@@ -1,66 +1,86 @@
-# DSpatch utvecklingsplan
+<a id="dspatch-utvecklingsplan"></a>
 
-Utvecklingsplan, uppdaterad 13 september 2026. Underlag: [VISION.md version 1.8](docs/VISION.md). Uppgifterna är planerade och ännu inte genomförda. TypeScript, React och Electron är valt teknikspår, med Windows och Linux i målbilden. Första implementation och provkörning sker med Cursor på Niclas Windowsdator. DSP-1 verifierar teknikspåret och väljer och provar den konkreta Cursor-anslutningen; se [beslut och motiv](docs/VISION.md#91-valt-teknikspår-och-plattformar). Nyttan och lärandet i varje inkrement får ändra planen.
+# DSpatch development plan
 
-## Nästa konkreta steg
+Development plan, updated 13 September 2026. Based on [VISION.md](docs/VISION.md). Task files record current progress, criteria and results. TypeScript, React and Electron are the selected stack, with Windows and Linux in the vision. Initial implementation and testing use Cursor on Niclas's Windows computer. DSP-1 verifies the stack and selects and tests the concrete Cursor connection; see [decisions and rationale](docs/VISION.md#91-selected-stack-and-platforms). Value and learning from each increment may change the plan.
 
-Börja med **DSP-7**, ett förberedelsesteg som provar [utvecklingsloopen](docs/DEVELOPMENT_LOOP.md) i Cursor: verkliga specialistanrop, planeringskvalitet och återupptagning. ID:t är senare tilldelat men uppgiften ligger först i arbetsordningen.
+<a id="nästa-konkreta-steg"></a>
 
-Därefter kommer **DSP-1**: verifiera det valda teknikspåret och vägen via Cursor till agentsvar, faktisk filändring och bygge eller test, inklusive ett minimalt paketerat Windowsprov. **DSP-2** bygger arbetsytan i små körbara delsteg: chatt, kodändring med diff och körkommando. Niclas kan prova delresultaten tidigt; **DSP-5** bedömer sedan hela ändringsflödet utan att behöva vänta på fördjupad felåterhämtning i DSP-3 och sparad historik i DSP-4.
+## Next concrete step
 
-Linuxstödet införs och verifieras stegvis, med enhetlig arbetsyta som mål; Linuxprov är inget krav för Etapp 0. VS Code/Copilot finns kvar i målbilden. Teknikvalen ska ge utrymme för det stödet, men implementation och provkörning med VS Code/Copilot krävs inte i Etapp 0. Kvarstående kompatibilitetsprov dokumenteras i DSP-1.
+The sequence begins with **DSP-7**, a preparatory [development-loop](docs/DEVELOPMENT_LOOP.md) probe in Cursor: real specialist calls, planning quality and recovery. Its ID was assigned later but it comes first in execution order. Consult its task status rather than repeating a completed calibration.
 
-Målet är en arbetsyta som Niclas vill använda för en verklig utvecklingsfråga. Planeringsverktyget ska ge honom effektivitet och tydlig överblick; externa dashboards, Jira och demovärde är inga krav för detta projekt.
+**DSP-1** follows: verify the selected stack and the Cursor path to an agent response, actual file change and build or test, including a minimal packaged Windows probe. **DSP-2** builds the workspace in small runnable substeps: chat, code change with diff and command execution. Niclas can test intermediate results early; **DSP-5** then assesses the complete change workflow without waiting for deeper error recovery in DSP-3 and persisted history in DSP-4.
 
-## Etapp 0 – Gör en verklig kodändring med DSpatch
+Linux support is introduced and verified incrementally, aiming for a consistent workspace; Linux testing is not a Phase 0 requirement. VS Code/Copilot remains in the vision. Technical decisions must leave room for it, but implementation and testing with VS Code/Copilot are not required in Phase 0. Record outstanding compatibility tests in DSP-1.
 
-[Milstolpens mål och bedömning](backlog/milestones/m-0%20-%20forsta-anvandbara-chatten.md)
+The goal is a workspace Niclas wants to use for a real development question. The planning tool must provide efficiency and a clear overview; external dashboards, Jira and demonstration value are not requirements for this project.
 
-| Uppgift | Steg | Nytta efter steget | Beror på |
+<a id="etapp-0--gör-en-verklig-kodändring-med-dspatch"></a>
+
+## Phase 0 – Make a real code change with DSpatch
+
+[Milestone goal and assessment](backlog/milestones/m-0%20-%20forsta-anvandbara-chatten.md)
+
+| Task | Step | Value after the step | Depends on |
 | --- | --- | --- | --- |
-| [DSP-7](backlog/tasks/dsp-7%20-%20Kalibrera-utvecklingsloopen-i-Cursor.md) | Kalibrera utvecklingsloopen i Cursor | Provad samordning och bedömd planeringskvalitet innan produktarbetet delegeras. | Inga |
-| [DSP-1](backlog/tasks/dsp-1%20-%20Valj-teknik-och-verifiera-agentanslutningen.md) | Verifiera teknikvalet och första Cursor-anslutningen | En provad väg till agentsvar, filändring och körresultat via Cursor. | DSP-7 |
-| [DSP-2](backlog/tasks/dsp-2%20-%20Oppna-projekt-och-ha-en-forsta-konversation.md) | Öppna ett repo, ändra kod och granska resultatet | En körbar arbetsyta för en liten kodändring, vanlig diff och bygge/test. | DSP-1 |
-| [DSP-3](backlog/tasks/dsp-3%20-%20Avbryt-och-aterhamta-en-chattkorning.md) | Avbryt och återhämta agent- och testkörningar begripligt | Tappad anslutning och avbrott lämnar ett begripligt läge med arbetet bevarat. | DSP-2 |
-| [DSP-4](backlog/tasks/dsp-4%20-%20Spara-och-fortsatt-en-konversation.md) | Spara konversation, ändringar och körresultat efter omstart | Resonemang, granskad diff och körresultat finns kvar nästa gång programmet öppnas. | DSP-2 |
-| [DSP-5](backlog/tasks/dsp-5%20-%20Provkor-forsta-chatten-med-Niclas.md) | Provkör kodändringsflödet med Niclas och fånga friktionen | Verklig användning av hela ändringsflödet avgör vad som hjälper, stör eller saknas. | DSP-2 |
-| [DSP-6](backlog/tasks/dsp-6%20-%20Forbattra-friktionen-och-folj-upp-chattflodet.md) | Förbättra största friktionen och följ upp hela utvecklingsflödet | Första milstolpen bedöms från uppdrag till kodändring och test, inklusive återhämtning. | DSP-3, DSP-4, DSP-5 |
+| [DSP-7](backlog/tasks/dsp-7%20-%20Kalibrera-utvecklingsloopen-i-Cursor.md) | Calibrate the development loop in Cursor | Tested coordination and assessed planning quality before delegating product work. | None |
+| [DSP-1](backlog/tasks/dsp-1%20-%20Valj-teknik-och-verifiera-agentanslutningen.md) | Verify the stack and first Cursor connection | A tested path to agent responses, file changes and execution results through Cursor. | DSP-7 |
+| [DSP-2](backlog/tasks/dsp-2%20-%20Oppna-projekt-och-ha-en-forsta-konversation.md) | Open a repository, change code and review the result | A runnable workspace for a small code change, normal diff and build/test. | DSP-1 |
+| [DSP-3](backlog/tasks/dsp-3%20-%20Avbryt-och-aterhamta-en-chattkorning.md) | Cancel and recover agent and test runs clearly | Lost connections and cancellation leave an understandable state with work preserved. | DSP-2 |
+| [DSP-4](backlog/tasks/dsp-4%20-%20Spara-och-fortsatt-en-konversation.md) | Preserve conversation, changes and results across restart | Reasoning, reviewed diffs and execution results remain available next time the app opens. | DSP-2 |
+| [DSP-5](backlog/tasks/dsp-5%20-%20Provkor-forsta-chatten-med-Niclas.md) | Test the code-change workflow with Niclas and capture friction | Real use of the complete workflow determines what helps, obstructs or is missing. | DSP-2 |
+| [DSP-6](backlog/tasks/dsp-6%20-%20Forbattra-friktionen-och-folj-upp-chattflodet.md) | Improve the main friction and assess the full development workflow | Assess the first milestone from assignment through code change and test, including recovery. | DSP-3, DSP-4, DSP-5 |
 
-Tabellen är en läsöversikt över omfattning och ordning. Uppgiftsfilerna är källan för aktuell status, detaljer, kriterier och resultat. Uppdatera översikten när riktning eller omfattning ändras; håll inte en separat statusbokföring här. Beroendena anger vilket underlag som behövs och innebär inte automatiskt parallella skrivande agenter.
+This table is an overview of scope and ordering. Task files are the source for current status, details, criteria and results. Update this overview when direction or scope changes; do not maintain a second status ledger here. Dependencies identify required input and do not automatically imply parallel writing agents.
 
-## Förbättringar av utvecklingsloopen
+<a id="förbättringar-av-utvecklingsloopen"></a>
 
-Dessa uppgifter gäller arbetsformen som bygger DSpatch. De ligger utanför produktens Etapp 0-milstolpe och inför inte nya beroenden för DSP-1–6. Prioritera dem utifrån observerad nytta efter kalibreringen; DSP-1 är fortsatt nästa produktsteg efter DSP-7.
+## Development-loop improvements
 
-| Uppgift | Nytta | Beror på |
+These tasks concern the workflow used to build DSpatch. They sit outside the product's Phase 0 milestone and add no dependencies to DSP-1–6. Prioritise them by observed value after calibration; DSP-1 remains the next product step after DSP-7.
+
+| Task | Value | Depends on |
 | --- | --- | --- |
-| [DSP-8](backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md) – Prova uppgiftsstyrt modellval i utvecklingsloopen | Koordinatorn väljer modell och resonemangsnivå efter det konkreta uppdraget, med synligt motiv, fast användarval och verifierat faktiskt modellval. | DSP-7 |
+| [DSP-8](backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md) – Test task-aware model selection | Select model and reasoning level for the concrete assignment, with visible rationale, fixed user choice and verified actual selection. | DSP-7 |
 
-DSP-8 börjar med att prova Cursors faktiska styrmöjligheter och jämföra med fast modellval. [Modellvalsförslaget](docs/MODEL_SELECTION.md) är planerat arbete, inte en redan aktiv funktion. Det ändrar inte den pågående kalibreringen.
+DSP-8 starts by testing Cursor's actual controls and comparing against a fixed-model baseline. The [model-selection proposal](docs/MODEL_SELECTION.md) is planned work, not an active feature, and does not change the calibration baseline. DSP-8 has no assigned milestone; DSP-1–7 belong to m-0.
 
-## Vad som avgör om vi är klara
+<a id="vad-som-avgör-om-vi-är-klara"></a>
 
-Efter **DSP-6** ska Niclas kunna öppna ett repo, diskutera en liten uppgift, låta agenten göra en verklig kodändring, granska berörda filer och hela textdiffen samt köra relevant bygge eller test och se resultatet för rätt kodversion. Han ska kunna följa upp, be om ett omtag, avbryta och fortsätta efter omstart. Fel ska ge en begriplig väg vidare; tidigare ändringar och körresultat ska bevaras utan automatisk upprepning.
+## What determines completion
 
-Hela milstolpen kräver både teknisk verifiering och Niclas egen bedömning av detta utvecklingsflöde. Hans första återkoppling kan börja med den enkla chatten. En avancerad diffvy, egen editor, autonom loop, automatisk commit eller push behövs inte för att uppnå milstolpen.
+After **DSP-6**, Niclas must be able to open a repository, discuss a small task, let the agent make a real code change, review affected files and the complete text diff, and run a relevant build or test with results for the correct code version. He must be able to follow up, request rework, cancel and continue after restart. Errors must offer an understandable way forward; preserve earlier changes and execution results without automatic repetition.
 
-Knyt återkoppling, tester och granskning till den version som faktiskt kördes. För uppgifter som uttryckligen kräver Niclas provkörning kan agenten förbereda och verifiera tekniken, men mänsklig acceptans förblir öppen tills den har lämnats. Annat avgränsat arbete kan fortsätta inom givet mandat medan vi väntar.
+The milestone requires technical verification and Niclas's own assessment of this development workflow. His first feedback may begin with simple chat. An advanced diff view, custom editor, autonomous loop or automatic commit/push is not required for the milestone.
 
-## Status och återupptagning
+Bind feedback, tests and review to the version actually run. For tasks explicitly requiring Niclas's testing, the agent may prepare and technically verify the result, but human acceptance remains open until supplied. Other bounded work may continue within the given mandate while waiting.
 
-| Status | Betydelse |
+<a id="status-och-återupptagning"></a>
+
+## Status and recovery
+
+| Status | Meaning |
 | --- | --- |
-| To Do | Planerat arbete; kontrollera beroenden och givna mandat innan start. |
-| In Progress | Någon arbetar aktivt med uppgiften. Ange aktuellt fokus i uppgiften. |
-| Review | Ett konkret resultat finns att bedöma. Ange vem eller vad som återstår; det är inte samma sak som godkänd UX. |
-| Blocked | Ett hinder stoppar meningsfullt fortsatt arbete. Ange orsaken, vad som provats och exakt vad som behövs. |
-| Done | Uppgiftens kriterier och relevanta kontroller är uppfyllda, inklusive uttryckligen efterfrågad mänsklig bedömning. |
+| To Do | Planned work; check dependencies and mandate before starting. |
+| In Progress | Someone is actively working on the task. Record the current focus in the task. |
+| Review | A concrete result is ready for assessment. State who or what remains; this does not mean UX acceptance. |
+| Blocked | An obstacle prevents meaningful progress. Record the cause, attempts and exactly what is needed. |
+| Done | Task criteria and relevant checks are satisfied, including explicitly requested human assessment. |
 
-Flytta tillbaka till In Progress vid omtag. Kryssa bara i verifierade kriterier och bevara tidigare relevanta resultat. Vid paus eller fel ska uppgiften ange senaste verifierade läge, kvarstående problem och nästa handling. Backlog-status beskriver arbetet; den är inte i sig bevis för att en agentprocess kör eller har stoppats.
+**Start the card before the work.** First make the brief checks needed to select the correct task and establish repository, dependencies, mandate and any ongoing run. Then set the card to `In Progress`, record its focus and confirm that the status was saved. Deeper planning, research, technical probes, implementation and specialist calls start only after this update; status must not wait until the final report. In the loop, the coordinator owns this action.
 
-## Granska och arbeta med planen
+If a subtask has its own card, update that card and reflect ongoing execution in the parent task. A numbered substep without its own card is recorded as the current focus in the existing task; do not create cards solely for status accounting. General planning or reading future tasks does not start their implementation.
 
-På GitHub kan du läsa och kommentera uppgiftsfilerna i pull requesten. I en lokal arbetskopia med Backlog.md installerat:
+On rework, move the card back to `In Progress` before resuming. On resume, check the existing status and focus without resetting history or run counters. Use the fallback in AGENTS.md if the CLI fails, and reconcile a failed write's outcome before retrying.
+
+Check only verified criteria and preserve earlier relevant results. On a pause or failure, record the latest verified state, remaining problems and next action. Backlog status describes work; it does not itself prove that an agent process is running or stopped.
+
+<a id="granska-och-arbeta-med-planen"></a>
+
+## Review and work with the plan
+
+On GitHub, read and comment on task files in the pull request. In a local working copy with Backlog.md installed:
 
 ```sh
 backlog browser
@@ -68,14 +88,26 @@ backlog task list --json
 backlog task view DSP-1 --plain
 ```
 
-Använd webbgränssnittet eller CLI:t för normal uppgiftshantering. När verktyget saknas kan filerna granskas och redigeras via GitHub; bevara YAML-fälten och Backlogs sektionsmarkörer. Varje uppgift har stabilt ID och egna acceptanskriterier. `AGENTS.md` anger arbetsreglerna; ingen MCP-anslutning eller extern planeringstjänst behövs.
+Use the web interface or CLI for normal task management. If the tool is missing, files can be reviewed and edited through GitHub; preserve YAML fields and Backlog section markers. Every task has a stable ID and its own acceptance criteria. `AGENTS.md` defines working rules; no MCP connection or external planning service is required.
 
-Konfigurationen läser den aktuella arbetskopian utan automatiska fjärranrop eller insamling från andra grenar. Git används uttryckligen för att hämta och dela ändringar. Vi provar detta enkla upplägg först; det är ett verktygsval för utvecklingen och låser inte DSpatchs framtida interna datamodell.
+The configuration reads the current working copy without automatic remote calls or collection from other branches. Use Git explicitly to fetch and share changes. We are trying this simple setup first; this development-tool choice does not lock DSpatch's future internal data model.
 
-## Efter första milstolpen
+## Repository maintenance
 
-Etapp 1–4 i [styrdokumentet](docs/VISION.md#14-etapper-för-genomförande) är riktningen: först tydligare uppgifter och körhistorik ovanpå det fungerande ändringsflödet, därefter djupare kodförståelse, Maestro och fler arbetsformer. Detaljera nästa inkrement efter erfarenheterna från Etapp 0. En avancerad editor, komplett agentnätverk eller alla integrationer ska inte behövas för att få nytta av första versionen.
+[DSP-10 — Use English consistently across the project](backlog/tasks/dsp-10%20-%20Use-English-consistently-across-the-project.md) makes repository content English while preserving Swedish conversation, stable IDs and historical evidence. It is separate from Phase 0 and adds no product dependency.
 
-## Format och verifieringsläge
+<a id="efter-första-milstolpen"></a>
 
-Backlog-filerna följer projektets dokumenterade konfiguration, uppgiftsformat och milstolpsformat. De är kontrollerade mot [Backlog.mds källkod](https://github.com/MrLesk/Backlog.md/tree/c0ec546a3b519c0c7b83070fe936f6bf49e14357), vars paketversion är 1.52.0. CLI och webb-API har provats med de sju ursprungliga uppgifterna i en isolerad kopia. Niclas har den 13 september 2026 även installerat 1.52.0 och bekräftat att webbgränssnittet fungerar på Windows. DSP-1–7 hör till milstolpen m-0; DSP-8 är en separat förbättring av utvecklingsloopen utan tilldelad milstolpe. Att planeringen visas korrekt bevisar inte att agentloopen eller produktintegrationen fungerar.
+## After the first milestone
+
+Phases 1–4 in the [vision](docs/VISION.md#14-implementation-phases) set the direction: clearer tasks and run history on top of the working change workflow, then deeper code understanding, Maestro and additional working modes. Detail the next increment based on Phase 0 experience. An advanced editor, complete agent network or every integration must not be prerequisites for initial value.
+
+<a id="format-och-verifieringsläge"></a>
+
+## Format and verification status
+
+Backlog files follow the project's documented configuration, task format and milestone format. They were checked against [Backlog.md source](https://github.com/MrLesk/Backlog.md/tree/c0ec546a3b519c0c7b83070fe936f6bf49e14357), package version 1.52.0.
+
+Historical verification on 13 September 2026: Backlog.md 1.52.0 was installed locally and tested against the DSpatch plan. `backlog task list --plain` displayed the then-existing seven tasks with correct AC counts; `backlog milestone list --plain` displayed `m-0` with the correct completed count; `backlog task view DSP-1 --plain` rendered the description, acceptance criteria and implementation plan. Niclas used the web interface. That probe did not exercise `backlog board`, an interactive TUI, or writing CLI commands; its five status columns were not checked by an agent.
+
+During DSP-7, task files were also edited manually as Markdown using the AGENTS.md fallback. The CLI read them successfully, confirming that the fallback preserved the format. Later verification belongs in the relevant task notes rather than overwriting this historical observation.

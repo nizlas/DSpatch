@@ -1,51 +1,51 @@
-# Uppgiftsstyrt modellval i utvecklingsloopen
+# Task-aware model selection in the development loop
 
-Förslag, 13 september 2026, utifrån Niclas önskemål. Införandet följs i [DSP-8](../backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md). Detta beskriver en kommande förbättring av loopen som bygger DSpatch; det är inte en implementerad modellväljare eller ett nytt krav för produktens Etapp 0.
+Proposal, 13 September 2026, based on Niclas's request. Implementation is tracked in [DSP-8](../backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md). This is a future improvement to the loop that builds DSpatch, not an implemented model selector or another requirement for product Phase 0.
 
-## Mål och nuvarande läge
+## Goal and current state
 
-Koordinatorn ska kunna välja modell och resonemangsnivå efter det konkreta uppdragets karaktär, komplexitet och osäkerhet. Agentrollen anger ansvar och behörigheter; den ska inte ensam avgöra modellvalet. Samma Implementer kan behöva olika modeller för en enkel textändring och för ett svårt samtidighetsfel.
+The coordinator should select a model and reasoning level based on the assignment's character, complexity and uncertainty. A role defines responsibilities and permissions; it must not determine the model alone. The same Implementer may need different models for a simple text change and a difficult concurrency bug.
 
-Alla fem nuvarande specialistdefinitioner använder `model: inherit`. Den pågående DSP-7-kalibreringen fortsätter med denna baslinje, även efter paus och resume. Förslaget aktiverar inga modellbyten. DSP-1 kan genomföras efter DSP-7 utan att vänta på DSP-8.
+All five current specialist definitions use `model: inherit`. DSP-7 used this baseline, including pause and resume. This proposal activates no model switching. DSP-1 may proceed after DSP-7 without waiting for DSP-8.
 
-## Föreslagen bedömning inför ett anrop
+## Proposed assessment before a call
 
-Gör bedömningen i koordinatorns befintliga planering; skapa inte ett extra agentanrop bara för att välja modell. Utgå från uppdraget, det tillgängliga underlaget och relevanta tidigare resultat.
+Assess the choice within the coordinator's existing planning; do not add an agent call just to select a model. Use the assignment, available evidence and relevant earlier results.
 
-| Uppdragets karaktär | Vad som bör styra valet |
+| Assignment | Selection considerations |
 | --- | --- |
-| Tydlig, lokal ändring med entydig kontroll | En snabbare modell kan räcka om den visat tillräcklig kvalitet för liknande arbete. |
-| Normal implementation över flera berörda delar | Förmåga att förstå beroenden och använda verktyg, vägd mot tid och kostnad. |
-| Arkitektur, svår felsökning eller oklara antaganden | Större resonemangskapacitet och vid behov högre effort, redan från första anropet. |
-| Granskning | Ändringens osäkerhet och konsekvens om ett fel missas. En kort diff är inte automatiskt enkel att granska. |
-| Research | Frågans svårighet, källornas kvalitet, kontextbehov och tillgängliga verktyg. |
+| Clear local change with an unambiguous check | A faster model may suffice if it has demonstrated adequate quality on similar work. |
+| Ordinary implementation across several components | Ability to understand dependencies and use tools, weighed against time and cost. |
+| Architecture, difficult debugging or uncertain assumptions | More reasoning capacity and, where appropriate, higher effort from the first call. |
+| Review | Uncertainty and consequences of missing a defect. A short diff is not automatically easy to review. |
+| Research | Question difficulty, source quality, context needs and available tools. |
 
-Välj bland modeller som är tillgängliga och tillåtna i den aktuella miljön. Första förslaget kan använda ett fåtal profiler för snabbare, balanserat och fördjupat arbete, kopplade till verifierade modell-ID:n och inställningar. Håll den gemensamma rollinstruktionen samlad om flera profiler för samma roll behövs. En profil är ett prövbart val, inte en generell rangordning av modeller.
+Choose among models available and permitted in the actual environment. Start with a few profiles for faster, balanced and deeper work, tied to verified model IDs and settings. Keep common role instructions together if several profiles are needed for one role. A profile is a testable choice, not a general model ranking.
 
-Modellnamn, marknadsföring eller modellens egen säkerhet i svaret räcker inte som belägg för lämplighet. Kontextutrymme, verktygsstöd, lokala erfarenheter och uppdragets kvalitetskrav ska vägas in. En annan modell för review kan provas, men ersätter inte oberoende underlag och verifiering.
+Model names, marketing or a model's own confidence do not establish suitability. Consider context capacity, tool support, local experience and quality requirements. A different model for review is worth testing but does not replace independent evidence and verification.
 
-Optimera arbetet till ett godkänt resultat: kvalitet, tid, omtag och kostnad tillsammans. En låg tokenkostnad är inte en besparing om flera extra försök behövs. Okända kostnader eller saknade mätvärden ska framgå.
+Optimise the work through to an accepted result: quality, time, rework and cost together. A lower token price is not a saving if it requires several extra attempts. Expose unknown costs and missing measurements.
 
-## Fast modell och ökad kapacitet
+## Fixed model and increased capacity
 
-Niclas ska kunna ange en fast modell för ett pass eller ett uppdrag. Det valet går före automatiken. Håll samma val vid resume om inte användaren ändrar det eller ett byte ryms i ett redan angivet mandat. Tillgänglighet, behörigheter och eventuella resursramar ska respekteras; modellvalet ger ingen utökad åtkomst.
+Niclas can fix a model for a run or assignment; that choice overrides automation. Preserve it on resume unless he changes it or an already granted mandate permits a switch. Respect availability, permissions and resource limits; model selection grants no extra access.
 
-När ett resultat är otillräckligt ska koordinatorn först skilja mellan ett fel i instruktionen, saknat underlag, verktygsfel och ett problem som rimligen kräver mer resonemang. Lös rätt problem. Ett blockerat MCP-anrop eller okänt utfall ska inte behandlas som att en större modell automatiskt behövs.
+When a result is inadequate, first distinguish faulty instructions, missing evidence, tool failure and a problem that plausibly needs more reasoning. Address the actual cause. A blocked MCP call or unknown outcome does not automatically call for a larger model.
 
-Ett motiverat byte får gälla nästa anrop eller ett avgränsat omtag efter att föregående utfall klarlagts. Bevara arbetskopia, kandidat, tidigare rapporter och passets befintliga anrops- och omtagsräknare. Modellbyte nollställer inte gränser eller återupprepar redan utfört arbete. Den nya agenten får den information den behöver för att fortsätta.
+A justified switch may apply to the next call or a bounded retry after reconciling the previous outcome. Preserve the working copy, candidate, reports and existing call/rework counters. Switching does not reset limits or repeat completed work. Give the new agent the context needed to continue.
 
-## Vad Cursor-stödet behöver bevisa
+## What Cursor support must demonstrate
 
-[Cursor dokumenterar](https://cursor.com/docs/subagents#model-configuration) `model: inherit`, ett bestämt modell-ID per agentdefinition och modellparametrar, exempelvis effort. Kontots villkor och modellåtkomst kan påverka utfallet. Dokumentationen är läst 13 september 2026.
+[Cursor documents](https://cursor.com/docs/subagents#model-configuration) `model: inherit`, a specific model ID per agent definition and parameters such as effort. Account terms and model access may affect the outcome. Documentation was read on 13 September 2026.
 
-Detta bevisar inte att huvudagentens tillgängliga anropsverktyg kan välja ett godtyckligt modell-ID per anrop. DSP-8 behöver kontrollera den faktiska Cursor-miljön och prova den stödda vägen. Om direkt modellval inte stöds kan valet mellan fördefinierade agentprofiler utvärderas. Dynamisk omskrivning av agentfiler under ett pågående pass får inte antas fungera; upptäckt och inläsning måste i så fall vara verifierade.
+This does not prove that the main agent's invocation tool accepts any model ID per call. DSP-8 must inspect the actual Cursor environment and test its supported path. If direct selection is unavailable, evaluate predefined agent profiles. Do not assume rewriting definitions during an active run works; discovery and loading must be verified if that approach is used.
 
-Om inget tillförlitligt automatiskt val kan visas: rapportera hindret och behåll ett dokumenterat fast modellval. Ett förslag i chatten räknas inte som ett utfört modellbyte. DSP-8:s automatiska funktion ska då förbli ej klar, och nästa avgränsade åtgärd ska framgå.
+If reliable automatic selection cannot be demonstrated, report the obstacle and retain a documented fixed model. A chat suggestion is not an executed model switch. DSP-8's automatic functionality then remains incomplete with a concrete next action recorded.
 
-## Insyn och första utvärdering
+## Visibility and initial evaluation
 
-Före varje valt anrop ska journalen kunna ange roll, uppdrag, föreslagen modell och effort, kort motiv samt om valet är automatiskt eller fast. Efteråt ska den skilja begärt modellval från bekräftad faktisk modell/effort, med källa, anropsreferens, utfall, tid och tillgänglig förbrukning. Saknade runtime-uppgifter är okända; agentens egen identitetsuppgift är inte oberoende bekräftelse.
+Before a selected call, the journal should record role, assignment, proposed model/effort, short rationale and whether selection is automatic or fixed. Afterwards distinguish requested from confirmed actual model/effort, recording the source, call reference, outcome, time and available usage. Unavailable runtime details are unknown; the agent's self-reported identity is not independent confirmation.
 
-Visa en kort förklaring i översikten, exempelvis ”Fördjupat resonemang för ett fel med oklara samtidighetsberoenden”. Detaljer och mätvärden hör till journalen. Niclas ska kunna förstå och ändra valet utan att behöva styra varje anrop.
+Show a short explanation in the overview, such as "Deeper reasoning for uncertain concurrency dependencies". Put detailed measurements in the journal. Niclas should understand and change the selection without directing every call.
 
-Det första provet jämför en enkel ändring, en uppgift med tydlig osäkerhet och en granskning med ett fast modellval som referens. Håll underlag och kriterier jämförbara och inkludera två olika uppdrag inom samma roll. Bedöm planeringskvalitet, verifierat resultat, nödvändiga omtag, tidsåtgång och tillgängliga kostnadsdata. Dokumentera begränsningarna; ett litet prov visar inte en generell vinnare.
+Compare a simple change, an uncertain task and a review against a fixed-model baseline. Keep inputs and criteria comparable and include two different assignments within the same role. Assess planning quality, verified results, necessary rework, elapsed time and available costs. Document limitations: a small trial does not establish a general winner.

@@ -1,3 +1,10 @@
 /.dspatch-loop/
 __pycache__/
 *.pyc
+
+# Produktkoden i app/. Lockfilen ska däremot vara spårbar och ignoreras inte.
+node_modules/
+/app/dist/
+# Paketeringens utkatalog. Artefakter identifieras med innehållssumma i
+# körjournalen, inte genom att ligga i git.
+/app/release/

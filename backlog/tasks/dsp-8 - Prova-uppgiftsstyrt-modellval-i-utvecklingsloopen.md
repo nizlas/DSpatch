@@ -1,9 +1,10 @@
 ---
 id: DSP-8
-title: Prova uppgiftsstyrt modellval i utvecklingsloopen
+title: Test task-aware model selection in the development loop
 status: To Do
 assignee: []
 created_date: '2026-09-13 11:56'
+updated_date: '2026-09-13 20:16'
 labels:
   - integration
   - reliability
@@ -19,29 +20,29 @@ ordinal: 7000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-### Varför och önskat resultat
+### Purpose and intended result
 
-Niclas vill att utvecklingsloopen väljer modell efter uppgiftens karaktär och komplexitet. Alla fem specialister använder idag model: inherit, så en liten lokal ändring och en svår undersökning normalt får samma modell som huvudchatten. Vi vill kunna använda tillräcklig kapacitet för god kvalitet och bedöma tid och kostnad fram till ett verifierat resultat.
+Niclas wants the development loop to select models by task character and complexity. All five specialists currently use `model: inherit`, so a small local change and a difficult investigation normally use the main chat's model. Use enough capacity for good quality and assess time and cost through to a verified result.
 
-### Omfattning och gränser
+### Scope and boundaries
 
-Gäller den externa Cursor-loopen som bygger DSpatch. Det konkreta uppdraget, osäkerheten och konsekvensen av ett fel ska styra valet; rollen ska inte ensam avgöra det. Niclas ska kunna låsa modellvalet. Förslaget till beteende och första jämförelse finns i docs/MODEL_SELECTION.md. Exakta modellprofiler och teknisk lösning väljs när uppgiften tas upp utifrån då tillgängliga modeller och faktisk Cursor-funktion.
+This concerns the external Cursor loop building DSpatch. The concrete assignment, uncertainty and consequences of failure drive selection; the role alone must not determine it. Niclas can fix the model. Proposed behaviour and the first comparison are in docs/MODEL_SELECTION.md. Choose exact profiles and implementation when taking up the task, based on then-available models and actual Cursor functionality.
 
-Cursor dokumenterar modellval i agentdefinitioner. Godtyckligt val per anrop är inte verifierat i vår lokala miljö. Ett faktiskt, spårbart modellbyte krävs för att kalla automatiken fungerande; om stödet saknas ska hindret och ett konkret nästa steg dokumenteras medan ett fast val används.
+Cursor documents model selection in agent definitions. Arbitrary per-call selection is not verified locally. Calling automation functional requires an actual traceable model change; if unsupported, document the obstacle and next step while using a fixed model.
 
-DSP-7 är baslinjen och får slutföras med oförändrat modellval. DSP-8 prioriteras separat efter kalibreringen och är inte en ny grind för DSP-1 eller för Etapp 0. Behåll den platta samordningen, befintliga mandat och återupptagning. Ingen ny modellväljande specialist, omfattande benchmarkplattform eller produkt-GUI ingår.
+DSP-7 is the baseline and its model choice stays unchanged through calibration. Prioritise DSP-8 separately afterwards; it is not another gate for DSP-1 or Phase 0. Preserve flat coordination, existing mandates and resumption. Exclude an extra model-selecting specialist, an extensive benchmark platform and product GUI.
 
-### Bedömning
+### Assessment
 
-Nytta bedöms från uppnådd kvalitet, tydligheten i modellvalen, omtag, tidsåtgång och tillgänglig förbrukning. Skilj dokumenterade möjligheter från lokalt verifierat beteende och små provresultat från generella modellrankningar.
+Assess quality achieved, clarity of selections, rework, elapsed time and available usage. Distinguish documented possibilities from locally verified behaviour, and small trial outcomes from general model rankings.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Cursors faktiska väg för uppgiftsstyrt modellval är dokumenterad och provad på Niclas Windowsmiljö. Minst två olika modell-ID:n har använts i avgränsade specialistuppdrag med oberoende runtime-underlag; enbart begärd modell eller modellens egen identitetsuppgift räcker inte. Saknat styrstöd eller obekräftat utfall redovisas och lämnar automatiken ej klar.
-- [ ] #2 Koordinatorns val tar hänsyn till uppdragets karaktär, komplexitet, osäkerhet, felkonsekvens, verktygs-/kontextbehov och givna resursramar. Två olika uppdrag inom samma roll visar att rollnamnet inte ensamt styr valet; enkla och svåra uppdrag samt fast användarval är provade.
-- [ ] #3 Modellvalet görs inom tillgänglig och tillåten kapacitet. Fast användarval respekteras. Saknad modell, fallback och obekräftad faktisk modell/effort får ett tydligt utfall enligt det givna mandatet; de visas inte som ett lyckat byte till den begärda modellen.
-- [ ] #4 Journal och översikt skiljer begärd modell/effort från faktisk bekräftad modell/effort och anger källa, kort motiv, anropsreferens, resultat, tid och tillgänglig förbrukning. Okända värden markeras som okända och Niclas kan förstå varför valet gjordes.
-- [ ] #5 Ett motiverat byte efter otillräckligt resultat, ett verktygsfel/okänt utfall och resume är provade. Byte görs först efter avstämning; tidigare ändringar, kandidat, underlag och befintliga anrops-/omtagsgränser bevaras. Redan utfört arbete dubbelstartas inte.
-- [ ] #6 Ett litet jämförbart prov omfattar enkel ändring, osäker uppgift och granskning mot fast modellval som referens. Rapporten redovisar verifierad kvalitet, nödvändiga omtag, tid, tillgänglig kostnad och begränsningar. Körinstruktionerna anger vad som faktiskt införts, hur Niclas väljer fast modell och vilket nästa steg resultaten motiverar.
+- [ ] #1 Cursor's actual task-aware selection path is documented and tested on Niclas's Windows environment. At least two different model IDs are used for bounded specialist assignments with independent runtime evidence; a requested model or self-reported identity is insufficient. Missing control or unconfirmed outcomes are reported and leave automation incomplete.
+- [ ] #2 The coordinator considers assignment character, complexity, uncertainty, failure consequences, tool/context needs and resource limits. Two different assignments within one role show that the role name alone does not determine selection; simple and difficult work and fixed user selection have been tested.
+- [ ] #3 Selection stays within available and permitted capacity. Fixed user choice is respected. Missing models, fallbacks and unconfirmed actual model/effort produce an explicit outcome within the mandate, not a reported successful switch to the requested model.
+- [ ] #4 The journal and overview distinguish requested model/effort from confirmed actual model/effort and record source, brief rationale, call reference, result, time and available usage. Unknown values remain unknown; Niclas can understand why the choice was made.
+- [ ] #5 A justified switch after an inadequate result, a tool failure/unknown outcome and resume have been tested. Switching follows reconciliation; earlier changes, candidate, evidence and existing call/rework limits are preserved. Completed work is not double-started.
+- [ ] #6 A small comparable trial covers a simple change, uncertain work and review against a fixed-model baseline. The report includes verified quality, necessary rework, time, available cost and limitations. Instructions state what was actually introduced, how Niclas fixes a model and the next step justified by the results.
 <!-- AC:END -->

@@ -1,31 +1,35 @@
-# Första provet av utvecklingsloopen
+<a id="första-provet-av-utvecklingsloopen"></a>
 
-Detta körs som DSP-7 på Niclas dator i Cursor. Syftet är att prova verkliga specialistanrop, platt samordning och återupptagning samt att bedöma planeringskvalitet på riktigt DSpatch-underlag. Ett tekniskt rökprov är inte bevis för att framtida planering blir bra.
+# Initial development-loop probe
 
-## Första passet
+Run this as DSP-7 on Niclas's computer in Cursor. It tests real specialist calls, flat coordination and recovery, and assesses planning quality using actual DSpatch material. A technical smoke test does not prove future planning quality.
 
-Starta `/dspatch-loop calibrate` i huvudchatten.
+<a id="första-passet"></a>
 
-Koordinatorn ska:
+## First run
 
-1. Kontrollera att de fem specialistnamnen finns tillgängliga. Notera Cursor-version och valt modellnamn om dessa kan läsas; gissa inte saknade värden. Kontrollera Git och Python. Kör `python -m unittest discover -s tests -p "test_loop_snapshot.py"` för hjälpverktyget.
-2. Skapa en ny körjournal. Ange DSP-7 och en lokal artefaktkatalog som enda skrivområde för kalibreringsuppdragen. Produktkod och DSP-1:s kriterier ska inte ändras av specialisterna.
-3. Anropa **Backlog Planner** med faktisk VISION, BACKLOG, DSP-1 och relevanta användarbeslut. Begär en begriplig plan för DSP-1:s första teknikprov: nytta, avgränsning, ordning, osäkerheter och verifiering. Begär förslag till ändringar bara om det finns ett konkret skäl; skapa inte nya tickets för att fylla provet.
-4. Anropa **Reviewer i planläge** på förslaget. Spara båda rapporterna och presentera den korta planen för Niclas. Grundläggande brister får ett avgränsat omtag inom passets räknare. Niclas bedömning kan lämnas efter det tekniska provet; ingen produktimplementation startas här.
-5. Anropa **Researcher** för en smal fråga: kontrollera i aktuell officiell Cursor-dokumentation vad de fem agenternas `readonly` och `model: inherit` innebär och redovisa vad dokumentationen inte bevisar om den lokala körningen. Läsande uppdrag, ingen installation eller debiterad SDK-probe.
-6. Skapa ett separat lokalt Git-repo under `.dspatch-loop/runs/<run-id>/probe/`, med lokal testidentitet för dess enda bascommit. Det får inte ha någon remote. Lägg in `example.py` med funktionen nedan och `test_example.py` med testfallet nedan.
-7. Anropa **Implementer** i detta provrepo. Uppdrag: få `sum_numbers` att summera heltal representerade som strängar, och bevara anroparens indata. Bara `example.py` får ändras; testet får läsas och köras. Ingen delegering eller Git-commit ingår.
-8. Spara rapporten, kontrollera ändringen och fånga provrepots kandidat med `scripts/loop_snapshot.py --repo <probe> --output <probe>/.dspatch-loop/candidate.json` från DSpatchs rot. Spara absolut provsökväg och kandidatens referens i journalen.
-9. Pausa med status PAUSED och nästa steg ”Verifier på sparad kandidat”. Spara att Implementer är klar och kontrollera att inga provprocesser fortfarande kör. Be Niclas fortsätta i en ny huvudchatt med resume. Detta är en avsiktlig paus för att prova kontextåterställning, inte ett simulerat godkänt avbrott mitt i en extern tjänst.
+Enter `/dspatch-loop calibrate` in the main chat.
 
-Basfil `example.py`:
+The coordinator must:
+
+1. Check that all five specialist names are available. Record the Cursor version and selected model name if readable; do not guess missing values. Check Git and Python. Run `python -m unittest discover -s tests -p "test_loop_snapshot.py"` for the helper tool.
+2. Create a new run journal. Specify DSP-7 and a local artifact directory as the only write location for calibration assignments. Specialists must not change product code or DSP-1's criteria.
+3. Call **Backlog Planner** with the actual VISION, BACKLOG, DSP-1 and relevant user decisions. Request an understandable plan for DSP-1's first technical probe: value, scope, order, uncertainties and verification. Request changes only for a concrete reason; do not create tickets merely to fill the probe.
+4. Call **Reviewer in plan mode** on the proposal. Save both reports and present the short plan to Niclas. Fundamental defects receive bounded rework within the run's counters. Niclas may assess it after the technical probe; no product implementation starts here.
+5. Call **Researcher** for a narrow question: check current official Cursor documentation for the meaning of the five agents' `readonly` and `model: inherit`, and report what documentation does not prove about local execution. Read-only assignment, no installation or billed SDK probe.
+6. Create a separate local Git repository under `.dspatch-loop/runs/<run-id>/probe/`, with a local test identity for its only base commit. It must have no remote. Add `example.py` with the function below and `test_example.py` with the test below.
+7. Call **Implementer** in this probe repository. Assignment: make `sum_numbers` sum integers represented as strings while preserving the caller's input. Only `example.py` may change; the test may be read and run. No delegation or Git commit is included.
+8. Save the report, check the change and capture the probe candidate using `scripts/loop_snapshot.py --repo <probe> --output <probe>/.dspatch-loop/candidate.json` from DSpatch's root. Save the absolute probe path and candidate reference in the journal.
+9. Pause with status PAUSED and next step “Verifier on saved candidate”. Record Implementer as complete and check that no probe processes remain running. Ask Niclas to continue in a new main chat with resume. This deliberate pause tests context restoration; it is not a simulated successful interruption inside an external service.
+
+Base file `example.py`:
 
 ```python
 def sum_numbers(values):
     return "".join(values)
 ```
 
-Testfil `test_example.py`:
+Test file `test_example.py`:
 
 ```python
 import unittest
@@ -40,18 +44,22 @@ class SumNumbersTests(unittest.TestCase):
         self.assertEqual(sum_numbers([]), 0)
 ```
 
-## Återuppta i en ny huvudchatt
+<a id="återuppta-i-en-ny-huvudchatt"></a>
 
-Skriv `/dspatch-loop resume`.
+## Resume in a new main chat
 
-Koordinatorn ska läsa den befintliga journalen och bekräfta faktiskt provrepo och kandidat. **Implementer ska inte anropas igen för det redan genomförda steget.**
+Enter `/dspatch-loop resume`.
 
-Anropa **Verifier** på den sparade kandidaten. Kör `python -m unittest discover -s . -p "test_example.py"` i provrepot och kontrollera snapshot före och efter. Verifier får skapa normala ignorerade testartefakter men inte ändra källkod eller tester. Provrepots bascommit ska därför även ha en enkel `.gitignore` för `__pycache__/` och `.dspatch-loop/`.
+The coordinator must read the existing journal and confirm the actual probe repository and candidate. **Do not call Implementer again for the already completed step.**
 
-Anropa sedan **Reviewer i implementationsläge** på samma kandidat, verklig diff och verifieringsrapport. Eventuella fynd går genom de vanliga omtagsreglerna. Koordinatorn redovisar verkliga agentanrop och referenser, resultat, ofullständiga delar samt att detta gäller ett litet lokalt prov.
+Call **Verifier** on the saved candidate. Run `python -m unittest discover -s . -p "test_example.py"` in the probe repository and check the snapshot before and after. Verifier may create normal ignored test artifacts but may not change source code or tests. The probe repository's base commit must therefore include a simple `.gitignore` for `__pycache__/` and `.dspatch-loop/`.
 
-## Bedömning och fortsatt arbete
+Then call **Reviewer in implementation mode** on the same candidate, actual diff and verification report. Process findings through the normal rework rules. The coordinator reports actual agent calls and references, results, incomplete parts and the limited scope of this small local probe.
 
-Niclas bedömer planöversikten för DSP-1: är nästa steg begripligt, relevant och lagom avgränsat? Dokumentera både första förslaget och korrigeringarna. Skilj ny produktstyrning från logiska luckor eller glömda beslut.
+<a id="bedömning-och-fortsatt-arbete"></a>
 
-DSP-7 är klar när dess faktiska tekniska kriterier och Niclas planbedömning är uppfyllda. Ett saknat subagentverktyg, misslyckad överlämning eller nödvändigt omtag ska synas. Först därefter startas DSP-1 genom ett eget avgränsat uppdrag. DSP-1 testar den riktiga anslutningen för DSpatch-produkten; kalibreringen ersätter inte det provet.
+## Assessment and further work
+
+Niclas assesses the DSP-1 plan overview: is the next step understandable, relevant and appropriately bounded? Document the first proposal and its corrections. Distinguish new product direction from logical gaps or forgotten decisions.
+
+DSP-7 is complete when its actual technical criteria and Niclas's plan assessment are satisfied. Missing subagent tools, failed handoffs or necessary rework must be visible. Only then start DSP-1 as a separate bounded assignment. DSP-1 tests the real connection for the DSpatch product; calibration does not replace that probe.
