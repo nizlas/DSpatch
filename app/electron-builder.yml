@@ -1,0 +1,38 @@
+# Paketering av DSpatch. Målet här är en körbar katalog, inte en installerare:
+# installerare, signering och automatisk uppdatering ligger utanför DSP-1.
+#
+# Konfigurationen ligger i en egen fil och inte i package.json därför att den
+# behöver kommentarer. Anteckningen om asarUnpack nedan är en vägvisare till
+# nästa delsteg, och strikt JSON kan inte bära den.
+
+appId: dev.dspatch.app
+
+directories:
+  # Inte dist/. Den katalogen ägs av tsc och Vite, och electron-builders
+  # standardvärde för output är just dist/ — de skulle skriva över varandra.
+  output: release
+
+# Renderaren buntas av Vite, och huvudprocessen kräver bara node:path, electron
+# och sina egna dist-filer. Artefakten behöver därför inga node_modules alls.
+# react och react-dom är byggberoenden här, inte körberoenden.
+files:
+  - dist/**/*
+  - package.json
+  - '!node_modules/**/*'
+
+# Skelettet har inga nativa beroenden, så allt kan ligga kvar i asar-arkivet.
+#
+# Delsteg 7 blir annorlunda: @cursor/sdk-win32-x64 bär rg.exe,
+# cursorsandbox.exe och två .node-filer. Sådana filer kan inte köras eller
+# laddas ur ett asar-arkiv utan måste packas upp, annars faller anslutningen
+# vid första anropet. Utöka då files med paketet och lägg till:
+#
+#   asarUnpack:
+#     - node_modules/@cursor/sdk-win32-x64/**/*
+asar: true
+
+win:
+  target:
+    - target: dir
+      arch:
+        - x64
