@@ -8,11 +8,18 @@ An experimental development workspace for human–AI collaboration and autonomou
 | --- | --- |
 | [Styrdokument](docs/VISION.md) | Målbilden i sin helhet, version 1.7. Markdown är det styrande originalet. |
 | [Agentinstruktioner](AGENTS.md) | Kort läsordning, principer och arbetsregler. |
-| [Utvecklingsplan](BACKLOG.md) | Förslag till första milstolpen, ordning och länkar till de sex första uppgifterna. |
+| [Utvecklingsplan](BACKLOG.md) | Förberedande loop-prov och sex produktsteg, med ordning och uppgiftslänkar. |
+| [Utvecklingsloop](docs/DEVELOPMENT_LOOP.md) | Cursor-agenter, koordinator, överlämning, omtag och återupptagning. |
 
 Det här är projektets första dokument- och planeringsförslag. Produktkod, GUI-teknik, första målplattform och verifierad agentanslutning återstår. Cursor är vald för första integrationen och testningen på Niclas hemmadator. VS Code/Copilot finns kvar i målbilden och beaktas i teknikvalen, med implementation och provkörning senare. Första milstolpen går från interaktiv chatt till en verklig kodändring i ett repo, granskning av vanlig diff och körning av bygge eller test. Avbrott, återhämtning och sparad historik ingår; faktisk användning styr fortsättningen.
 
 Maestro är orkestratorns interna arbetsnamn. Människointeraktivt arbete och autonom iteration är båda delar av målbilden; användaren väljer graden av medverkan.
+
+## Prova utvecklingsloopen i Cursor
+
+Öppna repots rot i Cursor och skriv `/dspatch-loop calibrate` i en Agent-chatt. Koordinatorn kör i huvudchatten och anropar fem specialister direkt. Git och Python 3.10+ behövs för det lokala provet. [Startinstruktion och begränsningar](docs/DEVELOPMENT_LOOP.md) beskriver också hur passet återupptas i en ny chatt.
+
+Definitionerna och det lokala snapshot-verktyget är kontrollerade; det verkliga agentprovet på hemmadatorn återstår i DSP-7. Det är utvecklingshjälp för att bygga DSpatch, inte en färdig Maestro-funktion i produkten.
 
 ## Granska direkt på GitHub
 

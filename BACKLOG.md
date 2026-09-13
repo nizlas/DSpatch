@@ -4,7 +4,9 @@ Första förslag, 13 september 2026. Underlag: [VISION.md version 1.7](docs/VISI
 
 ## Nästa konkreta steg
 
-Börja med **DSP-1**: verifiera vägen via Cursor till agentsvar, faktisk filändring och bygge eller test. **DSP-2** bygger arbetsytan i små körbara delsteg: chatt, kodändring med diff och körkommando. Niclas kan prova delresultaten tidigt; **DSP-5** bedömer sedan hela ändringsflödet utan att behöva vänta på fördjupad felåterhämtning i DSP-3 och sparad historik i DSP-4.
+Börja med **DSP-7**, ett förberedelsesteg som provar [utvecklingsloopen](docs/DEVELOPMENT_LOOP.md) i Cursor: verkliga specialistanrop, planeringskvalitet och återupptagning. ID:t är senare tilldelat men uppgiften ligger först i arbetsordningen.
+
+Därefter kommer **DSP-1**: verifiera vägen via Cursor till agentsvar, faktisk filändring och bygge eller test. **DSP-2** bygger arbetsytan i små körbara delsteg: chatt, kodändring med diff och körkommando. Niclas kan prova delresultaten tidigt; **DSP-5** bedömer sedan hela ändringsflödet utan att behöva vänta på fördjupad felåterhämtning i DSP-3 och sparad historik i DSP-4.
 
 VS Code/Copilot finns kvar i målbilden. Teknikvalen ska ge utrymme för det stödet, men implementation och provkörning med VS Code/Copilot krävs inte i Etapp 0. Kvarstående kompatibilitetsprov dokumenteras i DSP-1.
 
@@ -16,7 +18,8 @@ Målet är en arbetsyta som Niclas vill använda för en verklig utvecklingsfrå
 
 | Uppgift | Steg | Nytta efter steget | Beror på |
 | --- | --- | --- | --- |
-| [DSP-1](backlog/tasks/dsp-1%20-%20Valj-teknik-och-verifiera-agentanslutningen.md) | Välj teknik och verifiera första Cursor-anslutningen | En provad väg till agentsvar, filändring och körresultat via Cursor. | Inga |
+| [DSP-7](backlog/tasks/dsp-7%20-%20Kalibrera-utvecklingsloopen-i-Cursor.md) | Kalibrera utvecklingsloopen i Cursor | Provad samordning och bedömd planeringskvalitet innan produktarbetet delegeras. | Inga |
+| [DSP-1](backlog/tasks/dsp-1%20-%20Valj-teknik-och-verifiera-agentanslutningen.md) | Välj teknik och verifiera första Cursor-anslutningen | En provad väg till agentsvar, filändring och körresultat via Cursor. | DSP-7 |
 | [DSP-2](backlog/tasks/dsp-2%20-%20Oppna-projekt-och-ha-en-forsta-konversation.md) | Öppna ett repo, ändra kod och granska resultatet | En körbar arbetsyta för en liten kodändring, vanlig diff och bygge/test. | DSP-1 |
 | [DSP-3](backlog/tasks/dsp-3%20-%20Avbryt-och-aterhamta-en-chattkorning.md) | Avbryt och återhämta agent- och testkörningar begripligt | Tappad anslutning och avbrott lämnar ett begripligt läge med arbetet bevarat. | DSP-2 |
 | [DSP-4](backlog/tasks/dsp-4%20-%20Spara-och-fortsatt-en-konversation.md) | Spara konversation, ändringar och körresultat efter omstart | Resonemang, granskad diff och körresultat finns kvar nästa gång programmet öppnas. | DSP-2 |
@@ -65,4 +68,4 @@ Etapp 1–4 i [styrdokumentet](docs/VISION.md#14-etapper-för-genomförande) är
 
 ## Format och verifieringsläge
 
-Backlog-filerna följer projektets dokumenterade konfiguration, uppgiftsformat och milstolpsformat. De är kontrollerade mot [Backlog.mds källkod](https://github.com/MrLesk/Backlog.md/tree/c0ec546a3b519c0c7b83070fe936f6bf49e14357), vars paketversion är 1.52.0. Detta förslag omfattar fil- och innehållskontroller; Backlogs CLI och webbgränssnitt har ännu inte provkörts med DSpatch-planen. Första lokala provet ska bekräfta att alla sex uppgifter, milstolpen och de fem statuskolumnerna visas som avsett.
+Backlog-filerna följer projektets dokumenterade konfiguration, uppgiftsformat och milstolpsformat. De är kontrollerade mot [Backlog.mds källkod](https://github.com/MrLesk/Backlog.md/tree/c0ec546a3b519c0c7b83070fe936f6bf49e14357), vars paketversion är 1.52.0. Detta förslag omfattar fil- och innehållskontroller; Backlogs CLI och webbgränssnitt har ännu inte provkörts med DSpatch-planen. Första lokala provet ska bekräfta att alla sju uppgifter, milstolpen och de fem statuskolumnerna visas som avsett.
