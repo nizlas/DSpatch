@@ -1,0 +1,15 @@
+project_name: "DSpatch"
+default_status: "To Do"
+statuses: ["To Do", "In Progress", "Review", "Blocked", "Done"]
+labels: ["integration", "ui", "reliability", "storage", "ux"]
+definition_of_done: []
+date_format: yyyy-mm-dd hh:mm
+max_column_width: 24
+auto_open_browser: true
+default_port: 6420
+remote_operations: false
+auto_commit: false
+filesystem_only: false
+bypass_git_hooks: false
+check_active_branches: false
+task_prefix: "dsp"
