@@ -6,12 +6,12 @@ An experimental development workspace for human–AI collaboration and autonomou
 
 | Underlag | Innehåll |
 | --- | --- |
-| [Styrdokument](docs/VISION.md) | Målbilden i sin helhet, version 1.7. Markdown är det styrande originalet. |
+| [Styrdokument](docs/VISION.md) | Målbilden i sin helhet, version 1.8. Markdown är det styrande originalet. |
 | [Agentinstruktioner](AGENTS.md) | Kort läsordning, principer och arbetsregler. |
 | [Utvecklingsplan](BACKLOG.md) | Förberedande loop-prov och sex produktsteg, med ordning och uppgiftslänkar. |
 | [Utvecklingsloop](docs/DEVELOPMENT_LOOP.md) | Cursor-agenter, koordinator, överlämning, omtag och återupptagning. |
 
-Det här är projektets första dokument- och planeringsförslag. Produktkod, GUI-teknik, första målplattform och verifierad agentanslutning återstår. Cursor är vald för första integrationen och testningen på Niclas hemmadator. VS Code/Copilot finns kvar i målbilden och beaktas i teknikvalen, med implementation och provkörning senare. Första milstolpen går från interaktiv chatt till en verklig kodändring i ett repo, granskning av vanlig diff och körning av bygge eller test. Avbrott, återhämtning och sparad historik ingår; faktisk användning styr fortsättningen.
+Det här är projektets dokumentation och första utvecklingsplan. TypeScript, React och Electron är valt teknikspår, med Windows och Linux i målbilden och en enhetlig arbetsyta som motiv. Första implementation och provkörning sker med Cursor på Niclas Windowsdator; Linuxstödet införs stegvis. [Beslut och verifiering](docs/VISION.md#91-valt-teknikspår-och-plattformar) beskriver omfattningen. Produktkod och en verifierad agentanslutning återstår. VS Code/Copilot finns kvar i målbilden och beaktas i teknikvalen, med implementation och provkörning senare. Första milstolpen går från interaktiv chatt till en verklig kodändring i ett repo, granskning av vanlig diff och körning av bygge eller test. Avbrott, återhämtning och sparad historik ingår; faktisk användning styr fortsättningen.
 
 Maestro är orkestratorns interna arbetsnamn. Människointeraktivt arbete och autonom iteration är båda delar av målbilden; användaren väljer graden av medverkan.
 

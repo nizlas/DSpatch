@@ -1,6 +1,6 @@
 ---
 id: "DSP-1"
-title: "Välj teknik och verifiera första Cursor-anslutningen"
+title: "Verifiera teknikvalet och första Cursor-anslutningen"
 status: "To Do"
 assignee: []
 created_date: "2026-09-13"
@@ -16,11 +16,13 @@ ordinal: 1000
 <!-- SECTION:DESCRIPTION:BEGIN -->
 ### Varför och önskat resultat
 
-Niclas använder Cursor hemma. Enligt hans beslut den 13 september 2026 ska första integrationen och testningen utgå från Cursor på hemmadatorn. Första milstolpen ska också kunna göra en avgränsad kodändring, visa diffen och köra bygge eller test. Teknikprovet behöver därför verifiera en väg till detta hela flöde. Styrdokumentets integrationsuppgifter är underlag för provet, inte redan verifierad DSpatch-funktion.
+Niclas använder Cursor hemma. Enligt hans beslut den 13 september 2026 ska första implementationen och testningen utgå från Cursor på Windows med TypeScript, React och Electron. Windows och Linux ingår i målbilden med en enhetlig arbetsyta. Första milstolpen ska också kunna göra en avgränsad kodändring, visa diffen och köra bygge eller test. Teknikprovet behöver därför verifiera en väg till detta hela flöde. Styrdokumentets integrationsuppgifter är underlag för provet, inte redan verifierad DSpatch-funktion.
 
 ### Avgränsning och föreslagen väg
 
-Utgå från Cursor och välj en lämplig anslutningsväg utifrån aktuell officiell dokumentation och Niclas faktiska konto och hemmadator. Välj en minimal GUI-teknik som kan bära chatten, en vanlig läsbar diff och ett körresultat. Skriv ett kort beslutsunderlag med motiv, alternativ, vad som faktiskt provats och vad som är öppet.
+Utgå från det beslutade teknikspåret TypeScript, React och Electron i VISION.md avsnitt 9.1. Välj och verifiera en lämplig Cursor-anslutning utifrån aktuell officiell dokumentation och Niclas faktiska konto och Windowsdator. Prova ett minimalt paketerat Windowsprogram där Electron/React-vyn och agentanslutningen fungerar tillsammans; ett prov enbart i utvecklingsservern räcker inte för paketeringen. Skriv ett kort teknikunderlag med versioner, motiv, vad som faktiskt provats, begränsningar och öppna frågor. Dokumentera konkreta hinder om teknikvalet behöver omprövas.
+
+Håll plattformsspecifika delar avskilda så att Linuxstödet kan tillkomma stegvis. Enhetlig layout, typografi, ikoner och arbetsflöden är målet; skärmskalning, textåtergivning och systemdialoger behöver senare provas på Linux. Varken Linuxpaketering eller Linuxprov krävs i DSP-1 eller Etapp 0. Dokumentera kända antaganden och kvarstående prov.
 
 VS Code och Copilot ska fortsatt stödjas i målbilden, men behöver inte implementeras eller provköras för DSP-1 eller Etapp 0. Håll Cursor-specifika anrop och sessionsdata bakom en tunn adapter; gemensam gränssnittslogik, projektdata och bygginstruktioner ska inte kräva Cursors interna tillstånd. Bedöm utifrån dokumentation hur VS Code/Copilot ska kunna stödjas senare och notera antaganden, kända hinder och kvarstående prov. Det är en bedömning av teknikvalen, inte verifierad kompatibilitet. Bygg inte ett generellt adapterramverk eller en andra fungerande integration nu.
 
@@ -34,13 +36,13 @@ Spara kommandon, versionsuppgifter, testad revision eller innehållsidentifierad
 
 ### Underlag
 
-[VISION.md, avsnitt 9–10, 12–15](../../docs/VISION.md#9-arkitektur-och-projektets-data).
+[Teknikbeslutet i VISION.md, avsnitt 9.1](../../docs/VISION.md#91-valt-teknikspår-och-plattformar), samt avsnitt 9–10 och 12–15.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 GUI-teknik och anslutningsväg för Cursor på Niclas hemmadator är valda, med målmiljö, motiv och begränsningar dokumenterade. Underlaget beskriver hur VS Code/Copilot kan stödjas senare och vilka kompatibilitetsprov som återstår; sådana prov krävs inte i denna uppgift.
+- [ ] #1 Det valda teknikspåret TypeScript, React och Electron samt en vald Cursor-anslutning fungerar tillsammans i ett minimalt paketerat Windowsprov. Versioner, målmiljö, motiv och begränsningar är dokumenterade. Underlaget beskriver vägen till Linux och VS Code/Copilot samt kvarstående kompatibilitetsprov; dessa senare prov krävs inte i uppgiften.
 - [ ] #2 Ett körbart prov har fått ett riktigt strömmande svar och en relevant följdfråga genom Niclas avsedda Cursor-konto; kommandon och leverantörsversioner finns noterade.
 - [ ] #3 Provets faktiska avbrottsbeteende och ett anslutningsfel är dokumenterade, inklusive vad som händer med redan ändrade filer och eventuella kvarvarande processer.
 - [ ] #4 Autentisering, avgränsning av fil- och verktygsåtkomst samt debiteringsväg är klarlagda med källor och datum; osäkra kostnadsuppgifter är markerade.

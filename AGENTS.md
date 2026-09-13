@@ -16,6 +16,7 @@ Niclas uttryckliga beslut styr målbilden. Skilj beslutade principer från tekni
 - Kodförståelse är central. Förklaringar, granskning och verifiering ska gå att följa till verklig kod och rätt revision; en agentberättelse är inte evidens.
 - DSpatch är både arbetsverktyg och experimentmiljö. Bygg små användbara inkrement och låt faktisk användning styra nästa steg.
 - Börja med en minimal interaktiv chatt och låt Etapp 0 omfatta verkliga avgränsade kodändringar, en vanlig fullständig textdiff och körning av relevant bygge eller test. Håll leverantörsanrop skilda från gränssnitt och sparade data. En avancerad kodvy, egen editor eller Maestro är inte en förutsättning för första nyttan.
+- Använd det valda teknikspåret TypeScript, React och Electron enligt [VISION.md, avsnitt 9.1](docs/VISION.md#91-valt-teknikspår-och-plattformar). Windows och Linux är målplattformar; bygg och prova först på Windows. Håll plattformsspecifika delar avskilda och eftersträva samma layout, styling och arbetsflöden. Linuxprov krävs inte i Etapp 0 och får inte anges som genomförda utan evidens.
 - Börja utveckling och testning med Cursor på Niclas hemmadator. VS Code/Copilot ska fortsatt stödjas i målbilden: beakta kompatibiliteten i teknikvalen och håll Cursor-specifika delar avskilda. Implementation och provkörning med VS Code/Copilot krävs inte i Etapp 0; dokumentera kvarstående prov utan att kalla kompatibiliteten verifierad.
 - Maestro är ett internt arbetsnamn. Referensloopen är ett exempel, och framtida arbetsflöden ska kunna skilja sig från den.
 
