@@ -1,10 +1,12 @@
 # DSpatch utvecklingsplan
 
-Första förslag, 13 september 2026. Underlag: [VISION.md version 1.5](docs/VISION.md). Uppgifterna är planerade och ännu inte genomförda. Nyttan och lärandet i varje inkrement får ändra denna plan; teknikvalen i första steget är öppna.
+Första förslag, 13 september 2026. Underlag: [VISION.md version 1.6](docs/VISION.md). Uppgifterna är planerade och ännu inte genomförda. Nyttan och lärandet i varje inkrement får ändra denna plan; Cursor är vald för första integrationen och testningen på Niclas hemmadator, medan GUI-teknik och konkret anslutningsväg återstår att välja.
 
 ## Nästa konkreta steg
 
-Börja med **DSP-1**: verifiera en första agentanslutning och välj den minsta tekniska grund som kan ge en användbar chatt. När chatten i **DSP-2** går att köra, förbered **DSP-5** så att Niclas kan prova den tidigt. Felåterhämtning och historik kan utvecklas medan provkörningen planeras.
+Börja med **DSP-1**: verifiera en första Cursor-anslutning och välj den minsta tekniska grund som kan ge en användbar chatt. När chatten i **DSP-2** går att köra, förbered **DSP-5** så att Niclas kan prova den tidigt. Felåterhämtning och historik kan utvecklas medan provkörningen planeras.
+
+VS Code/Copilot finns kvar i målbilden. Teknikvalen ska ge utrymme för det stödet, men implementation och provkörning med VS Code/Copilot krävs inte i Etapp 0. Kvarstående kompatibilitetsprov dokumenteras i DSP-1.
 
 Målet är en arbetsyta som Niclas vill använda för en verklig utvecklingsfråga. Planeringsverktyget ska ge honom effektivitet och tydlig överblick; externa dashboards, Jira och demovärde är inga krav för detta projekt.
 
@@ -14,7 +16,7 @@ Målet är en arbetsyta som Niclas vill använda för en verklig utvecklingsfrå
 
 | Uppgift | Steg | Nytta efter steget | Beror på |
 | --- | --- | --- | --- |
-| [DSP-1](backlog/tasks/dsp-1%20-%20Valj-teknik-och-verifiera-agentanslutningen.md) | Välj teknik och verifiera första agentanslutningen | En provad väg från eget program till ett riktigt agentsvar. | Inga |
+| [DSP-1](backlog/tasks/dsp-1%20-%20Valj-teknik-och-verifiera-agentanslutningen.md) | Välj teknik och verifiera första Cursor-anslutningen | En provad väg från eget program till ett riktigt agentsvar via Cursor. | Inga |
 | [DSP-2](backlog/tasks/dsp-2%20-%20Oppna-projekt-och-ha-en-forsta-konversation.md) | Öppna ett projekt och ha en första konversation | En liten körbar arbetsyta att börja diskutera verkliga projektfrågor i. | DSP-1 |
 | [DSP-3](backlog/tasks/dsp-3%20-%20Avbryt-och-aterhamta-en-chattkorning.md) | Avbryt och återhämta en chattkörning begripligt | Tappad anslutning och avbrott lämnar ett begripligt läge att arbeta vidare från. | DSP-2 |
 | [DSP-4](backlog/tasks/dsp-4%20-%20Spara-och-fortsatt-en-konversation.md) | Spara och fortsätt projektets konversation efter omstart | Resonemanget och projektkopplingen finns kvar nästa gång programmet öppnas. | DSP-2 |

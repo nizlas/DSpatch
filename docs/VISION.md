@@ -2,7 +2,9 @@
 
 Vision och styrdokument för agentisk programutveckling
 
-Niclas Danielsson | 11 september 2026 | Version 1.5
+Niclas Danielsson | 13 september 2026 | Version 1.6
+
+Ändring i version 1.6: Cursor prioriteras för första integrationen och testningen på hemmadatorn. VS Code/Copilot kvarstår i målbilden; teknikvalen ska möjliggöra stödet, medan implementation och provkörning kommer senare. Leverantörsuppgifternas tidigare kontrolltidpunkt framgår i avsnitt 17.
 
 ## Målbild
 
@@ -41,7 +43,8 @@ DSpatch är det valda produktnamnet i projektet. DS står för Danielssons Studi
 | Arbetssätt | Målbild | Uppgiftscentrerat arbete med utbytbara loopar och valbar grad av autonomi. |
 | Kodupplevelse | Målbild | Smart kodvisning och review, med möjlighet till enklare redigering. |
 | Egen editor | Inriktning | Bygg en egen avgränsad kodvy och editor utan Monaco som grund. |
-| Agentleverantörer | Målbild | Copilot och möjlighet till Cursor, särskilt för hobbyprojekt hemma. |
+| Agentleverantörer | Målbild | Cursor och Copilot, med fortsatt stöd för arbete med VS Code. |
+| Första integration och testning | Beslut 13 september 2026 | Cursor på Niclas hemmadator. VS Code/Copilot beaktas i teknikvalen men behöver inte implementeras eller provköras i Etapp 0. |
 | Teknik och plattform | Öppet | GUI, programmeringsspråk, datalagring och första målplattform väljs senare. |
 
 ### Vem miljön byggs för
@@ -384,7 +387,9 @@ Cursor CLI stöder dessutom ACP, Agent Client Protocol, för egna klienter och e
 
 ### Föreslagen användning i DSpatch
 
-Första inkrementet kan vara en minimal interaktiv chatt via Copilot SDK. Pröva den med det konto och den plattform som faktiskt ska användas. Filändring, testkörning och förbrukningsmätning tillkommer stegvis när motsvarande funktion byggs. Cursor ansluts senare via SDK eller ACP; den andra leverantören ska inte blockera den första användbara chatten.
+Första inkrementet är en minimal interaktiv chatt med Cursor som första agentleverantör, eftersom Niclas redan arbetar med Cursor hemma. Välj anslutningsväg i teknikprovet och verifiera den med hans faktiska konto och hemmadator. Filändring, testkörning och förbrukningsmätning tillkommer stegvis när motsvarande funktion byggs.
+
+VS Code och Copilot ska fortsatt stödjas i målbilden. Håll leverantörsspecifika anrop och sessionsdata bakom en tunn adapter och undvik att gemensam gränssnittslogik, projektdata eller bygginstruktioner kräver Cursors interna tillstånd. Teknikvalen ska bedömas med framtida VS Code/Copilot-stöd i åtanke, men den integrationen behöver inte implementeras eller provköras i Etapp 0. Dokumentera antaganden, kända hinder och återstående kompatibilitetsprov; förenlig arkitektur är inte detsamma som verifierad funktion.
 
 | **Förmåga att kontrollera** | **Vad prototypen ska visa** |
 | --- | --- |
@@ -488,7 +493,7 @@ Ett testresultat ska ange kommando, miljö, exitkod och den revision eller ögon
 
 ### Etapp 0 En minimal interaktiv chatt
 
-Anslut en agentleverantör, exempelvis Copilot, till en enkel chatt med vald projektmapp, strömmande svar, följdfrågor, avbrott och begriplig felstatus. Spara konversationen så att resonemang kan fortsätta senare. Nyttan är att kunna diskutera och undersöka en verklig projektfråga direkt i DSpatch. Återupptagning får inte antyda att en avslutad agentkörning fortfarande pågår.
+Anslut Cursor som första agentleverantör till en enkel chatt med vald projektmapp, strömmande svar, följdfrågor, avbrott och begriplig felstatus. Spara konversationen så att resonemang kan fortsätta senare. Nyttan är att kunna diskutera och undersöka en verklig projektfråga direkt i DSpatch. Återupptagning får inte antyda att en avslutad agentkörning fortfarande pågår.
 
 ### Etapp 1 Följ en uppgift och dess förändringar
 
@@ -535,7 +540,7 @@ Två parallella skrivande agenter ska kunna arbeta utan att skriva över varandr
 - Första operativsystemet, GUI-plattformen och språk för editor respektive integrationsprocesser.
 - Textbuffert, rendering, syntaxanalys och miniminivå för sökning och kodnavigation.
 - Beständig lagring, exportformat och hur mycket leverantörslogg som ska sparas.
-- Första chattadaptern; därefter val av Cursor SDK eller ACP när en andra leverantör införs.
+- Konkret anslutningsväg för den första Cursor-adaptern; därefter implementation och verifiering av VS Code/Copilot-stödet när det prioriteras.
 - Standardregler för autonomi, omtag, granskning, samtidighet och budget.
 - Vilket verkligt projekt som används för att utvärdera den första arbetsytan.
 

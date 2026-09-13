@@ -6,11 +6,11 @@ An experimental development workspace for human–AI collaboration and autonomou
 
 | Underlag | Innehåll |
 | --- | --- |
-| [Styrdokument](docs/VISION.md) | Målbilden i sin helhet, version 1.5. Markdown är det styrande originalet. |
+| [Styrdokument](docs/VISION.md) | Målbilden i sin helhet, version 1.6. Markdown är det styrande originalet. |
 | [Agentinstruktioner](AGENTS.md) | Kort läsordning, principer och arbetsregler. |
 | [Utvecklingsplan](BACKLOG.md) | Förslag till första milstolpen, ordning och länkar till sex små uppgifter. |
 
-Det här är projektets första dokument- och planeringsförslag. Produktkod, GUI-teknik, första målplattform och verifierad agentanslutning återstår. DSpatch ska ge nytta redan som en liten interaktiv chatt och sedan utvecklas genom faktisk användning.
+Det här är projektets första dokument- och planeringsförslag. Produktkod, GUI-teknik, första målplattform och verifierad agentanslutning återstår. Cursor är vald för första integrationen och testningen på Niclas hemmadator. VS Code/Copilot finns kvar i målbilden och beaktas i teknikvalen, med implementation och provkörning senare. DSpatch ska ge nytta redan som en liten interaktiv chatt och sedan utvecklas genom faktisk användning.
 
 Maestro är orkestratorns interna arbetsnamn. Människointeraktivt arbete och autonom iteration är båda delar av målbilden; användaren väljer graden av medverkan.
 
