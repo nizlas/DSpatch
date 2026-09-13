@@ -62,6 +62,32 @@ Bedöm både första förslaget och utfallet efter återkoppling: saknade nödv�
 
 Bevara generaliserbara beslut i uppgiften eller gemensamma instruktioner. Gör inte varje enskild kommentar till en permanent regel. Det första verkliga planeringsomtaget granskas med Niclas innan vi ökar mandatet.
 
+## Rapportering och öppna frågor
+
+Niclas ska kunna kopiera rapporten, diskutera den och lämna samlad återkoppling inför nästa iteration. Presentera därför resultat och beslutsunderlag direkt som Markdown i den vanliga chatten. Koordinatorn använder separata frågerutor, exempelvis `AskQuestion`, bara om Niclas uttryckligen ber om dem. Detta gäller loopens egna frågor; Cursors behörighetskontroller gäller fortfarande.
+
+Visa den aktuella planöversikten och konkreta föreslagna justeringar innan du ber om bedömning. Fråga inte först hur underlaget ska presenteras. Rapporten ska räcka för att förstå beslutet; länkar till uppgiftskort och rårapporter ger fördjupning.
+
+När frågor finns, samla dem i en numrerad lista under **Öppna frågor inför nästa iteration**. Ange för varje punkt:
+
+- Vad frågan gäller och vilket underlag eller konstaterat hinder den bygger på.
+- Koordinatorns rekommendation och den relevanta konsekvensen av valet.
+- När svaret behövs, vilket steg som beror på det och vad som kan fortsätta redan nu.
+
+Bedöm först vem som kan lösa frågan och när den behöver besvaras:
+
+| Situation | Hantering |
+| --- | --- |
+| Rutinval eller teknisk osäkerhet som agenterna kan utreda inom mandatet | Välj eller undersök och redovisa resultatet. En ännu oprövad förutsättning är inte i sig ett konstaterat hinder. |
+| Mänskligt beslut som behövs först senare | Spara frågan till nästa iteration. Fortsätt med oberoende arbete inom befintligt mandat och passets gränser. |
+| Mänsklig bedömning eller saknat mandat som nästa steg faktiskt kräver | Lämna det konkreta underlaget och frågan i vanlig chatt. Vänta med det beroende steget tills svaret finns. Om inget annat arbete kan fortsätta: spara nästa steg och använd WAITING_USER. |
+
+Att skjuta upp en fråga utökar inte mandatet. Uteblivet svar räknas aldrig som ett godkännande och mänskliga acceptanskriterier förblir öppna. Ett vanligt pass gäller fortfarande en uppgift; en senare iteration eller nästa uppgift får bara starta inom användarens givna mandat. Tekniska hinder och okända anropsutfall följer de befintliga stopp- och avstämningsreglerna.
+
+Koordinatorn sparar rapporten i körjournalen. Mänskliga beslut och kontroller som återstår förs in i befintliga `pending_human_checks` med hänvisning till rapportens punkt och när svaret behövs. Tekniska utredningar och nästa handling beskrivs i rapporten och `next_step`. Sammanfatta varaktiga frågor, beslut och nästa steg i uppgiftsfilen så att de också kan läsas från Backlog.
+
+Vid nästa iteration eller resume: läs rapporten, väntande punkter och Niclas eventuella svar före ny delegering. Knyt varje svar till rätt fråga, spara beslutet och bevara obesvarade punkter. Genomför redan godkända val utan att fråga igen; återför relevant beslut till berörda specialister. Använd den befintliga journalen och dess räknare enligt återupptagningsreglerna.
+
 ## Överlämning och en enda skrivande ägare
 
 Använd [HANDOFF.md](loop/HANDOFF.md) för uppdrag och slutsvar. Koordinatorn sparar specialistens rapport i sin helhet eller som en trogen, märkt sammanställning med referenser till råunderlag.

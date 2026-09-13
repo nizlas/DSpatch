@@ -16,6 +16,8 @@ Koordinatorn skickar ett avgränsat uppdrag med följande uppgifter. Använd kor
 
 Specialisten ska kontrollera en materiell motsägelse eller saknat mandat med koordinatorn. Den får göra normala reversibla val inom ett tydligt uppdrag.
 
+Frågor går till koordinatorn som vanlig text i rapporten, med rekommendation, beroende steg och när svaret behövs. Specialisten öppnar inga egna frågeformulär till Niclas. Koordinatorn avgör vad agenterna kan lösa och vad som ska tas upp i den samlade rapporten enligt [rapportering och öppna frågor](../DEVELOPMENT_LOOP.md#rapportering-och-öppna-frågor). Ett saknat beslut som uppdraget kräver ska framgå som hinder; övriga frågor får inte stoppa oberoende arbete inom mandatet.
+
 ## Slutsvar
 
 Ange:
