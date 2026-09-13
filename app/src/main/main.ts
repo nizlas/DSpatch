@@ -12,18 +12,18 @@ import type {
 const GET_ENVIRONMENT: BridgeChannel = 'dspatch:get-environment';
 const RENDERER_READY: BridgeChannel = 'dspatch:renderer-ready';
 
-/** Sätts av `scripts/dev.mjs` och pekar på Vites utvecklingsserver. */
+/** Set by `scripts/dev.mjs`; points to the Vite development server. */
 const rendererUrl = process.env['DSPATCH_RENDERER_URL'];
 
 /**
- * Startprovet. Sätt `DSPATCH_SMOKE=1` för att starta, ladda renderaren, skriva
- * vad som faktiskt observerades och avsluta med en exitkod. Läget finns för att
- * ett startat kommando inte är bevis för ett fönster.
+ * Startup smoke test. Set `DSPATCH_SMOKE=1` to start, load the renderer, report
+ * actual observations and exit with a code. A launched command alone does not
+ * prove that a window appeared.
  */
 const smokeMode = process.env['DSPATCH_SMOKE'] === '1';
 const smokeTimeoutMs = 30_000;
 
-/** `app.quit()` slukar exitkoden; `app.exit(code)` gör det inte. */
+/** `app.quit()` loses the exit code; `app.exit(code)` preserves it. */
 const EXIT_OK = 0;
 const EXIT_LOAD_FAILED = 2;
 const EXIT_TIMEOUT = 3;
@@ -64,15 +64,15 @@ async function disposeAdapterOnce(): Promise<void> {
 }
 
 /**
- * Startprovets två villkor. Båda måste vara uppfyllda: ett laddat dokument är
- * inte ett synligt fönster, och ett synligt fönster är inte en målad renderare.
+ * Both startup conditions must hold: a loaded document is not a visible window,
+ * and a visible window is not a painted renderer.
  */
 let windowShown = false;
 let rendererReady = false;
 let pendingExitCode: number | null = null;
 let mainWindow: BrowserWindow | null = null;
 
-/** Avvecklar och avslutar. `app.quit()` skulle sluka exitkoden. */
+/** Dispose and exit. `app.quit()` would lose the exit code. */
 function exitNow(code: number): void {
   void disposeAdapterOnce().finally(() => {
     app.exit(code);
@@ -80,22 +80,20 @@ function exitNow(code: number): void {
 }
 
 /**
- * Avslutar med en exitkod som faktiskt propagerar — men aldrig innan fönstret
- * har realiserats.
+ * Exit with a code that actually propagates, but only after the window is shown.
  *
- * Väntan är inte försiktighet utan en åtgärd mot ett observerat fel. Avslutas
- * processen direkt i `did-fail-load`, innan fönstret hunnit visas, avslutas den
- * inte alls: varken `app.exit()` eller `process.exit()` terminerade processen,
- * och efter `app.exit()` slutade även timers att köra. Ett prov hängde i tre
- * minuter innan processen dödades utifrån. Så snart fönstret visats — vilket
- * sker även när Chromium visar sin egen felsida — avslutas processen normalt.
+ * This wait addresses an observed failure. Exiting directly in `did-fail-load`,
+ * before the window appeared, did not terminate the process: neither `app.exit()`
+ * nor `process.exit()` worked, and timers stopped after `app.exit()`. One probe
+ * hung for three minutes before external termination. Once the window had appeared
+ * (including Chromium's error page), the process exited normally.
  *
- * Detta är en annan fälla än den pass 1 fann, att `app.quit()` slukar exitkoden.
+ * This differs from the first run's finding that `app.quit()` loses the exit code.
  */
 function exitWith(code: number): void {
   if (!windowShown) {
     pendingExitCode = code;
-    log(`avslut med kod ${String(code)} väntar på att fönstret realiseras`);
+    log(`exit code ${String(code)} waiting for the window to be shown`);
     return;
   }
   exitNow(code);
@@ -107,7 +105,7 @@ function completeSmokeRunIfReady(): void {
   }
   const bounds = mainWindow === null ? null : mainWindow.getBounds();
   log(
-    'startprovet lyckades: fönstret visas och renderaren har målat. ' +
+    'startup smoke test passed: window shown and renderer painted. ' +
       `visible=${String(mainWindow?.isVisible() ?? false)} ` +
       `bounds=${JSON.stringify(bounds)}`,
   );
@@ -131,7 +129,7 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  // Skelettet har ingen navigering och inga extra fönster.
+  // The skeleton has no navigation or additional windows.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   window.once('ready-to-show', () => {
@@ -139,7 +137,7 @@ function createWindow(): BrowserWindow {
   });
 
   window.on('show', () => {
-    log(`fönstret visas bounds=${JSON.stringify(window.getBounds())}`);
+    log(`window shown bounds=${JSON.stringify(window.getBounds())}`);
     windowShown = true;
     if (pendingExitCode !== null) {
       exitNow(pendingExitCode);
@@ -174,10 +172,10 @@ function createWindow(): BrowserWindow {
 
   if (rendererUrl === undefined) {
     const indexPath = path.join(__dirname, '..', 'renderer', 'index.html');
-    log(`laddar byggda filer: ${indexPath}`);
+    log(`loading built files: ${indexPath}`);
     void window.loadFile(indexPath);
   } else {
-    log(`laddar utvecklingsservern: ${rendererUrl}`);
+    log(`loading development server: ${rendererUrl}`);
     void window.loadURL(rendererUrl);
   }
 
@@ -203,9 +201,9 @@ function registerIpc(): void {
 }
 
 /**
- * Avvecklar adaptern innan appen stängs. Punkten finns redan nu eftersom en
- * verklig leverantörsväg kan äga en barnprocess eller ett lokalt lager med
- * öppna filer; en app som avslutas utan avveckling lämnar dem kvar.
+ * Dispose the adapter before closing the app. A real provider path may own a
+ * child process or local storage with open files; exiting without disposal would
+ * leave those resources behind.
  */
 function registerLifecycle(): void {
   app.on('before-quit', (event) => {
@@ -226,9 +224,8 @@ function registerLifecycle(): void {
 function main(): void {
   registerLifecycle();
 
-  // Electrons standardmeny tas bort. Den erbjuder poster vi inte byggt, och ett
-  // gränssnitt ska inte visa handlingar som inte finns. En egen meny hör till
-  // arbetsytan i en senare uppgift.
+  // Remove Electron's standard menu because its actions are not implemented.
+  // A custom workspace menu belongs in a later task.
   Menu.setApplicationMenu(null);
 
   void app.whenReady().then(() => {
@@ -238,13 +235,13 @@ function main(): void {
     if (smokeMode) {
       setTimeout(() => {
         log(
-          `startprovet nådde inte båda villkoren inom ${String(smokeTimeoutMs)} ` +
-            `ms. visat fönster=${String(windowShown)} ` +
-            `målad renderare=${String(rendererReady)}`,
+          `startup smoke test did not meet both conditions within ${String(smokeTimeoutMs)} ` +
+            `ms. window shown=${String(windowShown)} ` +
+            `renderer painted=${String(rendererReady)}`,
         );
-        // Går förbi väntan på fönstret med avsikt: har det inte realiserats på
-        // en halv minut kommer det inte att göra det, och då är risken att
-        // processen hänger mindre illa än att provet aldrig svarar.
+        // Deliberately bypass the window wait: if it has not appeared within half a
+        // minute, keeping the smoke test waiting indefinitely is worse than the
+        // remaining risk of a process that fails to exit.
         exitNow(EXIT_TIMEOUT);
       }, smokeTimeoutMs);
     }

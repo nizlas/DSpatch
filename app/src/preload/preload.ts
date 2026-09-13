@@ -7,8 +7,8 @@ import type {
   RendererReady,
 } from '../shared/bridge';
 
-// Sandlådad preload: bara Electrons egna moduler får importeras som värden.
-// Kanalnamnen står därför som literaler, typade så att ett stavfel fångas.
+// Sandboxed preload: only Electron modules may be imported as values.
+// Channel names are therefore typed literals so misspellings are caught.
 const GET_ENVIRONMENT: BridgeChannel = 'dspatch:get-environment';
 const RENDERER_READY: BridgeChannel = 'dspatch:renderer-ready';
 
@@ -20,5 +20,5 @@ const bridge: DspatchBridge = {
   },
 };
 
-// Renderaren når ingenting av Node och ingenting av Electron utöver detta.
+// The renderer has no Node access and no other Electron access.
 contextBridge.exposeInMainWorld('dspatch', bridge);

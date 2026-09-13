@@ -1,47 +1,51 @@
 ---
-id: "DSP-4"
-title: "Spara konversation, ändringar och körresultat efter omstart"
-status: "To Do"
+id: DSP-4
+title: 'Preserve conversations, changes and execution results after restart'
+status: To Do
 assignee: []
-created_date: "2026-09-13"
-labels: ["storage"]
-milestone: "m-0"
-dependencies: ["DSP-2"]
-documentation: ["docs/VISION.md", "BACKLOG.md"]
+created_date: '2026-09-13'
+updated_date: '2026-09-13 20:13'
+labels:
+  - storage
+milestone: m-0
+dependencies:
+  - DSP-2
+documentation:
+  - docs/VISION.md
+  - BACKLOG.md
 ordinal: 4000
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-### Varför och önskat resultat
+### Purpose and intended result
 
-Niclas ska kunna stänga DSpatch, öppna det igen och fortsätta en utvecklingsuppgift med projekt, resonemang, granskade ändringar och körresultat kvar. Sparad historik ska visa vad som verkligen hänt och vilken kod resultaten gäller.
+Niclas should close DSpatch, reopen it and continue a development task with its project, reasoning, reviewed changes and execution results intact. Saved history must show what actually happened and which code the results concern.
 
-### Avgränsning och föreslagen väg
+### Scope and proposed approach
 
-Välj enkel lokal lagring för konversations-ID, projektkoppling, meddelanden, körnings- och försök-ID:n samt referenser till ändrings- och testversioner. Bevara den granskade diffen eller underlaget för att återskapa exakt den diffen, tillsammans med filförteckning, körkommando, arbetskatalog, utmatning, exitkod och status. Versionsmärk formatet och dokumentera lagringsplats och export.
+Choose simple local storage for conversation ID, project association, messages, run/attempt IDs and change/test version references. Preserve the reviewed diff or enough evidence to reconstruct exactly that diff, plus the file list, command, working directory, output, exit code and status. Version the format and document storage location and export.
 
-Håll sparad historik skild från aktiva processer och arbetskopians nuvarande innehåll. En appomstart får inte starta om uppdrag eller kommandon, återapplicera en patch eller skriva tillbaka en historisk filversion automatiskt. Om repot har ändrats under tiden: visa historiska resultat som historiska och gör tidigare verifiering inaktuell för det nya innehållet.
+Separate saved history from active processes and current working-copy contents. Restart must not automatically restart jobs/commands, reapply patches or restore historical file contents. If the repository changed in the meantime, label historical results and invalidate their verification for the new contents.
 
-Använd leverantörens återupptagning om den fungerar i den valda anslutningen. Om en ny session måste skapas: visa det och beskriv vilken sparad kontext som faktiskt återförs. En synlig gammal chatt är inte bevis för att modellen har fått samma sammanhang. Lagra inga autentiseringshemligheter i konversationsfiler eller Git.
+Use provider resumption if the connection supports it. If a new session is necessary, show that and explain which saved context is actually restored. A visible old chat is not evidence the model received the same context. Keep authentication secrets out of conversation files and Git.
 
-### Verifiering
+### Verification
 
-Gör en kodändring och kör ett test, stäng programmet, öppna igen och följ upp resultatet. Prova även appavbrott under en körning, externa filändringar medan programmet är stängt samt skadat eller äldre sparformat. Bevara läsbart underlag och ge en tydlig återhämtningsväg vid fel. Synka med DSP-3:s körstatus; pågående processer med okänt utfall ska avstämmas innan arbetet fortsätter.
+Change code and run a test, close the app, reopen it and follow up. Also test interruption during a run, external file changes while closed, and corrupt or older storage formats. Preserve readable evidence and provide a clear recovery action. Align with DSP-3 run states; reconcile processes with unknown outcomes before continuing.
 
-### Underlag
+### References
 
-[VISION.md, avsnitt 8–9, 13 och 14](../../docs/VISION.md#9-arkitektur-och-projektets-data).
+[VISION.md, sections 8–9, 13 and 14](../../docs/VISION.md#9-architecture-and-project-data).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 Projektkoppling och konversation med meddelandeordning finns kvar efter en normal omstart.
-- [ ] #2 En följdfråga efter omstart får relevant sparad kontext; eventuell ny leverantörssession och dess begränsningar framgår.
-- [ ] #3 En avbruten eller okänd körning avstäms innan fortsatt arbete. Tidigare jobb, filändringar och kommandon upprepas inte automatiskt vid omstart.
-- [ ] #4 Lagringen har formatversion och dokumenterad export; hemligheter följer inte med sparad historik eller Git.
-- [ ] #5 Omstart, avbrott, externa filändringar och ett oläsbart eller ej stött sparformat har kontrollerats med resultat knutna till testad version.
-- [ ] #6 Den tidigare granskade diffen och körresultatet med kommando, arbetskatalog, utmatning, exitkod och kodreferens kan läsas efter omstart. Ändrad arbetskopia skrivs inte över, och gamla resultat presenteras inte som verifiering av ny kod.
+- [ ] #1 The project association and conversation, including message order, survive a normal restart.
+- [ ] #2 A follow-up after restart receives relevant saved context; any new provider session and its limitations are disclosed.
+- [ ] #3 An interrupted or unknown run is reconciled before continuing. Previous jobs, file changes and commands are not automatically repeated on restart.
+- [ ] #4 Storage has a format version and documented export; secrets are excluded from saved history and Git.
+- [ ] #5 Restart, interruption, external file changes and an unreadable or unsupported storage format have been checked with results tied to the tested version.
+- [ ] #6 The previously reviewed diff and execution result, including command, working directory, output, exit code and code reference, can be read after restart. A changed working copy is not overwritten; old results do not appear to verify new code.
 <!-- AC:END -->

@@ -2,40 +2,51 @@
 
 An experimental development workspace for human–AI collaboration and autonomous agent workflows, focused on simplicity, code understanding, and evolving how software is built.
 
-## Börja här
+<a id="börja-här"></a>
 
-| Underlag | Innehåll |
+## Start here
+
+| Material | Contents |
 | --- | --- |
-| [Styrdokument](docs/VISION.md) | Målbilden i sin helhet, version 1.8. Markdown är det styrande originalet. |
-| [Agentinstruktioner](AGENTS.md) | Kort läsordning, principer och arbetsregler. |
-| [Utvecklingsplan](BACKLOG.md) | Förberedande loop-prov och sex produktsteg, med ordning och uppgiftslänkar. |
-| [Utvecklingsloop](docs/DEVELOPMENT_LOOP.md) | Cursor-agenter, koordinator, överlämning, omtag och återupptagning. |
+| [Vision](docs/VISION.md) | The complete product vision. Markdown is the governing source. |
+| [Agent instructions](AGENTS.md) | Reading order, principles, working rules and project language. |
+| [Development plan](BACKLOG.md) | Preparatory loop calibration and six product steps, with ordering and task links. |
+| [Development loop](docs/DEVELOPMENT_LOOP.md) | Cursor agents, coordinator, handoffs, rework and recovery. |
+| [Run the application](app/README.md) | Install, run, build and package the current application skeleton. |
 
-Det här är projektets dokumentation och första utvecklingsplan. TypeScript, React och Electron är valt teknikspår, med Windows och Linux i målbilden och en enhetlig arbetsyta som motiv. Första implementation och provkörning sker med Cursor på Niclas Windowsdator; Linuxstödet införs stegvis. [Beslut och verifiering](docs/VISION.md#91-valt-teknikspår-och-plattformar) beskriver omfattningen. Produktkod och en verifierad agentanslutning återstår. VS Code/Copilot finns kvar i målbilden och beaktas i teknikvalen, med implementation och provkörning senare. Första milstolpen går från interaktiv chatt till en verklig kodändring i ett repo, granskning av vanlig diff och körning av bygge eller test. Avbrott, återhämtning och sparad historik ingår; faktisk användning styr fortsättningen.
+The selected stack is TypeScript, React and Electron. Windows and Linux are target platforms, with a consistent workspace as the goal. Initial implementation and testing use Cursor on Niclas's Windows computer; Linux support is introduced incrementally. [Decisions and verification](docs/VISION.md#91-selected-stack-and-platforms) define the scope. The runnable application skeleton is in `app/`; a verified provider connection is still pending in DSP-1. VS Code/Copilot remains in the vision and informs technical decisions, with implementation and testing later. The first milestone goes from interactive chat to a real repository code change, review of a normal diff and a build or test run. Cancellation, recovery and persisted history are included; actual use guides further development.
 
-Maestro är orkestratorns interna arbetsnamn. Människointeraktivt arbete och autonom iteration är båda delar av målbilden; användaren väljer graden av medverkan.
+Maestro is the orchestrator's internal working name. Human-interactive work and autonomous iteration are both part of the vision; the user chooses their level of involvement.
 
-## Prova utvecklingsloopen i Cursor
+English is the project's maintained language. Conversations with Niclas may be in Swedish; see the [language policy](AGENTS.md#project-language).
 
-Öppna repots rot i Cursor och skriv `/dspatch-loop calibrate` i en Agent-chatt. Koordinatorn kör i huvudchatten och anropar fem specialister direkt. Git och Python 3.10+ behövs för det lokala provet. [Startinstruktion och begränsningar](docs/DEVELOPMENT_LOOP.md) beskriver också hur passet återupptas i en ny chatt.
+<a id="prova-utvecklingsloopen-i-cursor"></a>
 
-Definitionerna och det lokala snapshot-verktyget är kontrollerade; det verkliga agentprovet på hemmadatorn återstår i DSP-7. Det är utvecklingshjälp för att bygga DSpatch, inte en färdig Maestro-funktion i produkten.
+## Try the development loop in Cursor
 
-## Granska direkt på GitHub
+Open the repository root in Cursor and enter `/dspatch-loop calibrate` in an Agent chat for the initial calibration. The coordinator runs in the main chat and calls five specialists directly. Git and Python 3.10+ are needed for the local probe. [Startup instructions and limitations](docs/DEVELOPMENT_LOOP.md) also describe resuming a run in a new chat.
 
-Öppna utvecklingsplanen ovan och följ länkarna till uppgifterna. Varje uppgift beskriver nyttan, avgränsningen, beroendena och hur resultatet ska bedömas. GitHubs förhandsvisning räcker för att läsa förslaget och kommentera det i pull requesten.
+DSP-7 records the completed calibration on Niclas's computer. Consult the task files for current state; do not repeat completed calibration simply because these startup instructions exist. This loop helps build DSpatch; it is not a finished Maestro feature in the product.
 
-## Öppna Backlogs webbgränssnitt lokalt
+<a id="granska-direkt-på-github"></a>
 
-När du har klonat repot och hämtat grenen med dessa filer, installera Backlog.md och starta det från repots rot. Kommandona förutsätter Node.js/npm:
+## Review directly on GitHub
+
+Open the development plan above and follow its task links. Each task describes its value, scope, dependencies and assessment criteria. GitHub's preview is sufficient to read the proposal and comment in its pull request.
+
+<a id="öppna-backlogs-webbgränssnitt-lokalt"></a>
+
+## Open Backlog's web interface locally
+
+After cloning the repository and fetching the branch containing these files, install Backlog.md and start it from the repository root. These commands require Node.js/npm:
 
 ```sh
-npm install -g backlog.md
+npm install -g backlog.md@1.52.0
 backlog browser
 ```
 
-Backlog-konfiguration och uppgifter finns redan i `backlog/`, så någon ny `backlog init` behövs inte. Kommandot öppnar den lokala tavlan i webbläsaren. Håll terminalprocessen igång medan du använder den. Det här startar planeringsverktyget; DSpatch-applikationen byggs i de planerade uppgifterna.
+The Backlog configuration and tasks already exist in `backlog/`; no new `backlog init` is needed. The command opens the local board in a browser. Keep the terminal process running while using it. This starts the planning tool. To start DSpatch itself, follow [app/README.md](app/README.md).
 
-Planeringen läser den aktuella arbetskopian. Backlogs automatiska fjärranrop och sökning i andra grenar är avstängda i detta första förslag. Hämta och publicera ändringar med vanligt Git när det behövs. En MCP-anslutning behövs inte för att läsa eller uppdatera planen.
+Planning reads the current working copy. Backlog's automatic remote calls and cross-branch searches are disabled in this initial setup. Fetch and publish changes explicitly with Git when needed. No MCP connection is required to read or update the plan.
 
-Se även [Backlog.mds officiella dokumentation](https://github.com/MrLesk/Backlog.md).
+See also [Backlog.md's official documentation](https://github.com/MrLesk/Backlog.md).

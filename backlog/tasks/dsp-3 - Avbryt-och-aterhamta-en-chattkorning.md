@@ -1,49 +1,54 @@
 ---
-id: "DSP-3"
-title: "Avbryt och återhämta agent- och testkörningar begripligt"
-status: "To Do"
+id: DSP-3
+title: Cancel and recover agent and test runs clearly
+status: To Do
 assignee: []
-created_date: "2026-09-13"
-labels: ["reliability", "ui"]
-milestone: "m-0"
-dependencies: ["DSP-2"]
-documentation: ["docs/VISION.md", "BACKLOG.md"]
+created_date: '2026-09-13'
+updated_date: '2026-09-13 20:13'
+labels:
+  - reliability
+  - ui
+milestone: m-0
+dependencies:
+  - DSP-2
+documentation:
+  - docs/VISION.md
+  - BACKLOG.md
 ordinal: 3000
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-### Varför och önskat resultat
+### Purpose and intended result
 
-Niclas tidigare agentloop kunde fastna vid misslyckade verktygsanrop. Första arbetsytan ska visa ett verkligt körläge och en begriplig väg vidare, även när agenten hunnit ändra filer eller starta ett bygge eller test.
+Niclas's earlier loop could stall on failed tool calls. The first workspace must show the actual execution state and an understandable next action, including after an agent has changed files or started a build/test.
 
-### Avgränsning och föreslagen väg
+### Scope and proposed approach
 
-Fördjupa Avbryt och hantera tappad anslutning, nekad fil- eller verktygsåtkomst, leverantörsfel samt lång väntan. Skilj mellan väntande, avbrytning begärd, faktiskt stoppad och okänt utfall. Definiera motiverade tidsgränser och begränsade återförsök; normal lång bearbetning ska inte förväxlas med ett konstaterat fel.
+Deepen Cancel and handle disconnection, denied file/tool access, provider failures and long waits. Distinguish waiting, cancellation requested, confirmed stopped and unknown outcome. Define justified timeouts and bounded retries; normal long processing is not a confirmed failure.
 
-Ge synliga handlingar som Försök igen eller Återanslut där de passar. Bevara inmatad text, mottagna svar, redan producerade filändringar och körloggar. Efter avbrott ska användaren kunna granska det partiella resultatet. Ett avbrott får inte göra en automatisk återställning som raderar användarens eller agentens arbete.
+Offer visible actions such as Retry or Reconnect where applicable. Preserve input, received responses, produced file changes and execution logs. Allow review of partial results after cancellation. Never automatically reset and erase user or agent work on cancellation.
 
-Agentens stopp och lokala underprocessers stopp ska följas var för sig. Stoppade eller avbrutna tester ska aldrig visas som godkända. Visa eventuella kvarvarande processer eller fjärranrop och en konkret väg vidare.
+Track agent termination and local subprocess termination separately. Stopped or interrupted tests must never appear passed. Show remaining processes or remote requests and a concrete next action.
 
-Ett nytt försök får ett eget försök-ID. Återanslutning ska först klarlägga tidigare läge, verkliga filändringar och kommandots utfall. Den får inte automatiskt dubblera ett modelljobb, återapplicera en ändring eller köra ett kommando på nytt när utfallet är okänt. Bygg bara det som behövs för den första anslutningen och redovisa dess begränsningar.
+Give each attempt its own ID. Reconnection first reconciles the previous state, actual file changes and command outcome. It must not automatically duplicate a model job, reapply a change or rerun a command with an unknown outcome. Build only what the first connection needs and document its limitations.
 
-### Verifiering
+### Verification
 
-Prova avbrott under strömning, efter en filändring och under ett bygge/test, samt sent svar efter avbrott, nekad åtkomst och tappad anslutning efter ett verktygsanrop. Kontrollera att ändringar och loggar finns kvar och att upprepning inte sker på grund av ett oklart utfall. Kontrollerade fel får simuleras för reproducerbarhet, men redovisa även ett verkligt avbrott mot leverantören och en verklig lokal process. Spara observerade resultat och testad version.
+Test cancellation during streaming, after a file change and during a build/test; late responses after cancellation; denied access; and disconnection after a tool call. Check that changes and logs survive and ambiguous outcomes do not trigger repetition. Controlled failures may be simulated for reproducibility, but also report real provider cancellation and a real local process. Save observations and the tested version.
 
-### Underlag
+### References
 
-[VISION.md, avsnitt 2.1, 13 och 14](../../docs/VISION.md#13-tillförlitlighet-och-kontroll).
+[VISION.md, sections 2.1, 13 and 14](../../docs/VISION.md#13-reliability-and-control).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 Avbryt skiljer begäran från bekräftat stopp för agent och lokala underprocesser; eventuella kvarvarande processer eller fjärranrop framgår.
-- [ ] #2 Anslutningsfel, åtkomstfel och lång väntan ger en begriplig status och en synlig tillämplig åtgärd.
-- [ ] #3 Inmatad text, mottagna svar, redan gjorda filändringar och körloggar överlever fel och återförsök inom den öppna arbetsytan; det partiella resultatet går att granska.
-- [ ] #4 Oklara tidigare utfall avstäms innan en åtgärd upprepas. Ingen ändring återappliceras och inget kommando dubbelstartas automatiskt; sena händelser kan inte göra en annan körning klar.
-- [ ] #5 Fel- och avbrottsscenarier omfattar strömning, filändring och bygge/test, med tydlig skillnad mellan simulerade fel och faktiska leverantörs- och processkörningar.
-- [ ] #6 Ett avbrutet eller ofullständigt bygge/test visas som avbrutet eller oklart, och får inte ge godkänd teststatus.
+- [ ] #1 Cancel distinguishes a request from confirmed termination for the agent and local subprocesses; remaining processes or remote calls are visible.
+- [ ] #2 Connection failures, access failures and long waits produce an understandable status and a visible applicable action.
+- [ ] #3 Input, received responses, existing file changes and execution logs survive errors and retries in the open workspace; partial results remain reviewable.
+- [ ] #4 Ambiguous previous outcomes are reconciled before repeating an action. No change is automatically reapplied or command double-started; late events cannot complete a different run.
+- [ ] #5 Failure and cancellation scenarios cover streaming, file changes and builds/tests, clearly distinguishing simulations from actual provider and process execution.
+- [ ] #6 An interrupted or incomplete build/test is shown as interrupted or uncertain and cannot produce a passed test status.
 <!-- AC:END -->

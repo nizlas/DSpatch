@@ -1,119 +1,131 @@
 ---
-id: "DSP-1"
-title: "Verifiera teknikvalet och första Cursor-anslutningen"
-status: "In Progress"
+id: DSP-1
+title: Verify the technology choice and first Cursor connection
+status: In Progress
 assignee: []
-created_date: "2026-09-13"
-labels: ["integration"]
-milestone: "m-0"
-dependencies: ["DSP-7"]
-documentation: ["docs/VISION.md", "BACKLOG.md"]
+created_date: '2026-09-13'
+updated_date: '2026-09-13 20:13'
+labels:
+  - integration
+milestone: m-0
+dependencies:
+  - DSP-7
+documentation:
+  - docs/VISION.md
+  - BACKLOG.md
 ordinal: 1000
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-### Varför och önskat resultat
+### Purpose and intended result
 
-Niclas använder Cursor hemma. Enligt hans beslut den 13 september 2026 ska första implementationen och testningen utgå från Cursor på Windows med TypeScript, React och Electron. Windows och Linux ingår i målbilden med en enhetlig arbetsyta. Första milstolpen ska också kunna göra en avgränsad kodändring, visa diffen och köra bygge eller test. Teknikprovet behöver därför verifiera en väg till detta hela flöde. Styrdokumentets integrationsuppgifter är underlag för provet, inte redan verifierad DSpatch-funktion.
+Niclas uses Cursor at home. His decision on 13 September 2026 makes Cursor on Windows, with TypeScript, React and Electron, the starting point for implementation and testing. The vision includes a consistent workspace on Windows and Linux. The first milestone must also support a bounded code change, a diff and a build or test. This technical spike must therefore establish a path to that whole workflow. Integration information in the vision is input to the experiment, not already verified DSpatch functionality.
 
-### Avgränsning och föreslagen väg
+### Scope and proposed approach
 
-Utgå från det beslutade teknikspåret TypeScript, React och Electron i VISION.md avsnitt 9.1. Välj och verifiera en lämplig Cursor-anslutning utifrån aktuell officiell dokumentation och Niclas faktiska konto och Windowsdator. Prova ett minimalt paketerat Windowsprogram där Electron/React-vyn och agentanslutningen fungerar tillsammans; ett prov enbart i utvecklingsservern räcker inte för paketeringen. Skriv ett kort teknikunderlag med versioner, motiv, vad som faktiskt provats, begränsningar och öppna frågor. Dokumentera konkreta hinder om teknikvalet behöver omprövas.
+Start from the selected TypeScript, React and Electron stack in VISION.md section 9.1. Select and verify a Cursor connection using current official documentation and Niclas's actual account and Windows computer. Test a minimal packaged Windows application with the Electron/React view and agent connection working together; a development-server test alone does not establish packaging support. Record versions, rationale, observations, limitations and open questions in a short technical note. Document concrete obstacles if the stack needs reconsideration.
 
-Håll plattformsspecifika delar avskilda så att Linuxstödet kan tillkomma stegvis. Enhetlig layout, typografi, ikoner och arbetsflöden är målet; skärmskalning, textåtergivning och systemdialoger behöver senare provas på Linux. Varken Linuxpaketering eller Linuxprov krävs i DSP-1 eller Etapp 0. Dokumentera kända antaganden och kvarstående prov.
+Keep platform-specific parts separate so Linux support can be added incrementally. Aim for consistent layout, typography, icons and workflows; display scaling, text rendering and system dialogs need later Linux testing. Linux packaging and tests are not required in DSP-1 or Phase 0. Record known assumptions and outstanding tests.
 
-VS Code och Copilot ska fortsatt stödjas i målbilden, men behöver inte implementeras eller provköras för DSP-1 eller Etapp 0. Håll Cursor-specifika anrop och sessionsdata bakom en tunn adapter; gemensam gränssnittslogik, projektdata och bygginstruktioner ska inte kräva Cursors interna tillstånd. Bedöm utifrån dokumentation hur VS Code/Copilot ska kunna stödjas senare och notera antaganden, kända hinder och kvarstående prov. Det är en bedömning av teknikvalen, inte verifierad kompatibilitet. Bygg inte ett generellt adapterramverk eller en andra fungerande integration nu.
+VS Code and Copilot remain in the vision, but need not be implemented or run for DSP-1 or Phase 0. Put Cursor-specific calls and session data behind a thin adapter; shared UI logic, project data and build instructions must not depend on Cursor's internal state. Assess the future VS Code/Copilot path from documentation, recording assumptions, obstacles and outstanding tests. This is an architectural assessment, not verified compatibility. Do not build a general adapter framework or a second working integration now.
 
-Gör ett litet körbart prov i ett separat provrepo: start, strömning, följdfråga, en faktisk textkodändring och ett relevant bygge eller test. Jämför de verkliga filerna före och efter ändringen och fånga körkommandots utmatning och exitkod. Prova avbrott. Körkommandot kan gå genom agentens verktyg eller en lokal process som DSpatch styr; dokumentera vald väg och dess begränsningar.
+Use a separate small test repository to exercise startup, streaming, a follow-up, a real text-code change and a relevant build or test. Compare actual files before and after the change, capture command output and exit code, and test cancellation. Commands may run through agent tools or a local process controlled by DSpatch; document the chosen path and its limitations.
 
-Håll inloggningsuppgifter utanför repot. Klargör kontotyp, autentisering, fil- och verktygsåtkomst samt skillnaden mellan lokal körning och fjärranrop till modellen. Identifiera debiteringsvägen utan att bygga en kostnadsdashboard.
+Keep credentials outside the repository. Clarify account type, authentication, file and tool access, and the distinction between local execution and remote model requests. Identify the billing path without building a cost dashboard.
 
-### Verifiering och mänsklig medverkan
+### Verification and human involvement
 
-Spara kommandon, versionsuppgifter, testad revision eller innehållsidentifierad ögonblicksbild och observerade resultat. Om kontot eller målmaskinen saknas: redovisa vad som kan göras ändå och vilken specifik kontroll Niclas behöver hjälpa till med. Dokumentationsläsning, mockade svar eller kod som endast visas i chatten uppfyller inte kriterierna om fungerande anslutning och filändring.
+Save commands, versions, the tested revision or content-addressed snapshot, and observations. If the account or target computer is unavailable, state what can still be done and exactly which check needs Niclas. Reading documentation, mocked responses or code displayed only in chat do not satisfy the working-connection and file-change criteria.
 
-### Underlag
+### References
 
-[Teknikbeslutet i VISION.md, avsnitt 9.1](../../docs/VISION.md#91-valt-teknikspår-och-plattformar), samt avsnitt 9–10 och 12–15.
+[Technology decision in VISION.md, section 9.1](../../docs/VISION.md#91-selected-stack-and-platforms), and sections 9–10 and 12–15.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 Det valda teknikspåret TypeScript, React och Electron samt en vald Cursor-anslutning fungerar tillsammans i ett minimalt paketerat Windowsprov. Versioner, målmiljö, motiv och begränsningar är dokumenterade. Underlaget beskriver vägen till Linux och VS Code/Copilot samt kvarstående kompatibilitetsprov; dessa senare prov krävs inte i uppgiften.
-- [ ] #2 Ett körbart prov har fått ett riktigt strömmande svar och en relevant följdfråga genom Niclas avsedda Cursor-konto; kommandon och leverantörsversioner finns noterade.
-- [ ] #3 Två scenarier är provade och dokumenterade genom den verkliga anslutningsvägen: en faktisk avbrytning, både under strömning och under pågående testkörning, och ett kontrollerat framkallat anslutningsfel. För båda framgår vad som hände med redan ändrade filer, om något fortsatte köra och om ett pågående fjärranrop kunde stoppas. Felet framkallas av provet självt; en driftstörning hos leverantören ska inte inväntas, och ett simulerat fel utan verklig anslutning uppfyller inte kriteriet.
-- [ ] #4 Autentisering, avgränsning av fil- och verktygsåtkomst samt debiteringsväg är klarlagda med källor och datum; osäkra kostnadsuppgifter är markerade.
-- [ ] #5 En annan utvecklare kan följa provets instruktioner utan hemligheter i repot; nästa steg mot arbetsytan är konkret och avgränsat.
-- [ ] #6 Agenten har gjort en verklig avgränsad kodändring i provrepot, ändringen har kontrollerats mot filerna och ett relevant bygge eller test har körts med dokumenterat kommando, utmatning, exitkod och testad kodversion.
+- [ ] #1 The selected TypeScript, React and Electron stack and a selected Cursor connection work together in a minimal packaged Windows experiment. Versions, target environment, rationale and limitations are documented. The record describes the path to Linux and VS Code/Copilot and outstanding compatibility tests; those later tests are not required in this task.
+- [ ] #2 A runnable experiment has received a real streaming response and a relevant follow-up through Niclas's intended Cursor account; commands and provider versions are recorded.
+- [ ] #3 Two scenarios are tested and documented through the real connection: actual cancellation, both during streaming and during a running test, and a deliberately induced connection failure. Both record what happened to already changed files, whether anything kept running and whether an active remote request could be stopped. The experiment induces the failure itself; do not wait for a provider outage. A simulated failure without a real connection does not satisfy this criterion.
+- [ ] #4 Authentication, file and tool access boundaries, and the billing path are established with sources and dates; uncertain cost information is marked.
+- [ ] #5 Another developer can follow the experiment instructions without secrets in the repository; the next step towards the workspace is concrete and bounded.
+- [ ] #6 The agent has made a real bounded code change in the test repository, the change has been checked against the files, and a relevant build or test has run with its command, output, exit code and tested code version documented.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Planen är framtagen av Backlog Planner, granskad av Reviewer i två omgångar och godkänd av Niclas den 13 september 2026 under DSP-7. Underlaget finns i körjournalen `.dspatch-loop/runs/20260913-114021-4slh/reports/` (001 plan v1, 002 granskning, 003 plan v2, 004 avstämning). Ordningsprincipen är billigaste möjliga stoppfynd först. Ett avbrutet pass återupptas på rätt delsteg nedan.
+The Backlog Planner prepared this plan, the Reviewer examined it twice, and Niclas approved it on 13 September 2026 during DSP-7. Evidence is in `.dspatch-loop/runs/20260913-114021-4slh/reports/` (001 plan v1, 002 review, 003 plan v2, 004 reconciliation). Investigate the cheapest potentially blocking findings first. Resume an interrupted pass at the correct step below.
 
-### Avgränsad uppföljning av anslutningsvalet
+### Bounded follow-up on the connection choice
 
-Komplettera delsteg 1:s underlag innan det gemensamma adaptergränssnittet låses. Utgå från sparade rapporter och prov; upprepa bara kontroller som behövs för att reda ut en konkret osäkerhet. Koordinatorn anger uppföljningen som aktuellt fokus och använder befintligt pass och räknare när detta är en återupptagning.
+Supplement step 1's evidence before fixing the shared adapter interface. Start from saved reports and experiments; repeat checks only to resolve a concrete uncertainty. The coordinator records this follow-up as the current focus and keeps the existing run and counters when resuming.
 
-- **Cursor och Copilot.** Jämför de officiella TypeScript-SDK:erna mot VISION:s sju förmågor: start, strömning, avbrott, återupptagning, modellval, godkännanden och kostnadsrapportering. Ange källor, datum, bedömd version och vad som är dokumenterat, observerat respektive okänt. Beskriv de konkreta konsekvenserna för gemensamma operationer, händelser och lagring, inklusive väntande godkännanden och leverantörsspecifika sessions-ID:n. Skilj Copilot som agentleverantör från integration med en befintlig VS Code-chatt och verktyg från dess tillägg. En andra fungerande integration eller VS Code-prov ingår inte.
-- **Slutsatser och bevis.** Skilj lyckad SDK-laddning och kontakt med en autentiseringsendpoint från en provad paketerad helkedja. Begränsa nätverkssondens slutsats till den åtkomst som faktiskt observerats. Kontrollera paketens ursprung mot officiella installationsanvisningar; vid den rapporterade namnförväxlingen, klarlägg ur tillgänglig kommandologg om tredjepartspaketet bara undersöktes eller också installerades. Utred rollen för den rapporterade lokala `blobEncryptionKey` utan att kopiera nyckelvärdet till rapport eller repo.
-- **Avstämning.** Reviewer bedömer det kompletterade underlaget och om Cursor-spåret fortfarande är motiverat utan att låsa ute Copilot. Koordinatorn sparar slutsats, kvarstående prov och nästa steg i uppgiften. Praktiska körningar utförs av en roll med terminalåtkomst när de behövs; dokumentationsjämförelsen kräver ingen ny leverantörsinloggning.
+- **Cursor and Copilot.** Compare the official TypeScript SDKs against VISION's seven capabilities: start, stream, cancel, resume, model selection, approvals and cost reporting. Record sources, dates, assessed versions and what is documented, observed or unknown. Explain consequences for shared operations, events and storage, including pending approvals and provider-specific session IDs. Distinguish Copilot as an agent provider from integration with an existing VS Code chat and its extension tools. A second working integration or VS Code test is outside scope.
+- **Conclusions and evidence.** Distinguish successful SDK loading and contact with an authentication endpoint from a tested packaged end-to-end workflow. Limit network-probe conclusions to observed access. Check package provenance against official installation instructions; for the reported naming confusion, establish from available command logs whether the third-party package was only inspected or also installed. Investigate the reported local `blobEncryptionKey` without copying its value into a report or repository.
+- **Review.** The Reviewer assesses the supplementary evidence and whether the Cursor path remains justified without excluding Copilot. The coordinator saves the conclusion, remaining tests and next step in the task. A role with terminal access performs practical checks when needed; the documentation comparison requires no new provider login.
 
-Godkänd uppföljning betyder att anslutningsvalets underlag är bedömt. DSP-1 blir inte `Done` förrän dess befintliga acceptanskriterier, inklusive det paketerade provet och Niclas bedömning, är uppfyllda. Fortsätt därefter med återstående delsteg inom mandatet; skapa ingen extra godkännandepunkt för rutinval.
+Accepting this follow-up means the connection-choice evidence has been assessed. DSP-1 is not `Done` until its existing acceptance criteria, including the packaged experiment and Niclas's assessment, are met. Then continue the remaining steps within the mandate; do not introduce another approval gate for routine choices.
 
-### Förkrav: konto och autentisering
+### Prerequisite: account and authentication
 
-Provet utgår från Niclas befintliga privata Cursor-konto. Kontofrågan är en **öppen teknisk fråga**, inte ett blockerande förkrav: delsteg 1 och 4 ska klarlägga vilken anslutningsväg som gäller, hur autentiseringen faktiskt fungerar för den vägen och om något verkligen saknas. Behövs en nyckel utöver vanlig inloggning föreslås förvaring — Windows kreditförvaring i första hand, miljövariabel eller fil utanför repot som alternativ — och Niclas beslutar då. Hans medverkan begärs vid inloggning som bara han kan göra och vid beslut om extra kostnad. Ett hinder rapporteras när det är belagt, inte när det misstänks.
+Use Niclas's existing private Cursor account. Account access is an **open technical question**, not an assumed blocker: steps 1 and 4 establish the connection path, its actual authentication method and whether anything is missing. If a key beyond normal login is required, propose storage—Windows credential storage first, with an environment variable or file outside the repository as alternatives—and let Niclas decide then. Involve him when only he can complete login or when additional spending requires a decision. Report an obstacle when established, not merely suspected.
 
-### Delsteg
+### Steps
 
-1. **Välj anslutningsväg och inventera maskinen.** Två halvor med olika utförare, eftersom läsande roller saknar terminal i denna miljö. Inventeringen körs av koordinator eller Implementer och levererar körda kommandon med utmatning: Windowsversion, `node`, `npm`, Cursors CLI-version om den finns, och hämtbara paket. Den läsande dokumentationshalvan görs av Researcher, som bedömer TypeScript-SDK, ACP över JSON-RPC och headless CLI mot faktiska versioner. Fem krav **måste** vara uppfyllda för att en väg ska kunna väljas: start, strömning, avbrott, filändring och verktygskörning, samt anropbarhet från Node i en paketerad Electron-app. Fyra ska **bedömas och redovisas** med "stöd saknas" som giltigt svar: återupptagning av session (DSP-4 AC#2 beror på det), godkännanden per verktygsanrop, modellval och kostnadsrapportering. Leverans: rekommendation med reservväg plus stödmatris där saknat stöd står som saknat.
-2. **Körbart skelett i dev-läge.** TypeScript, React och Electron startar ett fönster på Windows med låsta versioner och committad lockfile. Adaptern finns som gränssnitt men anropar ännu inget. Gränssnittet är **sessionsgranulärt**, inte körningsgranulärt, och bär `dispose()` samt godkännandetillståndet enligt uppföljningens beslut i Implementation Notes; de fältbeslut som listas som uppskjutna där ingår inte.
-3. **Paketera det tomma skelettet.** En körbar artefakt utan dev-server, innan agentanslutningen finns, med innehållssumma och källsnapshot noterade så att den inte förväxlas med artefakten i delsteg 7. Syftet är att separera paketeringsfel från anslutningsfel; motivet är ett erfarenhetsbaserat antagande, inte belagt faktum. Buntas huvudprocessen gäller Cursors dokumenterade lazy-load-problem med felsignaturen `Cannot find module './986.js'` vid första `Agent.create()`; se paketeringsavsnittet i Implementation Notes för motåtgärden. **Startinstruktionens första utkast skrivs redan här**, så att bara den paketerade delen tillkommer sent.
-4. **Verklig anslutning och strömning.** Adaptern körs utanför renderingstråden, ansluter via Niclas konto och ger ett riktigt strömmande svar plus en följdfråga i samma session. Inloggningsuppgifter hålls utanför repot. Bär två observationer för AC#4: vad autentiseringen faktiskt krävde och varifrån behörigheten hämtades, samt en första läsning av förbrukning eller kostnad. Saknade värden redovisas som okända, aldrig som noll.
-5. **Verklig kodändring och bygge eller test.** Agenten får ett uttryckligt ändringsuppdrag mot ett separat litet provrepo med ett känt deterministiskt test. Filerna jämförs före och efter, testkommandot körs och utmatning och exitkod fångas. Vald körväg dokumenteras. Visade delsteg 1 att godkännanden är interaktiva hanteras de uttryckligen här, och en väntande godkännandefråga får inte rapporteras som en hängning. Åtkomstsonderna nedan körs **efter** att kodändringen och testkörningen är dokumenterade, så att en nekad sond inte förorenar AC#6:s evidens. Förbrukningen läses en andra gång en stund efter körningen, eftersom kostnadsvärden kan dröja.
-6. **Avbrott och anslutningsfel, som två separata scenarier.** *Scenario A, faktisk avbrytning:* avbryt under strömning och avbryt under pågående testkörning. *Scenario B, kontrollerat framkallat anslutningsfel genom den verkliga anslutningsvägen:* felet framkallas av provet självt, ingen driftstörning hos leverantören inväntas. Båda dokumenterar vad som händer med redan ändrade filer, om något fortsätter köra, och särskilt om ett pågående fjärranrop till modellen inte kan stoppas.
-7. **Paketerat Windowsprov med anslutningen.** Bygg om artefakten nu när adaptern startar en extern process och kör **hela minimikedjan** från artefakten utan dev-server: fönstret öppnas och visar anslutningsstatus för Niclas konto; en fråga ger ett strömmande svar; en följdfråga besvaras i samma session; ett uttryckligt ändringsuppdrag ändrar en fil i provrepot så att ändringen syns på disk; provrepots test körs med synlig utmatning och exitkod; och Avbryt under strömning ger en begriplig status. Enbart anslutning och strömning räcker inte. "Begriplig status" knyts till AC#3:s ordalydelse: att strömningen upphört, och om något fortfarande kör. Artefakten identifieras med SHA-256 på den körbara filen eller på kataloginnehållets manifest, källans ögonblicksbild inklusive lockfile, byggkommandot och tidsstämpeln — inte med sökväg. Före leverans görs en namngiven hemlighetskontroll: mönstersökning i provkod och committade filer efter nyckel- och tokenmönster samt kontonamn, kontroll att `.gitignore` täcker lokala inställnings- och nyckelfiler, kontroll att sparade råloggar är maskade, och genomgång av indexet innan commit. Verifier kontrollerar hemlighetskontrollen oberoende. Niclas äger instruktionsgenomgången när han kör artefakten; en teknisk komplettering är att en ren session utan loopens historik följer instruktionen och rapporterar varje punkt där kunskap saknades. Räkna med varning för osignerad binär.
-8. **Teknikunderlag.** Versioner, motiv och målmiljö; vad som provades och inte provades; autentisering och nyckelförvaring; den observerade gränsen för fil- och verktygsåtkomst från delsteg 5; debiteringsvägen med källa, datum och observerade eller okända värden; stödmatrisen från delsteg 1; bedömningen av vägen till Linux och till VS Code/Copilot med kvarstående prov; skillnaden mellan lokal körning och fjärranrop till modellen, inklusive vad som händer om ett pågående fjärranrop inte kan stoppas; konkreta hinder om teknikvalet behöver omprövas, formulerade som faktiskt påträffade hinder och deras storlek; samt ett konkret avgränsat nästa steg för DSP-2.
+1. **Select the connection and inventory the computer.** Separate execution from documentation research because read-only roles lack terminal access in this environment. The coordinator or Implementer records commands and output for the Windows version, `node`, `npm`, Cursor CLI version if present, and available packages. The Researcher assesses the TypeScript SDK, ACP over JSON-RPC and headless CLI against actual versions. A viable path **must** support startup, streaming, cancellation, file changes and tool execution, and be callable from Node in a packaged Electron application. **Assess and report** session resumption (DSP-4 AC#2 depends on it), per-tool approvals, model selection and cost reporting; absent support is a valid finding for these four. Deliver a recommendation, fallback and capability matrix that explicitly identifies missing support.
+2. **Runnable development skeleton.** TypeScript, React and Electron open a Windows window with pinned versions and a committed lockfile. The adapter exists as an interface without making calls. It is **session-granular**, not run-granular, and includes `dispose()` and the approval state specified by the follow-up decisions in Implementation Notes. Fields explicitly deferred there are outside this step.
+3. **Package the empty skeleton.** Produce a runnable artifact without a development server before adding the agent connection. Record its content hash and source snapshot so it cannot be confused with step 7's artifact. Separating packaging failures from connection failures is the intended benefit, based on experience rather than established evidence. If bundling the main process, account for Cursor's documented lazy-loading failure `Cannot find module './986.js'` on the first `Agent.create()`; see the packaging mitigation in Implementation Notes. **Write the first startup instructions now**, leaving only the connected packaged workflow to add later.
+4. **Real connection and streaming.** Run the adapter outside the rendering thread, connect through Niclas's account and obtain a real streaming response and follow-up in the same session. Keep credentials outside the repository. Record two observations for AC#4: actual authentication requirements and credential source, and an initial usage or cost reading. Missing values are unknown, never zero.
+5. **Real code change and build or test.** Give the agent an explicit change request for a separate small test repository with a known deterministic test. Compare files before and after, run the test command, capture output and exit code, and document the execution path. If step 1 found interactive approvals, handle them explicitly; a pending approval must not be described as a hang. Run the access probes below **after** documenting the code change and test so a denied probe cannot contaminate AC#6 evidence. Read usage again after a short interval because cost reporting may be delayed.
+6. **Cancellation and connection failure as separate scenarios.** *Scenario A, actual cancellation:* cancel during streaming and during a running test. *Scenario B, a deliberately induced failure through the real connection:* the experiment causes the failure; do not wait for a provider outage. Both record already changed files, any continuing execution and, specifically, whether an active remote model request cannot be stopped.
+7. **Packaged Windows experiment with the connection.** Rebuild with the adapter starting an external process. Run the **whole minimal workflow** from the artifact without a development server: the window opens and shows connection status for Niclas's account; a prompt produces a streaming response; a follow-up is answered in the same session; an explicit change request changes a test-repository file on disk; its test runs with visible output and exit code; and Cancel during streaming gives an understandable status. Connection and streaming alone are insufficient. Relate that status to AC#3: has streaming stopped, and is anything still running? Identify the artifact by SHA-256 of the executable or directory-content manifest, source snapshot including lockfile, build command and timestamp—not its path. Before delivery, perform an explicit secrets check: search experiment code and committed files for key/token patterns and account names; check `.gitignore` covers local settings and key files; verify saved raw logs are redacted; and inspect the index before committing. The Verifier checks this independently. Niclas assesses the instructions when running the artifact; supplement this with a clean session without loop history following the instructions and reporting missing knowledge. Allow for an unsigned-binary warning.
+8. **Technical record.** Record versions, rationale, target environment, tested and untested behaviour, authentication and key storage, observed file/tool access from step 5, billing sources and dates with observed or unknown values, the step 1 matrix, the path to Linux and VS Code/Copilot with outstanding tests, and local execution versus remote model requests—including requests that cannot be stopped. Describe any actual obstacles to the chosen stack and their extent. End with a concrete bounded next step for DSP-2.
 
-### Vad åtkomstsonderna i delsteg 5 kontrollerar, och hur
+### What the access probes in step 5 check
 
-Sonderna svarar på frågan **vad en agent faktiskt kan nå när DSpatch kör den**. Det är inte samma sak som att kontrollera att vi når Cursor; den anslutningen provas i delsteg 4 och är ingen sond. Utfallet avgör vad DSpatch själv behöver bygga i fråga om inneslutning, och hör hemma i teknikunderlaget innan DSP-2 börjar.
+The probes ask **what an agent can actually access when DSpatch runs it**. Reaching Cursor is a different question, tested in step 4. Observations inform what containment DSpatch needs and belong in the technical record before DSP-2 begins.
 
-- **Filsond 1.** Provet skapar en egen temporär katalog utanför den angivna arbetskopian och lägger en fil där. Agenten ombeds läsa och ändra den. Ett av tre utfall noteras: lyckas, nekas, eller frågar om lov.
-- **Filsond 2.** Samma sak för ett kommando som skriver till den temporära katalogen.
-- **Nätverkssond, minsta form.** Provet startar en egen lyssnare på `127.0.0.1` på en ledig port och ber agenten hämta den adressen. Syns anropet i vår egen logg visar det att agentens process når den lokala testservern på `127.0.0.1`. Det bevisar inte fri internetåtkomst eller åtkomst till andra adresser. Ingen tredje part berörs, ingen extern tjänst kontaktas, ingen data lämnar maskinen. Detta är godkänt som en vanlig avgränsad anslutningskontroll inom teknikprovet.
+- **File probe 1.** Create a dedicated temporary directory outside the selected working copy and a file within it. Ask the agent to read and modify that file. Record success, denial or an approval request.
+- **File probe 2.** Repeat with a command that writes to the temporary directory.
+- **Minimal network probe.** Start a dedicated listener on a free port at `127.0.0.1` and ask the agent to fetch that address. An entry in our own log establishes access to that local test server, not unrestricted internet access or access to other addresses. No third party or external service is involved and no data leaves the computer. This is approved as a bounded connection check within the technical experiment.
 
-Ingen sond får röra DSpatch-repot, Niclas övriga projekt eller externa system. Skulle en sond behöva avse mer än ovanstående — exempelvis en verklig utgående anslutning till en extern adress — lyfts syfte och omfattning till Niclas innan den görs.
+Do not probe the DSpatch repository, Niclas's other projects or external systems. Any broader probe—for example a real outgoing connection to an external address—requires its purpose and scope to be presented to Niclas first.
 
-### Avgränsning inom uppgiften
+### Scope boundaries
 
-Arbetsytan i sig hör till DSP-2, fördjupad felhantering till DSP-3, sparad historik och omstart till DSP-4. Utanför ligger Linuxpaketering och Linuxprov, implementation eller provkörning av VS Code/Copilot, generellt adapterramverk eller en andra integration, kostnadsdashboard, MCP-verktyg och verktygsregister, kodsignering, installerare och automatisk uppdatering, commit, push och PR-hantering, parallella skrivande agenter, Maestro, egen editor och avancerad kodförståelse. Medvetet till senare: allt gränssnittsarbete utöver vad provet kräver.
+The workspace itself belongs to DSP-2, deeper error handling to DSP-3, and saved history and restart to DSP-4. Exclude Linux packaging/testing, implementing or testing VS Code/Copilot, a general adapter framework or second integration, a cost dashboard, MCP tools and registry, code signing, installers and automatic updates, commit/push/PR handling, parallel writing agents, Maestro, a custom editor and advanced code understanding. UI work beyond what this experiment needs is deliberately deferred.
 
-Provkoden är ett spike. **Beslut av Niclas 13 september 2026:** lämplig adapterkod från teknikprovet får återanvändas i DSP-2; DSP-2 ärver däremot inte provets gränssnittsval.
+The experiment is a spike. **Niclas's decision, 13 September 2026:** suitable adapter code may be reused in DSP-2; its UI choices are not inherited by DSP-2.
 
-### Hur kriterierna bärs
+### Acceptance-criterion mapping
 
-AC#1 av delsteg 2, 3, 7 och 8. AC#2 av delsteg 4, med kommandon, modellnamn och leverantörsversion noterade. AC#3 av delsteg 6:s båda scenarier. AC#4 av delsteg 4 och 5 för de empiriska observationerna och av delsteg 8 för sammanställningen med källor och datum — inte av delsteg 8 allena. AC#5 av delsteg 7. AC#6 av delsteg 5.
+AC#1: steps 2, 3, 7 and 8. AC#2: step 4, including commands, model name and provider versions. AC#3: both step 6 scenarios. AC#4: empirical observations from steps 4 and 5, summarised with dated sources in step 8—not step 8 alone. AC#5: step 7. AC#6: step 5.
 
-Teknisk evidens: exakta kommandon med exitkoder; versionsuppgifter för Windows, Node, Electron och leverantörens paket eller CLI; committad lockfile; provrepots filinnehåll före och efter som innehållsidentifierad ögonblicksbild; sparad rålogg med hemligheter borttagna; artefaktens innehållssumma med byggkommando och källsnapshot; och utfallet av åtkomstsonderna. Allt ska kunna upprepas av Verifier på samma kodversion.
+Evidence includes exact commands and exit codes; Windows, Node, Electron and provider package/CLI versions; the committed lockfile; before/after test-repository contents as content-addressed snapshots; redacted raw logs; artifact hash, build command and source snapshot; and probe outcomes. The Verifier must be able to repeat checks against the same code version.
 
-Niclas bedömning kan inte ersättas av agentkörningar: att provet använde hans avsedda konto, att artefakten startar och beter sig rimligt på hans dator, att startinstruktionen räcker för någon som inte skrivit koden, och om anslutningsvägen och friktionen är acceptabla. Tills han kört och bedömt står uppgiften i `Review`, inte `Done`.
+Agent runs cannot substitute for Niclas's assessment: the intended account was used, the artifact starts and behaves reasonably on his computer, startup instructions suffice for someone who did not write the code, and the connection path and friction are acceptable. Until he has run and assessed it, the task belongs in `Review`, not `Done`.
 
-### Öppna punkter som delstegen ska stänga
+### Questions resolved by the steps
 
-Anslutningsvägen avgörs av delsteg 1 och 4 tillsammans; reservvägen gör beslutet reversibelt. Godkännanden och återupptagning är okända i förväg och besvaras av delsteg 1 utan beslutsinsats från Niclas. Debiteringen är delvis okänd och löses med daterad dokumentationskontroll plus de två läsningarna i delsteg 4 och 5. Agent-i-agent-risken bör provas minst en gång från ett vanligt terminalfönster med noterade skillnader. Vem som kör byggkommandot: rekommendationen är att lösa det åt DSpatch-hållet, eftersom en underprocess som DSpatch själv startar ger exitkod, avbrott och ögonblicksbild under egen kontroll; reversibelt, men den andra vägens begränsningar dokumenteras. Provrepot ska vara ett litet ändamålsgjort TypeScript-repo med snabbt deterministiskt test, inte ett verkligt projekt. Paketeringsverktyget är den minsta kvarvarande öppna punkten.
+Steps 1 and 4 determine the connection path; the fallback keeps that choice reversible. Approvals and resumption are initially unknown and assessed in step 1 without requiring a decision from Niclas. Billing is partly unknown and addressed through dated documentation and the two readings in steps 4 and 5. Test the agent-within-agent risk at least once from an ordinary terminal and record differences. Prefer having DSpatch start the build subprocess so exit code, cancellation and snapshot association are under its control; this is reversible, and the other path's limitations must be documented. Use a purpose-built small TypeScript repository with a fast deterministic test, not a real project. Packaging-tool selection was the smallest remaining open question when this plan was approved; later decisions are recorded in Implementation Notes.
 
-Två förtydliganden som bör göras i beskrivningen när uppgiften startas: definiera vad "paketerat" betyder i AC#1:s mening — en körbar artefakt producerad av byggverktyget som startar utan dev-server, där installerare, signering och automatisk uppdatering inte ingår — och klargör att provets kod och instruktioner hör hemma i DSpatch-repot medan den arbetskopia agenten ändrar i är ett separat repo.
+Clarify in the task description when starting: "packaged" in AC#1 means a build-tool-produced runnable artifact that starts without a development server, excluding installers, signing and automatic updates. Experiment code and instructions belong in DSpatch; the working copy changed by the agent is a separate repository.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+### Current handoff at the language migration
+
+The pushed DSP-1 record covers the reviewed skeleton and Windows packaging (steps 2–3). The provider connection in step 4 still needs the real authentication flow and subsequent tests. The language migration changes text only and does not extend that runtime evidence. Niclas approved the current colour palette as a visual starting point; this does not complete the remaining UX or whole-workflow criteria.
+
+### Historical evidence — original language
+
+The following implementation and verification notes predate the English-language policy. They are preserved verbatim, including Swedish observations, quotations and identifiers. They describe the versions and dates recorded below; new findings must be written in English.
+
 ### Pass 1, 13 september 2026 — delsteg 1 klart, anslutningsvägen vald
 
 Körjournal: `.dspatch-loop/runs/20260913-175023-g8t7/` (lokal, Git-ignorerad). Bascommit `5fd842c`, gren `main`, ren arbetskopia före och efter. Två specialistanrop av tolv, noll omtag. Ingen produktkod är skriven ännu och inget debiterat leverantörsanrop har gjorts.

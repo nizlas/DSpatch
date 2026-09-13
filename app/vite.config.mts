@@ -4,10 +4,10 @@ import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
 /**
- * Renderaren ska aldrig nå Node, och den ska inte kunna ladda kod utifrån.
- * Utvecklingsläget behöver två lättnader som produktionsläget inte ska ha:
- * Vite injicerar ett inline-skript för hot reload och levererar CSS som
- * inline-stil, och hot reload använder en websocket.
+ * The renderer must never access Node or load external code.
+ * Development needs two exceptions that production must not have:
+ * Vite injects an inline script for hot reload and delivers CSS as inline
+ * styles; hot reload also uses a WebSocket.
  */
 const DEV_POLICY = [
   "default-src 'none'",
@@ -57,7 +57,7 @@ function contentSecurityPolicy(): Plugin {
 
 export default defineConfig({
   root: fileURLToPath(new URL('./src/renderer', import.meta.url)),
-  // Relativa sökvägar krävs när huvudprocessen laddar de byggda filerna direkt.
+  // Relative paths are required when the main process loads built files directly.
   base: './',
   plugins: [react(), contentSecurityPolicy()],
   build: {

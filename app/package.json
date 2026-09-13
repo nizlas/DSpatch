@@ -3,7 +3,7 @@
   "productName": "DSpatch",
   "version": "0.1.0",
   "private": true,
-  "description": "DSpatch – arbetsyta för agentassisterad utveckling. Körbart skelett från DSP-1 delsteg 2.",
+  "description": "DSpatch – a workspace for agent-assisted development. Runnable skeleton from DSP-1 substep 2.",
   "license": "UNLICENSED",
   "main": "dist/main/main.js",
   "engines": {
