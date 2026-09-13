@@ -10,6 +10,7 @@ An experimental development workspace for human–AI collaboration and autonomou
 | [Agentinstruktioner](AGENTS.md) | Kort läsordning, principer och arbetsregler. |
 | [Utvecklingsplan](BACKLOG.md) | Förberedande loop-prov och sex produktsteg, med ordning och uppgiftslänkar. |
 | [Utvecklingsloop](docs/DEVELOPMENT_LOOP.md) | Cursor-agenter, koordinator, överlämning, omtag och återupptagning. |
+| [Maestros orkestrering](docs/MAESTRO_ORCHESTRATION.md) | Teknisk vision för egna loopar över oberoende agentsessioner, med återhämtning och kostnad per steg. |
 
 Det här är projektets dokumentation och första utvecklingsplan. TypeScript, React och Electron är valt teknikspår, med Windows och Linux i målbilden och en enhetlig arbetsyta som motiv. Första implementation och provkörning sker med Cursor på Niclas Windowsdator; Linuxstödet införs stegvis. [Beslut och verifiering](docs/VISION.md#91-valt-teknikspår-och-plattformar) beskriver omfattningen. Produktkod och en verifierad agentanslutning återstår. VS Code/Copilot finns kvar i målbilden och beaktas i teknikvalen, med implementation och provkörning senare. Första milstolpen går från interaktiv chatt till en verklig kodändring i ett repo, granskning av vanlig diff och körning av bygge eller test. Avbrott, återhämtning och sparad historik ingår; faktisk användning styr fortsättningen.
 

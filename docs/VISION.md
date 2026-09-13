@@ -222,6 +222,8 @@ Låt användaren förklara ändringens beteende, peka ut ett relevant beroende o
 
 ## 4 Maestro och agentnätverket
 
+Den tekniska fördjupningen [Maestro och orkestrering av agentloopar](MAESTRO_ORCHESTRATION.md) beskriver egen orkestrering över oberoende agentsessioner, logiska deluppgifter, återhämtning och kostnadsbokföring per loopsteg. Den konkretiserar riktningen i detta avsnitt utan att utöka Etapp 0.
+
 Maestro ska samordna arbetet över flera körningar och leverantörer. Det primära exemplet är en iterativ agentloop med specialiserade roller, granskningsgrindar och återkoppling. Maestro ska även kunna bära andra upplägg. Applikationen håller reda på uppgifter, tillstånd, budget och arbetskopior; agenternas text är inte ensam bärare av projektets tillstånd.
 
 ### Föreslagna ansvarsområden
