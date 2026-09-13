@@ -1,10 +1,10 @@
 ---
 id: DSP-10
 title: Use English consistently across the project
-status: Review
+status: Done
 assignee: []
 created_date: '2026-09-13 19:56'
-updated_date: '2026-09-13 20:21'
+updated_date: '2026-09-13 20:28'
 labels: []
 dependencies: []
 ordinal: 9000
@@ -49,4 +49,8 @@ Limitations: no new Windows/Electron packaging, actual account call or visual UX
 The separate model-selection and Maestro proposals (PRs #4 and #7) have English overlays prepared on the language branch, preserving their scope and original task states. They are to be published as dependent PRs, not folded into this language change. The earlier Swedish Maestro Word export remains version 1.0; its English Markdown edition is explicitly version 1.1.
 
 Ready for Niclas to review. No product task was closed, no provider integration added, and no merge to main is included.
+
+### Human approval and completion
+
+Niclas reviewed PR #8 and authorised its merge. DSP-10 is complete; the other product-task states are unchanged. The English model-selection and Maestro proposals were published separately in PRs #4 and #7 and will target main after the language baseline is merged.
 <!-- SECTION:NOTES:END -->
