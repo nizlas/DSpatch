@@ -46,7 +46,13 @@ Knyt återkoppling, tester och granskning till den version som faktiskt kördes.
 | Blocked | Ett hinder stoppar meningsfullt fortsatt arbete. Ange orsaken, vad som provats och exakt vad som behövs. |
 | Done | Uppgiftens kriterier och relevanta kontroller är uppfyllda, inklusive uttryckligen efterfrågad mänsklig bedömning. |
 
-Flytta tillbaka till In Progress vid omtag. Kryssa bara i verifierade kriterier och bevara tidigare relevanta resultat. Vid paus eller fel ska uppgiften ange senaste verifierade läge, kvarstående problem och nästa handling. Backlog-status beskriver arbetet; den är inte i sig bevis för att en agentprocess kör eller har stoppats.
+**Starta kortet innan arbetet.** Gör först den korta kontroll som behövs för att välja rätt uppgift och klarlägga repo, beroenden, mandat och eventuell pågående körning. Sätt därefter det valda kortet till `In Progress`, ange aktuellt fokus och bekräfta att statusen sparats. Fördjupad planering, research, teknikprov, implementation och specialistanrop börjar först efter denna uppdatering; statusen får inte vänta till slutrapporten. I loopen ansvarar koordinatorn för detta.
+
+Har deluppgiften ett eget kort uppdateras det kortet, och föräldrauppgiften ska spegla att genomförandet pågår. Ett numrerat delsteg utan eget kort anges som aktuellt fokus i den befintliga uppgiften; skapa inte nya kort enbart för statusbokföringen. Generell planering eller läsning av framtida uppgifter innebär inte att deras genomförande startas.
+
+Vid omtag flyttas kortet tillbaka till `In Progress` innan arbetet återupptas. Vid resume kontrolleras befintlig status och fokus utan att historik eller passets räknare nollställs. Använd reservrutinen i AGENTS.md om CLI:t inte fungerar och klarlägg utfallet av en misslyckad skrivning innan den upprepas.
+
+Kryssa bara i verifierade kriterier och bevara tidigare relevanta resultat. Vid paus eller fel ska uppgiften ange senaste verifierade läge, kvarstående problem och nästa handling. Backlog-status beskriver arbetet; den är inte i sig bevis för att en agentprocess kör eller har stoppats.
 
 ## Granska och arbeta med planen
 

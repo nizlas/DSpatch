@@ -55,6 +55,16 @@ Spara kommandon, versionsuppgifter, testad revision eller innehållsidentifierad
 <!-- SECTION:PLAN:BEGIN -->
 Planen är framtagen av Backlog Planner, granskad av Reviewer i två omgångar och godkänd av Niclas den 13 september 2026 under DSP-7. Underlaget finns i körjournalen `.dspatch-loop/runs/20260913-114021-4slh/reports/` (001 plan v1, 002 granskning, 003 plan v2, 004 avstämning). Ordningsprincipen är billigaste möjliga stoppfynd först. Ett avbrutet pass återupptas på rätt delsteg nedan.
 
+### Avgränsad uppföljning av anslutningsvalet
+
+Komplettera delsteg 1:s underlag innan det gemensamma adaptergränssnittet låses. Utgå från sparade rapporter och prov; upprepa bara kontroller som behövs för att reda ut en konkret osäkerhet. Koordinatorn anger uppföljningen som aktuellt fokus och använder befintligt pass och räknare när detta är en återupptagning.
+
+- **Cursor och Copilot.** Jämför de officiella TypeScript-SDK:erna mot VISION:s sju förmågor: start, strömning, avbrott, återupptagning, modellval, godkännanden och kostnadsrapportering. Ange källor, datum, bedömd version och vad som är dokumenterat, observerat respektive okänt. Beskriv de konkreta konsekvenserna för gemensamma operationer, händelser och lagring, inklusive väntande godkännanden och leverantörsspecifika sessions-ID:n. Skilj Copilot som agentleverantör från integration med en befintlig VS Code-chatt och verktyg från dess tillägg. En andra fungerande integration eller VS Code-prov ingår inte.
+- **Slutsatser och bevis.** Skilj lyckad SDK-laddning och kontakt med en autentiseringsendpoint från en provad paketerad helkedja. Begränsa nätverkssondens slutsats till den åtkomst som faktiskt observerats. Kontrollera paketens ursprung mot officiella installationsanvisningar; vid den rapporterade namnförväxlingen, klarlägg ur tillgänglig kommandologg om tredjepartspaketet bara undersöktes eller också installerades. Utred rollen för den rapporterade lokala `blobEncryptionKey` utan att kopiera nyckelvärdet till rapport eller repo.
+- **Avstämning.** Reviewer bedömer det kompletterade underlaget och om Cursor-spåret fortfarande är motiverat utan att låsa ute Copilot. Koordinatorn sparar slutsats, kvarstående prov och nästa steg i uppgiften. Praktiska körningar utförs av en roll med terminalåtkomst när de behövs; dokumentationsjämförelsen kräver ingen ny leverantörsinloggning.
+
+Godkänd uppföljning betyder att anslutningsvalets underlag är bedömt. DSP-1 blir inte `Done` förrän dess befintliga acceptanskriterier, inklusive det paketerade provet och Niclas bedömning, är uppfyllda. Fortsätt därefter med återstående delsteg inom mandatet; skapa ingen extra godkännandepunkt för rutinval.
+
 ### Förkrav: konto och autentisering
 
 Provet utgår från Niclas befintliga privata Cursor-konto. Kontofrågan är en **öppen teknisk fråga**, inte ett blockerande förkrav: delsteg 1 och 4 ska klarlägga vilken anslutningsväg som gäller, hur autentiseringen faktiskt fungerar för den vägen och om något verkligen saknas. Behövs en nyckel utöver vanlig inloggning föreslås förvaring — Windows kreditförvaring i första hand, miljövariabel eller fil utanför repot som alternativ — och Niclas beslutar då. Hans medverkan begärs vid inloggning som bara han kan göra och vid beslut om extra kostnad. Ett hinder rapporteras när det är belagt, inte när det misstänks.
@@ -76,7 +86,7 @@ Sonderna svarar på frågan **vad en agent faktiskt kan nå när DSpatch kör de
 
 - **Filsond 1.** Provet skapar en egen temporär katalog utanför den angivna arbetskopian och lägger en fil där. Agenten ombeds läsa och ändra den. Ett av tre utfall noteras: lyckas, nekas, eller frågar om lov.
 - **Filsond 2.** Samma sak för ett kommando som skriver till den temporära katalogen.
-- **Nätverkssond, minsta form.** Provet startar en egen lyssnare på `127.0.0.1` på en ledig port och ber agenten hämta den adressen. Syns anropet i vår egen logg har agentens process fri utgående nätverksåtkomst. Ingen tredje part berörs, ingen extern tjänst kontaktas, ingen data lämnar maskinen. Detta är godkänt som en vanlig avgränsad anslutningskontroll inom teknikprovet.
+- **Nätverkssond, minsta form.** Provet startar en egen lyssnare på `127.0.0.1` på en ledig port och ber agenten hämta den adressen. Syns anropet i vår egen logg visar det att agentens process når den lokala testservern på `127.0.0.1`. Det bevisar inte fri internetåtkomst eller åtkomst till andra adresser. Ingen tredje part berörs, ingen extern tjänst kontaktas, ingen data lämnar maskinen. Detta är godkänt som en vanlig avgränsad anslutningskontroll inom teknikprovet.
 
 Ingen sond får röra DSpatch-repot, Niclas övriga projekt eller externa system. Skulle en sond behöva avse mer än ovanstående — exempelvis en verklig utgående anslutning till en extern adress — lyfts syfte och omfattning till Niclas innan den görs.
 

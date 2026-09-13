@@ -45,8 +45,8 @@ Koordinatorn anropar specialisterna direkt, sekventiellt i förgrunden. Ingen sp
 
 ## Ett normalt pass
 
-1. **Återställ sammanhanget.** Kontrollera rätt repo, aktuell gren, befintliga ändringar, vald uppgift och dess beroenden. Läs relevant målbild och aktuella beslut. Om en tidigare körning finns: klarlägg den före nytt arbete.
-2. **Avgränsa och förklara nyttan.** Visa kort vad nästa inkrement ska ge. Ett standardpass gäller en uppgift. En stor uppgift kan delas i användbara delsteg utan att dess slutkriterier tyst krymps.
+1. **Klarlägg vad som ska startas.** Gör en kort kontroll av rätt repo, aktuell gren, befintliga ändringar, vald uppgift, beroenden och mandat. Om en tidigare körning finns: klarlägg den före nytt arbete.
+2. **Starta uppgiften i Backlog.** Sätt valt kort till `In Progress`, ange aktuellt delsteg eller fokus och bekräfta att uppdateringen sparats enligt [status och återupptagning](../BACKLOG.md#status-och-återupptagning). Detta sker före fördjupad planering, research, teknikprov, implementation och specialistanrop. Vid resume eller omtag stäms statusen av innan arbetet fortsätter. Läs därefter återstående uppgiftsrelevant målbild och beslut och visa kort nyttan och avgränsningen. Ett standardpass gäller en uppgift; användbara delsteg får inte tyst krympa dess slutkriterier.
 3. **Planera när det behövs.** Backlog Planner lämnar översikt och uppgiftsförslag. Reviewer granskar ett substantiellt planförslag i planläge. Koordinatorn verkställer välgrundade förändringar inom mandatet; en ändrad produktinriktning lyfts till Niclas.
 4. **Undersök en konkret osäkerhet.** Anropa Researcher om kod eller dokumentation inte räcker. Ett körbart teknikprov tilldelas Implementer och Verifier med rätt mandat.
 5. **Implementera.** Ge Implementer avgränsade skrivytor och kriterier. När den återkommer kontrollerar koordinatorn den verkliga diffen och fastställer kandidatens ögonblicksbild.
@@ -81,6 +81,8 @@ Bedöm först vem som kan lösa frågan och när den behöver besvaras:
 | Rutinval eller teknisk osäkerhet som agenterna kan utreda inom mandatet | Välj eller undersök och redovisa resultatet. En ännu oprövad förutsättning är inte i sig ett konstaterat hinder. |
 | Mänskligt beslut som behövs först senare | Spara frågan till nästa iteration. Fortsätt med oberoende arbete inom befintligt mandat och passets gränser. |
 | Mänsklig bedömning eller saknat mandat som nästa steg faktiskt kräver | Lämna det konkreta underlaget och frågan i vanlig chatt. Vänta med det beroende steget tills svaret finns. Om inget annat arbete kan fortsätta: spara nästa steg och använd WAITING_USER. |
+
+En delrapport eller ett färdigt delsteg är inte i sig en stoppunkt. Fortsätt till nästa planerade steg när det ryms i mandatet och passets gränser och inte kräver ett obesvarat mänskligt beslut. Att redovisa ett rutinmässigt teknikval innebär inte att begära nytt godkännande. Avsluta inte ett pass enbart för att få en ny chatt eller nollställa räknarna.
 
 Att skjuta upp en fråga utökar inte mandatet. Uteblivet svar räknas aldrig som ett godkännande och mänskliga acceptanskriterier förblir öppna. Ett vanligt pass gäller fortfarande en uppgift; en senare iteration eller nästa uppgift får bara starta inom användarens givna mandat. Tekniska hinder och okända anropsutfall följer de befintliga stopp- och avstämningsreglerna.
 
