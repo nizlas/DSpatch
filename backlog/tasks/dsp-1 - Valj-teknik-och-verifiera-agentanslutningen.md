@@ -6,7 +6,7 @@ assignee: []
 created_date: "2026-09-13"
 labels: ["integration"]
 milestone: "m-0"
-dependencies: []
+dependencies: ["DSP-7"]
 documentation: ["docs/VISION.md", "BACKLOG.md"]
 ordinal: 1000
 ---

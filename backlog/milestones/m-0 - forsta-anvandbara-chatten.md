@@ -5,6 +5,8 @@ title: "Etapp 0 – Gör en verklig kodändring med DSpatch"
 
 ## Description
 
+DSP-7 är ett förberedelsesteg: prova utvecklingsloopen i Cursor och bedöm dess planering innan DSP-1 genomförs med loopen. Produktens slutmål nedan uppnås genom DSP-1–6; kalibreringen ersätter inget av deras kriterier.
+
 Förslag utifrån VISION.md avsnitt 14–15 och Niclas beslut den 13 september 2026. Efter DSP-6 ska Niclas kunna välja ett repo, diskutera en liten utvecklingsuppgift, låta agenten ändra koden, granska berörda filer och en fullständig vanlig textdiff samt köra relevant bygge eller test och se resultatet för rätt kodversion. Följdfrågor, omtag, avbrott, begriplig felhantering och fortsatt arbete efter omstart ingår.
 
 Tidigare manuella ändringar ska bevaras. Granskade ändringar och körresultat ska finnas kvar efter omstart, med tydlig skillnad mellan historiska resultat och arbetskopians nuvarande innehåll. Omstart eller återanslutning får inte automatiskt upprepa ett ändringsuppdrag eller körkommando.

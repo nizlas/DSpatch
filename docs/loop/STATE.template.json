@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "run_id": "",
+  "task_ids": [],
+  "mode": "calibrate",
+  "status": "READY",
+  "phase": "preflight",
+  "mandate": "",
+  "limits": {
+    "max_tasks": 1,
+    "max_rework_rounds": 2,
+    "max_specialist_calls": 12
+  },
+  "counts": {
+    "rework_rounds": 0,
+    "specialist_calls": 0
+  },
+  "working_copy": "",
+  "branch": "",
+  "base_commit": null,
+  "candidate_snapshot": null,
+  "active_call": null,
+  "reports": [],
+  "completed_steps": [],
+  "next_step": "",
+  "pending_human_checks": [],
+  "last_checkpoint_utc": ""
+}

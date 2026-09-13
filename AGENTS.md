@@ -5,6 +5,7 @@
 1. Läs [VISION.md](docs/VISION.md) när du börjar arbeta i projektet. Den är det styrande originalet; avsnitt 1–3, 8 och 14–15 beskriver produktens riktning och första omfattning.
 2. Läs [BACKLOG.md](BACKLOG.md) för aktuell utvecklingsriktning och arbetsflöde.
 3. Läs den aktuella uppgiften i `backlog/tasks/`, dess beroenden och relevanta visionsavsnitt. Vid fortsatt arbete räcker ändrat och uppgiftsrelevant underlag; läs inte om all historik rutinmässigt.
+4. När du kör eller ändrar utvecklingsloopen: läs [DEVELOPMENT_LOOP.md](docs/DEVELOPMENT_LOOP.md). Koordinatorns ingång är `.cursor/skills/dspatch-loop/SKILL.md`; de fem specialisterna finns i `.cursor/agents/`.
 
 Niclas uttryckliga beslut styr målbilden. Skilj beslutade principer från tekniska förslag och öppna frågor i VISION.md. Ändra inte målbilden för att passa en implementation; dokumentera ett föreslaget avsteg och dess motiv. Rutinmässiga, reversibla val inom överenskommen uppgift kan göras utan nytt godkännande. Varaktiga beslut och ändrad riktning ska framgå i repot.
 
@@ -30,4 +31,6 @@ Niclas uttryckliga beslut styr målbilden. Skilj beslutade principer från tekni
 
 ## Agentloopen under utvecklingen
 
-En extern agentloop som hjälper oss bygga DSpatch är skild från Maestro-funktionen vi senare bygger in i produkten. Börja vid behov med en koordinator och avgränsade specialistuppdrag; en platt anropsstruktur kan bära flera logiska roller. Inför roller, parallellitet och processgrindar när de tillför konkret värde. Bevara möjligheten att arbeta interaktivt genom hela utvecklingen.
+En extern agentloop som hjälper oss bygga DSpatch är skild från Maestro-funktionen vi senare bygger in i produkten. Första utkastet har koordinator i huvudchatten och fem specialister: Backlog Planner, Researcher, Implementer, Verifier och Reviewer. Alla specialistanrop går direkt via koordinatorn, sekventiellt och utan vidare delegering. Planner och Researcher används vid behov.
+
+Under ett loop-pass äger koordinatorn ensam backlog, planöversikt och körjournal. Specialister returnerar rapporter och får bara skriva inom sina uttryckliga uppdrag. En ny chatt ska återuppta kända steg och klarlägga oklara utfall före nya anrop. Bevara möjligheten att arbeta interaktivt genom hela utvecklingen. DSP-7 provar samarbete och planeringskvalitet i Cursor innan DSP-1 genomförs med loopen.
