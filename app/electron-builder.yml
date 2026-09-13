@@ -1,31 +1,29 @@
-# Paketering av DSpatch. Målet här är en körbar katalog, inte en installerare:
-# installerare, signering och automatisk uppdatering ligger utanför DSP-1.
+# Package DSpatch as a runnable directory. Installers, signing and automatic
+# updates are outside DSP-1.
 #
-# Konfigurationen ligger i en egen fil och inte i package.json därför att den
-# behöver kommentarer. Anteckningen om asarUnpack nedan är en vägvisare till
-# nästa delsteg, och strikt JSON kan inte bära den.
+# A separate YAML file allows comments, including the asarUnpack guidance for
+# the next substep, which strict JSON in package.json could not carry.
 
 appId: dev.dspatch.app
 
 directories:
-  # Inte dist/. Den katalogen ägs av tsc och Vite, och electron-builders
-  # standardvärde för output är just dist/ — de skulle skriva över varandra.
+  # Keep separate from dist/, which tsc and Vite own. electron-builder defaults
+  # to dist/ too; using that default would make the tools overwrite each other.
   output: release
 
-# Renderaren buntas av Vite, och huvudprocessen kräver bara node:path, electron
-# och sina egna dist-filer. Artefakten behöver därför inga node_modules alls.
-# react och react-dom är byggberoenden här, inte körberoenden.
+# Vite bundles the renderer; the main process requires only node:path, electron
+# and its own dist files. The skeleton therefore needs no node_modules in the
+# artifact. Here react and react-dom are build-time dependencies in practice.
 files:
   - dist/**/*
   - package.json
   - '!node_modules/**/*'
 
-# Skelettet har inga nativa beroenden, så allt kan ligga kvar i asar-arkivet.
+# The skeleton has no native dependencies, so everything may remain in asar.
 #
-# Delsteg 7 blir annorlunda: @cursor/sdk-win32-x64 bär rg.exe,
-# cursorsandbox.exe och två .node-filer. Sådana filer kan inte köras eller
-# laddas ur ett asar-arkiv utan måste packas upp, annars faller anslutningen
-# vid första anropet. Utöka då files med paketet och lägg till:
+# Substep 7 differs: @cursor/sdk-win32-x64 carries rg.exe, cursorsandbox.exe
+# and two .node files. They must be unpacked to execute or load, otherwise the
+# connection fails on its first call. Expand files to include the package and add:
 #
 #   asarUnpack:
 #     - node_modules/@cursor/sdk-win32-x64/**/*

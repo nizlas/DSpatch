@@ -1,140 +1,141 @@
-# DSpatch – körbart skelett
+# DSpatch – runnable skeleton
 
-Detta är DSpatchs första produktkod. Den visar ett fönster med appens namn och
-de versioner den kör på, och den renderar adapterns förmågor. **Den ansluter
-inte till någon agentleverantör.**
+This is DSpatch's first product code. It displays a window with the app's name,
+runtime versions and adapter capabilities. **It does not connect to an agent
+provider.**
 
-Adaptern finns som gränssnitt och en platshållare som kastar. Det är avsiktligt:
-delsteg 2 ska belägga att teknikspåret fungerar, delsteg 3 att skelettet går att
-paketera och delsteg 4 att agentanslutningen fungerar. Blandas de kan ett fel
-inte härledas till rätt orsak.
+The adapter consists of an interface and a placeholder whose unimplemented
+operations throw. This is deliberate: substep 2 establishes that the stack
+works, substep 3 that the skeleton can be packaged, and substep 4 that the
+agent connection works. Keeping these separate makes failures attributable.
 
-Dokumentet är skrivet för en utvecklare som inte har skrivit koden och ska räcka
-för att hämta repot, installera, köra i utvecklingsläge, bygga och köra den
-paketerade artefakten.
+This document is intended for a developer who did not write the code. It covers
+fetching the repository, installation, development mode, building and running
+the packaged artifact.
 
-## Förutsättningar
+## Prerequisites
 
-- Windows. Linux ingår i målbilden men är oprövat, och inget i denna
-  beskrivning är provat där.
-- Node 22.12 eller senare, med npm. Provat på Node 24.21.0 med npm 11.19.0.
+- Windows. Linux is a target but remains untested; none of these instructions
+  have been tested there.
+- Node 22.12 or later, with npm. Tested with Node 24.21.0 and npm 11.19.0.
 - Git.
-- Internetåtkomst vid första installationen och vid första paketeringen.
-  Electrons binär och Electrons distributionsarkiv hämtas då.
+- Internet access for initial installation and packaging, when the Electron
+  binary and distribution archive are downloaded.
 
-Inga konton, nycklar eller miljöhemligheter behövs. Det finns ingen
-agentanslutning att autentisera mot ännu.
+No account, key or secret environment variable is needed. There is no agent
+connection to authenticate yet.
 
-## Hämta och installera
+## Fetch and install
 
-Klona repot och installera beroenden. All produktkod ligger i `app/`, så det är
-därifrån alla kommandon nedan körs.
+Clone the repository and install dependencies. All product code is in `app/`;
+run the commands below from that directory.
 
 ```powershell
-git clone <repots URL>     # se `git remote -v` i en befintlig arbetskopia
+git clone <repository URL>     # see `git remote -v` in an existing working copy
 cd DSpatch\app
 npm install
 ```
 
-Electron 44 hämtar inte sin binär vid installationen; paketet har ingen
-`postinstall`. Nedladdningen sker vid första användningen, alltså under första
-`npm run dev`, och tar en stund. Det är väntat och inget fel.
+Electron 44 does not download its binary during installation: the package has
+no `postinstall`. The download happens on first use, during the first
+`npm run dev`, and takes a little time. This is expected.
 
-Hittas inte `node` eller `npm` i en redan öppen terminal kan PATH vara
-inaktuell. Öppna en ny terminal, eller komplettera för sessionen:
+If `node` or `npm` cannot be found in an already open terminal, its PATH may be
+stale. Open a new terminal or update the session:
 
 ```powershell
 $env:PATH = "C:\Program Files\nodejs;$env:APPDATA\npm;$env:PATH"
 ```
 
-## Kör i utvecklingsläge
+## Run in development mode
 
 ```powershell
 npm run dev
 ```
 
-Kommandot kompilerar huvudprocessen och preload med `tsc`, startar Vites
-utvecklingsserver för renderaren på port 5273 och öppnar Electron mot den.
-Porten är låst med `strictPort`, så är den upptagen avbryts starten i stället
-för att tyst flytta sig.
+The command compiles the main process and preload with `tsc`, starts Vite's
+renderer development server on port 5273 and opens Electron against it.
+`strictPort` fixes the port: startup fails if it is occupied rather than
+silently switching ports.
 
-## Bygg och kör den paketerade artefakten
+## Build and run the packaged artifact
 
 ```powershell
-npm run clean     # tar bort dist/
-npm run package   # bygger allt och paketerar
+npm run clean     # removes dist/
+npm run package   # builds and packages everything
 ```
 
-`npm run package` kör `npm run build` och sedan `electron-builder` med
-`electron-builder.yml`. Resultatet blir en uppackad körbar katalog:
+`npm run package` runs `npm run build` followed by `electron-builder` using
+`electron-builder.yml`. The output is an unpacked executable directory:
 
-```
+```text
 app\release\win-unpacked\DSpatch.exe
 ```
 
-Starta den direkt genom att dubbelklicka eller:
+Double-click it or run:
 
 ```powershell
 .\release\win-unpacked\DSpatch.exe
 ```
 
-Artefakten behöver **ingen** utvecklingsserver och inget `npm`. Den laddar
-renderaren ur sitt eget `resources\app.asar`. Hela katalogen hör ihop —
-`DSpatch.exe` kan inte flyttas ut ur den ensam.
+The artifact needs **no** development server or `npm`. It loads the renderer
+from its own `resources\app.asar`. Keep the entire directory together;
+`DSpatch.exe` cannot be moved out on its own.
 
-Katalogen är cirka 370 MB, varav det mesta är Electrons runtime. Den är
-`.gitignore`-ad och ska inte committas.
+The directory is approximately 370 MB, mostly Electron's runtime. It is
+Git-ignored and must not be committed.
 
-### Vad paketeringen inte är
+### Packaging scope
 
-Målet är `dir`, en körbar katalog. Det finns **ingen installerare, ingen
-kodsignering och ingen automatisk uppdatering**. Det ligger utanför uppgiften
-och ska inte läsas in i artefakten.
+The target is `dir`, an executable directory. There is **no installer, code
+signing or automatic update mechanism**. These are outside the task.
 
-### Att `DSpatch.exe` är osignerad
+### Unsigned `DSpatch.exe`
 
-Binären saknar digital signatur (`Get-AuthenticodeSignature` svarar
-`NotSigned`). Vad det innebär i praktiken:
+The binary has no digital signature (`Get-AuthenticodeSignature` reports
+`NotSigned`). Practical implications:
 
-- **Bygger du artefakten själv** startar den normalt utan varning. Det är vad
-  som observerades här: filen är lokalt skapad och har ingen märkning om att
-  den kommit från internet.
-- **Kopierar du artefakten från en annan maskin, eller hämtar den som en
-  zip**, märker Windows filerna som nedladdade. Då visar SmartScreen dialogen
-  *”Windows har skyddat din dator”*, och du måste välja **Mer information** och
-  sedan **Kör ändå** för att starta. Utgivaren anges som okänd.
-- Antivirusprogram kan dessutom flagga en osignerad Electron-binär. Det är inte
-  provat här.
+- **Locally built artifact:** it started without a warning in the observed
+  Windows test. The local file had no internet-origin marker.
+- **Artifact transferred from another computer or downloaded as a ZIP:**
+  internet-origin marking and Windows policy may trigger SmartScreen's
+  *“Windows protected your PC”* dialog, identifying the publisher as unknown.
+  Where policy permits, **More info** and **Run anyway** are the available
+  controls. This distribution scenario has not been verified by the local
+  build test; copying a file does not always give it an internet-origin marker.
+- Antivirus software may also flag an unsigned Electron binary. This was not
+  tested here.
 
-## Startprovet
+## Startup smoke test
 
-Sätt `DSPATCH_SMOKE=1` för att starta appen, ladda renderaren, skriva vad som
-observerades och avsluta med en exitkod. Provet finns för att ett startat
-kommando inte är bevis för ett fönster: det lyckas först när fönstret har visats
-**och** renderaren har målat och kvitterat via preload.
+Set `DSPATCH_SMOKE=1` to start the app, load the renderer, report observations
+and exit with a code. A launched command is not evidence of a window: the probe
+passes only after the window is shown **and** the renderer has painted and
+acknowledged readiness through preload.
 
 ```powershell
-$env:DSPATCH_SMOKE="1"; npm run dev                      # utvecklingsläge
-$env:DSPATCH_SMOKE="1"; npx electron .                   # byggda filer, kräver npm run build
-$env:DSPATCH_SMOKE="1"; .\release\win-unpacked\DSpatch.exe   # paketerad artefakt
+$env:DSPATCH_SMOKE="1"; npm run dev                         # development mode
+$env:DSPATCH_SMOKE="1"; npx electron .                      # built files; run npm run build first
+$env:DSPATCH_SMOKE="1"; .\release\win-unpacked\DSpatch.exe   # packaged artifact
 ```
 
-Kom ihåg att rensa variabeln efteråt (`Remove-Item Env:\DSPATCH_SMOKE`), annars
-avslutar sig appen direkt nästa gång.
+Clear the variable afterwards (`Remove-Item Env:\DSPATCH_SMOKE`) or the app
+will immediately exit on its next launch.
 
-| Exitkod | Betydelse |
+| Exit code | Meaning |
 | --- | --- |
-| 0 | Fönstret visades och renderaren målade. |
-| 2 | Renderaren kunde inte laddas. |
-| 3 | Villkoren uppfylldes inte inom 30 sekunder. |
-| 4 | Renderarprocessen försvann. |
+| 0 | The window was shown and the renderer painted. |
+| 2 | The renderer could not be loaded. |
+| 3 | Both conditions were not met within 30 seconds. |
+| 4 | The renderer process disappeared. |
 
-Läs utmatningen med urskillning. `did-finish-load` loggas **även** när Chromium
-visar sin egen felsida, så den raden skiljer inte lyckat från misslyckat. De
-avgörande raderna är `renderer-ready …` och `startprovet lyckades …`.
+Interpret output carefully. `did-finish-load` is also logged when Chromium
+displays its own error page, so it cannot distinguish success from failure.
+The decisive lines are `renderer-ready …` and `startup smoke test passed …`.
+Earlier Swedish logs used `startprovet lyckades …`; retain those logs verbatim.
 
-Startas `DSpatch.exe` som en Windows-GUI-process syns loggen inte i terminalen
-av sig själv. Omdirigera den till fil:
+When `DSpatch.exe` starts as a Windows GUI process, logs do not automatically
+appear in the terminal. Redirect them to files:
 
 ```powershell
 $env:DSPATCH_SMOKE="1"
@@ -142,20 +143,20 @@ Start-Process .\release\win-unpacked\DSpatch.exe -Wait -PassThru `
   -RedirectStandardOutput smoke.log -RedirectStandardError smoke.err
 ```
 
-`-PassThru` ger objektet vars `ExitCode` du vill läsa.
+`-PassThru` returns the process object whose `ExitCode` should be read.
 
-## Kommandon
+## Commands
 
-| Kommando | Vad det gör |
+| Command | Purpose |
 | --- | --- |
-| `npm run dev` | Utvecklingsläge: Vite-server plus Electron. |
-| `npm run build` | Bygger huvudprocess och preload med `tsc`, renderaren med Vite. |
-| `npm start` | Startar Electron mot de byggda filerna. Kräver `npm run build` först. |
-| `npm run package` | Bygger och paketerar till `release/win-unpacked/`. |
-| `npm run typecheck` | Typkontrollerar huvudprocess, preload, renderare och byggverktyg. |
-| `npm run clean` | Tar bort `dist/`. |
+| `npm run dev` | Development mode: Vite server and Electron. |
+| `npm run build` | Compile main/preload with `tsc` and bundle the renderer with Vite. |
+| `npm start` | Launch Electron against built files. Requires `npm run build` first. |
+| `npm run package` | Build and package into `release/win-unpacked/`. |
+| `npm run typecheck` | Type-check main, preload, renderer and build tools. |
+| `npm run clean` | Remove `dist/`. |
 
-`npm run clean` rör inte `release/`. Vill du paketera från helt rent läge:
+`npm run clean` does not touch `release/`. To package from a clean state:
 
 ```powershell
 npm run clean
@@ -163,59 +164,63 @@ Remove-Item -Recurse -Force release
 npm run package
 ```
 
-## Vad fönstret visar
+## What the window shows
 
-- Rubriken `DSpatch` och en notis om att ingen leverantör är ansluten.
-- **Körmiljö:** versioner för Electron, Chromium, Node och V8, plattform,
-  appversion, och om renderaren laddades från utvecklingsserver eller byggda
-  filer. Det sista fältet är användbart just för att se vilket läge du kör.
-- **Adaptern `not-implemented`:** integrationskontraktets sju förmågor — starta
-  körning, strömmande svar, avbryta körning, återupptagning, modellval,
-  godkännanden, förbrukning och kostnad.
+- The `DSpatch` heading and a notice that no provider is connected.
+- **Runtime environment:** Electron, Chromium, Node and V8 versions, platform,
+  app version and whether the renderer loaded from the development server or
+  built files. The last field identifies the mode being run.
+- **Adapter `not-implemented`:** the integration contract's seven capabilities:
+  starting runs, streaming responses, cancellation, resumption, model selection,
+  approvals, and usage/cost reporting.
 
-Alla sju står som **stöds inte**. Det är med flit. Platshållaradaptern stöder
-ingenting, och det är ett sant besked om just den instansen — inte en
-förhandsbedömning av vad en ansluten Cursor-adapter kommer att klara. Värdet
-`okänt` finns också och visas aldrig som ett positivt resultat.
+All seven are **unsupported**, deliberately. The placeholder supports nothing;
+this is a truthful report for that instance, not a prediction of a connected
+Cursor adapter's capabilities. `unknown` is also a valid value and is never
+presented as a positive result.
 
-## Vad som inte fungerar ännu
+Niclas approved the current colour palette as the visual starting point on
+13 September 2026. Preserve it as features are added. This feedback does not
+by itself accept the usability of future chat and code-review workflows.
 
-- **Ingen agentanslutning.** Inget SDK är installerat, ingen leverantör anropas,
-  ingen nätverksanslutning öppnas. Varje adapteroperation kastar
-  `AdapterNotImplementedError`.
-- Ingen chattvy, ingen inmatning, ingen anslutningsstatus.
-- Ingen meny. Electrons standardmeny är borttagen därför att den erbjuder poster
-  vi inte byggt.
-- Ingen installerare, signering eller automatisk uppdatering.
-- Ingen Linuxprovning.
+## Not implemented yet
 
-Inget av det ska låtsas finnas innan det gör det.
+- **Agent connection:** no SDK is installed, no provider is called and no
+  network connection is opened. Unimplemented adapter operations throw
+  `AdapterNotImplementedError`; capability reporting and disposal are implemented.
+- Chat view, input and connection status.
+- Application menu: Electron's default menu is removed because its actions
+  have not been built.
+- Installer, signing and automatic updates.
+- Linux testing.
 
-## Uppbyggnad
+Do not present these features as available before they are implemented.
 
+## Structure
+
+```text
+src/main/             Main process. Compiled by tsc, not bundled.
+src/preload/          Sandboxed bridge, exposing one interface via contextBridge.
+src/renderer/         React UI, bundled by Vite.
+src/shared/           Renderer/main contract. Types only.
+src/adapter/          Provider adapter interface and placeholder.
+scripts/dev.mjs       Starts the development server and Electron.
+electron-builder.yml Packaging configuration.
+dist/                 Build output. Git-ignored.
+release/              Packaging output. Git-ignored.
 ```
-src/main/            Huvudprocessen. Kompileras av tsc, buntas inte.
-src/preload/         Bryggan. Sandlådad, exponerar en enda yta via contextBridge.
-src/renderer/        React-gränssnittet. Buntas av Vite.
-src/shared/          Kontraktet mellan renderare och huvudprocess. Enbart typer.
-src/adapter/         Leverantörsadapterns gränssnitt och platshållaren.
-scripts/dev.mjs      Startar utvecklingsserver och Electron.
-electron-builder.yml Paketeringskonfigurationen.
-dist/                Byggresultat. Ignoreras av git.
-release/             Paketeringsresultat. Ignoreras av git.
-```
 
-Huvudprocessen buntas medvetet inte. Cursors SDK laddar delar av sig själv lazy,
-och en enfilsbunt kan inte följa de laddningarna; dokumentationen beskriver att
-en buntad app då faller på första `Agent.create()`. Genom att kompilera till
-vanliga moduler som löser `node_modules` normalt undviks problemet.
+The main process is deliberately not bundled. Cursor SDK lazily loads parts
+of itself that a single-file bundle cannot follow; its documentation describes
+such a bundle failing on the first `Agent.create()`. Compiling to ordinary
+modules with normal `node_modules` resolution avoids that problem.
 
-Renderaren når aldrig Node. Fönstret körs med `contextIsolation`, utan
-`nodeIntegration` och i sandlåda, och all kontakt går genom preload.
+The renderer never accesses Node. The window uses `contextIsolation`, disables
+`nodeIntegration`, enables the sandbox and communicates through preload.
 
-Artefakten innehåller inga `node_modules`. Renderaren är buntad av Vite, och
-huvudprocessen kräver bara `node:path`, `electron` och sina egna byggda filer.
-`react` och `react-dom` är därför byggberoenden i praktiken. Det ändras i det
-delsteg som lägger till agentanslutningen: dess paket bär körbara filer som
-måste packas upp ur asar-arkivet. `electron-builder.yml` har en anteckning om
-det.
+The artifact contains no `node_modules`. Vite bundles the renderer; the main
+process requires only `node:path`, `electron` and its own compiled files.
+`react` and `react-dom` are therefore build-time dependencies in practice.
+This changes when the agent connection is added: its package carries executable
+files that must be unpacked from asar. `electron-builder.yml` records the
+required packaging follow-up; its existing configuration is for the skeleton.

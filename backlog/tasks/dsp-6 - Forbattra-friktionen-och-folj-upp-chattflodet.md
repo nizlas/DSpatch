@@ -1,45 +1,52 @@
 ---
-id: "DSP-6"
-title: "Förbättra största friktionen och följ upp hela utvecklingsflödet"
-status: "To Do"
+id: DSP-6
+title: Improve the main friction and assess the complete development workflow
+status: To Do
 assignee: []
-created_date: "2026-09-13"
-labels: ["ux", "ui"]
-milestone: "m-0"
-dependencies: ["DSP-3", "DSP-4", "DSP-5"]
-documentation: ["docs/VISION.md", "BACKLOG.md"]
+created_date: '2026-09-13'
+updated_date: '2026-09-13 20:13'
+labels:
+  - ux
+  - ui
+milestone: m-0
+dependencies:
+  - DSP-3
+  - DSP-4
+  - DSP-5
+documentation:
+  - docs/VISION.md
+  - BACKLOG.md
 ordinal: 6000
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-### Varför och önskat resultat
+### Purpose and intended result
 
-Ta vara på återkopplingen från faktisk användning: gör en liten förbättring som hjälper Niclas, och bedöm sedan hela Etapp 0. Efter DSP-6 ska han kunna använda chatten för verkliga kodändringar, granska diffar och köra bygge eller test, med avbrott, felhantering och sparad historik på plats.
+Use feedback from actual use to make a small improvement for Niclas, then assess all of Phase 0. After DSP-6 he should make real code changes through chat, review diffs and run builds/tests, with cancellation, error handling and saved history in place.
 
-### Avgränsning och föreslagen väg
+### Scope and proposed approach
 
-Konkretisera förbättringen efter DSP-5 utifrån dess viktigaste observation. Skriv den specifika beteendeförändringen och hur den ska bedömas innan implementation. Behåll ändringen liten; fler önskemål får egna uppgifter. Om provkörningen inte visar något att rätta ska vi inte hitta på en funktion för att fylla planen: dokumentera det och gå vidare till helhetsbedömningen.
+Define the improvement from DSP-5's most important observation. State the specific behaviour change and assessment criteria before implementation. Keep it small; additional wishes get separate tasks. If the trial found nothing to fix, document that and proceed to the whole-workflow assessment rather than inventing a feature to fill the plan.
 
-Prova det sammanförda resultatet av DSP-2–4 och eventuell UX-förbättring. Niclas ska kunna öppna ett repo, diskutera en liten uppgift, låta agenten göra en kodändring, granska hela textdiffen och köra relevant bygge eller test med tydligt resultat för rätt kodversion. En följdfråga eller ett omtag ska fungera, liksom avbrott, begriplig felåterhämtning och fortsatt arbete efter omstart. Tidigare filändringar och körresultat ska finnas kvar utan att arbetet dubbelstartas.
+Test the combined DSP-2–4 result and any UX improvement. Niclas should open a repository, discuss a small task, let the agent change code, review the complete text diff and run a relevant build/test with a clear result for the correct code version. Follow-up/rework, cancellation, understandable recovery and continuing after restart must work. Earlier changes and results remain without duplicate execution.
 
-### Verifiering och beslut om fortsättning
+### Verification and continuation
 
-Agenten redovisar tekniska resultat för den version som lämnas ut, inklusive lyckat och misslyckat körkommando samt avbrott och omstart efter ändrade filer. Niclas bedömer användbarheten av samma version och gör själv en avgränsad ändring från uppdrag till diff och testresultat. Kvarstående hinder ska hanteras eller uttryckligen accepteras; en agent får inte markera en mänsklig bedömning som genomförd.
+Report technical results for the delivered version, including successful and failing commands, cancellation and restart after file changes. Niclas assesses the same version and personally completes a bounded change from request to diff and test result. Remaining obstacles must be resolved or explicitly accepted; an agent cannot mark his assessment complete.
 
-Niclas kan fortsätta arbeta människointeraktivt i kommande inkrement. Nästa steg kan vara ytterligare en förbättring av det befintliga flödet eller tydligare uppgifts- och körhistorik från Etapp 1. Avancerad kodförståelse, egen editor och Maestro kommer senare.
+Niclas can remain in the human-interactive mode in subsequent increments. Next may be another improvement to the current workflow or clearer task/run history from Phase 1. Advanced code understanding, a custom editor and Maestro come later.
 
-### Underlag
+### References
 
-[VISION.md, avsnitt 1.1, 14 och 15](../../docs/VISION.md#14-etapper-för-genomförande).
+[VISION.md, sections 1.1, 14 and 15](../../docs/VISION.md#14-implementation-phases).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 Den valda förbättringen har spårbart stöd i DSP-5 och konkreta kriterier, eller så finns ett motiverat beslut att ingen sådan ändring behövs.
-- [ ] #2 Förbättringen är verifierad mot sin avsikt. Det sammanförda flödet gör en verklig kodändring, visar berörda filer och fullständig textdiff och kör relevant bygge eller test med resultat kopplat till rätt kodversion. Avbrott, felhantering och omstart bevarar arbetet utan automatisk upprepning.
-- [ ] #3 Niclas har själv genomfört och bedömt hela Etapp 0 på en angiven version, inklusive kodändring, diff, bygge/test och fortsatt arbete efter omstart. Kvarstående hinder är lösta eller uttryckligen accepterade av honom.
-- [ ] #4 Resultat och lärdomar är dokumenterade och BACKLOG.md anger ett konkret nästa fokus utan att låsa senare teknik eller agenttopologi.
+- [ ] #1 The selected improvement is traceable to DSP-5 and has concrete criteria, or there is a justified decision that no such change is needed.
+- [ ] #2 The improvement is verified against its purpose. The combined workflow makes a real code change, shows affected files and the full text diff, and runs a relevant build/test with results tied to the correct code version. Cancellation, error handling and restart preserve work without automatic repetition.
+- [ ] #3 Niclas has personally completed and assessed all of Phase 0 on an identified version, including code change, diff, build/test and continuing after restart. Remaining obstacles are resolved or explicitly accepted by him.
+- [ ] #4 Results and lessons are documented and BACKLOG.md states a concrete next focus without fixing later technology or agent topology.
 <!-- AC:END -->

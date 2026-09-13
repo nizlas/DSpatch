@@ -1,11 +1,10 @@
 /**
- * Startar utvecklingsläget: Vites utvecklingsserver för renderaren och Electron
- * mot den adressen.
+ * Start development mode: Vite's renderer server and Electron loading its URL.
  *
- * Huvudprocessen och preload buntas inte. De kompileras av `tsc` till vanliga
- * CommonJS-moduler som löser `node_modules` normalt. Skälet är dokumenterat:
- * Cursors SDK laddar delar av sig själv lazy, vilket en enfilsbunt inte kan
- * följa. Kör `npm run build:node` före detta skript.
+ * The main process and preload are not bundled. `tsc` compiles them to ordinary
+ * CommonJS modules that resolve `node_modules` normally. The documented reason:
+ * Cursor SDK lazily loads parts of itself that a single-file bundle cannot
+ * follow. Run `npm run build:node` before this script.
  */
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -18,8 +17,8 @@ import { createServer } from 'vite';
 const require = createRequire(import.meta.url);
 const appDir = fileURLToPath(new URL('..', import.meta.url));
 
-// Läst från vanlig Node ger `electron` sökvägen till den körbara filen.
-// Paketets typdeklaration beskriver i stället Electrons API-yta, därav casten.
+// In ordinary Node, `electron` returns the path to its executable.
+// The package's type declaration instead describes Electron's API, hence the cast.
 const electronExecutable = /** @type {string} */ (
   /** @type {unknown} */ (require('electron'))
 );
@@ -35,7 +34,7 @@ const rendererUrl = server.resolvedUrls?.local[0];
 
 if (rendererUrl === undefined) {
   await server.close();
-  throw new Error('Vite startade utan att ge någon lokal adress att ladda.');
+  throw new Error('Vite started without providing a local URL to load.');
 }
 
 const electron = spawn(electronExecutable, [appDir], {

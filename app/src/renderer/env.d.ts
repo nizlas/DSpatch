@@ -2,7 +2,7 @@ import type { DspatchBridge } from '../shared/bridge';
 
 declare global {
   interface Window {
-    /** Allt renderaren når av huvudprocessen. Satt av preload. */
+    /** All main-process access available to the renderer. Set by preload. */
     readonly dspatch: DspatchBridge;
   }
 }

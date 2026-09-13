@@ -13,15 +13,15 @@ import type {
   UsageReading,
 } from './types';
 
-/** Kastas av varje operation i `NotImplementedAdapter`. */
+/** Thrown by every unimplemented operation in `NotImplementedAdapter`. */
 export class AdapterNotImplementedError extends Error {
   readonly operation: string;
 
   constructor(operation: string) {
     super(
-      `Adapteroperationen "${operation}" är inte implementerad. ` +
-        'Skelettet i DSP-1 delsteg 2 definierar gränssnittet utan att ansluta ' +
-        'någon leverantör.',
+      `Adapter operation "${operation}" is not implemented. ` +
+        'The skeleton in DSP-1 substep 2 defines the interface without connecting ' +
+        'a provider.',
     );
     this.name = 'AdapterNotImplementedError';
     this.operation = operation;
@@ -39,19 +39,19 @@ const CAPABILITIES: CapabilityReport = {
 };
 
 /**
- * Platshållaren för DSpatchs leverantörsadapter.
+ * Placeholder for DSpatch's provider adapter.
  *
- * Den anropar ingen leverantör, importerar ingen SDK och öppnar ingen
- * nätverksanslutning. Varje operation kastar. Syftet är att gränssnittets form
- * ska vara låst och typkontrollerad innan en verklig anslutning byggs, så att
- * paketeringsfel och anslutningsfel kan skiljas från varandra.
+ * It calls no provider, imports no SDK and opens no network connection.
+ * Unimplemented operations throw. The interface is fixed and type-checked before
+ * a real connection is built so packaging failures can be distinguished from
+ * connection failures.
  *
- * `capabilities()` svarar `unsupported` för alla sju förmågorna. Det är ett
- * sant besked om just denna instans — den stöder ingenting — och inte en
- * förhandsbedömning av vad en ansluten Cursor-adapter kommer att stödja.
+ * `capabilities()` returns `unsupported` for all seven capabilities. This is a
+ * truthful report for this instance, which supports nothing; it does not predict
+ * what a connected Cursor adapter will support.
  */
 export class NotImplementedAdapter implements AgentAdapter {
-  /** Vad gränssnittet visar som adapterns identitet. */
+  /** The adapter identity shown in the UI. */
   readonly id = 'not-implemented';
 
   startSession(_config: SessionConfig): Promise<SessionHandle> {
@@ -99,7 +99,7 @@ export class NotImplementedAdapter implements AgentAdapter {
     return CAPABILITIES;
   }
 
-  /** Ingenting att avveckla. Får inte kasta: anropas när appen stängs. */
+  /** Nothing to dispose. Must not throw: called during application shutdown. */
   dispose(): Promise<void> {
     return Promise.resolve();
   }

@@ -6,26 +6,26 @@ import type { EnvironmentInfo, RendererSource } from '../shared/bridge';
 
 const HEADING = 'DSpatch';
 
-/** Ordningen här är också visningsordningen. Typen kräver alla sju förmågorna. */
+/** This is also the display order. The type requires all seven capabilities. */
 const CAPABILITY_LABEL: Record<Capability, string> = {
-  start: 'Starta körning',
-  streaming: 'Strömmande svar',
-  cancel: 'Avbryta körning',
-  resume: 'Återupptagning',
-  modelSelection: 'Modellval',
-  approvals: 'Godkännanden',
-  usageReporting: 'Förbrukning och kostnad',
+  start: 'Start run',
+  streaming: 'Streaming responses',
+  cancel: 'Cancel run',
+  resume: 'Resume',
+  modelSelection: 'Model selection',
+  approvals: 'Approvals',
+  usageReporting: 'Usage and cost',
 };
 
 const SUPPORT_LABEL: Record<CapabilitySupport, string> = {
-  supported: 'stöds',
-  unsupported: 'stöds inte',
-  unknown: 'okänt',
+  supported: 'supported',
+  unsupported: 'unsupported',
+  unknown: 'unknown',
 };
 
 const RENDERER_SOURCE_LABEL: Record<RendererSource, string> = {
-  'dev-server': 'utvecklingsserver',
-  'built-files': 'byggda filer',
+  'dev-server': 'development server',
+  'built-files': 'built files',
 };
 
 const CAPABILITIES = Object.keys(CAPABILITY_LABEL) as Capability[];
@@ -54,7 +54,7 @@ export function App(): JSX.Element {
           setState({
             kind: 'error',
             message:
-              error instanceof Error ? error.message : 'Okänt fel från bryggan.',
+              error instanceof Error ? error.message : 'Unknown bridge error.',
           });
         }
       });
@@ -64,9 +64,8 @@ export function App(): JSX.Element {
     };
   }, []);
 
-  // Kvittensen skickas efter att innehållet målats, inte när komponenten
-  // monterats. Det är skillnaden mellan ett fönster som lever och ett som bara
-  // instansierats.
+  // The acknowledgement is sent after rendering, not on component mount.
+  // This distinguishes a live rendered window from an instantiated component.
   useEffect(() => {
     if (state.kind !== 'ready' || readyReported.current) {
       return;
@@ -90,17 +89,17 @@ export function App(): JSX.Element {
     <main className="app">
       <h1 className="app__title">{HEADING}</h1>
       <p className="app__subtitle">
-        Körbart skelett. Ingen agentleverantör är ansluten: adaptern finns som
-        gränssnitt och anropar ingenting.
+        Runnable skeleton. No agent provider is connected: the adapter defines
+        an interface and makes no provider calls.
       </p>
 
       {state.kind === 'loading' && (
-        <p className="app__note">Läser miljöuppgifter från huvudprocessen …</p>
+        <p className="app__note">Reading environment details from the main process …</p>
       )}
 
       {state.kind === 'error' && (
         <p className="app__error">
-          Kunde inte läsa miljöuppgifter: {state.message}
+          Could not read environment details: {state.message}
         </p>
       )}
 
@@ -119,29 +118,29 @@ function Environment({
   return (
     <>
       <section className="panel">
-        <h2 className="panel__title">Körmiljö</h2>
+        <h2 className="panel__title">Runtime environment</h2>
         <dl className="facts">
           <Fact label="Electron" value={versions.electron} />
           <Fact label="Chromium" value={versions.chromium} />
           <Fact label="Node" value={versions.node} />
           <Fact label="V8" value={versions.v8} />
-          <Fact label="Plattform" value={environment.platform} />
+          <Fact label="Platform" value={environment.platform} />
           <Fact
-            label="Renderaren laddad från"
+            label="Renderer loaded from"
             value={RENDERER_SOURCE_LABEL[environment.rendererSource]}
           />
-          <Fact label="Appversion" value={environment.appVersion} />
+          <Fact label="App version" value={environment.appVersion} />
         </dl>
       </section>
 
       <section className="panel">
         <h2 className="panel__title">
-          Adaptern <code className="panel__code">{adapter.id}</code>
+          Adapter <code className="panel__code">{adapter.id}</code>
         </h2>
         <p className="app__note">
-          De sju förmågorna i integrationskontraktet. Värdet gäller denna
-          adapterinstans — leverantör plus transport — inte en leverantör i
-          allmänhet.
+          The seven capabilities in the integration contract. These values apply
+          to this adapter instance — provider plus transport — rather than
+          to the provider in general.
         </p>
         <ul className="capabilities">
           {CAPABILITIES.map((capability) => {
@@ -162,7 +161,7 @@ function Environment({
           })}
         </ul>
         <p className="app__note">
-          Tre möjliga värden:{' '}
+          Three possible values:{' '}
           <span className="badge badge--supported">
             {SUPPORT_LABEL.supported}
           </span>{' '}
@@ -170,7 +169,7 @@ function Environment({
             {SUPPORT_LABEL.unsupported}
           </span>{' '}
           <span className="badge badge--unknown">{SUPPORT_LABEL.unknown}</span>.
-          Okänt är ett giltigt svar och visas aldrig som ett positivt resultat.
+          Unknown is a valid answer and is never presented as a positive result.
         </p>
       </section>
     </>

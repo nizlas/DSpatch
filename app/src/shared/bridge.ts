@@ -1,14 +1,14 @@
 /**
- * Kontraktet mellan renderaren och huvudprocessen.
+ * Contract between the renderer and the main process.
  *
- * Filen innehåller **enbart typer**. Det är ett krav, inte en stilfråga:
- * preload körs i sandlåda och får bara importera Electrons egna moduler som
- * värden. En typimport försvinner vid kompilering och är därför säker.
+ * This file contains **types only**. That is a requirement: sandboxed preload
+ * may import only Electron modules as values. A type import disappears during
+ * compilation and is therefore safe.
  */
 
 import type { CapabilityReport } from '../adapter/types';
 
-/** Versioner renderaren visar. Hämtas i huvudprocessen, aldrig i renderaren. */
+/** Versions shown by the renderer. Obtained in the main process, never the renderer. */
 export interface RuntimeVersions {
   readonly electron: string;
   readonly chromium: string;
@@ -16,10 +16,10 @@ export interface RuntimeVersions {
   readonly v8: string;
 }
 
-/** Var renderarens innehåll kom ifrån. Visas i gränssnittet utan tolkning. */
+/** The source of renderer content. Displayed by the UI without inference. */
 export type RendererSource = 'dev-server' | 'built-files';
 
-/** Vad huvudprocessen vet om appen och adaptern vid start. */
+/** What the main process knows about the app and adapter at startup. */
 export interface EnvironmentInfo {
   readonly appName: string;
   readonly appVersion: string;
@@ -32,22 +32,22 @@ export interface EnvironmentInfo {
   };
 }
 
-/** Renderarens kvittens på att den monterat och målat. Underlag för startprovet. */
+/** Renderer acknowledgement of mounting and painting. Evidence for the smoke test. */
 export interface RendererReady {
   readonly headingText: string;
   readonly capabilityCount: number;
   readonly renderedAt: string;
 }
 
-/** Det enda renderaren når av huvudprocessen. Exponeras via `contextBridge`. */
+/** The only main-process interface accessible to the renderer, via `contextBridge`. */
 export interface DspatchBridge {
   getEnvironment(): Promise<EnvironmentInfo>;
   reportReady(ready: RendererReady): void;
 }
 
 /**
- * Kanalnamnen. Typen finns för att preload måste skriva namnen som literaler:
- * en delad konstant vore ett värde, och ett värde går inte att importera in i
- * en sandlådad preload. Typen fångar stavfel vid typkontroll i stället.
+ * Channel names. Preload must write these as literals: a shared constant would
+ * be a value, which cannot be imported into sandboxed preload. The type catches
+ * misspellings during type checking instead.
  */
 export type BridgeChannel = 'dspatch:get-environment' | 'dspatch:renderer-ready';

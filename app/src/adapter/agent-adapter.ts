@@ -13,34 +13,32 @@ import type {
 } from './types';
 
 /**
- * DSpatchs gräns mot en agentleverantör.
+ * DSpatch's boundary to an agent provider.
  *
- * Gränssnittet är **sessionsgranulärt**. Skälet är konkret och gäller båda
- * leverantörerna: Copilot har ingen körningsnivå alls, och en prenumeration som
- * etableras efter `send` tappar händelser hos båda. Copilots dokumenterade
- * mönster är `session.on(...)` före första prompten, och Cursors race-fria väg
- * är callbacks som skickas in i `send`.
+ * The interface operates at **session granularity**. This matters for both
+ * providers: Copilot has no run-level object, and subscribing after `send` loses
+ * events with either provider. Copilot documents `session.on(...)` before the
+ * first prompt; Cursor's race-free path passes callbacks into `send`.
  *
- * **Invariant: högst en aktiv körning per session.** Ingen av leverantörerna
- * garanterar något annat — Copilot dokumenterar "No session locking — concurrent
- * access to same session is undefined" och Cursor kastar `AgentBusyError` för
- * molnkörningar. VISION avsnitt 14 kräver ändå bara en skrivande körning i taget
- * i Etapp 0. Anropas `send` medan en körning är aktiv ska adaptern avvisa
- * anropet, inte köa det.
+ * **Invariant: at most one active run per session.** Neither provider guarantees
+ * otherwise. Copilot documents "No session locking — concurrent access to same
+ * session is undefined", and Cursor throws `AgentBusyError` for cloud runs.
+ * VISION section 14 already requires just one writing run at a time in Phase 0.
+ * If `send` is called while a run is active, reject the call rather than queue it.
  *
- * Ingen implementation finns ännu. `NotImplementedAdapter` är den enda
- * implementationen i delsteg 2, och den anropar ingen leverantör.
+ * No provider implementation exists yet. `NotImplementedAdapter` is the sole
+ * implementation in substep 2 and calls no provider.
  */
 export interface AgentAdapter {
   /**
-   * Startar en ny session. Prenumerera med `subscribe` **innan** första `send`,
-   * annars kan händelser gå förlorade.
+   * Start a new session. Subscribe with `subscribe` **before** the first `send`
+   * to avoid losing events.
    */
   startSession(config: SessionConfig): Promise<SessionHandle>;
 
   /**
-   * Återupptar en tidigare session. Konfigurationen måste skickas igen: ingen
-   * leverantör persisterar hela den, och DSpatch äger den därför själv.
+   * Resume an earlier session. Resend configuration: neither provider persists
+   * all of it, so DSpatch owns it.
    */
   resume(
     sessionId: DspatchSessionId,
@@ -48,14 +46,14 @@ export interface AgentAdapter {
   ): Promise<SessionHandle>;
 
   /**
-   * Skickar en prompt och returnerar identiteten som händelserna grupperas på.
-   * Avvisas om sessionen redan har en aktiv körning.
+   * Send a prompt and return the identity used to group its events.
+   * Reject if the session already has an active run.
    */
   send(sessionId: DspatchSessionId, prompt: string): Promise<RunReference>;
 
   /**
-   * Etableras vid sessionsstart, före första `send`. Lyssnaren tar emot alla
-   * körningar i sessionen; `dspatchRunId` på varje händelse skiljer dem.
+   * Establish at session start, before the first `send`. The listener receives
+   * all runs in the session; each event carries `dspatchRunId` to distinguish them.
    */
   subscribe(
     sessionId: DspatchSessionId,
@@ -63,38 +61,38 @@ export interface AgentAdapter {
   ): Unsubscribe;
 
   /**
-   * Avbryter sessionens aktuella varv. Sessionen består och kan få en ny prompt.
+   * Cancel the session's current turn. The session remains available for a new prompt.
    *
-   * Om ett pågående fjärranrop till modellen faktiskt stoppas är odokumenterat
-   * hos båda leverantörerna. Det ska mätas, inte antas.
+   * Neither provider documents whether an in-flight remote model call is actually
+   * stopped. Measure this rather than assuming it.
    */
   cancel(sessionId: DspatchSessionId): Promise<void>;
 
-  /** Modeller adapterinstansen kan efterfråga. */
+  /** Models this adapter instance can request. */
   listModels(): Promise<readonly ModelInfo[]>;
 
   /**
-   * Läser förbrukning. Ett saknat värde returneras som `null`, aldrig som `0`.
-   * En tom lista betyder att adaptern inte hade någon läsning att ge.
+   * Read usage. Return a missing value as `null`, never `0`.
+   * An empty list means the adapter had no readings to supply.
    */
   readUsage(scope: UsageQuery): Promise<readonly UsageReading[]>;
 
   /**
-   * Svarar på en väntande godkännandefråga. Adaptern får svara att det inte
-   * stöds; `capabilities().approvals` ska då vara `unsupported`.
+   * Answer a pending approval request. The adapter may report this as unsupported;
+   * `capabilities().approvals` must then be `unsupported`.
    */
   respondToApproval(
     requestId: string,
     decision: ApprovalDecision,
   ): Promise<void>;
 
-  /** Vad just denna instans stöder — leverantör plus transport. */
+  /** What this particular instance supports: provider plus transport. */
   capabilities(): CapabilityReport;
 
   /**
-   * Avvecklar adaptern. Måste anropas innan appen avslutas: en leverantörsväg
-   * kan äga en barnprocess eller ett lokalt lager med öppna filer. Idempotent,
-   * och får inte kasta — den anropas när appen redan är på väg att stängas.
+   * Dispose the adapter before the app exits: a provider path may own a child
+   * process or local storage with open files. Idempotent and must not throw,
+   * because it is called while the app is already shutting down.
    */
   dispose(): Promise<void>;
 }

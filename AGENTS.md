@@ -1,38 +1,55 @@
-# Arbeta med DSpatch
+<a id="arbeta-med-dspatch"></a>
 
-## Läs rätt underlag
+# Working on DSpatch
 
-1. Läs [VISION.md](docs/VISION.md) när du börjar arbeta i projektet. Den är det styrande originalet; avsnitt 1–3, 8 och 14–15 beskriver produktens riktning och första omfattning.
-2. Läs [BACKLOG.md](BACKLOG.md) för aktuell utvecklingsriktning och arbetsflöde.
-3. Läs den aktuella uppgiften i `backlog/tasks/`, dess beroenden och relevanta visionsavsnitt. Vid fortsatt arbete räcker ändrat och uppgiftsrelevant underlag; läs inte om all historik rutinmässigt.
-4. När du kör eller ändrar utvecklingsloopen: läs [DEVELOPMENT_LOOP.md](docs/DEVELOPMENT_LOOP.md). Koordinatorns ingång är `.cursor/skills/dspatch-loop/SKILL.md`; de fem specialisterna finns i `.cursor/agents/`.
+## Project language
 
-Niclas uttryckliga beslut styr målbilden. Skilj beslutade principer från tekniska förslag och öppna frågor i VISION.md. Ändra inte målbilden för att passa en implementation; dokumentera ett föreslaget avsteg och dess motiv. Rutinmässiga, reversibla val inom överenskommen uppgift kan göras utan nytt godkännande. Varaktiga beslut och ändrad riktning ska framgå i repot.
+Use **English** for maintained repository content: READMEs, vision and technical documents, agent/skill instructions, backlog titles and prose, code comments, product strings, developer messages, saved reports, and new commit/PR descriptions. A Swedish conversation does not change the project language. Chat and executive summaries addressed to Niclas may remain in Swedish; persist their decisions and findings in English.
 
-## Bevara produktens riktning
+Preserve stable task/run IDs, API identifiers, commands and data formats. Keep historical raw logs, quotations and verification evidence verbatim and label their original language; add an English explanation when needed. Existing filenames and legacy anchors may remain for link compatibility. This is a language change, not a reason to add a localisation framework or alter product scope.
 
-- Enkelhet med bibehållen kraft: vanliga handlingar ska vara synliga och begripliga; kortkommandon är frivilliga.
-- Människointeraktivt arbete är ett fullvärdigt läge för hela projektet, så länge användaren vill. Autonomi ska kunna väljas till och från med sammanhang och historik bevarade.
-- Kodförståelse är central. Förklaringar, granskning och verifiering ska gå att följa till verklig kod och rätt revision; en agentberättelse är inte evidens.
-- DSpatch är både arbetsverktyg och experimentmiljö. Bygg små användbara inkrement och låt faktisk användning styra nästa steg.
-- Börja med en minimal interaktiv chatt och låt Etapp 0 omfatta verkliga avgränsade kodändringar, en vanlig fullständig textdiff och körning av relevant bygge eller test. Håll leverantörsanrop skilda från gränssnitt och sparade data. En avancerad kodvy, egen editor eller Maestro är inte en förutsättning för första nyttan.
-- Använd det valda teknikspåret TypeScript, React och Electron enligt [VISION.md, avsnitt 9.1](docs/VISION.md#91-valt-teknikspår-och-plattformar). Windows och Linux är målplattformar; bygg och prova först på Windows. Håll plattformsspecifika delar avskilda och eftersträva samma layout, styling och arbetsflöden. Linuxprov krävs inte i Etapp 0 och får inte anges som genomförda utan evidens.
-- Börja utveckling och testning med Cursor på Niclas hemmadator. VS Code/Copilot ska fortsatt stödjas i målbilden: beakta kompatibiliteten i teknikvalen och håll Cursor-specifika delar avskilda. Implementation och provkörning med VS Code/Copilot krävs inte i Etapp 0; dokumentera kvarstående prov utan att kalla kompatibiliteten verifierad.
-- Maestro är ett internt arbetsnamn. Referensloopen är ett exempel, och framtida arbetsflöden ska kunna skilja sig från den.
+<a id="läs-rätt-underlag"></a>
 
-## Genomför en avgränsad uppgift
+## Read the right material
 
-- Kontrollera befintliga ändringar och respektera andras arbete. När uppgift, beroenden och mandat är klarlagda: sätt den valda uppgiften eller deluppgiften till `In Progress`, ange aktuellt fokus och bekräfta att uppdateringen sparats **före** planeringsarbete, research, teknikprov, implementation eller specialistanrop. Följ [startordningen i BACKLOG.md](BACKLOG.md#status-och-återupptagning). Ange uppgifts-ID, avsett resultat och en kort plan innan större kodändringar. Genomförandet följer användarens givna mandat.
-- Använd Backlogs CLI eller webbgränssnitt för uppgiftsändringar när verktyget finns. Läs `backlog instructions overview` och relevant `--help` vid behov. Verktygets generella arbetsflödesråd ska anpassas till DSpatchs instruktioner och användarens mandat.
-- Om Backlog inte är tillgängligt kan uppgiftsfilerna uppdateras försiktigt som Markdown. Bevara ID, YAML-fält och sektionsmarkörer; kontrollera formatet efteråt. Planering ska kunna fortsätta utan MCP eller externa projektsystem.
-- Bevara beslut, försök och relevanta resultat i uppgiften. Vid avbrott: lämna senaste verifierade läge, kvarstående problem och ett konkret nästa steg. Ett okänt utfall ska klarläggas innan åtgärden upprepas.
-- Presentera frågor och beslutsunderlag som kopierbar Markdown i den vanliga chatrapporten. Använd separata frågerutor bara om Niclas uttryckligen ber om dem. Samla frågor som kan vänta till nästa iteration och ange rekommendation, när svaret behövs och vilket arbete som kan fortsätta inom mandatet. En uppskjuten fråga eller uteblivet svar innebär inget godkännande. Följ loopens rapporteringsregler när ett loop-pass körs.
-- Bevara användarens befintliga ändringar. Knyt diffar och körresultat till verkligt filinnehåll och identifierade ögonblicksbilder, även för ännu ej committad kod. Avbrott och omstart får inte tyst återställa filer, återapplicera ändringar eller dubbelstarta kommandon.
-- Kontrollera relevanta beteenden med rimlig omfattning. Rapportera vad som ändrades, varför, testad revision eller ögonblicksbild, körda kontroller och vad som återstår. Skilj leverantörsdokumentation från faktiskt provad funktion; saknade mätvärden är okända, inte noll.
-- Sätt inte UX-kriterier som kräver Niclas provkörning till godkända på grundval av agenttester. Använd `Review` när ett granskningsbart resultat väntar på bedömning och följ statusreglerna i BACKLOG.md.
+1. Read [VISION.md](docs/VISION.md) when starting work on the project. It is the governing source; sections 1–3, 8 and 14–15 describe product direction and initial scope.
+2. Read [BACKLOG.md](BACKLOG.md) for development direction and workflow.
+3. Read the current task in `backlog/tasks/`, its dependencies and relevant vision sections. When continuing, read changed and task-relevant material; do not routinely reread the entire history.
+4. When running or changing the development loop, read [DEVELOPMENT_LOOP.md](docs/DEVELOPMENT_LOOP.md). The coordinator entry point is `.cursor/skills/dspatch-loop/SKILL.md`; the five specialists are in `.cursor/agents/`.
 
-## Agentloopen under utvecklingen
+Niclas's explicit decisions govern the vision. Distinguish agreed principles from technical proposals and open questions in VISION.md. Do not change the vision to fit an implementation; document a proposed departure and its rationale. Routine, reversible choices within the agreed task need no new approval. Record durable decisions and changes of direction in the repository.
 
-En extern agentloop som hjälper oss bygga DSpatch är skild från Maestro-funktionen vi senare bygger in i produkten. Första utkastet har koordinator i huvudchatten och fem specialister: Backlog Planner, Researcher, Implementer, Verifier och Reviewer. Alla specialistanrop går direkt via koordinatorn, sekventiellt och utan vidare delegering. Planner och Researcher används vid behov.
+<a id="bevara-produktens-riktning"></a>
 
-Under ett loop-pass äger koordinatorn ensam backlog, planöversikt och körjournal. Specialister returnerar rapporter och får bara skriva inom sina uttryckliga uppdrag. En ny chatt ska återuppta kända steg och klarlägga oklara utfall före nya anrop. Bevara möjligheten att arbeta interaktivt genom hela utvecklingen. DSP-7 provar samarbete och planeringskvalitet i Cursor innan DSP-1 genomförs med loopen.
+## Preserve the product direction
+
+- Simplicity with full capability: common actions must be visible and understandable; shortcuts are optional.
+- Human-interactive work is a full operating mode for the entire project for as long as the user wants. Autonomy can be enabled or disabled while preserving context and history.
+- Code understanding is central. Explanations, review and verification must be traceable to real code and the correct revision; an agent narrative is not evidence.
+- DSpatch is both a working tool and an environment for experimenting with development methods. Build small useful increments and let actual use guide the next step.
+- Start with minimal interactive chat. Phase 0 includes real, bounded code changes, a normal complete text diff and execution of a relevant build or test. Separate provider calls from the UI and persisted data. An advanced code view, custom editor or Maestro is not required for initial value.
+- Use the selected TypeScript, React and Electron stack in [VISION.md, section 9.1](docs/VISION.md#91-selected-stack-and-platforms). Windows and Linux are target platforms; build and test on Windows first. Isolate platform-specific parts and aim for consistent layout, styling and workflows. Linux tests are not required in Phase 0 and must not be reported as performed without evidence.
+- Start development and testing with Cursor on Niclas's home computer. VS Code/Copilot remains in the vision: consider compatibility in technical decisions and isolate Cursor-specific parts. Implementation and testing with VS Code/Copilot are not required in Phase 0; document outstanding tests without calling compatibility verified.
+- Maestro is an internal working name. The reference loop is an example; future workflows may differ.
+- Preserve the current colour palette as the visual starting point approved by Niclas. Further UX acceptance depends on the actual workflow and is not implied by approval of the colours.
+
+<a id="genomför-en-avgränsad-uppgift"></a>
+
+## Complete a bounded task
+
+- Check existing changes and respect other work. Once the task, dependencies and mandate are clear, set the selected task or subtask to `In Progress`, record its current focus and confirm that the update was saved **before** planning, research, technical probes, implementation or specialist calls. Follow the [start order in BACKLOG.md](BACKLOG.md#status-and-recovery). State the task ID, intended result and a short plan before substantial code changes. Execution follows the user's mandate.
+- Use Backlog's CLI or web interface for task changes when available. Read `backlog instructions overview` and relevant `--help` when needed. Adapt the tool's general workflow guidance to DSpatch's instructions and the user's mandate.
+- If Backlog is unavailable, carefully update task files as Markdown. Preserve IDs, YAML fields and section markers; check the format afterwards. Planning must remain possible without MCP or external project systems.
+- Preserve decisions, attempts and relevant results in the task. On interruption, record the latest verified state, remaining problems and a concrete next step. Resolve an unknown outcome before repeating the action.
+- Present questions and decision material as copyable Markdown in the normal chat report. Use separate question forms only when Niclas explicitly requests them. Collect questions that can wait until the next iteration, stating the recommendation, when an answer is needed and what can continue within the mandate. Deferral or silence is not approval. Follow the loop's reporting rules during a loop run.
+- Preserve the user's existing changes. Bind diffs and execution results to actual file content and identified snapshots, including uncommitted code. Cancellation and restart must not silently reset files, reapply changes or launch commands twice.
+- Check relevant behaviour with proportionate scope. Report what changed, why, the tested revision or snapshot, checks performed and remaining work. Distinguish provider documentation from observed functionality; missing measurements are unknown, not zero.
+- Do not mark UX criteria requiring Niclas's testing as accepted based on agent tests. Use `Review` when a reviewable result awaits assessment and follow BACKLOG.md's status rules.
+
+<a id="agentloopen-under-utvecklingen"></a>
+
+## The development agent loop
+
+The external agent loop helping us build DSpatch is separate from the Maestro feature we will later build into the product. The initial draft has a coordinator in the main chat and five specialists: Backlog Planner, Researcher, Implementer, Verifier and Reviewer. All specialist calls go directly through the coordinator, sequentially and without further delegation. Planner and Researcher are used when needed.
+
+During a loop run, the coordinator alone owns the backlog, plan overview and run journal. Specialists return reports and may write only within their explicit assignments. A new chat must resume known steps and reconcile unclear outcomes before new calls. Preserve the option to work interactively throughout development. DSP-7 tests collaboration and planning quality in Cursor before DSP-1 is executed through the loop.

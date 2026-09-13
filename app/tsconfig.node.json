@@ -1,8 +1,8 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    // Node18-läget ger CommonJS-utmatning eftersom package.json saknar "type".
-    // Huvudprocessen och preload buntas inte; de ska lösa node_modules normalt.
+    // Node18 mode produces CommonJS output because package.json has no "type".
+    // The main process and preload are not bundled; they resolve node_modules normally.
     "module": "node18",
     "lib": ["ES2023"],
     "types": ["node"],
