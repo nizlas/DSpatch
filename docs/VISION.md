@@ -2,7 +2,9 @@
 
 Vision och styrdokument för agentisk programutveckling
 
-Niclas Danielsson | 13 september 2026 | Version 1.6
+Niclas Danielsson | 13 september 2026 | Version 1.7
+
+Ändring i version 1.7: Etapp 0 omfattar verkliga avgränsade kodändringar, vanlig fullständig textdiff och körning av relevant bygge eller test. Efter DSP-6 ska hela detta arbetsflöde vara provat med Niclas, inklusive avbrott, felåterhämtning och fortsatt arbete efter omstart.
 
 Ändring i version 1.6: Cursor prioriteras för första integrationen och testningen på hemmadatorn. VS Code/Copilot kvarstår i målbilden; teknikvalen ska möjliggöra stödet, medan implementation och provkörning kommer senare. Leverantörsuppgifternas tidigare kontrolltidpunkt framgår i avsnitt 17.
 
@@ -45,6 +47,7 @@ DSpatch är det valda produktnamnet i projektet. DS står för Danielssons Studi
 | Egen editor | Inriktning | Bygg en egen avgränsad kodvy och editor utan Monaco som grund. |
 | Agentleverantörer | Målbild | Cursor och Copilot, med fortsatt stöd för arbete med VS Code. |
 | Första integration och testning | Beslut 13 september 2026 | Cursor på Niclas hemmadator. VS Code/Copilot beaktas i teknikvalen men behöver inte implementeras eller provköras i Etapp 0. |
+| Första milstolpen | Beslut 13 september 2026 | Interaktiv chatt, verklig kodändring, fullständig textdiff och bygge/test, med avbrott, sparad historik och manuell provkörning. |
 | Teknik och plattform | Öppet | GUI, programmeringsspråk, datalagring och första målplattform väljs senare. |
 
 ### Vem miljön byggs för
@@ -387,7 +390,7 @@ Cursor CLI stöder dessutom ACP, Agent Client Protocol, för egna klienter och e
 
 ### Föreslagen användning i DSpatch
 
-Första inkrementet är en minimal interaktiv chatt med Cursor som första agentleverantör, eftersom Niclas redan arbetar med Cursor hemma. Välj anslutningsväg i teknikprovet och verifiera den med hans faktiska konto och hemmadator. Filändring, testkörning och förbrukningsmätning tillkommer stegvis när motsvarande funktion byggs.
+Första inkrementet är en minimal interaktiv chatt med Cursor som första agentleverantör, eftersom Niclas redan arbetar med Cursor hemma. Välj anslutningsväg i teknikprovet och verifiera den med hans faktiska konto och hemmadator. Filändring, en vanlig fullständig textdiff och körning av relevant bygge eller test ingår redan i Etapp 0. Förbrukningsmätning byggs vidare när tillförlitliga värden finns och motsvarande funktion prioriteras.
 
 VS Code och Copilot ska fortsatt stödjas i målbilden. Håll leverantörsspecifika anrop och sessionsdata bakom en tunn adapter och undvik att gemensam gränssnittslogik, projektdata eller bygginstruktioner kräver Cursors interna tillstånd. Teknikvalen ska bedömas med framtida VS Code/Copilot-stöd i åtanke, men den integrationen behöver inte implementeras eller provköras i Etapp 0. Dokumentera antaganden, kända hinder och återstående kompatibilitetsprov; förenlig arkitektur är inte detsamma som verifierad funktion.
 
@@ -491,13 +494,19 @@ Ett testresultat ska ange kommando, miljö, exitkod och den revision eller ögon
 
 **Utveckla DSpatch inkrementellt med nytta från första användbara steget.** Början kan vara en minimal interaktiv chattintegration för verkligt projektarbete. En färdig editor, komplett kostnadsredovisning eller agentorkestrator ska inte vara förutsättningar. Använd verktyget under dess egen utveckling och låt erfarenheten styra ordningen nedan.
 
-### Etapp 0 En minimal interaktiv chatt
+### Etapp 0 Från interaktiv chatt till en verklig kodändring
 
-Anslut Cursor som första agentleverantör till en enkel chatt med vald projektmapp, strömmande svar, följdfrågor, avbrott och begriplig felstatus. Spara konversationen så att resonemang kan fortsätta senare. Nyttan är att kunna diskutera och undersöka en verklig projektfråga direkt i DSpatch. Återupptagning får inte antyda att en avslutad agentkörning fortfarande pågår.
+Anslut Cursor som första agentleverantör till en enkel chatt med valt repo, strömmande svar och följdfrågor. Bygg i små körbara delsteg så att användaren kan prova chatten tidigt. Den färdiga milstolpen ska också kunna genomföra en avgränsad kodändring, visa berörda filer och hela den vanliga textdiffen samt köra ett relevant bygge eller test. Nyttan är att kunna använda DSpatch för en liten verklig utvecklingsuppgift från uppdrag till granskat och provat resultat.
+
+Gör körkommandot och arbetskatalogen synliga och redigerbara i gränssnittet. Visa utmatning, exitkod och vilken kodversion som kördes. Knyt diff och resultat till verkligt filinnehåll och identifierade ögonblicksbilder, även för ännu ej committade och nya filer. Tidigare manuella ändringar ska bevaras och skiljas från agentens ändringar. Ny kod ska inte automatiskt ärva ett tidigare testresultat.
+
+Avbrott, begriplig felstatus och sparad historik ingår. Bevara konversation, granskade ändringar och körresultat efter omstart. Återupptagning får inte antyda att en avslutad agentkörning fortfarande pågår eller automatiskt upprepa filändringar och kommandon. En skrivande agentkörning eller ett bygge/test åt gången i arbetskopian räcker initialt.
+
+DSP-1–6 konkretiserar etappen i utvecklingsplanen. Efter DSP-6 ska Niclas själv ha provat hela flödet, inklusive fortsatt arbete efter omstart. En avancerad kodvy, egen editor, autonom loop, automatisk commit, push och PR-hantering krävs inte för denna milstolpe.
 
 ### Etapp 1 Följ en uppgift och dess förändringar
 
-Knyt chatten till en uppgift och en körning. Visa verktygsaktivitet, berörda filer och fullständig diff för en bestämd revision. Lägg till begripliga kör- och teståtgärder när exekvering införs. Redovisa förbrukning när adaptern ger tillförlitliga värden. Nyttan är att kunna förstå och granska en faktisk agentändring med dess underlag.
+Bygg vidare på Etapp 0:s fungerande flöde för kodändring, diff och bygge/test. Samla mål, flera körningar, omtag, verktygsaktivitet, ändringsversioner och verifieringsresultat i en tydlig uppgiftsvy och historik. Redovisa förbrukning när adaptern ger tillförlitliga värden. Nyttan är att kunna överblicka ett längre arbete och jämföra dess försök utan att leta genom hela chatten.
 
 ### Etapp 2 Fördjupa kodförståelse och samarbete
 
@@ -518,6 +527,12 @@ Håll leverantörsanrop utanför gränssnittets logik och skilj konversation fr�
 Enkelhet, återhämtning och begriplighet ska prövas i varje inkrement. Planera nästa steg utifrån nyttan och lärandet i det föregående. Tidigare grova tidsuppskattningar omfattade mer än den minimala chatten; omfattning och tidsplan ska omprövas efter varje användbart steg.
 
 ## 15 Kriterier och öppna beslut
+
+### Kriterier för första milstolpen
+
+Etapp 0 kräver att användaren kan göra en verklig kodändring via chatten, granska berörda filer och hela textdiffen och köra relevant bygge eller test med utmatning, exitkod och rätt kodreferens. Avbrott och omstart ska bevara arbetet, och Niclas ska bedöma det sammanhängande flödet i faktisk användning. Detaljerade kriterier och verifieringsunderlag följs i DSP-1–6.
+
+Kriterierna nedan införs i takt med respektive funktion. Första milstolpen omfattar grundläggande diff, körstatus och enkelhet. Separat uppgiftsvy, beständiga granskningskommentarer, egen editor och full förbrukningsredovisning utvecklas senare.
 
 ### Kriterier när kodgranskning har införts
 
@@ -546,7 +561,7 @@ Två parallella skrivande agenter ska kunna arbeta utan att skriva över varandr
 
 ### Hur produktnyttan ska bedömas
 
-Första chatten är användbar när en verklig projektfråga kan diskuteras, avbrytas och följas upp med sparad historik. När kodvyerna införs prövas förståelse enligt avsnitt 3.1 och kriterierna ovan. Följ felupptäckt, omtag och förbrukning. Bedöm också vad användningen lär oss om arbetssättet; färre manuella ingripanden eller lägre tokenförbrukning visar inte ensamt högre nytta.
+Den första chatten kan ge tidig nytta genom dialog, men första milstolpen bedöms mot hela förloppet: formulera en liten uppgift, ändra kod, granska diff, köra bygge eller test och fortsätta arbetet efter omstart. Niclas egen provkörning avgör om det fungerar i praktiken. Djupare kodförståelse enligt avsnitt 3.1 utvecklas och prövas i senare inkrement. Följ felupptäckt, omtag och förbrukning. Bedöm också vad användningen lär oss om arbetssättet; färre manuella ingripanden eller lägre tokenförbrukning visar inte ensamt högre nytta.
 
 Prioritera förbättringar som ger konkret nytta eller prövar en tydlig hypotes om arbetssättet. Behåll, ändra eller ta bort funktioner utifrån erfarenhet. Enkelhet ska bedömas i varje inkrement, med fortsatt möjlighet till fördjupning. Hög autonomi ska kunna kombineras med hög begriplighet.
 

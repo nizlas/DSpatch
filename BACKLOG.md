@@ -1,33 +1,35 @@
 # DSpatch utvecklingsplan
 
-Första förslag, 13 september 2026. Underlag: [VISION.md version 1.6](docs/VISION.md). Uppgifterna är planerade och ännu inte genomförda. Nyttan och lärandet i varje inkrement får ändra denna plan; Cursor är vald för första integrationen och testningen på Niclas hemmadator, medan GUI-teknik och konkret anslutningsväg återstår att välja.
+Första förslag, 13 september 2026. Underlag: [VISION.md version 1.7](docs/VISION.md). Uppgifterna är planerade och ännu inte genomförda. Nyttan och lärandet i varje inkrement får ändra denna plan; Cursor är vald för första integrationen och testningen på Niclas hemmadator, medan GUI-teknik och konkret anslutningsväg återstår att välja.
 
 ## Nästa konkreta steg
 
-Börja med **DSP-1**: verifiera en första Cursor-anslutning och välj den minsta tekniska grund som kan ge en användbar chatt. När chatten i **DSP-2** går att köra, förbered **DSP-5** så att Niclas kan prova den tidigt. Felåterhämtning och historik kan utvecklas medan provkörningen planeras.
+Börja med **DSP-1**: verifiera vägen via Cursor till agentsvar, faktisk filändring och bygge eller test. **DSP-2** bygger arbetsytan i små körbara delsteg: chatt, kodändring med diff och körkommando. Niclas kan prova delresultaten tidigt; **DSP-5** bedömer sedan hela ändringsflödet utan att behöva vänta på fördjupad felåterhämtning i DSP-3 och sparad historik i DSP-4.
 
 VS Code/Copilot finns kvar i målbilden. Teknikvalen ska ge utrymme för det stödet, men implementation och provkörning med VS Code/Copilot krävs inte i Etapp 0. Kvarstående kompatibilitetsprov dokumenteras i DSP-1.
 
 Målet är en arbetsyta som Niclas vill använda för en verklig utvecklingsfråga. Planeringsverktyget ska ge honom effektivitet och tydlig överblick; externa dashboards, Jira och demovärde är inga krav för detta projekt.
 
-## Etapp 0 – En chatt att använda i verkligt projektarbete
+## Etapp 0 – Gör en verklig kodändring med DSpatch
 
 [Milstolpens mål och bedömning](backlog/milestones/m-0%20-%20forsta-anvandbara-chatten.md)
 
 | Uppgift | Steg | Nytta efter steget | Beror på |
 | --- | --- | --- | --- |
-| [DSP-1](backlog/tasks/dsp-1%20-%20Valj-teknik-och-verifiera-agentanslutningen.md) | Välj teknik och verifiera första Cursor-anslutningen | En provad väg från eget program till ett riktigt agentsvar via Cursor. | Inga |
-| [DSP-2](backlog/tasks/dsp-2%20-%20Oppna-projekt-och-ha-en-forsta-konversation.md) | Öppna ett projekt och ha en första konversation | En liten körbar arbetsyta att börja diskutera verkliga projektfrågor i. | DSP-1 |
-| [DSP-3](backlog/tasks/dsp-3%20-%20Avbryt-och-aterhamta-en-chattkorning.md) | Avbryt och återhämta en chattkörning begripligt | Tappad anslutning och avbrott lämnar ett begripligt läge att arbeta vidare från. | DSP-2 |
-| [DSP-4](backlog/tasks/dsp-4%20-%20Spara-och-fortsatt-en-konversation.md) | Spara och fortsätt projektets konversation efter omstart | Resonemanget och projektkopplingen finns kvar nästa gång programmet öppnas. | DSP-2 |
-| [DSP-5](backlog/tasks/dsp-5%20-%20Provkor-forsta-chatten-med-Niclas.md) | Provkör första chatten med Niclas och fånga friktionen | Verklig användning avgör vad som hjälper, stör eller saknas. | DSP-2 |
-| [DSP-6](backlog/tasks/dsp-6%20-%20Forbattra-friktionen-och-folj-upp-chattflodet.md) | Förbättra största friktionen och följ upp hela chattflödet | Första milstolpen bedöms mot ett helt arbetsförlopp och faktisk nytta. | DSP-3, DSP-4, DSP-5 |
+| [DSP-1](backlog/tasks/dsp-1%20-%20Valj-teknik-och-verifiera-agentanslutningen.md) | Välj teknik och verifiera första Cursor-anslutningen | En provad väg till agentsvar, filändring och körresultat via Cursor. | Inga |
+| [DSP-2](backlog/tasks/dsp-2%20-%20Oppna-projekt-och-ha-en-forsta-konversation.md) | Öppna ett repo, ändra kod och granska resultatet | En körbar arbetsyta för en liten kodändring, vanlig diff och bygge/test. | DSP-1 |
+| [DSP-3](backlog/tasks/dsp-3%20-%20Avbryt-och-aterhamta-en-chattkorning.md) | Avbryt och återhämta agent- och testkörningar begripligt | Tappad anslutning och avbrott lämnar ett begripligt läge med arbetet bevarat. | DSP-2 |
+| [DSP-4](backlog/tasks/dsp-4%20-%20Spara-och-fortsatt-en-konversation.md) | Spara konversation, ändringar och körresultat efter omstart | Resonemang, granskad diff och körresultat finns kvar nästa gång programmet öppnas. | DSP-2 |
+| [DSP-5](backlog/tasks/dsp-5%20-%20Provkor-forsta-chatten-med-Niclas.md) | Provkör kodändringsflödet med Niclas och fånga friktionen | Verklig användning av hela ändringsflödet avgör vad som hjälper, stör eller saknas. | DSP-2 |
+| [DSP-6](backlog/tasks/dsp-6%20-%20Forbattra-friktionen-och-folj-upp-chattflodet.md) | Förbättra största friktionen och följ upp hela utvecklingsflödet | Första milstolpen bedöms från uppdrag till kodändring och test, inklusive återhämtning. | DSP-3, DSP-4, DSP-5 |
 
 Tabellen är en läsöversikt över omfattning och ordning. Uppgiftsfilerna är källan för aktuell status, detaljer, kriterier och resultat. Uppdatera översikten när riktning eller omfattning ändras; håll inte en separat statusbokföring här. Beroendena anger vilket underlag som behövs och innebär inte automatiskt parallella skrivande agenter.
 
 ## Vad som avgör om vi är klara
 
-En användare ska kunna välja projekt, diskutera en riktig fråga, få strömmande svar, ställa följdfrågor, avbryta och fortsätta efter omstart. Fel ska ge en begriplig väg vidare. Hela milstolpen kräver både teknisk verifiering och Niclas egen bedömning. Hans första provkörning behöver däremot inte vänta på alla funktioner.
+Efter **DSP-6** ska Niclas kunna öppna ett repo, diskutera en liten uppgift, låta agenten göra en verklig kodändring, granska berörda filer och hela textdiffen samt köra relevant bygge eller test och se resultatet för rätt kodversion. Han ska kunna följa upp, be om ett omtag, avbryta och fortsätta efter omstart. Fel ska ge en begriplig väg vidare; tidigare ändringar och körresultat ska bevaras utan automatisk upprepning.
+
+Hela milstolpen kräver både teknisk verifiering och Niclas egen bedömning av detta utvecklingsflöde. Hans första återkoppling kan börja med den enkla chatten. En avancerad diffvy, egen editor, autonom loop, automatisk commit eller push behövs inte för att uppnå milstolpen.
 
 Knyt återkoppling, tester och granskning till den version som faktiskt kördes. För uppgifter som uttryckligen kräver Niclas provkörning kan agenten förbereda och verifiera tekniken, men mänsklig acceptans förblir öppen tills den har lämnats. Annat avgränsat arbete kan fortsätta inom givet mandat medan vi väntar.
 
@@ -59,7 +61,7 @@ Konfigurationen läser den aktuella arbetskopian utan automatiska fjärranrop el
 
 ## Efter första milstolpen
 
-Etapp 1–4 i [styrdokumentet](docs/VISION.md#14-etapper-för-genomförande) är riktningen: först uppgifter och faktiska ändringar, därefter djupare kodförståelse, Maestro och fler arbetsformer. Detaljera nästa inkrement efter erfarenheterna från Etapp 0. En avancerad editor, komplett agentnätverk eller alla integrationer ska inte behövas för att få nytta av första versionen.
+Etapp 1–4 i [styrdokumentet](docs/VISION.md#14-etapper-för-genomförande) är riktningen: först tydligare uppgifter och körhistorik ovanpå det fungerande ändringsflödet, därefter djupare kodförståelse, Maestro och fler arbetsformer. Detaljera nästa inkrement efter erfarenheterna från Etapp 0. En avancerad editor, komplett agentnätverk eller alla integrationer ska inte behövas för att få nytta av första versionen.
 
 ## Format och verifieringsläge
 

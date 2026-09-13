@@ -1,6 +1,6 @@
 ---
 id: "DSP-4"
-title: "Spara och fortsätt projektets konversation efter omstart"
+title: "Spara konversation, ändringar och körresultat efter omstart"
 status: "To Do"
 assignee: []
 created_date: "2026-09-13"
@@ -16,17 +16,19 @@ ordinal: 4000
 <!-- SECTION:DESCRIPTION:BEGIN -->
 ### Varför och önskat resultat
 
-En användbar projektchatt måste kunna fortsätta över flera sessioner. Niclas ska kunna stänga DSpatch, öppna det igen och hitta rätt projekt och konversation utan att klistra in historiken för hand.
+Niclas ska kunna stänga DSpatch, öppna det igen och fortsätta en utvecklingsuppgift med projekt, resonemang, granskade ändringar och körresultat kvar. Sparad historik ska visa vad som verkligen hänt och vilken kod resultaten gäller.
 
 ### Avgränsning och föreslagen väg
 
-Välj enkel lokal lagring för konversations-ID, projektkoppling, meddelanden och den körinformation som behövs nu. Versionsmärk formatet och dokumentera var data sparas samt hur en konversation exporteras. Håll sparad historik skild från en aktiv leverantörsprocess; en appomstart får inte starta om ett gammalt uppdrag automatiskt.
+Välj enkel lokal lagring för konversations-ID, projektkoppling, meddelanden, körnings- och försök-ID:n samt referenser till ändrings- och testversioner. Bevara den granskade diffen eller underlaget för att återskapa exakt den diffen, tillsammans med filförteckning, körkommando, arbetskatalog, utmatning, exitkod och status. Versionsmärk formatet och dokumentera lagringsplats och export.
+
+Håll sparad historik skild från aktiva processer och arbetskopians nuvarande innehåll. En appomstart får inte starta om uppdrag eller kommandon, återapplicera en patch eller skriva tillbaka en historisk filversion automatiskt. Om repot har ändrats under tiden: visa historiska resultat som historiska och gör tidigare verifiering inaktuell för det nya innehållet.
 
 Använd leverantörens återupptagning om den fungerar i den valda anslutningen. Om en ny session måste skapas: visa det och beskriv vilken sparad kontext som faktiskt återförs. En synlig gammal chatt är inte bevis för att modellen har fått samma sammanhang. Lagra inga autentiseringshemligheter i konversationsfiler eller Git.
 
 ### Verifiering
 
-Stäng efter en vanlig följdfråga, öppna igen och fortsätt resonemanget. Prova även appavbrott mitt i ett svar samt skadat eller äldre sparformat. Bevara läsbart underlag och ge en tydlig återhämtningsväg vid fel. Synka med DSP-3:s körstatus om båda stegen har ändrat den.
+Gör en kodändring och kör ett test, stäng programmet, öppna igen och följ upp resultatet. Prova även appavbrott under en körning, externa filändringar medan programmet är stängt samt skadat eller äldre sparformat. Bevara läsbart underlag och ge en tydlig återhämtningsväg vid fel. Synka med DSP-3:s körstatus; pågående processer med okänt utfall ska avstämmas innan arbetet fortsätter.
 
 ### Underlag
 
@@ -38,7 +40,8 @@ Stäng efter en vanlig följdfråga, öppna igen och fortsätt resonemanget. Pro
 <!-- AC:BEGIN -->
 - [ ] #1 Projektkoppling och konversation med meddelandeordning finns kvar efter en normal omstart.
 - [ ] #2 En följdfråga efter omstart får relevant sparad kontext; eventuell ny leverantörssession och dess begränsningar framgår.
-- [ ] #3 Ett avbrutet pågående svar återställs som avbrutet eller oklart tills det avstämts; tidigare arbete dubbelstartas inte.
+- [ ] #3 En avbruten eller okänd körning avstäms innan fortsatt arbete. Tidigare jobb, filändringar och kommandon upprepas inte automatiskt vid omstart.
 - [ ] #4 Lagringen har formatversion och dokumenterad export; hemligheter följer inte med sparad historik eller Git.
-- [ ] #5 Omstart, avbrott och ett oläsbart eller ej stött sparformat har kontrollerats med resultat knutna till testad revision.
+- [ ] #5 Omstart, avbrott, externa filändringar och ett oläsbart eller ej stött sparformat har kontrollerats med resultat knutna till testad version.
+- [ ] #6 Den tidigare granskade diffen och körresultatet med kommando, arbetskatalog, utmatning, exitkod och kodreferens kan läsas efter omstart. Ändrad arbetskopia skrivs inte över, och gamla resultat presenteras inte som verifiering av ny kod.
 <!-- AC:END -->
