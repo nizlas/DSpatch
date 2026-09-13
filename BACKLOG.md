@@ -1,14 +1,14 @@
 # DSpatch utvecklingsplan
 
-Första förslag, 13 september 2026. Underlag: [VISION.md version 1.7](docs/VISION.md). Uppgifterna är planerade och ännu inte genomförda. Nyttan och lärandet i varje inkrement får ändra denna plan; Cursor är vald för första integrationen och testningen på Niclas hemmadator, medan GUI-teknik och konkret anslutningsväg återstår att välja.
+Utvecklingsplan, uppdaterad 13 september 2026. Underlag: [VISION.md version 1.8](docs/VISION.md). Uppgifterna är planerade och ännu inte genomförda. TypeScript, React och Electron är valt teknikspår, med Windows och Linux i målbilden. Första implementation och provkörning sker med Cursor på Niclas Windowsdator. DSP-1 verifierar teknikspåret och väljer och provar den konkreta Cursor-anslutningen; se [beslut och motiv](docs/VISION.md#91-valt-teknikspår-och-plattformar). Nyttan och lärandet i varje inkrement får ändra planen.
 
 ## Nästa konkreta steg
 
 Börja med **DSP-7**, ett förberedelsesteg som provar [utvecklingsloopen](docs/DEVELOPMENT_LOOP.md) i Cursor: verkliga specialistanrop, planeringskvalitet och återupptagning. ID:t är senare tilldelat men uppgiften ligger först i arbetsordningen.
 
-Därefter kommer **DSP-1**: verifiera vägen via Cursor till agentsvar, faktisk filändring och bygge eller test. **DSP-2** bygger arbetsytan i små körbara delsteg: chatt, kodändring med diff och körkommando. Niclas kan prova delresultaten tidigt; **DSP-5** bedömer sedan hela ändringsflödet utan att behöva vänta på fördjupad felåterhämtning i DSP-3 och sparad historik i DSP-4.
+Därefter kommer **DSP-1**: verifiera det valda teknikspåret och vägen via Cursor till agentsvar, faktisk filändring och bygge eller test, inklusive ett minimalt paketerat Windowsprov. **DSP-2** bygger arbetsytan i små körbara delsteg: chatt, kodändring med diff och körkommando. Niclas kan prova delresultaten tidigt; **DSP-5** bedömer sedan hela ändringsflödet utan att behöva vänta på fördjupad felåterhämtning i DSP-3 och sparad historik i DSP-4.
 
-VS Code/Copilot finns kvar i målbilden. Teknikvalen ska ge utrymme för det stödet, men implementation och provkörning med VS Code/Copilot krävs inte i Etapp 0. Kvarstående kompatibilitetsprov dokumenteras i DSP-1.
+Linuxstödet införs och verifieras stegvis, med enhetlig arbetsyta som mål; Linuxprov är inget krav för Etapp 0. VS Code/Copilot finns kvar i målbilden. Teknikvalen ska ge utrymme för det stödet, men implementation och provkörning med VS Code/Copilot krävs inte i Etapp 0. Kvarstående kompatibilitetsprov dokumenteras i DSP-1.
 
 Målet är en arbetsyta som Niclas vill använda för en verklig utvecklingsfråga. Planeringsverktyget ska ge honom effektivitet och tydlig överblick; externa dashboards, Jira och demovärde är inga krav för detta projekt.
 
@@ -19,7 +19,7 @@ Målet är en arbetsyta som Niclas vill använda för en verklig utvecklingsfrå
 | Uppgift | Steg | Nytta efter steget | Beror på |
 | --- | --- | --- | --- |
 | [DSP-7](backlog/tasks/dsp-7%20-%20Kalibrera-utvecklingsloopen-i-Cursor.md) | Kalibrera utvecklingsloopen i Cursor | Provad samordning och bedömd planeringskvalitet innan produktarbetet delegeras. | Inga |
-| [DSP-1](backlog/tasks/dsp-1%20-%20Valj-teknik-och-verifiera-agentanslutningen.md) | Välj teknik och verifiera första Cursor-anslutningen | En provad väg till agentsvar, filändring och körresultat via Cursor. | DSP-7 |
+| [DSP-1](backlog/tasks/dsp-1%20-%20Valj-teknik-och-verifiera-agentanslutningen.md) | Verifiera teknikvalet och första Cursor-anslutningen | En provad väg till agentsvar, filändring och körresultat via Cursor. | DSP-7 |
 | [DSP-2](backlog/tasks/dsp-2%20-%20Oppna-projekt-och-ha-en-forsta-konversation.md) | Öppna ett repo, ändra kod och granska resultatet | En körbar arbetsyta för en liten kodändring, vanlig diff och bygge/test. | DSP-1 |
 | [DSP-3](backlog/tasks/dsp-3%20-%20Avbryt-och-aterhamta-en-chattkorning.md) | Avbryt och återhämta agent- och testkörningar begripligt | Tappad anslutning och avbrott lämnar ett begripligt läge med arbetet bevarat. | DSP-2 |
 | [DSP-4](backlog/tasks/dsp-4%20-%20Spara-och-fortsatt-en-konversation.md) | Spara konversation, ändringar och körresultat efter omstart | Resonemang, granskad diff och körresultat finns kvar nästa gång programmet öppnas. | DSP-2 |

@@ -2,7 +2,9 @@
 
 Vision och styrdokument för agentisk programutveckling
 
-Niclas Danielsson | 13 september 2026 | Version 1.7
+Niclas Danielsson | 13 september 2026 | Version 1.8
+
+Ändring i version 1.8: TypeScript, React och Electron är valt teknikspår. Windows och Linux ingår i målbilden med en enhetlig arbetsyta; första implementation och provkörning sker med Cursor på Windows. Motiven, gränserna och kvarstående verifiering beskrivs i avsnitt 9.1.
 
 Ändring i version 1.7: Etapp 0 omfattar verkliga avgränsade kodändringar, vanlig fullständig textdiff och körning av relevant bygge eller test. Efter DSP-6 ska hela detta arbetsflöde vara provat med Niclas, inklusive avbrott, felåterhämtning och fortsatt arbete efter omstart.
 
@@ -48,7 +50,9 @@ DSpatch är det valda produktnamnet i projektet. DS står för Danielssons Studi
 | Agentleverantörer | Målbild | Cursor och Copilot, med fortsatt stöd för arbete med VS Code. |
 | Första integration och testning | Beslut 13 september 2026 | Cursor på Niclas hemmadator. VS Code/Copilot beaktas i teknikvalen men behöver inte implementeras eller provköras i Etapp 0. |
 | Första milstolpen | Beslut 13 september 2026 | Interaktiv chatt, verklig kodändring, fullständig textdiff och bygge/test, med avbrott, sparad historik och manuell provkörning. |
-| Teknik och plattform | Öppet | GUI, programmeringsspråk, datalagring och första målplattform väljs senare. |
+| Teknikspår | Beslut 13 september 2026 | TypeScript, React och Electron för DSpatch. Motiven och verifieringen beskrivs i avsnitt 9.1. |
+| Plattformar | Beslut 13 september 2026 | Windows och Linux i målbilden. Enhetlig arbetsyta eftersträvas; första implementation och provkörning sker på Windows. |
+| Datalagring | Öppet | Lagringsmotor och format väljs i kommande inkrement. |
 
 ### Vem miljön byggs för
 
@@ -131,6 +135,12 @@ Visa vilket värde som faktiskt gäller, om det kommer från projektet eller anv
 #### Fördjupning på användarens villkor
 
 Visa de val som behövs i det aktuella sammanhanget och låt användaren öppna fler detaljer därifrån. Avancerade arbetsflöden, modeller, verktyg och mätvärden ska fortfarande vara åtkomliga. Samma begrepp och projektkontext ska följa med mellan översikt, detaljarbete och autonom iteration. Nya funktioner ska passa in i detta arbetssätt.
+
+#### Visuell kvalitet och responsivitet
+
+Arbetsytan ska kännas modern, sammanhållen och genomarbetad redan i de första användbara inkrementen. Typografi, ikoner, färger, avstånd och kontroller ska vara konsekventa. Windows och Linux ska erbjuda samma centrala layout och arbetsflöden. Anpassning till fönsterstorlek och skärmskalning ska bevara läsbarhet och åtkomst till vanliga handlingar.
+
+Strömmande agentsvar och pågående arbete ska låta användaren fortsätta skriva, scrolla, byta vy och avbryta utan störande hack eller tappat fokus. Teknikvalet är inget bevis för uppnådd kvalitet. Niclas provkörning och mätningar med representativa konversationer och diffar ska styra förbättringarna; Windows provas först och Linux när stödet införs.
 
 #### Föreslaget användbarhetsprov
 
@@ -358,6 +368,20 @@ Arkitekturen är en riktning att växa mot. Första inkrementet behöver bara en
 | Arbetsmiljö | Git, filer, terminalprocesser, byggkommandon och testkörningar. |
 | Beständig lagring | Uppgifter, körningar, revisioner, beslut, förbrukning och granskningshistorik. |
 
+### 9.1 Valt teknikspår och plattformar
+
+**Beslut 13 september 2026: bygg DSpatch med TypeScript, React och Electron, med Windows och Linux i målbilden.** Första implementation och provkörning sker med Cursor på Niclas Windowsdator. Linuxstödet införs och verifieras stegvis; en fungerande Linuxversion är inte ett krav för Etapp 0.
+
+TypeScript är huvudspråk för gränssnitt, projektlogik och leverantörsadaptrar. React med HTML/CSS används för den egna arbetsytan. Electron ger desktopfönster och lokal systemintegration; Node.js används för agentintegrationerna. Valet styr inte språken i de projekt som DSpatch arbetar med.
+
+En enhetlig upplevelse på Windows och Linux är ett centralt motiv. Electron låter oss distribuera samma Chromium-version på båda plattformarna. Gemensamma typsnitt, ikoner och styling ska stödja en konsekvent arbetsyta. Skärmskalning, textåtergivning, fönsterhantering och systemdialoger behöver ändå provas på respektive system. Node/TypeScript passar också de dokumenterade SDK-vägarna för Cursor och Copilot, vars faktiska funktion måste verifieras. [2][3][12]
+
+Tauri övervägdes som alternativ med mindre grundpaket genom systemets webview. Electron valdes främst för kontrollen över renderingsmiljön mellan Windows och Linux. Nackdelen är ett större grundpaket med egen Chromium- och Node-miljö. Ingen prestanda- eller minnesjämförelse har genomförts för DSpatch; antalet tekniker är inte det avgörande motivet. [12][14]
+
+Håll gränssnitt och projektdata fria från direkta leverantörsanrop och plattformsspecifika detaljer. Låt agentkörningar, Git-operationer, byggen och tunga diffberäkningar ske asynkront utanför gränssnittstråden, i bakgrundsprocesser där det behövs. Stora konversationer och diffar ska visas utan att hela innehållet behöver renderas om vid varje uppdatering. [13]
+
+DSP-1 verifierar teknikspåret och den valda Cursor-anslutningen, inklusive ett minimalt paketerat Windowsprov. Exakta beroendeversioner, lagring och senare Linuxpaketering återstår att konkretisera. Teknikspåret kan omprövas vid dokumenterade hinder; bevara projektdata, leverantörsgränser och målbild vid ett sådant byte.
+
 ### Gemensamt integrationskontrakt
 
 Varje leverantörs- och körmiljöadapter bör redovisa sitt stöd för start, strömmande svar, avbrott, återupptagning, modellval, godkännanden och kostnadsrapportering. Arbetsflödet väljer lämplig adapter per steg. Saknat stöd ska framgå, och en gemensam vy får inte antyda att leverantörerna fungerar identiskt.
@@ -496,7 +520,7 @@ Ett testresultat ska ange kommando, miljö, exitkod och den revision eller ögon
 
 ### Etapp 0 Från interaktiv chatt till en verklig kodändring
 
-Anslut Cursor som första agentleverantör till en enkel chatt med valt repo, strömmande svar och följdfrågor. Bygg i små körbara delsteg så att användaren kan prova chatten tidigt. Den färdiga milstolpen ska också kunna genomföra en avgränsad kodändring, visa berörda filer och hela den vanliga textdiffen samt köra ett relevant bygge eller test. Nyttan är att kunna använda DSpatch för en liten verklig utvecklingsuppgift från uppdrag till granskat och provat resultat.
+Använd det valda teknikspåret TypeScript, React och Electron på Windows. Anslut Cursor som första agentleverantör till en enkel chatt med valt repo, strömmande svar och följdfrågor. Bygg i små körbara delsteg så att användaren kan prova chatten tidigt. Den färdiga milstolpen ska också kunna genomföra en avgränsad kodändring, visa berörda filer och hela den vanliga textdiffen samt köra ett relevant bygge eller test. Nyttan är att kunna använda DSpatch för en liten verklig utvecklingsuppgift från uppdrag till granskat och provat resultat.
 
 Gör körkommandot och arbetskatalogen synliga och redigerbara i gränssnittet. Visa utmatning, exitkod och vilken kodversion som kördes. Knyt diff och resultat till verkligt filinnehåll och identifierade ögonblicksbilder, även för ännu ej committade och nya filer. Tidigare manuella ändringar ska bevaras och skiljas från agentens ändringar. Ny kod ska inte automatiskt ärva ett tidigare testresultat.
 
@@ -552,7 +576,7 @@ Två parallella skrivande agenter ska kunna arbeta utan att skriva över varandr
 
 ### Beslut som behöver tas
 
-- Första operativsystemet, GUI-plattformen och språk för editor respektive integrationsprocesser.
+- Exakta beroendeversioner och paketering inom det valda teknikspåret TypeScript, React och Electron; senare Linuxdistributioner och verifieringsmiljöer.
 - Textbuffert, rendering, syntaxanalys och miniminivå för sökning och kodnavigation.
 - Beständig lagring, exportformat och hur mycket leverantörslogg som ska sparas.
 - Konkret anslutningsväg för den första Cursor-adaptern; därefter implementation och verifiering av VS Code/Copilot-stödet när det prioriteras.
@@ -591,7 +615,7 @@ AIDE, Agent Orange, Agent Smith, DSee och Task Manager förekom också som kreat
 
 ## 17 Källor och teknisk verifiering
 
-Leverantörsuppgifterna nedan kontrollerades i samband med diskussionen den 11 september 2026. De styr vilket teknikprov som behövs, men ersätter inte verifiering mot valda versioner och konton. Dokumentets produktarkitektur och etappindelning är projektförslag.
+Underlagen [1]–[11] hör till diskussionen den 11 september 2026. SDK-underlagen [2]–[3] lästes på nytt den 13 september 2026 inför teknikvalet. Desktopunderlagen [12]–[14] tillkom samma dag. Dokumentationen styr vilka prov som behövs, men ersätter inte verifiering mot valda versioner och konton. Beslutstabellen och avsnitt 9.1 anger de valda delarna; övrig produktarkitektur och etappindelning är fortsatt projektförslag.
 
 **[1]** [GitHub Copilot SDK](https://github.com/github/copilot-sdk)
 
@@ -636,6 +660,18 @@ Särskiljningsförmåga och förväxlingsrisk inom liknande varor och tjänster.
 [11] Underlag till agentloopen
 
 Användarens referensdiagram. Figur 1 är en generaliserad version med bibehållna agentroller och kopplingar, beskriven i avsnitt 6.
+
+**[12]** [Electron: introduktion](https://www.electronjs.org/docs/latest/)
+
+Medföljande Chromium och Node.js samt stöd för Windows, Linux och macOS. Läst 13 september 2026.
+
+**[13]** [Electron: processmodell](https://www.electronjs.org/docs/latest/tutorial/process-model) och [prestanda](https://www.electronjs.org/docs/latest/tutorial/performance)
+
+Separata processer och arbete för att hålla gränssnittet responsivt. Lästa 13 september 2026.
+
+**[14]** [Tauri: processmodell](https://v2.tauri.app/concept/process-model/) och [webview-motorer](https://v2.tauri.app/reference/webview-versions/)
+
+Jämförelsealternativ med systemets webview: WebView2 på Windows och WebKitGTK på Linux. Lästa 13 september 2026.
 
 ### Underlag för nästa version
 
