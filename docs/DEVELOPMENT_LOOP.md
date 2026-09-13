@@ -41,7 +41,7 @@ Detta är uppdrag till skillen i chatten, inte ett separat CLI. Om skillen inte 
 | Verifier | [Agent](../.cursor/agents/dspatch-verifier.md) | Oberoende körning och bedömning av teknisk evidens. |
 | Reviewer | [Agent](../.cursor/agents/dspatch-reviewer.md) | Oberoende granskning av plan eller implementation. |
 
-Koordinatorn anropar specialisterna direkt, sekventiellt i förgrunden. Ingen specialist delegerar, inte heller till generiska underagenter. Researcher och Backlog Planner används vid behov, inte som obligatoriska ceremonier inför varje mindre ändring. Reviewer används för substantiella nya planförslag och för levererade implementationer. Koordinatorn ger varje specialist en tydlig överlämning; den ska inte behöva gissa vad som sagts i huvudchatten.
+Koordinatorn anropar specialisterna direkt, sekventiellt i förgrunden. Ingen specialist delegerar, inte heller till generiska underagenter. Det är vår egen policy, inte en plattformsbegränsning: enligt Cursors dokumentation kan subagenter starta barnsubagenter sedan Cursor 2.5. Policyn finns för att hålla anropsstrukturen platt och spårbar, och specialisternas instruktioner upprepar den. Researcher och Backlog Planner används vid behov, inte som obligatoriska ceremonier inför varje mindre ändring. Reviewer används för substantiella nya planförslag och för levererade implementationer. Koordinatorn ger varje specialist en tydlig överlämning; den ska inte behöva gissa vad som sagts i huvudchatten.
 
 ## Ett normalt pass
 
@@ -69,6 +69,8 @@ Använd [HANDOFF.md](loop/HANDOFF.md) för uppdrag och slutsvar. Koordinatorn sp
 Koordinatorn ensam skriver `BACKLOG.md`, uppgiftsstatus, milstolpar och körjournal. Backlog Planner föreslår ändringar. Implementer får skriva uppdragets filer. Verifier får skapa testartefakter och loggar men inte rätta produktkod. Planner, Researcher och Reviewer är konfigurerade som läsande.
 
 Backlog CLI används när det fungerar. Annars kan koordinatorn redigera samma Markdown-filer enligt AGENTS.md. En misslyckad MCP- eller CLI-skrivning följs av läsning av det verkliga utfallet före nytt försök. Inget externt projektsystem är en förutsättning.
+
+Om `backlog` inte hittas i terminalen: kontrollera `PATH` innan du drar slutsatsen att verktyget saknas. En agentterminal kan ha ärvt en inaktuell miljö där `C:\Program Files\nodejs` och `%APPDATA%\npm` fattas, trots att de finns i den sparade PATH. Symtomet blir antingen att kommandot inte känns igen eller, med full sökväg, att `node` inte känns igen. Komplettera PATH i sessionen eller starta om Cursor; installera inte om något utan belägg. Detta inträffade under DSP-7 och är dokumenterat där.
 
 ## Körjournal och återupptagning
 

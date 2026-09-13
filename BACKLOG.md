@@ -68,4 +68,8 @@ Etapp 1–4 i [styrdokumentet](docs/VISION.md#14-etapper-för-genomförande) är
 
 ## Format och verifieringsläge
 
-Backlog-filerna följer projektets dokumenterade konfiguration, uppgiftsformat och milstolpsformat. De är kontrollerade mot [Backlog.mds källkod](https://github.com/MrLesk/Backlog.md/tree/c0ec546a3b519c0c7b83070fe936f6bf49e14357), vars paketversion är 1.52.0. Detta förslag omfattar fil- och innehållskontroller; Backlogs CLI och webbgränssnitt har ännu inte provkörts med DSpatch-planen. Första lokala provet ska bekräfta att alla sju uppgifter, milstolpen och de fem statuskolumnerna visas som avsett.
+Backlog-filerna följer projektets dokumenterade konfiguration, uppgiftsformat och milstolpsformat. De är kontrollerade mot [Backlog.mds källkod](https://github.com/MrLesk/Backlog.md/tree/c0ec546a3b519c0c7b83070fe936f6bf49e14357), vars paketversion är 1.52.0.
+
+Backlog.md 1.52.0 är installerat lokalt och provkört mot DSpatch-planen den 13 september 2026. `backlog task list --plain` visar samtliga sju uppgifter med korrekta AC-räknare, `backlog milestone list --plain` visar `m-0` med rätt antal klara, och `backlog task view DSP-1 --plain` renderar beskrivning, acceptanskriterier och implementationsplan. Niclas har använt webbgränssnittet. Kvarstår oprövat: `backlog board`, som är ett interaktivt TUI, och skrivande CLI-kommandon; de fem statuskolumnerna är därmed inte kontrollerade av en agent.
+
+Uppgiftsfilerna har under DSP-7 även redigerats för hand som Markdown enligt reservrutinen i `AGENTS.md`. CLI:t läser dem utan anmärkning, vilket bekräftar att reservrutinen bevarar formatet.
