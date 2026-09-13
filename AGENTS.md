@@ -22,7 +22,7 @@ Niclas uttryckliga beslut styr målbilden. Skilj beslutade principer från tekni
 
 ## Genomför en avgränsad uppgift
 
-- Kontrollera befintliga ändringar och respektera andras arbete. Ange uppgifts-ID, avsett resultat och en kort plan innan större kodändringar. Genomförandet följer användarens givna mandat.
+- Kontrollera befintliga ändringar och respektera andras arbete. När uppgift, beroenden och mandat är klarlagda: sätt den valda uppgiften eller deluppgiften till `In Progress`, ange aktuellt fokus och bekräfta att uppdateringen sparats **före** planeringsarbete, research, teknikprov, implementation eller specialistanrop. Följ [startordningen i BACKLOG.md](BACKLOG.md#status-och-återupptagning). Ange uppgifts-ID, avsett resultat och en kort plan innan större kodändringar. Genomförandet följer användarens givna mandat.
 - Använd Backlogs CLI eller webbgränssnitt för uppgiftsändringar när verktyget finns. Läs `backlog instructions overview` och relevant `--help` vid behov. Verktygets generella arbetsflödesråd ska anpassas till DSpatchs instruktioner och användarens mandat.
 - Om Backlog inte är tillgängligt kan uppgiftsfilerna uppdateras försiktigt som Markdown. Bevara ID, YAML-fält och sektionsmarkörer; kontrollera formatet efteråt. Planering ska kunna fortsätta utan MCP eller externa projektsystem.
 - Bevara beslut, försök och relevanta resultat i uppgiften. Vid avbrott: lämna senaste verifierade läge, kvarstående problem och ett konkret nästa steg. Ett okänt utfall ska klarläggas innan åtgärden upprepas.
