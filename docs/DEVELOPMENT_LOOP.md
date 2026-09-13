@@ -43,6 +43,12 @@ Detta är uppdrag till skillen i chatten, inte ett separat CLI. Om skillen inte 
 
 Koordinatorn anropar specialisterna direkt, sekventiellt i förgrunden. Ingen specialist delegerar, inte heller till generiska underagenter. Researcher och Backlog Planner används vid behov, inte som obligatoriska ceremonier inför varje mindre ändring. Reviewer används för substantiella nya planförslag och för levererade implementationer. Koordinatorn ger varje specialist en tydlig överlämning; den ska inte behöva gissa vad som sagts i huvudchatten.
 
+## Planerad förbättring: uppgiftsstyrt modellval
+
+[DSP-8](../backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md) prövar modellval efter uppdragets karaktär, komplexitet och osäkerhet. [Förslaget till modellval](MODEL_SELECTION.md) beskriver bedömning, fast användarval, motiverade byten och verifiering av vilket val Cursor faktiskt använder.
+
+Detta är kommande arbete. DSP-7 behåller `model: inherit` under hela kalibreringen. Införande kräver ett verifierat Cursor-prov; den nuvarande skillen och specialisterna väljer inte modeller dynamiskt. DSP-8 är inte ett beroende för DSP-1 eller för produktens första milstolpe.
+
 ## Ett normalt pass
 
 1. **Återställ sammanhanget.** Kontrollera rätt repo, aktuell gren, befintliga ändringar, vald uppgift och dess beroenden. Läs relevant målbild och aktuella beslut. Om en tidigare körning finns: klarlägg den före nytt arbete.

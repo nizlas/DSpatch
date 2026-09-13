@@ -28,6 +28,16 @@ Målet är en arbetsyta som Niclas vill använda för en verklig utvecklingsfrå
 
 Tabellen är en läsöversikt över omfattning och ordning. Uppgiftsfilerna är källan för aktuell status, detaljer, kriterier och resultat. Uppdatera översikten när riktning eller omfattning ändras; håll inte en separat statusbokföring här. Beroendena anger vilket underlag som behövs och innebär inte automatiskt parallella skrivande agenter.
 
+## Förbättringar av utvecklingsloopen
+
+Dessa uppgifter gäller arbetsformen som bygger DSpatch. De ligger utanför produktens Etapp 0-milstolpe och inför inte nya beroenden för DSP-1–6. Prioritera dem utifrån observerad nytta efter kalibreringen; DSP-1 är fortsatt nästa produktsteg efter DSP-7.
+
+| Uppgift | Nytta | Beror på |
+| --- | --- | --- |
+| [DSP-8](backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md) – Prova uppgiftsstyrt modellval i utvecklingsloopen | Koordinatorn väljer modell och resonemangsnivå efter det konkreta uppdraget, med synligt motiv, fast användarval och verifierat faktiskt modellval. | DSP-7 |
+
+DSP-8 börjar med att prova Cursors faktiska styrmöjligheter och jämföra med fast modellval. [Modellvalsförslaget](docs/MODEL_SELECTION.md) är planerat arbete, inte en redan aktiv funktion. Det ändrar inte den pågående kalibreringen.
+
 ## Vad som avgör om vi är klara
 
 Efter **DSP-6** ska Niclas kunna öppna ett repo, diskutera en liten uppgift, låta agenten göra en verklig kodändring, granska berörda filer och hela textdiffen samt köra relevant bygge eller test och se resultatet för rätt kodversion. Han ska kunna följa upp, be om ett omtag, avbryta och fortsätta efter omstart. Fel ska ge en begriplig väg vidare; tidigare ändringar och körresultat ska bevaras utan automatisk upprepning.
@@ -68,4 +78,4 @@ Etapp 1–4 i [styrdokumentet](docs/VISION.md#14-etapper-för-genomförande) är
 
 ## Format och verifieringsläge
 
-Backlog-filerna följer projektets dokumenterade konfiguration, uppgiftsformat och milstolpsformat. De är kontrollerade mot [Backlog.mds källkod](https://github.com/MrLesk/Backlog.md/tree/c0ec546a3b519c0c7b83070fe936f6bf49e14357), vars paketversion är 1.52.0. Detta förslag omfattar fil- och innehållskontroller; Backlogs CLI och webbgränssnitt har ännu inte provkörts med DSpatch-planen. Första lokala provet ska bekräfta att alla sju uppgifter, milstolpen och de fem statuskolumnerna visas som avsett.
+Backlog-filerna följer projektets dokumenterade konfiguration, uppgiftsformat och milstolpsformat. De är kontrollerade mot [Backlog.mds källkod](https://github.com/MrLesk/Backlog.md/tree/c0ec546a3b519c0c7b83070fe936f6bf49e14357), vars paketversion är 1.52.0. CLI och webb-API har provats med de sju ursprungliga uppgifterna i en isolerad kopia. Niclas har den 13 september 2026 även installerat 1.52.0 och bekräftat att webbgränssnittet fungerar på Windows. DSP-1–7 hör till milstolpen m-0; DSP-8 är en separat förbättring av utvecklingsloopen utan tilldelad milstolpe. Att planeringen visas korrekt bevisar inte att agentloopen eller produktintegrationen fungerar.
