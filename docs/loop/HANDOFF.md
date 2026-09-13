@@ -1,36 +1,44 @@
-# Överlämning mellan koordinator och specialist
+<a id="överlämning-mellan-koordinator-och-specialist"></a>
 
-Koordinatorn skickar ett avgränsat uppdrag med följande uppgifter. Använd kort text och exakta filer eller rubriker; dumpa inte hela chatthistoriken.
+# Handoff between coordinator and specialist
 
-## Uppdrag
+The coordinator sends a bounded assignment containing the following information. Use short text and exact files or headings; do not dump the entire chat history. Apply the English project-language policy in AGENTS.md to handoffs and saved reports.
 
-- **Identitet:** run-id, task-id och call-id. Call-id är journalens nummer; runtime-agent-ID sparas separat när det finns.
-- **Roll och läge:** specialistnamn, exempelvis Reviewer i plan- eller implementationsläge.
-- **Mål och nytta:** vad som ska uppnås och varför det behövs nu.
-- **Mandat och gränser:** tillåtna skrivytor, möjliga kommandon och vad som ligger utanför uppdraget. Ange om det gäller ett isolerat kalibreringsrepo.
-- **Aktuella beslut:** relevant användarstyrning i klartext, inklusive korrigeringar sedan föregående försök.
-- **Underlag:** relevant VISION-avsnitt, aktuell uppgiftsfil, kod och tidigare rapporter. Läs AGENTS.md.
-- **Startläge:** gren, basrevision, befintliga ändringar och kandidatens snapshot om den är fastställd.
-- **Bedömning:** kriterier som gäller, vilken kontroll som behövs och vad som kräver mänsklig återkoppling.
-- **Leverans:** slutsvar till koordinatorn; eventuell uttryckligen tillåten loggkatalog. Inga egna delegeringar.
+<a id="uppdrag"></a>
 
-Specialisten ska kontrollera en materiell motsägelse eller saknat mandat med koordinatorn. Den får göra normala reversibla val inom ett tydligt uppdrag.
+## Assignment
 
-Frågor går till koordinatorn som vanlig text i rapporten, med rekommendation, beroende steg och när svaret behövs. Specialisten öppnar inga egna frågeformulär till Niclas. Koordinatorn avgör vad agenterna kan lösa och vad som ska tas upp i den samlade rapporten enligt [rapportering och öppna frågor](../DEVELOPMENT_LOOP.md#rapportering-och-öppna-frågor). Ett saknat beslut som uppdraget kräver ska framgå som hinder; övriga frågor får inte stoppa oberoende arbete inom mandatet.
+- **Identity:** run-id, task-id and call-id. Call-id is the journal's sequence number; store the runtime agent ID separately when available.
+- **Role and mode:** specialist name, for example Reviewer in plan or implementation mode.
+- **Goal and value:** what must be achieved and why it is needed now.
+- **Mandate and boundaries:** permitted write locations, possible commands and what is outside the assignment. State whether this is an isolated calibration repository.
+- **Current decisions:** relevant user direction in plain language, including corrections since the previous attempt.
+- **Source material:** relevant VISION section, current task file, code and previous reports. Read AGENTS.md.
+- **Initial state:** branch, base revision, existing changes and candidate snapshot if established.
+- **Assessment:** applicable criteria, required checks and what needs human feedback.
+- **Delivery:** final response to the coordinator; any explicitly permitted log directory. No further delegation.
 
-## Slutsvar
+The specialist must check material contradictions or missing authority with the coordinator. Normal reversible choices may be made within a clear assignment.
 
-Ange:
+Questions go to the coordinator as normal report text, with a recommendation, dependent step and when an answer is needed. Specialists do not open their own question forms for Niclas. The coordinator decides what agents can resolve and what belongs in the combined report under [reporting and open questions](../DEVELOPMENT_LOOP.md#reporting-and-open-questions). A missing decision required by the assignment must be reported as a blocker; other questions must not stop independent work within the mandate.
 
-1. **Resultat:** COMPLETE, PARTIAL, BLOCKED eller NEEDS_DECISION för ditt uppdrag, aldrig automatiskt för hela backloguppgiften.
-2. **Underlag:** vad du faktiskt läst eller kontrollerat, relevant kandidat-/rapportreferens.
-3. **Leverans:** ändrade filer, förslag eller slutsats; varför detta löser den avgränsade uppgiften.
-4. **Evidens:** utförda kontroller, kommandon, exitkoder och loggar. Skilj egna observationer från dokumentation och antaganden. Verifier använder PASS/FAIL/NOT_RUN/HUMAN_PENDING per kriterium; Reviewer använder ACCEPT/REWORK/NEEDS_DECISION.
-5. **Kvarstående:** osäkerheter, processer med oklart utfall, relevanta risker och mänskliga bedömningar.
-6. **Nästa steg:** konkret föreslagen handling och vem som behöver göra den.
+<a id="slutsvar"></a>
 
-Svara så kort som underlaget tillåter. Länka till råloggar som finns, men ersätt inte viktiga fynd med ”se loggen”. Koordinatorn sparar rapporten och returnerar samma relevanta sammanhang vid ett omtag.
+## Final response
 
-## Journalens aktiva anrop
+Include:
 
-Före delegering sätter koordinatorn `active_call` till ett objekt med `call_id`, `role`, `started_at_utc`, `runtime_agent_id` (initialt null), `outcome` (initialt `unknown`) och `handoff_path`. Anropsräknaren ökas före start. Vid känt avslut sparas rapporten, steget förs till `completed_steps` och `active_call` blir null. Vid avbrott med oklart utfall behålls objektet för avstämning; räknare eller tidigare rapporter nollställs inte.
+1. **Result:** COMPLETE, PARTIAL, BLOCKED or NEEDS_DECISION for your assignment, never automatically for the entire backlog task.
+2. **Source material:** what you actually read or checked, with relevant candidate/report references.
+3. **Delivery:** changed files, proposal or conclusion; why this addresses the bounded assignment.
+4. **Evidence:** checks performed, commands, exit codes and logs. Distinguish your observations from documentation and assumptions. Verifier uses PASS/FAIL/NOT_RUN/HUMAN_PENDING per criterion; Reviewer uses ACCEPT/REWORK/NEEDS_DECISION.
+5. **Remaining:** uncertainties, processes with unclear outcomes, relevant risks and human assessments.
+6. **Next step:** a concrete proposed action and who needs to perform it.
+
+Be as concise as the evidence allows. Link existing raw logs, but do not replace important findings with “see log”. The coordinator saves the report and supplies the same relevant context on rework.
+
+<a id="journalens-aktiva-anrop"></a>
+
+## The journal's active call
+
+Before delegation, the coordinator sets `active_call` to an object with `call_id`, `role`, `started_at_utc`, `runtime_agent_id` (initially null), `outcome` (initially `unknown`) and `handoff_path`. Increment the call counter before starting. On a known completion, save the report, add the step to `completed_steps` and set `active_call` to null. On interruption with an unclear outcome, retain the object for reconciliation; do not reset counters or earlier reports.

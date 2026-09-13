@@ -1,680 +1,919 @@
 # DSpatch
 
-Vision och styrdokument för agentisk programutveckling
+Vision and governing document for agentic software development
 
-Niclas Danielsson | 13 september 2026 | Version 1.8
+Niclas Danielsson | 13 September 2026 | Version 1.9
 
-Ändring i version 1.8: TypeScript, React och Electron är valt teknikspår. Windows och Linux ingår i målbilden med en enhetlig arbetsyta; första implementation och provkörning sker med Cursor på Windows. Motiven, gränserna och kvarstående verifiering beskrivs i avsnitt 9.1.
+Change in version 1.9: English is the maintained project language, including documentation, agent instructions, backlog prose, code comments, product text and saved reports. Dialogue with Niclas may remain in Swedish. Historical evidence and stable identifiers are preserved. The current colour palette is the approved visual starting point. This language revision does not expand Phase 0 or change its technical decisions.
 
-Ändring i version 1.7: Etapp 0 omfattar verkliga avgränsade kodändringar, vanlig fullständig textdiff och körning av relevant bygge eller test. Efter DSP-6 ska hela detta arbetsflöde vara provat med Niclas, inklusive avbrott, felåterhämtning och fortsatt arbete efter omstart.
+Change in version 1.8: TypeScript, React and Electron are the selected stack. Windows and Linux are target platforms with a consistent workspace; initial implementation and testing use Cursor on Windows. Section 9.1 describes the rationale, boundaries and outstanding verification.
 
-Ändring i version 1.6: Cursor prioriteras för första integrationen och testningen på hemmadatorn. VS Code/Copilot kvarstår i målbilden; teknikvalen ska möjliggöra stödet, medan implementation och provkörning kommer senare. Leverantörsuppgifternas tidigare kontrolltidpunkt framgår i avsnitt 17.
+Change in version 1.7: Phase 0 includes real bounded code changes, a normal complete text diff and execution of a relevant build or test. After DSP-6, Niclas must have tested this entire workflow, including cancellation, error recovery and continued work after restart.
 
-## Målbild
+Change in version 1.6: Cursor is prioritised for initial integration and testing on the home computer. VS Code/Copilot remains in the vision; technical choices must enable that support, with implementation and testing later. Section 17 records when provider information was checked.
 
-DSpatch ska vara en utvecklingsmiljö där människan formulerar mål och väljer graden av egen medverkan. Arbetet kan drivas interaktivt eller genom autonoma agentloopar med rapportering på executive-nivå. Uppgifter, beslut, ändringar och verifiering hör ihop i samma arbetsyta. Koden kan alltid undersökas, kommenteras och redigeras för hand. Enkelhet i gränssnitt och arbetssätt är en ledstjärna, med bibehållen kraft och möjlighet att gå på djupet.
+<a id="målbild"></a>
 
-**Maestro är DSpatchs orkestrator.** Den ska samordna agentnätverk och iterativa arbetsflöden, följa beroenden, samla resultat och redovisa förbrukning. Copilot och Cursor är tänkta agentleverantörer. Hela projektet ska kunna drivas människointeraktivt så länge användaren vill, med valfri övergång till autonom iteration och tillbaka. Arbetssätt ska kunna utökas utan att hela produkten byggs om.
+## Vision
 
-## Varför projektet behövs
+DSpatch will be a development environment where people define goals and choose their level of involvement. Work can proceed interactively or through autonomous agent loops with executive-level reporting. Tasks, decisions, changes and verification belong together in one workspace. Code can always be inspected, commented on and edited manually. Simplicity in the UI and workflow is a guiding principle, retaining power and the ability to explore details.
 
-När agenter utför mer av programmeringen förändras användarens arbete. Det blir viktigare att förstå vad som beställts, varför en lösning valts och om ändringen faktiskt fungerar. En lång chatt och en samling öppna filer ger inte alltid en tillräcklig överblick, särskilt när flera agenter arbetar samtidigt.
+**Maestro is DSpatch's orchestrator.** It will coordinate agent networks and iterative workflows, follow dependencies, collect results and report usage. Copilot and Cursor are intended agent providers. The entire project can remain human-interactive for as long as the user wants, with optional transitions to autonomous iteration and back. Working methods should be extensible without rebuilding the whole product.
 
-**DSpatch är både ett arbetsverktyg och en experimentmiljö för att utveckla själva utvecklingsarbetet.** Kodförståelse och granskning ska stödja tänkande och samarbete genom hela projektet. Användaren ska kunna följa avsikt, beteende och verifiering till verklig kod. Nytta ska uppstå från första användbara inkrementet, som kan vara en minimal interaktiv chattintegration.
+<a id="varför-projektet-behövs"></a>
 
-## Vad vi vill kunna visa
+## Why the project is needed
 
-Vid interaktivt arbete deltar användaren i resonemang, granskning och korrigering. Vid autonom körning sköter agentnätverket research, genomförande, granskning, verifiering och omtag inom givna ramar. Användaren får executive-rapporter, kan fördjupa sig och ingripa, och blir inkopplad när loopen behöver mänsklig styrning. Båda arbetssätten bevarar uppgifter, underlag och historik.
+As agents perform more programming, the user's work changes. Understanding what was requested, why a solution was chosen and whether a change actually works becomes more important. A long chat and a collection of open files do not always provide enough overview, especially with multiple agents working simultaneously.
 
-## Så används dokumentet
+**DSpatch is both a working tool and an environment for experimenting with software development itself.** Code understanding and review should support thinking and collaboration throughout a project. Users must be able to trace intent, behaviour and verification to real code. Value should begin with the first useful increment, potentially a minimal interactive chat integration.
 
-Avsnitt 1–3 beskriver målbild och användarupplevelse, inklusive lärande i 1.1, enkelhet i 2.1 och kodförståelse i 3.1. Avsnitt 4–8 behandlar Maestro, agentloopen och mänsklig styrning. Avsnitt 9–13 anger teknisk riktning. Avsnitt 14–15 ger inkrement och kriterier. Bakgrund och begrepp finns i 16, källor i 17.
+<a id="vad-vi-vill-kunna-visa"></a>
 
-Beslutsstatus: DSpatch är valt produktnamn och Maestro är orkestratorns arbetsnamn. Namnens tillgänglighet och varumärkesrättigheter är inte kontrollerade. Centralt är enkelhet, kodförståelse, lärande om arbetssätt och flexibel autonomi. Utvecklingen ska ge nytta stegvis från en minimal start. Agentloopen är ett exempel; arkitektur och etapper kan omprövas genom erfarenhet.
+## What we want to demonstrate
 
-## 1 Identitet och beslut
+During interactive work, users participate in reasoning, review and correction. During autonomous execution, the agent network handles research, implementation, review, verification and rework within defined boundaries. Users receive executive reports, can investigate and intervene, and are involved when the loop needs human direction. Both modes preserve tasks, evidence and history.
 
-### DSpatch och Maestro
+<a id="så-används-dokumentet"></a>
 
-DSpatch är det valda produktnamnet i projektet. DS står för Danielssons Studio. Namnet anspelar både på dispatch, att skicka ut uppdrag, och på patchar, kodändringarna som kommer tillbaka. Namnvalet är ett projektbeslut; det innebär inte att namnets tillgänglighet eller varumärkesrättigheter har kontrollerats.
+## How to use this document
 
-**Maestro är tills vidare ett internt arbetsnamn för orkestratorn.** Musikassociationen beskriver hur självständiga bidrag samordnas till en helhet. Namnet används redan av en annan produkt för orkestrering av kodagenter, [Maestro från RunMaestro](https://runmaestro.ai/). Vilka rättigheter som finns och var de gäller har inte utretts. Arbetsnamnet kan användas under utvecklingen, men ett offentligt namn behöver bedömas separat före lansering. Komponenten kan också visas som ”orkestratorn” eller ”agentflöden” utan ett eget varumärke. Dokumentets användning av Maestro avser vår planerade komponent och innebär ingen koppling till den befintliga produkten.
+Sections 1–3 cover vision and user experience, including learning in 1.1, simplicity in 2.1 and code understanding in 3.1. Sections 4–8 cover Maestro, the agent loop and human direction. Sections 9–13 set technical direction. Sections 14–15 define increments and criteria. Section 16 provides background and terminology; section 17 lists sources.
 
-| **Område** | **Status** | **Innebörd** |
+Decision status: DSpatch is the chosen product name and Maestro the orchestrator's working name. Name availability and trademark rights have not been checked. Simplicity, code understanding, learning about workflows and flexible autonomy are central. Development must deliver incremental value from a minimal start. The agent loop is an example; architecture and phases may be revised through experience.
+
+<a id="1-identitet-och-beslut"></a>
+
+## 1 Identity and decisions
+
+<a id="dspatch-och-maestro"></a>
+
+### DSpatch and Maestro
+
+DSpatch is the project's chosen product name. DS stands for Danielssons Studio. The name refers both to dispatching assignments and to the patches returned. This is a project decision, not a claim that name availability or trademark rights have been checked.
+
+**Maestro is currently an internal working name for the orchestrator.** Its musical association describes independent contributions coordinated into a whole. Another code-agent orchestration product already uses the name: [Maestro from RunMaestro](https://runmaestro.ai/). Its rights and their geographic scope have not been investigated. The working name may be used during development; a public name needs separate assessment before launch. The component could also appear as “orchestrator” or “agent workflows” without a separate brand. This document refers to our planned component and implies no connection to the existing product.
+
+| **Area** | **Status** | **Meaning** |
 | --- | --- | --- |
-| Produktnamn | Valt | DSpatch är valt inom projektet. Tillgänglighet och rättigheter är inte kontrollerade. |
-| Orkestrator | Arbetsnamn | Maestro används internt. Offentligt komponentnamn bedöms separat. |
-| Arbetssätt | Målbild | Uppgiftscentrerat arbete med utbytbara loopar och valbar grad av autonomi. |
-| Kodupplevelse | Målbild | Smart kodvisning och review, med möjlighet till enklare redigering. |
-| Egen editor | Inriktning | Bygg en egen avgränsad kodvy och editor utan Monaco som grund. |
-| Agentleverantörer | Målbild | Cursor och Copilot, med fortsatt stöd för arbete med VS Code. |
-| Första integration och testning | Beslut 13 september 2026 | Cursor på Niclas hemmadator. VS Code/Copilot beaktas i teknikvalen men behöver inte implementeras eller provköras i Etapp 0. |
-| Första milstolpen | Beslut 13 september 2026 | Interaktiv chatt, verklig kodändring, fullständig textdiff och bygge/test, med avbrott, sparad historik och manuell provkörning. |
-| Teknikspår | Beslut 13 september 2026 | TypeScript, React och Electron för DSpatch. Motiven och verifieringen beskrivs i avsnitt 9.1. |
-| Plattformar | Beslut 13 september 2026 | Windows och Linux i målbilden. Enhetlig arbetsyta eftersträvas; första implementation och provkörning sker på Windows. |
-| Datalagring | Öppet | Lagringsmotor och format väljs i kommande inkrement. |
+| Product name | Chosen | DSpatch is selected within the project. Availability and rights have not been checked. |
+| Orchestrator | Working name | Maestro is used internally. A public component name will be assessed separately. |
+| Working methods | Vision | Task-centred work with replaceable loops and selectable autonomy. |
+| Code experience | Vision | Smart code views and review, with simple editing available. |
+| Custom editor | Direction | Build a bounded custom code view and editor without Monaco as its foundation. |
+| Agent providers | Vision | Cursor and Copilot, retaining support for working with VS Code. |
+| Initial integration and testing | Decision, 13 September 2026 | Cursor on Niclas's home computer. Consider VS Code/Copilot in technical decisions; no implementation or testing is required in Phase 0. |
+| First milestone | Decision, 13 September 2026 | Interactive chat, real code changes, complete text diff and build/test, including cancellation, persisted history and manual testing. |
+| Technology stack | Decision, 13 September 2026 | TypeScript, React and Electron. Section 9.1 explains rationale and verification. |
+| Platforms | Decision, 13 September 2026 | Windows and Linux targets. Aim for a consistent workspace; implement and test on Windows first. |
+| Data storage | Open | Select the storage engine and format in subsequent increments. |
+| Project language | Decision, 13 September 2026 | English for maintained project content; Swedish dialogue is welcome. Preserve historical evidence in its original language. |
+| Colour palette | User feedback, 13 September 2026 | Preserve the current app palette as the visual starting point; assess broader UX separately. |
 
-### Vem miljön byggs för
+<a id="vem-miljön-byggs-för"></a>
 
-Den första användaren är en utvecklare som redan arbetar mycket med kodagenter, använder få avancerade redigeringsfunktioner och vill lägga sin tid på riktning, förståelse och kvalitet. En första version ska vara användbar i egna projekt och ge konkreta erfarenheter innan den breddas till fler användare eller arbetsmiljöer.
+### Who the environment is for
 
-### Avgränsning
+The first user is a developer who already works extensively with coding agents, uses few advanced editing features and wants to spend time on direction, understanding and quality. An initial version should be useful in personal projects and generate concrete experience before broadening to more users or environments.
 
-Projektet ska inte behöva nå full funktionsparitet med en etablerad IDE för att bli användbart. Avancerad manuell redigering, ett allmänt tilläggsekosystem, full debuggerintegration och generell fjärrutveckling ligger utanför den föreslagna första leveransen. Git, terminalkörning och pålitlig granskning har däremot direkt betydelse för kärnflödet.
+<a id="avgränsning"></a>
 
-### 1.1 Ett verktyg för arbete och lärande
+### Scope boundaries
 
-**DSpatch ska vara både ett användbart verktyg och en experimentmiljö för att utveckla själva utvecklingsarbetet.** Projektet ska ge erfarenhet av hur vi vill och inte vill arbeta med agenter. Att bygga och använda verktyget är i sig ett sätt att lära, pröva idéer och förändra arbetssättet över tid.
+The project need not reach feature parity with an established IDE to be useful. Advanced manual editing, a general extension ecosystem, full debugger integration and general remote development are outside the proposed initial delivery. Git, terminal execution and reliable review directly support the core workflow.
 
-#### Eget värde även när liknande verktyg finns
+<a id="11-ett-verktyg-för-arbete-och-lärande"></a>
 
-Projektets värde kräver inte att grundidén är unik. Liknande produkter ger jämförelser, inspiration och möjliga byggdelar. De kan göra konceptet mindre unikt utan att göra det mindre intressant att utveckla. Egna behov, glädjen i att bygga och möjligheten att undersöka nya arbetsformer är legitima skäl att fortsätta.
+### 1.1 A tool for work and learning
 
-Den inledande omvärldsgenomgången belade främst orkestrering, arbetsytor och granskningsfunktioner. Den undersökte inte tillräckligt djupt hur väl verktygen hjälper användaren att bygga en mental modell av koden. Därför är bättre kodförståelse en ambition att pröva, inte en fastställd konkurrensfördel. Flera jämförda miljöer erbjuder mänsklig granskning; de ska inte generellt beskrivas som om de förutsätter att människan aldrig läser kod.
+**DSpatch should be both a useful tool and an experimental environment for improving software development itself.** It should teach us how we do and do not want to work with agents. Building and using the tool is a way to learn, test ideas and evolve working methods over time.
 
-Exempel som belägger mänsklig granskning är [Intent](https://www.augmentcode.com/blog/intent-a-workspace-for-agent-orchestration) och [JetBrains Air](https://www.jetbrains.com/help/air/quick-start-with-air.html). Deras dokumenterade funktioner är jämförelseunderlag, inte resultat från ett praktiskt test i våra projekt.
+<a id="eget-värde-även-när-liknande-verktyg-finns"></a>
 
-#### Granskning som ett sätt att tänka och samarbeta
+#### Value even when similar tools exist
 
-En diffvy visar vilka rader som förändrats. DSpatch ska dessutom hjälpa användaren att förstå beteende, sammanhang och skälen bakom ändringen. Granskning ska kunna pågå under formulering, undersökning och genomförande, så att en felaktig premiss kan upptäckas och diskuteras före nästa omtag. Den fyller därmed en större funktion än en slutkontroll.
+The project's value does not depend on a unique core idea. Similar products provide comparisons, inspiration and possible building blocks. They may reduce uniqueness without reducing the interest in developing it. Personal needs, enjoyment of building and exploration of new working methods are valid reasons to continue.
 
-#### Autonomi och begriplighet är separata val
+The initial landscape review mainly established orchestration, workspaces and review features. It did not investigate deeply enough how well those tools help users build a mental model of code. Better code understanding is therefore an ambition to test, not a proven competitive advantage. Several compared environments support human review; they should not generally be described as assuming people will never read code.
 
-**Autonomin bestämmer hur mycket arbete användaren delegerar. Begripligheten bestämmer hur väl användaren kan förstå och påverka resultatet.** DSpatch ska göra det möjligt att välja mycket av båda. Autonom körning ska bevara möjligheten till djup insyn, samtidigt som användaren kan stanna i ett nära samarbete under hela projektet.
+Examples documenting human review include [Intent](https://www.augmentcode.com/blog/intent-a-workspace-for-agent-orchestration) and [JetBrains Air](https://www.jetbrains.com/help/air/quick-start-with-air.html). Their documented features are comparison material, not results of practical tests in our projects.
 
-#### Lärandet ska påverka nästa inkrement
+<a id="granskning-som-ett-sätt-att-tänka-och-samarbeta"></a>
 
-Använd DSpatch i verkliga projekt och så tidigt som möjligt i dess egen utveckling. Notera var arbetet blir lättare, var överblick saknas och var verktyget skapar onödiga steg. Pröva en avgränsad förbättring, bedöm effekten och behåll, ändra eller ta bort den. Produktnytta och lärande om arbetssätt är båda resultat som ska vägleda fortsättningen.
+#### Review as thinking and collaboration
 
-## 2 Arbetsytan utgår från uppgiften
+A diff view shows changed lines. DSpatch should also help users understand behaviour, context and reasons for a change. Review can happen during formulation, investigation and implementation, allowing a wrong premise to be discovered and discussed before the next attempt. Its role extends beyond a final check.
 
-Användaren ska kunna öppna en uppgift och förstå vad som händer utan att först läsa en hel konversation. Uppgiften samlar avsikt, avgränsning, plan, agentkörningar, beslut, kodändringar och verifiering. Filträdet är tillgängligt som ett kompletterande sätt att hitta information.
+<a id="autonomi-och-begriplighet-är-separata-val"></a>
 
-### Exempel på ett interaktivt förlopp
+#### Autonomy and understanding are separate choices
 
-Exemplet visar interaktivt arbete med en frysning vid zoom under uppspelning i ett ljudprogram. Användaren deltar i granskning och omtag. Samma uppgift visas i autonom form i avsnitt 2.2. Exemplet fastställer ingen verklig buggorsak.
+**Autonomy determines how much work users delegate. Understanding determines how well they can comprehend and influence the result.** DSpatch should offer a high degree of both. Autonomous execution must preserve deep visibility, while users may remain in close collaboration throughout the project.
 
-- **Formulera:** Användaren beskriver felet, hur det reproduceras och vilket beteende som ska fungera efter ändringen.
-- **Planera:** Maestro föreslår en undersökning, synliggör antaganden och delar vid behov upp arbetet i deluppgifter.
-- **Arbeta:** Agenter analyserar berörda kodställen, genomför ändringar och rapporterar framsteg. Parallellt arbete får tydliga ansvarsområden.
-- **Granska:** Användaren ser diffar tillsammans med motiv och relevant omgivande kod. En oberoende agent kan granska samma bestämda revision.
-- **Verifiera:** Bygg- och testresultat kopplas till den ändring som faktiskt kördes. Osäkra eller oprövade scenarier framgår.
-- **Korrigera:** En kommentar som ”detta måste också fungera under playback” blir ett avgränsat omtag. Användaren kan också rätta några rader själv.
-- **Avsluta:** Uppgiften får ett tydligt resultat, en granskningsstatus och samlad rapporterad förbrukning. Tidigare försök finns kvar.
+<a id="lärandet-ska-påverka-nästa-inkrement"></a>
 
-### Föreslagen disposition i gränssnittet
+#### Learning should shape the next increment
 
-Projektöversikten visar aktiva uppgifter, blockerade beroenden och sådant som väntar på användaren. Uppgiftsvyn visar sammanfattning och beslut överst, följt av plan och deluppgifter. Kod och diffar öppnas intill det resonemang de hör till. Agentdialog och rålogg finns nära till hands, men behöver inte dominera hela arbetsytan.
+Use DSpatch in real projects, including its own development as early as possible. Record where work becomes easier, where overview is missing and where the tool introduces unnecessary steps. Try a bounded improvement, assess its effect, then keep, change or remove it. Product value and learning about working methods should both guide what follows.
 
-Användaren ska kunna växla mellan helhetsbild och detalj utan att tappa sin plats. Ett klick på ett testfel ska kunna leda till loggen och den granskade revisionen; ett klick på en ändringsförklaring ska kunna leda till den exakta diffen.
+<a id="2-arbetsytan-utgår-från-uppgiften"></a>
 
-### Mänsklig styrning
+## 2 The workspace starts from the task
 
-Maestro ska kunna föreslå nästa steg och utföra arbete inom givna ramar. Användaren ska kunna ändra prioritet, precisera ett mål, avbryta en körning eller begära en ny granskning. Hur mycket som körs automatiskt ska kunna väljas per projekt eller uppgift.
+Users should be able to open a task and understand what is happening without reading an entire conversation. The task collects intent, scope, plan, agent runs, decisions, code changes and verification. The file tree remains an additional navigation method.
 
-### 2.1 Enkelhet med bibehållen kraft
+<a id="exempel-på-ett-interaktivt-förlopp"></a>
 
-**Enkelhet ska prägla både gränssnittet och arbetssättet.** DSpatch ska göra avancerat agentarbete tillgängligt genom begripliga handlingar, rimliga standardval och tydlig återkoppling. Användaren ska kunna börja med sitt projekt och successivt fördjupa kontrollen. Enkelhet får inte dölja relevanta ändringar, osäkerheter eller konsekvenser.
+### Example of interactive work
 
-#### Vanliga handlingar ska gå att hitta
+This example concerns a freeze during zoom while playing audio. The user participates in review and rework. Section 2.2 shows the same task in autonomous mode. The example does not establish the cause of an actual bug.
 
-Öppna projekt, köra kod eller tester, starta och stoppa agenter, granska ändringar och växla arbetssätt ska ha synliga, konsekventa vägar i gränssnittet. Kortkommandon och kommandopalett får ge snabbare åtkomst men ska vara valfria. Samtal med en agent ska komplettera dessa handlingar; användaren ska inte behöva gissa rätt formulering för att nå en grundfunktion.
+- **Formulate:** Describe the failure, reproduction steps and behaviour required after the change.
+- **Plan:** Maestro proposes an investigation, exposes assumptions and divides work into subtasks when needed.
+- **Work:** Agents inspect relevant code, make changes and report progress. Parallel work has clear ownership.
+- **Review:** The user sees diffs with rationale and relevant surrounding code. An independent agent can review the same identified revision.
+- **Verify:** Bind build and test results to the change actually executed. Show uncertain or untested scenarios.
+- **Correct:** Feedback such as “this must also work during playback” becomes bounded rework. The user may also fix a few lines manually.
+- **Finish:** Give the task a clear result, review status and combined reported usage. Preserve earlier attempts.
 
-#### Konfiguration ska få ett begripligt gränssnitt
+<a id="föreslagen-disposition-i-gränssnittet"></a>
 
-För stödda projekttyper ska DSpatch känna igen hur projektet byggs och körs, eller hjälpa användaren att välja det som saknas. Körkommandot och arbetskatalogen ska gå att se, ändra och spara i gränssnittet. Vanliga uppgifter ska inte kräva handredigering av konfigurationsfiler. Konfiguration som text ska kunna finnas för avancerad användning och versionshantering, med samma värden som gränssnittet visar.
+### Proposed UI organisation
 
-#### Inställningar ska ge synlig effekt
+The project overview shows active tasks, blocked dependencies and items awaiting the user. The task view leads with a summary and decisions, followed by the plan and subtasks. Code and diffs open beside the reasoning they support. Agent dialogue and raw logs remain accessible without dominating the workspace.
 
-Visa vilket värde som faktiskt gäller, om det kommer från projektet eller användarens standardval och när en ändring börjar gälla. Om en regel eller en leverantör begränsar valet ska det framgå där valet görs. Misslyckat sparande eller tillämpning ska ge ett begripligt fel och ett nästa steg. Undvik inställningar som ser ändrade ut men saknar effekt.
+Users should move between overview and detail without losing their place. Clicking a failed test can lead to its log and reviewed revision; clicking a change explanation can lead to the exact diff.
 
-#### Återhämtning ska vara en del av produkten
+<a id="mänsklig-styrning"></a>
 
-Återanslut automatiskt när det är säkert. När användaren behöver ingripa ska den berörda vyn förklara problemet och erbjuda exempelvis Försök igen eller Återanslut. Normal användning ska inte bero på dolda utvecklarkommandon som Developer: Reload Window. Om en komponent måste startas om ska DSpatch erbjuda den åtgärden och bevara arbetet.
+### Human direction
 
-#### Fördjupning på användarens villkor
+Maestro can propose next steps and act within the agreed mandate. Users can change priorities, refine goals, cancel a run or request another review. The degree of automation can be selected per project or task.
 
-Visa de val som behövs i det aktuella sammanhanget och låt användaren öppna fler detaljer därifrån. Avancerade arbetsflöden, modeller, verktyg och mätvärden ska fortfarande vara åtkomliga. Samma begrepp och projektkontext ska följa med mellan översikt, detaljarbete och autonom iteration. Nya funktioner ska passa in i detta arbetssätt.
+<a id="21-enkelhet-med-bibehållen-kraft"></a>
 
-#### Visuell kvalitet och responsivitet
+### 2.1 Simplicity with full capability
 
-Arbetsytan ska kännas modern, sammanhållen och genomarbetad redan i de första användbara inkrementen. Typografi, ikoner, färger, avstånd och kontroller ska vara konsekventa. Windows och Linux ska erbjuda samma centrala layout och arbetsflöden. Anpassning till fönsterstorlek och skärmskalning ska bevara läsbarhet och åtkomst till vanliga handlingar.
+**Simplicity should shape both the UI and the working method.** DSpatch should make advanced agent work accessible through understandable actions, sensible defaults and clear feedback. Users can begin with their project and progressively deepen control. Simplicity must not hide relevant changes, uncertainties or consequences.
 
-Strömmande agentsvar och pågående arbete ska låta användaren fortsätta skriva, scrolla, byta vy och avbryta utan störande hack eller tappat fokus. Teknikvalet är inget bevis för uppnådd kvalitet. Niclas provkörning och mätningar med representativa konversationer och diffar ska styra förbättringarna; Windows provas först och Linux när stödet införs.
+<a id="vanliga-handlingar-ska-gå-att-hitta"></a>
 
-#### Föreslaget användbarhetsprov
+#### Common actions must be discoverable
 
-Låt en utvecklare som inte känner DSpatch öppna ett stött projekt, köra kod och tester, ge en agent en uppgift, granska resultatet och växla mellan interaktivt arbete och loopen. Prova också en ändrad inställning och en tappad anslutning. Förloppet ska gå att genomföra utan memorerade kortkommandon, handredigerad konfiguration eller dolda återställningskommandon. Notera var användaren måste fråga, leta eller gissa; använd det som underlag för förbättring.
+Opening projects, running code/tests, starting/stopping agents, reviewing changes and switching working modes must have visible, consistent UI paths. Shortcuts and a command palette may provide faster access but remain optional. Agent conversation complements these actions; users should not need to guess a phrase to reach a basic function.
 
-### 2.2 Exempel på autonomt agentarbete
+<a id="konfiguration-ska-få-ett-begripligt-gränssnitt"></a>
 
-**I det autonoma arbetssättet ligger det löpande arbetet hos agenterna.** Användaren styr på executive-nivå och kan följa resultat utan att själv delta i varje research-, gransknings- eller korrigeringssteg. Samma zoomproblem som i det interaktiva exemplet kan hanteras så här.
+#### Configuration needs an understandable interface
 
-#### Från högnivåmål till en eller flera iterationer
+For supported project types, DSpatch should recognise how to build and run the project or help select missing information. Commands and working directories must be visible, editable and saveable in the UI. Common tasks should not require manual configuration-file editing. Text configuration may support advanced use and version control, reflecting the same values shown in the UI.
 
-- **Ange mål och starta:** Användaren beskriver önskat beteende, exempelvis stabil zoom under uppspelning, samt kvalitetskrav och resursramar. Via Executive-agenten startar användaren en eller flera iterationer. Mandatet anger när fortsatt körning är tillåten.
-- **Välj nästa iterationsmål:** Executive-agenten utgår från högnivåmålet, tidigare resultat och kvarvarande osäkerheter. Den väljer nästa steg, exempelvis reproduktion och orsaksanalys, och delegerar till nätverket.
-- **Undersök och genomför:** Tech Lead och Planner samordnar arbetet. Research- och implementationsagenter samlar underlag, prövar hypoteser och genomför ändringar. Planen uppdateras när ny kunskap kräver det.
-- **Granska och iterera:** Gransknings- och QA-agenter bedömer ändringen, kör relevanta tester och prövar påståenden mot underlaget. Fel eller otillräckliga resultat leder till omplanering, korrigering eller eskalering inom nätverket. Mänsklig kodgranskning är möjlig men inget obligatoriskt steg i detta läge.
-- **Rapportera och fortsätt eller stanna:** Executive-agenten sammanställer iterationens resultat och väljer nästa iterationsmål inom mandatet. Loopen fortsätter över flera iterationer om det är tillåtet. Den stannar när målet är uppnått, en gräns nås eller mänsklig input behövs.
+<a id="inställningar-ska-ge-synlig-effekt"></a>
 
-#### När människan behöver kopplas in
+#### Settings must have visible effects
 
-Användaren kan ingripa om rapporteringen tyder på ett allvarligare problem eller ändra riktning när som helst. Loopen ska själv stanna och be om styrning när den inte kan reda ut ett problem inom sitt mandat, exempelvis efter upprepade resultatlösa omtag eller vid en avgörande målkonflikt. Rapporten ska ange vad som prövats, vad som blockerar och vilket beslut som behövs.
+Show the effective value, whether it comes from the project or user defaults, and when a change takes effect. Show policy or provider restrictions where the choice is made. Failure to save or apply a setting needs an understandable error and next step. Avoid settings that appear changed but have no effect.
 
-#### Samma projekt kan återgå till interaktivt arbete
+<a id="återhämtning-ska-vara-en-del-av-produkten"></a>
 
-Rapporter, tester, ändringar och beslut följer med till fortsatt dialog och detaljarbete. Användaren kan stanna där så länge det behövs och senare återstarta loopen från det uppdaterade läget. Ett avslutat agentsteg ska ha ett synligt resultat och verifieringsunderlag även när ingen människa granskat det manuellt.
+#### Recovery belongs in the product
 
-## 3 Kodgranskning och enkel redigering
+Reconnect automatically when safe. When intervention is needed, the affected view should explain the problem and offer actions such as Retry or Reconnect. Normal use must not depend on hidden developer commands such as Developer: Reload Window. If a component needs restarting, DSpatch should offer that action while preserving work.
 
-Kodupplevelsen ska hjälpa användaren att bygga en mental modell av koden och förändringen. Relevanta funktioner från flera filer ska kunna visas tillsammans, med möjlighet att öppna hela filen och följa referenser när språkstödet medger det. Granskning ska stödja tänkande och samarbete genom hela arbetet. Avsnitt 3.1 konkretiserar denna centrala ambition.
+<a id="fördjupning-på-användarens-villkor"></a>
 
-### Granskning med full insyn
+#### Detail on the user's terms
 
-- Visa före och efter, med omgivande rader och möjlighet att växla mellan sammanhållen diff och vy sida vid sida.
-- Låt användaren se alla ändrade filer och fullständig diff, även när agenten föreslagit ett urval eller en tematisk gruppering.
-- Fäst kommentarer vid fil, kodställe och revision. Bevara diskussionen när agenten gör ett nytt försök.
-- Skilj mellan agentens påstående, granskarens bedömning och ett faktiskt testresultat.
-- Gör ändrade, tillagda och borttagna filer synliga. Gruppering ska inte kunna dölja återstående ändringar.
-- Ge stöd för att begära en korrigering direkt från den kod användaren läser.
+Show choices relevant to the current context and allow deeper detail from there. Advanced workflows, models, tools and metrics remain accessible. The same concepts and project context should carry between overview, detailed work and autonomous iteration. New features should fit this working method.
 
-### Granskningen gäller en bestämd version
+<a id="visuell-kvalitet-och-responsivitet"></a>
 
-En review ska avse en identifierad version av ändringarna. Om agenten fortsätter arbeta ska den pågående granskningen ligga kvar på sin version och visa att nyare ändringar finns. Ett tidigare godkännande ska inte automatiskt gälla kod som tillkommit senare.
+#### Visual quality and responsiveness
 
-Att godkänna enskilda delar kan bli värdefullt, men beroenden mellan ändringarna måste synliggöras. I en tidig version är det rimligt att granska hela ändringsmängden och begära riktade omtag innan selektiv sammanföring införs.
+The workspace should feel modern, coherent and carefully designed from the first useful increments. Typography, icons, colours, spacing and controls should be consistent. Windows and Linux should offer the same core layout and workflows. Resizing and display scaling must preserve readability and access to common actions. Niclas approved the current skeleton's colour palette as the visual starting point; this does not imply acceptance of every layout or future workflow.
 
-### Den egna editorns första omfattning när den införs
+Streaming agent responses and ongoing work must allow continued typing, scrolling, view changes and cancellation without disruptive stutter or lost focus. The technology choice does not prove achieved quality. Niclas's testing and measurements with representative conversations and diffs should guide improvements; test Windows first and Linux when support is introduced.
 
-Förslaget är en egen textmodell och kodvy ovanpå en befintlig GUI-plattform. Kärnan omfattar läsbar monospaced text, radnummer, syntaxfärgning, scrollning, markör, markering, sökning, urklipp, öppna och spara samt undo och redo. Grundläggande indrag och tydlig status för osparade ändringar behövs för bekväma korrigeringar.
+<a id="föreslaget-användbarhetsprov"></a>
 
-Flera markörer, avancerade refaktoreringar och ett stort antal redigeringskommandon kan vänta. Textmodellen måste ändå hantera Unicode, olika radslut och förändringar utan att skada filen. Återanvändbara bibliotek för exempelvis syntaxanalys kan användas även om själva editorn är egen.
+#### Proposed usability test
 
-### Manuella ändringar under agentarbete
+Ask a developer unfamiliar with DSpatch to open a supported project, run code and tests, assign agent work, review the result and switch between interactive work and the loop. Also try changing a setting and losing a connection. The workflow should require no memorised shortcuts, hand-edited configuration or hidden reset commands. Record where the user must ask, search or guess and use those observations for improvement.
 
-Om en användare har osparad text och en agent ändrar filen ska DSpatch upptäcka konflikten. Användarens arbete får inte skrivas över tyst. Val mellan spara, jämföra och förena versioner ska utgå från faktiska filversioner, inte enbart från vad chatten uppger.
+<a id="22-exempel-på-autonomt-agentarbete"></a>
 
-### 3.1 Förstå förändringar och deras sammanhang
+### 2.2 Example of autonomous agent work
 
-**Att ha en diffvy är inte samma sak som att förstå en förändring.** DSpatch ska hjälpa användaren att koppla ändrade rader till beteende, samband, beslut och evidens. Följande är riktningar att utveckla och utvärdera stegvis, inte ett krav på att allt finns i första versionen.
+**In autonomous mode, agents handle the ongoing work.** Users direct it at executive level and follow results without participating in every research, review or correction step. The same zoom problem can be handled as follows.
 
-| **Frågan användaren vill besvara** | **Vad arbetsytan skulle kunna visa** |
+<a id="från-högnivåmål-till-en-eller-flera-iterationer"></a>
+
+#### From a high-level goal to one or more iterations
+
+- **Set the goal and start:** Define desired behaviour, such as stable zoom during playback, quality requirements and resource limits. Start one or more iterations through the Executive agent. The mandate specifies when continuation is allowed.
+- **Choose the next iteration goal:** Executive uses the high-level goal, previous results and remaining uncertainties to select the next step, such as reproduction and root-cause analysis, and delegates to the network.
+- **Investigate and implement:** Tech Lead and Planner coordinate. Research and implementation agents gather evidence, test hypotheses and change code. Update the plan when new knowledge requires it.
+- **Review and iterate:** Review and QA agents assess changes, run relevant tests and check claims against evidence. Failures or insufficient results lead to replanning, correction or escalation within the network. Human code review remains possible but is not mandatory in this mode.
+- **Report and continue or stop:** Executive summarises the iteration and selects the next goal within its mandate. Continue across iterations if authorised. Stop when the goal is met, a limit is reached or human input is required.
+
+<a id="när-människan-behöver-kopplas-in"></a>
+
+#### When a person needs to be involved
+
+Users can intervene if reports suggest a serious problem and can change direction at any time. The loop must stop and request direction when it cannot resolve a problem within its mandate, such as repeated unsuccessful rework or a decisive conflict between goals. Report what was tried, what blocks progress and which decision is needed.
+
+<a id="samma-projekt-kan-återgå-till-interaktivt-arbete"></a>
+
+#### The same project can return to interactive work
+
+Reports, tests, changes and decisions carry into further dialogue and detailed work. Users can remain there as long as needed and later restart the loop from the updated state. Completed agent steps need visible results and verification evidence even when no person reviewed them manually.
+
+<a id="3-kodgranskning-och-enkel-redigering"></a>
+
+## 3 Code review and simple editing
+
+The code experience should help users build a mental model of code and changes. Relevant functions from multiple files should be viewable together, with full-file access and reference navigation where language support permits. Review supports thinking and collaboration throughout the work. Section 3.1 makes this central ambition concrete.
+
+<a id="granskning-med-full-insyn"></a>
+
+### Review with full visibility
+
+- Show before and after with surrounding lines and both unified and side-by-side diffs.
+- Show all changed files and the complete diff, even if an agent proposes a selection or thematic grouping.
+- Attach comments to files, code locations and revisions. Preserve discussion across agent attempts.
+- Distinguish an agent claim, a reviewer's judgement and an actual test result.
+- Make modified, added and deleted files visible. Grouping must not hide remaining changes.
+- Allow correction requests directly from the code being read.
+
+<a id="granskningen-gäller-en-bestämd-version"></a>
+
+### Review applies to a specific version
+
+A review must refer to an identified version of the changes. If the agent keeps working, the ongoing review remains attached to its version and indicates newer changes. Earlier approval must not automatically apply to later code.
+
+Approval of individual parts may become useful, but dependencies between changes must be visible. An early version can review the entire change set and request targeted rework before selective integration is introduced.
+
+<a id="den-egna-editorns-första-omfattning-när-den-införs"></a>
+
+### Initial scope of the custom editor when introduced
+
+The proposal is a custom text model and code view on an existing GUI platform. The core includes readable monospaced text, line numbers, syntax highlighting, scrolling, cursor, selection, search, clipboard, open/save and undo/redo. Basic indentation and clear unsaved-change status support convenient corrections.
+
+Multiple cursors, advanced refactoring and numerous editing commands can wait. The text model must still handle Unicode, line endings and edits without corrupting files. Reusable libraries, such as syntax parsers, may support the custom editor.
+
+<a id="manuella-ändringar-under-agentarbete"></a>
+
+### Manual edits during agent work
+
+If a user has unsaved text while an agent changes the file, DSpatch must detect the conflict. Never silently overwrite the user's work. Saving, comparing and combining versions must use actual file versions rather than only chat claims.
+
+<a id="31-förstå-förändringar-och-deras-sammanhang"></a>
+
+### 3.1 Understanding changes and their context
+
+**Having a diff view is not the same as understanding a change.** DSpatch should connect changed lines to behaviour, relationships, decisions and evidence. These directions should be developed and evaluated incrementally; not everything is required in the first version.
+
+| **Question the user wants to answer** | **What the workspace could show** |
 | --- | --- |
-| Vad har egentligen ändrats i beteendet? | Gruppera ändringar efter avsikt, exempelvis ”samlar zoomhändelser” och ”ändrar cachehantering”, även när de ligger i olika filer. |
-| Hur hänger detta ihop? | Visa berörda anropskedjor, dataflöden och relevant oförändrad kod tillsammans med ändringarna. |
-| Varför gjorde agenten så? | Knyt ändringen till mål, antaganden, övervägda alternativ och beslut. |
-| Vad vet vi faktiskt fungerar? | Koppla testresultat och experiment till den exakta revisionen och visa vad de inte täcker. |
-| Vad behöver jag förstå först? | Ge en översikt som går att fördjupa från beteende och arkitektur ner till enskilda rader. |
-| Vad hände sedan jag tittade senast? | Visa förändringar sedan användarens senaste granskning och vilka tidigare slutsatser som behöver omprövas. |
+| What actually changed in behaviour? | Group changes by intent, such as “coalesce zoom events” and “change cache handling”, even across files. |
+| How does it fit together? | Show affected call chains, data flows and relevant unchanged code alongside changes. |
+| Why did the agent do this? | Link the change to goals, assumptions, considered alternatives and decisions. |
+| What do we actually know works? | Bind tests and experiments to the exact revision and show what they do not cover. |
+| What should I understand first? | Provide an overview that can be explored from behaviour and architecture down to individual lines. |
+| What changed since I last looked? | Show changes since the user's previous review and conclusions that need reassessment. |
 
-#### Exempel med zoom under uppspelning
+<a id="exempel-med-zoom-under-uppspelning"></a>
 
-I ljudprogrammets zoomexempel skulle arbetsytan kunna hjälpa användaren att följa **hjulhändelse → viewport → cacheuppdatering → rendering**, med playback som ett parallellt förlopp. Visa relevanta ändringar och oförändrade kodställen längs vägen. Då kan användaren upptäcka en felaktig premiss och diskutera den med agenterna innan deras nästa omtag. Förloppet illustrerar en möjlig vy och fastställer ingen verklig buggorsak.
+#### Zoom during playback example
 
-#### Förklaringen måste gå att kontrollera
+The audio application's zoom example could let users follow **wheel event → viewport → cache update → rendering**, with playback as a parallel flow. Show relevant changes and unchanged code along that path. A wrong premise can then be identified and discussed before the next agent attempt. This illustrates a possible view and does not establish an actual bug cause.
 
-En övertygande agentberättelse får inte ersätta insyn i den verkliga koden. Varje föreslagen ändringsgrupp och beskrivet samband ska kunna följas till underlaget. Visa vad som kommer från kodanalys, körda tester respektive agentens tolkning, och markera osäkra samband. Fullständig diff och återstående ändringar ska alltid vara åtkomliga.
+<a id="förklaringen-måste-gå-att-kontrollera"></a>
 
-#### Prova om förståelsen faktiskt förbättras
+#### Explanations must be checkable
 
-Låt användaren förklara ändringens beteende, peka ut ett relevant beroende och identifiera en osäkerhet med hjälp av vyn. Jämför med vanlig diffgranskning av liknande uppgifter. Bedöm begriplighet, felupptäckt och hur lätt det är att fortsätta resonemanget med agenten; färre öppnade kodfiler är inget mål i sig.
+A persuasive agent narrative must not replace access to real code. Every proposed change group and described relationship should be traceable to evidence. Distinguish code analysis, executed tests and agent interpretation; mark uncertain relationships. The full diff and remaining changes must always be accessible.
 
-## 4 Maestro och agentnätverket
+<a id="prova-om-förståelsen-faktiskt-förbättras"></a>
 
-Den tekniska fördjupningen [Maestro och orkestrering av agentloopar](MAESTRO_ORCHESTRATION.md) beskriver egen orkestrering över oberoende agentsessioner, logiska deluppgifter, återhämtning och kostnadsbokföring per loopsteg. Den konkretiserar riktningen i detta avsnitt utan att utöka Etapp 0.
+#### Test whether understanding actually improves
 
-Maestro ska samordna arbetet över flera körningar och leverantörer. Det primära exemplet är en iterativ agentloop med specialiserade roller, granskningsgrindar och återkoppling. Maestro ska även kunna bära andra upplägg. Applikationen håller reda på uppgifter, tillstånd, budget och arbetskopior; agenternas text är inte ensam bärare av projektets tillstånd.
+Ask users to explain the changed behaviour, identify a relevant dependency and identify an uncertainty using the view. Compare with normal diff review on similar tasks. Assess understanding, defect discovery and ease of continuing the discussion with the agent; fewer opened code files is not a goal in itself.
 
-### Föreslagna ansvarsområden
+<a id="4-maestro-och-agentnätverket"></a>
 
-| **Ansvar** | **Vad Maestro ska hålla reda på** |
+## 4 Maestro and the agent network
+
+The technical elaboration [Maestro and agent-loop orchestration](MAESTRO_ORCHESTRATION.md) describes Maestro-owned orchestration over independent agent sessions, logical subtasks, recovery and cost accounting per loop step. It makes this section concrete without expanding Phase 0.
+
+Maestro should coordinate work across runs and providers. The primary example is an iterative agent loop with specialist roles, review gates and feedback. Maestro must also support other arrangements. The application tracks tasks, state, budgets and working copies; agent text must not be the sole repository of project state.
+
+<a id="föreslagna-ansvarsområden"></a>
+
+### Proposed responsibilities
+
+| **Responsibility** | **What Maestro tracks** |
 | --- | --- |
-| Planering | Mål, deluppgifter, beroenden och kriterier för att vara klar. |
-| Fördelning | Vilken agent och leverantör som arbetar med vilken uppgift. |
-| Samordning | Parallellitet, väntande resultat och arbete som riskerar att kollidera. |
-| Genomförande | Start, avbrott, återupptagning, fel och nya försök. |
-| Granskning | Vilken revision som granskats, av vem och med vilket resultat. |
-| Ekonomi | Förbrukning per körning och uppgift samt gränser för fortsatt arbete. |
+| Planning | Goals, subtasks, dependencies and completion criteria. |
+| Assignment | Which agent and provider is working on each task. |
+| Coordination | Parallelism, pending results and potentially conflicting work. |
+| Execution | Start, cancellation, resumption, failures and new attempts. |
+| Review | Which revision was reviewed, by whom and with what result. |
+| Accounting | Usage per run and task, and limits on continued work. |
 
-### Roller och delegering
+<a id="roller-och-delegering"></a>
 
-Planering, implementation och granskning är grundfunktioner. Referensloopen i avsnitt 5–6 visar en mer utvecklad rollfördelning. Roller anger ansvar och instruktioner, inte en fast modell eller en permanent hierarki i Maestro. En separat granskare ska kunna pröva mål och underlag utan att okritiskt ta över utförarens slutsatser.
+### Roles and delegation
 
-En agent ska kunna begära en deluppgift genom Maestro. Orkestratorn beslutar om den får starta och väljer leverantör enligt projektets inställningar. Detta möjliggör delegering över flera nivåer utan att hela projektet är beroende av en viss leverantörs interna subagentsystem. Leverantörernas egna subagenter kan användas där de passar.
+Planning, implementation and review are core functions. Sections 5–6 show a richer role allocation. Roles specify responsibilities and instructions rather than a fixed model or permanent hierarchy in Maestro. A separate reviewer should challenge goals and evidence without uncritically adopting the implementer's conclusions.
 
-Förslaget är att sätta gränser för samtidiga körningar, delegeringsdjup och antal omtag. En deluppgift behöver ett avgränsat mål och ett resultat som går att återföra till föräldrauppgiften. Maestros egen planering och samordning kan också förbruka modellresurser och ska då räknas in.
+An agent can request a subtask through Maestro. The orchestrator decides whether it may start and selects a provider according to project settings. This enables multilevel delegation without making the whole project depend on one provider's internal subagent system. Provider-native subagents may be used where appropriate.
 
-### Isolering och sammanföring
+The proposal is to limit concurrent runs, delegation depth and rework count. A subtask needs a bounded goal and a result that can return to its parent. Maestro's own planning and coordination may also consume model resources and must then be counted.
 
-Parallella skrivande agenter bör normalt arbeta i separata Git-arbetskopior. Varje resultat förankras i en känd basrevision. Maestro samordnar när ändringar förs ihop, upptäcker konflikter och beställer verifiering av det sammanförda resultatet. Två godkända delresultat innebär inte automatiskt att kombinationen fungerar.
+<a id="isolering-och-sammanföring"></a>
 
-En uppgift kan vara planerad, redo, pågående, blockerad, redo för granskning, under verifiering, klar, misslyckad eller avbruten. Tillstånden är ett förslag. Skillnaden mellan ”agenten svarade” och ”uppgiften är verifierad och klar” ska däremot alltid vara synlig.
+### Isolation and integration
 
-### 4.1 Tre nivåer och en gemensam målbild
+Parallel writing agents should normally use separate Git working copies. Each result is anchored to a known base revision. Maestro coordinates integration, detects conflicts and requests verification of the combined result. Two accepted parts do not automatically imply a working combination.
 
-**Referensupplägget har tre nivåer med olika ansvar.** De beskriver hur användaren samverkar med Executive-agenten och agentnätverket. Maestro ska stödja detta upplägg och samtidigt kunna bära andra arbetsflöden enligt avsnitt 7.
+A task may be planned, ready, active, blocked, ready for review, under verification, complete, failed or cancelled. These states are proposed. The distinction between “the agent replied” and “the task is verified and complete” must always be visible.
 
-#### Nivå 1 Användarens dagliga loop
+<a id="41-tre-nivåer-och-en-gemensam-målbild"></a>
 
-Användaren läser en executive summary, tar ställning till riktning och godkänner samt startar en eller flera iterationer via Executive-agenten. Rapporteringen kan vara en integrerad del av DSpatch eller visas via en valfri adapter till en dashboard, Confluence eller ett annat system. Vid problem kan användaren öppna en djupare Tech Lead-rapport med underlag och beslutspunkter.
+### 4.1 Three levels and a shared goal
 
-Ett godkännande kan omfatta flera iterationer. Återkommande mänskligt godkännande av varje intern plan, researchinsats eller kodändring ska inte vara ett krav i autonomt läge. Användaren behåller möjlighet att gripa in, pausa eller återgå till interaktivt projektarbete.
+**The reference arrangement has three levels with different responsibilities.** They describe how the user interacts with Executive and the agent network. Maestro should support this arrangement and other workflows described in section 7.
 
-#### Nivå 2 Executive-agenten
+<a id="nivå-1-användarens-dagliga-loop"></a>
 
-Executive-agenten äger arbetet mot det högnivåmål som användaren definierat. Den väljer nästa iterationsmål, delegerar genom nätverket, samlar rapporter och ansvarar för att en executive-rapport och en fördjupad Tech Lead-rapport produceras i slutet av iterationen. Underagenter kan skriva underlaget och sköta sammanställningen.
+#### Level 1 The user's daily loop
 
-Executive-agenten kan ändra delmål och plan inom mandatet, men ska begära mänsklig styrning när högnivåmålet eller ramarna behöver omprövas. Maestro tillhandahåller körning, tillstånd, verktygsanslutningar och historik; Executive är en agentroll i arbetsflödet.
+The user reads an executive summary, assesses direction, approves and starts one or more iterations through Executive. Reports can be integrated into DSpatch or presented through an optional adapter to a dashboard, Confluence or another system. For problems, users can open a deeper Tech Lead report with evidence and decision points.
 
-#### Nivå 3 Agentnätverket
+Approval may cover several iterations. Autonomous mode must not require repeated human approval of every internal plan, research effort or code change. Users retain the ability to intervene, pause or return to interactive project work.
 
-Specialiserade roller som Tech Lead, Planner, Implementer, Reviewer och Researcher samverkar, rapporterar till varandra och uppdaterar planen. Andra roller kan ansvara för projektöversikt, dokumentation och rapportering, oberoende av presentationsverktyg. Research, oberoende granskning, testning och korrigering sker inom nätverket. Lokala problem återförs i loopen; problem som nätverket inte kan lösa förs till Executive och vid behov till användaren.
+<a id="nivå-2-executive-agenten"></a>
 
-#### Domänen anger vad projektet ska åstadkomma
+#### Level 2 The Executive agent
 
-Domänen beskriver målbild, begrepp och kvalitetskriterier, exempelvis ett AI-träningsramverk, ett strategispel eller en musikstudio. Den är ingen ytterligare chefsnivå. Samma grundupplägg ska kunna användas med olika domäner, medan roller, verktyg, utvärdering och rapportinnehåll anpassas till projektet.
+Executive owns progress towards the user-defined high-level goal. It chooses the next iteration goal, delegates through the network, collects reports and ensures an executive report and detailed Tech Lead report are produced at the end. Subagents may write and compile the underlying material.
 
-#### Rapportering som gör autonomin begriplig
+Executive can change subgoals and plans within its mandate but must request human direction when the high-level goal or boundaries need reconsideration. Maestro supplies execution, state, tool connections and history; Executive is an agent role in the workflow.
 
-Executive-rapporten ska kort visa måluppfyllelse, viktiga resultat, förbrukning, problem och nästa steg. Tech Lead-rapporten ska göra det möjligt att följa tekniska slutsatser till tester, mätningar, ändringar och kvarvarande osäkerheter. När loopen stannar ska status skilja mellan uppnått mål, resursgräns och behov av mänskligt beslut. Samma underlag ska kunna presenteras internt eller via valfria adaptrar; kanalbyte ska bevara historiken och inget externt presentationssystem ska krävas för att loopen fungerar.
+<a id="nivå-3-agentnätverket"></a>
 
-## 5 Referensloop för agentarbete
+#### Level 3 The agent network
 
-![Generisk agentloop med Executive, Tech Lead, plan- och jobbgrindar, fyra arbetsvägar, Skeptic samt dokumentation och rapportering. Externt samarbete anges som systerprojekt utan domänkoppling.](assets/agentloop_generisk.png)
+Specialists such as Tech Lead, Planner, Implementer, Reviewer and Researcher collaborate, report to each other and update the plan. Other roles may own project overview, documentation and reporting independently of presentation tools. Research, independent review, testing and correction occur within the network. Local problems return through the loop; unresolved problems go to Executive and, when needed, the user.
 
-Figur 1. Exempel på möjlig loop-struktur.
+<a id="domänen-anger-vad-projektet-ska-åstadkomma"></a>
 
-## 6 Roller och återkoppling i referensloopen
+#### The domain defines what the project should achieve
 
-Loopen beskriver hur en godkänd uppgift planeras, delas upp efter arbetstyp och återkommer för bedömning. Deluppgiften kallas slice i bilden. Beskrivningen följer den generaliserade figurens roller och kopplingar; experimentgrenen kan exempelvis användas för träning och utvärdering av en modell. [11]
+The domain defines goals, concepts and quality criteria: for example, an AI training framework, strategy game or music studio. It is not another management level. The same basic arrangement should work across domains while roles, tools, evaluation and report contents adapt to the project.
 
-### Ledning och planering
+<a id="rapportering-som-gör-autonomin-begriplig"></a>
 
-Användaren godkänner och startar en eller flera iterationer. Executive väljer nästa iterationsmål och lämnar vidare till Tech Lead, som kopplar in Planner. Planen passerar agentgrinden Reviewer-s före val av slicetyp. Reviewer-s och Reviewer-l är bildens beteckningar, utan fasta modeller eller kapacitetsnivåer. Den övergripande ansvarsfördelningen beskrivs i avsnitt 4.1.
+#### Reporting that makes autonomy understandable
 
-| **Arbetstyp** | **Väg i bilden** | **Resultat som förs vidare** |
+Executive reports should briefly show goal attainment, important results, usage, problems and next steps. Tech Lead reports should trace technical conclusions to tests, measurements, changes and remaining uncertainties. When the loop stops, distinguish goal completion, resource limits and required human decisions. The same material may be presented internally or through optional adapters; changing channels must preserve history, and the loop must not depend on an external presentation system.
+
+<a id="5-referensloop-för-agentarbete"></a>
+
+## 5 Reference loop for agent work
+
+```mermaid
+flowchart TD
+    U["User: approve and start"] --> E["Executive"]
+    E --> T["Tech Lead"]
+    T -->|"Accepted"| E
+    E --> D["Documenter: project status and results"]
+    D --> P["Publisher: executive log and technical report"]
+    P --> U
+    T --> PL["Planner"]
+    T -. "Specification failure: replan" .-> PL
+    PL --> RS["Plan gate: Reviewer-s"]
+    RS --> S{"Slice type"}
+    T -. "Capacity failure: escalate one step" .-> S
+    S -->|"Code"| I["Implementer"]
+    I --> QA["QA"]
+    QA --> R["Reviewer"]
+    R --> SK["Skeptic: claim gate"]
+    S -->|"Research"| RE["Researcher / Prior-Art"]
+    RE --> SK
+    S -->|"Experiment"| RL["Job gate: Reviewer-l"]
+    RL --> INF["Infra + Data Curator"]
+    INF --> EA["Experiment Analyst"]
+    EA --> SK
+    S -->|"Sister sync"| L["Sister-Project Liaison"]
+    L --> SK
+    subgraph Sister["Sister project"]
+        EX["External agents"] <-. "Questions" .-> SR["Sister-Project Respondent"]
+    end
+    L <-. "Questions" .-> EX
+    SK --> T
+    AR["Iteration archive: each agent writes a report and returns a reference"] -.- SK
+```
+
+Figure 1. Example of a possible loop structure.
+
+This editable English diagram preserves the roles and connections of the [original Swedish reference image](assets/agentloop_generisk.png), retained as historical source material.
+
+<a id="6-roller-och-återkoppling-i-referensloopen"></a>
+
+## 6 Roles and feedback in the reference loop
+
+The loop shows how approved work is planned, divided by work type and returned for assessment. A subtask is called a slice in the diagram. The description follows the generalised figure's roles and connections; the experiment branch may, for example, train and evaluate a model. [11]
+
+<a id="ledning-och-planering"></a>
+
+### Leadership and planning
+
+The user approves and starts one or more iterations. Executive selects the next goal and passes it to Tech Lead, which involves Planner. The plan passes the Reviewer-s agent gate before selecting a slice type. Reviewer-s and Reviewer-l are diagram labels, not fixed models or capability tiers. Section 4.1 explains the overall responsibility split.
+
+| **Work type** | **Path in the diagram** | **Result passed on** |
 | --- | --- | --- |
-| Research | Researcher / Prior-Art till Skeptic. | Forskningsunderlag och påståenden att pröva. |
-| Kod | Implementer till QA och Reviewer, sedan Skeptic. | Kodändringar och deras kvalitetsbedömning. |
-| Experiment | Jobbgrind Reviewer-l till Infra + Data Curator, sedan Experiment Analyst och Skeptic. | Ett genomfört jobb med experimentanalys. |
-| Systersynk | Sister-Project Liaison utbyter frågor med systerprojektet och återför till Skeptic. | Kunskap eller svar från ett närliggande projekt. |
+| Research | Researcher / Prior-Art to Skeptic. | Research evidence and claims to test. |
+| Code | Implementer to QA and Reviewer, then Skeptic. | Code changes and quality assessments. |
+| Experiment | Reviewer-l job gate to Infra + Data Curator, then Experiment Analyst and Skeptic. | An executed job with experiment analysis. |
+| Sister sync | Sister-Project Liaison exchanges questions with the sister project and returns to Skeptic. | Knowledge or answers from a related project. |
 
-### Återkoppling har olika orsaker
+<a id="återkoppling-har-olika-orsaker"></a>
 
-Skeptic fungerar som en påståendegrind och återför till Tech Lead. Bilden skiljer mellan **specifikationsfel**, som leder tillbaka till Planner för omplanering, och **kapacitetsfel**, som leder till eskalering ett steg och ny behandling av aktuell slicetyp. Accepterat resultat går från Tech Lead till Executive. Exakt hur eskalering väljer modell, resurser eller arbetssätt behöver definieras i den körbara versionen.
+### Feedback has different causes
 
-### Rapporter och kunskapsutbyte
+Skeptic is a claim gate and returns to Tech Lead. The figure distinguishes **specification failures**, which return to Planner, from **capacity failures**, which escalate one step and retry the current slice type. Accepted results pass from Tech Lead to Executive. The runnable version must define how escalation selects models, resources or working methods.
 
-Executive kopplar in Documenter för projektstatus och resultat. Publisher sammanställer executive log och teknisk rapport till användaren. Varje agent skriver sin rapport i ett gemensamt iterationsarkiv och returnerar en referens. DSpatch ska kunna koppla rapporterna till rätt iteration och visa dem utan att allt kopieras i chatten. Filnamn, lagringsplats och presentationskanal väljs för projektet.
+<a id="rapporter-och-kunskapsutbyte"></a>
 
-Systerprojektet är en generell extern samarbetspart. Bilden visar externa agenter och en Sister-Project Respondent med ett eget frågeutbyte. Maestro behöver kunna representera kontakten och dess vänteläge utan att ta över systerprojektets interna orkestrering. Rapporter kan visas direkt i DSpatch eller förmedlas genom valfria adaptrar inom projektets mandat.
+### Reports and knowledge exchange
 
-## 7 Utbytbara arbetssätt i Maestro
+Executive involves Documenter for project status and results. Publisher compiles the executive log and technical report for the user. Each agent writes its report into a shared iteration archive and returns a reference. DSpatch should link reports to the correct iteration and display them without copying everything into chat. Filenames, storage and presentation channels are project choices.
 
-**Flexibilitet är en del av målbilden.** Referensloopen ligger närmast det primära arbetssättet. Kommittéer som diskuterar och röstar, såsom det MAD-upplägg användaren beskriver, ska samtidigt vara möjliga. Framtida koncept ska kunna införas genom avgränsade tillägg i stället för att hela produktidén byggs om.
+The sister project is a generic external collaborator. The diagram shows external agents and a Sister-Project Respondent with their own question exchange. Maestro must represent this contact and waiting state without taking over the sister project's internal orchestration. Reports may appear in DSpatch or through optional adapters within the project's mandate.
 
-### Skilj arbetsflöde från körmiljö
+<a id="7-utbytbara-arbetssätt-i-maestro"></a>
 
-Ett arbetsflöde beskriver roller, överlämningar, grindar och återkoppling. En körmiljö beskriver var och hur stegen utförs. Samma rollfördelning ska kunna prövas med olika leverantörer, modeller och lokala eller externa körmiljöer när integrationerna stöder det. Roller som Executive och Tech Lead tillhör referensflödet; de ska inte vara obligatoriska nivåer i Maestro.
+## 7 Replaceable working methods in Maestro
 
-### Föreslagen utbyggbar modell
+**Flexibility is part of the vision.** The reference loop is closest to the primary working method. Discussion and voting committees, such as the user's MAD arrangement, must also remain possible. Future concepts should be introduced through bounded extensions rather than rebuilding the product idea.
 
-- **Versionssatta arbetsflöden:** definiera steg, ansvar, in- och utdata, beroenden, villkor och återkoppling. Loopen kräver cykler; enbart en graf utan återkoppling räcker inte.
-- **Utbytbara beslutssätt:** ett steg kan använda regler, en agent, en människa eller en kommitté. Röstning och sammanvägning ska kunna läggas till med egen redovisning av underlaget.
-- **Tydliga gränssnitt:** körning, resultat, händelser, fel och förbrukning har gemensamma kontrakt. Nya stegtyper kan komplettera dem med specifika data.
-- **Gemensam historik:** uppgifter, iterationer, underlag och beslut behåller sin identitet även när modellen, rollen eller arbetssättet ändras.
-- **Utbyggbar presentation:** nya steg får en begriplig grundvy för status, indata och resultat. Specialvyer kan läggas till utan att projekt- och granskningsvyerna måste ersättas.
+<a id="skilj-arbetsflöde-från-körmiljö"></a>
 
-### Flexibilitet som går att verifiera
+### Separate workflow from execution environment
 
-Ett föreslaget acceptansprov är att först köra referensloopen och sedan lägga till ett enklare kommittéflöde via dess tilläggsgränssnitt. Uppgiftshistorik, kostnadsredovisning och kodgranskning ska fungera för båda utan ändringar i sina grundläggande datamodeller. En ny körmiljö ska kunna införas oberoende av arbetsflödesdefinitionen.
+A workflow defines roles, handoffs, gates and feedback. An execution environment defines where and how steps run. The same roles should be testable with different providers, models and local or external environments where integrations support them. Executive and Tech Lead belong to the reference workflow; they are not mandatory Maestro levels.
 
-Ingen arkitektur kan förutse alla framtida idéer. Målet är därför versionshanterade kontrakt, tydliga tilläggspunkter och kontrollerade migreringar. Första versionen behöver inte innehålla en allmän visuell flödesbyggare; en strukturerad definition är tillräcklig om den verkligen går att byta ut.
+<a id="föreslagen-utbyggbar-modell"></a>
 
-## 8 Mänsklig styrning och autonom iteration
+### Proposed extensible model
 
-**Det människointeraktiva läget är ett fullvärdigt arbetssätt för hela projektet.** Användaren ska kunna stanna där så länge som behövs eller önskas, även genom hela projektet. Övergång till agentloopen är valfri och sker när eller om målbilden och projektets mognad gör det lämpligt. Det ska vara lika naturligt att växla tillbaka.
+- **Versioned workflows:** define steps, ownership, inputs/outputs, dependencies, conditions and feedback. Loops need cycles; an acyclic graph alone is insufficient.
+- **Replaceable decision methods:** a step may use rules, an agent, a person or a committee. Voting and aggregation can be added with their own evidence reporting.
+- **Clear interfaces:** execution, results, events, errors and usage share contracts. New step types may add specific data.
+- **Shared history:** tasks, iterations, evidence and decisions retain identity when models, roles or working methods change.
+- **Extensible presentation:** new steps receive an understandable basic view of status, inputs and results. Specialist views can be added without replacing project and review views.
 
-| **Arbetssätt** | **Användarens roll** | **Maestros beteende** |
+<a id="flexibilitet-som-går-att-verifiera"></a>
+
+### Verifiable flexibility
+
+A proposed acceptance test first runs the reference loop, then adds a simpler committee workflow through extension interfaces. Task history, cost accounting and code review should work for both without changing their core data models. A new execution environment should be introducible independently of workflow definitions.
+
+No architecture can anticipate every future idea. Aim for versioned contracts, clear extension points and controlled migrations. The first version need not include a general visual workflow builder; a structured definition is enough if it is genuinely replaceable.
+
+<a id="8-mänsklig-styrning-och-autonom-iteration"></a>
+
+## 8 Human direction and autonomous iteration
+
+**Human-interactive mode is a full working method for the entire project.** Users can stay there for as long as needed or wanted, including the whole project. Switching to the agent loop is optional, when or if the goal and project maturity make it appropriate. Returning should be equally natural.
+
+| **Working mode** | **User role** | **Maestro behaviour** |
 | --- | --- | --- |
-| Människointeraktivt arbete | Driver resonemang, detaljiteration och beslut över hela projektet. | Bevarar kontext och historik, ger agentstöd och utför överenskommet arbete. |
-| Styrning vid grindar | Anger riktning och tar ställning vid valda beslutspunkter. | Driver rutinmässiga steg och stannar vid konfigurerade grindar eller avvikelser. |
-| Autonom iteration | Anger högnivåmål och mandat, läser executive-rapporter och ingriper vid behov. | Driver agentloopen inklusive granskning och omtag; rapporterar och stannar vid behov av mänsklig styrning. |
+| Human-interactive work | Leads reasoning, detailed iteration and decisions across the project. | Preserves context/history, provides agent assistance and executes agreed work. |
+| Direction at gates | Sets direction and assesses selected decision points. | Runs routine steps and stops at configured gates or deviations. |
+| Autonomous iteration | Sets high-level goals and mandate, reads executive reports and intervenes when needed. | Runs the agent loop including review/rework; reports and stops when human direction is needed. |
 
-### Kontinuitet mellan arbetssätten
+<a id="kontinuitet-mellan-arbetssätten"></a>
 
-Interaktivt arbete kan omfatta teori, planering, experiment, kodning och granskning över många sessioner. Användaren ska kunna diskutera och detaljiterera tillsammans med agenter utan att aktivera en autonom loop. Samma projekt, uppgifter, underlag och beslut följer med när arbetssättet ändras. Olika delar av projektet kan också ha olika grad av autonomi.
+### Continuity between modes
 
-Vid övergång till loopen väljs aktuell målversion, startpunkt och mandat. Vid återgång till interaktivt arbete bevaras vad loopen har gjort och vilka frågor som återstår. Växlingen sker vid definierade säkra punkter; pågående verktyg kan behöva avslutas separat. Nya mål eller ändringar ska markera tidigare verifiering som inaktuell där den berörs.
+Interactive work may span theory, planning, experiments, coding and review over many sessions. Users can discuss and iterate with agents without enabling an autonomous loop. The same project, tasks, evidence and decisions follow mode changes. Different project parts may use different autonomy levels.
 
-### Mål och metriker som grund för iteration
+When switching to the loop, select the current goal version, starting point and mandate. On returning to interactive work, preserve the loop's actions and pending questions. Switch at defined safe points; active tools may need separate termination. New goals or changes should invalidate affected earlier verification.
 
-För autonom körning bör uppgiften ange önskat resultat, startläge, vad som får ändras, hur resultatet mäts och när loopen ska stanna. Kriterierna kan vara kvalitativa eller mätbara. Exempel är godkända tester eller förbättrad ReID-prestanda under givna gränser för latens och minne; inga numeriska mål är fastställda här.
+<a id="mål-och-metriker-som-grund-för-iteration"></a>
 
-Mätprotokoll, data och målversion ska följa varje iteration så att jämförelsen är meningsfull. Utebliven förbättring, motstridiga resultat, oklar specifikation eller en resursgräns kan utlösa stopp eller mänsklig bedömning. En förbättrad metriksiffra ska inte ensam räcka om övriga kvalitetskrav försämras.
+### Goals and metrics for iteration
 
-### Föreslaget acceptansprov
+Autonomous tasks should specify the desired result, initial state, permitted changes, measurement method and stopping conditions. Criteria may be qualitative or measurable, such as passing tests or better ReID performance within latency and memory limits; no numerical targets are fixed here.
 
-Driv projektet interaktivt över flera sessioner. Kör sedan flera autonoma iterationer med research, granskning, verifiering och omtag inom nätverket, utan rutinmässiga mänskliga delgodkännanden. Kontrollera executive-rapporter och ett stopp som begär mänsklig styrning. Återgå till interaktivt arbete med uppgifter, målversioner, underlag, kommentarer och kostnader bevarade, utan att starta om slutfört arbete.
+Measurement protocols, data and goal versions must accompany each iteration for meaningful comparison. Lack of improvement, contradictory results, unclear specifications or resource limits may trigger a stop or human assessment. A better metric alone is insufficient if other quality requirements deteriorate.
 
-## 9 Arkitektur och projektets data
+<a id="föreslaget-acceptansprov"></a>
 
-Arkitekturen är en riktning att växa mot. Första inkrementet behöver bara en tunn gräns mellan chattgränssnitt, leverantörsadapter och projektets sparade tillstånd. Därefter skiljs arbetsflöden och körmiljöer åt när behoven blir konkreta. Maestro ska kunna tillföra loopar och andra agentupplägg utan att gränssnittet binds till en leverantör eller en bestämd topologi.
+### Proposed acceptance test
 
-| **Del** | **Föreslagen funktion** |
+Work interactively across several sessions, then run multiple autonomous iterations with research, review, verification and rework inside the network, without routine human sub-approvals. Check executive reports and a stop requesting human direction. Return to interactive work with tasks, goal versions, evidence, comments and costs preserved, without restarting completed work.
+
+<a id="9-arkitektur-och-projektets-data"></a>
+
+## 9 Architecture and project data
+
+The architecture is a direction to grow towards. The first increment needs only a thin boundary between chat UI, provider adapter and persisted project state. Separate workflows from execution environments as needs become concrete. Maestro should add loops and other agent arrangements without binding the UI to one provider or topology.
+
+| **Part** | **Proposed function** |
 | --- | --- |
-| DSpatch | Projekt- och uppgiftsvyer, kodläsning, diffar, kommentarer och lätt redigering. |
-| Maestro | Körning av utbytbara arbetsflöden, delegering, beroenden, budget och mänsklig styrning. |
-| Leverantörsadaptrar | Starta och följa Copilot- eller Cursor-körningar samt tolka deras händelser. |
-| Arbetsmiljö | Git, filer, terminalprocesser, byggkommandon och testkörningar. |
-| Beständig lagring | Uppgifter, körningar, revisioner, beslut, förbrukning och granskningshistorik. |
+| DSpatch | Project/task views, code reading, diffs, comments and light editing. |
+| Maestro | Execute replaceable workflows, delegation, dependencies, budgets and human direction. |
+| Provider adapters | Start and observe Copilot or Cursor runs and interpret their events. |
+| Working environment | Git, files, terminal processes, build commands and test runs. |
+| Persistent storage | Tasks, runs, revisions, decisions, usage and review history. |
 
-### 9.1 Valt teknikspår och plattformar
+<a id="91-valt-teknikspår-och-plattformar"></a>
 
-**Beslut 13 september 2026: bygg DSpatch med TypeScript, React och Electron, med Windows och Linux i målbilden.** Första implementation och provkörning sker med Cursor på Niclas Windowsdator. Linuxstödet införs och verifieras stegvis; en fungerande Linuxversion är inte ett krav för Etapp 0.
+### 9.1 Selected stack and platforms
 
-TypeScript är huvudspråk för gränssnitt, projektlogik och leverantörsadaptrar. React med HTML/CSS används för den egna arbetsytan. Electron ger desktopfönster och lokal systemintegration; Node.js används för agentintegrationerna. Valet styr inte språken i de projekt som DSpatch arbetar med.
+**Decision, 13 September 2026: build DSpatch with TypeScript, React and Electron, targeting Windows and Linux.** Initial implementation and testing use Cursor on Niclas's Windows computer. Introduce and verify Linux support incrementally; a working Linux version is not required in Phase 0.
 
-En enhetlig upplevelse på Windows och Linux är ett centralt motiv. Electron låter oss distribuera samma Chromium-version på båda plattformarna. Gemensamma typsnitt, ikoner och styling ska stödja en konsekvent arbetsyta. Skärmskalning, textåtergivning, fönsterhantering och systemdialoger behöver ändå provas på respektive system. Node/TypeScript passar också de dokumenterade SDK-vägarna för Cursor och Copilot, vars faktiska funktion måste verifieras. [2][3][12]
+TypeScript is the main language for UI, project logic and provider adapters. React with HTML/CSS provides the custom workspace. Electron supplies desktop windows and local system integration; Node.js supports agent integrations. This choice does not constrain languages in projects DSpatch works on.
 
-Tauri övervägdes som alternativ med mindre grundpaket genom systemets webview. Electron valdes främst för kontrollen över renderingsmiljön mellan Windows och Linux. Nackdelen är ett större grundpaket med egen Chromium- och Node-miljö. Ingen prestanda- eller minnesjämförelse har genomförts för DSpatch; antalet tekniker är inte det avgörande motivet. [12][14]
+A consistent Windows/Linux experience is a central reason. Electron lets us ship the same Chromium version on both. Shared fonts, icons and styling support consistency. Display scaling, text rendering, window management and system dialogs still require platform-specific tests. Node/TypeScript also fits the documented Cursor and Copilot SDK paths, whose behaviour must be verified. [2][3][12]
 
-Håll gränssnitt och projektdata fria från direkta leverantörsanrop och plattformsspecifika detaljer. Låt agentkörningar, Git-operationer, byggen och tunga diffberäkningar ske asynkront utanför gränssnittstråden, i bakgrundsprocesser där det behövs. Stora konversationer och diffar ska visas utan att hela innehållet behöver renderas om vid varje uppdatering. [13]
+Tauri was considered for its smaller base package using the system webview. Electron was selected mainly for control of rendering across Windows and Linux, at the cost of a larger package carrying Chromium and Node. No DSpatch performance or memory comparison has been performed; the number of technologies is not the deciding factor. [12][14]
 
-DSP-1 verifierar teknikspåret och den valda Cursor-anslutningen, inklusive ett minimalt paketerat Windowsprov. Exakta beroendeversioner, lagring och senare Linuxpaketering återstår att konkretisera. Teknikspåret kan omprövas vid dokumenterade hinder; bevara projektdata, leverantörsgränser och målbild vid ett sådant byte.
+Keep UI and project data free of direct provider calls and platform-specific details. Agent runs, Git operations, builds and heavy diff calculations should run asynchronously outside the UI thread, in background processes where needed. Large conversations and diffs should not require rerendering all content on every update. [13]
 
-### Gemensamt integrationskontrakt
+DSP-1 verifies the stack and selected Cursor connection, including a minimal packaged Windows probe. Concrete dependency versions, storage and later Linux packaging are refined through implementation and recorded in the task. Documented blockers may justify revisiting the stack while preserving project data, provider boundaries and the vision.
 
-Varje leverantörs- och körmiljöadapter bör redovisa sitt stöd för start, strömmande svar, avbrott, återupptagning, modellval, godkännanden och kostnadsrapportering. Arbetsflödet väljer lämplig adapter per steg. Saknat stöd ska framgå, och en gemensam vy får inte antyda att leverantörerna fungerar identiskt.
+<a id="gemensamt-integrationskontrakt"></a>
 
-Leverantörens råhändelser bör kunna sparas tillsammans med en normaliserad representation. Då går det att felsöka integrationen, förbättra tolkningen och förklara varifrån en status eller kostnad kommer. Normaliserade händelser får stabila identifierare så att återanslutning inte duplicerar tidigare resultat.
+### Shared integration contract
 
-### Föreslagna informationsobjekt
+Each provider/execution adapter should report support for start, streaming, cancellation, resumption, model selection, approvals and cost reporting. Workflows select suitable adapters per step. Missing support must be visible; a common view must not imply identical provider behaviour.
 
-Projektet innehåller uppgifter med mål, avgränsning och acceptanskriterier. En uppgift kan ha en förälder och flera körningar. Körningen anger leverantör, session, modell, arbetskopia, tidsstämplar och avslutningsorsak. Ändringar och verifieringar refererar till den revision som producerades eller testades.
+Provider raw events should be saveable alongside a normalised representation, supporting debugging, improved interpretation and explanation of status/cost sources. Normalised events need stable identifiers so reconnection does not duplicate results.
 
-Kommentarer och granskningsbeslut behöver både en koppling till uppgiften och en stabil kodreferens. Förbrukningsposter behöver leverantör, enhet, omfattning och källhändelse. Exakta fältnamn och lagringsformat fastställs i en senare teknisk specifikation.
+<a id="föreslagna-informationsobjekt"></a>
 
-### Beständighet och framtida anslutningar
+### Proposed information objects
 
-Lokal databas eller strukturerade filer är båda möjliga. Valet ska stödja återställning, export och spårbarhet. Leverantörens chatthistorik är värdefull kontext, men ersätter inte projektets egen bokföring av uppgifter och beslut. Externa projektsystem kan anslutas senare utan att behöva bli ett villkor för att DSpatch fungerar.
+Projects contain tasks with goals, scope and acceptance criteria. A task may have a parent and multiple runs. A run records provider, session, model, working copy, timestamps and termination reason. Changes and verification refer to the revision produced or tested.
 
-## 10 Copilot och Cursor som agentleverantörer
+Comments and review decisions need both a task link and stable code reference. Usage entries need provider, unit, scope and source event. Exact field names and storage formats belong in a later technical specification.
+
+<a id="beständighet-och-framtida-anslutningar"></a>
+
+### Persistence and future connections
+
+A local database or structured files are both possible. Support recovery, export and traceability. Provider chat history is valuable context but does not replace the project's own record of tasks and decisions. External project systems may be connected later without becoming prerequisites for DSpatch to work.
+
+<a id="10-copilot-och-cursor-som-agentleverantörer"></a>
+
+## 10 Copilot and Cursor as agent providers
 
 ### Copilot
 
-GitHubs Copilot SDK ger programmatisk åtkomst till motorn bakom Copilot CLI. Eget gränssnitt och kopplingen till editorn byggs i DSpatch. SDK:t är inte en färdig kopia av VS Codes chattpanel och innebär inte automatisk funktionsparitet med VS Code. Det finns bland annat för TypeScript, Python och .NET. [1]
+GitHub's Copilot SDK provides programmatic access to the engine behind Copilot CLI. DSpatch supplies its own UI and editor integration. The SDK is not a ready-made copy of VS Code's chat panel and does not imply automatic feature parity. It is available for TypeScript, Python and .NET, among others. [1]
 
-Dokumenterat stöd omfattar sessioner, strömmande svar, modellval, egna verktyg och MCP. GitHub-inloggning kan användas för Copilot-åtkomst; alternativet med egna modellnycklar har ett annat åtkomst- och debiteringsupplägg. Standardanvändning av SDK:t följer CLI:s användningsmodell. Vilka modeller som erbjuds ska läsas från den aktuella miljön. [1–2]
+Documented support includes sessions, streaming, model selection, custom tools and MCP. GitHub authentication can provide Copilot access; using personal model keys has a different access and billing arrangement. Standard SDK use follows the CLI usage model. Read available models from the actual environment. [1–2]
 
 ### Cursor
 
-Cursor har ett TypeScript-SDK för lokala agentkörningar och molnkörningar. Lokal körning avser agentloop och filåtkomst; modellen anropas fortfarande som en tjänst. SDK:t ger stöd för att starta, följa, avbryta och återuppta arbete. Enligt dokumentationen belastar användarnycklar användarens plan, med samma prissättning och förbrukningspotter som motsvarande produktkörningar. [3]
+Cursor has a TypeScript SDK for local and cloud agent runs. “Local” describes the agent loop and file access; the model is still called as a service. The SDK supports starting, observing, cancelling and resuming work. Documentation states that user keys charge the user's plan with the same pricing and usage pools as corresponding product runs. [3]
 
-Cursor CLI stöder dessutom ACP, Agent Client Protocol, för egna klienter och editorer. Kommunikation sker med JSON-RPC över standard in och ut. Protokollet omfattar sessioner, uppdateringar, godkännanden och avbrott. Headless CLI med JSON eller strömmande JSON är ytterligare en integrationsväg. [4–5]
+Cursor CLI also supports ACP, Agent Client Protocol, for custom clients and editors. It uses JSON-RPC over standard input/output for sessions, updates, approvals and cancellation. Headless CLI with JSON or streaming JSON is another integration path. [4–5]
 
-### Föreslagen användning i DSpatch
+<a id="föreslagen-användning-i-dspatch"></a>
 
-Första inkrementet är en minimal interaktiv chatt med Cursor som första agentleverantör, eftersom Niclas redan arbetar med Cursor hemma. Välj anslutningsväg i teknikprovet och verifiera den med hans faktiska konto och hemmadator. Filändring, en vanlig fullständig textdiff och körning av relevant bygge eller test ingår redan i Etapp 0. Förbrukningsmätning byggs vidare när tillförlitliga värden finns och motsvarande funktion prioriteras.
+### Proposed use in DSpatch
 
-VS Code och Copilot ska fortsatt stödjas i målbilden. Håll leverantörsspecifika anrop och sessionsdata bakom en tunn adapter och undvik att gemensam gränssnittslogik, projektdata eller bygginstruktioner kräver Cursors interna tillstånd. Teknikvalen ska bedömas med framtida VS Code/Copilot-stöd i åtanke, men den integrationen behöver inte implementeras eller provköras i Etapp 0. Dokumentera antaganden, kända hinder och återstående kompatibilitetsprov; förenlig arkitektur är inte detsamma som verifierad funktion.
+The first increment is minimal interactive chat with Cursor first because Niclas already uses it at home. Select the connection path in the technical probe and verify it with his actual account and computer. File changes, a normal complete text diff and a relevant build/test are already part of Phase 0. Extend usage measurement when reliable values are available and the feature is prioritised.
 
-| **Förmåga att kontrollera** | **Vad prototypen ska visa** |
+VS Code and Copilot remain in the vision. Keep provider-specific calls and session data behind a thin adapter; avoid common UI logic, project data or build instructions depending on Cursor's internal state. Evaluate technical choices for future VS Code/Copilot support, without requiring its implementation or testing in Phase 0. Record assumptions, known obstacles and outstanding compatibility probes; compatible architecture is not verified functionality.
+
+| **Capability to check** | **What the prototype should demonstrate** |
 | --- | --- |
-| Åtkomst | Inloggning, tillgängliga modeller och fungerande lokal arbetskopia. |
-| Livscykel | Start, uppdateringar, avbrott och fortsatt arbete efter omstart. |
-| Verktyg | Filändring och terminalkörning med begriplig felrapportering. |
-| Förbrukning | Rapporterade mått, enheter, fördröjning och hur de avgränsas. |
-| Gränssnitt | Händelser kan kopplas till rätt uppgift och visas utan duplicering. |
+| Access | Authentication, available models and a working local checkout. |
+| Lifecycle | Start, updates, cancellation and continued work after restart. |
+| Tools | File changes and terminal execution with understandable errors. |
+| Usage | Reported measurements, units, delay and scope. |
+| UI | Events attach to the correct task and display without duplication. |
 
-**Kunskapsläge:** Integrationsmöjligheterna är belagda i leverantörernas dokumentation. Någon fungerande DSpatch-integration eller mätning mot användarens konton är ännu inte genomförd. Leverantörsversioner och ändrade villkor behöver följas under projektet.
+**Evidence status:** integration possibilities are documented by providers. Successful DSpatch integration and measurements against the user's accounts require actual probes; consult DSP-1 for current evidence. Track provider versions and changing terms throughout the project.
 
-## 11 Verktyg MCP och REST
+<a id="11-verktyg-mcp-och-rest"></a>
 
-DSpatch behöver kunna ge agenter tillgång till projektets verktyg och externa API:er. Diskussionen skiljde mellan MCP-servrar, egna SDK-verktyg och vanliga skript. Alla tre kan fylla en funktion; en integration behöver inte göras till en MCP-server enbart för att en agent ska kunna använda den.
+## 11 Tools, MCP and REST
 
-| **Väg** | **Hur den fungerar** | **När den är lämplig** |
+DSpatch needs to give agents access to project tools and external APIs. The discussion distinguished MCP servers, custom SDK tools and ordinary scripts. All three can be useful; an integration need not become an MCP server just for agent access.
+
+| **Path** | **How it works** | **When it fits** |
 | --- | --- | --- |
-| MCP-server | Klienten hämtar verktygsbeskrivningar och anropar serverns verktyg. | När standardiserad anslutning och återanvändning mellan klienter är värdefull. |
-| Eget SDK-verktyg | SDK:t anropar en funktion i värdapplikationen och återför resultatet. | När DSpatch äger integrationen och behöver en strukturerad funktion. |
-| Skript via terminal | Agenten kör exempelvis Python, som anropar ett REST-API. | För en enkel, uttryckligen tillåten integration som redan kan köras i terminalen. |
+| MCP server | The client discovers tool descriptions and calls server tools. | Standardised connections and reuse across clients. |
+| Custom SDK tool | The SDK calls a host-application function and returns its result. | DSpatch owns the integration and needs a structured function. |
+| Terminal script | An agent runs, for example, Python calling a REST API. | A simple, explicitly authorised integration already executable in the terminal. |
 
-### Vad som är verifierat om registerkravet
+<a id="vad-som-är-verifierat-om-registerkravet"></a>
 
-Initiativtagaren har bekräftat att registry_only var verifierat i den aktuella VS Code-miljön. Detta är en fast utgångspunkt från diskussionen och ska inte beskrivas som en obekräftad hypotes. Det är däremot inte fastställt här exakt hur samma kontos begränsningar tillämpas i en egen SDK-applikation.
+### What is verified about the registry requirement
 
-SDK:t dokumenterar direkt konfiguration av lokala och externa MCP-servrar. GitHub anger samtidigt att organisationens register- och allowlist-policy kan gälla även Copilot CLI. En egen applikation innebär därför inte automatiskt att en organisationsbegränsning försvinner. [6–7]
+The project initiator confirmed that registry_only was verified in the relevant VS Code environment. Treat this as an established input from the discussion, not an unconfirmed hypothesis. How the same account's restrictions apply to a custom SDK application has not been established here.
 
-### Den enkla vägen är redan godkänd
+The SDK documents direct configuration of local and external MCP servers. GitHub also states that organisational registry and allowlist policy may apply to Copilot CLI. A custom application therefore does not automatically remove an organisational restriction. [6–7]
 
-Initiativtagaren har uttryckligen bekräftat att REST-anrop genom Python-skript och terminal är godkända i den diskuterade miljön. DSpatch kan använda denna integrationsväg utan att behöva en MCP-server. Godkännandet gäller det beskrivna upplägget, inte ett generellt påstående om alla tänkbara externa system.
+<a id="den-enkla-vägen-är-redan-godkänd"></a>
 
-Skripten bör ha tydliga argument, strukturerade resultat, stabila exitkoder och begripliga fel. Återförsök måste skilja på läsning och åtgärder som skapar eller ändrar data, så att en avbruten körning inte orsakar dubbla ändringar. Inloggningsuppgifter ska förmedlas utan att hamna i agentloggar eller dokument.
+### The simple path is already authorised
 
-### Egen MCP-host och egen agentmotor
+The initiator explicitly confirmed that REST calls through Python scripts and the terminal are approved in the discussed environment. DSpatch can use that path without an MCP server. This approval applies to that arrangement, not every possible external system.
 
-En egen MCP-host är delen som ansluter till servrar och förmedlar deras verktyg. En egen agentmotor styr dessutom loopen mellan modell och verktyg. Båda diskuterades som tekniska möjligheter. Den valda målbilden behåller tillgången till Copilot och Cursor; direktanrop till modellleverantörer är en möjlig framtida adapter, inte ett krav för första versionen.
+Scripts should have clear arguments, structured results, stable exit codes and understandable errors. Retries must distinguish reads from operations creating or changing data to avoid duplicated changes after interruption. Credentials must be supplied without entering agent logs or documents.
 
-## 12 Förbrukning och kostnad per uppgift
+<a id="egen-mcp-host-och-egen-agentmotor"></a>
 
-Användaren ska kunna se vad en uppgift förbrukat, inklusive planering, deluppgifter, granskning och omtag. Uppgiften kan omfatta flera sessioner och leverantörer. Därför behöver DSpatch koppla leverantörernas mätvärden till sin egen uppgiftsstruktur.
+### Custom MCP host and agent engine
 
-### Dokumenterade mätvärden
+An MCP host connects to servers and exposes their tools. An agent engine also controls the model/tool loop. Both were discussed as technical possibilities. The selected vision retains Copilot and Cursor access; direct model-provider calls are a possible future adapter, not a first-version requirement.
 
-Copilot SDK exponerar session.rpc.usage.getMetrics() med sessionstotalen totalNanoAiu och uppdelningen modelMetrics. Totalen omfattar huvudagenten och interna subagenter. assistant.usage ger tokenmått per modellanrop; dess fält cost beskrivs som en premium request-multiplikator, inte direkt som AI-krediter. session.usage_info beskriver kontextfönstrets användning. [8]
+<a id="12-förbrukning-och-kostnad-per-uppgift"></a>
 
-getMetrics är experimentellt. GitHubs exempel dividerar totalNanoAiu med 10 upphöjt till 9, men dokumentationen kräver kontroll mot aktuell debiteringsdefinition. SDK- och CLI-version ska låsas vid verifieringen. Händelsen assistant.usage levereras live och spelas inte upp igen när en session återupptas. [8]
+## 12 Usage and cost per task
 
-Cursor SDK har agent.getUsage() för användning och kostnad, med uppdelning per körning eller tur. rawCostCents och chargedCents har olika betydelse. Kostnaden kan dröja efter avslutad körning och chargedCents kan vara noll vid användning som ingår i planen. Ett saknat kostnadsvärde ska därför inte presenteras som noll. [3]
+Users should see a task's consumption, including planning, subtasks, review and rework. A task may span sessions and providers, so DSpatch must map provider measurements to its own task structure.
 
-### Föreslagen redovisning i DSpatch
+<a id="dokumenterade-mätvärden"></a>
 
-| **Mått** | **Hur det bör presenteras** |
+### Documented measurements
+
+Copilot SDK exposes `session.rpc.usage.getMetrics()` with session total `totalNanoAiu` and `modelMetrics` breakdowns. The total includes the main agent and internal subagents. `assistant.usage` provides token measurements per model call; its `cost` field is described as a premium-request multiplier, not directly as AI credits. `session.usage_info` describes context-window use. [8]
+
+`getMetrics` is experimental. GitHub's example divides `totalNanoAiu` by 10 to the power of 9, but documentation requires checking against the current billing definition. Pin SDK and CLI versions during verification. `assistant.usage` events arrive live and are not replayed when a session resumes. [8]
+
+Cursor SDK provides `agent.getUsage()` for usage and cost, broken down by run or turn. `rawCostCents` and `chargedCents` mean different things. Costs may arrive after a run finishes, and `chargedCents` may be zero for included plan usage. Do not show missing cost as zero. [3]
+
+<a id="föreslagen-redovisning-i-dspatch"></a>
+
+### Proposed accounting in DSpatch
+
+| **Measurement** | **Presentation** |
 | --- | --- |
-| Rapporterad förbrukning | Leverantörens värde med enhet, källa och tidpunkt. |
-| Debiterat belopp | Separat från förbrukning inom abonnemang eller tilldelade krediter. |
-| Beräknad kostnad | Tydligt märkt uppskattning med prisunderlag och datum. |
-| Uppgiftens total | Summering av unika körningar som hör till uppgiften. |
-| Tid och omtag | Körtid, antal försök och granskningar kopplade till resultatet. |
+| Reported usage | Provider value with unit, source and timestamp. |
+| Billed amount | Separate from included subscription usage or allocated credits. |
+| Estimated cost | Clearly labelled estimate with price basis and date. |
+| Task total | Sum unique runs belonging to the task. |
+| Time and rework | Runtime, attempt count and reviews linked to the result. |
 
-Maestro bör tilldela varje körning ett uppgifts-ID. Första versionen bör undvika att blanda flera orelaterade uppgifter i en leverantörssession. Om en session återanvänds behövs avgränsade mätpunkter. Kumulativa totalsiffror ska inte summeras varje gång de läses.
+Maestro should assign each run a task ID. Initially avoid mixing unrelated tasks in one provider session. Reused sessions need bounded measurement points. Do not sum cumulative totals every time they are read.
 
-Interna subagenter som redan ingår i en sessionstotal får inte läggas till en gång till. Separata delegerade sessioner räknas däremot med en gång var. Copilot-krediter och Cursor-belopp ska visas per leverantör tills en verifierad gemensam värdering finns.
+Do not add internal subagents again when already included in session totals. Count each separately delegated session once. Display Copilot credits and Cursor amounts separately by provider until a verified common valuation exists.
 
-Budget bör kunna stoppa nya deluppgifter eller begära ett användarbeslut. En gräns baserad på fördröjd mätning kan överskridas av redan pågående anrop och får inte marknadsföras som ett garanterat exakt kostnadstak.
+Budgets should prevent new subtasks or request a user decision. Delayed measurements can allow in-flight calls to overshoot a limit; do not present that limit as a guaranteed exact cost cap.
 
-## 13 Tillförlitlighet och kontroll
+<a id="13-tillförlitlighet-och-kontroll"></a>
 
-Den största tekniska risken ligger i samspelet mellan agentkörningar, filer, manuell redigering, Git och granskning. Följande är föreslagna krav för att användaren ska kunna lita på miljön även när något avbryts eller går fel.
+## 13 Reliability and control
 
-### Skydda pågående arbete
+The greatest technical risk is the interaction between agent runs, files, manual editing, Git and review. These proposed requirements should make the environment trustworthy during interruption and failure.
 
-Agentens ändringar och användarens osparade text ska hållas isär tills de kan förenas medvetet. DSpatch behöver följa filversioner och upptäcka externa ändringar. Undo och redo i editorn ska fungera för användarens redigering; återställning av en hel agentuppgift behöver en separat, tydlig åtgärd.
+<a id="skydda-pågående-arbete"></a>
 
-### Avbrott som motsvarar vad som faktiskt stoppats
+### Protect ongoing work
 
-Ett stopp kan gälla nya modellsteg, själva agentprocessen eller underprocesser som ett bygge. DSpatch ska visa vilka delar som avslutats och vilka som fortfarande kör. Avbrott ska bevara loggar och redan producerade ändringar. Om en leverantör inte kan stoppa ett pågående fjärranrop ska begränsningen visas.
+Keep agent changes separate from the user's unsaved text until they can be deliberately combined. Track file versions and detect external changes. Editor undo/redo applies to user editing; reverting an entire agent task needs a separate, explicit action.
 
-### Återuppta efter fel
+<a id="avbrott-som-motsvarar-vad-som-faktiskt-stoppats"></a>
 
-Uppgiftens mål, senaste tillstånd, körnings-ID, arbetskopia och resultat behöver överleva en omstart. Återanslutning ska läsa befintligt läge innan nytt arbete startas. Oklara utfall, exempelvis ett API-anrop som kan ha lyckats trots tappad anslutning, ska kontrolleras innan åtgärden upprepas.
+### Cancellation must reflect what actually stopped
 
-### Verifiera den kod som ska användas
+Stopping may affect new model steps, the agent process or subprocesses such as a build. Show which parts ended and which remain active. Preserve logs and produced changes. Expose any provider limitation on stopping an in-flight remote call.
 
-Ett testresultat ska ange kommando, miljö, exitkod och den revision eller ögonblicksbild som testades. En granskning blir inaktuell när dess underlag ändras. Sammanförda agentändringar ska kunna verifieras på nytt även om varje separat gren redan hade godkända tester.
+<a id="återuppta-efter-fel"></a>
 
-### Håll användaren orienterad
+### Resume after failure
 
-- Visa senaste verkliga aktivitet och när en agent väntar på verktyg, annan agent eller användare.
-- Bevara misslyckade försök med felorsak och tillhörande förbrukning.
-- Låt agentens sammanfattning kompletteras med rålogg och fullständig diff.
-- Skilj tydligt mellan redo för review, godkänd och verifierad.
-- Visa saknade uppgifter som okända eller väntande, aldrig som ett positivt resultat.
+The task goal, latest state, run ID, working copy and results must survive restart. Reconnection reads existing state before starting work. Check unknown outcomes, such as an API call that may have succeeded despite a lost connection, before repeating actions.
 
-### Avgränsade arbetsmiljöer
+<a id="verifiera-den-kod-som-ska-användas"></a>
 
-Åtkomst till filer, nätverk och externa system behöver vara explicit för varje projekt. Hemmaprojekt och företagsprojekt ska kunna använda olika konton och inställningar. Projektets tidigare godkännande av Python- och REST-vägen ska respekteras utan att samma fråga ställs igen vid varje normal körning.
+### Verify the code that will be used
 
-## 14 Etapper för genomförande
+A test result must identify command, environment, exit code and tested revision or snapshot. Review becomes stale when its input changes. Combined agent changes must be verifiable again even if each separate branch passed tests.
 
-**Utveckla DSpatch inkrementellt med nytta från första användbara steget.** Början kan vara en minimal interaktiv chattintegration för verkligt projektarbete. En färdig editor, komplett kostnadsredovisning eller agentorkestrator ska inte vara förutsättningar. Använd verktyget under dess egen utveckling och låt erfarenheten styra ordningen nedan.
+<a id="håll-användaren-orienterad"></a>
 
-### Etapp 0 Från interaktiv chatt till en verklig kodändring
+### Keep users oriented
 
-Använd det valda teknikspåret TypeScript, React och Electron på Windows. Anslut Cursor som första agentleverantör till en enkel chatt med valt repo, strömmande svar och följdfrågor. Bygg i små körbara delsteg så att användaren kan prova chatten tidigt. Den färdiga milstolpen ska också kunna genomföra en avgränsad kodändring, visa berörda filer och hela den vanliga textdiffen samt köra ett relevant bygge eller test. Nyttan är att kunna använda DSpatch för en liten verklig utvecklingsuppgift från uppdrag till granskat och provat resultat.
+- Show the latest actual activity and when an agent waits for a tool, another agent or the user.
+- Preserve failed attempts with failure causes and associated usage.
+- Complement agent summaries with raw logs and complete diffs.
+- Distinguish ready for review, accepted and verified.
+- Show missing information as unknown or pending, never as a positive result.
 
-Gör körkommandot och arbetskatalogen synliga och redigerbara i gränssnittet. Visa utmatning, exitkod och vilken kodversion som kördes. Knyt diff och resultat till verkligt filinnehåll och identifierade ögonblicksbilder, även för ännu ej committade och nya filer. Tidigare manuella ändringar ska bevaras och skiljas från agentens ändringar. Ny kod ska inte automatiskt ärva ett tidigare testresultat.
+<a id="avgränsade-arbetsmiljöer"></a>
 
-Avbrott, begriplig felstatus och sparad historik ingår. Bevara konversation, granskade ändringar och körresultat efter omstart. Återupptagning får inte antyda att en avslutad agentkörning fortfarande pågår eller automatiskt upprepa filändringar och kommandon. En skrivande agentkörning eller ett bygge/test åt gången i arbetskopian räcker initialt.
+### Bounded working environments
 
-DSP-1–6 konkretiserar etappen i utvecklingsplanen. Efter DSP-6 ska Niclas själv ha provat hela flödet, inklusive fortsatt arbete efter omstart. En avancerad kodvy, egen editor, autonom loop, automatisk commit, push och PR-hantering krävs inte för denna milstolpe.
+File, network and external-system access must be explicit per project. Personal and company projects may use different accounts and settings. Respect the existing approval of the Python/REST path without repeating the same question on every normal run.
 
-### Etapp 1 Följ en uppgift och dess förändringar
+<a id="14-etapper-för-genomförande"></a>
 
-Bygg vidare på Etapp 0:s fungerande flöde för kodändring, diff och bygge/test. Samla mål, flera körningar, omtag, verktygsaktivitet, ändringsversioner och verifieringsresultat i en tydlig uppgiftsvy och historik. Redovisa förbrukning när adaptern ger tillförlitliga värden. Nyttan är att kunna överblicka ett längre arbete och jämföra dess försök utan att leta genom hela chatten.
+## 14 Implementation phases
 
-### Etapp 2 Fördjupa kodförståelse och samarbete
+**Develop DSpatch incrementally, delivering value from the first useful step.** Start with minimal interactive chat for real project work. A finished editor, complete cost accounting or orchestrator must not be prerequisites. Use the tool in its own development and let experience guide the order below.
 
-Pröva en förbättring i taget från avsnitt 3.1: exempelvis gruppering efter avsikt, relevant oförändrad kod eller ändringar sedan senaste granskning. Lägg till kommentarer och lätt manuell redigering när de behövs. Nyttan ska visas genom bättre förståelse och enklare omtag i verkligt arbete. En egen avancerad editor behöver inte vara färdig för att börja lära av dessa vyer.
+<a id="etapp-0-från-interaktiv-chatt-till-en-verklig-kodändring"></a>
 
-### Etapp 3 Inför Maestro och autonom iteration
+### Phase 0 From interactive chat to a real code change
 
-Inför ett första arbetsflöde med planering, genomförande, oberoende granskning, verifiering och omtag. Börja sekventiellt. Lägg till executive-rapporter, tydliga stopporsaker och växling till och från långvarigt interaktivt arbete. Nyttan är att kunna delegera flera steg med bevarad insyn och projektkontext.
+Use TypeScript, React and Electron on Windows. Connect Cursor as the first provider to simple chat with a selected repository, streamed replies and follow-up questions. Build small runnable substeps so users can test chat early. The completed milestone must also make bounded code changes, show affected files and a complete normal text diff, and run a relevant build or test. The value is using DSpatch for a small real development task from assignment to reviewed, tested result.
 
-### Etapp 4 Pröva fler agenter och arbetsformer
+Make the command and working directory visible and editable in the UI. Show output, exit code and the code version run. Bind diffs and results to actual content and identified snapshots, including uncommitted and new files. Preserve earlier manual changes and distinguish them from agent changes. New code must not automatically inherit earlier test results.
 
-Inför isolerade arbetskopior och begränsad parallellitet. Anslut en andra leverantör och prova ett annat nätverksupplägg, exempelvis en granskningskommitté. Följ konflikter, verifiering och förbrukning. Nyttan är större kapacitet och ett konkret prov på utbytbarheten. Bredda språk, plattformar och rapportadaptrar när användningen motiverar det.
+Include cancellation, understandable failure status and persisted history. Preserve conversation, reviewed changes and results across restart. Resumption must neither imply that completed agent work remains active nor automatically repeat edits or commands. One writing agent run or build/test at a time in the working copy is enough initially.
 
-### Väx utan att låsa framtida val
+DSP-1–6 detail this phase in the development plan. After DSP-6, Niclas must have tested the entire flow, including continued work after restart. Advanced code views, a custom editor, autonomous loops, automatic commits, pushes and PR management are not required for this milestone.
 
-Håll leverantörsanrop utanför gränssnittets logik och skilj konversation från uppgift och körning när dessa införs. Bevara råunderlag och revisionsreferenser. Versionssätt sparade data och gör dem möjliga att exportera och migrera. Inför bara de gränssnitt som behövs nu; generell orkestrering ska växa ur prövade behov. Tidiga val ska kunna ändras utan att projektets historik går förlorad.
+<a id="etapp-1-följ-en-uppgift-och-dess-förändringar"></a>
 
-Enkelhet, återhämtning och begriplighet ska prövas i varje inkrement. Planera nästa steg utifrån nyttan och lärandet i det föregående. Tidigare grova tidsuppskattningar omfattade mer än den minimala chatten; omfattning och tidsplan ska omprövas efter varje användbart steg.
+### Phase 1 Follow a task and its changes
 
-## 15 Kriterier och öppna beslut
+Build on Phase 0's working code-change, diff and build/test flow. Collect goals, multiple runs, rework, tool activity, change versions and verification in a clear task view and history. Report usage when adapters provide reliable values. The value is understanding longer work and comparing attempts without searching an entire chat.
 
-### Kriterier för första milstolpen
+<a id="etapp-2-fördjupa-kodförståelse-och-samarbete"></a>
 
-Etapp 0 kräver att användaren kan göra en verklig kodändring via chatten, granska berörda filer och hela textdiffen och köra relevant bygge eller test med utmatning, exitkod och rätt kodreferens. Avbrott och omstart ska bevara arbetet, och Niclas ska bedöma det sammanhängande flödet i faktisk användning. Detaljerade kriterier och verifieringsunderlag följs i DSP-1–6.
+### Phase 2 Deepen code understanding and collaboration
 
-Kriterierna nedan införs i takt med respektive funktion. Första milstolpen omfattar grundläggande diff, körstatus och enkelhet. Separat uppgiftsvy, beständiga granskningskommentarer, egen editor och full förbrukningsredovisning utvecklas senare.
+Try one improvement from section 3.1 at a time, such as intent grouping, relevant unchanged code or changes since the previous review. Add comments and light manual editing when needed. Demonstrate value through better understanding and easier rework in real use. A finished advanced custom editor is not needed to begin learning from these views.
 
-### Kriterier när kodgranskning har införts
+<a id="etapp-3-inför-maestro-och-autonom-iteration"></a>
 
-| **ID** | **Kriterium** | **Hur det bedöms** |
+### Phase 3 Introduce Maestro and autonomous iteration
+
+Introduce a first workflow with planning, implementation, independent review, verification and rework. Start sequentially. Add executive reports, clear stopping reasons and transitions to and from prolonged interactive work. The value is delegating multiple steps while retaining visibility and project context.
+
+<a id="etapp-4-pröva-fler-agenter-och-arbetsformer"></a>
+
+### Phase 4 Try more agents and working methods
+
+Introduce isolated working copies and limited parallelism. Connect a second provider and try another network arrangement, such as a review committee. Track conflicts, verification and usage. The value is greater capacity and a concrete test of replaceability. Broaden supported languages, platforms and report adapters when justified by use.
+
+<a id="väx-utan-att-låsa-framtida-val"></a>
+
+### Grow without locking future choices
+
+Keep provider calls outside UI logic, and separate conversations from tasks and runs as these are introduced. Preserve raw evidence and revision references. Version saved data and support export and migration. Introduce only interfaces needed now; general orchestration should grow from tested needs. Early choices must be changeable without losing project history.
+
+Test simplicity, recovery and understanding in each increment. Plan the next step from the preceding step's value and learning. Earlier rough time estimates covered more than minimal chat; reassess scope and schedule after each useful step.
+
+<a id="15-kriterier-och-öppna-beslut"></a>
+
+## 15 Criteria and open decisions
+
+<a id="kriterier-för-första-milstolpen"></a>
+
+### First-milestone criteria
+
+Phase 0 requires a real code change through chat, review of affected files and the full text diff, and a relevant build/test with output, exit code and correct code reference. Cancellation and restart must preserve work, and Niclas must assess the complete flow in actual use. DSP-1–6 track detailed criteria and evidence.
+
+Introduce the criteria below alongside their corresponding features. The first milestone includes basic diffs, execution status and simplicity. Separate task views, persistent review comments, a custom editor and complete usage accounting come later.
+
+<a id="kriterier-när-kodgranskning-har-införts"></a>
+
+### Criteria once code review is introduced
+
+| **ID** | **Criterion** | **Assessment** |
 | --- | --- | --- |
-| K1 | En uppgift håller ihop arbetet. | Mål, körning, diff och testresultat går att öppna från samma uppgiftsvy. |
-| K2 | Granskningen är fullständig. | Alla ändrade filer kan ses och hela diffen kan öppnas utöver sammanfattningen. |
-| K3 | En kommentar gäller rätt kod. | Kommentar och godkännande behåller sin revision efter ett nytt agentförsök. |
-| K4 | Manuell korrigering är säker. | Spara och undo fungerar; osparad text överlever en samtidig extern filändring. |
-| K5 | Körningen går att följa. | Avbrott och omstart ger korrekt status och bevarar producerade resultat. |
-| K6 | Förbrukningen är begriplig. | Källa, enhet och omfattning visas; saknade värden och uppskattningar skiljs från rapporterade totaler. |
-| K7 | Vanliga uppgifter är begripliga. | Användbarhetsprovet i avsnitt 2.1 fungerar utan dolda kommandon, memorerade genvägar eller handredigerad konfiguration. |
+| K1 | A task holds work together. | Open goal, run, diff and test results from the same task view. |
+| K2 | Review is complete. | View every changed file and open the full diff beyond the summary. |
+| K3 | Comments apply to the correct code. | Comments and approvals retain their revision after another agent attempt. |
+| K4 | Manual correction is safe. | Save/undo work, and unsaved text survives a simultaneous external file change. |
+| K5 | Runs can be followed. | Cancellation/restart show correct status and preserve results. |
+| K6 | Usage is understandable. | Show source, unit and scope; distinguish missing values and estimates from reported totals. |
+| K7 | Common tasks are understandable. | The section 2.1 usability test works without hidden commands, memorised shortcuts or hand-edited configuration. |
 
-### Kriterier när agentnätverket införs
+<a id="kriterier-när-agentnätverket-införs"></a>
 
-Två parallella skrivande agenter ska kunna arbeta utan att skriva över varandra. Granskning ska avse en bestämd revision. Maestro ska bevara föräldrauppgiften vid ett misslyckat barnjobb och undvika dubbelstart efter omstart. Kontrollera även byte av arbetssätt och autonominivå enligt avsnitt 7–8. Kostnaden ska kunna förklaras utan dubbelräkning.
+### Criteria once the agent network is introduced
 
-### Beslut som behöver tas
+Two parallel writing agents must work without overwriting each other. Review must apply to a specific revision. Maestro must preserve the parent task when a child job fails and avoid duplicate launches after restart. Check changes of workflow and autonomy under sections 7–8. Costs must be explainable without double counting.
 
-- Exakta beroendeversioner och paketering inom det valda teknikspåret TypeScript, React och Electron; senare Linuxdistributioner och verifieringsmiljöer.
-- Textbuffert, rendering, syntaxanalys och miniminivå för sökning och kodnavigation.
-- Beständig lagring, exportformat och hur mycket leverantörslogg som ska sparas.
-- Konkret anslutningsväg för den första Cursor-adaptern; därefter implementation och verifiering av VS Code/Copilot-stödet när det prioriteras.
-- Standardregler för autonomi, omtag, granskning, samtidighet och budget.
-- Vilket verkligt projekt som används för att utvärdera den första arbetsytan.
+<a id="beslut-som-behöver-tas"></a>
 
-### Hur produktnyttan ska bedömas
+### Decisions to make
 
-Den första chatten kan ge tidig nytta genom dialog, men första milstolpen bedöms mot hela förloppet: formulera en liten uppgift, ändra kod, granska diff, köra bygge eller test och fortsätta arbetet efter omstart. Niclas egen provkörning avgör om det fungerar i praktiken. Djupare kodförståelse enligt avsnitt 3.1 utvecklas och prövas i senare inkrement. Följ felupptäckt, omtag och förbrukning. Bedöm också vad användningen lär oss om arbetssättet; färre manuella ingripanden eller lägre tokenförbrukning visar inte ensamt högre nytta.
+- Concrete dependency versions and packaging within TypeScript, React and Electron; later Linux distributions and verification environments. Record implemented choices in the relevant task.
+- Text buffer, rendering, syntax analysis and minimum search/code-navigation support.
+- Persistent storage, export format and how much provider logging to retain.
+- Concrete first Cursor connection, followed by implementation and verification of VS Code/Copilot support when prioritised.
+- Defaults for autonomy, rework, review, concurrency and budgets.
+- The real project used to evaluate the first workspace.
 
-Prioritera förbättringar som ger konkret nytta eller prövar en tydlig hypotes om arbetssättet. Behåll, ändra eller ta bort funktioner utifrån erfarenhet. Enkelhet ska bedömas i varje inkrement, med fortsatt möjlighet till fördjupning. Hög autonomi ska kunna kombineras med hög begriplighet.
+<a id="hur-produktnyttan-ska-bedömas"></a>
 
-## 16 Bakgrund och begrepp
+### Assessing product value
 
-### Hur idén växte fram
+Initial chat can provide early value, but assess the first milestone against the complete flow: formulate a small task, change code, review the diff, run a build/test and continue after restart. Niclas's own testing determines practical usability. Develop and test deeper code understanding from section 3.1 in later increments. Track defect discovery, rework and usage. Also assess what use teaches about working methods; fewer manual interventions or tokens alone do not prove greater value.
 
-Utgångspunkten var frågan om ett eget IDE kunde använda Copilot Chat. Diskussionen identifierade SDK-vägen och klargjorde att agentmotorn kan integreras medan gränssnittet byggs separat. Därefter undersöktes MCP-registerkravet och möjligheten att använda egna verktyg eller godkända Python-skript för REST-anrop.
+Prioritise improvements delivering concrete value or testing a clear workflow hypothesis. Keep, change or remove features based on experience. Assess simplicity in every increment while retaining access to detail. High autonomy should coexist with deep understanding.
 
-Monaco diskuterades som återanvändbar editor från VS Code. Inriktningen blev i stället att bygga en egen editor med begränsad omfattning. Det avgörande förtydligandet var att användaren främst vill läsa kod, granska ändringar och göra enstaka korrigeringar. Det försköt produktidén mot en uppgiftscentrerad miljö för agentarbete.
+<a id="16-bakgrund-och-begrepp"></a>
 
-Idén breddades sedan till orkestrering av agentnätverk, med Copilot och möjlighet till Cursor för hobbyprojekt. Förbrukningsstatistik per uppgift blev en central möjlighet: den ska hämtas från integrationslagret och kopplas till arbetet, i stället för att vara beroende av vad en chattpanel visar vid hovring.
+## 16 Background and terminology
 
-### Namntradition och namnval
+<a id="hur-idén-växte-fram"></a>
 
-Det första namnet var DS Code, Danielssons Studio Code, som medvetet liknar VS Code i uttal. Inspirationen kom från CVAT, Computer Vision Annotation Tool, och det egna VSAT, Visual Similarity Annotation Tool. Traditionen är en trovärdig uttydning med en lekfull namnlikhet.
+### How the idea developed
 
-DS Code valdes bort eftersom ordet Code inte fångar arbetsflödets tyngdpunkt och likheten med VS Code kan väcka en varumärkesfråga. Microsoft anger VS Code som sitt varumärke, och PRV beskriver förväxlingsrisk för liknande namn inom liknande produktområden. DSpatch är valt produktnamn och Maestro ett internt arbetsnamn; namnens tillgänglighet och varumärkesrättigheter har inte kontrollerats. [9–10]
+The starting question was whether a custom IDE could use Copilot Chat. The discussion identified the SDK path: integrate the agent engine while building the UI separately. It then examined MCP registry requirements and custom tools or approved Python scripts for REST calls.
 
-AIDE, Agent Orange, Agent Smith, DSee och Task Manager förekom också som kreativa alternativ. Maestro föreslogs med uttydningen Multi-Agent Engineering Studio for Tasks, Review & Orchestration. Efter upptäckten av en befintlig agentprodukt med samma namn betraktas Maestro som ett arbetsnamn enligt avsnitt 1. Ett offentligt komponentnamn är ännu inte fastställt; en formell akronym behöver inte användas i gränssnittet.
+Monaco was considered as a reusable VS Code editor. The direction became a bounded custom editor instead. The decisive clarification was that the user primarily wanted to read code, review changes and make occasional corrections. This shifted the product towards a task-centred agent workspace.
 
-### Begrepp i dokumentet
+The idea expanded into agent-network orchestration, using Copilot and potentially Cursor for personal projects. Per-task usage became central: obtain it through the integration layer and attach it to work rather than relying on a chat-panel hover display.
 
-**Uppgift:** ett önskat resultat med avgränsning. **Körning:** ett genomförandeförsök. **Session:** leverantörens konversations- och körningskontext. **Agent:** modellen tillsammans med instruktioner, verktyg och körlogik. **Adapter:** översättningen mellan Maestro och leverantören.
+<a id="namntradition-och-namnval"></a>
 
-**Revision:** en identifierad kodversion. **Diff:** skillnaden mellan versioner. **Arbetskopia:** ett eget filträd för arbete på en viss Git-gren eller revision. **MCP:** protokoll för anslutning av verktyg och resurser. **ACP:** protokoll för anslutning av agentklienter. **REST:** API-anrop över HTTP enligt en vanlig arkitekturstil.
+### Naming tradition and decisions
 
-## 17 Källor och teknisk verifiering
+The first name was DS Code, Danielssons Studio Code, deliberately close to VS Code in pronunciation. Inspiration came from CVAT, Computer Vision Annotation Tool, and the team's VSAT, Visual Similarity Annotation Tool. The tradition combines a credible expansion with playful similarity.
 
-Underlagen [1]–[11] hör till diskussionen den 11 september 2026. SDK-underlagen [2]–[3] lästes på nytt den 13 september 2026 inför teknikvalet. Desktopunderlagen [12]–[14] tillkom samma dag. Dokumentationen styr vilka prov som behövs, men ersätter inte verifiering mot valda versioner och konton. Beslutstabellen och avsnitt 9.1 anger de valda delarna; övrig produktarkitektur och etappindelning är fortsatt projektförslag.
+DS Code was dropped because “Code” misses the workflow emphasis and similarity to VS Code could raise a trademark question. Microsoft identifies VS Code as its trademark; PRV describes confusion risk for similar names in similar product areas. DSpatch is the chosen product name and Maestro an internal working name; availability and rights have not been checked. [9–10]
+
+AIDE, Agent Orange, Agent Smith, DSee and Task Manager were other creative options. Maestro was proposed as Multi-Agent Engineering Studio for Tasks, Review & Orchestration. After discovering an existing agent product of that name, Maestro is treated as a working name under section 1. A public component name is not yet fixed; the UI need not display a formal acronym.
+
+<a id="begrepp-i-dokumentet"></a>
+
+### Terms used here
+
+**Task:** a desired result with bounded scope. **Run:** an execution attempt. **Session:** the provider's conversational and execution context. **Agent:** a model with instructions, tools and execution logic. **Adapter:** translation between Maestro and the provider.
+
+**Revision:** an identified code version. **Diff:** differences between versions. **Working copy:** a separate file tree for work on a Git branch or revision. **MCP:** a protocol for connecting tools and resources. **ACP:** a protocol for connecting agent clients. **REST:** API calls over HTTP following a common architectural style.
+
+<a id="17-källor-och-teknisk-verifiering"></a>
+
+## 17 Sources and technical verification
+
+Sources [1]–[11] belong to the 11 September 2026 discussion. SDK sources [2]–[3] were reread on 13 September for the stack decision; desktop sources [12]–[14] were added that day. Documentation guides necessary probes but does not replace verification against selected versions and accounts. The decision table and section 9.1 identify chosen elements; other architecture and phases remain proposals. Version 1.9 translates this source material rather than claiming a new provider audit.
 
 **[1]** [GitHub Copilot SDK](https://github.com/github/copilot-sdk)
 
-SDK, CLI-motor, språk, autentisering och övergripande integrationsmöjligheter.
+SDK, CLI engine, languages, authentication and overall integration options.
 
-**[2]** [Copilot SDK för Node och TypeScript](https://github.com/github/copilot-sdk/blob/main/nodejs/README.md)
+**[2]** [Copilot SDK for Node and TypeScript](https://github.com/github/copilot-sdk/blob/main/nodejs/README.md)
 
-Sessioner, egna verktyg, strömning och behörighetshantering.
+Sessions, custom tools, streaming and permission handling.
 
 **[3]** [Cursor TypeScript SDK](https://cursor.com/docs/sdk/typescript)
 
-Lokala körningar och molnkörningar, livscykel, plananknytning och getUsage.
+Local/cloud runs, lifecycle, plan association and getUsage.
 
 **[4]** [Cursor Agent Client Protocol](https://cursor.com/docs/cli/acp)
 
-Anslutning av en egen klient, sessionsuppdateringar, godkännanden och avbrott.
+Custom clients, session updates, approvals and cancellation.
 
 **[5]** [Cursor Headless CLI](https://cursor.com/docs/cli/headless)
 
-Automatiserade körningar och strukturerad utmatning.
+Automated execution and structured output.
 
-**[6]** [MCP i Copilot SDK](https://docs.github.com/en/copilot/how-tos/copilot-sdk/features/mcp)
+**[6]** [MCP in Copilot SDK](https://docs.github.com/en/copilot/how-tos/copilot-sdk/features/mcp)
 
-Direkt konfiguration av lokala och externa MCP-servrar.
+Direct configuration of local and external MCP servers.
 
-**[7]** [MCP i Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)
+**[7]** [MCP in Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)
 
-CLI-konfiguration samt organisationers register- och allowlist-policy.
+CLI configuration and organisational registry/allowlist policies.
 
-**[8]** [Copilot SDK Usage and billing metrics](https://docs.github.com/en/copilot/how-tos/copilot-sdk/features/usage-and-billing)
+**[8]** [Copilot SDK usage and billing metrics](https://docs.github.com/en/copilot/how-tos/copilot-sdk/features/usage-and-billing)
 
-Sessionstotaler, tokenhändelser, kontextmått och experimentella gränssnitt.
+Session totals, token events, context measurements and experimental interfaces.
 
-**[9]** [Visual Studio Code namn och symboler](https://code.visualstudio.com/brand)
+**[9]** [Visual Studio Code names and marks](https://code.visualstudio.com/brand)
 
-Microsofts varumärkesuppgifter och riktlinjer för namn och grafisk identitet.
+Microsoft's trademark information and naming/visual-identity guidelines.
 
-**[10]** [PRV Registreringskrav för varumärke](https://www.prv.se/sv/varumarke/forbered-dig-infor-varumarkesansokan/registreringskrav-for-varumarke/)
+**[10]** [PRV trademark registration requirements](https://www.prv.se/sv/varumarke/forbered-dig-infor-varumarkesansokan/registreringskrav-for-varumarke/)
 
-Särskiljningsförmåga och förväxlingsrisk inom liknande varor och tjänster.
+Distinctiveness and confusion risk for similar goods/services. Source is in Swedish.
 
-[11] Underlag till agentloopen
+[11] Agent-loop source material
 
-Användarens referensdiagram. Figur 1 är en generaliserad version med bibehållna agentroller och kopplingar, beskriven i avsnitt 6.
+The user's reference diagram. Figure 1 is a generalised version preserving its roles and connections, described in section 6. Version 1.9 uses editable English Mermaid; the original Swedish image remains linked as historical material.
 
-**[12]** [Electron: introduktion](https://www.electronjs.org/docs/latest/)
+**[12]** [Electron introduction](https://www.electronjs.org/docs/latest/)
 
-Medföljande Chromium och Node.js samt stöd för Windows, Linux och macOS. Läst 13 september 2026.
+Bundled Chromium/Node.js and Windows, Linux and macOS support. Read 13 September 2026.
 
-**[13]** [Electron: processmodell](https://www.electronjs.org/docs/latest/tutorial/process-model) och [prestanda](https://www.electronjs.org/docs/latest/tutorial/performance)
+**[13]** [Electron process model](https://www.electronjs.org/docs/latest/tutorial/process-model) and [performance](https://www.electronjs.org/docs/latest/tutorial/performance)
 
-Separata processer och arbete för att hålla gränssnittet responsivt. Lästa 13 september 2026.
+Separate processes and techniques for keeping the UI responsive. Read 13 September 2026.
 
-**[14]** [Tauri: processmodell](https://v2.tauri.app/concept/process-model/) och [webview-motorer](https://v2.tauri.app/reference/webview-versions/)
+**[14]** [Tauri process model](https://v2.tauri.app/concept/process-model/) and [webview engines](https://v2.tauri.app/reference/webview-versions/)
 
-Jämförelsealternativ med systemets webview: WebView2 på Windows och WebKitGTK på Linux. Lästa 13 september 2026.
+System-webview alternative: WebView2 on Windows and WebKitGTK on Linux. Read 13 September 2026.
 
-### Underlag för nästa version
+<a id="underlag-för-nästa-version"></a>
 
-Nästa dokumentversion bör kompletteras med teknikprovets versioner, kontotyper, modeller och kostnadsenheter, samt en körbar definition av referensloopen. Prova även ett alternativt arbetssätt och övergången från detaljstyrning till autonom iteration. Dessa resultat ger underlag för att fastställa tekniska beslut och etappkrav.
+### Input for the next version
+
+Supplement the next version with technical-probe versions, account types, models and cost units, and a runnable reference-loop definition. Also test an alternative workflow and the transition from detailed human direction to autonomous iteration. These results inform technical decisions and phase requirements.

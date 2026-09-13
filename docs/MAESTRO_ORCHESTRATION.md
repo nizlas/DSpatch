@@ -1,186 +1,216 @@
-# Maestro och orkestrering av agentloopar
+<a id="maestro-och-orkestrering-av-agentloopar"></a>
 
-Teknisk vision för egna arbetsflöden över oberoende agentsessioner
+# Maestro and agent-loop orchestration
 
-DSpatch • 13 september 2026 • Version 1.0
+Technical vision for independent workflows over independent agent sessions
 
-## 1 Syfte och grundprincip
+DSpatch • 13 September 2026 • Version 1.1 — English edition
 
-**Maestro ska äga arbetsflödet, rollrelationerna och projektets tillstånd. Leverantörsadaptrarna tillhandahåller agentkörningen.** Varje deltagare i vårt nätverk kan köras som en självständig huvudagent hos Cursor, Copilot eller en framtida leverantör. Att en agent arbetar åt en annan representeras i Maestro.
+<a id="1-syfte-och-grundprincip"></a>
 
-Det gör att samma arbetsstruktur kan användas med olika agentmotorer och att dess logiska djup kan bestämmas av projektets behov. Vi får också en tydlig koppling från varje loopsteg till dess körningar, resultat och förbrukning. Leverantörens interna subagenter kan användas som en del av utförandet, utan att definiera vår loopstruktur.
+## 1 Purpose and guiding principle
 
-Dokumentet fördjupar [DSpatchs styrdokument](VISION.md), särskilt avsnitt 4, 7–9 och 14. Grundprincipen ovan är den valda riktningen i detta dokument; datamodell, gränssnitt och införandesteg nedan är tekniska förslag att pröva. Maestro är ett internt arbetsnamn.
+**Maestro owns the workflow, role relationships and project state. Provider adapters supply agent execution.** Each participant in our network can run as an independent main agent with Cursor, Copilot or a future provider. Maestro represents the relationship when one agent works for another.
 
-Den externa Cursor-loop som nu hjälper oss bygga DSpatch beskrivs i [DEVELOPMENT_LOOP.md](DEVELOPMENT_LOOP.md). Den är ett separat utvecklingshjälpmedel. Denna vision gäller den orkestrering som senare byggs in i produkten. Första användbara chatten och DSP-1–6 behåller sin omfattning.
+This lets the same work structure use different agent engines and lets project needs determine its logical depth. Each loop step has a clear connection to its runs, results and usage. Providers' internal subagents may help execute an assignment without defining our loop structure.
 
-## 2 Begrepp som behöver hållas isär
+This elaborates [DSpatch's governing vision](VISION.md), particularly sections 4, 7–9 and 14. The principle above is the selected direction here; the data model, interfaces and implementation increments below are technical proposals to test. Maestro is an internal working name.
 
-| Begrepp | Betydelse i Maestro |
+The external Cursor loop currently helping us build DSpatch is described in [DEVELOPMENT_LOOP.md](DEVELOPMENT_LOOP.md). That is a separate development aid. This vision concerns orchestration later built into the product. The first useful chat and DSP-1–6 retain their scope.
+
+<a id="2-begrepp-som-behöver-hållas-isär"></a>
+
+## 2 Distinct concepts
+
+| Concept | Meaning in Maestro |
 | --- | --- |
-| Roll | Ansvar och instruktioner, exempelvis Researcher eller Reviewer. Rollen låser ingen modell. |
-| Uppgift | Ett önskat resultat med mål, avgränsning och kriterier. Kan ha deluppgifter. |
-| Loopsteg | Ett tillfälle då arbetsflödet exempelvis planerar, implementerar eller granskar. |
-| Försök | Ett genomförande av steget. Ett omtag får egen identitet och behåller föregående resultat. |
-| Session | Leverantörens konversation och körkontext. Kan återanvändas när det är lämpligt. |
-| Körning | Ett avgränsat anrop i en session, med start, händelser och avslutningsorsak. |
-| Intern subagent | En agent som leverantörens agentmotor själv startar inom uppdraget. |
+| Role | Responsibilities and instructions, such as Researcher or Reviewer. A role does not fix a model. |
+| Task | An intended result with a goal, boundaries and criteria. May contain subtasks. |
+| Loop step | An occurrence of planning, implementation, review or another workflow activity. |
+| Attempt | One execution of a step. Rework gets its own identity and preserves previous results. |
+| Session | The provider's conversation and execution context. May be reused when appropriate. |
+| Run | A bounded invocation within a session, with a start, events and termination reason. |
+| Internal subagent | An agent started by the provider's agent engine within an assignment. |
 
-En uppgift kan genomgå flera steg och omtag. Ett steg kan kräva flera anrop, och samma roll kan utföras av flera sessioner. Därför bör varken ett rollnamn eller ett sessions-ID vara projektets uppgiftsidentitet.
+A task may pass through several steps and attempts. A step may require multiple calls, and several sessions may perform the same role. Neither a role name nor a session ID should therefore identify a project task.
 
-**Logiskt djup, inbyggt subagentdjup, samtidighet och antal iterationer är olika saker.** Vår uppgiftshierarki kan vara djup även om SDK-sessionerna anropas från samma centrala orkestrator. Maestro behöver egna gränser för arbete och resursåtgång; kontots och leverantörens begränsningar gäller fortfarande.
+**Logical depth, native subagent depth, concurrency and iteration count are different.** Our task hierarchy may be deep even when one central orchestrator calls all SDK sessions. Maestro needs its own work and resource limits; account and provider limits still apply.
 
-## 3 Ansvarsfördelningen i arkitekturen
+<a id="3-ansvarsfördelningen-i-arkitekturen"></a>
 
-Arbetsflödet anger vilka steg som finns, hur resultat bedöms och när nästa steg får starta. Maestros programkod registrerar arbete, driver tillståndsövergångar och verkställer mandatet. En Executive- eller Planner-agent kan föreslå prioriteringar och delegering, men förslagen valideras innan de blir schemalagt arbete.
+## 3 Architectural responsibilities
+
+The workflow defines steps, how results are assessed and when the next step may start. Maestro's code registers work, drives state transitions and enforces the mandate. An Executive or Planner agent may propose priorities and delegation, but proposals are validated before becoming scheduled work.
 
 ```mermaid
 flowchart TD
-    U["Användarens mål och mandat"] --> M["Maestros orkestrator"]
-    W["Versionerat arbetsflöde"] --> M
-    M <-->|"Tillstånd och historik"| J["Beständig journal"]
-    M -->|"Uppdrag"| A["Leverantörsadapter"]
-    A -->|"Starta eller fortsätt"| S["Oberoende agentsession"]
-    S -->|"Resultat eller delegeringsbegäran"| M
+    U["User goals and mandate"] --> M["Maestro orchestrator"]
+    W["Versioned workflow"] --> M
+    M <-->|"State and history"| J["Persistent journal"]
+    M -->|"Assignment"| A["Provider adapter"]
+    A -->|"Start or continue"| S["Independent agent session"]
+    S -->|"Result or delegation request"| M
 ```
 
-Figur 1. Exempel på ansvar och återkoppling för ett steg. Flera sådana sessioner kan ingå i samma arbetsflöde.
+Figure 1. Example of responsibilities and feedback for one step. A workflow can include several such sessions.
 
-Orkestratorn ska kunna köras utan att ett visst chattfönster hålls öppet. I det valda TypeScript-, React- och Electron-spåret ligger agentarbete och tunga operationer utanför renderingstråden. Gränssnittet visar projektets sparade tillstånd och strömmande uppdateringar.
+The orchestrator must be able to run without keeping a particular chat window open. In the selected TypeScript, React and Electron stack, agent work and heavy operations run outside the rendering thread. The UI displays persisted project state and streaming updates.
 
-En adapter redovisar stöd för start, strömning, avbrott, återupptagning, modellval, godkännanden och kostnad. Den översätter leverantörshändelser till gemensamma begrepp och bevarar relevanta råreferenser. Saknat stöd ska kunna uttryckas utan att resten av modellen låtsas att funktionen finns.
+An adapter reports support for start, streaming, cancellation, resumption, model selection, approvals and cost. It maps provider events to shared concepts while retaining relevant raw references. Unsupported functionality must be expressible without the rest of the model pretending it exists.
 
-## 4 Ett exempel på logiskt nästlat arbete
+<a id="4-ett-exempel-på-logiskt-nästlat-arbete"></a>
 
-Anta att uppgiften är att förstå varför zoomning under uppspelning fryser ett ljudprogram. Exemplet illustrerar arbetsformen och fastställer ingen verklig buggorsak.
+## 4 Example of logically nested work
 
-1. **Tech Lead** får mål, reproduktionssteg och kodreferens i session A. Den föreslår en undersökning av samspelet mellan händelser och rendering.
-2. **Maestro** registrerar research som deluppgift, kopplar den till beställaren och startar **Researcher** i session B. Tech Leads fortsättning väntar på resultatet.
-3. Researcher behöver en mätning. Maestro registrerar experimentet som dess deluppgift och startar **Implementer** i session C med avgränsat skrivområde.
-4. Resultatet granskas och verifieras i egna steg. Mätning, diff och testutfall kopplas till den kodversion som faktiskt användes.
-5. Maestro återför experimentrapporten till Researcher, som väger den mot hypoteserna. Därefter återförs researchresultatet till Tech Lead.
-6. Tech Lead föreslår en korrigering eller omplanering. Användaren kan följa resonemanget och ingripa på valfri nivå.
+Suppose the task is to understand why zooming during playback freezes an audio application. This illustrates the workflow; it establishes no real bug cause.
 
-Relationen Tech Lead–Researcher–Implementer finns i Maestros uppgifter och överlämningar. A, B och C är självständiga leverantörssessioner. För att samarbetet ska bli logiskt likvärdigt med underagenter behöver vi själva hantera väntan, kontext, resultatleverans och fortsättning.
+1. **Tech Lead** receives the goal, reproduction steps and code reference in session A. It proposes investigating interactions between events and rendering.
+2. **Maestro** registers research as a subtask, associates it with its requester and starts **Researcher** in session B. The Tech Lead's continuation waits for the result.
+3. The Researcher needs a measurement. Maestro registers an experiment as its subtask and starts **Implementer** in session C with a bounded write scope.
+4. Separate steps review and verify the result. Measurements, diff and test outcomes reference the actual code version used.
+5. Maestro returns the experiment report to the Researcher, which weighs it against the hypotheses. It then returns the research result to the Tech Lead.
+6. The Tech Lead proposes a correction or replanning. The user can follow the reasoning and intervene at any level.
 
-En delegeringsbegäran kan vara ett strukturerat verktygsanrop eller en validerad del av agentens svar. Den bör ange mål, resultatformat och avgränsning. Maestro kompletterar med betrodda identiteter, kontrollerar behörighet och budget och köar arbetet. Föräldern kan lämna ifrån sig körkapaciteten under väntan; ett barnjobb ska inte fastna för att alla körplatser upptas av väntande föräldrar.
+The Tech Lead–Researcher–Implementer relationship lives in Maestro's tasks and handoffs. A, B and C are independent provider sessions. To make this logically equivalent to subagent collaboration, we must manage waiting, context, result delivery and continuation ourselves.
 
-## 5 Sammanhang och beständig information
+A delegation request may be a structured tool call or a validated part of an agent response. It should specify the goal, result format and boundaries. Maestro adds trusted identities, checks permissions and budget, and queues the work. A parent can release execution capacity while waiting; child work must not stall because waiting parents occupy every slot.
 
-Varje uppdrag får ett avgränsat sammanhang: aktuell målversion, relevant plan, kodreferens, tidigare beslut, nödvändiga rapporter och gällande mandat. Resultatet anger vad som gjordes, vilka slutsatser som stöds, vilket underlag som finns och vad som återstår. Länkar till större underlag gör att hela projektets chatt inte behöver kopieras vid varje delegering.
+<a id="5-sammanhang-och-beständig-information"></a>
 
-Föreslagna stabila identiteter är projekt, uppgift, arbetsflödesversion, loopsteg, försök och körning. Till körningen kopplas leverantörens sessions- och anrops-ID, begärd och observerad modell, arbetskopia, tidsstämplar samt avslutningsorsak. En förbrukningspost och ett verifieringsresultat refererar till dessa identiteter.
+## 5 Context and persistent information
 
-Projektets egen historik gör det möjligt att byta modell eller leverantör. En leverantörssession kan däremot inte förutsättas flyttas till en annan leverantör med sitt interna tillstånd intakt. Vid byte skapar Maestro ett nytt sammanhang från sparade beslut och underlag och redovisar överlämningen.
+Each assignment receives bounded context: current goal version, relevant plan, code reference, earlier decisions, necessary reports and applicable mandate. Results state what was done, supported conclusions, available evidence and remaining work. References to larger evidence avoid copying the entire project chat at every delegation.
 
-En separat session ger inte automatiskt en oberoende granskning. Reviewern behöver ett tydligt uppdrag, rätt revision och tillgång till evidens för att pröva utförarens slutsatser. Vid parallella kodändringar används avskilda arbetskopior; efter sammanföring verifieras den kombinerade revisionen.
+Proposed stable identities cover project, task, workflow version, loop step, attempt and run. Associate each run with provider session/call IDs, requested and observed model, working copy, timestamps and termination reason. Usage records and verification results reference these identities.
 
-## 6 Tillstånd och återhämtning
+Project-owned history enables model or provider changes. A provider session cannot be assumed to transfer intact to another provider. On a switch, Maestro builds new context from saved decisions and evidence and makes the handoff explicit.
 
-**Arbetet registreras innan det startas.** Efter kontroll av uppgift, beroenden och mandat sätts valt steg till pågående, fokus sparas och ett försök registreras före leverantörsanropet. Kanban och rapporter ska kunna visa detta direkt. Tavlans status är en vy av arbetet; den bevisar inte ensam att en process fortfarande kör.
+A separate session does not automatically provide independent review. The Reviewer needs a clear assignment, correct revision and evidence to challenge the implementer's conclusions. Parallel changes use isolated working copies; after integration, verify the combined revision.
 
-Tillstånd behöver skilja mellan köat, körande, väntande på delresultat, väntande på användaren, under granskning, klart, misslyckat, avbrutet och okänt utfall. Exakta namn kan ändras. Att agenten har svarat innebär inte att uppgiftens kriterier är uppfyllda.
+<a id="6-tillstånd-och-återhämtning"></a>
 
-Vid timeout eller processkrasch sparas den senaste säkra observationen. Maestro kontrollerar sedan leverantörens status, arbetskopian och redan producerade resultat innan ett anrop eventuellt upprepas. Ett nytt anrop får inte tyst dubbelstarta ett jobb eller återapplicera en ändring. Där API:t saknar idempotens eller säker återanslutning måste okänt utfall synliggöras.
+## 6 State and recovery
 
-Händelser och överlämningar behöver stabila ID:n så att upprepad leverans kan kännas igen. Första implementationen kan ha en enda skrivande orkestrator; en distribuerad körmotor är inget grundkrav. Ingen specifik databas eller fullständig event sourcing låses här.
+**Register work before starting it.** After checking the task, dependencies and mandate, mark the selected step active, save its focus and register an attempt before invoking the provider. Kanban and reports should reflect this immediately. Board status is a view of the work; by itself it does not prove a process is still running.
 
-Paus ska kunna stoppa nya starter och invänta eller avbryta aktiva jobb enligt vald regel. Avbrott följer också berörda deluppgifter, SDK-körningar och terminalprocesser. Ett skickat avbrottskommando är en begäran; gränssnittet visar om stoppet är bekräftat eller fortfarande okänt. Räknare, kostnader och tidigare försök bevaras vid återupptagning.
+States need to distinguish queued, running, awaiting child results, awaiting the user, under review, complete, failed, cancelled and unknown outcome. Exact names may change. An agent response does not mean the task's criteria are met.
 
-## 7 Leverantörernas egna subagenter
+On timeout or process crash, preserve the last reliable observation. Maestro then reconciles provider status, working-copy contents and existing results before possibly retrying. A new call must not silently duplicate a job or reapply a change. When an API lacks idempotency or reliable reconnection, expose the unknown outcome.
 
-En leverantör kan internt dela upp exempelvis kodsökning mellan egna subagenter. Det kan vara användbart även när Maestro äger det övergripande arbetsflödet. Den interna aktiviteten visas då under den ansvariga körningen och ändrar inte automatiskt projektplanen eller skapar nya logiska loopsteg.
+Events and handoffs need stable IDs to recognise duplicate delivery. The first implementation may have one writing orchestrator; a distributed execution engine is not a prerequisite. No database or full event-sourcing architecture is selected here.
 
-Maestro ska kunna välja om intern delegering tillåts per uppdrag, när adaptern stödjer det. Den ansvariga körningen behåller sitt mandat och sin budget. Observationer om intern aktivitet måste visa vad leverantören faktiskt exponerar; en fullständig intern agentgraf kan inte förutsättas.
+Pause should prevent new starts and wait for or cancel active work according to the chosen policy. Cancellation also tracks affected subtasks, SDK runs and terminal processes. Sending a cancellation command is a request; the UI shows whether termination is confirmed or unknown. Resume preserves counters, costs and earlier attempts.
 
-Cursor dokumenterar både separata beständiga agenter och ett dispatcher-mönster. Dess inbyggda subagentfunktion begränsar nästlingen till två subagentnivåer under huvudagenten. I lokal SDK-körning kan intern delegering spärras via `disallowedTools: ["task"]`; begränsningar behöver skickas igen vid `Agent.resume()`. Detta är dokumenterat stöd, inte ett genomfört integrationsprov i DSpatch. [Cursor SDK](https://cursor.com/docs/sdk/typescript)
+<a id="7-leverantörernas-egna-subagenter"></a>
 
-Copilot SDK dokumenterar oberoende sessioner och använder Copilot CLI som körmotor. Därför ska VS Codes gräns för inbyggda subagenter inte behandlas som SDK:ts generella gräns. [Copilot SDK](https://github.com/github/copilot-sdk), [oberoende sessioner](https://github.com/github/copilot-sdk/blob/main/nodejs/README.md#multiple-sessions)
+## 7 Providers' internal subagents
 
-## 8 Kostnad per loopsteg och försök
+A provider may split work such as code search among its own subagents. This can be useful while Maestro owns the overall workflow. Show that internal activity under the responsible run; it does not automatically change the project plan or create logical loop steps.
 
-**Egen orkestrering gör kostnaden lättare att hänföra till rätt arbete.** När Maestro startar ett anrop vet det redan vilken uppgift, vilket steg och vilket försök anropet tillhör. Research, planering, implementation, granskning och omtag får därmed egna poster. Även modellbaserad koordinering och rapportsammanställning räknas med.
+Maestro should be able to allow or disable internal delegation per assignment where the adapter supports this. The responsible run retains its mandate and budget. Display only internal activity actually exposed by the provider; do not assume a complete internal agent graph is available.
 
-En session knuten till ett steg ger en tydlig kostnadsgräns. När en session återanvänds över flera steg krävs anropsspecifika värden eller avstämda skillnader mellan ackumulerade mätningar. Sådana skillnader är bara tillförlitliga om mätningarnas omfattning är känd och inga andra samtidiga eller sena aktiviteter blandas in. Oklara belopp ska stå som ofördelade eller preliminära.
+Cursor documents independent persistent agents and a dispatcher pattern. Its native subagent feature limits nesting to two subagent levels below the main agent. Local SDK execution can disable internal delegation with `disallowedTools: ["task"]`; restrictions must be supplied again on `Agent.resume()`. This is documented support, not an integration test performed in DSpatch. [Cursor SDK](https://cursor.com/docs/sdk/typescript)
 
-### Vad som bokförs
+Copilot SDK documents independent sessions and uses Copilot CLI as its runtime. VS Code's native subagent limit must therefore not be treated as a general SDK limit. [Copilot SDK](https://github.com/github/copilot-sdk), [independent sessions](https://github.com/github/copilot-sdk/blob/main/nodejs/README.md#multiple-sessions)
 
-Varje post bör ange källa, enhet, mätomfattning, mättidpunkt, leverantörsreferens och koppling till försöket. Spara ursprunglig precision och avrunda först i presentationen. Skilj rapporterad förbrukning, preliminära värden, prisbaserade uppskattningar och faktiskt debiterat belopp. Saknad kostnad visas som okänd, aldrig som noll.
+<a id="8-kostnad-per-loopsteg-och-försök"></a>
 
-**AI credits används när leverantören rapporterar dem med definierad betydelse.** Tokenantal, premium requests och pengar är separata mått. Credits från olika leverantörer får inte summeras som en gemensam valuta utan dokumenterad jämförbarhet. En eventuell omräkning visas separat med regel och tidpunkt.
+## 8 Cost per loop step and attempt
 
-Copilot SDK dokumenterar `session.rpc.usage.getMetrics()` med ackumulerad förbrukning inklusive interna subagenter. `totalNanoAiu` är dess mått i nano-AI-enheter; exemplet delar med en miljard för AI credits, men dokumentationen kräver kontroll mot gällande faktureringsdefinition. API:t är experimentellt och SDK- och CLI-version behöver fixeras vid provet. Fältet `assistant.usage.cost` beskrivs som en premium request-multiplikator och ska inte förväxlas med AI credits. Livehändelsen återspelas inte vid resume, vilket motiverar egen bokföring och avstämning mot totalsummor. [Copilot SDK om förbrukning](https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md)
+**Owning orchestration makes cost easier to attribute to the right work.** Before starting a call, Maestro already knows its task, step and attempt. Research, planning, implementation, review and rework get distinct records. Model-based coordination and report compilation count too.
 
-Cursor dokumenterar `Agent.getUsage()` med tokenförbrukning och kostnad i amerikanska cent. Lokal körning bryts ned per turn och molnkörning per run; leverantörens ID:n behöver kopplas till våra försök. Kostnaden kan komma senare, och `chargedCents: 0` kan avse inkluderad användning. Det bevisar inte noll förbrukning. En gemensam AI-credit-enhet är därför inget antagande i Cursor-adaptern. [Cursor SDK om kostnad](https://cursor.com/docs/sdk/typescript#agentgetusage)
+A session dedicated to a step creates a clear accounting boundary. Reusing a session across steps requires call-specific values or reconciled differences between cumulative measurements. Differences are reliable only when measurement scope is known and concurrent or delayed activity does not contaminate them. Ambiguous amounts remain unallocated or provisional.
 
-### Summera utan dubbelräkning
+<a id="vad-som-bokförs"></a>
 
-Ett stegs direkta kostnad är summan av dess egna försök. Kostnaden för en hel uppgift omfattar dessutom dess logiska deluppgifter, räknade en gång vardera. Delade researchresultat kan refereras från flera uppgifter, men samma kostnadspost får bara räknas en gång i projektets total. Eventuell kostnadsfördelning redovisas uttryckligen.
+### What to record
 
-Om SDK-sessionens total redan omfattar interna subagenter är deras detaljer en nedbrytning av totalen. De läggs inte på igen. Ackumulerade mätvärden ersätter eller stämmer av tidigare mätningar för samma omfattning; de behandlas inte som nya kostnader vid varje avläsning. Sena korrigeringar bevarar spårbarheten till tidigare rapporter.
+Each record should identify source, unit, measurement scope, observation time, provider reference and attempt. Preserve original precision; round only for presentation. Distinguish reported usage, provisional values, price-based estimates and actual charges. Missing cost is unknown, never zero.
 
-Följande räkneexempel antar samma leverantör, samma credit-definition och fullständig rapportering. Värdena illustrerar bokföringen och är inga priser eller mätresultat.
+**Use AI credits when the provider reports them with a defined meaning.** Tokens, premium requests and money are separate measures. Do not sum different providers' credits as one currency without documented comparability. Show any conversion separately with its rule and date.
 
-| Loopsteg | Försök | AI credits | Anmärkning |
+Copilot SDK documents `session.rpc.usage.getMetrics()` with cumulative usage including internal subagents. `totalNanoAiu` measures nano-AI units; its example divides by one billion for AI credits, but the documentation requires checking the current billing definition. The API is experimental, and the experiment needs pinned SDK and CLI versions. `assistant.usage.cost` is described as a premium-request multiplier and must not be confused with AI credits. This live event is not replayed on resume, motivating independent accounting and reconciliation against totals. [Copilot SDK usage](https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md)
+
+Cursor documents `Agent.getUsage()` with tokens and costs in US cents. Local execution is broken down by turn and cloud execution by run; provider IDs must map to our attempts. Cost may arrive later, and `chargedCents: 0` may represent included usage. It does not establish zero consumption. The Cursor adapter therefore cannot assume a common AI-credit unit. [Cursor SDK cost](https://cursor.com/docs/sdk/typescript#agentgetusage)
+
+<a id="summera-utan-dubbelräkning"></a>
+
+### Aggregate without double counting
+
+A step's direct cost is the sum of its own attempts. A whole task also includes its logical subtasks, counted once each. Several tasks may reference shared research, but each cost record counts only once in the project total. Make any allocation policy explicit.
+
+When a session total already includes internal subagents, their detail is a breakdown of that total, not an addition. Cumulative readings replace or reconcile earlier readings for the same scope; every reading is not a new charge. Late corrections retain traceability to earlier reports.
+
+This arithmetic example assumes one provider, one credit definition and complete reporting. These are illustrative values, not prices or measurements.
+
+| Loop step | Attempt | AI credits | Note |
 | --- | --- | --- | --- |
-| Planering | 1 | 0,4 | Eget anrop |
-| Research | 1 | 1,2 | Inkluderar 0,3 från intern subagent |
-| Implementation | 1 | 2,0 | Första kandidat |
-| Granskning | 1 | 0,6 | Begär omtag |
-| Implementation | 2 | 0,8 | Korrigerad kandidat |
-| Verifiering | 1 | 0,5 | Agentanrop för verifieringen |
-| Totalt | 6 försök | 5,5 | Interna 0,3 ingår redan |
+| Planning | 1 | 0.4 | Separate call |
+| Research | 1 | 1.2 | Includes 0.3 from an internal subagent |
+| Implementation | 1 | 2.0 | First candidate |
+| Review | 1 | 0.6 | Requests rework |
+| Implementation | 2 | 0.8 | Corrected candidate |
+| Verification | 1 | 0.5 | Agent call for verification |
+| Total | 6 attempts | 5.5 | Internal 0.3 already included |
 
-Budgetstyrning kan kombinera rapporterad förbrukning med reservationer för pågående arbete. Fördröjda värden och avbrottslatens innebär att en lokal budgetkontroll inte automatiskt är ett exakt debiteringstak. Externa experiment- och beräkningskostnader redovisas separat från agentens credits.
+Budget control can combine reported usage with reservations for active work. Delayed values and cancellation latency mean a local budget check is not automatically an exact billing cap. Report external experiment and compute costs separately from agent credits.
 
-## 9 Mänsklig styrning och begriplig översikt
+<a id="9-mänsklig-styrning-och-begriplig-översikt"></a>
 
-Hela projektet ska kunna drivas interaktivt så länge användaren vill. Vid autonom körning kan samma steg utföras inom ett överenskommet mandat, med rapportering på executive-nivå. Växlingen bevarar mål, beslut, historik och kostnader och hanterar pågående arbete uttryckligen.
+## 9 Human direction and understandable overview
 
-Rapporten visar vad som uppnåtts, aktuell plan, öppna frågor, förbrukning och nästa steg. Frågor presenteras som kopierbar text med rekommendation, när svaret behövs och vad som kan fortsätta. Uteblivet svar utgör inget godkännande, men frågor som kan vänta ska inte stoppa arbete inom mandatet.
+The whole project can remain interactive as long as the user wants. In autonomous mode, the same steps may run within an agreed mandate with executive-level reporting. Switching preserves goals, decisions, history and costs and explicitly handles active work.
 
-Översikten ska göra det lätt att förstå vem som arbetar åt vem, varför ett steg väntar och vad ett omtag kostade. Fördjupning leder till motiven, diffen, relevant omgivande kod och evidensen för rätt revision. Tekniska agent- och sessions-ID:n finns för felsökning utan att dominera användarflödet.
+Reports show achievements, current plan, open questions, usage and next steps. Questions appear as copyable text with a recommendation, when an answer is needed and what can continue. Silence is not approval, but deferrable questions must not stop authorised work.
 
-Automatiska tester kan bedöma många funktioner. Upplevelsen av tydlighet, respons och manuell kodgranskning behöver också prövas av användaren. Ett högt antal autonoma steg eller låg kostnad bevisar inte att arbetsformen är bra.
+Make it easy to understand who works for whom, why a step is waiting and what rework cost. Drill-down reveals rationale, diff, relevant surrounding code and evidence for the correct revision. Technical agent/session IDs support troubleshooting without dominating the user workflow.
 
-## 10 Införande i användbara inkrement
+Automated tests assess many functions. Clarity, responsiveness and manual code review also need user trials. Many autonomous steps or low cost do not establish a good working method.
 
-Denna ordning konkretiserar den senare Maestro-utvecklingen. Den ersätter inte DSpatchs redan planerade första milstolpe.
+<a id="10-införande-i-användbara-inkrement"></a>
 
-| Inkrement | Nytta och avgränsning |
+## 10 Useful implementation increments
+
+This sequence makes the later Maestro work concrete. It does not replace DSpatch's planned first milestone.
+
+| Increment | Value and boundaries |
 | --- | --- |
-| Förbered i chattintegrationen | Håll adapter, session, körning och sparad historik åtskilda. Samla förbrukning där den är tillgänglig. En agent räcker. |
-| Två samordnade sessioner | Implementer och Reviewer arbetar sekventiellt på en känd kandidat. Resultat återförs med stabila referenser. |
-| Beständig stegvis loop | Lägg till planering, verifiering och omtag, med fungerande paus och återhämtning. |
-| Logiska deluppgifter | Låt agenter begära arbete via Maestro och fortsätta efter barnresultat. Prova kostnadsfördelning per steg. |
-| Fler arbetsformer | Inför isolerad parallellitet, en andra leverantör och exempelvis en granskningskommitté när nyttan är tydlig. |
+| Prepare in the chat integration | Separate adapter, session, run and saved history. Collect available usage. One agent is enough. |
+| Two coordinated sessions | Implementer and Reviewer work sequentially on an identified candidate, returning results with stable references. |
+| Persistent stepwise loop | Add planning, verification and rework with working pause and recovery. |
+| Logical subtasks | Agents request work through Maestro and continue after child results. Test per-step cost allocation. |
+| More working methods | Add isolated parallelism, a second provider and, for example, a review committee when they provide clear value. |
 
-Första loopen kan vara en liten versionerad definition och en enkel körmotor. En grafisk flödesbyggare, distribuerad infrastruktur och ett stort rollbibliotek behövs först när de löser konkreta problem. Sekventiellt arbete underlättar både felsökning och kostnadsavstämning.
+The first loop may be a small versioned definition and a simple runner. A graphical workflow builder, distributed infrastructure and large role library are needed only when they solve concrete problems. Sequential work simplifies debugging and cost reconciliation.
 
-Modellval kan senare anpassas efter arbetets art, komplexitet, evidenskrav och budget. Spara varför en modell valdes och vilken modell som faktiskt rapporterades. Om en starkare modell används vid ett omtag ska både kvalitet och total kostnad för försöken kunna jämföras.
+Later, model selection may adapt to task character, complexity, evidence requirements and budget. Save the selection rationale and the model actually reported. If rework uses a stronger model, compare both quality and total cost across attempts.
 
-Versionssatta arbetsflöden behöver kunna uttrycka återkoppling och cykler. För varje iteration skapas identifierade stegtillfällen, så att samma granskningssteg kan återkomma utan att historiken skrivs över. Nya arbetsformer kan behöva utöka kontrakten; all framtida variation kan inte förutses.
+Versioned workflows must express feedback and cycles. Create identified step occurrences for each iteration so review can recur without overwriting history. New working methods may require contract extensions; not all future variation is predictable.
 
-## 11 Vad som behöver visas i en prototyp
+<a id="11-vad-som-behöver-visas-i-en-prototyp"></a>
 
-1. En agent begär en deluppgift som utförs i en separat session. Rätt beställare får resultatet och fortsätter med bevarat sammanhang.
-2. Ett logiskt nästlat exempel fungerar utan att använda leverantörens inbyggda subagentfunktion. Väntande steg blockerar inte nödvändig körkapacitet.
-3. Ett avbrott efter start men före slutrapport lämnar ett begripligt läge. Omstart klarlägger utfallet före eventuell upprepning och bevarar räknarna.
-4. Ett steg, ett omtag och en körning med intern delegering kan bokföras utan dubbelräkning. Saknade och sena kostnadsvärden förblir synliga.
-5. Återanvänd session och separat session jämförs för kostnadsavstämning. Skillnader mot leverantörens rapport förklaras; AI credits anges först när enhet och omfattning är verifierade.
-6. Byte mellan interaktivt arbete och autonom körning bevarar uppgifter, evidens och mänskliga beslut. Användaren bedömer översikten.
+## 11 What a prototype must demonstrate
 
-När en andra leverantör införs prövas samma arbetsflöde genom dess adapter. Målet är ett gemensamt arbetsflöde med redovisade skillnader i förmågor, inte ett antagande om identisk körning eller flyttbar intern kontext.
+1. An agent requests a subtask executed in a separate session. The correct requester receives its result and continues with preserved context.
+2. A logically nested example works without the provider's native subagent feature. Waiting steps do not consume capacity needed for execution.
+3. Interruption after startup but before the final report leaves an understandable state. Restart reconciles the outcome before any repetition and preserves counters.
+4. A step, a rework attempt and a run with internal delegation can be accounted for without double counting. Missing and delayed costs remain visible.
+5. Compare reused and separate sessions for cost reconciliation. Explain differences from the provider report; use AI credits only after verifying unit and scope.
+6. Switching between interactive and autonomous work preserves tasks, evidence and human decisions. The user assesses the overview.
 
-## 12 Källor och dokumentstatus
+When adding a second provider, test the same workflow through its adapter. Aim for a shared workflow with disclosed capability differences, not assumed identical execution or transferable internal context.
 
-Produktens överordnade riktning finns i [VISION.md](VISION.md), version 1.8. Detta dokument är en separat fördjupning; Markdown-versionen i repot är original och Word-versionen återger samma sakliga innehåll.
+<a id="12-källor-och-dokumentstatus"></a>
 
-Leverantörsdokumentationen nedan lästes den 13 september 2026. Den beskriver tillgängliga byggstenar och deras begränsningar. DSpatchs konkreta integration, kostnadsavstämning och återhämtning behöver fortfarande verifieras mot valda versioner och konto.
+## 12 Sources and document status
 
-- [Cursor TypeScript SDK](https://cursor.com/docs/sdk/typescript) beskriver agentlivscykel, dispatcher, egna verktyg, intern delegering och förbrukning.
-- [Copilot SDK](https://github.com/github/copilot-sdk) beskriver SDK:ts relation till CLI-körmotorn.
-- [Copilot SDK för Node.js](https://github.com/github/copilot-sdk/blob/main/nodejs/README.md) beskriver oberoende sessioner och verktygsintegration.
-- [Copilot SDK om förbrukning och fakturering](https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md) beskriver sessionsmått, livehändelser, AI-enheter och experimentella gränssnitt.
+[VISION.md](VISION.md) governs product direction. This is a separate elaboration. Version 1.0 was prepared against VISION 1.8; this English edition follows the project's language policy. Repository Markdown is the maintained source. The previously delivered Swedish Word export, `Maestro_orkestrering_vision_v1.docx`, represents version 1.0 and has not been regenerated for this language-only edition.
 
-Konkreta datalagringsval, sessionsåteranvändning, budgetstandarder och regler för intern delegering fastställs genom prototyperna. Arkitekturriktningen är att Maestro bevarar projektets identitet och styr arbetet genom dessa förändringar.
+The following provider documentation was read on 13 September 2026. These are documented building blocks and limitations. DSpatch's integration, cost reconciliation and recovery still need verification against selected versions and account. Translation is not a new runtime verification.
+
+- [Cursor TypeScript SDK](https://cursor.com/docs/sdk/typescript): agent lifecycle, dispatcher, custom tools, internal delegation and usage.
+- [Copilot SDK](https://github.com/github/copilot-sdk): SDK relationship to the CLI runtime.
+- [Copilot SDK for Node.js](https://github.com/github/copilot-sdk/blob/main/nodejs/README.md): independent sessions and tool integration.
+- [Copilot SDK usage and billing](https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md): session metrics, live events, AI units and experimental interfaces.
+
+Prototypes determine storage choices, session reuse, default budgets and internal-delegation policies. The architectural direction is for Maestro to preserve project identity and direct work through these changes.

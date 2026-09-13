@@ -1,53 +1,63 @@
 ---
-id: "DSP-7"
-title: "Kalibrera utvecklingsloopen i Cursor"
-status: "Done"
-assignee: ["@nizlas"]
-created_date: "2026-09-13"
-labels: ["integration", "ux"]
-milestone: "m-0"
+id: DSP-7
+title: Calibrate the development loop in Cursor
+status: Done
+assignee:
+  - '@nizlas'
+created_date: '2026-09-13'
+updated_date: '2026-09-13 20:13'
+labels:
+  - integration
+  - ux
+milestone: m-0
 dependencies: []
-documentation: ["docs/DEVELOPMENT_LOOP.md", "docs/loop/CALIBRATION.md", "BACKLOG.md"]
+documentation:
+  - docs/DEVELOPMENT_LOOP.md
+  - docs/loop/CALIBRATION.md
+  - BACKLOG.md
 ordinal: 500
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-### Varför och önskat resultat
+### Purpose and intended result
 
-Innan DSP-1 genomförs med loopen behöver vi veta att de definierade rollerna faktiskt kan anropas i Cursor, att koordinatorn håller ihop arbetet och att planeringen ger Niclas tydlighet. Detta är ett förberedelsesteg för utvecklingsarbetet; det implementerar inte produktens Maestro.
+Before using the loop for DSP-1, establish that Cursor can actually invoke the defined roles, the coordinator keeps the work coherent, and planning gives Niclas clarity. This prepares development; it does not implement the product's Maestro.
 
-### Avgränsning och föreslagen väg
+### Scope and proposed approach
 
-Definitionerna och det lokala snapshot-verktyget levereras i förslaget till utvecklingsloop. Följ [CALIBRATION.md](../../docs/loop/CALIBRATION.md) i Cursor på hemmadatorn. Koordinatorn är huvudchatten och anropar fem specialister direkt utan rekursiv delegering. Börja med ett faktiskt planförslag för DSP-1, granska det, gör en avgränsad researchkontroll och prova implementation/verifiering/review i ett separat lokalt provrepo.
+The development-loop proposal supplies the definitions and local snapshot tool. Follow [CALIBRATION.md](../../docs/loop/CALIBRATION.md) in Cursor on the home computer. The main chat coordinates five specialists directly without recursive delegation. Start with a real DSP-1 plan, review it, perform bounded research and test implementation/verification/review in a separate local test repository.
 
-Pausa efter implementationen och återuppta i en ny huvudchatt från samma journal. Kontrollera att redan genomfört arbete inte körs igen. Niclas bedömer planöversiktens innehåll och tydlighet; fungerande filformat eller ett litet kodprov bevisar inte bra planering.
+Pause after implementation and resume from the same journal in a new main chat. Check that completed work is not repeated. Niclas assesses the plan's content and clarity; valid file formats or a small code experiment do not establish good planning.
 
-### Verifiering och fortsättning
+### Verification and continuation
 
-Spara riktiga anropsreferenser och resultat, Cursor-version och modell där uppgifterna finns, kandidatens snapshot, testloggar och vad som behövde korrigeras. Markera saknade runtime-uppgifter som okända. Om ett verktyg eller en agent saknas: ange exakt vad som hindrar provet och fortsätt med de oberoende kontroller som går att göra.
+Save real call references and results, Cursor version and model where available, the candidate snapshot, test logs and necessary corrections. Mark unavailable runtime information unknown. If a tool or agent is missing, state the precise obstacle and continue independent checks that remain possible.
 
-Gör inte produktkod eller ändra DSP-1:s acceptanskriterier för att få kalibreringen godkänd. Uppdatera definitionsfilerna genom ett avgränsat korrigeringsuppdrag om provet avslöjar ett faktiskt problem. Efter godkänd kalibrering är DSP-1 nästa produktsteg.
+Do not write product code or change DSP-1's acceptance criteria to pass calibration. Correct definitions through a bounded task if calibration reveals an actual problem. After successful calibration, DSP-1 is the next product step.
 
-### Underlag
+### References
 
-[Utvecklingsloopen](../../docs/DEVELOPMENT_LOOP.md), [överlämningar](../../docs/loop/HANDOFF.md) och [utvecklingsplanen](../../BACKLOG.md).
+[Development loop](../../docs/DEVELOPMENT_LOOP.md), [handoffs](../../docs/loop/HANDOFF.md) and [development plan](../../BACKLOG.md).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [x] #1 Skillen kör koordinatorn i huvudchatten och alla fem namngivna specialister har anropats på riktigt i Cursor. Tillgängliga runtime-ID:n och eventuella begränsningar är dokumenterade; inga specialistanrop är imiterade i huvudkontexten.
-- [x] #2 Backlog Planner har lämnat ett konkret planförslag för DSP-1 och Reviewer har granskat det oberoende. Niclas har bedömt nyttan, tydligheten och behovet av korrigeringar.
-- [x] #3 Provrepots kodändring har implementerats, verifierats och granskats på samma identifierade kandidat; verkliga diffar, kommandon, resultat och rapporter finns.
-- [x] #4 En ny huvudchatt har återupptagit efter den avsiktliga pausen utan att upprepa implementationen; mandat, räknare och nästa steg har bevarats.
-- [x] #5 Fynd och kvarstående begränsningar är dokumenterade. Koordinatorns sammanfattning skiljer tekniskt prov, planeringsbedömning och ännu oprövad DSpatch-integration åt; DSP-1 har ett konkret nästa steg.
+- [x] #1 The skill runs the coordinator in the main chat and all five named specialists have actually been invoked in Cursor. Available runtime IDs and limitations are documented; no specialist call is imitated in the main context.
+- [x] #2 The Backlog Planner has produced a concrete DSP-1 plan and the Reviewer has reviewed it independently. Niclas has assessed its usefulness, clarity and need for corrections.
+- [x] #3 The test-repository change has been implemented, verified and reviewed on the same identified candidate; actual diffs, commands, results and reports exist.
+- [x] #4 A new main chat has resumed after the intentional pause without repeating implementation; mandate, counters and next step survived.
+- [x] #5 Findings and remaining limitations are documented. The coordinator summary distinguishes the technical experiment, planning assessment and still-untested DSpatch integration; DSP-1 has a concrete next step.
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+### Historical evidence — original language
+
+The following implementation and verification notes predate the English-language policy. They are preserved verbatim, including Swedish observations, quotations and identifiers. They describe the versions and dates recorded below; new findings must be written in English.
+
 ### Pass 1, 13 september 2026 — pausat enligt plan
 
 Körjournal: `.dspatch-loop/runs/20260913-114021-4slh/` (lokal, Git-ignorerad). Cursor 3.17.8, Git 2.53.0, Python 3.12.10. Koordinatorns modell enligt systemprompt är Claude Opus 5; det exakta modellslugget går inte att läsa ut och specialisternas faktiska modell är okänd, eftersom `model: inherit` inte exponerar något avläsbart runtime-värde.

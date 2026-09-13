@@ -1,0 +1,36 @@
+# Package DSpatch as a runnable directory. Installers, signing and automatic
+# updates are outside DSP-1.
+#
+# A separate YAML file allows comments, including the asarUnpack guidance for
+# the next substep, which strict JSON in package.json could not carry.
+
+appId: dev.dspatch.app
+
+directories:
+  # Keep separate from dist/, which tsc and Vite own. electron-builder defaults
+  # to dist/ too; using that default would make the tools overwrite each other.
+  output: release
+
+# Vite bundles the renderer; the main process requires only node:path, electron
+# and its own dist files. The skeleton therefore needs no node_modules in the
+# artifact. Here react and react-dom are build-time dependencies in practice.
+files:
+  - dist/**/*
+  - package.json
+  - '!node_modules/**/*'
+
+# The skeleton has no native dependencies, so everything may remain in asar.
+#
+# Substep 7 differs: @cursor/sdk-win32-x64 carries rg.exe, cursorsandbox.exe
+# and two .node files. They must be unpacked to execute or load, otherwise the
+# connection fails on its first call. Expand files to include the package and add:
+#
+#   asarUnpack:
+#     - node_modules/@cursor/sdk-win32-x64/**/*
+asar: true
+
+win:
+  target:
+    - target: dir
+      arch:
+        - x64
