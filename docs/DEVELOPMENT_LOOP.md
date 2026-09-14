@@ -49,6 +49,14 @@ These are chat instructions to the skill, not a separate CLI. If the skill is mi
 
 The coordinator calls specialists directly, sequentially and in the foreground. No specialist delegates, including to generic subagents. This is our policy, not a platform restriction: Cursor's documentation states that subagents can launch child subagents starting in Cursor 2.5. The policy keeps the call structure flat and traceable, and specialist instructions repeat it. Researcher and Backlog Planner are used when needed, not as mandatory ceremonies before every small change. Reviewer assesses substantial new plans and delivered implementations. The coordinator supplies a clear handoff so specialists need not guess what was said in the main chat.
 
+<a id="planerad-förbättring-uppgiftsstyrt-modellval"></a>
+
+## Planned improvement: task-aware model selection
+
+[DSP-8](../backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md) tests model selection by assignment character, complexity and uncertainty. The [model-selection proposal](MODEL_SELECTION.md) describes assessment, fixed user choice, justified switches and verification of Cursor's actual selection.
+
+This is future work. DSP-7 used `model: inherit` throughout calibration. Adoption requires a verified Cursor experiment; the current skill and specialists do not select models dynamically. DSP-8 is not a dependency for DSP-1 or the first product milestone.
+
 <a id="ett-normalt-pass"></a>
 
 ## A normal run

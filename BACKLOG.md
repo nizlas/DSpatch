@@ -34,6 +34,18 @@ The goal is a workspace Niclas wants to use for a real development question. The
 
 This table is an overview of scope and ordering. Task files are the source for current status, details, criteria and results. Update this overview when direction or scope changes; do not maintain a second status ledger here. Dependencies identify required input and do not automatically imply parallel writing agents.
 
+<a id="förbättringar-av-utvecklingsloopen"></a>
+
+## Development-loop improvements
+
+These tasks concern the workflow used to build DSpatch. They sit outside the product's Phase 0 milestone and add no dependencies to DSP-1–6. Prioritise them by observed value after calibration; DSP-1 remains the next product step after DSP-7.
+
+| Task | Value | Depends on |
+| --- | --- | --- |
+| [DSP-8](backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md) – Test task-aware model selection | Select model and reasoning level for the concrete assignment, with visible rationale, fixed user choice and verified actual selection. | DSP-7 |
+
+DSP-8 starts by testing Cursor's actual controls and comparing against a fixed-model baseline. The [model-selection proposal](docs/MODEL_SELECTION.md) is planned work, not an active feature, and does not change the calibration baseline. DSP-8 has no assigned milestone; DSP-1–7 belong to m-0.
+
 <a id="vad-som-avgör-om-vi-är-klara"></a>
 
 ## What determines completion
