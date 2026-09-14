@@ -92,14 +92,19 @@ The configuration reads the current working copy without automatic remote calls 
 
 ## After the first milestone
 
-After DSP-6, enter **discovery and a direction review**, using experience from the working product. [DSP-11](backlog/tasks/dsp-11%20-%20Research-code-understanding-and-agree-next-direction.md) is planned under [milestone m-1](backlog/milestones/m-1%20-%20Review-and-Maestro-discovery.md). It is not an additional condition for completing Phase 0.
+After DSP-6, enter **discovery and a direction review**, using experience from the working product. [Milestone m-1](backlog/milestones/m-1%20-%20Review-and-Maestro-discovery.md) contains five stories. It is not an additional condition for completing Phase 0.
 
-| Discovery work | Result for the next decision |
-| --- | --- |
-| Observe human interaction and review Phase 0 experience | Concrete difficulties in understanding, navigation, verification and control. |
-| Study HCI research and existing tools | Evidence of what has been tried, what was evaluated and what remains uncertain. |
-| Compare Niclas's early concepts with that evidence | Small sketches or prototypes of promising interactions, including alternatives to the original ideas. |
-| Discuss review features and Maestro orchestration with Niclas | A selected next experiment, bounded scope and success criteria, plus explicit deferrals. |
+| Story | Result | Depends on |
+| --- | --- | --- |
+| [DSP-11 — Understand review needs](backlog/tasks/dsp-11%20-%20Research-code-understanding-and-agree-next-direction.md) | A needs brief and comparison tasks grounded in Phase 0 feedback and Niclas's walkthrough. | DSP-6 |
+| [DSP-12 — Survey smart tools and interaction designs](backlog/tasks/dsp-12%20-%20Survey-smart-tools-and-interaction-designs.md) | A concrete interaction gallery/comparison of existing tools, older approaches and research prototypes. | DSP-6 |
+| [DSP-13 — Review HCI and UI research](backlog/tasks/dsp-13%20-%20Review-HCI-and-UI-research-for-code-understanding.md) | A primary-source evidence synthesis, including relevant UI/information-visualisation research outside programming. | DSP-6 |
+| [DSP-14 — Compare and try concepts](backlog/tasks/dsp-14%20-%20Compare-and-try-code-review-concepts.md) | All five seeds compared with the research and alternatives; one or two small experiments assessed with Niclas. | DSP-11, DSP-12, DSP-13 |
+| [DSP-15 — Agree the next direction](backlog/tasks/dsp-15%20-%20Agree-the-next-direction-for-review-and-Maestro.md) | A joint direction decision for review features and Maestro, with bounded follow-up proposals and explicit deferrals. | DSP-14 |
+
+The two surveys are independent deliverables. Search broadly before selecting concepts: current and older tools, research prototypes, HCI/UI studies and useful interaction ideas outside IDEs. Collect concrete examples and evidence, including negative or context-dependent findings. Research must be able to change our direction, not just support the initial ideas. A competitor list or feature checklist is insufficient.
+
+DSP-12 and DSP-13 need not wait for DSP-11's human walkthrough. Dependencies permit independent progress; they do not authorise parallel writing agents or expand run limits. DSP-14 combines all three inputs before selecting experiments, and DSP-15 records Niclas's direction decision.
 
 The [research brief](docs/REVIEW_RESEARCH.md) preserves all five concept seeds: guided code flow with tree highlights, essential diffs, conceptual differences, visual explanations of benefits/risks, and a zoomable minimap or another overview. These are hypotheses, not committed features or evidence of novelty.
 

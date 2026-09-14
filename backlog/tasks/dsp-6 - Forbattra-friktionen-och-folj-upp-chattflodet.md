@@ -39,7 +39,7 @@ Test the combined DSP-2–4 result and any UX improvement. Niclas should open a 
 
 Report technical results for the delivered version, including successful and failing commands, cancellation and restart after file changes. Niclas assesses the same version and personally completes a bounded change from request to diff and test result. Remaining obstacles must be resolved or explicitly accepted; an agent cannot mark his assessment complete.
 
-Niclas can remain in the human-interactive mode in subsequent increments. His decision on 14 September 2026 is to continue through DSP-6 and then take stock before further product implementation. Hand Phase 0 observations and unresolved needs to [DSP-11](dsp-11%20-%20Research-code-understanding-and-agree-next-direction.md), the planned HCI, prior-art and concept study. Discuss the next direction for review features and Maestro with Niclas using that evidence. Discovery is subsequent work, not a new completion requirement for DSP-6.
+Niclas can remain in the human-interactive mode in subsequent increments. His decision on 14 September 2026 is to continue through DSP-6 and then take stock before further product implementation. Hand Phase 0 observations and unresolved needs to [DSP-11](dsp-11%20-%20Research-code-understanding-and-agree-next-direction.md), the user-needs story in [discovery milestone m-1](../milestones/m-1%20-%20Review-and-Maestro-discovery.md). DSP-12 and DSP-13 cover the independent tool and HCI/UI surveys, DSP-14 compares concepts, and DSP-15 records the joint direction decision. Discuss the next direction for review features and Maestro with Niclas using that evidence. Discovery is subsequent work, not a new completion requirement for DSP-6.
 
 ### References
 

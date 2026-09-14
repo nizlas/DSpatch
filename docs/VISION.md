@@ -305,7 +305,7 @@ Ask users to explain the changed behaviour, identify a relevant dependency and i
 
 ### 3.2 Research and emerging review concepts
 
-Before committing to advanced review interactions, study how developers understand code and changes, what HCI research and existing tools have tried, and where evidence is missing. Combine those findings with Phase 0 observations and Niclas's emerging ideas. A literature or product search cannot establish that an idea has never been tried; distinguish documented features, empirical results, our own observations and hypotheses.
+Before committing to advanced review interactions, undertake an open survey of smart tools and a separate synthesis of HCI/UI research. Include current and older tools, research prototypes, and relevant information-visualisation or interaction research outside programming. Collect concrete interaction examples and study findings, including limitations and negative results, rather than only a competitor list. Research should be able to change our direction before concepts are selected. Combine the findings with Phase 0 observations and Niclas's emerging ideas. A literature or product search cannot establish that an idea has never been tried; distinguish documented features, empirical results, our own observations and hypotheses.
 
 Concept seeds recorded on 14 September 2026 are **open design hypotheses**, not selected features or literal command requirements:
 
@@ -754,7 +754,7 @@ Niclas approved continuing through DSP-6 on 14 September 2026. The existing depe
 
 ### Discovery after Phase 0: human interaction, review and Maestro
 
-After DSP-6, take a step back and use the working product to inform a bounded study of human-computer interaction, code comprehension, review tools and prior research. [DSP-11](../backlog/tasks/dsp-11%20-%20Research-code-understanding-and-agree-next-direction.md) and its [research brief](REVIEW_RESEARCH.md) organise this work under a separate discovery milestone. It is not a prerequisite for completing Phase 0.
+After DSP-6, take a step back and use the working product to inform a bounded study of human-computer interaction, code comprehension, review tools and prior research. [Milestone m-1](../backlog/milestones/m-1%20-%20Review-and-Maestro-discovery.md) and its [research brief](REVIEW_RESEARCH.md) organise five stories: user needs (DSP-11), existing tools (DSP-12), HCI/UI research (DSP-13), concept comparisons (DSP-14) and the direction decision (DSP-15). Discovery is not a prerequisite for completing Phase 0.
 
 Compare the evidence with Niclas's concept seeds in section 3.2, explore a small selection through sketches or prototypes, and discuss the next product increment with him. Consider both review features and Maestro loop orchestration: what should run automatically, what a human needs to understand, and how to inspect or intervene across attempts. Keep the ability to work interactively throughout.
 
