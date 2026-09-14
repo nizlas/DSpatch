@@ -23,6 +23,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\""
   },
   "dependencies": {
+    "@cursor/sdk": "1.0.31",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

@@ -4,7 +4,7 @@ title: Verify the technology choice and first Cursor connection
 status: In Progress
 assignee: []
 created_date: '2026-09-13'
-updated_date: '2026-09-13 20:13'
+updated_date: '2026-09-13 21:48'
 labels:
   - integration
 milestone: m-0
@@ -47,7 +47,7 @@ Save commands, versions, the tested revision or content-addressed snapshot, and 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The selected TypeScript, React and Electron stack and a selected Cursor connection work together in a minimal packaged Windows experiment. Versions, target environment, rationale and limitations are documented. The record describes the path to Linux and VS Code/Copilot and outstanding compatibility tests; those later tests are not required in this task.
-- [ ] #2 A runnable experiment has received a real streaming response and a relevant follow-up through Niclas's intended Cursor account; commands and provider versions are recorded.
+- [x] #2 A runnable experiment has received a real streaming response and a relevant follow-up through Niclas's intended Cursor account; commands and provider versions are recorded.
 - [ ] #3 Two scenarios are tested and documented through the real connection: actual cancellation, both during streaming and during a running test, and a deliberately induced connection failure. Both record what happened to already changed files, whether anything kept running and whether an active remote request could be stopped. The experiment induces the failure itself; do not wait for a provider outage. A simulated failure without a real connection does not satisfy this criterion.
 - [ ] #4 Authentication, file and tool access boundaries, and the billing path are established with sources and dates; uncertain cost information is marked.
 - [ ] #5 Another developer can follow the experiment instructions without secrets in the repository; the next step towards the workspace is concrete and bounded.
@@ -362,7 +362,81 @@ Rökprovets exitkoder 3 (tidsgräns) och 4 (renderarprocessen försvann) är dok
 
 **Väntar på Niclas:** att köra `app\release\win-unpacked\DSpatch.exe` och bedöma intrycket, och att bedöma om adaptergränssnittets form är den han vill leva med. Att fönstret visas och målar rätt innehåll är belagt maskinellt; att det ser bra ut är det inte.
 
-### Nästa steg
+*(Everything above this line is preserved Swedish evidence from passes 1–2, as DSP-10 provides. Notes from step 4 onward are written in English.)*
 
-**Delsteg 4 kräver Niclas medverkan** och passet pausar därför här. Adaptern ska ansluta genom hans konto och ge ett riktigt strömmande svar plus en följdfråga i samma session. SDK:t återanvänder inte Cursor-appens inloggning, så steget behöver antingen `CURSOR_API_KEY` eller ett engångs `Cursor.auth.login()` som öppnar webbläsaren och sparar en användarnyckel med 90 dagars livslängd i `~/.cursor/sdk/auth.json`. Rekommendationen är inloggningsflödet: inget hamnar i repot och insatsen är ett webbläsarklick. Detta är också det första steget som gör ett debiterat leverantörsanrop.
+### Pass 2, continued — step 4 completed and independently verified
+
+**AC#2 is met and checked.** The adapter connects from the Electron main process through Niclas's own account, streams a real answer and answers a follow-up in the same session. Verified independently by the Verifier, who reproduced every substantive claim and found nothing blocking.
+
+**Candidate:** manifest `.dspatch-loop/runs/20260913-175023-g8t7/snapshots/delsteg-4-source.sha256`, 23 source files under `app/`, the manifest file's own SHA-256 `9d33ac43e069851830acddc3f92d4d28b36b9a701c651c3a9f23bd9ea6a4fde6`, computed on file bytes so it reproduces with `Get-FileHash`. Re-checked by the coordinator after all verification runs: 23 of 23 match, no drift.
+
+`@cursor/sdk` is pinned to **1.0.31** exactly, as a production dependency. New code is `app/src/adapter/cursor-sdk-adapter.ts` and `app/src/main/probe-cursor.ts`. `tsconfig.renderer.json` now excludes the SDK adapter so that a renderer-side import fails typecheck. **The renderer was not touched**; a chat surface is deliberately a later step.
+
+### How the login actually works, and what it required
+
+The coordinator ran `Cursor.auth.login()` once with Niclas present. The flow is a one-time challenge, a browser page at `cursor.com/loginDeepControl?…&redirectTarget=sdk`, polling, and then a session token used exactly once to mint a named, expiring user API key. The key is stored at `C:\Users\nicla\.cursor\sdk\auth.json` — **258 bytes, outside the repository** — and expires **2026-12-12**. It is named `DSpatch DSP-1 (Niclas hemdator)` in the dashboard so it can be revoked on its own. `CURSOR_API_KEY` was never set. The value has never been written to screen, log, report or repository.
+
+**AC#4's first observation — authentication requirements and credential source.** The adapter needed **nothing from DSpatch**: no API key argument, no environment variable, no file read of its own. The SDK resolves the credential itself from its own store. That is a genuinely useful property — DSpatch never handles the secret — and it is also the thing to re-check for a packaged artifact in step 7, since credential resolution has only been observed in development mode.
+
+### Streaming is real, but the stated criterion does not discriminate
+
+Requested model `claude-haiku-4-5`; reported model `claude-haiku-4-5`. Turn 1 produced **12 chunks at 12 distinct times**, first at 4788.2 ms and last at 4957.9 ms after send, with the run finishing at 5138.7 ms. `agent.send()` resolved at 2332.8 ms, *before* the first chunk, which is the structural evidence that delivery is push-based rather than a return value.
+
+The Verifier sharpened this and the sharpening matters. Chunks arrive in **three bursts** separated by 154.3 ms and 8.1 ms, and the last chunk lands 184 ms before the run ends, so the stream is genuinely incremental. But ten of the twelve inter-chunk gaps are 0.1–0.7 ms — the event loop draining a batch, not twelve separate arrivals. **The probe's own pass criterion, "two chunks at two distinct times", would also accept a fully buffered replay.** The claim is true; the test that checks it is weaker than the claim. Tighten the criterion before step 7 relies on it.
+
+### The follow-up is in the same session, and now there is a control proving the test can fail
+
+Turn 1 planted the nonce `7UXDHRDTPH`; turn 2 recalled it, under agent `agent-40e0d9d0-…` with two distinct run IDs. On its own that shows only that something was recalled.
+
+The Verifier added the missing **negative control**: a *fresh* session, asked turn 2's question word for word with no nonce ever planted, replied *"I don't have any record of you asking me to remember a token in our current conversation. This appears to be the start of our chat."* It invented no nonce and did not leak the one from the other session. So the continuity test discriminates, and sessions are isolated from each other despite sharing a local store root.
+
+### Two findings that change how DSpatch must be built
+
+**1. Cursor's agent ID must be `agent-<uuid>`; DSpatch must map its own ID rather than pass it through.** An arbitrary DSpatch ID is accepted by `Agent.create`, streams two complete turns, and is only then rejected by the usage API with `Agent ID must be in the format 'bc-<uuid>' (cloud) or 'agent-<uuid>' (local)`. Create and send are lenient while the usage path validates. **This corrects the earlier note that the only rule was "never `bc-`".** The failure surfaces late and far from its cause, which is exactly the kind of thing to pin down now.
+
+**2. `vite build` succeeds with exit code 0 when a renderer file imports the SDK adapter**, bundling the whole SDK into a 3.7 MB renderer full of throwing Node stubs. `npm run typecheck` catches it; `build` and `package` never run typecheck. This is the same silent-success shape as the `!node_modules/**/*` trap already signposted for step 7. **Decision: `package` must depend on `typecheck`.** To be applied in the next implementation call.
+
+### AC#4's usage reading: tokens yes, cost refused — and the refusal is narrow
+
+`agent.getUsage()` is **refused for this account**: `UnknownAgentError [feature_unavailable]`, twice, twenty seconds apart, so it is not billing lag.
+
+The Verifier established, and the coordinator reproduced independently in plain Node with no adapter and no Electron, that the refusal is **narrower than first reported**:
+
+| Agent ID passed to `Agent.getUsage()` | Answer |
+| --- | --- |
+| local `agent-<uuid>`, never existed | **HTTP 403** `feature_unavailable` |
+| cloud `bc-<uuid>`, never existed | **HTTP 404** `agent_not_found` |
+
+The 403 arrives even for an agent that never existed, so the gate is evaluated **before lookup**. The cloud path answering 404 shows the endpoint authenticates and works for this account. **Only usage reporting for local SDK agents is gated.** That makes the question to Niclas a narrow one about entitlement rather than an open-ended billing investigation.
+
+**Cost in cents is therefore `unknown`, never `0`.** Per-turn tokens do arrive, on a different path — `SDKUsageMessage` on the run stream:
+
+| Turn | input | output | cacheRead | cacheWrite | total | reasoning |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1372 | 155 | 0 | 0 | **1527** | **unknown** (field absent) |
+| 2 | 1485 | 82 | 0 | 0 | **1567** | **unknown** (field absent) |
+
+Turn 1 emitted 26 reasoning deltas, so the model demonstrably reasoned while the field is absent from the payload. Recording `0` would have been **factually false**, not merely imprecise. This is the concrete case the `value: null` rule was written for.
+
+**Decision: `capabilities().usageReporting` is changed from `supported` to `unknown`.** The Verifier's reasoning is accepted: a UI told `supported` will render a cost field and leave it blank, which is precisely the "missing cost presented as zero" that VISION 12 forbids. The per-reading data is already honest through `unit`, `source` and `value: null`; it is the one-word summary that overstates. The field is **not** split — that would reopen a step 2 decision for a presentation problem `unknown` already solves. To be applied in the next implementation call.
+
+**How much this weakens the step 1 choice: very little.** The choice was comparative, and a 403 here does not give the headless CLI a cost API it never had. Cost *is* exposed by this path; one route is gated for this account. Per-turn tokens are a workable order-of-magnitude substitute so long as they are never presented as a billed amount.
+
+### Containment and hygiene
+
+The agent's workspace was a dedicated scratch directory under `%TEMP%`, **refused in code** if it were inside the repository or non-empty. It was **empty after the run** and the run reported `tools: []`, so the agent touched no file. The SDK's local agent store landed outside the repository under `~/.cursor/projects/…/sdk-agent-store/…`. A secret search across all TypeScript sources returns only the probe's own redaction allowlist, no values.
+
+**One earlier concern is withdrawn.** The reported un-checkpointed WAL files over 1 MB surviving `dispose()` were an artefact of when the measurement was taken — `describeLocalState()` runs inside the probe body while disposal happens in the outer `finally`. After process exit no `-wal` or `-shm` file exists anywhere. Struck from remaining work.
+
+### What step 4 cost, and what it did not establish
+
+**Seven billed turns in total:** the Implementer needed four sessions rather than one — the first failed on the ID format, the second on the usage API plus a probe that treated a refusal as fatal, the third exposed that `assistant` messages are increments rather than cumulative snapshots, and the fourth is the delivered candidate. The Verifier spent three, two for the probe and one for the negative control. No failed call was retried unchanged.
+
+`cancel` and `resume` are implemented and **explicitly untested**; steps 5 and 6 exercise them. `respondToApproval` throws by design, and `{type:"request"}` never occurred in any run, so Cursor's approval response path remains unobserved. Packaging with the SDK present is untested — that is step 7, and it is where the lazy-load and `asarUnpack` signposts finally get exercised. Step 3's verification still stands: the English-migration commit changed 15 of its 21 files, and all 82 changed non-comment lines were read and are string literals, JSX text, or one `lang` attribute.
+
+### Next step
+
+**Step 5: a real bounded code change plus a build or test** in a separate small test repository, with `toolPolicy: 'provider-default'`. Two corrections travel with it: make `package` depend on `typecheck`, and set `capabilities().usageReporting` to `unknown`. Then step 6 (cancellation and induced failure), a UI call before step 7, step 7 (the packaged experiment) and step 8 (the technical record).
+
+**Waiting on Niclas, neither blocking step 5:** running `app\release\win-unpacked\DSpatch.exe` and judging the impression, judging whether the adapter interface is the shape he wants to live with, and the narrow entitlement question — *does this Cursor plan include usage reporting for local SDK agents?* — which decides whether AC#4 records the cost path as gated-for-this-account or as available-once-enabled.
 <!-- SECTION:NOTES:END -->

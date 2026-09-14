@@ -8,6 +8,7 @@ import type {
   EnvironmentInfo,
   RendererReady,
 } from '../shared/bridge';
+import { PROBE_EXIT, runCursorProbe } from './probe-cursor';
 
 const GET_ENVIRONMENT: BridgeChannel = 'dspatch:get-environment';
 const RENDERER_READY: BridgeChannel = 'dspatch:renderer-ready';
@@ -23,14 +24,30 @@ const rendererUrl = process.env['DSPATCH_RENDERER_URL'];
 const smokeMode = process.env['DSPATCH_SMOKE'] === '1';
 const smokeTimeoutMs = 30_000;
 
+/**
+ * Connection probe. Set `DSPATCH_PROBE=1` to connect through the Cursor adapter
+ * from the main process and exit with a code. See `probe-cursor.ts`; its exit
+ * codes start at 10 so they cannot be confused with the smoke test's.
+ *
+ * It runs after the window is shown, so the adapter is demonstrably working
+ * outside the rendering thread in a live Electron app. The window itself keeps
+ * showing the skeleton: a chat surface is a later step, not this one.
+ */
+const probeMode = process.env['DSPATCH_PROBE'] === '1';
+
 /** `app.quit()` loses the exit code; `app.exit(code)` preserves it. */
 const EXIT_OK = 0;
 const EXIT_LOAD_FAILED = 2;
 const EXIT_TIMEOUT = 3;
 const EXIT_RENDERER_GONE = 4;
 
+/**
+ * The application's own adapter stays the placeholder. The probe creates and
+ * disposes its own Cursor adapter, so nothing the window displays changes.
+ */
 const adapter = new NotImplementedAdapter();
 let adapterDisposed = false;
+let probeStarted = false;
 
 function log(message: string): void {
   process.stdout.write(`[dspatch] ${message}\n`);
@@ -144,6 +161,7 @@ function createWindow(): BrowserWindow {
       return;
     }
     completeSmokeRunIfReady();
+    startProbeIfRequested();
   });
 
   window.webContents.on('did-finish-load', () => {
@@ -180,6 +198,41 @@ function createWindow(): BrowserWindow {
   }
 
   return window;
+}
+
+/**
+ * The repository the agent must never be pointed at.
+ *
+ * `app.getAppPath()` is `<repo>/app` when running from source, which is the mode
+ * substep 4 uses. From a packaged artifact it is inside `app.asar`, where the
+ * repository is not an ancestor at all, so substep 7 must pass
+ * `DSPATCH_PROBE_REPO_ROOT` explicitly rather than trust the default.
+ */
+function probeRepoRoot(): string {
+  const explicit = process.env['DSPATCH_PROBE_REPO_ROOT'];
+  if (explicit !== undefined && explicit.trim() !== '') {
+    return path.resolve(explicit);
+  }
+  return path.resolve(app.getAppPath(), '..');
+}
+
+function startProbeIfRequested(): void {
+  if (!probeMode || probeStarted) {
+    return;
+  }
+  probeStarted = true;
+  const repoRoot = probeRepoRoot();
+  log(`connection probe starting. repo root treated as ${repoRoot}`);
+  void runCursorProbe(repoRoot).then(
+    ({ exitCode }) => {
+      log(`connection probe finished with exit code ${String(exitCode)}`);
+      exitNow(exitCode);
+    },
+    (error: unknown) => {
+      log(`connection probe threw outside its own handling: ${String(error)}`);
+      exitNow(PROBE_EXIT.unexpectedError);
+    },
+  );
 }
 
 function registerIpc(): void {
@@ -222,6 +275,15 @@ function registerLifecycle(): void {
 }
 
 function main(): void {
+  if (smokeMode && probeMode) {
+    log(
+      'DSPATCH_SMOKE and DSPATCH_PROBE are both set. They own the exit code and ' +
+        'would fight over it. Set exactly one.',
+    );
+    app.exit(PROBE_EXIT.misconfigured);
+    return;
+  }
+
   registerLifecycle();
 
   // Remove Electron's standard menu because its actions are not implemented.

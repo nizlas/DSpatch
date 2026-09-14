@@ -14,6 +14,20 @@ directories:
 # Vite bundles the renderer; the main process requires only node:path, electron
 # and its own dist files. The skeleton therefore needs no node_modules in the
 # artifact. Here react and react-dom are build-time dependencies in practice.
+#
+# WARNING, and this is measured rather than theoretical: the '!node_modules/**/*'
+# line below excludes production dependencies *silently*. The substep 3 build
+# already dropped two declared dependencies — react and react-dom appear in the
+# artifact's package.json but not in the asar archive — with exit code 0 and not
+# one warning. That was harmless only because Vite had inlined them.
+#
+# It stops being harmless in substep 4 onward. @cursor/sdk is now a production
+# dependency that the main process requires at runtime, and the main process is
+# deliberately NOT bundled. If the negation still applies when the SDK is
+# packaged, the artifact builds cleanly and then fails at the first
+# Agent.create() — with an error signature resembling Cursor's documented
+# lazy-load failure ("Cannot find module './986.js'"). Two unrelated causes,
+# nearly the same surface. Do not diagnose one as the other.
 files:
   - dist/**/*
   - package.json
@@ -23,10 +37,17 @@ files:
 #
 # Substep 7 differs: @cursor/sdk-win32-x64 carries rg.exe, cursorsandbox.exe
 # and two .node files. They must be unpacked to execute or load, otherwise the
-# connection fails on its first call. Expand files to include the package and add:
+# connection fails on its first call. Then:
 #
-#   asarUnpack:
-#     - node_modules/@cursor/sdk-win32-x64/**/*
+#   1. Lift the '!node_modules/**/*' negation, or order it *before* the new
+#      node_modules pattern so the later rule wins. Leaving it last re-excludes
+#      whatever was just added, without complaining.
+#   2. Expand files to include @cursor/sdk and @cursor/sdk-win32-x64.
+#   3. Add:
+#        asarUnpack:
+#          - node_modules/@cursor/sdk-win32-x64/**/*
+#   4. Verify with `asar list` afterwards. A successful build is not evidence
+#      that the dependency is in the archive; only its contents are.
 asar: true
 
 win:
