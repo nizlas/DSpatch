@@ -8,3 +8,17 @@ node_modules/
 # Paketeringens utkatalog. Artefakter identifieras med innehållssumma i
 # körjournalen, inte genom att ligga i git.
 /app/release/
+
+# Local settings, credentials and keys. Nothing here exists today and nothing
+# should: the Cursor login lives in %USERPROFILE%\.cursor\sdk\auth.json, outside
+# this repository, and DSpatch neither writes nor reads it. These patterns are
+# here so that a local override file cannot become a commit by accident.
+.env
+.env.*
+*.local
+local.settings.json
+*.pem
+*.key
+*.pfx
+*.p12
+secrets.json

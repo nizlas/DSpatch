@@ -95,14 +95,22 @@ export interface CursorSdkAdapterOptions {
  * working here — substeps 5 and 6 do that. A capability report states what the
  * instance offers; it is not a verification record.
  *
- * `usageReporting` is `supported`, but the claim is narrower than the name.
- * Observed in substep 4 on this account: per-turn **token** counts arrive as
- * `SDKUsageMessage` on the run stream, while the account-level **cost** API
- * `agent.getUsage()` is refused outright with `UnknownAgentError
- * [feature_unavailable] This feature is not available for your account` — twice,
- * twenty seconds apart, so it is not a billing lag. One value per capability
- * cannot express "tokens yes, cost no"; the readings carry `source` so the
- * difference is visible where it matters.
+ * `usageReporting` is `unknown`, and that is the honest value rather than a
+ * cautious one. Observed in substeps 4 and 5 on this account: per-turn **token**
+ * counts arrive as `SDKUsageMessage` on the run stream, while the account-level
+ * **cost** API `agent.getUsage()` is refused with HTTP 403 `UnknownAgentError
+ * [feature_unavailable] This feature is not available for your account` — for
+ * local agents specifically, before the agent is even looked up, so it is an
+ * entitlement gate and not a billing lag.
+ *
+ * One value per capability cannot express "tokens yes, cost no", and the field is
+ * deliberately **not** split: `UsageReading` already carries `unit`, `source` and
+ * `value: null`, so the per-reading data is precise where it matters. What the
+ * one-word summary must not do is make a UI render a cost field and leave it
+ * blank, which is the "missing cost presented as nothing" that VISION 12 forbids.
+ * `unknown` under-promises and forces the UI to say it does not know; `supported`
+ * over-promises exactly where money should appear. If cost starts answering, this
+ * becomes `supported` with no interface change.
  */
 const CAPABILITIES: CapabilityReport = {
   start: 'supported',
@@ -111,7 +119,7 @@ const CAPABILITIES: CapabilityReport = {
   resume: 'supported',
   modelSelection: 'supported',
   approvals: 'unsupported',
-  usageReporting: 'supported',
+  usageReporting: 'unknown',
 };
 
 interface ActiveRun {

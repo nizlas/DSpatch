@@ -1,10 +1,10 @@
 ---
 id: DSP-1
 title: Verify the technology choice and first Cursor connection
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-09-13'
-updated_date: '2026-09-13 21:48'
+updated_date: '2026-09-14 06:49'
 labels:
   - integration
 milestone: m-0
@@ -46,12 +46,12 @@ Save commands, versions, the tested revision or content-addressed snapshot, and 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The selected TypeScript, React and Electron stack and a selected Cursor connection work together in a minimal packaged Windows experiment. Versions, target environment, rationale and limitations are documented. The record describes the path to Linux and VS Code/Copilot and outstanding compatibility tests; those later tests are not required in this task.
+- [x] #1 The selected TypeScript, React and Electron stack and a selected Cursor connection work together in a minimal packaged Windows experiment. Versions, target environment, rationale and limitations are documented. The record describes the path to Linux and VS Code/Copilot and outstanding compatibility tests; those later tests are not required in this task.
 - [x] #2 A runnable experiment has received a real streaming response and a relevant follow-up through Niclas's intended Cursor account; commands and provider versions are recorded.
-- [ ] #3 Two scenarios are tested and documented through the real connection: actual cancellation, both during streaming and during a running test, and a deliberately induced connection failure. Both record what happened to already changed files, whether anything kept running and whether an active remote request could be stopped. The experiment induces the failure itself; do not wait for a provider outage. A simulated failure without a real connection does not satisfy this criterion.
-- [ ] #4 Authentication, file and tool access boundaries, and the billing path are established with sources and dates; uncertain cost information is marked.
+- [x] #3 Two scenarios are tested and documented through the real connection: actual cancellation, both during streaming and during a running test, and a deliberately induced connection failure. Both record what happened to already changed files, whether anything kept running and whether an active remote request could be stopped. The experiment induces the failure itself; do not wait for a provider outage. A simulated failure without a real connection does not satisfy this criterion.
+- [x] #4 Authentication, file and tool access boundaries, and the billing path are established with sources and dates; uncertain cost information is marked.
 - [ ] #5 Another developer can follow the experiment instructions without secrets in the repository; the next step towards the workspace is concrete and bounded.
-- [ ] #6 The agent has made a real bounded code change in the test repository, the change has been checked against the files, and a relevant build or test has run with its command, output, exit code and tested code version documented.
+- [x] #6 The agent has made a real bounded code change in the test repository, the change has been checked against the files, and a relevant build or test has run with its command, output, exit code and tested code version documented.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -439,4 +439,192 @@ The agent's workspace was a dedicated scratch directory under `%TEMP%`, **refuse
 **Step 5: a real bounded code change plus a build or test** in a separate small test repository, with `toolPolicy: 'provider-default'`. Two corrections travel with it: make `package` depend on `typecheck`, and set `capabilities().usageReporting` to `unknown`. Then step 6 (cancellation and induced failure), a UI call before step 7, step 7 (the packaged experiment) and step 8 (the technical record).
 
 **Waiting on Niclas, neither blocking step 5:** running `app\release\win-unpacked\DSpatch.exe` and judging the impression, judging whether the adapter interface is the shape he wants to live with, and the narrow entitlement question — *does this Cursor plan include usage reporting for local SDK agents?* — which decides whether AC#4 records the cost path as gated-for-this-account or as available-once-enabled.
+
+## Step 8 — the technical record
+
+*Written by the coordinator on 14 September 2026, closing an autonomous pass that ran steps 5–8 against a three-hour wall clock while Niclas was at work. Everything below is either something we ran and saw, or is explicitly marked as unknown.*
+
+### What now works, end to end
+
+**The whole minimal workflow runs from a packaged Windows artifact with no development server.** One launch of `DSpatch.exe` connects to Niclas's Cursor account, streams an answer, answers a follow-up in the same session, changes a real file on disk in a separate test repository, runs that repository's test and shows its exit code, and cancels a stream with an understandable status. Exit code 0, no failures.
+
+**Which artifact each measurement came from matters, so it is stated explicitly.** Two builds exist: `7` (exe `0a6f005e…`) and the **delivered** `7b` (exe `0756b1c7…`). They differ only in the extracted gate module, the 90-second cancellation constant, the new test suite, `package.json` and the README; `electron-builder.yml`, `main.ts`, `preload.ts` and the dependency tree are identical.
+
+- **The Verifier's independent run was on artifact `7`**, not on the delivered bytes: a different nonce, different streaming samples and a **different resulting file hash** (`25a198a1…`, 536 B, against the Implementer's `9e5f1688…`, 500 B), with the test still going exit 1 before and exit 0 after. The differing hash is the reassuring part — the pass criterion is the behaviour, not a memorised value.
+- **The delivered artifact `7b` has been run end to end twice:** once by the Implementer who built it, and once by the **coordinator** at 09:13 on 14 September 2026. No independent specialist role has run `7b`. The packaging findings carry over by construction rather than by measurement, and that is an inference, not an observation.
+- The external checks of `--enable-sandbox` and `--app-path=…app.asar` via process command lines were made on artifact `7`. The coordinator attempted to repeat them on `7b` and **failed to capture the renderer process before it exited**; the measurement is therefore not repeated on the delivered bytes.
+
+### Versions and target environment
+
+| | |
+| --- | --- |
+| Windows | 11 Home, 10.0.26200.0, AMD64 |
+| Node / npm | 24.21.0 / 11.19.0 |
+| Electron | 44.3.0 (carries Node 24.20.0 and `node:sqlite`) |
+| React / TypeScript / Vite | 19.3.0 / 7.0.2 / 8.3.0 |
+| `electron-builder` | 26.15.3, target `dir`, `asar: true` with `asarUnpack` |
+| `@cursor/sdk` | 1.0.31, exact, production dependency |
+| Model used throughout | `claude-haiku-4-5` (requested and reported) |
+| Backend | `https://api2.cursor.sh` |
+
+All versions are pinned without `^` or `~`, with a committed lockfile. Windows x64 only; unsigned; no installer and no auto-update, all three explicitly outside this task.
+
+### Why this stack, and what the choice rests on
+
+`@cursor/sdk` was chosen in step 1 over ACP-over-JSON-RPC and the headless CLI, conditional on one unproven requirement — that it loads inside Electron. That condition was discharged before any product code was written, and the packaged run has now discharged the harder version of it.
+
+The main process is **deliberately not bundled**. `tsc` emits ordinary modules that resolve `node_modules` normally, which is the documented mitigation for Cursor's lazy-load failure `Cannot find module './986.js'` on the first `Agent.create()`. The Verifier closed this question properly: `986.js` is a **real lazily-required SDK chunk**, and all **21** numbered chunks are present inside the archive � the Verifier spot-checked three, and the coordinator then counted all 21 in `app.asar` against the 21 on disk � so the failure is **structurally impossible here** rather than merely unobserved.
+
+The fallback remains the headless CLI, and the switch conditions recorded in pass 1 are unchanged. Nothing found since weakens the choice.
+
+### Authentication and key storage
+
+`Cursor.auth.login()` was run once, with Niclas present, on 13 September 2026. The flow is a one-time challenge, a browser page, polling, and a session token used exactly once to mint a named expiring user API key.
+
+- Key stored at `C:\Users\nicla\.cursor\sdk\auth.json`, **outside the repository**, expiring **2026-12-12**, named `DSpatch DSP-1 (Niclas hemdator)` so it can be revoked alone.
+- `CURSOR_API_KEY` was never set.
+- **The adapter needs nothing from DSpatch to authenticate** — no key argument, no environment variable, no file read of its own. The SDK resolves the credential itself.
+- **Resolution behaves identically from the packaged artifact as in development** — same account, same 38 models. That was an open question before step 7 and is now closed.
+
+**One real hygiene failure occurred and was corrected.** An Implementer script wrote Niclas's account address verbatim into the run logs. The Implementer scrubbed both records, changed the code to record *presence* rather than the value, then rebuilt and re-ran the artifact so source, artifact and record agree, at the cost of one extra four-turn session. It also flagged a second occurrence in another call's report, which the coordinator then scrubbed along with two handoffs. `git grep` confirms the address was **never** committed. The lesson is worth keeping: the leak came from diagnostics, not from credential handling.
+
+### Observed file and tool access — what an agent can actually reach
+
+Measured in step 5, **after** the code change and test were documented so a denied probe could not contaminate AC#6.
+
+- **Reading and modifying a file outside the chosen working copy: succeeded.**
+- **A shell command writing outside the working copy: succeeded.**
+- **Zero approval requests** were raised in any run, and `{type:"request"}` has never once occurred. Cursor's approval response path remains unobserved.
+
+This is the outcome step 1 predicted, because the SDK runs unsandboxed by default. It is not a defect in the probe; it is the finding. **DSpatch must build its own containment** — the provider will not supply it on this path.
+
+**The most instructive observation in the whole task came from the network probe.** Asked to fetch a local address, the agent used `WebFetch`, which runs on Cursor's server and cannot see `127.0.0.1`. Asked instead to run a local command, **our own listener logged the GET arriving from PowerShell while the agent reported the command as refused.** The agent's account of what happened and the fact pointed in opposite directions, and only our own instrumentation caught it. The Verifier confirmed the log verbatim. This is precisely why VISION insists that explanation and verification trace to real evidence: an agent narrative is not evidence, and here it was actively wrong.
+
+Scope, stated honestly: this establishes access to *our own local test server* and to *one directory outside the working copy*. It does **not** establish unrestricted internet access or access to other addresses.
+
+### Local execution versus remote model requests
+
+This distinction turned out to be the sharpest technical finding of the task.
+
+**Local execution we control.** DSpatch starts the test subprocess itself, so its exit code, output and cancellation are ours. Cancelling a running test sends SIGTERM and the process is dead in 7.1 ms.
+
+**Remote requests we do not control.** Two independent measurements say so:
+
+1. **Severing the connection does not stop the work.** All five live TLS sockets held by this process were destroyed mid-turn. One qualification the Verifier raised: four of eight captured sockets recorded `host: "443"`, so the live ones are identified by IP (`100.55.238.23:443`) and **nothing ties that IP to `api2.cursor.sh` by name**. The conclusion survives because the Verifier established from the SDK's own source that the agent runs in-process over `connect-node`/`undici` and therefore through the wrapped `tls.connect`. **The turn finished 69.5 seconds later with all 30 files written, 90 tool events, and no error ever surfaced to DSpatch.** The Verifier ruled out the obvious alternative explanation — that the destroyed sockets were telemetry rather than the agent's transport — by establishing from the SDK's own code that the agent runs in-process over `connect-node`/`undici`, so `tls.connect` is its path. A transparently reconnecting transport makes a lost connection **invisible**.
+2. **`cancel()` stops us listening; whether it stops the provider is unknown.** It resolves in single-digit milliseconds — 4.6, 3.7 and 6.6 ms across four measurements — far too fast to contain a round trip, so the terminal state is decided locally. The discriminator was genuinely exercised: cancel was clicked after the first *finished* tool call with two files already on disk, and nothing more appeared in 20 seconds, no further tool or usage event. **Local tool execution provably stopped.** Whether Cursor's generation stopped is **not established**, and the Verifier agreed that "unresolved" is the honest verdict rather than a gap in effort. Finding 1 is exactly why local quiet cannot be read as provider silence.
+
+Three consequences DSpatch must design around, all observed: a cancelled turn leaves **three tool calls permanently in flight** in DSpatch's own view; **partial work is indistinguishable from complete work** on disk; and a cancelled turn reports **no usage at all**, so we cannot even see what it cost.
+
+### Billing: sources, dates and what is unknown
+
+**The cost path is gated for this account.** `agent.getUsage()` returns HTTP **403 `feature_unavailable`** on the local-agent path — twice, twenty seconds apart, so not billing lag — while a well-formed cloud ID returns **404 `agent_not_found`**, proving the endpoint authenticates and works. The 403 arrives even for an agent that never existed, so the gate is evaluated before lookup. Established 13 September 2026 by the Implementer, independently by the Verifier, and reproduced a third time by the coordinator in plain Node with no adapter and no Electron.
+
+**Monetary cost is therefore `unknown`. It is never recorded as `0`.** `capabilities().usageReporting` was changed from `supported` to `unknown` for exactly this reason: a UI told `supported` renders a cost field and leaves it blank, which is the "missing cost shown as zero" presentation VISION 12 forbids.
+
+**Token usage does arrive**, on the run stream via `SDKUsageMessage`, and the numbers corrected an assumption we had been carrying:
+
+| Turn type | Tokens | Note |
+| --- | --- | --- |
+| Text turn, `tools: []` (step 4) | ~1 500 | the figure we had been planning with |
+| Text turn, tools enabled | ~29 000 | ~14 400 of it input — **the tool schema, charged before the conversation starts** |
+| Code-change turn | ~90 000 | two orders of magnitude above a text turn |
+
+The Verifier confirmed the mechanism directly: turn 1 shows `cacheWrite` 14 345 and turn 2 reads back **exactly 14 345**. Pass totals: the Implementer 3 sessions / 12 turns / 450 570 known tokens; the Verifier 1 session / 4 turns / 150 059. **Cancelled turns report `usageEvents: []`, not zeros, so their tokens are unknown rather than zero** — the distinction the `value: null` rule exists to preserve.
+
+One caveat the Verifier raised and that belongs in the record: `totalTokens` is the exact sum of its components, so roughly half of the 450 570 is cache reads. It is a sound token total and a **poor proxy for money**; the number must not be multiplied by a rate.
+
+**What the record does not establish: where the money lands.** The billing evidence here is entirely empirical � what DSpatch can observe, not how Cursor charges. VISION section 10 already carries a documentation source stating that user keys charge the user's plan with the same pricing and usage pools as corresponding product runs, and VISION 12 distinguishes `rawCostCents` from `chargedCents`. Neither was consulted or dated during this task. **Treat the plan-level cost of these runs as unknown**, pending the entitlement question below.
+
+### Packaging: two traps, both real, both now closed
+
+1. **`files` ending in `!node_modules/**/*` excludes production dependencies silently.** Proven, not theoretical: the step 3 build dropped `react` and `react-dom` — declared in the artifact's `package.json`, absent from the archive — at exit code 0 with no warning. It would have dropped the SDK. Removing the negation restored the whole tree.
+2. **Native binaries cannot live inside the archive.** `asarUnpack` now places `rg.exe`, `cursorsandbox.exe` and two `binding.node` files in `app.asar.unpacked`.
+
+A method note worth keeping: **`asar list` also lists unpacked files and therefore cannot distinguish packed from unpacked.** The Verifier read the asar header's `unpacked` flags instead — 1 309 entries genuinely inside the archive, exactly 10 marked unpacked, matching the 10 real files on disk, with `react`, `react-dom` and `@cursor/sdk` all packed.
+
+Artifact identity, distinct from step 3's at all three levels. **The delivered artifact is the second one** — the correction round below rebuilt it, and these are the hashes that count:
+
+| | Delivered (`7b`) | Superseded (`7`) |
+| --- | --- | --- |
+| `DSpatch.exe` | **`0756b1c7…`** | `0a6f005e…` |
+| `app.asar` | **`dd298c01…`** | `16c3a3ff…` |
+| Directory manifest, 82 entries | **`d979f40d…`** | `b74ce05b…` |
+| Source manifest | **`6e4c33fe…`, 29 files** | `0a9fcd06…`, 27 files |
+
+### The correction round — closing the gaps verification found
+
+Niclas instructed that identified build and test deficiencies be handled **within DSP-1** rather than deferred, so three defects in our own evidence apparatus were fixed and the artifact rebuilt. A gate that cannot fail is not evidence, and two of these could not fail.
+
+- **The streaming gate now discriminates.** It counts only samples longer than the ellipsis placeholder and requires two distinct such lengths at two distinct times. A buffered-replay sequence is now rejected.
+- **The connection element now asserts what it claims.** It fails if no account is named, if the field says unknown, or if the value is not address-shaped. The gate never receives the address as a parameter, so no record or message can leak it, and a test asserts that.
+- **The cancellation watch is 90 seconds**, longer than the one known 69.5-second counter-example. The workflow consequently takes about two minutes rather than 47 seconds.
+
+The rules were moved into `app/src/renderer/workflow-gates.ts` so the controls exercise **shipped code rather than a copy**, and `npm run package` now runs `typecheck` → `test` → `build`. Fifteen controls run in about 130 ms with no provider calls. The Implementer did not settle for a passing suite: it **mutated each gate in place and confirmed the suite failed both times**, restoring each file byte-identically afterwards.
+
+**Coordinator's own closing check**, run against the delivered artifact at 09:13 on 14 September 2026: `DSPATCH_CHAT_RUN=1 DSpatch.exe` → **exit code 0, stderr 0 bytes**, renderer loaded from `app.asar`, `capabilities=7`, test run `exit=1` then `exit=0`, `cancel requested: resolved in 5.9 ms`, cancellation watch `toolEventsAfter=0 usageAfter=0 filesAtCancel=7 filesAfter=7`, `passed=true failures=0`. This is a third independent execution, after the Implementer's and the Verifier's.
+
+**One finding recorded rather than fixed.** The first rebuild attempt failed with exit 37 after 183 seconds because a working copy left at `%TEMP%\dspatch-chat\duration-repo` by an earlier run could not be deleted. `generateExperimentRepo` lets `EPERM` escape, and the renderer only sees a session that never appears — a real diagnosability gap where the message does not name the cause. Nothing was billed for that attempt. The coordinator cleared the stale directory before the closing check.
+
+### Tested, untested, and known weak
+
+**Tested and independently verified:** the six-element workflow from the artifact; the code change and test, with the test repository regenerated from scratch to **6/6 byte-identical** hashes; the sever experiment; cancellation of a running test; credential resolution from the artifact; the renderer loading from `app.asar` with `--enable-sandbox`, checked from outside via process command lines.
+
+**Known weak, and honest about it.** Three gate defects found in verification were **fixed in the correction round below and are in the delivered build** — the streaming gate, element 1's account assertion and the watch window. What remains weak is narrower: the **other four gates still have their rules inline** in `workflow-script.ts` with no negative controls, so only two of six have been shown capable of failing. And `PLACEHOLDER_ANSWER_CHARS` is still coupled to a rendering choice in `App.tsx`, so changing the placeholder would silently change what counts as evidence.
+
+**Untested.** `contextIsolation` externally — it leaves no process switch, so it is self-reported only. Linux, entirely. VS Code/Copilot, entirely. Code signing, installers, auto-update — all out of scope. The SmartScreen dialog for a copied or downloaded artifact. Cursor's approval response path, never triggered. `resume` as a session-restoration mechanism, which belongs to DSP-4. **And the clean-session walkthrough of `app/README.md` without loop history**, which step 7 asks for and which nobody performed — the Verifier states plainly that it did not execute the README's instructions end to end from a clean machine. That check is outstanding for AC#5 alongside Niclas's own judgement.
+
+### The path to Linux and to VS Code/Copilot
+
+**Linux.** Platform-specific parts are already isolated: the adapter is provider-facing and platform-neutral, and the packaging **configuration** is the only Windows-specific part � `electron-builder.yml` names `node_modules/@cursor/sdk-win32-x64/**/*` in `asarUnpack`, and `chat-service.ts` branches on `process.platform`, which is platform-aware rather than Windows-only. Outstanding before any Linux claim: a Linux `electron-builder` target, the SDK's Linux platform package with its own native binaries, display scaling and text rendering, and system-dialog behaviour. Not required in Phase 0, and **nothing here has been tested on Linux**.
+
+**VS Code/Copilot.** Assessed from documentation only, in pass 2. Both `@cursor/sdk` 1.0.31 and `@github/copilot-sdk` 1.0.13 document all seven VISION capabilities, and the adapter interface was deliberately shaped to avoid three Cursor-specific readings-in — run as a first-class object, prefix-bearing IDs, and cost as an integer in cents. The known divergences are Copilot's pending-approval semantics, its seven decision types and its `nanoAiu` cost unit. **Copilot's Electron suitability is entirely unproven**, and nothing about compatibility has been verified in code.
+
+### Obstacles to the chosen stack, and their extent
+
+Three, all bounded, none a reason to reconsider the stack:
+
+1. **Usage reporting is gated for this account on the local-agent path.** Extent: monetary cost is unknown; tokens are available. Not a property of the stack but of the entitlement.
+2. **An active remote model request cannot be shown to be stoppable.** Extent: cancellation is reliable locally and unproven remotely. This is a real product constraint that DSP-3 must design around, and it appears to be a property of the provider, not of our integration.
+3. **The agent is unsandboxed and can reach outside the working copy.** Extent: containment is DSpatch's job. Known before implementation and confirmed by measurement.
+
+### The concrete next step for DSP-2
+
+**Give the chat a real workspace.** Today the workspace is a scratch directory a probe script generates; DSP-2 should let Niclas open a project, show which revision the agent is working against, and bind the diff and test output to that revision. That is the smallest step that turns this spike into something usable, and it is exactly where step 7's artifact stops.
+
+**DSP-2 already exists with eight acceptance criteria** — repository selection, streaming, activity clarity, cancellation, a runnable result, a real code change that preserves manual changes, the full text diff against an identified snapshot, and a build or test with a visible editable command. Point at those rather than restating a scope that could drift from them. It is a substantial increment, not a small one.
+
+**One gap to carry across.** DSP-1's strongest finding for DSP-2 is that **the workspace is not a containment boundary** — the agent read and modified a file outside the working copy and ran a shell command that wrote outside it. None of DSP-2's eight criteria mention containment. Either put it in DSP-2's task or record explicitly which task owns it; right now that decision lives only in `app/README.md`.
+
+**Do not inherit this spike's UI choices.** Per Niclas's decision of 13 September 2026, suitable adapter code may be reused in DSP-2; its UI choices are not.
+
+### After handover � the EPERM that blocked the first assessment run
+
+Niclas ran the delivered artifact on 14 September 2026 and could not start a session at all:
+
+```
+Could not start a session: EPERM, Permission denied:
+\\?\C:\Users\nicla\AppData\Local\Temp\dspatch-chat\duration-repo
+```
+
+This is the gap report 014 recorded rather than fixed. It is now fixed, and the diagnosis is worth keeping because **the first hypothesis was wrong and a test was written that could not fail.**
+
+**The wrong answer.** Ten of the files under the stale directory were read-only � git marks its loose objects that way � and `fs.rm`'s `force` documentation says nothing about clearing that attribute. A regression test was written around it. Reverting the fix left the test passing, which is the only reason the error was caught.
+
+**The measured answer.** A probe (`.dspatch-loop/runs/20260913-175023-g8t7/probe-electron/eperm-cause.mjs`) tried three conditions against `fs.rmSync(..., { force: true })` on Node 24.21.0:
+
+| Condition | Result |
+| --- | --- |
+| A read-only file in the tree | deletes fine |
+| A live process whose **working directory** is in the tree | **EPERM, identical message and `\\?\` path shape** |
+| Another process holding an open file handle | deletes fine |
+
+Windows will not delete a directory a live process sits in. `runWorkspaceTest` spawns the test runner with `cwd` set to the working copy and never tracked or stopped it, so a runner outliving its turn � a cancelled turn, or the window closing mid-test � blocked **every later session**. The 90-second cancellation probe makes that outcome likely rather than exotic.
+
+**Two changes.** `ChatService` now tracks the runner and stops the whole process tree (`taskkill /T /F`) on cancel, on close and on dispose; `node --test` runs each file in a child of its own, so killing only the parent would not be enough. `removeGeneratedTree` retries briefly for a holder on its way out and otherwise raises an error naming the working-directory cause and the remedy, rather than passing a bare `EPERM` to the UI.
+
+**The control now fails when it should.** With `removeGeneratedTree` reverted to the bare `rmSync`, `tests/experiment-repo.test.ts` fails with Niclas's exact message. Suite: 18 pass, 0 fail; typecheck clean.
+
+**New artifact, superseding `7b`.** `app/release/win-unpacked/DSpatch.exe`, SHA-256 `eb0e4d1b76373e364e1bac1992d5a2d83c1f162bee8b1a07cab844d07272fcaf`, built 14 September 2026 16:46:17, 234.7 MB. Both fixes were confirmed present inside `app.asar` by extracting `dist\main\experiment-repo.js` and `dist\main\chat-service.js`. **No specialist has independently verified this build, and no session has been started from it** � that first session is Niclas's assessment run.
+
+**Still unmeasured.** Whether the orphaned runner was in fact what held Niclas's directory cannot be established after the fact; the mechanism is proven, this instance is inferred. `generateExperimentRepo` also cannot report *which* process holds a directory, so its advice is generic.
 <!-- SECTION:NOTES:END -->

@@ -22,7 +22,7 @@ body {
 }
 
 .app {
-  max-width: 52rem;
+  max-width: 62rem;
   margin: 0 auto;
   padding: 1.5rem 1.5rem 1.25rem;
 }
@@ -144,4 +144,159 @@ body {
 
 .badge--unknown {
   color: var(--unknown);
+}
+
+/* --- Chat surface. Same palette; no new colours and no component library. --- */
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.625rem;
+  margin: 0.75rem 0 0;
+}
+
+.button {
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+
+.button:hover:enabled {
+  border-color: var(--muted);
+}
+
+.button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.button--primary {
+  border-color: var(--ok);
+}
+
+.button--primary:disabled {
+  border-color: var(--line);
+}
+
+/* Waiting has to look like waiting rather than like a finished empty result. */
+.pending {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+.transcript {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.turn {
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.75rem 0.875rem;
+}
+
+.turn__prompt {
+  margin: 0 0 0.5rem;
+  color: var(--text);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-left: 0.625rem;
+  border-left: 2px solid var(--line);
+}
+
+.turn__answer {
+  margin: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.turn__meta {
+  margin: 0.625rem 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.composer {
+  margin-top: 1rem;
+}
+
+.composer__input {
+  display: block;
+  width: 100%;
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.625rem;
+  resize: vertical;
+}
+
+.composer__input:disabled {
+  color: var(--muted);
+}
+
+.files {
+  list-style: none;
+  margin: 0.625rem 0 0;
+  padding: 0;
+  font-size: 0.8125rem;
+}
+
+.files__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 0.875rem;
+  padding: 0.3125rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.files__row:last-child {
+  border-bottom: none;
+}
+
+.files__path {
+  overflow-wrap: anywhere;
+}
+
+.files__note {
+  color: var(--muted);
+}
+
+.files__hash {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.output {
+  margin: 0.75rem 0 0;
+  padding: 0.625rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
