@@ -2,7 +2,7 @@
 
 # DSpatch development plan
 
-Development plan, updated 13 September 2026. Based on [VISION.md](docs/VISION.md). Task files record current progress, criteria and results. TypeScript, React and Electron are the selected stack, with Windows and Linux in the vision. Initial implementation and testing use Cursor on Niclas's Windows computer. DSP-1 verifies the stack and selects and tests the concrete Cursor connection; see [decisions and rationale](docs/VISION.md#91-selected-stack-and-platforms). Value and learning from each increment may change the plan.
+Development plan, updated 14 September 2026. Based on [VISION.md](docs/VISION.md). Task files record current progress, criteria and results. TypeScript, React and Electron are the selected stack, with Windows and Linux in the vision. Initial implementation and testing use Cursor on Niclas's Windows computer. DSP-1 verifies the stack and selects and tests the concrete Cursor connection; see [decisions and rationale](docs/VISION.md#91-selected-stack-and-platforms). Value and learning from each increment may change the plan.
 
 <a id="nästa-konkreta-steg"></a>
 
@@ -15,6 +15,8 @@ The sequence begins with **DSP-7**, a preparatory [development-loop](docs/DEVELO
 Linux support is introduced and verified incrementally, aiming for a consistent workspace; Linux testing is not a Phase 0 requirement. VS Code/Copilot remains in the vision. Technical decisions must leave room for it, but implementation and testing with VS Code/Copilot are not required in Phase 0. Record outstanding compatibility tests in DSP-1.
 
 The goal is a workspace Niclas wants to use for a real development question. The planning tool must provide efficiency and a clear overview; external dashboards, Jira and demonstration value are not requirements for this project.
+
+**Direction agreed on 14 September 2026:** continue through DSP-6 using the existing dependencies and acceptance criteria. Carry forward verified work from DSP-1 when planning later tasks instead of rebuilding it. This agreement does not increase run limits or replace Niclas's required assessments. After DSP-6, take stock, conduct bounded HCI and prior-art research, and agree the next direction for code review and Maestro with Niclas. Later product implementation does not start automatically.
 
 <a id="etapp-0--gör-en-verklig-kodändring-med-dspatch"></a>
 
@@ -53,6 +55,8 @@ DSP-8 starts by testing Cursor's actual controls and comparing against a fixed-m
 After **DSP-6**, Niclas must be able to open a repository, discuss a small task, let the agent make a real code change, review affected files and the complete text diff, and run a relevant build or test with results for the correct code version. He must be able to follow up, request rework, cancel and continue after restart. Errors must offer an understandable way forward; preserve earlier changes and execution results without automatic repetition.
 
 The milestone requires technical verification and Niclas's own assessment of this development workflow. His first feedback may begin with simple chat. An advanced diff view, custom editor, autonomous loop or automatic commit/push is not required for the milestone.
+
+The conventional diff is a usable baseline, not the final review interaction or a commitment to its layout, navigation or rendering approach. Keep actual changes and revision-linked evidence accessible to future views without building speculative extension machinery in Phase 0.
 
 Bind feedback, tests and review to the version actually run. For tasks explicitly requiring Niclas's testing, the agent may prepare and technically verify the result, but human acceptance remains open until supplied. Other bounded work may continue within the given mandate while waiting.
 
@@ -100,7 +104,23 @@ The configuration reads the current working copy without automatic remote calls 
 
 ## After the first milestone
 
-Phases 1–4 in the [vision](docs/VISION.md#14-implementation-phases) set the direction: clearer tasks and run history on top of the working change workflow, then deeper code understanding, Maestro and additional working modes. Detail the next increment based on Phase 0 experience. An advanced editor, complete agent network or every integration must not be prerequisites for initial value.
+After DSP-6, enter **discovery and a direction review**, using experience from the working product. [Milestone m-1](backlog/milestones/m-1%20-%20Review-and-Maestro-discovery.md) contains five stories. It is not an additional condition for completing Phase 0.
+
+| Story | Result | Depends on |
+| --- | --- | --- |
+| [DSP-11 — Understand review needs](backlog/tasks/dsp-11%20-%20Research-code-understanding-and-agree-next-direction.md) | A needs brief and comparison tasks grounded in Phase 0 feedback and Niclas's walkthrough. | DSP-6 |
+| [DSP-12 — Survey smart tools and interaction designs](backlog/tasks/dsp-12%20-%20Survey-smart-tools-and-interaction-designs.md) | A concrete interaction gallery/comparison of existing tools, older approaches and research prototypes. | DSP-6 |
+| [DSP-13 — Review HCI and UI research](backlog/tasks/dsp-13%20-%20Review-HCI-and-UI-research-for-code-understanding.md) | A primary-source evidence synthesis, including relevant UI/information-visualisation research outside programming. | DSP-6 |
+| [DSP-14 — Compare and try concepts](backlog/tasks/dsp-14%20-%20Compare-and-try-code-review-concepts.md) | All five seeds compared with the research and alternatives; one or two small experiments assessed with Niclas. | DSP-11, DSP-12, DSP-13 |
+| [DSP-15 — Agree the next direction](backlog/tasks/dsp-15%20-%20Agree-the-next-direction-for-review-and-Maestro.md) | A joint direction decision for review features and Maestro, with bounded follow-up proposals and explicit deferrals. | DSP-14 |
+
+The two surveys are independent deliverables. Search broadly before selecting concepts: current and older tools, research prototypes, HCI/UI studies and useful interaction ideas outside IDEs. Collect concrete examples and evidence, including negative or context-dependent findings. Research must be able to change our direction, not just support the initial ideas. A competitor list or feature checklist is insufficient.
+
+DSP-12 and DSP-13 need not wait for DSP-11's human walkthrough. Dependencies permit independent progress; they do not authorise parallel writing agents or expand run limits. DSP-14 combines all three inputs before selecting experiments, and DSP-15 records Niclas's direction decision.
+
+The [research brief](docs/REVIEW_RESEARCH.md) preserves all five concept seeds: guided code flow with tree highlights, essential diffs, conceptual differences, visual explanations of benefits/risks, and a zoomable minimap or another overview. These are hypotheses, not committed features or evidence of novelty.
+
+Phases 1–4 in the [vision](docs/VISION.md#14-implementation-phases) remain candidate directions: task/run history, deeper code understanding, Maestro and additional working methods. Their order and concrete implementation are reconsidered at this point. Finishing DSP-6 does not select a permanent review design, editor or agent topology.
 
 <a id="format-och-verifieringsläge"></a>
 

@@ -2,7 +2,9 @@
 
 Vision and governing document for agentic software development
 
-Niclas Danielsson | 13 September 2026 | Version 1.9
+Niclas Danielsson | 14 September 2026 | Version 1.10
+
+Change in version 1.10: continue through DSP-6, then undertake bounded HCI and prior-art discovery and review the next direction with Niclas. Record five early review concepts as hypotheses. Phase 0's conventional diff remains a baseline and does not fix the future review interaction, code-view implementation or Maestro topology.
 
 Change in version 1.9: English is the maintained project language, including documentation, agent instructions, backlog prose, code comments, product text and saved reports. Dialogue with Niclas may remain in Swedish. Historical evidence and stable identifiers are preserved. The current colour palette is the approved visual starting point. This language revision does not expand Phase 0 or change its technical decisions.
 
@@ -64,6 +66,7 @@ DSpatch is the project's chosen product name. DS stands for Danielssons Studio. 
 | Agent providers | Vision | Cursor and Copilot, retaining support for working with VS Code. |
 | Initial integration and testing | Decision, 13 September 2026 | Cursor on Niclas's home computer. Consider VS Code/Copilot in technical decisions; no implementation or testing is required in Phase 0. |
 | First milestone | Decision, 13 September 2026 | Interactive chat, real code changes, complete text diff and build/test, including cancellation, persisted history and manual testing. |
+| Continuation and discovery | Decision, 14 September 2026 | Continue through DSP-6, then study human interaction, prior work and emerging review concepts before agreeing the next direction for review and Maestro. The concept designs remain open. |
 | Technology stack | Decision, 13 September 2026 | TypeScript, React and Electron. Section 9.1 explains rationale and verification. |
 | Platforms | Decision, 13 September 2026 | Windows and Linux targets. Aim for a consistent workspace; implement and test on Windows first. |
 | Data storage | Open | Select the storage engine and format in subsequent increments. |
@@ -299,6 +302,20 @@ A persuasive agent narrative must not replace access to real code. Every propose
 #### Test whether understanding actually improves
 
 Ask users to explain the changed behaviour, identify a relevant dependency and identify an uncertainty using the view. Compare with normal diff review on similar tasks. Assess understanding, defect discovery and ease of continuing the discussion with the agent; fewer opened code files is not a goal in itself.
+
+### 3.2 Research and emerging review concepts
+
+Before committing to advanced review interactions, undertake an open survey of smart tools and a separate synthesis of HCI/UI research. Include current and older tools, research prototypes, and relevant information-visualisation or interaction research outside programming. Collect concrete interaction examples and study findings, including limitations and negative results, rather than only a competitor list. Research should be able to change our direction before concepts are selected. Combine the findings with Phase 0 observations and Niclas's emerging ideas. A literature or product search cannot establish that an idea has never been tried; distinguish documented features, empirical results, our own observations and hypotheses.
+
+Concept seeds recorded on 14 September 2026 are **open design hypotheses**, not selected features or literal command requirements:
+
+- **“Take me through the code flow.”** A guided walkthrough, with highlights in the code/file tree so the user can see where navigation jumps and retain an overview.
+- **“Highlight the essential diffs.”** Help direct attention to consequential changes while keeping every change accessible.
+- **“Give me the conceptual difference.”** Explain the before/after behaviour or design beyond a line-level diff, traceable to the code.
+- **“Explain benefits/risks.”** Relate explanatory text to visual annotations in the code, separating observed results from predicted consequences and uncertainty.
+- **“Zoomable minimap” or another overview of changes.** Explore ways to move between an overall change picture and local detail without losing orientation.
+
+The [research brief](REVIEW_RESEARCH.md) describes a bounded study, candidate comparisons and evaluation. Research can suggest alternatives, combine concepts or show that an idea is not useful. No particular navigation model, layout, code renderer, minimap or explanation generator is selected here. Retain full code/diff access and revision-linked evidence while testing whether understanding actually improves.
 
 <a id="4-maestro-och-agentnätverket"></a>
 
@@ -734,6 +751,16 @@ Make the command and working directory visible and editable in the UI. Show outp
 Include cancellation, understandable failure status and persisted history. Preserve conversation, reviewed changes and results across restart. Resumption must neither imply that completed agent work remains active nor automatically repeat edits or commands. One writing agent run or build/test at a time in the working copy is enough initially.
 
 DSP-1–6 detail this phase in the development plan. After DSP-6, Niclas must have tested the entire flow, including continued work after restart. Advanced code views, a custom editor, autonomous loops, automatic commits, pushes and PR management are not required for this milestone.
+
+Niclas approved continuing through DSP-6 on 14 September 2026. The existing dependencies, acceptance criteria and run limits still apply. The conventional diff is a working baseline; it does not fix the permanent review experience or require speculative architecture for later concepts.
+
+### Discovery after Phase 0: human interaction, review and Maestro
+
+After DSP-6, take a step back and use the working product to inform a bounded study of human-computer interaction, code comprehension, review tools and prior research. [Milestone m-1](../backlog/milestones/m-1%20-%20Review-and-Maestro-discovery.md) and its [research brief](REVIEW_RESEARCH.md) organise five stories: user needs (DSP-11), existing tools (DSP-12), HCI/UI research (DSP-13), concept comparisons (DSP-14) and the direction decision (DSP-15). Discovery is not a prerequisite for completing Phase 0.
+
+Compare the evidence with Niclas's concept seeds in section 3.2, explore a small selection through sketches or prototypes, and discuss the next product increment with him. Consider both review features and Maestro loop orchestration: what should run automatically, what a human needs to understand, and how to inspect or intervene across attempts. Keep the ability to work interactively throughout.
+
+The output is a reasoned, bounded next experiment, its assessment criteria and explicit deferrals. Phases 1–4 below describe candidate directions; their order and detailed scope are revisited here. Completing DSP-6 does not automatically authorise their implementation or select a final interaction design.
 
 <a id="etapp-1-följ-en-uppgift-och-dess-förändringar"></a>
 
