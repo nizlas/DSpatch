@@ -12,6 +12,7 @@ An experimental development workspace for human–AI collaboration and autonomou
 | [Agent instructions](AGENTS.md) | Reading order, principles, working rules and project language. |
 | [Development plan](BACKLOG.md) | Preparatory loop calibration and six product steps, with ordering and task links. |
 | [Development loop](docs/DEVELOPMENT_LOOP.md) | Cursor agents, coordinator, handoffs, rework and recovery. |
+| [Maestro orchestration](docs/MAESTRO_ORCHESTRATION.md) | Technical vision for independent sessions, logical subtasks, recovery and per-step cost. |
 | [Run the application](app/README.md) | Install, run, build and package the current application skeleton. |
 
 The selected stack is TypeScript, React and Electron. Windows and Linux are target platforms, with a consistent workspace as the goal. Initial implementation and testing use Cursor on Niclas's Windows computer; Linux support is introduced incrementally. [Decisions and verification](docs/VISION.md#91-selected-stack-and-platforms) define the scope. The runnable application skeleton is in `app/`; a verified provider connection is still pending in DSP-1. VS Code/Copilot remains in the vision and informs technical decisions, with implementation and testing later. The first milestone goes from interactive chat to a real repository code change, review of a normal diff and a build or test run. Cancellation, recovery and persisted history are included; actual use guides further development.

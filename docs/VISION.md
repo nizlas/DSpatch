@@ -304,6 +304,8 @@ Ask users to explain the changed behaviour, identify a relevant dependency and i
 
 ## 4 Maestro and the agent network
 
+The technical elaboration [Maestro and agent-loop orchestration](MAESTRO_ORCHESTRATION.md) describes Maestro-owned orchestration over independent agent sessions, logical subtasks, recovery and cost accounting per loop step. It makes this section concrete without expanding Phase 0.
+
 Maestro should coordinate work across runs and providers. The primary example is an iterative agent loop with specialist roles, review gates and feedback. Maestro must also support other arrangements. The application tracks tasks, state, budgets and working copies; agent text must not be the sole repository of project state.
 
 <a id="föreslagna-ansvarsområden"></a>
