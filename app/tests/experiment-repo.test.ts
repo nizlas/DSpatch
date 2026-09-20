@@ -22,42 +22,30 @@
  */
 
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { after, test } from 'node:test';
+import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { generateExperimentRepo } from '../src/main/experiment-repo.ts';
+import { holdDirectory, tempRoot } from './support/fixtures.ts';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const scratchRoots: string[] = [];
 
 function scratch(name: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `dspatch-test-${name}-`));
-  scratchRoots.push(dir);
-  return path.join(dir, 'duration-repo');
+  return path.join(tempRoot(`test-${name}`), 'duration-repo');
 }
-
-after(() => {
-  for (const root of scratchRoots) {
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-  }
-});
 
 test('names the real cause when a live process holds the working directory', async () => {
   const target = scratch('cwdlock');
   generateExperimentRepo(target, repoRoot);
 
   // A process sitting in the directory, which is what an orphaned test runner is.
-  const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], {
-    cwd: target,
-    stdio: 'ignore',
-  });
+  // Registered rather than merely spawned: a failed assertion below used to leave
+  // it alive, which kept this whole process alive and made the removal in cleanup
+  // race the kill for an `EPERM`.
+  const release = await holdDirectory(target);
   try {
-    await new Promise((resolve) => setTimeout(resolve, 600));
-
     let message = '';
     assert.throws(
       () => generateExperimentRepo(target, repoRoot),
@@ -77,11 +65,12 @@ test('names the real cause when a live process holds the working directory', asy
     assert.match(message, /EPERM|EACCES|EBUSY|ENOTEMPTY/, 'and still carry the code');
     assert.ok(message.includes(target), 'and name the directory to clear');
   } finally {
-    holder.kill();
+    // Waits for the exit, not for the kill to be requested. The next line depends
+    // on the directory really being free.
+    await release();
   }
 
   // Once the holder is gone the same call must succeed, or the advice is wrong.
-  await new Promise((resolve) => setTimeout(resolve, 600));
   const after = generateExperimentRepo(target, repoRoot);
   assert.ok(after.files.length > 0);
   assert.ok(fs.existsSync(path.join(target, 'src', 'duration.ts')));

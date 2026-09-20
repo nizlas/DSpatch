@@ -34,6 +34,9 @@ directories:
 # the contents:
 #   npx asar list release/win-unpacked/resources/app.asar
 files:
+  # dist/build-identity.json is part of this and is meant to be: it is the only
+  # thing inside the artifact that says which sources it was built from. See
+  # scripts/build-identity.mjs.
   - dist/**/*
   - package.json
 

@@ -219,8 +219,12 @@ function newRunId(): DspatchRunId {
  * version-4 UUID. Deterministic on purpose: `resume` can then find the provider's
  * agent after a process restart without DSpatch persisting a mapping table,
  * which is DSP-4's concern rather than this adapter's.
+ *
+ * Exported so that a probe outside the app can address exactly the agent DSpatch
+ * would address. A probe that recomputed the mapping would be measuring its own
+ * copy of it.
  */
-function providerAgentIdFor(dspatchSessionId: DspatchSessionId): string {
+export function providerAgentIdFor(dspatchSessionId: DspatchSessionId): string {
   const hex = createHash('sha256').update(dspatchSessionId).digest('hex');
   const at = (index: number): string => hex[index] ?? '0';
   const variant = ((parseInt(at(16), 16) & 0x3) | 0x8).toString(16);
@@ -367,6 +371,22 @@ export class CursorSdkAdapter implements AgentAdapter {
     activeRun.run = run;
     void this.consumeRun(state, activeRun, run);
     return { dspatchRunId };
+  }
+
+  /**
+   * Whether this adapter is holding a run for the session.
+   *
+   * Beyond {@link AgentAdapter}, and the reason is report 008's first defect. Two
+   * layers refuse a second run in one session, in nearly the same sentence: this
+   * adapter's own guard above, and Cursor itself when a session that was resumed
+   * still holds a run started before the restart. Only the first produces events
+   * DSpatch will see, so only the first can honestly be described as something to
+   * wait for — and the difference is a fact about this adapter, not a difference in
+   * wording. `false` for an unknown session: an adapter that is not holding the
+   * session is not holding its run either.
+   */
+  hasActiveRun(sessionId: DspatchSessionId): boolean {
+    return this.sessions.get(sessionId)?.activeRun != null;
   }
 
   subscribe(

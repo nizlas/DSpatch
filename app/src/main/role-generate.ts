@@ -1,0 +1,377 @@
+/**
+ * Turning one provider-neutral role into the file a framework expects.
+ *
+ * The interesting part of DSP-23 is not the rendering; it is what happens to a
+ * requirement the target cannot enforce. Three answers exist and they must stay three:
+ * the framework enforces it, something else achieves it, or **nothing does**. The one
+ * outcome the task forbids is a generated file that reads as though the requirement
+ * holds when it does not, so every requirement produces a notice here — a note when
+ * the target enforces it, a warning when it is honoured by other means or unestablished,
+ * and an error that stops generation when it cannot be met at all.
+ *
+ * The capability table is DSP-21's {@link TARGET_CAPABILITIES}, not a second opinion
+ * written here. Its Cursor row comes from this repository's own use of Cursor; its
+ * Copilot and Claude Code rows are deliberately unknown, and this module refuses to
+ * generate for either rather than emitting a file whose provenance would be a guess.
+ *
+ * ## Two decisions worth knowing before reading
+ *
+ * **A generated file names its source and carries a digest.** Both are YAML comments
+ * inside the front matter, so the prose a model reads is exactly the role's own words
+ * and nothing else. The digest covers everything below those comments, which is what
+ * lets {@link inspectGeneratedFile} tell a file nobody has touched from one somebody
+ * edited by hand — and a hand edit is reported, never overwritten.
+ *
+ * **Cursor's file uses CRLF.** Not a platform default: the five live definitions in
+ * `.cursor/agents/` use CRLF, and generating LF would rewrite all five files in their
+ * entirety the first time anyone ran this. The convention is a stated option with a
+ * stated default rather than something inherited from whoever runs the generator.
+ */
+
+import { createHash } from 'node:crypto';
+
+import { TARGET_CAPABILITIES, capabilityAnswer } from '../shared/loop-graph';
+import type { CapabilityAnswer, LoopTarget, RequirementId, TargetCapabilities } from '../shared/loop-graph';
+import { sectionBodies } from './role-source';
+import type { RoleSource } from './role-source';
+
+/**
+ * What generation has to say about a role, beyond the file itself.
+ *
+ * `error` stops generation. `warning` does not, and must not be silenced: a role that
+ * is only *asked* to avoid subagents is running on an instruction, and the person
+ * reading the run needs to know that is what they have.
+ */
+export interface RoleNotice {
+  readonly level: 'error' | 'warning' | 'note';
+  readonly message: string;
+  readonly requirement?: RequirementId;
+}
+
+export interface GeneratedFile {
+  /** Where this target keeps the file, relative to the project root. */
+  readonly path: string;
+  readonly text: string;
+  /** The digest recorded inside the file, over everything below the provenance comments. */
+  readonly digest: string;
+}
+
+export type GenerateResult =
+  | { readonly ok: true; readonly file: GeneratedFile; readonly notices: readonly RoleNotice[] }
+  | { readonly ok: false; readonly notices: readonly RoleNotice[] };
+
+export interface GenerateOptions {
+  /** Where the source file lives, relative to the project root, for the provenance line. */
+  readonly sourcePath: string;
+  /** Defaults to CRLF; see the note at the top of this file. */
+  readonly newline?: '\r\n' | '\n';
+  /** Injectable so a test can state a capability table instead of depending on today's. */
+  readonly capabilities?: TargetCapabilities;
+}
+
+/**
+ * Generate the file one target expects.
+ *
+ * Refuses, rather than approximating, in three situations: the role does not declare
+ * the target, nothing here can emit for the target, or the target cannot meet a
+ * requirement the role states.
+ */
+export function generateRoleFile(
+  source: RoleSource,
+  target: LoopTarget,
+  options: GenerateOptions,
+): GenerateResult {
+  const notices: RoleNotice[] = [];
+
+  if (!source.targets.includes(target)) {
+    return {
+      ok: false,
+      notices: [
+        {
+          level: 'error',
+          message:
+            `\`${source.id}\` does not declare \`${target}\` as a target (it declares ` +
+            `${source.targets.join(', ')}). Generating for an undeclared target would be a guess ` +
+            'at content nobody has written, so it is refused. Add the target to the source when the ' +
+            'role has actually been considered for it.',
+        },
+      ],
+    };
+  }
+
+  const table = options.capabilities ?? TARGET_CAPABILITIES;
+  for (const requirement of source.requirements) {
+    const answer = capabilityAnswer(target, requirement.id, table);
+    notices.push(requirementNotice(target, requirement.id, answer));
+  }
+  if (notices.some((notice) => notice.level === 'error')) {
+    return { ok: false, notices };
+  }
+
+  if (target !== 'cursor') {
+    notices.push({
+      level: 'error',
+      message:
+        `No emitter exists for \`${target}\`. It is on the map because the format has to be ` +
+        'honest about more than one framework, but nothing has been run against it from this ' +
+        'repository — whatever we believe about its role files is documentation somebody read, ' +
+        'not behaviour anybody saw. Writing a file from that would be the degraded output DSP-23 ' +
+        'forbids.',
+    });
+    return { ok: false, notices };
+  }
+
+  const newline = options.newline ?? '\r\n';
+  const body = renderCursorFile(source, options.sourcePath, newline);
+  return { ok: true, file: body, notices };
+}
+
+/** How a target's answer to a requirement reads in a report. */
+function requirementNotice(
+  target: LoopTarget,
+  requirement: RequirementId,
+  answer: CapabilityAnswer,
+): RoleNotice {
+  const evidence =
+    answer.evidence === 'observed'
+      ? 'observed here'
+      : answer.evidence === 'documentation'
+        ? 'documentation only'
+        : 'nothing established';
+  switch (answer.status) {
+    case 'enforced':
+      return {
+        level: 'note',
+        requirement,
+        message: `${requirement}: enforced by ${target} — ${answer.how} (${evidence})`,
+      };
+    case 'other-means':
+      return {
+        level: 'warning',
+        requirement,
+        message:
+          `${requirement}: ${target} does not enforce it. Achieved another way — ${answer.how} ` +
+          `(${evidence}) The generated file states the requirement as an instruction; it is not a ` +
+          'restriction the platform applies.',
+      };
+    case 'unknown':
+      return {
+        level: 'warning',
+        requirement,
+        message:
+          `${requirement}: whether ${target} can meet it is unestablished — ${answer.how} ` +
+          `(${evidence}) Treat the requirement as unmet until someone runs it.`,
+      };
+    case 'unmet':
+      return {
+        level: 'error',
+        requirement,
+        message:
+          `${requirement}: ${target} cannot meet it — ${answer.how} (${evidence}) Generation is ` +
+          'refused; a file that omitted this would read as though the requirement held.',
+      };
+  }
+}
+
+// --- Cursor -----------------------------------------------------------------
+
+/** Where Cursor keeps a project agent. */
+export function cursorAgentPath(id: string): string {
+  return `.cursor/agents/${id}.md`;
+}
+
+/**
+ * Cursor's project-agent file.
+ *
+ * The field order is the order the five hand-written definitions already use, so that
+ * a regenerated file is comparable to the one it replaces line by line rather than
+ * only in meaning. Three fields are *mechanisms answering requirements*, and the
+ * mapping is the whole of DSP-23's rule in four lines of code: `readonly` answers
+ * `no-file-writes`, `is_background` answers `background-execution`, and `model`
+ * answers `fixed-model-selection`. Where the role states no such requirement, the
+ * field carries Cursor's own way of saying *no constraint*: `false`, `false` and
+ * `inherit`. `inherit` is not a fixed-model requirement met — it is the absence of one.
+ */
+function renderCursorFile(source: RoleSource, sourcePath: string, newline: string): GeneratedFile {
+  const required = new Map(source.requirements.map((requirement) => [requirement.id, requirement]));
+  const fields = [
+    `name: ${source.id}`,
+    `description: "${source.summary}"`,
+    `model: ${required.get('fixed-model-selection')?.value ?? 'inherit'}`,
+    `readonly: ${String(required.has('no-file-writes'))}`,
+    `is_background: ${String(required.has('background-execution'))}`,
+  ];
+
+  const blocks = source.targetBlocks
+    .filter((block) => block.target === 'cursor')
+    .map((block) => block.body);
+
+  const belowProvenance = [
+    ...fields,
+    '---',
+    '',
+    `# ${source.title}`,
+    '',
+    ...interleave([...sectionBodies(source), ...blocks]),
+    '',
+  ].join(newline);
+
+  const digest = digestOf(belowProvenance);
+  const text = ['---', ...provenanceComments(sourcePath, digest), belowProvenance].join(newline);
+  return { path: cursorAgentPath(source.id), text, digest };
+}
+
+/**
+ * Prose blocks separated by one blank line, which is what Markdown paragraphs are.
+ *
+ * Blocks are split back into lines here rather than emitted as multi-line strings, so
+ * that the caller's newline convention applies inside a block as well as between them.
+ * A file that used CRLF between paragraphs and LF within one would look right in an
+ * editor and differ from the original on every line of every long section.
+ */
+function interleave(blocks: readonly string[]): readonly string[] {
+  const out: string[] = [];
+  for (const block of blocks) {
+    if (block === '') {
+      continue;
+    }
+    if (out.length > 0) {
+      out.push('');
+    }
+    out.push(...block.split('\n'));
+  }
+  return out;
+}
+
+// --- Provenance and hand edits ----------------------------------------------
+
+const PROVENANCE_MARK = 'GENERATED FILE';
+
+function provenanceComments(sourcePath: string, digest: string): readonly string[] {
+  return [
+    `# ${PROVENANCE_MARK} — do not edit. Written from ${sourcePath} (DSP-23).`,
+    '# Regenerate from app/ with `npm run roles:generate`. Everything below these comment',
+    '# lines is covered by the digest, so a hand edit is reported rather than overwritten.',
+    `# digest: sha256:${digest}`,
+  ];
+}
+
+/**
+ * The digest, over line-ending-normalised text.
+ *
+ * Normalising means a file that travelled through a tool that rewrote CRLF to LF is
+ * still recognised as untouched. A checkout convention is not a hand edit, and
+ * reporting it as one would train people to ignore the warning that matters.
+ */
+function digestOf(belowProvenance: string): string {
+  return createHash('sha256').update(belowProvenance.replace(/\r\n/g, '\n'), 'utf8').digest('hex');
+}
+
+export type ExistingFile =
+  /** No such file. Writing one is not an overwrite. */
+  | { readonly kind: 'absent' }
+  /** Written by this generator and unchanged since. Safe to replace. */
+  | { readonly kind: 'generated'; readonly sourcePath: string; readonly digest: string }
+  /** Written by this generator and changed since. The edit is the finding. */
+  | { readonly kind: 'hand-edited'; readonly sourcePath: string; readonly recordedDigest: string; readonly actualDigest: string }
+  /** No provenance at all — somebody else's file, or the hand-written original. */
+  | { readonly kind: 'foreign' };
+
+/**
+ * Read what a file on disk claims about itself.
+ *
+ * This is the answer to "is it safe to write here", and it has to be answered from the
+ * file rather than from a manifest beside it: a manifest is one more thing that can be
+ * stale, and the five files this replaces were hand-written with no manifest at all.
+ * They come back `foreign`, which is correct — replacing them is a decision a person
+ * makes once, not something a re-run does quietly.
+ */
+export function inspectGeneratedFile(text: string | null): ExistingFile {
+  if (text === null) {
+    return { kind: 'absent' };
+  }
+  const normalised = text.replace(/^\uFEFF/, '');
+  const lines = normalised.split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') {
+    return { kind: 'foreign' };
+  }
+  const comments: string[] = [];
+  let index = 1;
+  for (; index < lines.length; index += 1) {
+    const line = lines[index] as string;
+    if (!line.startsWith('#')) {
+      break;
+    }
+    comments.push(line);
+  }
+  const joined = comments.join('\n');
+  if (!joined.includes(PROVENANCE_MARK)) {
+    return { kind: 'foreign' };
+  }
+  const sourceMatch = /Written from (\S+)/.exec(joined);
+  const digestMatch = /digest:\s*sha256:([0-9a-f]{64})/.exec(joined);
+  if (!sourceMatch || !digestMatch) {
+    return { kind: 'foreign' };
+  }
+  const sourcePath = sourceMatch[1] as string;
+  const recordedDigest = digestMatch[1] as string;
+
+  // The same slice the generator hashed: everything after the provenance comments,
+  // with the file's own line endings preserved and then normalised by digestOf.
+  const remainder = keepNewlines(normalised, index);
+  const actualDigest = digestOf(remainder);
+  if (actualDigest !== recordedDigest) {
+    return { kind: 'hand-edited', sourcePath, recordedDigest, actualDigest };
+  }
+  return { kind: 'generated', sourcePath, digest: recordedDigest };
+}
+
+/** Everything from line `index` onwards, with the original line endings intact. */
+function keepNewlines(text: string, index: number): string {
+  const parts = text.split(/(\r\n|\n)/);
+  // `parts` alternates content and separator, so line `index` starts at `index * 2`.
+  return parts.slice(index * 2).join('');
+}
+
+/**
+ * Whether a generated file may replace what is there, and why not when it may not.
+ *
+ * `--force` exists on the command line for the one case a person has decided about:
+ * the hand-written originals. It does not exist for a hand-edited generated file,
+ * because that edit is somebody's work and losing it silently is the failure this
+ * whole mechanism is for.
+ */
+export function writeDecision(
+  existing: ExistingFile,
+  options: { readonly force: boolean } = { force: false },
+): { readonly write: boolean; readonly reason: string } {
+  switch (existing.kind) {
+    case 'absent':
+      return { write: true, reason: 'no file there yet' };
+    case 'generated':
+      return { write: true, reason: 'generated and unchanged since' };
+    case 'hand-edited':
+      return {
+        write: false,
+        reason:
+          `edited by hand after generation (recorded sha256:${existing.recordedDigest.slice(0, 16)}, ` +
+          `found sha256:${existing.actualDigest.slice(0, 16)}). Move the edit into ` +
+          `${existing.sourcePath} first; regeneration will not overwrite it.`,
+      };
+    case 'foreign':
+      return options.force
+        ? { write: true, reason: 'no provenance, replaced because --force was given' }
+        : {
+            write: false,
+            reason:
+              'no provenance header, so this generator did not write it — the hand-written ' +
+              'original, or somebody else\'s file. Replacing it is a decision: re-run with --force.',
+          };
+  }
+}
+
+export function formatNotices(notices: readonly RoleNotice[]): string {
+  return notices
+    .map((notice) => `  ${notice.level === 'error' ? 'ERROR' : notice.level === 'warning' ? 'WARN ' : 'note '} ${notice.message}`)
+    .join('\n');
+}

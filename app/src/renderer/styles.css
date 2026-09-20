@@ -8,6 +8,15 @@
   --ok: #4ea86a;
   --no: #b4606a;
   --unknown: #8a7fb8;
+  /* A surface for the user's own message, clearly lighter than the conversation
+     behind it. Mixed from the two colours the palette already has rather than added
+     to it: the panel lifted a tenth of the way towards the text colour. Niclas read
+     a stronger border as the same dark box, which it was — the reference's user
+     message differs by its *surface*, not by its edge. */
+  --raised: color-mix(in srgb, var(--panel) 90%, var(--text));
+  /* One line of message text, so the collapsed height and the fade over it are both
+     expressed in lines rather than in guessed pixels. */
+  --message-line: 1.40625rem;
   font-family: "Segoe UI", system-ui, sans-serif;
 }
 
@@ -15,29 +24,117 @@
   box-sizing: border-box;
 }
 
+/* --- One window, one scroller (DSP-58). -------------------------------------
+   The page itself does not scroll. `.app` is exactly the height of the window and
+   the conversation inside it is the single vertical scroll area, which is §9.1's
+   requirement and also what makes the jump impossible rather than merely unlikely:
+   there is no ancestor scroller left for anything to move. */
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+  overflow: hidden;
 }
 
+/* The window's width is the column's width. `max-width: 62rem` was here, and it is
+   why the chat followed the window's height but not its width: past about 990 px
+   widening the window only added empty margin on both sides, and Niclas read that as
+   a layout that does not follow. Nothing below sets a width in pixels either, so the
+   conversation, the message boxes and the composer all take what the window has. */
 .app {
-  max-width: 62rem;
-  margin: 0 auto;
-  padding: 1.5rem 1.5rem 1.25rem;
+  height: 100%;
+  width: 100%;
+  padding: 0.75rem 1.25rem 1rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* --- Above the conversation. ------------------------------------------------
+   The project row is gone: DSpatch's name, the project, *Open another project*,
+   *connected* and *Session details* were chrome over every conversation, and the
+   last two of those are menu items. `.appbar` is still the window's own heading
+   while the environment is being read, and `.appbar__problems` is what is left
+   above an open conversation — which draws nothing when nothing is wrong. */
+.appbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.25rem 0 0.5rem;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.appbar__spacer {
+  flex: 1 1 auto;
+}
+
+.appbar__project {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.appbar__problems {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.5rem 0 0;
 }
 
 .app__title {
   margin: 0;
-  font-size: 1.875rem;
+  font-size: 1.0625rem;
+  font-weight: 600;
   letter-spacing: 0.02em;
+  color: var(--muted);
 }
 
-.app__subtitle {
-  margin: 0.35rem 0 1.25rem;
-  color: var(--muted);
-  max-width: 42rem;
-  line-height: 1.5;
+/* The work area below the bar: the conversation, or the details over it. */
+.workarea {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 0.75rem;
+}
+
+/* The chooser and a restored conversation, above the thread while they are
+   needed. Bounded so they can never squeeze the conversation away. */
+.workarea__lead {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.workarea__lead:empty {
+  display: none;
+}
+
+.workarea--details > .panel--conversation,
+.workarea--details > .workarea__lead {
+  display: none;
+}
+
+.details-view {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.workarea--details > .details-view {
+  display: block;
 }
 
 .app__note {
@@ -53,6 +150,23 @@ body {
   border: 1px solid var(--no);
   border-radius: 0.5rem;
   color: var(--text);
+}
+
+/* DSP-64: the technical detail behind an error, closed until it is asked for.
+   No new colour: the summary borrows the muted text the notes already use. */
+.error-detail {
+  margin: 0.5rem 0 0;
+}
+
+.error-detail__summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.875rem;
+  list-style: revert;
+}
+
+.error-detail[open] > .error-detail__summary {
+  margin-bottom: 0.25rem;
 }
 
 .panel {
@@ -80,7 +194,7 @@ body {
 
 .facts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr));
   gap: 0.75rem 1.5rem;
   margin: 0;
 }
@@ -146,6 +260,149 @@ body {
   color: var(--unknown);
 }
 
+/* --- Status strip: project, connection, context and current activity. ------
+   Four cards rather than a sentence, because these are the four things the user
+   has to be able to check at a glance. No new colours. */
+
+.topbar {
+  margin-bottom: 1rem;
+}
+
+.strip {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+/* --- The compressed header (DSP-27 #1). -------------------------------------
+   Layout only. Every colour here is one the palette already defines: the
+   headline reuses --text and --muted exactly as the cards did, and the badge and
+   the problem paragraphs reuse the existing .badge and .app__error / .app__note
+   rules untouched. What changed is weight and position, not hue. */
+.headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem 0.875rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.625rem;
+  min-width: 0;
+}
+
+.headline__project {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.headline__agent {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+/* The one thing on this line that changes while a person is reading it. Given
+   the remaining width so a longer sentence wraps here rather than pushing the
+   four fixed items around. */
+.headline__activity {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.headline__details {
+  margin-bottom: 0;
+  padding: 0.5rem 0.875rem 0.625rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.625rem;
+  padding: 0.75rem 0.875rem;
+  min-width: 0;
+}
+
+.card__title {
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.card__value {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.card__detail {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.panel__head .panel__title {
+  margin-bottom: 0;
+}
+
+/* Which project, as the conversation's own heading rather than as a row above it. */
+.panel__title--project {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* The lead panel is where the work starts when nothing is open yet. */
+.panel--lead {
+  border-color: var(--muted);
+}
+
+.panel--section > *:not(summary) {
+  margin-top: 0.75rem;
+}
+
+.panel__summary {
+  cursor: pointer;
+  margin-bottom: 0;
+}
+
+.panel__summary::marker {
+  color: var(--muted);
+}
+
+.subheading {
+  margin: 1rem 0 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.button--quiet {
+  font-size: 0.8125rem;
+  padding: 0.25rem 0.625rem;
+}
+
 /* --- Chat surface. Same palette; no new colours and no component library. --- */
 
 .row {
@@ -191,38 +448,458 @@ body {
   font-style: italic;
 }
 
+/* The conversation panel is the column's tall element; the composer under it keeps
+   its own height and stays reachable without the page scrolling. */
+.panel--conversation {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+  position: relative;
+}
+
+/* The scroller's own box, so the way back can be placed against its foot. */
+.conversation {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
 .transcript {
   margin-top: 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 1rem;
+  /* The one vertical scroller in the window. No max-height: it takes the space the
+     panel has, which is what "give the conversation the main space" means here. */
+  flex: 1 1 auto;
+  min-height: 4rem;
+  overflow-y: auto;
+  /* A reply that arrives while the reader is further up must not shift the text
+     under their eyes. */
+  overflow-anchor: none;
+  padding-right: 0.25rem;
 }
 
+/* Unobtrusive, and only present when there is something below to return to. */
+.transcript__return {
+  position: absolute;
+  right: 1.25rem;
+  bottom: 0.75rem;
+  background: var(--panel);
+  border-color: var(--muted);
+  font-size: 0.75rem;
+  opacity: 0.92;
+}
+
+/* A turn is a group, not a box. The bordered thing inside it is the user's own
+   message; the reply reads as the agent's words in the column, which is the
+   Cursor reference §9.1 names. */
 .turn {
-  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/*
+  A loop run, marked as one. Same card as an ordinary turn — this is the same
+  conversation, not a second panel — with a dashed edge and the line below, so a
+  reader can tell at a glance that the mandate was walked by a loop rather than
+  sent as a message. No new colour: the palette is Niclas's approved starting point.
+*/
+.turn--loop {
+  border: 1px dashed var(--line);
   border-radius: 0.5rem;
   padding: 0.75rem 0.875rem;
 }
 
-.turn__prompt {
+.turn__loop-mark {
   margin: 0 0 0.5rem;
-  color: var(--text);
-  font-size: 0.875rem;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  padding-left: 0.625rem;
-  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
-.turn__answer {
+/*
+  The user's own message (DSP-59 #1, and the Cursor reference again in DSP-65).
+
+  Three things make it read as the user's rather than as a quotation of the user's:
+  a surface clearly lighter than the conversation, a quiet border, and the full width
+  of the column — the reply is inset inside it, so the user's message is the *wider*
+  element, which is the way round the reference has it and the opposite of what this
+  window did until now.
+*/
+.turn__prompt {
   margin: 0;
-  padding: 0;
-  font-family: inherit;
+  color: var(--text);
   font-size: 0.9375rem;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  background: var(--raised);
+  /*
+    The border is lighter than the box, which is the way round the reference has it
+    and the opposite of what this was.
+
+    `--line` is #272d36 and `--raised` mixes to around #2d3136, so a border drawn in
+    `--line` was *darker* than the surface it was outlining — visible against the
+    conversation behind it and invisible where it mattered, which is why Niclas could
+    no longer find it. Mixing from `--raised` towards `--text` keeps it inside the
+    approved palette: the same colours, a few percent apart, rather than a new one.
+
+    The inset shadow is the reference's faint highlight along the top edge, and it
+    follows `border-radius` for free, so the corners stay rounded.
+  */
+  border: 1px solid color-mix(in srgb, var(--raised) 84%, var(--text));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--raised) 72%, var(--text));
+  border-radius: 0.625rem;
+  padding: 0.75rem 0.9375rem;
+  width: 100%;
+  min-width: 0;
+  /* The fade and the glyph are drawn inside this box, against its own background. */
+  position: relative;
+}
+
+/*
+  A long message is clipped, not shortened.
+
+  `max-height` and `overflow: hidden` leave every character in the document, which is
+  the requirement that decided this: the message stays selectable and copyable in
+  full while it is collapsed. A substring would have looked the same on screen and
+  would have had nothing to copy.
+
+  Three and a half lines, so the fourth line is half dissolved rather than cut — the
+  reference's collapsed message ends in a fade, and a hard edge mid-word is what
+  Niclas was looking at.
+*/
+.turn__prompt--collapsed {
+  max-height: calc(4 * var(--message-line) + 1.5rem);
+  overflow: hidden;
+}
+
+/* Only a message that really is too tall becomes interactive: a short one is drawn
+   whole, with no fade, no glyph and nothing to click. */
+.turn__prompt--collapsible.turn__prompt--collapsed {
+  cursor: pointer;
+}
+
+/*
+  The fade, and it starts much earlier than it did.
+
+  It was 1.45 lines tall and it looked like a couple of grey pixels, for a reason worth
+  writing down: the box has 0.75rem of bottom padding, so more than half of that height
+  was spent over blank space below the last line, leaving about two thirds of one line
+  actually covered. Hence Niclas's reading — the last line only goes slightly grey.
+
+  So the height now accounts for the padding explicitly and asks for lines of *text*
+  beyond it, and the gradient reaches the box's own colour at 78% rather than 92%: the
+  bottom fifth is solid `--raised`, so the text at the foot does not merely grey off, it
+  disappears into the surface as it does in the reference. Four lines stay visible; what
+  changed is how much of the fourth is legible by the time the box ends.
+
+  Still drawn inside the padding box, so the border stays crisp around it, and still
+  takes no pointer events: clicking the fade is clicking the message.
+*/
+.turn__prompt--collapsible.turn__prompt--collapsed::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: calc(2.5 * var(--message-line) + 0.75rem);
+  border-radius: 0 0 0.5rem 0.5rem;
+  background: linear-gradient(to bottom, transparent, var(--raised) 78%);
+  pointer-events: none;
+}
+
+/*
+  The whole affordance: one small glyph at the bottom right, as in the reference.
+
+  Drawn by CSS rather than rendered as an element, which is not decoration — the
+  message's own text is what a script reads out of this box and what a person copies
+  out of it, and a glyph in the markup would be one character of neither.
+*/
+.turn__prompt--collapsible::after {
+  content: "\25BE";
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.25rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.turn__prompt--collapsible[aria-expanded="true"]::after {
+  content: "\25B4";
+}
+
+/* Keyboard access without a visible button: the box is focusable, and focus has to
+   be visible or it is not access. */
+.turn__prompt--collapsible:focus-visible {
+  outline: 2px solid var(--muted);
+  outline-offset: 2px;
+}
+
+/*
+  The disclosure under a reply, as quiet as it can be while staying findable.
+
+  It used to be a badge and a label on a row of their own under every answer. The badge
+  is gone; this is what keeps the label from replacing it as the thing the eye lands on
+  after each reply. Smaller, in the muted colour, and brought up to full strength on
+  hover and on keyboard focus, so a person looking for it finds it and a person reading
+  the conversation does not have to look at it.
+*/
+.turn__counts-summary--quiet {
+  font-size: 0.75rem;
+  color: var(--muted);
+  opacity: 0.72;
+}
+
+.turn__counts-summary--quiet:hover,
+.turn__counts-summary--quiet:focus-visible,
+.turn__counts[open] > .turn__counts-summary--quiet {
+  opacity: 1;
+}
+
+/* The counting behind a turn: present, and not in the way. */
+.turn__counts > summary,
+.standing-detail__summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+/* A finished ordinary reply is followed by one quiet line, not by a badge row and a
+   disclosure row. The badge moved into the summary, so the state is still stated and
+   still readable — it is one line instead of two after every answer. */
+.turn__counts-summary .badge {
+  margin-right: 0.25rem;
+}
+
+/* Lined up with the reply above them rather than with the user's box. */
+.turn > .turn__meta,
+.turn > .turn__counts {
+  padding-left: 0.625rem;
+}
+
+.turn__counts[open] > summary {
+  margin-bottom: 0.25rem;
+}
+
+.standing-detail {
+  margin: 0.5rem 0 0;
+}
+
+/* Inset inside the user's box, which is what makes that box the wider element while
+   the two columns of text still line up within a few pixels of each other. */
+.turn__answer {
+  margin: 0;
+  padding: 0 0.625rem;
+  font-family: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* --- Rendered Markdown (DSP-59 #2). ----------------------------------------
+   Spacing and weight only. Code keeps the panel background the rest of the window
+   uses, and the one place a horizontal scroll is allowed is a code block, which is
+   what §9.1 permits. */
+
+.markdown > *:first-child {
+  margin-top: 0;
+}
+
+.markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown__p {
+  margin: 0 0 0.6rem;
+}
+
+.markdown__h {
+  margin: 0.9rem 0 0.4rem;
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.markdown__h--1 {
+  font-size: 1.1875rem;
+}
+
+.markdown__h--2 {
+  font-size: 1.0938rem;
+}
+
+.markdown__h--3 {
+  font-size: 1rem;
+}
+
+.markdown__h--4,
+.markdown__h--5,
+.markdown__h--6 {
+  font-size: 0.9375rem;
+  color: var(--muted);
+}
+
+.markdown__list {
+  margin: 0 0 0.6rem;
+  padding-left: 1.5rem;
+}
+
+.markdown__list li {
+  margin: 0.15rem 0;
+}
+
+.markdown__list .markdown__p {
+  margin: 0;
+}
+
+.markdown__code {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.875em;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.3rem;
+  /* Inside code the characters are the content, so nothing may be re-flowed away.
+     Wrapping a long token is not re-flowing it away, and it is what keeps a narrow
+     window from growing a horizontal scrollbar around one inline path. */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.markdown__pre {
+  margin: 0 0 0.6rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  /* Horizontal, deliberately: a wrapped code line hides its own indentation. */
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.markdown__code-block {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.markdown__quote {
+  margin: 0 0 0.6rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+}
+
+.markdown__rule {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 0.75rem 0;
+}
+
+.markdown__link {
+  color: var(--text);
+}
+
+/* A target DSpatch refused. It keeps its words and says nothing it cannot do. */
+.markdown__link--inert {
+  text-decoration: underline dotted var(--muted);
+}
+
+/* --- Which model the next message goes to (DSP-60 #3). --------------------- */
+
+.model {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.model__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.model__select {
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  padding: 0.2rem 0.4rem;
+  max-width: 14rem;
+}
+
+.model__fixed {
+  color: var(--text);
+}
+
+/* What DSpatch told the model in front of this message, when it had to. Collapsed
+   by default because it is long and is not the conversation; expandable because a
+   summary of what the model was told is not the same as what the model was told. */
+.turn__resent {
+  margin: 0 0 0.5rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.turn__resent > summary {
+  cursor: pointer;
+}
+
+.turn__resent > pre {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  max-height: 22rem;
+  overflow: auto;
+}
+
+/* Execution state: one block per attempt. Deliberately close to `.turn`, because
+   an attempt and a turn are two views of the same work and should not look like
+   parts of different applications. */
+.attempts {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.attempt {
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+}
+
+.attempt__head {
+  margin: 0 0 0.375rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.375rem 0.625rem;
+  font-size: 0.8125rem;
+}
+
+.attempt .card__detail {
+  margin: 0.25rem 0 0;
+}
+
+.attempt .button {
+  margin-top: 0.5rem;
 }
 
 .turn__meta {
@@ -252,6 +929,131 @@ body {
 
 .composer__input:disabled {
   color: var(--muted);
+}
+
+.loop-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.loop-toggle input {
+  width: auto;
+}
+
+.loop-log {
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.75rem 0.5rem 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.loop-log li + li {
+  margin-top: 0.25rem;
+}
+
+.loop-log__pending {
+  color: var(--muted);
+}
+
+/* --- The running line (DSP-27 #4, #5). --------------------------------------
+   Subdued and transient. No border and no background: it is not a panel, it is a
+   sentence that is there while something is happening and gone afterwards. Same
+   --muted the .pending rule above already uses. */
+.running {
+  margin: 0.5rem 0 0;
+}
+
+.running__line {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.running__summary {
+  color: var(--muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+/* The move from one role to the next, in the history. Quieter than a reply and
+   indented under it, so the column still reads as the agents' own words with the
+   moves between them marked rather than competing. */
+.handoff {
+  margin: 0.5rem 0 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+/*
+  A message sent into a run in progress. The user's own message, so it is drawn
+  like one — a solid border, unlike the dashed one a loop run gets — and the only
+  thing distinguishing it is the left edge saying it went into work already under
+  way. No new colours: the palette is Niclas's approved starting point.
+*/
+.turn--instruction .turn__prompt {
+  border-left: 3px solid var(--muted);
+}
+
+/*
+  Where the run stands, in §9's four terms. Deliberately quiet: this answers a
+  question rather than demanding attention, and the problems that do demand it
+  are in the header above.
+*/
+.standing {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.standing p {
+  margin: 0 0 0.25rem;
+}
+
+.standing p:last-child {
+  margin-bottom: 0;
+}
+
+/*
+  The pulse, and the one rule that matters about it: it is attached to
+  `standing--live`, which `conversationStanding` grants only when activity is
+  actually known. A run DSpatch has stopped watching gets the same block without
+  it, because an animation over an unknown state would be the window claiming to
+  see something it cannot (§9).
+*/
+.standing--live {
+  border-left-color: var(--accent, var(--line));
+  animation: standing-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes standing-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.72;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .standing--live {
+    animation: none;
+  }
 }
 
 .files {
@@ -287,6 +1089,121 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* --- Diff review. The palette is unchanged: additions reuse the "supported"
+   green and deletions the "unsupported" red, so the diff reads with the same
+   vocabulary as the badges rather than introducing a second one. */
+
+.diffs {
+  margin-top: 0.75rem;
+}
+
+.diff {
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  margin-bottom: 0.625rem;
+}
+
+.diff:last-child {
+  margin-bottom: 0;
+}
+
+.diff__summary {
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.diff__summary::marker {
+  color: var(--muted);
+}
+
+.diff > p {
+  padding: 0 0.75rem 0.5rem;
+}
+
+.diff__text {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: 0 0 0.5rem 0.5rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  /* Bounded so one large file cannot push everything else off the screen. */
+  max-height: 26rem;
+  overflow: auto;
+  /* Not pre-wrap: a wrapped diff line hides which column the +/- is in. */
+  white-space: pre;
+  tab-size: 4;
+}
+
+/* Inline, not block. Each span carries its own trailing newline so that copying
+   the diff out of the window yields the patch verbatim; a block span would add a
+   second line break on top of that one and double-space the whole diff. */
+.diff__line--add {
+  color: var(--ok);
+}
+
+.diff__line--del {
+  color: var(--no);
+}
+
+.diff__line--hunk {
+  color: var(--unknown);
+}
+
+.diff__line--meta {
+  color: var(--muted);
+}
+
+/* --- Editable command fields. AC#8 requires both to be changed in the window
+   rather than in a configuration file, so they are plain inputs. */
+
+.fields {
+  display: grid;
+  /* `min()` rather than a bare 20rem: a grid track with a 20rem floor is wider than a
+     narrow window and pushes its own fields off the edge. */
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.field {
+  display: block;
+  min-width: 0;
+}
+
+.field__label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.25rem;
+}
+
+.field__input {
+  display: block;
+  width: 100%;
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  padding: 0.4rem 0.625rem;
+}
+
+.field__input:focus {
+  outline: none;
+  border-color: var(--muted);
+}
+
+.field__input:disabled {
+  color: var(--muted);
+}
+
 .output {
   margin: 0.75rem 0 0;
   padding: 0.625rem 0.75rem;
@@ -299,4 +1216,76 @@ body {
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Who decides that the next work step starts (DSP-29, DSP-30)               */
+/* ------------------------------------------------------------------------- */
+
+/*
+  Loaded in both windows, because the chat and the graph view use one component for
+  this and must not be able to look like two different answers about one run.
+
+  Built entirely from the approved palette custom properties. A pause is not an error
+  and must not be dressed as one, so the phases differ by the border and the headline
+  colour rather than by a new hue: --unknown while a pause is only requested, because
+  that is exactly what is true of the run then, and --muted once it has arrived.
+*/
+.loop-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--panel);
+}
+
+.loop-control__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.loop-control__phase {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.loop-control--pause-requested {
+  border-color: var(--unknown);
+}
+
+.loop-control--pause-requested .loop-control__phase {
+  color: var(--unknown);
+}
+
+.loop-control--paused {
+  border-color: var(--muted);
+}
+
+.loop-control--waiting-for-you {
+  border-color: var(--unknown);
+}
+
+.loop-control__mode {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.loop-control__detail,
+.loop-control__note {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.loop-control__note {
+  color: var(--text);
 }
