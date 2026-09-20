@@ -27,6 +27,7 @@ import {
   describeRunView,
   edgesTakenIn,
   eventBelongsTo,
+  explainRunView,
   nodeRunStateFor,
   nodeRunStates,
   runViewFor,
@@ -378,9 +379,24 @@ describe('a view of a run is a view, not a drawing board', () => {
     assert.equal(viewIsLocked(null), false, 'with no run on screen the editor is an editor again');
   });
 
-  it('says which run and which version of the drawing is on screen', () => {
+  /*
+   * The banner used to be one sentence carrying all of this at once, over a canvas
+   * that was refusing to draw. It is now two: the line a person reads while watching
+   * a run, and the identity they ask for when the short line is not enough. Nothing
+   * has been dropped — the assertions below are the same claims, moved to whichever
+   * of the two now makes them.
+   */
+  it('names the drawing and what it is doing, in one short line', () => {
     const run = announcement({ graphVersionId: 'graph-9f3a2c', graphName: 'Live duration' });
     const said = describeRunView(runViewFor(run));
+    assert.match(said, /Live duration/);
+    assert.match(said, /running now/);
+    assert.ok(said.length < 80, `the line a person reads while waiting must be short. It said: ${said}`);
+  });
+
+  it('says which run and which version of the drawing is on screen, when asked', () => {
+    const run = announcement({ graphVersionId: 'graph-9f3a2c', graphName: 'Live duration' });
+    const said = explainRunView(runViewFor(run));
     assert.match(said, /graph-9f3a2c/, 'the content version is the point: a name identifies nothing');
     assert.match(said, new RegExp(run.runId.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.match(said, /locked/);
@@ -388,12 +404,22 @@ describe('a view of a run is a view, not a drawing board', () => {
   });
 
   it('does not pretend a dry run of the unsaved canvas has a content version', () => {
-    const said = describeRunView(runViewFor(announcement({ graphVersionId: UNVERSIONED_CANVAS })));
+    const said = explainRunView(runViewFor(announcement({ graphVersionId: UNVERSIONED_CANVAS })));
     assert.match(
       said,
       /never read from a file and so has no content version/,
       `a dry run walks the drawing in the window; naming a hash for it would be a different ` +
         `claim wearing the same word. It said: ${said}`,
+    );
+  });
+
+  it('says a chosen loop is ready rather than running', () => {
+    const view = runViewFor(announcement({ phase: 'ready', graphName: 'Chat loop' }));
+    const said = describeRunView(view);
+    assert.match(said, /ready for a mandate/);
+    assert.ok(
+      !/running/.test(said),
+      `a loop standing by must not read as work in progress. It said: ${said}`,
     );
   });
 });

@@ -90,14 +90,17 @@ import {
   applyRunEvent,
   describeRunView,
   edgesTakenIn,
+  explainRunView,
   nodeRunStateFor,
   nodeRunStates,
   runViewFor,
   viewIsLocked,
+  viewIsReady,
   type LiveRunAnnouncement,
   type NodeRunState,
   type RunView,
 } from '../shared/loop-run-view';
+import { runningStep, stepStanding, type StepStandingReport } from '../shared/loop-activity';
 import { nodeHelpText, requiredForKind } from '../shared/loop-chat';
 import {
   ANCHOR_DOT_RADIUS,
@@ -204,6 +207,17 @@ export function LoopEditor(): React.JSX.Element {
    */
   const [watch, setWatch] = useState<RunView | null>(null);
   const [watchNote, setWatchNote] = useState<string | null>(null);
+  /** Bumped by Retry, so the run's drawing is loaded again from the same bytes. */
+  const [watchAttempt, setWatchAttempt] = useState(0);
+  /**
+   * The clock, for the one line that has to say how long a step has been quiet.
+   *
+   * A second of state rather than a `Date.now()` in the render, because a component
+   * that reads the clock without re-rendering shows the time it first mounted — and a
+   * status line that freezes at "last update just now" is worse than no line at all.
+   * It ticks only while a run is being watched.
+   */
+  const [nowMs, setNowMs] = useState(() => Date.now());
   /** Who decides the next work step. The same report the chat window reads. */
   const loopControl = useLoopControl();
 
@@ -394,11 +408,26 @@ export function LoopEditor(): React.JSX.Element {
       if (event.kind === 'started') {
         setWatch(runViewFor(event.run));
         setWatchNote(null);
+        setWatchAttempt(0);
         return;
       }
       setWatch((previous) => applyRunEvent(previous, event));
     });
   }, []);
+
+  // Only while something is on screen to time. A window with no run does not tick.
+  useEffect(() => {
+    if (watch === null || watch.ended) {
+      return;
+    }
+    setNowMs(Date.now());
+    const timer = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [watch === null, watch?.ended]);
 
   /**
    * What is already running when this window opens.
@@ -551,18 +580,88 @@ export function LoopEditor(): React.JSX.Element {
    * cannot be loaded is said out loud, because drawing the author's own graph and
    * calling it the run's would be the same untruth in a friendlier voice.
    */
-  const watchedGraph = useMemo<LoopGraph | null>(() => {
-    if (watch === null) {
-      return null;
+  /**
+   * The roles a watched run announced, over this window's own.
+   *
+   * **This is the line that stopped the graph view refusing to draw the loop it was
+   * watching.** `resolveRole` above is built from `roles`, and that map is only ever
+   * filled for a graph the author opened through the file dialog — `openLoopGraph`
+   * returns its roles and `refreshRoles` adds the ones the author edits. The chat loop
+   * was never opened here, so its `project-work` and `project-check` references
+   * resolved to nothing and `loadLoopGraph` refused on *a role reference that resolves
+   * to nothing is an error*: a correct rule, reaching the wrong conclusion, about roles
+   * the main process had already resolved in order to run the graph.
+   *
+   * The run's own bindings win where they overlap, because they are the ones it is
+   * using. A reference that genuinely resolves to nothing still arrives as `null` and
+   * still refuses — nothing here weakens the rule, it supplies the facts the rule was
+   * being asked to judge without.
+   */
+  const shownRoles = useMemo(() => {
+    const announced = watch?.run.roles;
+    if (announced === undefined || announced.length === 0) {
+      return roles;
     }
-    const loaded = loadLoopGraph(watch.run.graphText, { resolveRole, connectedTargets });
-    return loaded.ok ? layOutMissingViews(loaded.graph).graph : null;
-  }, [watch, resolveRole, connectedTargets]);
+    const merged = new Map<string, ResolvedRole | null>(roles);
+    for (const entry of announced) {
+      merged.set(entry.key, entry.role);
+    }
+    return merged;
+  }, [watch, roles]);
+  const watchedResolveRole = useMemo(() => resolverFromEntries(shownRoles), [shownRoles]);
+
+  /**
+   * Why the run's own drawing could not be loaded, or `null` when it loaded.
+   *
+   * Kept beside the graph rather than reduced to a boolean, so the panel can say what
+   * is wrong in one line instead of a paragraph about the general principle. `retry`
+   * re-reads nothing from disk — the bytes are in the announcement — it re-runs the
+   * load, which is the whole of what could have been wrong once the roles arrived.
+   */
+  const watchedGraphLoad = useMemo<
+    { readonly graph: LoopGraph | null; readonly findings: readonly Finding[] }
+  >(() => {
+    if (watch === null) {
+      return { graph: null, findings: [] };
+    }
+    const loaded = loadLoopGraph(watch.run.graphText, {
+      resolveRole: watchedResolveRole,
+      connectedTargets,
+    });
+    return loaded.ok
+      ? { graph: layOutMissingViews(loaded.graph).graph, findings: [] }
+      : { graph: null, findings: loaded.findings };
+    // `watchAttempt` is read for its identity alone: pressing Retry changes it, which
+    // is what makes this run again for the same run and the same bytes.
+  }, [watch, watchedResolveRole, connectedTargets, watchAttempt]);
+  const watchedGraph = watchedGraphLoad.graph;
 
   /** Locked while a run is on screen: an editable graph would stop describing the run. */
   const locked = viewIsLocked(watch);
   /** One graph on screen at a time, and while a run is watched it is the run's. */
   const shownGraph = watch === null ? graph : watchedGraph;
+
+  /**
+   * The line along the foot, describing whatever is actually on the canvas.
+   *
+   * `note` is the author's own running commentary — what was opened, what was placed,
+   * what was saved — and while a run is watched it is commentary about a drawing that
+   * is not on screen. Over the six-node chat loop it read *14 nodes, 31 edges*, which
+   * is the header's fault surviving one line lower: two things on screen naming
+   * different graphs, when the criterion is that they name one.
+   *
+   * **Empty when the run's graph could not be loaded.** There is no node count to give
+   * for a graph nobody could read, and inventing one is the exact move the refusal
+   * panel exists to refuse. That panel keeps saying what it says.
+   */
+  const shownNote =
+    watch === null
+      ? note
+      : watchedGraph === null
+        ? ''
+        : `${watchedGraph.name} — ${String(watchedGraph.nodes.length)} nodes, ` +
+          `${String(watchedGraph.edges.length)} edges. This is the version the run is ` +
+          `walking. Your own drawing is untouched and comes back when you leave the view.`;
 
   const selectedNode = graph !== null && selection?.kind === 'node' ? nodeById(graph, selection.id) : null;
   const selectedEdge =
@@ -736,8 +835,37 @@ export function LoopEditor(): React.JSX.Element {
     };
   }, [graph, index.errors, apply, showRun]);
 
-  const runStates = useMemo(() => nodeRunStates(watch), [watch]);
+  // `shownGraph?.entry` is read for the ready state alone: a chosen loop marks its
+  // entry step and nothing else, and the view holds graph *text* rather than a loaded
+  // graph to find that id in.
+  const runStates = useMemo(
+    () => nodeRunStates(watch, shownGraph?.entry),
+    [watch, shownGraph?.entry],
+  );
   const edgeSet = useMemo(() => edgesTakenIn(watch), [watch]);
+
+  /**
+   * What the step that is running is doing, in one line, for this window.
+   *
+   * The same fold and the same sentences the conversation reads — `stepStanding` over
+   * `view.steps` — so the graph view and the chat cannot give a person two different
+   * answers about one run. `stillWatching` is false once the run has ended, which is
+   * what stops a finished run's last step reporting that it is waiting for something.
+   */
+  const watchedStanding = useMemo(
+    () =>
+      // Nothing for a loop standing by, and nothing for a run that has ended: the
+      // ending has its own account, and "DSpatch is no longer following this run" over
+      // a run that finished normally would be alarming and untrue.
+      watch === null || watch.ended || viewIsReady(watch)
+        ? null
+        : stepStanding({
+            step: runningStep(watch.steps, watch.run.runId),
+            stillWatching: true,
+            nowMs,
+          }),
+    [watch, nowMs],
+  );
 
   /** Leave the run view and go back to editing. Deliberate, and it stops nothing. */
   const leaveRunView = useCallback(() => {
@@ -750,14 +878,41 @@ export function LoopEditor(): React.JSX.Element {
   }, []);
 
   return (
-    <div className={`editor${journalOpen ? ' has-journal' : ''}`} onMouseUp={() => setDrag(null)}>
+    /*
+      `has-watch` is not decoration.
+
+      `.editor` is a grid with named rows, and the run banner is an extra child between
+      the palette and the canvas. Without a row for it the banner took the `1fr` meant
+      for the canvas: a tall empty band above a squashed graph, which is the opposite of
+      "the graph stays visible". The class gives each combination of banner and journal
+      its own row list.
+    */
+    <div
+      className={`editor${watch === null ? '' : ' has-watch'}${journalOpen ? ' has-journal' : ''}`}
+      onMouseUp={() => setDrag(null)}
+    >
       <header className="editor-bar">
+        {/*
+          The title names what is on the canvas.
+
+          It used to name `graph` — the author's own drawing — unconditionally, and the
+          editor opens our development loop on mount by design. So while the window
+          watched a chat-loop run it announced the development loop over a picture of
+          something else, which is the "title, graph and run status must refer to the
+          same thing" half of what was wrong. One source: whatever `shownGraph` is.
+        */}
         <div className="editor-title">
           <h1>Loop editor</h1>
-          <p>
-            {graph === null ? 'No graph open' : graph.name}
-            {file === null ? '' : ` — ${file.displayPath}`}
-            {dirty ? ' · unsaved changes' : ''}
+          <p data-ev="editor-title-line">
+            {watch === null
+              ? `${graph === null ? 'No graph open' : graph.name}${
+                  file === null ? '' : ` — ${file.displayPath}`
+                }${dirty ? ' · unsaved changes' : ''}`
+              : `${watch.run.graphName} — ${
+                  watch.run.graphVersionId === UNVERSIONED_CANVAS
+                    ? 'the unsaved drawing in this window'
+                    : `version ${watch.run.graphVersionId.slice(0, 12)}`
+                } · ${viewIsReady(watch) ? 'ready' : watch.ended ? 'ended' : 'running'}`}
           </p>
         </div>
 
@@ -821,9 +976,14 @@ export function LoopEditor(): React.JSX.Element {
           </button>
           <label className="editor-target">
             Target framework
+            {/*
+              `shownGraph`, not `graph`. Disabled while a run is watched, but a disabled
+              field still states a value, and stating the author's target beside the
+              run's drawing is the same mistake in a control rather than in prose.
+            */}
             <select
-              value={graph?.target ?? 'cursor'}
-              disabled={graph === null || locked}
+              value={shownGraph?.target ?? 'cursor'}
+              disabled={shownGraph === null || locked}
               onChange={(event) => changeTarget(event.target.value as LoopTarget)}
             >
               {LOOP_TARGETS.map((target) => (
@@ -836,14 +996,26 @@ export function LoopEditor(): React.JSX.Element {
         </div>
 
         <div className="editor-state">
-          <Chip severity="error" count={index.errors} />
-          <Chip severity="warning" count={index.warnings} />
-          <Chip severity="notice" count={index.notices} />
+          {/*
+            Findings and the live binding are about the author's canvas, and while a run
+            is watched that drawing is not on screen. "0 errors · 13 notices" over
+            somebody else's graph is the same untruth as the footer's node count, and
+            there is nothing to put in their place: the run's graph validated by
+            definition, and a binding chip about it would answer a question nobody asked
+            of a drawing nobody can edit. So they are absent rather than wrong.
+          */}
+          {locked ? null : (
+            <>
+              <Chip severity="error" count={index.errors} />
+              <Chip severity="warning" count={index.warnings} />
+              <Chip severity="notice" count={index.notices} />
+            </>
+          )}
           {runBusy ? (
             <span className="chip chip-live-ready" title="A run is walking the canvas. Cancel run stays available.">
               {runKind === 'live' ? 'Live running…' : 'Dry-run…'}
             </span>
-          ) : liveBinding === null ? null : (
+          ) : locked || liveBinding === null ? null : (
             <span
               className={`chip ${liveBinding.ready ? 'chip-live-ready' : 'chip-live-off'}`}
               title={liveBinding.reason}
@@ -950,6 +1122,8 @@ export function LoopEditor(): React.JSX.Element {
       {watch === null ? null : (
         <RunWatchBanner
           view={watch}
+          states={runStates}
+          standing={watchedStanding}
           graphLoaded={watchedGraph !== null}
           note={watchNote}
           control={loopControl}
@@ -960,7 +1134,14 @@ export function LoopEditor(): React.JSX.Element {
       <main className="editor-main">
         <div className="editor-canvas">
           {shownGraph === null ? (
-            <RefusalPanel findings={refusal} watching={watch !== null} />
+            <RefusalPanel
+              findings={refusal}
+              watching={watch !== null}
+              watchFindings={watchedGraphLoad.findings}
+              onRetry={() => {
+                setWatchAttempt((attempt) => attempt + 1);
+              }}
+            />
           ) : (
             <svg
               ref={svgRef}
@@ -1006,7 +1187,11 @@ export function LoopEditor(): React.JSX.Element {
                 <NodeShape
                   key={node.id}
                   node={node}
-                  role={node.role ? (roles.get(roleKey(node.role)) ?? null) : null}
+                  // `shownRoles`, not `roles`: while a run is watched the canvas is the
+                  // run's drawing, and reading its nodes against the author's own map
+                  // drew every one of them as "role broken" — the same mistake the
+                  // refusal panel made, one level down.
+                  role={node.role ? (shownRoles.get(roleKey(node.role)) ?? null) : null}
                   isEntry={shownGraph.entry === node.id}
                   selected={!locked && selection?.kind === 'node' && selection.id === node.id}
                   connecting={connectFrom === node.id}
@@ -1074,7 +1259,9 @@ export function LoopEditor(): React.JSX.Element {
         />
       ) : null}
 
-      <footer className="editor-note">{note}</footer>
+      <footer className="editor-note" data-ev="editor-note">
+        {shownNote}
+      </footer>
 
       {pendingTarget === null || graph === null ? null : (
         <TargetChangeDialog
@@ -1104,25 +1291,54 @@ export function LoopEditor(): React.JSX.Element {
  */
 function RunWatchBanner({
   view,
+  states,
+  standing,
   graphLoaded,
   note,
   control,
   onLeave,
 }: {
   readonly view: RunView;
+  /** The same marks the canvas draws, passed in rather than derived a second time. */
+  readonly states: ReadonlyMap<string, NodeRunState>;
+  /** What the running step is doing, or `null` for a loop standing by. */
+  readonly standing: StepStandingReport | null;
   readonly graphLoaded: boolean;
   readonly note: string | null;
   readonly control: LoopControlReport;
   readonly onLeave: () => void;
 }): React.JSX.Element {
-  const states = nodeRunStates(view);
   const counted = new Map<NodeRunState, number>();
   for (const state of states.values()) {
     counted.set(state, (counted.get(state) ?? 0) + 1);
   }
   return (
     <section className={`editor-watch${view.ended ? ' editor-watch-ended' : ''}`} aria-label="Run being watched">
-      <p className="editor-watch-line">{describeRunView(view)}</p>
+      {/*
+        Short, then the identity behind it.
+
+        This line used to carry the run id, the content hash, the lock, the reason for
+        the lock and what leaving does — one sentence long enough that a person
+        watching a run read past it. `describeRunView` is now the first clause and
+        `explainRunView` is the rest, on request.
+      */}
+      <p className="editor-watch-line" data-ev="watch-line">
+        {describeRunView(view)}
+      </p>
+      {standing === null ? null : (
+        <p
+          className={`editor-watch-standing editor-watch-standing-${standing.standing}`}
+          data-ev="watch-standing"
+          data-standing={standing.standing}
+          data-activity-known={String(standing.activityIsKnown)}
+        >
+          {standing.text}
+        </p>
+      )}
+      <details className="editor-watch-detail">
+        <summary>Which run this is, and why it is locked</summary>
+        <p className="editor-watch-note">{explainRunView(view)}</p>
+      </details>
       {note === null ? null : <p className="editor-watch-note">{note}</p>}
       {/*
         The same controls as the chat window, from the same component reading the same
@@ -1191,7 +1407,7 @@ function WatchedRunInspector({
       </ul>
       <h3>What the words mean</h3>
       <ul className="findings">
-        {(['waiting', 'active', 'finished', 'failed', 'stopped'] as const).map((state) => (
+        {(['ready', 'waiting', 'active', 'finished', 'failed', 'stopped'] as const).map((state) => (
           <li key={state} className={`run-row ${NODE_RUN_STATE_MARKS[state].className}`}>
             <strong>{NODE_RUN_STATE_MARKS[state].mark}</strong> — {NODE_RUN_STATE_MARKS[state].label}
           </li>
@@ -1217,14 +1433,38 @@ function RunJournal({
   const liveText = liveEntries.map((entry) => formatJournalEntry(entry)).join('\n');
   return (
     <section className="editor-journal" aria-label="Run journal">
-      <h2>{busy ? `${kind === 'live' ? 'Live' : 'Dry-run'} in progress` : 'Last run'}</h2>
+      <h2>
+        {busy
+          ? `${kind === 'live' ? 'Live' : 'Dry-run'} in progress`
+          : liveEntries.length > 0 && summary === null
+            ? 'This run so far'
+            : 'Last run'}
+      </h2>
       {refuse === null ? null : <p className="journal-refuse">{refuse}</p>}
-      {busy && summary === null ? (
+      {/*
+        A run this window is only watching has no summary and no local `busy`, so this
+        pane used to be an empty titled box under the graph — space taken from the
+        drawing to say nothing. The run's own entries are what it has, so they are what
+        it shows.
+      */}
+      {!busy && summary === null && refuse === null ? (
+        liveText === '' ? (
+          <p className="muted">Nothing has been written to this run&apos;s journal yet.</p>
+        ) : (
+          <pre>{liveText}</pre>
+        )
+      ) : busy && summary === null ? (
         <>
+          {/*
+            One line, not a paragraph defending the wait.
+
+            The sentence this replaces explained that the first step can take several
+            minutes, which is a general fact about agents rather than a statement about
+            this run — and a person who has waited five minutes has already learned it.
+            The status line above the canvas says what is actually happening.
+          */}
           <p className="muted">
-            {kind === 'live'
-              ? 'Cursor is working in an isolated experiment repository. Nodes light up as they are entered. This first step can take several minutes.'
-              : 'Walking the graph on the canvas…'}
+            {kind === 'live' ? 'Walking the graph in an isolated experiment repository.' : 'Walking the graph on the canvas.'}
           </p>
           {liveText === '' ? null : <pre>{liveText}</pre>}
         </>
@@ -1269,22 +1509,43 @@ function Chip({ severity, count }: { readonly severity: Finding['severity']; rea
 function RefusalPanel({
   findings,
   watching,
+  watchFindings,
+  onRetry,
 }: {
   readonly findings: readonly Finding[] | null;
   readonly watching: boolean;
+  readonly watchFindings: readonly Finding[];
+  readonly onRetry: () => void;
 }): React.JSX.Element {
   if (watching) {
-    // The run's own graph text could not be loaded. Said rather than papered over: the
-    // alternative is drawing the author's canvas and calling it the run's picture.
+    /*
+     * The run's own graph text could not be loaded.
+     *
+     * Still said rather than papered over — drawing the author's canvas and calling it
+     * the run's picture would be the same untruth in a friendlier voice — but said in
+     * one line with the reason in it. The paragraph this replaces explained the
+     * principle and not the problem, and the problem was usually one nameable finding.
+     */
+    const first = watchFindings[0];
     return (
-      <div className="refusal">
-        <h2>The version this run is walking could not be drawn</h2>
+      <div className="refusal" data-ev="watch-load-error">
+        <h2>This run&apos;s graph could not be drawn</h2>
         <p>
-          The run announced a graph DSpatch could not load, so there is nothing here that
-          would honestly be called the graph that is running. The journal below is still
-          this run's own history. Leave the run view to go back to your drawing; the run is
-          not affected either way.
+          {first === undefined
+            ? 'DSpatch could not load the graph this run announced, and the loader gave no finding.'
+            : `${first.message}${
+                watchFindings.length === 1
+                  ? ''
+                  : ` (and ${String(watchFindings.length - 1)} more)`
+              }`}
         </p>
+        <p className="muted">
+          Nothing is affected by this either way: the run carries on, the journal below is
+          still its own history, and leaving the view changes nothing.
+        </p>
+        <button type="button" onClick={onRetry}>
+          Try again
+        </button>
       </div>
     );
   }

@@ -33,6 +33,12 @@
 import type { CapabilitySupport } from '../adapter/types';
 import type { ChatLoopRunOutcome } from './bridge';
 import type { TrailBranch } from './chat-workspace';
+import {
+  finishStep,
+  foldStepActivity,
+  type StepActivity,
+  type StepActivityState,
+} from './loop-activity';
 import { endingWithoutDetail } from './loop-chat';
 import {
   loopInstructionState,
@@ -164,6 +170,20 @@ export interface LoopTurn {
   readonly sentAtUtc: string;
   readonly replies: readonly LoopAgentReply[];
   /**
+   * What each step was observed doing while it worked.
+   *
+   * The same fold the graph view uses, over the same events, so one run cannot be
+   * described two ways in two windows. Optional, because every `LoopTurn` written
+   * before this field existed still means exactly what it meant: absent is a run
+   * nobody watched step by step, not a run in which nothing happened.
+   *
+   * **This is a live view and not a second history.** The run record already keeps
+   * each reply with the whole prompt it answered, and a completed step's streamed
+   * text is the same text as its reply — which is why the window shows the streamed
+   * text *in the reply's place* and the reply replaces it, rather than showing both.
+   */
+  readonly steps?: readonly StepActivityState[];
+  /**
    * Steps that answered with nothing, in the order they happened.
    *
    * Optional so that every `LoopTurn` written before this field existed still
@@ -205,6 +225,27 @@ export type LoopTurnEvent =
     }
   /** An agent node finished a provider turn. Its text may be empty; see the reducer. */
   | { readonly kind: 'agent-replied'; readonly runId: string; readonly reply: LoopAgentReply }
+  /**
+   * Something the provider reported while a step was working.
+   *
+   * `waitForTurn` used to drop every one of these, which is why a loop run was an
+   * opaque call. They arrive *during* a step, so they land here rather than waiting
+   * for `agent-replied`, which is the whole point.
+   */
+  | { readonly kind: 'step-activity'; readonly runId: string; readonly activity: StepActivity }
+  /**
+   * A step's turn is over, so it stops reporting that it is waiting for anything.
+   *
+   * Separate from `agent-replied` and carrying the executor's own occurrence rather
+   * than a count recomputed here: an empty reply becomes a silent step and never
+   * reaches the reply list, and a step that went quiet must still stop being live.
+   */
+  | {
+      readonly kind: 'step-finished';
+      readonly runId: string;
+      readonly nodeId: string;
+      readonly occurrence: number;
+    }
   /**
    * The run took a branch, so the thread can say why control moved.
    *
@@ -333,6 +374,20 @@ export function loopTurnsAfter(
     case 'branch-taken': {
       const already = turn.branches ?? [];
       return replaced({ ...turn, branches: [...already, event.branch] });
+    }
+    case 'step-activity': {
+      const steps = foldStepActivity(turn.steps ?? [], event.activity);
+      // The same array back when the fold changed nothing, so an event about a step
+      // this turn never saw open costs no render.
+      return steps === turn.steps ? turns : replaced({ ...turn, steps });
+    }
+    case 'step-finished': {
+      const steps = finishStep(turn.steps ?? [], {
+        runId: event.runId,
+        nodeId: event.nodeId,
+        occurrence: event.occurrence,
+      });
+      return steps === turn.steps ? turns : replaced({ ...turn, steps });
     }
     case 'stop-requested': {
       if (turn.ending !== null) {

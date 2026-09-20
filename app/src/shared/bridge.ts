@@ -15,6 +15,7 @@ import type {
   TerminalRunStatus,
   UsageReading,
 } from '../adapter/types';
+import type { StepActivity } from './loop-activity';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from './loop-control';
 import type { ResolvedRole, RoleReference } from './loop-graph';
 import type { ParsedRunRecord, RecordedRunEnding } from './loop-record';
@@ -1564,6 +1565,31 @@ export interface DspatchBridge {
    */
   onChatLoopReply(listener: (reply: ChatLoopReply) => void): () => void;
   /**
+   * What the provider reports while a loop step is working, as it happens.
+   *
+   * Separate from the reply, which arrives once the turn is over. This is the channel
+   * that makes a step legible while it runs — streamed reply text, tool calls
+   * starting and finishing, and a provider that says it is waiting on a person.
+   * `waitForTurn` handled three event types and none of them was one of these, which
+   * is why a loop run used to be an opaque call with a report at the end of it.
+   *
+   * Carries no private reasoning: `reasoning.delta` is deliberately not forwarded.
+   */
+  onChatLoopActivity(listener: (activity: StepActivity) => void): () => void;
+  /**
+   * Choose the chat loop, or unchoose it, without starting anything.
+   *
+   * `Use loop` picks a graph. Until now that was invisible until the first send, so
+   * the graph only ever appeared once work had already begun. This announces the
+   * chosen drawing to any graph view that is open, with its entry step marked *ready*
+   * — a different claim from *running*, and one no journal entry contradicts because
+   * there are none.
+   *
+   * **A read and an announcement, nothing else.** It starts no run, opens no window
+   * and writes no file, and it will not displace a run that is walking.
+   */
+  prepareChatLoop(chosen: boolean): Promise<ChatLoopPrepareOutcome>;
+  /**
    * Add a message to the run already walking, rather than starting a second one.
    *
    * The composer routes here whenever a loop run is in flight — see
@@ -1608,6 +1634,20 @@ export interface DspatchBridge {
   /** Every change to who decides the next step, in every window. */
   onLoopControl(listener: (report: LoopControlReport) => void): () => void;
 }
+
+/**
+ * What came of choosing or unchoosing the chat loop.
+ *
+ * `not-shown` is a real answer rather than a failure: a graph that could not be read
+ * or does not validate means the graph view has nothing honest to draw, and the
+ * `note` says which. Nothing about sending a mandate depends on it — `Use loop`
+ * stays ticked and `startChatLoopRun` refuses for itself with its own reason, so a
+ * preview that cannot be drawn never becomes a reason work cannot start.
+ */
+export type ChatLoopPrepareOutcome =
+  | { readonly kind: 'shown'; readonly run: LiveRunAnnouncement }
+  | { readonly kind: 'stood-down' }
+  | { readonly kind: 'not-shown'; readonly note: string };
 
 /** Which graph to open: the one Niclas asks for by name, or one he picks. */
 export type LoopGraphOpenRequest =
@@ -1873,6 +1913,8 @@ export type BridgeChannel =
   | 'dspatch:cancel-chat-loop-run'
   | 'dspatch:chat-loop-journal'
   | 'dspatch:chat-loop-reply'
+  | 'dspatch:chat-loop-activity'
+  | 'dspatch:prepare-chat-loop'
   | 'dspatch:add-loop-instruction'
   | 'dspatch:loop-instruction-event'
   | 'dspatch:list-run-records'

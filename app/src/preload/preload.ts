@@ -12,6 +12,7 @@ import type {
   ConversationSaveStatus,
   DspatchBridge,
   ChatLoopCancelOutcome,
+  ChatLoopPrepareOutcome,
   ChatLoopReply,
   ChatLoopRunOutcome,
   ChatLoopRunRequest,
@@ -48,6 +49,7 @@ import type {
   UiAgentEvent,
   WorkspaceReport,
 } from '../shared/bridge';
+import type { StepActivity } from '../shared/loop-activity';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
 import type { RoleReference } from '../shared/loop-graph';
 import type { RunJournalEntry } from '../shared/loop-run';
@@ -99,6 +101,8 @@ const START_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:start-chat-loop-run';
 const CANCEL_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:cancel-chat-loop-run';
 const CHAT_LOOP_JOURNAL: BridgeChannel = 'dspatch:chat-loop-journal';
 const CHAT_LOOP_REPLY: BridgeChannel = 'dspatch:chat-loop-reply';
+const CHAT_LOOP_ACTIVITY: BridgeChannel = 'dspatch:chat-loop-activity';
+const PREPARE_CHAT_LOOP: BridgeChannel = 'dspatch:prepare-chat-loop';
 const ADD_LOOP_INSTRUCTION: BridgeChannel = 'dspatch:add-loop-instruction';
 const LOOP_INSTRUCTION_EVENT: BridgeChannel = 'dspatch:loop-instruction-event';
 const LIST_RUN_RECORDS: BridgeChannel = 'dspatch:list-run-records';
@@ -244,6 +248,17 @@ const bridge: DspatchBridge = {
       ipcRenderer.removeListener(CHAT_LOOP_REPLY, handler);
     };
   },
+  onChatLoopActivity: (listener: (activity: StepActivity) => void) => {
+    const handler = (_event: unknown, payload: StepActivity): void => {
+      listener(payload);
+    };
+    ipcRenderer.on(CHAT_LOOP_ACTIVITY, handler);
+    return () => {
+      ipcRenderer.removeListener(CHAT_LOOP_ACTIVITY, handler);
+    };
+  },
+  prepareChatLoop: (chosen: boolean) =>
+    ipcRenderer.invoke(PREPARE_CHAT_LOOP, chosen) as Promise<ChatLoopPrepareOutcome>,
   addLoopInstruction: (request: AddLoopInstructionRequest) =>
     ipcRenderer.invoke(ADD_LOOP_INSTRUCTION, request) as Promise<AddLoopInstructionOutcome>,
   onLoopInstruction: (listener: (event: LoopInstructionEventPayload) => void) => {

@@ -65,6 +65,7 @@ const AREAS = {
   loop: {
     what: 'the loop graph, its editor, the run record, control, instructions and the walk',
     files: [
+      'loop-activity.test.ts',
       'loop-chat.test.ts',
       'loop-command.test.ts',
       'loop-control.test.ts',

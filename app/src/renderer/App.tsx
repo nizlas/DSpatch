@@ -82,6 +82,13 @@ import {
   planChatCancel,
 } from '../shared/loop-chat';
 import {
+  runningStep,
+  stepStanding,
+  type StepActivityState,
+  type StepStandingReport,
+  type StepToolCall,
+} from '../shared/loop-activity';
+import {
   activityLine,
   chatHeaderView,
   composerKeyAction,
@@ -515,6 +522,27 @@ function Workbench({
    * spinner cannot be shown over a run nobody is watching.
    */
   const newestLoopTurn = loopTurns.length === 0 ? null : (loopTurns[loopTurns.length - 1] ?? null);
+  /**
+   * The clock, for the one line that says how long a step has been quiet.
+   *
+   * State rather than a `Date.now()` in the render, because a component that reads the
+   * clock without re-rendering shows the time it mounted — and a line frozen at "last
+   * update just now" while nothing arrives is precisely the false reassurance this
+   * work removes. It ticks only while a loop run is in flight.
+   */
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!loopBusy) {
+      return;
+    }
+    setNowMs(Date.now());
+    const timer = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [loopBusy]);
   const standing = useMemo(
     () =>
       conversationStanding({
@@ -813,6 +841,30 @@ function Workbench({
         runId: reply.runId,
         reply: { nodeId: reply.nodeId, nodeLabel: reply.nodeLabel, text: reply.text },
       });
+      // The step's turn is over, so it stops being the live one. Carried separately
+      // and with the executor's own occurrence, because an empty reply becomes a
+      // silent step and never reaches the reply list — and a step that went quiet
+      // must still stop reporting that it is waiting for something.
+      applyLoopTurnEvent({
+        kind: 'step-finished',
+        runId: reply.runId,
+        nodeId: reply.nodeId,
+        occurrence: reply.occurrence,
+      });
+    });
+  }, [applyLoopTurnEvent]);
+
+  /**
+   * What the step that is working is doing, as it does it.
+   *
+   * The channel that closes the 320-second silence. `waitForTurn` handled three event
+   * types and none of them arrived before the turn ended; these are the ones it now
+   * forwards, folded by the same module the graph view folds them with, so the two
+   * windows cannot give different answers about one run.
+   */
+  useEffect(() => {
+    return window.dspatch.onChatLoopActivity((activity) => {
+      applyLoopTurnEvent({ kind: 'step-activity', runId: activity.runId, activity });
     });
   }, [applyLoopTurnEvent]);
 
@@ -2017,6 +2069,8 @@ function Workbench({
                     /* Only the run the standing was computed from, so one run's
                        status can never be drawn against another's mandate. */
                     standing={item.turn.runId === newestLoopTurn?.runId ? standing : null}
+                    stillWatching={item.turn.runId === newestLoopTurn?.runId && loopBusy}
+                    nowMs={nowMs}
                   />
                 ) : (
                   <InstructionEntry
@@ -2173,6 +2227,25 @@ function Workbench({
                           setStopWaitingNote(outcome.note);
                         });
                       }
+                      /*
+                       * Show the loop that has just been chosen, in the graph view if
+                       * one is open.
+                       *
+                       * Ticking this box picks a graph, and until now that was
+                       * invisible until the first send — so the drawing first appeared
+                       * over work that had already started. **It opens no window and
+                       * starts nothing**: a graph view that is open sees the loop
+                       * appear with its entry step marked ready, and a tick with no
+                       * graph view open changes nothing anywhere.
+                       *
+                       * The failure is swallowed deliberately. A preview that cannot
+                       * be drawn is not a reason a mandate cannot be sent, and
+                       * `startChatLoopRun` reads the same file and gives its own
+                       * account when it matters.
+                       */
+                      void window.dspatch.prepareChatLoop(next).catch(() => {
+                        /* Nothing to show is not something to report here. */
+                      });
                     }}
                   />
                   Use loop
@@ -4943,15 +5016,26 @@ function LoopTurnEntry({
   turn,
   index,
   standing,
+  stillWatching,
+  nowMs,
 }: {
   readonly turn: LoopTurn;
   readonly index: number;
   /** Where this run stands, for the run it is about. `null` for any other run. */
   readonly standing: ConversationStanding | null;
+  /** Whether the window is still receiving this run's events. */
+  readonly stillWatching: boolean;
+  readonly nowMs: number;
 }): JSX.Element {
   const badge = loopTurnBadge(turn);
   const at = `loop-turn-${String(index)}`;
   const ending = loopTurnEndingLine(turn);
+  const steps = turn.steps ?? [];
+  const live = turn.ending === null ? runningStep(steps, turn.runId) : null;
+  const liveStanding =
+    live === null && turn.ending !== null
+      ? null
+      : stepStanding({ step: live, stillWatching, nowMs });
   return (
     <article className="turn turn--loop" data-ev={at}>
       <p className="turn__loop-mark" data-ev={`${at}-mark`}>
@@ -4993,9 +5077,38 @@ function LoopTurnEntry({
             <div className="turn__answer" data-ev={`${at}-reply-${String(itemIndex)}`}>
               <Markdown text={item.text} />
             </div>
+            {/* What this step did, beside the work it did it for. §9 asks for tool
+                detail expanded alongside the relevant work rather than in a log
+                somewhere else; a step that made no tool calls shows nothing. */}
+            <StepToolCalls
+              tools={toolsForStep(steps, turn.runId, item.nodeId, item.occurrence)}
+              testId={`${at}-reply-${String(itemIndex)}-tools`}
+            />
           </div>
         ),
       )}
+      {/*
+        The step that is working, **in the place its reply will take**.
+
+        §9: streaming text grows in the reply's place and remains as history when
+        complete. So this sits after the last handover, where the next answer goes, and
+        the reply replaces it when it lands — which is why the final result does not
+        duplicate what was already shown. It is a view and not history: the run record
+        keeps the reply and the prompt it answered, and nothing here is written down.
+      */}
+      {live === null ? null : (
+        <LiveStep step={live} standing={liveStanding} testId={`${at}-live`} />
+      )}
+      {live === null && liveStanding !== null && turn.ending === null ? (
+        <p
+          className={`step-status step-status--${liveStanding.standing}`}
+          data-ev={`${at}-live-status`}
+          data-standing={liveStanding.standing}
+          data-activity-known={String(liveStanding.activityIsKnown)}
+        >
+          {liveStanding.text}
+        </p>
+      ) : null}
       {/*
         The ending, short, with the technical account behind it.
 
@@ -5032,6 +5145,130 @@ function LoopTurnEntry({
       <RunStanding standing={standing} testId={at} />
     </article>
   );
+}
+
+/** The tool calls belonging to one step of one run, or none when there were none. */
+function toolsForStep(
+  steps: readonly StepActivityState[],
+  runId: string,
+  nodeId: string,
+  occurrence: number,
+): readonly StepToolCall[] {
+  const step = steps.find(
+    (entry) =>
+      entry.runId === runId && entry.nodeId === nodeId && entry.occurrence === occurrence,
+  );
+  return step?.tools ?? [];
+}
+
+/**
+ * What an agent actually did, expanded beside the work it did it for.
+ *
+ * Summaries from `describeToolActivity`, which reads the provider's own message. The
+ * detail behind each one is whatever the provider reported and nothing else: a command
+ * that printed nothing says *no output was reported*, never *it printed nothing*,
+ * because a two-megabyte stdout has been measured arriving here empty with the field
+ * that would disclose it left null.
+ */
+function StepToolCalls({
+  tools,
+  testId,
+}: {
+  readonly tools: readonly StepToolCall[];
+  readonly testId: string;
+}): JSX.Element | null {
+  if (tools.length === 0) {
+    return null;
+  }
+  return (
+    <details className="tool-calls" data-ev={testId}>
+      <summary className="tool-calls__summary">
+        {tools.length === 1 ? 'One tool call' : `${String(tools.length)} tool calls`} in this
+        step
+      </summary>
+      <ul className="tool-calls__list">
+        {tools.map((call) => (
+          <li
+            key={call.callId}
+            className={`tool-call tool-call--${call.status ?? 'running'}`}
+            data-ev={`${testId}-${call.callId}`}
+          >
+            <span className="tool-call__summary">{call.summary}</span>
+            {call.detail === null ? null : (
+              <pre className="tool-call__detail">{call.detail}</pre>
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+/**
+ * The step that is working: what it is saying, what it is running, and how long since.
+ *
+ * Three things a person asked for and could not have: the reply text as it is written,
+ * the tool calls as they start and finish, and which agent and role the activity
+ * belongs to. The status line is the fourth — one line, never a paragraph defending
+ * the wait, and it says *waiting* rather than *working* the moment DSpatch stops
+ * hearing anything, because time alone proves neither progress nor failure.
+ */
+function LiveStep({
+  step,
+  standing,
+  testId,
+}: {
+  readonly step: StepActivityState;
+  readonly standing: StepStandingReport | null;
+  readonly testId: string;
+}): JSX.Element {
+  return (
+    <div className="live-step" data-ev={testId}>
+      <p className="app__note" data-ev={`${testId}-who`}>
+        {step.nodeId} is working
+        {step.roleId === null ? '' : ` as “${step.roleId}”`}
+        {step.occurrence > 1 ? `, on its ${String(step.occurrence)}${ordinalSuffix(step.occurrence)} turn` : ''}:
+      </p>
+      {standing === null ? null : (
+        <p
+          className={`step-status step-status--${standing.standing}`}
+          data-ev={`${testId}-status`}
+          data-standing={standing.standing}
+          data-activity-known={String(standing.activityIsKnown)}
+        >
+          {standing.text}
+        </p>
+      )}
+      {/* The reply as it is being written, in the place the finished reply will take.
+          Formatted the same way, so nothing jumps when the two swap over. */}
+      {step.text === '' ? null : (
+        <div className="turn__answer" data-ev={`${testId}-text`}>
+          <Markdown text={step.text} />
+        </div>
+      )}
+      {step.tools.length === 0 ? null : (
+        <ul className="tool-calls__list tool-calls__list--live" data-ev={`${testId}-tools`}>
+          {step.tools.map((call) => (
+            <li
+              key={call.callId}
+              className={`tool-call tool-call--${call.status ?? 'running'}`}
+              data-ev={`${testId}-tool-${call.callId}`}
+            >
+              <span className="tool-call__summary">{call.summary}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ordinalSuffix(value: number): string {
+  if (value % 100 >= 11 && value % 100 <= 13) {
+    return 'th';
+  }
+  const last = value % 10;
+  return last === 1 ? 'st' : last === 2 ? 'nd' : last === 3 ? 'rd' : 'th';
 }
 
 /**
@@ -5077,13 +5314,28 @@ function RunStanding({
       <p data-ev="standing-next">{standing.whatHappensNext}</p>
     </div>
   );
-  if (standing.standing !== 'stopped') {
+  /*
+   * A working run keeps its four answers, on request.
+   *
+   * They were four paragraphs, permanently, under a run that had nothing to report —
+   * *the first step to answer, nothing has come back yet* said at length for five
+   * minutes. The line that belongs there while a step works is the step's own status,
+   * which `LiveStep` draws above from what the provider actually sent; §9's four
+   * questions are what a reader asks when the short line is not enough, and a
+   * disclosure is where a question like that is answered.
+   *
+   * `stop-requested` and `unknown` stay open, because both are states a person may
+   * have to act on and neither has anything shorter to say.
+   */
+  if (standing.standing !== 'stopped' && standing.standing !== 'active') {
     return block;
   }
   return (
     <details className="standing-detail" data-ev={`${testId}-standing-detail`}>
       <summary className="standing-detail__summary">
-        Where this run stands, and what it left behind
+        {standing.standing === 'active'
+          ? 'Who is working, on what, and what happens next'
+          : 'Where this run stands, and what it left behind'}
       </summary>
       {block}
     </details>

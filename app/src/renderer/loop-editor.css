@@ -21,6 +21,22 @@
   grid-template-rows: auto auto 1fr minmax(160px, 28vh) auto;
 }
 
+/*
+ * One row per child, for every combination of the banner and the journal.
+ *
+ * The run banner sits between the palette and the canvas, so while a run is on screen
+ * there is one more child than the base list has rows — and the banner took the `1fr`
+ * that belongs to the canvas. The result was a tall empty band over a graph two nodes
+ * high, which was easy to read as the graph having failed to draw.
+ */
+.editor.has-watch {
+  grid-template-rows: auto auto auto 1fr auto;
+}
+
+.editor.has-watch.has-journal {
+  grid-template-rows: auto auto auto 1fr minmax(160px, 28vh) auto;
+}
+
 .editor-bar {
   display: flex;
   flex-wrap: wrap;
@@ -343,6 +359,21 @@
 
 .node-run-active .node-run-mark { fill: #7fc4a0; }
 
+/*
+ * Ready: the entry step of a loop that has been chosen and not yet sent anything.
+ *
+ * Drawn deliberately unlike `active` — a cooler colour and a lighter border — because
+ * the one thing it must not be read as is work in progress. The word "ready" beside it
+ * is what actually carries the difference; this only has to avoid contradicting it.
+ */
+.node-run-ready .node-body {
+  stroke: #7fa8c4;
+  stroke-width: 2.2;
+  stroke-dasharray: none;
+}
+
+.node-run-ready .node-run-mark { fill: #7fa8c4; }
+
 /* Waiting for a person: dashed, because it is not moving and must not look as if it is. */
 .node-run-waiting .node-body {
   stroke: #d9b25f;
@@ -393,12 +424,19 @@
   100% { opacity: 1; }
 }
 
-.node-run-active .node-body {
+.node-run-active .node-body,
+.node-run-ready .node-body {
   animation: dspatch-node-pulse 2s ease-in-out infinite;
 }
 
+/* Discreet, and slower on a ready node: it is standing by rather than working. */
+.node-run-ready .node-body {
+  animation-duration: 3.2s;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .node-run-active .node-body {
+  .node-run-active .node-body,
+  .node-run-ready .node-body {
     animation: none;
   }
 }
@@ -432,6 +470,32 @@
   color: #d9b25f;
 }
 
+/*
+ * What the running step is doing, in one line.
+ *
+ * Three states and three tones, because "we can see activity", "we have heard nothing
+ * for a while" and "we are no longer listening" are three different claims and the
+ * line exists to keep them apart. Only `confirmed` gets the colour that reads as work.
+ */
+.editor-watch-standing {
+  margin: 0;
+  font-size: 12px;
+  flex: 1 1 320px;
+}
+
+.editor-watch-standing-confirmed { color: #7fc4a0; }
+.editor-watch-standing-waiting { color: #9fb2c8; }
+.editor-watch-standing-unknown { color: #d98b6a; }
+
+.editor-watch-detail {
+  font-size: 12px;
+  color: #9fb2c8;
+}
+
+.editor-watch-detail > summary {
+  cursor: pointer;
+}
+
 .editor-watch-states {
   margin: 0;
   display: flex;
@@ -446,6 +510,7 @@
 }
 
 .run-row.node-run-active { border-left-color: #7fc4a0; }
+.run-row.node-run-ready { border-left-color: #7fa8c4; }
 .run-row.node-run-waiting { border-left-color: #d9b25f; }
 .run-row.node-run-finished { border-left-color: #6f8aa5; }
 .run-row.node-run-failed { border-left-color: #d96a6a; }

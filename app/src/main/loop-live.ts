@@ -59,6 +59,7 @@ import {
   NOT_VERIFIED_OUTCOME,
   undeclaredReadableOutcome,
 } from '../shared/loop-chat';
+import { describeToolActivity, type StepActivity } from '../shared/loop-activity';
 import type { CommandNotStarted } from '../shared/loop-record';
 import type {
   StepContext,
@@ -225,6 +226,18 @@ export interface LiveExecutorOptions {
    * was no turn to report, and the fault's own detail is what says so.
    */
   readonly onAgentReply?: (reply: LiveAgentReply) => void;
+  /**
+   * Each thing the provider reports **while** an agent step is working.
+   *
+   * Separate from `onAgentReply`, which fires once the turn is over. This is the one
+   * that makes a step legible as it happens, and the distinction is the point: a
+   * caller wiring only the first gets exactly the behaviour this increment replaces.
+   *
+   * The executor supplies the step's address and the adapter's event; deciding what
+   * a `tool_call` *means* is the window's business and is done in
+   * `shared/loop-activity.ts`, which both the graph view and the chat read.
+   */
+  readonly onStepActivity?: (activity: StepActivity) => void;
   /**
    * Called with each gate command the moment it settles, so a caller can write it
    * to the run record while the run is still walking rather than reading
@@ -749,7 +762,30 @@ interface TurnWait {
   readonly readings: () => UsageReading[];
 }
 
-function waitForTurn(adapter: AgentAdapter, sessionId: DspatchSessionId): TurnWait {
+/**
+ * Follow one provider turn.
+ *
+ * **It used to handle three event types.** `assistant.message`, `usage` and
+ * `run.finished` — nothing else — so a loop step collected one finished message and
+ * forwarded it once, while the direct chat path streamed the whole time because
+ * `chat-service.ts` handles the delta events. That is the whole of why a loop run
+ * looked like an opaque call: the adapter was emitting `assistant.delta`,
+ * `tool.started`, `tool.finished` and `approval.requested` into a listener that
+ * dropped them on the floor.
+ *
+ * `onActivity` is where they go now. It is a hook rather than more fields on
+ * `TurnWait` because these arrive *during* the turn and everything else here is read
+ * *after* it; a getter for them would be a getter nobody could call in time.
+ *
+ * **`reasoning.delta` is deliberately absent.** It carries the model's private
+ * thinking, and the assignment asks for available commentary and activity, not that.
+ * Its absence here is the enforcement.
+ */
+function waitForTurn(
+  adapter: AgentAdapter,
+  sessionId: DspatchSessionId,
+  onActivity?: (event: AgentEvent) => void,
+): TurnWait {
   let assistantText = '';
   let terminalStatus: string | null = null;
   let terminalError: string | null = null;
@@ -766,6 +802,14 @@ function waitForTurn(adapter: AgentAdapter, sessionId: DspatchSessionId): TurnWa
     }
     if (event.dspatchRunId !== runId) {
       return;
+    }
+    if (
+      event.type === 'assistant.delta' ||
+      event.type === 'tool.started' ||
+      event.type === 'tool.finished' ||
+      event.type === 'approval.requested'
+    ) {
+      onActivity?.(event);
     }
     if (event.type === 'assistant.message') {
       assistantText += event.text;
@@ -1083,8 +1127,72 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       inspection.snapshotBefore = snapshotRef(before);
     }
 
-    const turn = waitForTurn(options.adapter, session.dspatchSessionId);
+    // Who the activity below belongs to. Carried once here rather than rebuilt at
+    // each emission, so the graph view, the chat and the step they are both about
+    // cannot end up with three different ideas of which step is speaking.
+    const address = {
+      runId: context.runId,
+      nodeId: node.id,
+      occurrence: context.occurrence,
+    };
+    const emit = options.onStepActivity;
+    const turn = waitForTurn(options.adapter, session.dspatchSessionId, (event) => {
+      if (emit === undefined) {
+        return;
+      }
+      if (event.type === 'assistant.delta') {
+        if (event.text !== '') {
+          emit({ ...address, atUtc: event.at, kind: 'reply-text', text: event.text });
+        }
+        return;
+      }
+      if (event.type === 'tool.started') {
+        emit({
+          ...address,
+          atUtc: event.at,
+          kind: 'tool-started',
+          callId: event.toolCallId,
+          name: event.name,
+          summary: describeToolActivity(event.name, 'started', event.rawProviderEvent).summary,
+        });
+        return;
+      }
+      if (event.type === 'tool.finished') {
+        const described = describeToolActivity(event.name, event.status, event.rawProviderEvent);
+        emit({
+          ...address,
+          atUtc: event.at,
+          kind: 'tool-finished',
+          callId: event.toolCallId,
+          name: event.name,
+          status: event.status,
+          summary: described.summary,
+          detail: described.detail,
+        });
+        return;
+      }
+      if (event.type === 'approval.requested') {
+        emit({
+          ...address,
+          atUtc: event.at,
+          kind: 'awaiting-approval',
+          summary: event.request.summary,
+        });
+      }
+    });
     const prompt = (options.promptFor ?? (() => LIVE_DURATION_PROMPT))(node);
+    // Announced before `send`, because the interval this increment exists for is the
+    // one *before* the first provider event — the few seconds, or minutes, where a
+    // step is genuinely running and nothing has come back. Without an opened step
+    // there is nothing for the status line to be about, and "nothing has started" and
+    // "something started and has said nothing" would read identically.
+    emit?.({
+      ...address,
+      atUtc: new Date(now()).toISOString(),
+      kind: 'step-started',
+      roleId: node.role?.id ?? null,
+      roleSourcePath: node.role?.source.path ?? null,
+    });
 
     let timedOut = false;
     let aborted = false;

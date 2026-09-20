@@ -22,6 +22,7 @@ import {
   type LiveExecutorOptions,
   type LiveInspection,
 } from './loop-live';
+import type { StepActivity } from '../shared/loop-activity';
 import { describeChatLoopBinding } from '../shared/loop-chat';
 import {
   describeLiveBinding,
@@ -69,6 +70,14 @@ export interface LiveCliOptions {
   ) => Promise<LiveCommandRecord>;
   /** Each agent node's own words, as they happen. The chat binding shows them. */
   readonly onAgentReply?: (reply: LiveAgentReply) => void;
+  /**
+   * What the provider reports while a step is still working.
+   *
+   * Passed straight to the executor. The CLI leaves it out and behaves exactly as
+   * before; the window wires it, which is what turns a loop step from an opaque call
+   * into something a person can watch.
+   */
+  readonly onStepActivity?: (activity: StepActivity) => void;
   /**
    * Each gate command as it settles, so a caller can write it to the run record
    * while the run is still walking. Reading `inspection.commands` afterwards works
@@ -181,6 +190,9 @@ async function driveLive(
         ...(options.promptFor === undefined ? {} : { promptFor: options.promptFor }),
         ...(options.runProjectTest === undefined ? {} : { runProjectTest: options.runProjectTest }),
         ...(options.onAgentReply === undefined ? {} : { onAgentReply: options.onAgentReply }),
+        ...(options.onStepActivity === undefined
+          ? {}
+          : { onStepActivity: options.onStepActivity }),
         ...(options.onCommand === undefined ? {} : { onCommand: options.onCommand }),
       }),
     });

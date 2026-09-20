@@ -31,6 +31,7 @@ import type {
   ProjectListing,
   ProjectPickOutcome,
   RendererReady,
+  ChatLoopPrepareOutcome,
   ResolvedRoleEntry,
   SampleProjectsView,
   ScriptedRunPlan,
@@ -130,6 +131,8 @@ const START_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:start-chat-loop-run';
 const CANCEL_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:cancel-chat-loop-run';
 const CHAT_LOOP_JOURNAL: BridgeChannel = 'dspatch:chat-loop-journal';
 const CHAT_LOOP_REPLY: BridgeChannel = 'dspatch:chat-loop-reply';
+const CHAT_LOOP_ACTIVITY: BridgeChannel = 'dspatch:chat-loop-activity';
+const PREPARE_CHAT_LOOP: BridgeChannel = 'dspatch:prepare-chat-loop';
 const ADD_LOOP_INSTRUCTION: BridgeChannel = 'dspatch:add-loop-instruction';
 const LOOP_INSTRUCTION_EVENT: BridgeChannel = 'dspatch:loop-instruction-event';
 const LIST_RUN_RECORDS: BridgeChannel = 'dspatch:list-run-records';
@@ -1732,6 +1735,29 @@ function registerIpc(): void {
  * the same reason — `createFileRoleResolver` reads `.cursor/agents/*.md`, and a role
  * reference that resolves to nothing is a finding the author must see (DSP-22 #6).
  */
+/**
+ * A graph's role references, resolved once, keyed the way the renderer indexes them.
+ *
+ * Shared by the editor's `resolveLoopRoles` handler and by the announcement a run
+ * makes about itself, because those have to agree. A run that announced its drawing
+ * without its bindings is what made a graph view refuse to draw the loop it was
+ * watching: the roles existed, had already been resolved here in order to run the
+ * graph, and simply never travelled — see `LiveRunAnnouncement.roles`.
+ */
+function resolvedRolesWith(
+  references: readonly RoleReference[],
+  resolve: RoleResolver,
+): readonly ResolvedRoleEntry[] {
+  const seen = new Map<string, ResolvedRoleEntry>();
+  for (const reference of references) {
+    const key = roleKey(reference);
+    if (!seen.has(key)) {
+      seen.set(key, { key, role: resolve(reference) });
+    }
+  }
+  return [...seen.values()];
+}
+
 function registerLoopGraphIpc(): void {
   const ownRoot = ownRepositoryRoot(app.getAppPath());
 
@@ -1743,14 +1769,7 @@ function registerLoopGraphIpc(): void {
       return [];
     }
     const resolve = createFileRoleResolver(ownRoot);
-    const seen = new Map<string, ResolvedRoleEntry>();
-    for (const reference of references) {
-      const key = roleKey(reference);
-      if (!seen.has(key)) {
-        seen.set(key, { key, role: resolve(reference) });
-      }
-    }
-    return [...seen.values()];
+    return resolvedRolesWith(references, resolve);
   }
 
   ipcMain.handle(
@@ -1898,8 +1917,12 @@ function registerLoopGraphIpc(): void {
         return { kind: 'failed', note: overlap };
       }
 
+      // Held rather than inlined, because the announcement below carries what these
+      // references resolved to. A run that shows a window its drawing without its
+      // bindings is a run that window cannot draw.
+      const resolveEditorRole = createFileRoleResolver(ownRoot);
       const loaded = loadLoopGraph(request.text, {
-        resolveRole: createFileRoleResolver(ownRoot),
+        resolveRole: resolveEditorRole,
         connectedTargets: ['cursor'],
       });
       if (!loaded.ok) {
@@ -1959,6 +1982,10 @@ function registerLoopGraphIpc(): void {
           binding: 'editor-loop',
           graphText: request.text,
           startedAtUtc: new Date().toISOString(),
+          phase: 'running',
+          // Read from the same bytes the run is walking, so the bindings that travel
+          // are the bindings of the drawing that travels.
+          roles: resolvedRolesWith(referencedRoles(request.text), resolveEditorRole),
         };
         runAudience.start(announcement);
         const delivery = await runLiveGraph(loaded.graph, {
@@ -1978,6 +2005,16 @@ function registerLoopGraphIpc(): void {
               runId: announcement.runId,
               graphVersionId: announcement.graphVersionId,
               entry,
+            });
+          },
+          // The same addressed channel as the journal, so the window watching this
+          // graph reads one run state rather than two that can disagree.
+          onStepActivity: (activity) => {
+            runAudience.broadcast({
+              kind: 'activity',
+              runId: announcement.runId,
+              graphVersionId: announcement.graphVersionId,
+              activity,
             });
           },
         });
@@ -2196,6 +2233,12 @@ function registerLoopGraphIpc(): void {
           binding: 'chat-loop',
           graphText,
           startedAtUtc: new Date().toISOString(),
+          phase: 'running',
+          // The bindings this run is actually using, announced with the drawing.
+          // `resolveRole` above has already read every one of them in order to build
+          // the prompts, so this costs a cache lookup and closes the defect where a
+          // graph view refused to draw the very loop it was watching.
+          roles: resolvedRolesWith(referencedRoles(graphText), resolveRole),
         };
         runAudience.start(announcement);
         const delivery = await runLiveGraph(loaded.graph, {
@@ -2287,6 +2330,30 @@ function registerLoopGraphIpc(): void {
               runId: announcement.runId,
               graphVersionId: announcement.graphVersionId,
               entry,
+            });
+          },
+          /*
+           * What the provider reports **while** the step works.
+           *
+           * The chat window and the graph window, from one emission and one fold. A
+           * loop step used to be an opaque call because `waitForTurn` handled three
+           * event types and none of them arrived before the turn ended; these are the
+           * ones it now forwards, and they are the difference between a run a person
+           * can watch and 320 seconds of silence.
+           *
+           * Nothing is recorded here. The run record already keeps the reply and the
+           * whole prompt it answered, and a second written history of the same turn is
+           * exactly the drift DSP-26 #1 exists to prevent. This is a live view.
+           */
+          onStepActivity: (activity) => {
+            if (!event.sender.isDestroyed()) {
+              event.sender.send(CHAT_LOOP_ACTIVITY, activity);
+            }
+            runAudience.broadcast({
+              kind: 'activity',
+              runId: announcement.runId,
+              graphVersionId: announcement.graphVersionId,
+              activity,
             });
           },
           // The agent's own account of what it did to the user's project. It used to
@@ -2454,6 +2521,85 @@ function registerLoopGraphIpc(): void {
         receivedAtUtc: entry.receivedAtUtc,
         waiting: chatLoopInstructions.peekFor(request.runId).length,
       };
+    },
+  );
+
+  /**
+   * Show the chat loop before anything is sent, or take it off the screen again.
+   *
+   * **Nothing here starts work.** It reads the graph file, resolves its roles and
+   * announces the drawing with `phase: 'ready'`. No session, no provider call, no
+   * workspace, no record, no control claimed — and it refuses to displace a run that
+   * is walking rather than overwriting the announcement a graph view is drawing from.
+   *
+   * It also opens no window. A graph view that is open sees the loop appear; one that
+   * is not stays closed, because a tick-box is not a request for a second window and
+   * DSP-28 #1 has one editor.
+   *
+   * A graph that cannot be read or does not validate answers `not-shown` with the
+   * reason. That is deliberately not a refusal to work: `startChatLoopRun` checks the
+   * same file for itself and gives its own account, so a preview that cannot be drawn
+   * never becomes a reason a mandate cannot be sent.
+   */
+  ipcMain.handle(
+    PREPARE_CHAT_LOOP,
+    (_event, chosen: boolean): ChatLoopPrepareOutcome => {
+      if (!chosen) {
+        runAudience.standDown();
+        return { kind: 'stood-down' };
+      }
+      if (ownRoot === null) {
+        return {
+          kind: 'not-shown',
+          note:
+            'DSpatch could not find its own working copy from where it is running, so it ' +
+            `cannot read ${CHAT_LOOP_GRAPH_REL} to show you the loop.`,
+        };
+      }
+      const graphPath = path.join(ownRoot, CHAT_LOOP_GRAPH_REL);
+      let graphText: string;
+      try {
+        graphText = fs.readFileSync(graphPath, 'utf8');
+      } catch (error) {
+        return {
+          kind: 'not-shown',
+          note: `${graphPath} could not be read: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        };
+      }
+      const resolveRole = createFileRoleResolver(ownRoot);
+      const loaded = loadLoopGraph(graphText, { resolveRole, connectedTargets: ['cursor'] });
+      if (!loaded.ok) {
+        return {
+          kind: 'not-shown',
+          note: `The chat loop graph does not validate, so there is nothing to show:\n\n${formatFindings(loaded.findings)}`,
+        };
+      }
+      const run: LiveRunAnnouncement = {
+        // Its own id, and never one a run will reuse. The address has to be unique or
+        // a later run's entries could land on the stand-by view; `ready-` is not a
+        // prefix any run id takes.
+        runId: `ready-${graphVersionIdFor(graphText).slice(0, 12)}`,
+        graphVersionId: graphVersionIdFor(graphText),
+        graphId: loaded.graph.id,
+        graphName: loaded.graph.name,
+        binding: 'chat-loop',
+        graphText,
+        startedAtUtc: new Date().toISOString(),
+        phase: 'ready',
+        roles: resolvedRolesWith(referencedRoles(graphText), resolveRole),
+      };
+      if (!runAudience.prepare(run)) {
+        return {
+          kind: 'not-shown',
+          note:
+            'A loop run is already on screen, so the graph view keeps showing the run ' +
+            'that is walking rather than the loop you have just chosen. Nothing was ' +
+            'started or stopped.',
+        };
+      }
+      return { kind: 'shown', run };
     },
   );
 

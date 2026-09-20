@@ -95,6 +95,51 @@ export class LoopRunAudience {
   }
 
   /**
+   * Show a loop that has been chosen but not started, or take that offer away again.
+   *
+   * `Use loop` picks a graph; it does not begin anything. The graph view had no way to
+   * say so, so the loop was invisible until the first send and then appeared as a
+   * refusal panel. This announces the drawing with `phase: 'ready'`, which is a
+   * different claim from a run: {@link nodeRunStates} marks the entry step *ready* and
+   * there are no journal entries to say anything else.
+   *
+   * **It cannot displace a run.** A stand-by offer arriving while something is walking
+   * is dropped and answers `false`, rather than replacing the announcement a window is
+   * using to draw live work. That is not defensive coding: the chat can tick `Use loop`
+   * while an editor run is in flight, and one of the two has to lose.
+   */
+  prepare(run: LiveRunAnnouncement): boolean {
+    const current = this.active;
+    if (current !== null && current.phase !== 'ready') {
+      return false;
+    }
+    this.active = run;
+    this.broadcast({ kind: 'started', run });
+    return true;
+  }
+
+  /**
+   * Withdraw a stand-by offer, leaving any real run alone.
+   *
+   * Its own event rather than an `ended`, because a loop that was never started did
+   * not end: a view told it had ended would report a run that never happened, which is
+   * the kind of small untruth this product cannot afford. `stood-down` empties the
+   * view and says nothing about a run.
+   */
+  standDown(): void {
+    const current = this.active;
+    if (current === null || current.phase !== 'ready') {
+      return;
+    }
+    this.active = null;
+    this.broadcast({
+      kind: 'stood-down',
+      runId: current.runId,
+      graphVersionId: current.graphVersionId,
+    });
+  }
+
+  /**
    * The run has ended. The announcement is cleared **only** if it is still this run.
    *
    * Guarded rather than unconditional: a slow `finally` from a cancelled run must not
