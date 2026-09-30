@@ -42,6 +42,10 @@ A task may pass through several steps and attempts. A step may require multiple 
 
 The workflow defines steps, how results are assessed and when the next step may start. Maestro's code registers work, drives state transitions and enforces the mandate. An Executive or Planner agent may propose priorities and delegation, but proposals are validated before becoming scheduled work.
 
+**Maestro owns the flow; the agent owns the method.** Which step runs, what context it is given, where its result goes, and how the run waits, continues or stops are Maestro's. How an assignment is carried out — which commands a project needs, how it is built, what checks a verification requires — belongs to the agent, and an agent called as a loop step has the same working capability as one addressed directly. [INTERACTION_MODEL.md](INTERACTION_MODEL.md) is the governing description of that split and of what a user's message means; it takes precedence over this document where the two differ on who decides what.
+
+[AGENT_BEHAVIOUR_AND_ORCHESTRATION.md](AGENT_BEHAVIOUR_AND_ORCHESTRATION.md) carries that split down to the level a step is actually built at: which part of an agent's way of working comes from its role and skills, which from the graph's steps and declared outcomes, and which from the call contract Maestro adds. Its requirement on this document's subject is that the contract be inspectable rather than implicit — a call must not oblige a step to read the project, produce code or write a report file unless its own instructions say so, and it must not promise a report path or attachment it does not carry. Read it before changing what a call contains. Its later sections propose how the editor might present and edit these instructions, and how a run might hand a task to interactive work; those are recommended designs and neither is built.
+
 ```mermaid
 flowchart TD
     U["User goals and mandate"] --> M["Maestro orchestrator"]

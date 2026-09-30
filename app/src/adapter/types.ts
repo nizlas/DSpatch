@@ -99,6 +99,21 @@ export interface SessionConfig {
   readonly modelRequested: string;
   /** The working copy used by the agent. Session input, not an observation. */
   readonly workspacePath: string;
+  /**
+   * Every folder this session works with, the working directory first.
+   *
+   * DSP-72. `workspacePath` stays what it was — the primary, the shell's `cwd`, and
+   * what a provider scopes its own per-workspace state by — so a caller that sets
+   * neither this nor more than one entry gets exactly the session it got before.
+   * Omitted or a single entry means one working root.
+   *
+   * **Roots, not permissions.** An adapter may pass these to its provider so each
+   * folder's project configuration is loaded, and Cursor's does. Nothing on this
+   * interface grants or withholds filesystem access, and no adapter may report that it
+   * does: `CapabilityReport` has no containment capability because none of the
+   * connected transports offers one.
+   */
+  readonly workspacePaths?: readonly string[];
 }
 
 /** What the adapter returns when a session is started or resumed. */

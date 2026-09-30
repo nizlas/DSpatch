@@ -17,24 +17,18 @@
   overflow: hidden;
 }
 
+/*
+ * The one row that still comes and goes, and it is asked for.
+ *
+ * `has-watch` went with the run banner (DSP-86). A run starting used to add a child
+ * between the palette and the canvas, which meant a row list of its own and a graph with
+ * less height than it had a moment earlier — the layout moving under a person at exactly
+ * the moment they wanted it still. Nothing is inserted by a run now, so there are two
+ * lists rather than four, and the second one appears only when the journal is opened from
+ * the menu.
+ */
 .editor.has-journal {
   grid-template-rows: auto auto 1fr minmax(160px, 28vh) auto;
-}
-
-/*
- * One row per child, for every combination of the banner and the journal.
- *
- * The run banner sits between the palette and the canvas, so while a run is on screen
- * there is one more child than the base list has rows — and the banner took the `1fr`
- * that belongs to the canvas. The result was a tall empty band over a graph two nodes
- * high, which was easy to read as the graph having failed to draw.
- */
-.editor.has-watch {
-  grid-template-rows: auto auto auto 1fr auto;
-}
-
-.editor.has-watch.has-journal {
-  grid-template-rows: auto auto auto 1fr minmax(160px, 28vh) auto;
 }
 
 .editor-bar {
@@ -128,6 +122,34 @@
   width: auto;
 }
 
+/*
+  Where a loop is chosen (DSP-85).
+
+  Built on `.editor-target`'s shape because it is the same kind of thing — a labelled
+  control in the header — and given the header's own text colour rather than the muted
+  one. This is the window's statement of which loop will run, and a caption a shade
+  quieter than the buttons beside it would be the wrong emphasis for the one control on
+  which every run depends.
+
+  The value can be a long file path in a narrow window, so the control is allowed to grow
+  and then stops: a dropdown wide enough for `C:\…\dspatch-development-loop.loop.json`
+  pushes Save and Run off the bar, and the name is what a person reads.
+*/
+.editor-loop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #cfd6de;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.editor-loop select {
+  width: auto;
+  max-width: 34ch;
+  border-color: #3b4a5c;
+}
+
 .editor-toggle {
   display: flex;
   align-items: center;
@@ -191,14 +213,74 @@
   color: #93a0b0;
 }
 
+/*
+  DSP-84's `.chip-next-loop` is gone with DSP-85's chip: the dropdown in the header is the
+  selection now, so a chip beside the findings naming it was the window saying one thing
+  twice. The unsaved-changes chip and the refused-choice chip both reuse `.chip-live-off`,
+  because "what you see is not what would run" and "that one was not chosen" are cautions
+  of exactly the kind that class already carries.
+*/
+
+/*
+ * The one row whose height is fixed rather than found (DSP-86).
+ *
+ * Everything else here sizes itself to its contents, which is ordinarily right and is
+ * exactly wrong for this row: it is where a walking run puts its phase, its mode
+ * chooser, Pause, Continue and its standing chip, and a row that grew to hold them
+ * would take that height off the drawing at the moment a person most wants the drawing
+ * left alone. The trial measured 110 pixels of canvas lost that way. `height` with
+ * `overflow` is therefore deliberate: a run may not move this row, and if a window is
+ * too narrow for everything in it the row scrolls rather than the graph shrinking.
+ * `scrollbar-gutter` keeps the scrollbar's own space reserved, so its appearing is not
+ * a third way for the height to change.
+ */
 .editor-palette {
   display: flex;
   gap: 6px;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  box-sizing: border-box;
+  height: 48px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
   padding: 8px 16px;
   border-bottom: 1px solid #232a33;
   background: #12171d;
+}
+
+/* The run's controls, pushed to the end of the row the palette is in. */
+.editor-palette-run {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+  padding-left: 12px;
+  flex: 0 0 auto;
+}
+
+/*
+ * One line, and no box around it. In the chat the control is a panel of its own; here
+ * it is a few items at the end of an existing row, and the border and padding that make
+ * it a panel there make it a panel sitting inside a strip here.
+ */
+.loop-control--compact {
+  flex-direction: row;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  gap: 8px;
+}
+
+.loop-control--compact .loop-control__row {
+  flex-wrap: nowrap;
+}
+
+/* The one thing the compact form keeps from the phase colours: which phase it is. */
+.loop-control--compact.loop-control--pause-requested .loop-control__phase,
+.loop-control--compact.loop-control--waiting-for-you .loop-control__phase {
+  color: var(--unknown);
 }
 
 .editor-palette-title {
@@ -414,31 +496,235 @@
 .node-run-not-reached .node-run-mark { fill: transparent; }
 
 /*
- * The discreet slow pulse the card allows, on the active node only. Two seconds, opacity
- * only, and it never changes the border weight or the word — so a reader who cannot see
- * it, has switched it off, or is looking at a screenshot loses nothing.
+ * The pulse, the halo and the glint (DSP-80).
+ *
+ * Three layers and one rule between them: **the pulse says a node is live, the glint says
+ * it is working, and neither of them is the only thing that says either.** Ready has the
+ * pulse alone; a working node has the glint over the top of it; a node held at a pause has
+ * both stilled and keeps every marking that is not motion — its border weight, its colour
+ * and its word.
+ *
+ * The pulse was strengthened by moving its amplitude rather than increasing it. The old
+ * one took the body's opacity down to 0.55 and back: on a 168×54 box in the corner of a
+ * person's eye that is close to invisible, and the two obvious ways to make it carry —
+ * more opacity swing, or a heavier border — are the two ways to make it flicker or to
+ * look like a different state. So the body now moves much less, and a wide soft ring in
+ * the state's own colour breathes behind it. Perceptually that is a far clearer *this is
+ * alive*, and it happens outside the border where nothing is being read.
+ *
+ * Niclas then tried it and found it barely noticeable, so the ring's range went from
+ * 0.08–0.40 to 0.04–0.78: two and a third times the swing it had, and a trough nearer to
+ * gone. The rhythm is deliberately untouched — the same 2 s, the same 3.2 s on a ready
+ * node, the same `ease-in-out`, the same three keyframes — because it was the rhythm he
+ * approved. The body's 1 → 0.82 is untouched for the same reason it was chosen: the label
+ * and the word sit in front of the body, so the body is the one layer whose swing could
+ * cost the text its contrast, and the ring is outside the border where no text is.
+ *
+ * The palette is still the one already in this file. The glint's near-white is a highlight
+ * on the existing green rather than a new colour in the drawing.
  */
 @keyframes dspatch-node-pulse {
   0% { opacity: 1; }
-  50% { opacity: 0.55; }
+  50% { opacity: 0.82; }
   100% { opacity: 1; }
 }
+
+/*
+ * The ring, in opacity only — never in width.
+ *
+ * A ring that widened and narrowed would be the clearest pulse of all and would also be
+ * the node appearing to change size, which is the one thing the card forbids. Width is a
+ * constant here and it is the only reason this is safe.
+ */
+@keyframes dspatch-node-halo {
+  0% { opacity: 0.04; }
+  50% { opacity: 0.78; }
+  100% { opacity: 0.04; }
+}
+
+/*
+ * The glint travelling the outline.
+ *
+ * One property animated, and it is the one that costs nothing: `stroke-dashoffset` from 0
+ * to the whole outline, so a lap ends exactly where it began and the loop is seamless.
+ * Because every one of these numbers is scaled to `pathLength="100"` on the path, they are
+ * shares of the perimeter rather than pixels — which is what lets this one rule run
+ * correctly on a 6-pixel-cornered box, a pill and a diamond, and on all of them round the
+ * corners, since a dash following a path follows it round an arc.
+ */
+@keyframes dspatch-node-glint {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -100; }
+}
+
+/* The halo exists on every node and is invisible unless a rule below lights it. */
+.node-halo {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 7;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.node-run-active .node-halo { stroke: #7fc4a0; }
+.node-run-ready .node-halo { stroke: #7fa8c4; }
+.node-run-waiting .node-halo { stroke: #d9b25f; }
+.node-run-failed .node-halo { stroke: #d96a6a; }
+.node-run-stopped .node-halo { stroke: #d98b6a; }
 
 .node-run-active .node-body,
 .node-run-ready .node-body {
   animation: dspatch-node-pulse 2s ease-in-out infinite;
 }
 
+.node-run-active .node-halo,
+.node-run-ready .node-halo {
+  animation: dspatch-node-halo 2s ease-in-out infinite;
+}
+
 /* Discreet, and slower on a ready node: it is standing by rather than working. */
-.node-run-ready .node-body {
+.node-run-ready .node-body,
+.node-run-ready .node-halo {
   animation-duration: 3.2s;
 }
 
+/*
+ * Held: active, and not working. A pause, or a release the person has not given yet.
+ *
+ * The motion stops and the ring stays, at a steady middle opacity. That is deliberate and
+ * it is the shape of the requirement: *the state must still be evident*. A node that lost
+ * its ring at a pause would be indistinguishable from one nobody has reached, and a node
+ * that kept breathing would be the graph contradicting the control an inch away from it.
+ */
+.node-run-active:not(.node-working) .node-body {
+  animation: none;
+}
+
+.node-run-active:not(.node-working) .node-halo,
+.node-run-waiting .node-halo {
+  animation: none;
+  opacity: 0.24;
+}
+
+/*
+ * The glint: one gradient, cut into pieces of one path, travelling as a single object.
+ *
+ * It began as four dashes staggered by `animation-delay`, and Niclas read them for what
+ * they were. The redistribution is in `glintSegments()` in `shared/loop-edge-geometry.ts`,
+ * which is also where the argument for cutting a ramp into pieces at all is written down;
+ * the pieces arrive here as presentation attributes, and there is deliberately no length,
+ * colour, width or opacity in this file to disagree with them.
+ *
+ * What is here is the movement, and it is the part that did not change: the same
+ * 2.6-second linear lap of the same `stroke-dashoffset`, with **no delay on any piece**.
+ * That is the mechanism as well as the promise — the pieces are held apart by the dash
+ * pattern rather than by their phase, so there is no timing relationship left that could
+ * let one of them lead or lag, and the whole gradient is carried round by one number.
+ *
+ * `stroke-linecap: butt`, which the four dashes could not use. A round cap adds half a
+ * stroke width at each end: harmless on dashes with gaps between them, and on pieces that
+ * touch it would overlap every neighbour and leave a bright bead at each seam.
+ */
+.node-glint {
+  fill: none;
+  stroke-linecap: butt;
+  pointer-events: none;
+}
+
+.node-working .node-glint {
+  animation: dspatch-node-glint 2.6s linear infinite;
+}
+
+/*
+ * Reduced motion: a still marking, not nothing.
+ *
+ * Every animation stops, and the working node's glint becomes a continuous bright ring on
+ * its outline instead of a dash running round it. So the distinction the motion carried
+ * survives without any motion: the working node has the ring, a ready one has the halo
+ * alone, and both still have their word.
+ */
 @media (prefers-reduced-motion: reduce) {
+  /*
+   * The selectors are repeated rather than shortened, and that is the whole of this rule.
+   *
+   * A media query adds no specificity. `.node-body { animation: none }` in here loses to
+   * `.node-run-active .node-body` outside it, so the short version switched nothing off —
+   * which is exactly what the window trial measured: with the preference set, the glint
+   * dimmed to its still ring (those rules do match) while six animations went on running
+   * underneath. Every selector below therefore matches the one it is overriding.
+   */
   .node-run-active .node-body,
-  .node-run-ready .node-body {
+  .node-run-ready .node-body,
+  .node-run-active .node-halo,
+  .node-run-ready .node-halo,
+  .node-working .node-glint {
     animation: none;
   }
+
+  .node-run-active .node-halo,
+  .node-run-ready .node-halo {
+    opacity: 0.24;
+  }
+
+  /*
+   * The gradient's pieces are hidden and the first one becomes the whole ring.
+   *
+   * These rules also have to beat the dash pattern, width, colour and opacity the pieces
+   * carry as attributes, and they do without `!important`: a presentation attribute enters
+   * the cascade with no specificity at all, so any selector here outranks it. That is why
+   * the numbers are attributes and not inline styles — an inline style would have won, and
+   * reduced motion would have been left showing a frozen comet.
+   */
+  .node-working .node-glint {
+    opacity: 0;
+  }
+
+  .node-working .node-glint-0 {
+    stroke: #cfeede;
+    stroke-dasharray: none;
+    stroke-width: 1.6;
+    opacity: 0.85;
+  }
+}
+
+/*
+ * Where the run ended (DSP-36).
+ *
+ * A tick for the terminal this loop declares as the assignment being met, and a ring for
+ * every other ending. The tick is green and small: *clear but discreet* is the card's
+ * wording, and a mark that shouted would compete with the Ready pulse it is meant to be
+ * readable beside. The ring is the quiet grey the finished state already uses, because the
+ * run ending somewhere other than success is not a fault to flag — a cross would say
+ * something the run did not.
+ *
+ * The ending's node also keeps a still halo, so that after a run the drawing answers two
+ * questions at a glance: where the last run got to, and that the loop is ready again.
+ */
+.node-ending-tick {
+  fill: none;
+  stroke: #7fc4a0;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.node-ending-ring {
+  fill: none;
+  stroke: #8fa6bd;
+  stroke-width: 1.8;
+  pointer-events: none;
+}
+
+.node-ended-here .node-halo {
+  stroke: #8fa6bd;
+  animation: none;
+  opacity: 0.18;
+}
+
+.node-ended-met .node-halo {
+  stroke: #7fc4a0;
+  opacity: 0.26;
 }
 
 /* A locked canvas: it is a view of a run, so it does not offer the editor's cursors. */
@@ -447,74 +733,36 @@
 }
 
 /* The banner that says which run is on screen. */
-.editor-watch {
-  padding: 8px 14px;
-  border-bottom: 1px solid #2a323d;
-  background: #161b22;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  align-items: center;
-}
-
-.editor-watch-line {
-  margin: 0;
-  font-size: 12px;
-  color: #c3d0de;
-  flex: 1 1 460px;
-}
-
-.editor-watch-note {
-  margin: 0;
-  font-size: 12px;
-  color: #d9b25f;
-}
-
 /*
- * What the running step is doing, in one line.
+ * What the running step is doing, as a chip in the control strip.
  *
  * Three states and three tones, because "we can see activity", "we have heard nothing
- * for a while" and "we are no longer listening" are three different claims and the
- * line exists to keep them apart. Only `confirmed` gets the colour that reads as work.
+ * for a while" and "we are no longer listening" are three different claims and the chip
+ * exists to keep them apart. Only `confirmed` gets the colour that reads as work.
+ *
+ * The rest of `.editor-watch*` went with the run banner (DSP-86). These three names are
+ * kept because it is the same distinction on the same fold; what changed is that it is
+ * one chip among the others rather than a line in a panel of its own.
  */
-.editor-watch-standing {
+.editor-watch-standing-confirmed { border-color: #7fc4a0; color: #7fc4a0; }
+.editor-watch-standing-waiting { border-color: #9fb2c8; color: #9fb2c8; }
+.editor-watch-standing-unknown { border-color: #d98b6a; color: #d98b6a; }
+
+/*
+ * The inspector's lock, which must be invisible (DSP-86 #10).
+ *
+ * A `fieldset` is the one element that disables every control inside it by itself, and
+ * that is the whole reason it is here — but it arrives with a border, a margin and a
+ * padding nobody asked for. Stripped to nothing, so the panel a person reads during a run
+ * is the panel they were reading a moment before, with its fields greyed and its text,
+ * its findings and its Advanced section exactly as they were.
+ */
+.inspector-lock {
+  border: 0;
   margin: 0;
-  font-size: 12px;
-  flex: 1 1 320px;
+  padding: 0;
+  min-width: 0;
 }
-
-.editor-watch-standing-confirmed { color: #7fc4a0; }
-.editor-watch-standing-waiting { color: #9fb2c8; }
-.editor-watch-standing-unknown { color: #d98b6a; }
-
-.editor-watch-detail {
-  font-size: 12px;
-  color: #9fb2c8;
-}
-
-.editor-watch-detail > summary {
-  cursor: pointer;
-}
-
-.editor-watch-states {
-  margin: 0;
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.editor-watch-ended .editor-watch-line { color: #9fb2c8; }
-
-.run-row {
-  border-left: 3px solid #3a4553;
-}
-
-.run-row.node-run-active { border-left-color: #7fc4a0; }
-.run-row.node-run-ready { border-left-color: #7fa8c4; }
-.run-row.node-run-waiting { border-left-color: #d9b25f; }
-.run-row.node-run-finished { border-left-color: #6f8aa5; }
-.run-row.node-run-failed { border-left-color: #d96a6a; }
-.run-row.node-run-stopped { border-left-color: #d98b6a; }
 
 /* Edges */
 .edge path {
@@ -609,7 +857,7 @@
 }
 
 .inspector h3 {
-  margin: 16px 0 6px;
+  margin: 10px 0 5px;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -618,7 +866,7 @@
 
 .inspector label {
   display: block;
-  margin: 8px 0;
+  margin: 6px 0;
   color: #93a0b0;
   font-size: 11.5px;
 }
@@ -652,15 +900,265 @@
   font-size: 11.5px;
 }
 
-.unhonoured {
+/*
+  What acts on a setting, in three tones (DSP-83 #7). One device, because a second
+  badge saying almost the same thing is how a panel stops being read at all.
+    inert   — recorded, nothing acts on it
+    limited — honoured, with a boundary worth knowing
+    stated  — in force as an instruction, not as anything the platform applies
+*/
+.support {
   display: inline-block;
   margin-left: 6px;
   padding: 1px 6px;
   border-radius: 8px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.support-inert {
   background: #2a2418;
   border: 1px solid #6a5a2f;
   color: #dcc98f;
+}
+
+.support-limited {
+  background: #1b2430;
+  border: 1px solid #3b5872;
+  color: #a8c5e0;
+}
+
+.support-stated {
+  background: #2a1f26;
+  border: 1px solid #6d4a5c;
+  color: #e0b3c6;
+}
+
+/* The node's own heading line: kind, id and whether its role resolved. */
+.inspector .kind-line {
+  margin: 0 0 10px;
+  color: #7c8899;
+  font-size: 11.5px;
+}
+
+.inspector .entry-tag {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #1d2a20;
+  border: 1px solid #3f6a49;
+  color: #a7d2b4;
   font-size: 10px;
+  font-weight: normal;
+  text-transform: none;
+}
+
+.inspector .inherited {
+  margin-left: 6px;
+  color: #93c9a5;
+  font-size: 10px;
+}
+
+/* A setting that explains itself: name and unit, the control, then what it does. */
+.inspector label.setting {
+  display: grid;
+  grid-template-columns: 1fr 88px;
+  gap: 2px 8px;
+  align-items: baseline;
+  margin: 10px 0;
+}
+
+.inspector label.setting.check {
+  grid-template-columns: auto 1fr;
+}
+
+.inspector label.setting .setting-name {
+  color: #c3cedb;
+}
+
+.inspector label.setting .setting-detail {
+  grid-column: 1 / -1;
+  color: #7c8899;
+  font-size: 11px;
+}
+
+.inspector label.setting.check input {
+  grid-row: 1;
+}
+
+.inspector .routes {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: #93a0b0;
+  font-size: 11.5px;
+}
+
+.inspector .routes em {
+  color: #dcc98f;
+}
+
+.inspector .no-effect {
+  margin: 6px 0;
+  padding: 6px 8px 6px 22px;
+  border-left: 3px solid #d9b25f;
+  background: #1b1811;
+  color: #dcc98f;
+  font-size: 11.5px;
+}
+
+/*
+  The role, as the agent gets it. Boxed and scrollable rather than truncated: a role
+  is two to five thousand characters and the point of showing it is that a person can
+  read the whole thing, but it must not push the settings below off the panel.
+*/
+.inspector .role-block h3,
+.inspector .brief-block h3 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inspector .role-block h3 em {
+  font-style: normal;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #6f7c8b;
+}
+
+/*
+  Tall enough to read a dozen lines without scrolling the panel, short enough that the
+  Brief and Advanced below it are still reachable. `vh` rather than a fixed height so a
+  taller window shows more of the role rather than more empty space beneath it.
+*/
+.inspector .role-text {
+  max-height: 46vh;
+  min-height: 30vh;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid #2b3440;
+  border-left: 3px solid #4f7ea8;
+  border-radius: 4px;
+  background: #0e1318;
+  color: #d5dde6;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.inspector .role-text h1,
+.inspector .role-text h2,
+.inspector .role-text h3 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #e6e9ee;
+}
+
+.inspector .role-text p,
+.inspector .role-text li {
+  margin: 4px 0;
+}
+
+.inspector .role-text pre {
+  overflow-x: auto;
+  background: #141a21;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.inspector button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #8fb6d9;
+  font-size: 10.5px;
+  text-transform: none;
+  letter-spacing: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* What is inside the message, against what the message only points at. */
+.inspector .brief {
+  margin: 6px 0 0;
+}
+
+.inspector .brief > div {
+  border-left: 3px solid #4f7ea8;
+  background: #141a21;
+  padding: 5px 8px;
+  margin-bottom: 5px;
+}
+
+.inspector .brief > div.brief-named {
+  border-left-style: dashed;
+  border-left-color: #7c8899;
+}
+
+.inspector .brief dt {
+  color: #c3cedb;
+  font-size: 11.5px;
+}
+
+.inspector .brief dd {
+  margin: 2px 0 0;
+  color: #7c8899;
+  font-size: 11px;
+}
+
+.inspector .brief-tag {
+  margin-left: 6px;
+  color: #6f7c8b;
+  font-size: 10px;
+}
+
+/*
+  An instruction DSpatch adds, in the characters the agent receives (DSP-94).
+
+  Brighter than the description above it, because the description is about the text
+  and this *is* the text. Wrapped rather than scrolled sideways: it is prose meant to
+  be read here, and `pre-wrap` keeps the line breaks the message has while letting a
+  narrow panel fold the long lines.
+*/
+.inspector .brief-text {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #0e1318;
+  color: #cfd8e3;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/*
+  Advanced, closed to begin with. `<details>` so the browser owns the state and a
+  window trial can read `open` off the element rather than guess from the pixels.
+*/
+.inspector .advanced {
+  margin: 16px 0 10px;
+  border: 1px solid #232a33;
+  border-radius: 5px;
+  background: #10151a;
+}
+
+.inspector .advanced > summary {
+  padding: 7px 10px;
+  color: #b6c3d2;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.inspector .advanced > summary:hover {
+  color: #e6e9ee;
+}
+
+.inspector .advanced-body {
+  padding: 0 10px 10px;
+  border-top: 1px solid #232a33;
 }
 
 .broken {

@@ -64,9 +64,25 @@ export function useLoopControl(): LoopControlReport {
 export function LoopControlBar({
   report,
   loopIntended,
+  compact = false,
 }: {
   readonly report: LoopControlReport;
   readonly loopIntended: boolean;
+  /**
+   * One line, for a strip whose height must not change (DSP-86).
+   *
+   * The graph view puts this in a row that already exists and is exactly as tall
+   * whether a run is walking or not — because a run that made the strip taller would
+   * take height off the drawing at the moment a person most wants it left alone, and
+   * the trial measured that at 110 pixels before this existed. So the two paragraphs
+   * fold away: the detail becomes the headline's hover, and the note becomes the
+   * mode chooser's, which loses the prose to a hover rather than losing it.
+   *
+   * It is a shape, not a second vocabulary. Every word is still `describeControl`'s
+   * and every enabled button is still `controlActionsFor`'s, which is what keeps the
+   * chat and the graph view from wording one run two ways.
+   */
+  readonly compact?: boolean;
 }): JSX.Element | null {
   const [note, setNote] = useState<string | null>(null);
   const runActive = report.runId !== null;
@@ -88,14 +104,21 @@ export function LoopControlBar({
   }
 
   return (
-    <div className={`loop-control loop-control--${described.phase}`} data-ev="loop-control">
+    <div
+      className={`loop-control loop-control--${described.phase}${compact ? ' loop-control--compact' : ''}`}
+      data-ev="loop-control"
+    >
       <div className="loop-control__row">
         {/* With no run, the headline is the mode — which the chooser beside it
             already says. It is worth a word of its own only when it is saying
             something the chooser cannot: running, pause requested, paused,
             waiting for you. */}
         {runActive && (
-          <span className="loop-control__phase" data-ev="loop-control-phase">
+          <span
+            className="loop-control__phase"
+            data-ev="loop-control-phase"
+            title={compact ? described.detail : undefined}
+          >
             {described.headline}
           </span>
         )}
@@ -109,7 +132,9 @@ export function LoopControlBar({
             'someone DSpatch does not run. The loop is not held between steps: routing ' +
             'from one to the next never waits, and a human step waits for an answer ' +
             'either way. Letting one step through is spent on that step, so the next ' +
-            'one asks again.'
+            'one asks again.' +
+            // The last thing pressing one of these said, which compact has no line for.
+            (compact && note !== null ? `\n\n${note}` : '')
           }
         >
           <span className="loop-control__mode-label">Agent and command steps</span>
@@ -154,12 +179,12 @@ export function LoopControlBar({
           </button>
         ))}
       </div>
-      {runActive && (
+      {runActive && !compact && (
         <p className="loop-control__detail" data-ev="loop-control-detail">
           {described.detail}
         </p>
       )}
-      {note === null ? null : (
+      {note === null || compact ? null : (
         <p className="loop-control__note" data-ev="loop-control-note">
           {note}
         </p>

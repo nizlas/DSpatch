@@ -1,0 +1,266 @@
+{
+  "format": "dspatch-loop-graph",
+  "formatVersion": 1,
+  "id": "dspatch-development-loop",
+  "name": "DSpatch development loop",
+  "purpose": "Building DSpatch itself. One bounded backlog task per run, from an agreed task through implementation, independent verification and independent review, to a result Niclas assesses.",
+  "target": "cursor",
+  "entry": "niclas-mandate",
+  "onRuntimeFault": "stop-and-reconcile",
+  "notes": "This is the loop that is actually running, not an illustration: the six roles are the real files in .cursor/, the limits are the ones docs/DEVELOPMENT_LOOP.md sets, and the failure routing is what happens when something goes wrong. It runs in Cursor, through subagents, driven by a person — DSpatch does not run it, and this drawing is not a claim that it could. Two things it does not draw. The candidate snapshot the coordinator takes after implementation is a tool the coordinator runs, not a step of its own. And this loop has no external node — no participant outside our control — so that node kind is exercised by docs/assets/agentloop_generisk.png and its Externa agenter, not by this file.\n\nWHAT DSPATCH WOULD AND WOULD NOT DO WITH THIS DRAWING (DSP-79). Since `produces` and `consumes` were added, six nodes declare what they must leave and three declare what they receive, and a DSpatch run would honour those: it would give each agent node its own session and its own brief, file a read-only role's report for it, check that a required report arrived, and hand the implementer's report and the verifier's evidence to the review. Running this drawing against DSpatch's own working copy is still refused, and is meant to be. Since 20 September 2026 that refusal is the only one left: the drawing used to be refused by its id wherever it ran, and what refuses it now is the working-root guard, asked of every loop about the folders the run was given. So this file may be chosen — and what stops it from being *walked* is now only what the list below says.\n\nWHAT IS STILL ONLY DRAWN, and this list is the honest part. (1) The candidate: `consumes` hands over a report, not the tree the report was about, so \"the same candidate\" is a convention the coordinator keeps with sha-256 snapshots outside DSpatch, not something the runner binds. (2) A live run of THIS file stops at its first node. `niclas-mandate` is a human node and a human node stops the run and waits; `route-next-step` is a router and the runner takes a router's first declared outcome, which is \"plan\" every time rather than a classification of what the step needs. Both are true to the Cursor loop and neither is runnable, which is why the standalone definition (DSP-78) points at dspatch-development-loop-runnable rather than at this file, and says what it left out. The two review nodes are no longer part of this: they were gates, a gate starts a command rather than an agent, and they are agents now. (3) `limits` — twelve calls, two rework rounds, ninety minutes — is declared and not enforced. (4) `requirements: no-subagent-delegation` is honoured by the role text, not by the platform. (5) The three human nodes cannot be answered in the chat; a run reaching one stops and waits. (6) Nothing survives a restart: there is no durable reconciliation of an interrupted call. (7) The coordinator's own work — owning the backlog, writing the briefs, reconciling an unclear outcome — is a role, and this drawing does not make it a mechanism.",
+  "limits": {
+    "maxTasks": 1,
+    "maxCalls": 12,
+    "maxReworkRounds": 2,
+    "note": "The defaults in docs/DEVELOPMENT_LOOP.md. Counters survive a resume, and a failed call counts. At a limit the run delivers its result and a proposed next step rather than starting a fresh run that resets the count."
+  },
+  "archive": {
+    "path": ".dspatch-loop/runs/<run-id>/reports/",
+    "entryPerNode": true,
+    "referenceReturned": true,
+    "notes": "The figure draws the iteration archive as an aside; this loop learned it is not one. On 14 September 2026 an Implementer finished with a complete report that was never delivered to the coordinator, and the work survived only because it had been written to disk. Which node writes an entry is not always the node that produced it - see report.writtenBy on the read-only roles."
+  },
+  "failureKinds": [
+    {
+      "id": "spec-error",
+      "label": "specification error: plan again",
+      "meaning": "The task's criteria or the plan rest on a premise that turned out to be wrong. Work cannot be corrected in place; planning has to change first. The reference figure's specfel: planera om."
+    },
+    {
+      "id": "research-needed",
+      "label": "research needed",
+      "meaning": "A real uncertainty blocks the next step, and code or documentation to hand does not settle it. Bounded investigation comes before more implementation, rather than another attempt at the same change."
+    },
+    {
+      "id": "missing-authority",
+      "label": "outside the mandate",
+      "meaning": "What the next step requires is not covered by the mandate given for this run. Escalation, not a decision to make locally. The nearest analogue of the figure's kapacitetsfel: eskalera ett steg."
+    },
+    {
+      "id": "limit-reached",
+      "label": "run bounds spent",
+      "meaning": "The run's own bounds are used up: one task, twelve specialist calls or two rework rounds. The result and a concrete next step are delivered; a new run is not started to reset the counter."
+    },
+    {
+      "id": "blocked",
+      "label": "blocked",
+      "meaning": "A concrete obstacle prevents meaningful progress: missing access, blocking technology, or a decision the run cannot make. What was tried and exactly what is needed are reported."
+    }
+  ],
+  "nodes": [
+    {
+      "id": "niclas-mandate",
+      "kind": "human",
+      "label": "Niclas: approve and start",
+      "purpose": "The run exists because a person asked for it, with a task and a mandate. Silence is not approval.",
+      "outcomes": ["start", "not-now"],
+      "view": { "x": 480, "y": 40 }
+    },
+    {
+      "id": "coordinator",
+      "kind": "agent",
+      "label": "Coordinator",
+      "purpose": "Owns the mandate, the backlog, the plan overview and the run journal, and makes every specialist call itself.",
+      "role": {
+        "id": "dspatch-loop",
+        "source": { "kind": "cursor-skill-file", "path": ".cursor/skills/dspatch-loop/SKILL.md" }
+      },
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["missing-authority", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "notes": "A skill in the main chat rather than a subagent, which is why its role source is a skill file. It also takes the candidate snapshot after implementation; that is a tool it runs, not a node.",
+      "view": { "x": 480, "y": 160 }
+    },
+    {
+      "id": "route-next-step",
+      "kind": "router",
+      "label": "What does this step need?",
+      "purpose": "Sends the work down one branch, the way the figure's Slicetyp diamond does. Planning and research are used when needed, not as ceremonies before every small change.",
+      "outcomes": ["plan", "research", "implement", "wrap-up"],
+      "view": { "x": 480, "y": 280 }
+    },
+    {
+      "id": "backlog-planner",
+      "kind": "agent",
+      "label": "Backlog Planner",
+      "purpose": "Proposes the next increment and well-specified tasks. Proposes only: the coordinator owns the backlog.",
+      "role": {
+        "id": "dspatch-backlog-planner",
+        "source": { "kind": "cursor-agent-file", "path": ".cursor/agents/dspatch-backlog-planner.md" }
+      },
+      "model": { "policy": "inherit" },
+      "requirements": ["no-subagent-delegation"],
+      "declaredFailures": ["missing-authority"],
+      "report": { "writtenBy": "coordinator" },
+      "produces": { "required": true, "form": "markdown-file", "note": "The plan proposal itself: the increment, the tasks and their criteria. You return it; the runner files it, because your role cannot write." },
+      "notes": "Read-only, so it cannot file its own archive entry. That is not a detail: on 15 September 2026 a read-only role was asked to write both its deliverable and its report and could write neither. `report.writtenBy` says who files it and `produces` says it is required, so the runner now does what the coordinator used to do by hand.",
+      "view": { "x": 140, "y": 400 }
+    },
+    {
+      "id": "plan-review",
+      "kind": "agent",
+      "label": "Plan review",
+      "purpose": "Independent assessment of a substantial plan before anything is built from it. The figure's Plangrind.",
+      "role": {
+        "id": "dspatch-reviewer",
+        "source": { "kind": "cursor-agent-file", "path": ".cursor/agents/dspatch-reviewer.md" }
+      },
+      "model": { "policy": "inherit" },
+      "requirements": ["no-subagent-delegation"],
+      "outcomes": ["accept", "rework", "needs-decision"],
+      "report": { "writtenBy": "coordinator" },
+      "produces": { "required": true, "form": "markdown-file", "note": "ACCEPT, REWORK or NEEDS_DECISION with the reasons. Read-only, so the runner files it." },
+      "consumes": ["backlog-planner"],
+      "notes": "A verdict of rework is an outcome, not a failure: the reviewer did its job and the answer was no. Failures are for when the loop cannot proceed as drawn. It was drawn as a gate until 20 September 2026, because it is a decision point — and a gate in this runner starts a command rather than an agent, so it reached no reviewer, built no brief, used none of what it consumes, and left no result the required entry below could be checked against: a live run would have stopped here with required-result-missing. The node kind was the mistake and not the runner: our reviewer is an agent, and an agent node is given exactly what a review needs — its own session, its role text, the results it consumes, and a result the runner files because a read-only role cannot. A gate is for running the project's own command. See the graph notes.",
+      "view": { "x": 140, "y": 540 }
+    },
+    {
+      "id": "researcher",
+      "kind": "agent",
+      "label": "Researcher",
+      "purpose": "Answers one bounded uncertainty with evidence, distinguishing what was observed from what was only read.",
+      "role": {
+        "id": "dspatch-researcher",
+        "source": { "kind": "cursor-agent-file", "path": ".cursor/agents/dspatch-researcher.md" }
+      },
+      "model": { "policy": "inherit" },
+      "requirements": ["no-subagent-delegation"],
+      "declaredFailures": ["spec-error", "blocked"],
+      "report": { "writtenBy": "coordinator" },
+      "produces": { "required": true, "form": "markdown-file", "note": "The evidence and what it settles, distinguishing what was observed from what was only read. Read-only, so the runner files it." },
+      "view": { "x": 320, "y": 400 }
+    },
+    {
+      "id": "implementer",
+      "kind": "agent",
+      "label": "Implementer",
+      "purpose": "Makes the bounded change and runs its own checks. Its checks do not replace the independent ones that follow.",
+      "role": {
+        "id": "dspatch-implementer",
+        "source": { "kind": "cursor-agent-file", "path": ".cursor/agents/dspatch-implementer.md" }
+      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 90, "note": "A wall-clock bound is how the runner notices a step that stopped moving. It is not a route: nothing in this graph is taken when it expires - see onRuntimeFault." },
+      "requirements": ["no-subagent-delegation"],
+      "declaredFailures": ["spec-error", "research-needed", "blocked"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "markdown-file", "note": "What changed and why, the checks you ran with their commands and exit codes, and what is still wrong. Write it before you end: the run checks that it is there." },
+      "view": { "x": 620, "y": 400 }
+    },
+    {
+      "id": "verifier",
+      "kind": "agent",
+      "label": "Verifier",
+      "purpose": "Runs the real commands on the identified candidate and reports evidence and gaps, without fixing anything.",
+      "role": {
+        "id": "dspatch-verifier",
+        "source": { "kind": "cursor-agent-file", "path": ".cursor/agents/dspatch-verifier.md" }
+      },
+      "model": { "policy": "inherit" },
+      "requirements": ["no-subagent-delegation"],
+      "declaredFailures": ["blocked"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "markdown-file", "note": "PASS / FAIL / NOT_RUN / HUMAN_PENDING per criterion, with the commands you ran and their exit codes. Write it before you end." },
+      "consumes": ["implementer"],
+      "view": { "x": 620, "y": 540 }
+    },
+    {
+      "id": "implementation-review",
+      "kind": "agent",
+      "label": "Implementation review",
+      "purpose": "Reads the same candidate, the actual diff and the verifier's evidence, and returns accept, rework or needs-decision.",
+      "role": {
+        "id": "dspatch-reviewer",
+        "source": { "kind": "cursor-agent-file", "path": ".cursor/agents/dspatch-reviewer.md" }
+      },
+      "model": { "policy": "inherit" },
+      "requirements": ["no-subagent-delegation"],
+      "outcomes": ["accept", "rework", "needs-decision"],
+      "report": { "writtenBy": "coordinator" },
+      "produces": { "required": true, "form": "markdown-file", "note": "ACCEPT, REWORK or NEEDS_DECISION against the criteria, the actual code and the verifier's evidence. Read-only, so the runner files it." },
+      "consumes": ["implementer", "verifier"],
+      "notes": "The same role as plan-review, referenced a second time rather than copied. A role is an artefact of its own; two nodes using it is the normal case, not a special one. An agent node since 20 September 2026, for the reason written on plan-review. `consumes` is what makes \"reads the same candidate\" a fact rather than an instruction — it is handed the implementer's report and the verifier's evidence, each resolved to its most recent visit. Which *tree* those were about is not expressible here; see the graph notes on the candidate.",
+      "view": { "x": 620, "y": 680 }
+    },
+    {
+      "id": "niclas-decision",
+      "kind": "human",
+      "label": "Niclas decides",
+      "purpose": "A decision the run cannot make: product direction, a mandate it does not have, or a UX judgement no agent test can stand in for.",
+      "outcomes": ["answered", "deferred"],
+      "notes": "Deferring is not approval. A deferred question travels to the report and the run continues only with work already inside the mandate.",
+      "view": { "x": 900, "y": 400 }
+    },
+    {
+      "id": "coordinator-report",
+      "kind": "agent",
+      "label": "Coordinator: report",
+      "purpose": "Value, changes, evidence, open questions and the next action, as copyable text Niclas can respond to in one pass.",
+      "role": {
+        "id": "dspatch-loop",
+        "source": { "kind": "cursor-skill-file", "path": ".cursor/skills/dspatch-loop/SKILL.md" }
+      },
+      "model": { "policy": "inherit" },
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "markdown-file", "note": "Value, changes, evidence, open questions and the next action, as copyable Markdown Niclas can respond to in one pass." },
+      "view": { "x": 480, "y": 800 }
+    },
+    {
+      "id": "niclas-assessment",
+      "kind": "human",
+      "label": "Niclas assesses the result",
+      "purpose": "Human acceptance criteria are settled here and nowhere else. An agent check is not an acceptance.",
+      "outcomes": ["accept", "more-work"],
+      "view": { "x": 480, "y": 910 }
+    },
+    {
+      "id": "run-complete",
+      "kind": "terminal",
+      "label": "Run complete",
+      "purpose": "This run is finished. The backlog task is not automatically Done - satisfied criteria decide that.",
+      "ending": "success",
+      "view": { "x": 480, "y": 1020 }
+    },
+    {
+      "id": "not-started",
+      "kind": "terminal",
+      "label": "Not started",
+      "purpose": "No mandate, no run. Recorded so that declining is a drawn outcome rather than an absence.",
+      "ending": "not-success",
+      "view": { "x": 800, "y": 40 }
+    }
+  ],
+  "edges": [
+    { "id": "e01", "from": "niclas-mandate", "to": "coordinator", "when": { "on": "outcome", "outcome": "start" }, "label": "approved" },
+    { "id": "e02", "from": "niclas-mandate", "to": "not-started", "when": { "on": "outcome", "outcome": "not-now" }, "label": "not now" },
+    { "id": "e03", "from": "coordinator", "to": "route-next-step", "when": { "on": "success" }, "label": "task and mandate established" },
+    { "id": "e04", "from": "coordinator", "to": "niclas-decision", "when": { "on": "declared-failure", "failure": "missing-authority" }, "label": "outside the mandate: escalate" },
+    { "id": "e05", "from": "coordinator", "to": "coordinator-report", "when": { "on": "declared-failure", "failure": "limit-reached" }, "label": "bounds spent: deliver and stop" },
+    { "id": "e06", "from": "route-next-step", "to": "backlog-planner", "when": { "on": "outcome", "outcome": "plan" }, "label": "plan" },
+    { "id": "e07", "from": "route-next-step", "to": "researcher", "when": { "on": "outcome", "outcome": "research" }, "label": "research" },
+    { "id": "e08", "from": "route-next-step", "to": "implementer", "when": { "on": "outcome", "outcome": "implement" }, "label": "code" },
+    { "id": "e09", "from": "route-next-step", "to": "coordinator-report", "when": { "on": "outcome", "outcome": "wrap-up" }, "label": "wrap up" },
+    { "id": "e10", "from": "backlog-planner", "to": "plan-review", "when": { "on": "success" }, "label": "proposal" },
+    { "id": "e11", "from": "backlog-planner", "to": "niclas-decision", "when": { "on": "declared-failure", "failure": "missing-authority" }, "label": "outside the mandate: escalate" },
+    { "id": "e12", "from": "plan-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "accept" }, "label": "accepted" },
+    { "id": "e13", "from": "plan-review", "to": "backlog-planner", "when": { "on": "outcome", "outcome": "rework" }, "label": "rework the plan" },
+    { "id": "e14", "from": "plan-review", "to": "niclas-decision", "when": { "on": "outcome", "outcome": "needs-decision" }, "label": "needs a decision" },
+    { "id": "e15", "from": "researcher", "to": "coordinator", "when": { "on": "success" }, "label": "evidence" },
+    { "id": "e16", "from": "researcher", "to": "backlog-planner", "when": { "on": "declared-failure", "failure": "spec-error" }, "label": "specification error: plan again" },
+    { "id": "e17", "from": "researcher", "to": "niclas-decision", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked" },
+    { "id": "e18", "from": "implementer", "to": "verifier", "when": { "on": "success" }, "label": "candidate" },
+    { "id": "e19", "from": "implementer", "to": "backlog-planner", "when": { "on": "declared-failure", "failure": "spec-error" }, "label": "specification error: plan again" },
+    { "id": "e20", "from": "implementer", "to": "researcher", "when": { "on": "declared-failure", "failure": "research-needed" }, "label": "research needed first" },
+    { "id": "e21", "from": "implementer", "to": "niclas-decision", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked" },
+    { "id": "e22", "from": "verifier", "to": "implementation-review", "when": { "on": "success" }, "label": "evidence on the candidate" },
+    { "id": "e23", "from": "verifier", "to": "niclas-decision", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked" },
+    { "id": "e24", "from": "implementation-review", "to": "coordinator-report", "when": { "on": "outcome", "outcome": "accept" }, "label": "accepted" },
+    { "id": "e25", "from": "implementation-review", "to": "implementer", "when": { "on": "outcome", "outcome": "rework" }, "label": "rework, bounded", "notes": "The loop's rework round. maxReworkRounds on the graph is what stops this becoming the same assignment handed to more agents." },
+    { "id": "e26", "from": "implementation-review", "to": "niclas-decision", "when": { "on": "outcome", "outcome": "needs-decision" }, "label": "needs a decision" },
+    { "id": "e27", "from": "niclas-decision", "to": "coordinator", "when": { "on": "outcome", "outcome": "answered" }, "label": "answered" },
+    { "id": "e28", "from": "niclas-decision", "to": "coordinator-report", "when": { "on": "outcome", "outcome": "deferred" }, "label": "deferred: report and continue within the mandate" },
+    { "id": "e29", "from": "coordinator-report", "to": "niclas-assessment", "when": { "on": "success" }, "label": "report" },
+    { "id": "e30", "from": "niclas-assessment", "to": "run-complete", "when": { "on": "outcome", "outcome": "accept" }, "label": "accepted" },
+    { "id": "e31", "from": "niclas-assessment", "to": "route-next-step", "when": { "on": "outcome", "outcome": "more-work" }, "label": "next iteration" }
+  ]
+}

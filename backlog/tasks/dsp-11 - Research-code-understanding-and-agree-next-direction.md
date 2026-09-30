@@ -37,4 +37,23 @@ Provide a concise needs brief and representative comparison tasks for DSP-14. Th
 - [ ] #2 Niclas has assessed the remaining review/navigation questions in a bounded walkthrough, or existing recorded feedback explicitly covers them; unresolved questions are labelled.
 - [ ] #3 A small set of representative code-change tasks and baseline observations is available for comparing future interactions, including how understanding, orientation and uncertainty will be assessed.
 - [ ] #4 The needs brief records its sample and scope limitations and does not treat the five concept seeds as selected features.
+- [ ] #5 The DSP-12 and DSP-13 documents are re-checked against Niclas's DSP-6 AC#3 feedback before DSP-14 consumes them, and any conclusion the new feedback changes is corrected in place rather than left standing.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Criterion #5 was added on 15 September 2026 by Reviewer call 011 of run `20260915-174013-p6qd`, finding F7, and it records a judgement rather than a fault to repair.
+
+**Both surveys ran ahead of this dependency.** DSP-12 and DSP-13 were executed on 15 September, in parallel with the work on DSP-6, at Niclas's own suggestion. Both depend on DSP-6, and the substance of that dependency is that they should be grounded in real use — DSP-6 AC#3, his own assessment of Phase 0, was outstanding when they ran and still is. The bookkeeping was done properly and roughly 2,400 lines of documents exist, so nothing was lost.
+
+What makes it worth a criterion rather than a note is how feedback-sensitive that grounding turned out to be. The DSP-12 researcher states that it re-weighted its entire gallery on DSP-5's trial findings: Niclas read a complete diff without reporting difficulty, and what he did report was orientation and state, so the survey leans toward return-to-position rather than better diffs. His AC#3 assessment is a second and larger tranche of evidence of exactly that kind. Two large documents should not be treated as settled input to DSP-14 before it has been read against them.
+
+**Also carried here**, from the same review: the composer's distance from the restored panel is an orientation problem DSP-6 described accurately rather than solved — measured at 1265 and 1584 pixels below the panel, off screen at rest. That is this task's material, not a reopening of DSP-6.
+
+### DSP-6 AC#3 feedback, 16 September 2026 — Niclas, not an inference
+
+He closed Phase 0 as a **functional test**. In his words: the design of where things should be found in menus and the like needs a great deal of iteration; it feels like one big debug window. He will not re-walk packaged identity `a75ae56759fc9cad`. The assessed walkthrough remains the 15 September trial on `b4a87678dd5203cd`.
+
+Criterion #5 now has that feedback to read DSP-12 and DSP-13 against. Do not treat “he read a complete diff without reporting difficulty” as the last word on orientation: he has now said the whole window is a debug surface and that findability in menus is the unfinished design work. That is a user observation. It does not select a review concept and it does not start an IA rewrite from this card.
+<!-- SECTION:NOTES:END -->

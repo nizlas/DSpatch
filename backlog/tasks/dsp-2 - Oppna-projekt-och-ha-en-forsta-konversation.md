@@ -1,10 +1,10 @@
 ---
 id: DSP-2
 title: 'Open a repository, change code and review the result'
-status: To Do
+status: Review
 assignee: []
 created_date: '2026-09-13'
-updated_date: '2026-09-13 20:13'
+updated_date: '2026-09-15 10:07'
 labels:
   - ui
   - integration
@@ -49,12 +49,12 @@ Make a small change in a repository with a known build/test. Check contents and 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The workspace starts on the selected platform and the user can select a repository through visible controls.
-- [ ] #2 Send produces a real streaming agent response; a follow-up or rework uses relevant conversation context.
+- [x] #1 The workspace starts on the selected platform and the user can select a repository through visible controls.
+- [x] #2 Send produces a real streaming agent response; a follow-up or rework uses relevant conversation context.
 - [ ] #3 The active project, connection, available project context and current activity are clear without reading a raw log.
-- [ ] #4 Basic cancellation of the agent and command works as established in DSP-1 and honestly shows continuing execution; late events cannot affect the wrong conversation.
-- [ ] #5 A verified runnable result, tested version and short startup and trial instructions are ready for Niclas.
-- [ ] #6 An explicit request produces a real code change in the selected working copy. A reading question can remain read-only; existing manual changes survive and are distinguished from the run's changes.
-- [ ] #7 Affected files and the full text diff can be reviewed against actual contents for an identified snapshot. Added and deleted text files are included; other changes and limitations are visible.
-- [ ] #8 A relevant build/test starts through a visible action with a visible, editable command and working directory. Output, exit code and tested snapshot are shown; the result does not automatically apply after another code change.
+- [x] #4 Basic cancellation of the agent and command works as established in DSP-1 and honestly shows continuing execution; late events cannot affect the wrong conversation.
+- [x] #5 A verified runnable result, tested version and short startup and trial instructions are ready for Niclas.
+- [x] #6 An explicit request produces a real code change in the selected working copy. A reading question can remain read-only; existing manual changes survive and are distinguished from the run's changes.
+- [x] #7 Affected files and the full text diff can be reviewed against actual contents for an identified snapshot. Added and deleted text files are included; other changes and limitations are visible.
+- [x] #8 A relevant build/test starts through a visible action with a visible, editable command and working directory. Output, exit code and tested snapshot are shown; the result does not automatically apply after another code change.
 <!-- AC:END -->

@@ -20,7 +20,10 @@ import { describe, it } from 'node:test';
 
 import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { loadLoopGraph } from '../src/shared/loop-graph-load';
-import type { LoopGraph } from '../src/shared/loop-graph';
+import { terminalDeclaresSuccess, type LoopGraph } from '../src/shared/loop-graph';
+import { undeclaredReadableOutcome } from '../src/shared/loop-chat';
+import { runOutcomeFrom } from '../src/shared/loop-record';
+import { createMemoryResultStore } from '../src/shared/loop-results';
 import {
   createClock,
   createDryRunExecutor,
@@ -28,12 +31,20 @@ import {
   formatRunJournal,
   journalToJsonl,
   runLoopGraph,
+  type DryRunDecision,
   type RunJournalEntry,
   type StepExecutor,
 } from '../src/shared/loop-run';
 
 const repoRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const graphPath = path.join(repoRoot, 'docs', 'loop', 'graphs', 'dspatch-development-loop.graph.json');
+const runnablePath = path.join(
+  repoRoot,
+  'docs',
+  'loop',
+  'graphs',
+  'dspatch-development-loop-runnable.graph.json',
+);
 
 function loadDevelopmentLoop(): LoopGraph {
   const loaded = loadLoopGraph(fs.readFileSync(graphPath, 'utf8'), {
@@ -41,6 +52,16 @@ function loadDevelopmentLoop(): LoopGraph {
     connectedTargets: ['cursor'],
   });
   assert.ok(loaded.ok, 'the development loop graph must be valid before it can be run');
+  return loaded.graph;
+}
+
+/** The subset DSpatch can actually walk, loaded the way the main process loads it. */
+function loadRunnable(): LoopGraph {
+  const loaded = loadLoopGraph(fs.readFileSync(runnablePath, 'utf8'), {
+    resolveRole: createFileRoleResolver(repoRoot),
+    connectedTargets: ['cursor'],
+  });
+  assert.ok(loaded.ok, 'the runnable subset must be valid before it can be walked');
   return loaded.graph;
 }
 
@@ -548,4 +569,676 @@ describe('runLoopGraph — human steps and the archive', () => {
     // `<run-id>` in the archive path is substituted by the runner.
     assert.ok(!(placements['coordinator'] ?? '').includes('<run-id>'));
   });
+});
+
+/* ------------------------------------------------------------------------- */
+/* DSP-96 #10: what arriving at Delivered claims, and what it does not         */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Whether a competently written final report can be read as a fulfilled assignment.
+ *
+ * The question this answers comes from part 1 of the same card. A step whose node
+ * declares no failures is now told to describe an obstacle in ordinary prose rather
+ * than open with a word the graph cannot route — and `coordinator-report` is such a
+ * step, with one edge out of it, `e14`, to a terminal whose `ending` is `success`.
+ *
+ * These walk the shipped runnable graph with the dry-run executor. No provider is
+ * reached and nothing here reads a report body: the runner does not read one either,
+ * which is the point.
+ */
+describe('reaching Delivered is a claim about the walk and not about the work', () => {
+  /**
+   * The only way in is the reviewer's accept, which is what keeps an obstacle in the
+   * *work* away from this terminal. Asserted on the drawing rather than inferred from
+   * one walk, because a second edge added later is exactly what would undo it.
+   */
+  it('lets nothing but an accepted review reach the report step', () => {
+    const graph = loadRunnable();
+    const into = graph.edges.filter((edge) => edge.to === 'coordinator-report');
+    assert.deepEqual(
+      into.map((edge) => [edge.id, edge.from, edge.when.on, edge.when.outcome ?? null]),
+      [['e11', 'implementation-review', 'outcome', 'accept']],
+    );
+    const review = graph.nodes.find((node) => node.id === 'implementation-review');
+    // DSP-97 added a fourth name here and it is not a fourth verdict: the three verdicts
+    // are unchanged and `could-not-review` is what this step says when the reporting
+    // contract its node sets cannot be fulfilled at all.
+    assert.deepEqual(review?.outcomes, ['accept', 'rework', 'needs-decision', 'could-not-review']);
+    // The other verdicts leave the loop elsewhere, and none of them is Delivered.
+    assert.equal(graph.edges.find((edge) => edge.id === 'e12')?.to, 'implementer');
+    assert.equal(graph.edges.find((edge) => edge.id === 'e13')?.to, 'needs-a-decision');
+    assert.equal(graph.edges.find((edge) => edge.id === 'e13a')?.to, 'reporting-incomplete');
+    assert.equal(
+      graph.nodes.find((node) => node.id === 'needs-a-decision')?.ending,
+      'not-success',
+    );
+  });
+
+  /**
+   * The ordinary path, walked, with the obstacle still in the text.
+   *
+   * This used to be the card's finding rather than its fix: the report step produced plain
+   * `success` whatever it had written, so the summary below — a report saying the evidence
+   * could not be read — reached an ending whose tick claims the assignment was reported.
+   * DSP-97 made `reported` a name the step has to give, and the summary is kept here
+   * verbatim to hold the other half of the claim: a step that *says* it reported goes to
+   * Delivered no matter what its prose says, because nothing reads the prose.
+   */
+  it('routes the report step to Delivered on the name it gave, not on what it wrote', async () => {
+    const graph = loadRunnable();
+    const result = await runLoopGraph(graph, {
+      runId: 'test-delivered-with-an-obstacle',
+      dryRun: true,
+      executor: createDryRunExecutor({
+        decisions: [
+          { node: 'implementation-review', produce: { kind: 'outcome', outcome: 'accept' } },
+          {
+            node: 'coordinator-report',
+            produce: { kind: 'outcome', outcome: 'reported' },
+            summary:
+              'I could not read the verifier\u2019s evidence file, so what follows is the ' +
+              'implementer\u2019s account alone and the commands are unconfirmed.',
+          },
+        ],
+      }),
+    });
+
+    assert.equal(result.status, 'completed');
+    assert.deepEqual(result.path, [
+      'coordinator',
+      'implementer',
+      'verifier',
+      'implementation-review',
+      'coordinator-report',
+      'delivered',
+    ]);
+    assert.deepEqual(result.edgesTaken, ['e01', 'e02', 'e09', 'e11', 'e14']);
+    assert.equal(result.terminalNodeId, 'delivered');
+
+    // The drawing does declare this ending a success, so the graph view ticks it.
+    const delivered = graph.nodes.find((node) => node.id === 'delivered');
+    assert.equal(terminalDeclaresSuccess(delivered), true);
+
+    // And the step now has a way to say it was in trouble that the graph can route:
+    // DSP-97's own tests below walk it. It still declares no failure, which is why part 1
+    // of DSP-96 told it to describe an obstacle in prose rather than open with a word.
+    const report = graph.nodes.find((node) => node.id === 'coordinator-report');
+    assert.deepEqual(report?.outcomes, ['reported', 'could-not-report']);
+    assert.equal(report?.declaredFailures, undefined);
+  });
+
+  /**
+   * The separation that does hold, and it is the one a person reads. Arriving at a
+   * terminal earns nothing: `runOutcomeFrom` never looks at `terminalNodeId`, so the
+   * run above records `verification-not-performed` and not `work-verified`. This
+   * runnable subset draws no gate at all, so no run of it can record anything else.
+   */
+  it('records verification as not performed, terminal or no terminal', async () => {
+    const graph = loadRunnable();
+    assert.equal(
+      graph.nodes.some((node) => node.kind === 'gate'),
+      false,
+      'this subset runs no command, so nothing in it can verify anything',
+    );
+    const result = await runLoopGraph(graph, {
+      runId: 'test-delivered-outcome',
+      dryRun: true,
+      executor: createDryRunExecutor({
+        decisions: [
+          { node: 'implementation-review', produce: { kind: 'outcome', outcome: 'accept' } },
+        ],
+      }),
+    });
+    assert.equal(result.terminalNodeId, 'delivered');
+    assert.equal(
+      runOutcomeFrom({
+        commands: [],
+        status: result.status,
+        cancelled: false,
+        recordComplete: true,
+        walk: { terminalNodeId: result.terminalNodeId, movedPaths: [], movedPathsNotListed: 0 },
+      }),
+      'verification-not-performed',
+    );
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+/* DSP-102: a step that must name its result cannot pass by not naming one     */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The dry-run executor, with the body a real step would have left attached.
+ *
+ * `createDryRunExecutor` hands back no `resultBody`: a dry run has no store, so there
+ * has never been anything for it to give one to. The claim below is that a step's own
+ * account is filed **before** the run decides where its outcome goes, so these runs do
+ * have a store — and the products still come from the dry-run executor, which closes
+ * over nothing that could reach a provider.
+ *
+ * A decision that scripts a `summary` gets it as the body as well, which is what a real
+ * step leaves: one account, written by the step, filed whole. Every other step gets a
+ * placeholder, because the point of the placeholder is that nothing routing reads it.
+ */
+function dryRunLeavingBodies(decisions: readonly DryRunDecision[]): StepExecutor {
+  const dry = createDryRunExecutor({ decisions });
+  const scripted = new Map(
+    decisions
+      .filter((decision) => decision.summary !== undefined)
+      .map((decision) => [decision.node, decision.summary as string]),
+  );
+  return async (context) => ({
+    ...(await dry(context)),
+    resultBody:
+      scripted.get(context.node.id) ??
+      `What "${context.node.id}" wrote, which is not read by anything routing it.`,
+  });
+}
+
+/** A store that keeps bodies in memory, so no test here touches a filesystem. */
+function bodiesInMemory(): ReturnType<typeof createMemoryResultStore> {
+  return createMemoryResultStore((body) => `digest-of-${String(body.length)}-bytes`);
+}
+
+/**
+ * DSP-102, on the drawing rather than in the routing.
+ *
+ * On 22 September 2026 the implementer of this loop was offered `RESULT: blocked`, asked
+ * a question instead, and was routed to the verifier as a step that had finished; the
+ * verifier wrote **BLOCKED** in prose and was routed to the reviewer the same way. Neither
+ * was a misreading. `outcomes` has always meant *this step must name its result* and the
+ * runner has always refused to let a node carrying it finish on plain success — these
+ * three steps simply did not carry the field, so for them success was the residue of
+ * every reply that was not a declared failure, and their own message said so.
+ *
+ * The drawing now says what each of them must name, and what a reply that names nothing
+ * means. Nothing here reads a report body and nothing asks anything what a reply meant:
+ * a route is taken because a form the message asked for is absent.
+ */
+describe('a step that must name its result does not pass by not naming one', () => {
+  /** The three steps down the middle: the name for having done it, and the name for not. */
+  const MUST_NAME = [
+    { node: 'coordinator', done: 'briefed', unestablished: 'unclear', stops: 'e01c', onward: 'e01' },
+    { node: 'implementer', done: 'done', unestablished: 'unclear', stops: 'e02a', onward: 'e02' },
+    {
+      node: 'verifier',
+      done: 'checked',
+      unestablished: 'could-not-check',
+      stops: 'e09a',
+      onward: 'e09',
+    },
+  ] as const;
+
+  /**
+   * Four mechanics that are each a way to get this wrong, asserted on the shipped file.
+   *
+   * The success name is first because an unscripted dry run takes `declared[0]`, and the
+   * check that this graph reaches `delivered` walks it that way. The other name is the one
+   * the node's own `whenUndeclared` points at — DSP-103, where it used to be whichever of
+   * two literals the author had happened to spell. Say nothing there and a reply that
+   * declared nothing stops the run as a fault instead of taking the drawn route, whatever
+   * the outcome is called.
+   */
+  it('names its success first and routes the other name to Stopped', () => {
+    const graph = loadRunnable();
+    for (const step of MUST_NAME) {
+      const node = graph.nodes.find((candidate) => candidate.id === step.node);
+      assert.ok(node, `${step.node} must be a node of this graph`);
+      assert.deepEqual(node.outcomes, [step.done, step.unestablished]);
+      assert.equal(
+        node.whenUndeclared,
+        step.unestablished,
+        `${step.node} must state the route, because nothing is inferred from a name`,
+      );
+      assert.equal(
+        undeclaredReadableOutcome(node)?.outcome,
+        step.unestablished,
+        `${step.node}'s stated route is the one the run's own reader takes`,
+      );
+
+      const out = graph.edges.filter((edge) => edge.from === step.node);
+      assert.equal(
+        out.some((edge) => edge.when.on === 'success'),
+        false,
+        `${step.node} declares outcomes, so plain success has nowhere to go from it`,
+      );
+      const onward = out.find((edge) => edge.id === step.onward);
+      assert.deepEqual(
+        [onward?.when.on, onward?.when.outcome],
+        ['outcome', step.done],
+        `${step.onward} must carry the work on only when the step said it did the work`,
+      );
+      const stops = out.find((edge) => edge.id === step.stops);
+      assert.deepEqual([stops?.when.on, stops?.when.outcome, stops?.to], [
+        'outcome',
+        step.unestablished,
+        'stopped',
+      ]);
+    }
+
+    // The one node this card left permissive was `coordinator-report`, deliberately,
+    // because it was DSP-97's subject. That card has since decided it, and its own block
+    // below is where the contract is asserted — the point kept here is that it did not
+    // reuse this card's route: naming no result at the report step does not reach
+    // `stopped`, whose three sentences would all be untrue of it.
+    const report = graph.nodes.find((node) => node.id === 'coordinator-report');
+    assert.equal(report?.whenUndeclared, 'could-not-report');
+    assert.equal(
+      graph.edges.some((edge) => edge.from === 'coordinator-report' && edge.to === 'stopped'),
+      false,
+    );
+
+    // These three routes added no ending and relabelled none. They reuse the terminal that
+    // already took seven edges, and it names the third cause it can arrive by — without
+    // saying the step failed at its work, because it may well not have.
+    assert.deepEqual(
+      graph.nodes.filter((node) => node.kind === 'terminal').map((node) => node.id),
+      ['delivered', 'needs-a-decision', 'reporting-incomplete', 'stopped'],
+    );
+    const stopped = graph.nodes.find((node) => node.id === 'stopped');
+    assert.equal(stopped?.ending, 'not-success');
+    assert.equal(stopped?.label, 'Stopped without a result');
+    assert.match(stopped?.purpose ?? '', /a form the run could not route/);
+    assert.match(stopped?.purpose ?? '', /not a verdict on the work/);
+    assert.match(
+      graph.nodes.find((node) => node.id === 'delivered')?.purpose ?? '',
+      /^The assignment was carried out, verified, reviewed and reported/,
+    );
+  });
+
+  for (const step of MUST_NAME) {
+    it(`sends "${step.node}" to Stopped when it names no result, its account already filed`, async () => {
+      const graph = loadRunnable();
+      const result = await runLoopGraph(graph, {
+        runId: `dsp-102-${step.node}`,
+        dryRun: true,
+        resultStore: bodiesInMemory(),
+        // What a reply with none of the asked-for line produces, which is this outcome
+        // and not plain success: the fallback is applied when the reply is read, before
+        // the runner sees a product at all.
+        executor: dryRunLeavingBodies([
+          { node: step.node, produce: { kind: 'outcome', outcome: step.unestablished } },
+        ]),
+      });
+
+      assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+      assert.equal(result.terminalNodeId, 'stopped');
+      assert.equal(result.path.at(-1), 'stopped');
+      assert.equal(result.path.at(-2), step.node);
+      assert.ok(result.edgesTaken.includes(step.stops), `${step.stops} is the route that was drawn`);
+      assert.equal(
+        result.edgesTaken.includes(step.onward),
+        false,
+        'and the work must not have been carried on as though it had been done',
+      );
+
+      // The step's own account survives the stop, which is what makes stopping cheap: a
+      // person reads the question, the refusal or the essay rather than an inference
+      // about it. Filed first, routed second, and in that order in the journal.
+      const filed = result.results.filter((entry) => entry.nodeId === step.node);
+      assert.equal(filed.length, 1, 'the step that named nothing still left its result');
+      const filedAt = result.journal.findIndex(
+        (entry) => entry.kind === 'result-filed' && entry.nodeId === step.node,
+      );
+      const routedAt = result.journal.findIndex(
+        (entry) => entry.kind === 'edge-taken' && entry.edgeId === step.stops,
+      );
+      assert.ok(filedAt >= 0, 'the filing is journalled');
+      assert.ok(routedAt > filedAt, 'the result is filed before the run decides where to go');
+    });
+  }
+
+  /**
+   * DSP-103 #7, and it is a change to this drawing rather than to anything general.
+   *
+   * The researcher was the one step DSP-102 left permissive, on the grounds that it was
+   * the cheapest case to leave alone. It was not: `e06` returned on plain success, and
+   * plain success is the residue of every reply that is not a declared failure — so a
+   * researcher that asked a question back, or that investigated honestly and settled
+   * nothing, arrived at the implementer as finished research. The two names make that
+   * difference visible, and both of them come back to the implementer, because either way
+   * the work resumes where it stopped and what it resumes with is the researcher's own
+   * account.
+   *
+   * Nothing in the engine knows what a researcher is. This asserts the drawing.
+   */
+  for (const [outcome, edgeId] of [
+    ['answered', 'e06'],
+    ['not-established', 'e06a'],
+  ] as const) {
+    it(`returns a researcher that ${outcome === 'answered' ? 'answered' : 'settled nothing'} to the implementer`, async () => {
+      const graph = loadRunnable();
+      const researcher = graph.nodes.find((node) => node.id === 'researcher');
+      assert.deepEqual(researcher?.outcomes, ['answered', 'not-established']);
+      assert.equal(researcher?.whenUndeclared, 'not-established');
+
+      const result = await runLoopGraph(graph, {
+        runId: `dsp-103-${outcome}`,
+        dryRun: true,
+        resultStore: bodiesInMemory(),
+        executor: dryRunLeavingBodies([
+          // The one route to the researcher: the implementer stops on a question, and
+          // its second visit carries on with whatever came back.
+          {
+            node: 'implementer',
+            occurrence: 1,
+            produce: { kind: 'declared-failure', failure: 'research-needed' },
+          },
+          { node: 'researcher', produce: { kind: 'outcome', outcome } },
+        ]),
+      });
+
+      assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+      assert.ok(result.edgesTaken.includes('e03'), 'the research need is what reaches it');
+      assert.ok(
+        result.edgesTaken.includes(edgeId),
+        `${outcome} must leave the researcher on ${edgeId}`,
+      );
+      assert.deepEqual(result.path.slice(0, 4), [
+        'coordinator',
+        'implementer',
+        'researcher',
+        'implementer',
+      ]);
+
+      // And what comes back is the researcher's own account, on both routes — the
+      // question it was sent with is not what resumes the work.
+      const back = result.journal.find(
+        (entry) => entry.kind === 'edge-taken' && entry.edgeId === edgeId,
+      );
+      assert.ok(back);
+      assert.ok(
+        result.results.some((entry) => entry.nodeId === 'researcher'),
+        'the researcher filed what it established, whichever name it gave it',
+      );
+    });
+  }
+
+  /**
+   * And the product the old contract turned every non-answer into. A node declaring
+   * outcomes may not finish on plain success, so if anything ever hands one back for
+   * these steps the run stops instead of walking on — which is the strict behaviour the
+   * graceful route is drawn on top of, not instead of.
+   */
+  it('stops rather than walking on if such a step reports plain success', async () => {
+    const result = await runLoopGraph(loadRunnable(), {
+      runId: 'dsp-102-plain-success',
+      dryRun: true,
+      resultStore: bodiesInMemory(),
+      executor: dryRunLeavingBodies([{ node: 'implementer', produce: { kind: 'success' } }]),
+    });
+
+    assert.equal(result.status, 'runtime-fault');
+    assert.equal(result.fault?.kind, 'undeclared-product');
+    assert.equal(result.fault?.nodeId, 'implementer');
+    assert.match(result.fault?.detail ?? '', /may not finish on plain success/);
+    assert.equal(result.terminalNodeId, null);
+    assert.equal(result.edgesTaken.includes('e02'), false);
+    // Filed before the check here too, so nothing is lost either way.
+    assert.ok(result.results.some((entry) => entry.nodeId === 'implementer'));
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+/* DSP-97: what this loop says when the work was accepted and it could not     */
+/* report on it                                                               */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The ending Niclas decided, and the two things its wording must keep apart.
+ *
+ * The gap was narrow and real. `coordinator-report` declared no outcomes, so a report
+ * step that filed a report saying it could not do its own step still produced plain
+ * success, took `e14` and reached `delivered`, whose `ending` is `success`. Only the tick
+ * was wrong — the recorded outcome, the badge and the sentence beside it were all honest,
+ * and `runOutcomeFrom` never reads `terminalNodeId` — but the tick was ahead of the facts.
+ *
+ * The destination is described factually and **asserts nothing about the work**: not that
+ * it was done because a report is missing, and not that it was done because there are
+ * files in the folder. The reason is preserved in the step's own report and in the
+ * recorded outcome's provenance; evidence about completed work is stated separately from
+ * the ending. Those are different registers and the tests below check that the wording
+ * keeps them apart, because the wording is the deliverable of this card.
+ *
+ * Nothing here reads a report body, and neither does the run: every route is taken on a
+ * name the step gave or on the absence of one.
+ */
+describe('a run that could not report on accepted work says that and nothing more', () => {
+  /** The terminal the card adds, with the label Niclas settled. */
+  const ENDING = 'reporting-incomplete';
+
+  it('declares the ending factually and refuses to claim the work either way', () => {
+    const graph = loadRunnable();
+    const node = graph.nodes.find((each) => each.id === ENDING);
+    assert.ok(node, 'the drawing must have the ending this card decided');
+    assert.equal(node.kind, 'terminal');
+    assert.equal(node.label, 'Ended without complete reporting');
+
+    // Not success, and not by omission: an absent `ending` means the author has not said,
+    // and the author has. `TerminalEnding` has two values, so this needs no third — the
+    // reasons live in the purpose, which is the one place they cannot contradict a second
+    // vocabulary.
+    assert.equal(node.ending, 'not-success');
+    assert.equal(terminalDeclaresSuccess(node), false, 'nothing on this path earns a tick');
+
+    const purpose = node.purpose ?? '';
+    // What it says.
+    assert.match(purpose, /ended without one/);
+    // What it refuses to say, and the two tempting reasons for saying it.
+    assert.match(purpose, /does not assert that the work was done/);
+    assert.match(purpose, /A report that is missing is a report that is missing/);
+    assert.match(purpose, /files in the working folders are files in the working folders/);
+    // Where the reason actually is.
+    assert.match(purpose, /The actual reason is preserved/);
+    assert.match(purpose, /filed before this route is chosen/);
+    // And the separation the card asks for by name.
+    assert.match(purpose, /stated separately from this ending/);
+  });
+
+  /**
+   * The bounds, asserted rather than trusted. Delivered keeps its label, its ending and
+   * its sentence, and no other terminal was touched.
+   */
+  it('leaves Delivered and the other endings exactly as they were', () => {
+    const graph = loadRunnable();
+    const delivered = graph.nodes.find((node) => node.id === 'delivered');
+    assert.equal(delivered?.label, 'Delivered');
+    assert.equal(delivered?.ending, 'success');
+    assert.match(
+      delivered?.purpose ?? '',
+      /^The assignment was carried out, verified, reviewed and reported/,
+    );
+    const stopped = graph.nodes.find((node) => node.id === 'stopped');
+    assert.equal(stopped?.label, 'Stopped without a result');
+    assert.equal(stopped?.ending, 'not-success');
+    assert.equal(
+      graph.nodes.find((node) => node.id === 'needs-a-decision')?.label,
+      'Needs a decision',
+    );
+  });
+
+  /**
+   * Shared destination, distinct reason — which is the shape of the decision.
+   *
+   * Two nodes arrive, each on its own edge and its own outcome name, so the record says
+   * which without anything having to read a report to work it out.
+   */
+  it('is reached by two steps on distinct reasons', () => {
+    const graph = loadRunnable();
+    const into = graph.edges.filter((edge) => edge.to === ENDING);
+    assert.deepEqual(
+      into.map((edge) => [edge.id, edge.from, edge.when.outcome ?? null, edge.label ?? null]),
+      [
+        ['e13a', 'implementation-review', 'could-not-review', 'could not report a verdict'],
+        ['e14a', 'coordinator-report', 'could-not-report', 'could not report'],
+      ],
+    );
+
+    // The report step: its success is a name now, so `e14` no longer takes every reply
+    // that was not a declared failure.
+    const report = graph.nodes.find((node) => node.id === 'coordinator-report');
+    assert.deepEqual(report?.outcomes, ['reported', 'could-not-report']);
+    assert.equal(report?.whenUndeclared, 'could-not-report');
+    assert.equal(undeclaredReadableOutcome(report!)?.outcome, 'could-not-report');
+    assert.deepEqual(
+      graph.edges.find((edge) => edge.id === 'e14')?.when,
+      { on: 'outcome', outcome: 'reported' },
+    );
+    assert.equal(
+      graph.edges.some((edge) => edge.from === 'coordinator-report' && edge.when.on === 'success'),
+      false,
+      'a node that declares outcomes routes on them, so plain success has nowhere to go',
+    );
+
+    // The review: the three verdicts keep the routes they had, and the fourth name is not
+    // one of them.
+    const review = graph.nodes.find((node) => node.id === 'implementation-review');
+    assert.deepEqual(review?.outcomes, ['accept', 'rework', 'needs-decision', 'could-not-review']);
+    assert.equal(review?.whenUndeclared, 'could-not-review');
+    assert.deepEqual(
+      ['e11', 'e12', 'e13'].map((id) => {
+        const edge = graph.edges.find((each) => each.id === id);
+        return [edge?.when.outcome ?? null, edge?.to ?? null];
+      }),
+      [
+        ['accept', 'coordinator-report'],
+        ['rework', 'implementer'],
+        ['needs-decision', 'needs-a-decision'],
+      ],
+    );
+  });
+
+  /**
+   * The report step's own route, walked with a scripted product.
+   *
+   * The other way in — a reply that names nothing, routed on the absence of a form rather
+   * than on a verdict — needs a real reply to be read, so it is in `loop-live.test.ts`
+   * against a fake adapter. What this one pins is that the step's account is filed before
+   * the route is chosen, which is what makes the reason recoverable at all: the ending says
+   * the run did not report, and the report that does exist says why.
+   */
+  it('ends at the new terminal when the report step says it could not report', async () => {
+    const graph = loadRunnable();
+    const result = await runLoopGraph(graph, {
+      runId: 'dsp-97-could-not-report',
+      dryRun: true,
+      resultStore: bodiesInMemory(),
+      executor: dryRunLeavingBodies([
+        { node: 'implementation-review', produce: { kind: 'outcome', outcome: 'accept' } },
+        {
+          node: 'coordinator-report',
+          produce: { kind: 'outcome', outcome: 'could-not-report' },
+          summary:
+            'The run\u2019s own storage was unreachable, so I could not assemble the report ' +
+            'from the steps\u2019 results.',
+        },
+      ]),
+    });
+
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.deepEqual(result.path, [
+      'coordinator',
+      'implementer',
+      'verifier',
+      'implementation-review',
+      'coordinator-report',
+      ENDING,
+    ]);
+    assert.deepEqual(result.edgesTaken, ['e01', 'e02', 'e09', 'e11', 'e14a']);
+    assert.equal(result.terminalNodeId, ENDING);
+    assert.equal(result.edgesTaken.includes('e14'), false, 'Delivered is not on this path');
+
+    // No tick, and the recorded outcome is what it would have been at Delivered: arriving
+    // at a terminal earns nothing either way, so this card changed no claim about the work.
+    assert.equal(
+      terminalDeclaresSuccess(graph.nodes.find((node) => node.id === ENDING)),
+      false,
+    );
+    assert.equal(
+      runOutcomeFrom({
+        commands: [],
+        status: result.status,
+        cancelled: false,
+        recordComplete: true,
+        walk: { terminalNodeId: result.terminalNodeId, movedPaths: [], movedPathsNotListed: 0 },
+      }),
+      'verification-not-performed',
+    );
+
+    // The reason is preserved where the ending says it is: in the step's own account,
+    // filed before the route was chosen.
+    const filed = result.results.find((entry) => entry.nodeId === 'coordinator-report');
+    assert.ok(filed, 'the report step still left what it wrote');
+    assert.match(filed.body, /could not assemble the report/);
+    const filedAt = result.journal.findIndex(
+      (entry) => entry.kind === 'result-filed' && entry.nodeId === 'coordinator-report',
+    );
+    const routedAt = result.journal.findIndex(
+      (entry) => entry.kind === 'edge-taken' && entry.edgeId === 'e14a',
+    );
+    assert.ok(filedAt >= 0 && routedAt > filedAt, 'filed first, routed second');
+
+    // And the evidence about the work that *was* done is stated separately from the
+    // ending: it is in the earlier steps' own results, which the run still has.
+    assert.deepEqual(
+      result.results.map((entry) => entry.nodeId),
+      ['coordinator', 'implementer', 'verifier', 'implementation-review', 'coordinator-report'],
+    );
+  });
+
+  /**
+   * The review's share of the same destination, and its verdicts left alone.
+   *
+   * Before this the node declared outcomes and stated no fallback, so a reviewer that
+   * could not answer — or that reasoned in prose and never put a verdict on the line the
+   * message asked for — was an undeclared product and stopped the run as a runtime fault
+   * one step from the end.
+   */
+  it('ends at the same terminal when the review could not report a verdict', async () => {
+    const graph = loadRunnable();
+    const result = await runLoopGraph(graph, {
+      runId: 'dsp-97-could-not-review',
+      dryRun: true,
+      resultStore: bodiesInMemory(),
+      executor: dryRunLeavingBodies([
+        {
+          node: 'implementation-review',
+          produce: { kind: 'outcome', outcome: 'could-not-review' },
+        },
+      ]),
+    });
+
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.equal(result.terminalNodeId, ENDING);
+    assert.deepEqual(result.edgesTaken, ['e01', 'e02', 'e09', 'e13a']);
+    assert.equal(result.path.at(-2), 'implementation-review');
+    assert.ok(
+      result.results.some((entry) => entry.nodeId === 'implementation-review'),
+      'what the review did read is filed, whichever name it gave',
+    );
+  });
+
+  /** And the ordinary verdicts still go where they went, on the same drawing. */
+  for (const [outcome, edgeId, next] of [
+    ['accept', 'e11', 'coordinator-report'],
+    ['rework', 'e12', 'implementer'],
+    ['needs-decision', 'e13', 'needs-a-decision'],
+  ] as const) {
+    it(`leaves "${outcome}" on ${edgeId} to ${next}`, async () => {
+      const result = await runLoopGraph(loadRunnable(), {
+        runId: `dsp-97-verdict-${outcome}`,
+        dryRun: true,
+        resultStore: bodiesInMemory(),
+        executor: dryRunLeavingBodies([
+          { node: 'implementation-review', occurrence: 1, produce: { kind: 'outcome', outcome } },
+        ]),
+      });
+
+      assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+      assert.ok(result.edgesTaken.includes(edgeId), `${outcome} must still leave on ${edgeId}`);
+      assert.equal(result.path[4], next);
+      assert.notEqual(result.terminalNodeId, ENDING);
+    });
+  }
 });

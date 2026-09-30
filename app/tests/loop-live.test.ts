@@ -32,29 +32,42 @@ import { generateExperimentRepo } from '../src/main/experiment-repo';
 import {
   createLiveExecutor,
   describeBound,
+  describeRequiredResult,
   describeStoppedCommand,
   emptyInspection,
+  formatLiveInspection,
+  refuseLiveWorkingRoots,
   refuseLiveWorkspace,
   runConfiguredProjectTest,
   runNodeProjectTest,
+  stepSessionId,
   type LiveCommandRecord,
+  type LiveInspection,
 } from '../src/main/loop-live';
+import { createFileResultStore } from '../src/main/loop-result-store';
 import { describeLoopEnding } from '../src/shared/loop-transcript';
 import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { loadLoopGraph } from '../src/shared/loop-graph-load';
-import type { LoopGraph } from '../src/shared/loop-graph';
+import type { LoopGraph, LoopNode } from '../src/shared/loop-graph';
 import {
   createDryRunExecutor,
   runLoopGraph,
+  type ArchivePlacement,
   type JournalKind,
   type RunJournalEntry,
   type StepExecution,
 } from '../src/shared/loop-run';
-import { chatPromptFor, formatChatLiveLogLine, lookupFromGraph } from '../src/shared/loop-chat';
+import {
+  chatPromptFor,
+  describeChosenLoopBinding,
+  formatChatLiveLogLine,
+  lookupFromGraph,
+} from '../src/shared/loop-chat';
 import { InstructionQueue } from '../src/main/instruction-queue';
 import { instructionPreamble, INSTRUCTION_BLOCK_OPEN } from '../src/shared/loop-instruction';
 import { activityLine } from '../src/shared/chat-workspace';
 import { nodeRunStateFor, nodeRunStates, runViewFor } from '../src/shared/loop-run-view';
+import { describeUnobservedOutside, workingRootsFrom } from '../src/shared/working-roots';
 
 const repoRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const liveGraphPath = path.join(repoRoot, 'docs', 'loop', 'graphs', 'dspatch-live-duration.graph.json');
@@ -80,6 +93,19 @@ function loadLiveGraph(): LoopGraph {
   });
   assert.ok(loaded.ok, 'the live duration graph must validate');
   return loaded.graph;
+}
+
+/**
+ * Somewhere for a chat-loop run to keep its results.
+ *
+ * The shipped chat loop declares `produces` on `work` and `consumes` on `check` since
+ * DSP-79, because that declaration *is* the handover now the two steps are two agents
+ * rather than two turns of one conversation. A graph that declares either needs a
+ * store, and a live run given none is refused before it walks — so every chat-loop run
+ * below has one, exactly as the window's run does.
+ */
+function chatResultStore(name: string): ReturnType<typeof createFileResultStore> {
+  return createFileResultStore(scratch(`store-${name}`));
 }
 
 function loadChatGraph(): LoopGraph {
@@ -116,6 +142,54 @@ interface FakeOptions {
   readonly writeRelPath?: string;
   readonly writeContent?: string;
   readonly throwOnSend?: string;
+  /**
+   * Absolute paths the fake agent writes, wherever they are.
+   *
+   * DSP-72's per-root measurement needs an agent that writes into a folder that is not
+   * the working copy — and one that writes somewhere no root covers, which is the case
+   * the record must describe as *not observed* rather than as nothing. `writeRelPath`
+   * cannot express either, because it is relative to the working copy by construction.
+   */
+  readonly writeAbsolute?: readonly { readonly path: string; readonly content: string }[];
+  /**
+   * Called as each prompt arrives, before the fake writes anything or replies.
+   *
+   * For assertions about what a message said *when it was sent*. Reading the inspection
+   * after `runLoopGraph` returns answers a different question — what the run last
+   * observed — and DSP-99's account of the folders moves as the run walks, so the two
+   * disagree by design from the second step onwards.
+   */
+  readonly onSend?: (prompt: string) => void;
+}
+
+/**
+ * What the run had last observed of the folders as each message went out.
+ *
+ * A test about DSP-99's account cannot read `inspection.snapshotAfter` after the run and
+ * compare it with a message built mid-walk: the account's second moment is the walk taken
+ * after the most recently finished step, so it is a different observation for each step
+ * and the run's final one belongs to no message but the last. Capturing at the send is the
+ * only way to assert *the message carried the record's instant* rather than the weaker
+ * *the message carried some instant*.
+ */
+function observationsAtSend(inspection: LiveInspection): {
+  readonly record: () => void;
+  readonly at: (index: number) => string;
+} {
+  const taken: (string | null)[] = [];
+  return {
+    record: () => {
+      taken.push(inspection.snapshotAfter?.takenAtUtc ?? null);
+    },
+    at: (index) => {
+      const value = taken[index] ?? null;
+      assert.ok(
+        value !== null,
+        `send ${String(index)} was built after the run had observed the folders`,
+      );
+      return value;
+    },
+  };
 }
 
 /** Named verdicts the increment-1 drawing asks for. */
@@ -127,8 +201,19 @@ const CHECK_COULD_NOT =
 
 class FakeAdapter implements AgentAdapter {
   readonly sends: string[] = [];
+  /** Every `startSession` config, so what the run asked the provider for is readable. */
+  readonly configs: SessionConfig[] = [];
   readonly cancels: string[] = [];
   modelValue: string | null = 'composer-2';
+  /**
+   * What the next turn says, when a test needs more than two scripted replies.
+   *
+   * `assistantText` and `laterAssistantText` cover "the first turn" and "every turn
+   * after it", which is enough for a two-step walk and not enough for a rework round:
+   * work, check, work again, check again is four turns with four different things to
+   * say. Cleared after each turn, so a test that sets it once sets it for one turn.
+   */
+  nextReply: string | null = null;
   private readonly listeners = new Map<string, Set<AgentEventListener>>();
   private readonly options: FakeOptions;
   private workspace = '';
@@ -138,11 +223,17 @@ class FakeAdapter implements AgentAdapter {
   }
 
   async startSession(config: SessionConfig): Promise<SessionHandle> {
+    this.configs.push(config);
     this.workspace = config.workspacePath;
+    // The id the caller asked for, the way the real adapter does. It used to return
+    // `dsp-session-fake` whatever it was given, which was harmless while a run had one
+    // session and would have made DSP-79's per-node sessions untestable: every step
+    // would have looked like the same agent whether or not it was.
+    const dspatchSessionId = config.dspatchSessionId ?? 'dsp-session-fake';
     return {
-      dspatchSessionId: 'dsp-session-fake',
+      dspatchSessionId,
       provider: 'cursor',
-      providerSessionId: 'agent-fake',
+      providerSessionId: `agent-${dspatchSessionId}`,
       createdAt: new Date().toISOString(),
     };
   }
@@ -153,6 +244,7 @@ class FakeAdapter implements AgentAdapter {
 
   async send(sessionId: DspatchSessionId, prompt: string): Promise<RunReference> {
     this.sends.push(prompt);
+    this.options.onSend?.(prompt);
     const dspatchRunId = `dsp-run-${String(this.sends.length)}`;
     this.emit(sessionId, {
       type: 'run.started',
@@ -172,7 +264,13 @@ class FakeAdapter implements AgentAdapter {
       fs.mkdirSync(path.dirname(full), { recursive: true });
       fs.writeFileSync(full, this.options.writeContent, 'utf8');
     }
+    for (const write of this.options.writeAbsolute ?? []) {
+      fs.mkdirSync(path.dirname(write.path), { recursive: true });
+      fs.writeFileSync(write.path, write.content, 'utf8');
+    }
     const runId = dspatchRunId;
+    const scripted = this.nextReply;
+    this.nextReply = null;
     queueMicrotask(() => {
       this.emit(sessionId, {
         type: 'assistant.message',
@@ -181,9 +279,10 @@ class FakeAdapter implements AgentAdapter {
         at: new Date().toISOString(),
         rawProviderEvent: null,
         text:
-          this.sends.length > 1 && this.options.laterAssistantText !== undefined
+          scripted ??
+          (this.sends.length > 1 && this.options.laterAssistantText !== undefined
             ? this.options.laterAssistantText
-            : (this.options.assistantText ?? 'DONE'),
+            : (this.options.assistantText ?? 'DONE')),
       });
       this.emit(sessionId, {
         type: 'run.finished',
@@ -345,6 +444,86 @@ describe('createLiveExecutor — only agent nodes reach the adapter', () => {
     assert.equal(inspection.cost, 'unknown');
   });
 
+  /**
+   * DSP-91 #7, at the level where the absence could be mistaken for a finding.
+   *
+   * `hashWorkingRoots: false` is the whole of the saving: no file under any root is read,
+   * hashed or compared. The danger is entirely in how that reads afterwards — three empty
+   * lists and a pair of snapshot ids look exactly like a run that measured the project and
+   * found it untouched, and the before/after hash is the only thing in DSpatch that can
+   * contradict an agent claiming it changed nothing. So the test asserts both halves: that
+   * nothing was measured, and that the record says nothing was measured.
+   *
+   * The fake agent writes a file while the hashing is off, which is what makes the first
+   * half meaningful: a run that reported no changed files because there were none would
+   * pass a weaker version of this.
+   */
+  it('reads no project bytes when hashing is off, and the record says so rather than "nothing changed"', async () => {
+    const workspace = path.join(scratch('no-hash'), 'duration-repo');
+    generateExperimentRepo(workspace, repoRoot);
+    // An existing file of the generated repo, so the comparison this test is about is a
+    // change to a tracked file rather than an addition. `src/duration.ts` is the same file
+    // the measured walk above writes, which is what makes the two halves comparable.
+    const adapter = new FakeAdapter({
+      writeRelPath: 'src/duration.ts',
+      writeContent: 'export const written = true;\n',
+    });
+    const roots = workingRootsFrom([workspace], workspace, process.platform === 'win32');
+    const inspection = emptyInspection(workspace, 'composer-2', roots);
+    inspection.rootsNote = describeUnobservedOutside(roots, 'No step in this drawing may write.');
+    const result = await runLoopGraph(loadLiveGraph(), {
+      runId: 'live-no-hash',
+      dryRun: false,
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        workingRoots: roots,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection,
+        hashWorkingRoots: false,
+        runProjectTest: passingTest,
+      }),
+    });
+
+    assert.equal(result.status, 'completed');
+    // The agent really did write, and the run really did not see it.
+    assert.equal(
+      fs.readFileSync(path.join(workspace, 'src/duration.ts'), 'utf8'),
+      'export const written = true;\n',
+    );
+    assert.deepEqual(inspection.changedFiles, []);
+    assert.deepEqual(
+      inspection.roots.flatMap((root) => [...root.changedFiles, ...root.addedFiles]),
+      [],
+    );
+    // And the record's own register carries the distinction rather than leaving the empty
+    // lists to be read as a result.
+    assert.match(inspection.rootsNote, /took no before-and-after snapshot/);
+    assert.match(inspection.rootsNote, /not observed is not the same as none/);
+
+    // The same walk with hashing on is the control: the change is visible, so the absence
+    // above is the option and not the fixture.
+    const second = path.join(scratch('hash-on'), 'duration-repo');
+    generateExperimentRepo(second, repoRoot);
+    const onAdapter = new FakeAdapter({
+      writeRelPath: 'src/duration.ts',
+      writeContent: 'export const written = true;\n',
+    });
+    const measured = emptyInspection(second, 'composer-2');
+    await runLoopGraph(loadLiveGraph(), {
+      runId: 'live-hash-on',
+      dryRun: false,
+      executor: createLiveExecutor({
+        workspacePath: second,
+        adapter: onAdapter,
+        modelRequested: 'composer-2',
+        inspection: measured,
+        runProjectTest: passingTest,
+      }),
+    });
+    assert.equal(measured.changedFiles[0]?.relPath, 'src/duration.ts');
+  });
+
   it('does not call send for human, router or gate nodes', async () => {
     const workspace = scratch('no-send');
     const adapter = new FakeAdapter();
@@ -439,6 +618,508 @@ describe('createLiveExecutor — only agent nodes reach the adapter', () => {
   });
 });
 
+/**
+ * DSP-74 and DSP-75 on the path the product actually uses.
+ *
+ * The runner's own tests drive it with a scripted executor; this is the live executor
+ * and a real file store, so the two halves that only exist here are covered: the reply
+ * becoming the body of a filed result, and a received result reaching the prompt.
+ */
+describe('createLiveExecutor — results and handovers', () => {
+  /** Two agent steps and an ending. Small on purpose: nothing here is our own loop. */
+  function handoverGraph(): LoopGraph {
+    const role = {
+      id: 'live-role',
+      source: { kind: 'cursor-agent-file' as const, path: 'docs/loop/roles/live.role.md' },
+    };
+    return {
+      format: 'dspatch-loop-graph',
+      formatVersion: 1,
+      id: 'live-handover',
+      name: 'Work, then check the work',
+      purpose: 'A live-executor fixture for results and handovers.',
+      target: 'cursor',
+      entry: 'work',
+      onRuntimeFault: 'stop-and-reconcile',
+      failureKinds: [],
+      archive: { path: 'reports/<run-id>', entryPerNode: true, referenceReturned: true },
+      nodes: [
+        { id: 'work', kind: 'agent', label: 'Work', role, produces: { required: true, form: 'stored-result' } },
+        { id: 'check', kind: 'agent', label: 'Check', role, consumes: ['work'] },
+        { id: 'done', kind: 'terminal', label: 'Finished' },
+      ],
+      edges: [
+        { id: 'w1', from: 'work', to: 'check', when: { on: 'success' } },
+        { id: 'w2', from: 'check', to: 'done', when: { on: 'success' } },
+      ],
+    };
+  }
+
+  it('files the reply as the step’s result and hands it to the next step', async () => {
+    const workspace = scratch('results');
+    const results = scratch('results-store');
+    const adapter = new FakeAdapter({ assistantText: 'I changed src/duration.ts and ran the tests.' });
+    const result = await runLoopGraph(handoverGraph(), {
+      runId: 'live-results',
+      dryRun: false,
+      resultStore: createFileResultStore(results),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection: emptyInspection(workspace, 'composer-2'),
+        promptFor: (node) => `Do the ${node.id} step.`,
+      }),
+    });
+
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    const filed = result.results[0];
+    assert.equal(result.results.length, 1);
+    assert.equal(
+      filed?.body,
+      'I changed src/duration.ts and ran the tests.',
+      'the result is the reply itself, not a summary of it written beside it',
+    );
+    // The second step's prompt carries the first step's result. Not the executor's
+    // own idea of what happened: the body the record holds.
+    assert.equal(adapter.sends.length, 2);
+    assert.match(adapter.sends[1] ?? '', /Do the check step\./);
+    assert.match(adapter.sends[1] ?? '', /"work" left this result/);
+    assert.match(adapter.sends[1] ?? '', /I changed src\/duration\.ts and ran the tests\./);
+    assert.equal(
+      (adapter.sends[0] ?? '').includes('left this result'),
+      false,
+      'a step that consumes nothing is sent exactly what it was sent before this existed',
+    );
+  });
+
+  /**
+   * DSP-99, on the path that failed. In run `chat-loop-2026-09-22T19-50-58-359Z` the
+   * reviewer had `git status` and no statement from the run, so two earlier runs'
+   * uncommitted inventory files became "what the implementer delivered". The figures were
+   * already computed — the journal said `Changed: none` at every step — and reached no
+   * prompt. These three tests are the executor actually sending them.
+   */
+  it('tells the step it hands the work to what the run changed, and tells the first step nothing', async () => {
+    const workspace = scratch('run-change-none');
+    const inspection = emptyInspection(workspace, 'composer-2');
+    const observedAtSend = observationsAtSend(inspection);
+    const adapter = new FakeAdapter({
+      assistantText: 'I read the code and changed nothing.',
+      onSend: observedAtSend.record,
+    });
+    const result = await runLoopGraph(handoverGraph(), {
+      runId: 'live-run-change-none',
+      dryRun: false,
+      resultStore: createFileResultStore(scratch('run-change-none-store')),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection,
+        promptFor: (node) => `Do the ${node.id} step.`,
+      }),
+    });
+
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.equal(adapter.sends.length, 2);
+    const check = adapter.sends[1] ?? '';
+    assert.match(check, /between two moments DSpatch observed them: nothing\./);
+    assert.match(
+      check,
+      /anything you find changed or uncommitted in those folders was already like that before the first of those moments/,
+      'the sentence a reviewer of a run that changed nothing needs',
+    );
+    // Both instants are the record's own, not the clock at prompt-building time: the
+    // origin, which never moves, and the observation the record held at that send.
+    assert.ok(check.includes(inspection.snapshotBefore?.takenAtUtc ?? '\u0000'));
+    assert.ok(check.includes(observedAtSend.at(1)));
+    assert.equal(
+      (adapter.sends[0] ?? '').includes('What changed in this run\u2019s working folders'),
+      false,
+      'a step handed nobody\u2019s work is not sent the run\u2019s account of itself',
+    );
+  });
+
+  it('names what the run actually changed, in the same paths the record holds', async () => {
+    const workspace = scratch('run-change-file');
+    const inspection = emptyInspection(workspace, 'composer-2');
+    const observedAtSend = observationsAtSend(inspection);
+    const adapter = new FakeAdapter({
+      assistantText: 'Added the helper.',
+      writeRelPath: path.join('src', 'added.ts'),
+      writeContent: 'export const added = 1;\n',
+      onSend: observedAtSend.record,
+    });
+    const result = await runLoopGraph(handoverGraph(), {
+      runId: 'live-run-change-file',
+      dryRun: false,
+      resultStore: createFileResultStore(scratch('run-change-file-store')),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection,
+        promptFor: (node) => `Do the ${node.id} step.`,
+      }),
+    });
+
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    const check = adapter.sends[1] ?? '';
+    assert.match(check, /: 1 file differs\./);
+    assert.match(check, /What differs: src\/added\.ts\./);
+    assert.match(check, /who changed them is not, and other work may have been going on/);
+    // The same measurement the record carries, not a second reading of the tree. The
+    // record's separator is the record's: `relPath` is `/` on every platform.
+    assert.deepEqual(
+      inspection.addedFiles.map((file) => file.relPath),
+      ['src/added.ts'],
+    );
+    assert.ok(check.includes(inspection.snapshotBefore?.snapshotId ?? '\u0000'));
+    // The two instants in the message are the record's own, read as the message was
+    // built. The after-instant moves with the run: what `inspection.snapshotAfter` holds
+    // once `runLoopGraph` has returned is the walk taken after the *last* step, which is
+    // not the observation the second step was told about and must not be asserted here.
+    const observedTo = observedAtSend.at(1);
+    assert.ok(check.includes(inspection.snapshotBefore?.takenAtUtc ?? '\u0000'));
+    assert.ok(
+      check.includes(observedTo),
+      `the after-instant is the observation the record held at that send (${observedTo})`,
+    );
+    const ranOn = inspection.snapshotAfter?.takenAtUtc ?? '';
+    assert.ok(
+      Date.parse(ranOn) >= Date.parse(observedTo),
+      `the run's own observation only moves forward (${observedTo} then ${ranOn})`,
+    );
+  });
+
+  it('says a run that measured nothing measured nothing, rather than reporting no change', async () => {
+    const workspace = scratch('run-change-unmeasured');
+    const adapter = new FakeAdapter({ assistantText: 'Read only.' });
+    const inspection = emptyInspection(workspace, 'composer-2');
+    // What a run whose drawing could not write says about its own folders, in the words the
+    // record uses. `hashWorkingRoots: false` is the case that makes this test worth having:
+    // the snapshots are empty trees, so all three file lists come out empty and look exactly
+    // like a measured run that changed nothing.
+    inspection.rootsNote = describeUnobservedOutside(
+      [{ name: path.basename(workspace), path: workspace, primary: true }],
+      'No step of this drawing could write in the working folders.',
+    );
+    const result = await runLoopGraph(handoverGraph(), {
+      runId: 'live-run-change-unmeasured',
+      dryRun: false,
+      resultStore: createFileResultStore(scratch('run-change-unmeasured-store')),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection,
+        hashWorkingRoots: false,
+        promptFor: (node) => `Do the ${node.id} step.`,
+      }),
+    });
+
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    const check = adapter.sends[1] ?? '';
+    assert.match(check, /is not established, and that is not the same as nothing/);
+    assert.match(check, /No step of this drawing could write in the working folders\./);
+    assert.equal(
+      check.includes('DSpatch observed them: nothing.'),
+      false,
+      'an absence of measurement must never be sent as a measurement of no change',
+    );
+    assert.equal(
+      check.includes('DSpatch looked at those folders at'),
+      false,
+      'and it must not name two moments it did not look at',
+    );
+  });
+
+  it('names the file for a step that must write its own, and stops if it does not', async () => {
+    const workspace = scratch('results-file');
+    const results = scratch('results-file-store');
+    const graph = handoverGraph();
+    const filing: LoopGraph = {
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.id === 'work' ? { ...node, produces: { required: true, form: 'markdown-file' } } : node,
+      ),
+    };
+    const adapter = new FakeAdapter({ assistantText: 'Done, but I wrote no file.' });
+    const workspacePath = workspace;
+    const result = await runLoopGraph(filing, {
+      runId: 'live-file',
+      dryRun: false,
+      resultStore: createFileResultStore(results),
+      executor: createLiveExecutor({
+        workspacePath,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection: emptyInspection(workspacePath, 'composer-2'),
+        promptFor: () => 'Do the work.',
+      }),
+    });
+
+    // The step is told where the file goes, in a path it can act on.
+    assert.match(adapter.sends[0] ?? '', /must leave its result as a Markdown file at/);
+    assert.ok((adapter.sends[0] ?? '').includes(path.join(results, 'reports', 'live-file', '001-work.md')));
+    // And a reply with no file behind it does not pass for one.
+    assert.equal(result.status, 'runtime-fault');
+    assert.equal(result.fault?.kind, 'required-result-missing');
+    assert.equal(adapter.sends.length, 1, 'the second step must not be reached');
+  });
+});
+
+/**
+ * DSP-79's first half, where it can actually be seen: two nodes, two agents.
+ *
+ * The reason this needs its own tests rather than an assertion folded into the ones
+ * above is the card's own sentence — *a handover that passed nothing would look
+ * identical to one that works*. Every test in this file passed while every step shared
+ * one conversation, because a shared conversation carries the context invisibly. So
+ * what is measured here is what the second agent was **told**, and what it was not.
+ */
+describe('createLiveExecutor — one agent per step', () => {
+  function twoStepGraph(consumes: readonly string[]): LoopGraph {
+    const role = {
+      id: 'live-role',
+      source: { kind: 'cursor-agent-file' as const, path: 'docs/loop/roles/live.role.md' },
+    };
+    return {
+      format: 'dspatch-loop-graph',
+      formatVersion: 1,
+      id: 'live-two-agents',
+      name: 'Two agents',
+      purpose: 'A fixture for per-node sessions.',
+      target: 'cursor',
+      entry: 'work',
+      onRuntimeFault: 'stop-and-reconcile',
+      failureKinds: [],
+      archive: { path: 'reports/<run-id>', entryPerNode: true, referenceReturned: true },
+      nodes: [
+        { id: 'work', kind: 'agent', label: 'Work', role, produces: { required: true, form: 'stored-result' } },
+        { id: 'check', kind: 'agent', label: 'Check', role, ...(consumes.length === 0 ? {} : { consumes }) },
+        { id: 'done', kind: 'terminal', label: 'Finished' },
+      ],
+      edges: [
+        { id: 'w1', from: 'work', to: 'check', when: { on: 'success' } },
+        { id: 'w2', from: 'check', to: 'done', when: { on: 'success' } },
+      ],
+    };
+  }
+
+  it('gives two consecutive agent nodes two sessions, named in the record', async () => {
+    const workspace = scratch('two-sessions');
+    const adapter = new FakeAdapter({ assistantText: 'I did the thing.' });
+    const inspection = emptyInspection(workspace, 'composer-2');
+    const replies: { nodeId: string; sessionId: string }[] = [];
+    const result = await runLoopGraph(twoStepGraph(['work']), {
+      runId: 'two-sessions',
+      dryRun: false,
+      resultStore: createFileResultStore(scratch('two-sessions-store')),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection,
+        promptFor: (node) => `Do the ${node.id} step.`,
+        onAgentReply: (reply) => {
+          replies.push({ nodeId: reply.nodeId, sessionId: reply.sessionId });
+        },
+      }),
+    });
+
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.equal(adapter.configs.length, 2, 'two nodes, two calls to startSession');
+    assert.deepEqual(
+      inspection.sessions.map((session) => session.nodeId),
+      ['work', 'check'],
+    );
+    assert.equal(new Set(inspection.sessions.map((s) => s.dspatchSessionId)).size, 2);
+    assert.equal(new Set(inspection.sessions.map((s) => s.providerSessionId)).size, 2);
+    // Observable in the record, which is what the criterion asks for: the reply the
+    // record stores carries the session the step ran in.
+    assert.deepEqual(
+      replies.map((reply) => reply.nodeId),
+      ['work', 'check'],
+    );
+    assert.notEqual(replies[0]?.sessionId, replies[1]?.sessionId);
+    assert.equal(replies[0]?.sessionId, stepSessionId('two-sessions', 'work'));
+    // And `inspection.sessionId` still means what every reader written before this
+    // means by it: the run's first session, not a second idea of the same thing.
+    assert.equal(inspection.sessionId, replies[0]?.sessionId);
+  });
+
+  /**
+   * The discriminating test, and the reason the rest of this file could not catch the
+   * defect: with one shared session the second step's prompt could say nothing at all
+   * about the work and the run would still behave correctly, because the agent had
+   * watched the work happen.
+   */
+  it('tells the second agent only what the graph hands it', async () => {
+    const workspace = scratch('told-what');
+    const withHandover = new FakeAdapter({ assistantText: 'I rewrote the parser.' });
+    await runLoopGraph(twoStepGraph(['work']), {
+      runId: 'told-what',
+      dryRun: false,
+      resultStore: createFileResultStore(scratch('told-what-store')),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter: withHandover,
+        modelRequested: 'composer-2',
+        inspection: emptyInspection(workspace, 'composer-2'),
+        promptFor: (node) => `Do the ${node.id} step.`,
+      }),
+    });
+
+    // The negative control, and it is the half that matters. The same fixture with
+    // `consumes` removed: the second step is a second agent either way, so if the
+    // handover is what carries the work's account, taking it away must take the
+    // account away — and the run must still complete, because a graph that hands
+    // nothing over is a legal graph.
+    const workspaceB = scratch('told-what-control');
+    const withoutHandover = new FakeAdapter({ assistantText: 'I rewrote the parser.' });
+    const control = await runLoopGraph(twoStepGraph([]), {
+      runId: 'told-what-control',
+      dryRun: false,
+      resultStore: createFileResultStore(scratch('told-what-control-store')),
+      executor: createLiveExecutor({
+        workspacePath: workspaceB,
+        adapter: withoutHandover,
+        modelRequested: 'composer-2',
+        inspection: emptyInspection(workspaceB, 'composer-2'),
+        promptFor: (node) => `Do the ${node.id} step.`,
+      }),
+    });
+
+    assert.equal(control.status, 'completed', control.fault?.detail ?? '');
+    assert.match(withHandover.sends[1] ?? '', /I rewrote the parser\./);
+    assert.equal(
+      (withoutHandover.sends[1] ?? '').includes('I rewrote the parser.'),
+      false,
+      'without `consumes` the second agent is told nothing about the first step — which ' +
+        'is correct, and is exactly why a graph that means to hand work over has to say so',
+    );
+  });
+
+  /**
+   * Keyed by node and not by visit, which is the whole of what a rework round is.
+   *
+   * A second visit to the same node is the same agent being told what the review said,
+   * so it keeps its own conversation. Two visits must not open two sessions, and they
+   * must not reuse the *other* node's.
+   */
+  it('continues a revisited node in its own session rather than opening a second', async () => {
+    const workspace = scratch('revisit');
+    const role = {
+      id: 'live-role',
+      source: { kind: 'cursor-agent-file' as const, path: 'docs/loop/roles/live.role.md' },
+    };
+    const graph: LoopGraph = {
+      format: 'dspatch-loop-graph',
+      formatVersion: 1,
+      id: 'live-rework',
+      name: 'Rework once',
+      purpose: 'A fixture for a rework edge returning to a node.',
+      target: 'cursor',
+      entry: 'work',
+      onRuntimeFault: 'stop-and-reconcile',
+      failureKinds: [],
+      archive: { path: 'reports/<run-id>', entryPerNode: true, referenceReturned: true },
+      nodes: [
+        { id: 'work', kind: 'agent', label: 'Work', role, produces: { required: true, form: 'stored-result' } },
+        { id: 'check', kind: 'agent', label: 'Check', role, outcomes: ['met', 'rework'], consumes: ['work'] },
+        { id: 'done', kind: 'terminal', label: 'Finished' },
+      ],
+      edges: [
+        { id: 'w1', from: 'work', to: 'check', when: { on: 'success' } },
+        { id: 'w2', from: 'check', to: 'done', when: { on: 'outcome', outcome: 'met' } },
+        { id: 'w3', from: 'check', to: 'work', when: { on: 'outcome', outcome: 'rework' } },
+      ],
+    };
+    // work → check(rework) → work → check(met).
+    const replies = [
+      'first attempt',
+      'Not yet.\n\nRESULT: rework',
+      'second attempt',
+      'Now it is right.\n\nRESULT: met',
+    ];
+    const adapter = new FakeAdapter({ assistantText: 'unused' });
+    const inspection = emptyInspection(workspace, 'composer-2');
+    const result = await runLoopGraph(graph, {
+      runId: 'revisit',
+      dryRun: false,
+      resultStore: createFileResultStore(scratch('revisit-store')),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection,
+        promptFor: (node, step) => {
+          adapter.nextReply = replies[step.callId - 1] ?? 'unused';
+          return `Do the ${node.id} step, visit ${String(step.occurrence)}.`;
+        },
+      }),
+    });
+
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.deepEqual(result.path, ['work', 'check', 'work', 'check', 'done']);
+    assert.equal(adapter.configs.length, 2, 'four turns, two nodes, two sessions');
+    assert.deepEqual(
+      inspection.sessions.map((session) => ({ nodeId: session.nodeId, turns: session.turns })),
+      [
+        { nodeId: 'work', turns: 2 },
+        { nodeId: 'check', turns: 2 },
+      ],
+    );
+    // And the second check receives the second work, not the first — the binding
+    // DSP-75 built, now crossing a real session boundary.
+    assert.match(adapter.sends[3] ?? '', /second attempt/);
+    assert.equal((adapter.sends[3] ?? '').includes('first attempt'), false);
+  });
+
+  /**
+   * The simple loop, on a shipped graph that declares none of this.
+   *
+   * `dspatch-live-duration` has an agent, a gate and terminals and mentions neither
+   * `produces` nor `consumes`. Running it with a store and without one has to produce
+   * the same sequence of journal kinds and no `result-filed` entry in either — which is
+   * what "a simple loop must be able to work without the development loop's full
+   * reporting package" means as something a test can hold.
+   */
+  it('costs a graph that declares nothing exactly nothing, store or no store', async () => {
+    const kindsOf = async (withStore: boolean): Promise<readonly JournalKind[]> => {
+      const workspace = path.join(scratch(`simple-${String(withStore)}`), 'duration-repo');
+      generateExperimentRepo(workspace, repoRoot);
+      const result = await runLoopGraph(loadLiveGraph(), {
+        runId: `simple-${String(withStore)}`,
+        dryRun: false,
+        ...(withStore
+          ? { resultStore: createFileResultStore(scratch(`simple-store-${String(withStore)}`)) }
+          : {}),
+        executor: createLiveExecutor({
+          workspacePath: workspace,
+          adapter: new FakeAdapter({
+            assistantText: 'DONE',
+            writeRelPath: 'src/duration.ts',
+            writeContent: 'export function formatDuration(n: number): string { return `${n}s`; }\n',
+          }),
+          modelRequested: 'composer-2',
+          inspection: emptyInspection(workspace, 'composer-2'),
+          runProjectTest: passingTest,
+        }),
+      });
+      assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+      assert.deepEqual(result.results, [], 'nothing is filed for a graph that asks for nothing');
+      return result.journal.map((entry) => entry.kind);
+    };
+    const without = await kindsOf(false);
+    const withOne = await kindsOf(true);
+    assert.deepEqual(withOne, without);
+    assert.equal(without.includes('result-filed'), false);
+  });
+});
+
 describe('createLiveExecutor — deadline and cancel', () => {
   it('owns the deadline: a hung send is cancelled and returns step-timed-out', async () => {
     const workspace = path.join(scratch('hang'), 'duration-repo');
@@ -498,6 +1179,7 @@ describe('createLiveExecutor — deadline and cancel', () => {
       limits: {},
       deadlineAt: Date.now() + 60_000,
       archive: null,
+      received: [],
     };
     const first = await executor(context);
     const second = await executor(context);
@@ -553,6 +1235,7 @@ describe("the checking step's third verdict: the assignment was not established"
     const result = await runLoopGraph(loadChatGraph(), {
       runId: 'check-could-not',
       dryRun: false,
+      resultStore: chatResultStore('check-could-not'),
       executor: createLiveExecutor({
         workspacePath: workspace,
         adapter,
@@ -584,11 +1267,24 @@ describe("the checking step's third verdict: the assignment was not established"
       (line) => line.kind === 'node-produced' && line.nodeId === 'check',
     );
     assert.match(produced?.detail ?? '', /RESULT: could-not-check/);
+    // Reversed by DSP-79, and the reversal is the card. This used to require the
+    // record to say the check *reused* the work's session — true then, and the reason
+    // the graph's own notes said the check was not an independent judge. Each agent
+    // node now has its own session, so the sentence the record must carry is the
+    // opposite one, and it has to be checkable rather than asserted in prose.
     assert.match(
       produced?.detail ?? '',
-      /reused the provider session/,
-      'the record must say the check is not an independent judge',
+      /ran in its own session .* opened for "check"/,
+      'the record must say the check was a separate agent',
     );
+    assert.match(produced?.detail ?? '', /no history of the run's other steps/);
+    const sessions = new Set(inspection.sessions.map((session) => session.dspatchSessionId));
+    assert.deepEqual(
+      inspection.sessions.map((session) => session.nodeId),
+      ['work', 'check'],
+      'one session per agent node, in the order the run reached them',
+    );
+    assert.equal(sessions.size, 2, 'and they are two sessions, not one used twice');
   });
 
   it('still stops the duration fixture for a command that could not be started', async () => {
@@ -686,6 +1382,7 @@ describe("the checking step's third verdict: the assignment was not established"
       const result = await runLoopGraph(graph, {
         runId: `check-verdict-${terminal}`,
         dryRun: false,
+        resultStore: chatResultStore(`check-verdict-${terminal}`),
         executor: createLiveExecutor({
           workspacePath: workspace,
           adapter: new FakeAdapter({
@@ -722,6 +1419,7 @@ describe('which branch the run takes is declared, not measured from files', () =
     const result = await runLoopGraph(loadChatGraph(), {
       runId: 'declared-unchanged',
       dryRun: false,
+      resultStore: chatResultStore('declared-unchanged'),
       executor: createLiveExecutor({
         workspacePath: workspace,
         adapter: new FakeAdapter({
@@ -760,6 +1458,7 @@ describe('which branch the run takes is declared, not measured from files', () =
     const result = await runLoopGraph(loadChatGraph(), {
       runId: 'declared-changed',
       dryRun: false,
+      resultStore: chatResultStore('declared-changed'),
       executor: createLiveExecutor({
         workspacePath: workspace,
         adapter: new FakeAdapter({
@@ -789,6 +1488,7 @@ describe('which branch the run takes is declared, not measured from files', () =
     const result = await runLoopGraph(loadChatGraph(), {
       runId: 'undeclared-work',
       dryRun: false,
+      resultStore: chatResultStore('undeclared-work'),
       executor: createLiveExecutor({
         workspacePath: workspace,
         adapter: new FakeAdapter({
@@ -829,6 +1529,7 @@ describe('which branch the run takes is declared, not measured from files', () =
       const result = await runLoopGraph(loadChatGraph(), {
         runId: 'blocked-in-prose',
         dryRun: false,
+        resultStore: chatResultStore('blocked-in-prose'),
         executor: createLiveExecutor({
           workspacePath: workspace,
           adapter: new FakeAdapter({ assistantText: reply }),
@@ -870,6 +1571,7 @@ describe('which branch the run takes is declared, not measured from files', () =
       const result = await runLoopGraph(loadChatGraph(), {
         runId: 'declared-opening',
         dryRun: false,
+        resultStore: chatResultStore('declared-opening'),
         executor: createLiveExecutor({
           workspacePath: workspace,
           adapter: new FakeAdapter({ assistantText: reply }),
@@ -898,6 +1600,7 @@ describe('which branch the run takes is declared, not measured from files', () =
     const result = await runLoopGraph(loadChatGraph(), {
       runId: 'measured-names-paths',
       dryRun: false,
+      resultStore: chatResultStore('measured-names-paths'),
       executor: createLiveExecutor({
         workspacePath: workspace,
         adapter: new FakeAdapter({
@@ -940,6 +1643,7 @@ describe('which branch the run takes is declared, not measured from files', () =
     const result = await runLoopGraph(loadChatGraph(), {
       runId: 'measured-spec-error',
       dryRun: false,
+      resultStore: chatResultStore('measured-spec-error'),
       executor: createLiveExecutor({
         workspacePath: workspace,
         adapter: new FakeAdapter({
@@ -1013,6 +1717,7 @@ describe('which branch the run takes is declared, not measured from files', () =
     const result = await runLoopGraph(graph, {
       runId: 'instruction-delivery',
       dryRun: false,
+      resultStore: chatResultStore('instruction-delivery'),
       executor: createLiveExecutor({
         workspacePath: workspace,
         adapter,
@@ -1083,6 +1788,7 @@ describe('which branch the run takes is declared, not measured from files', () =
     await runLoopGraph(graph, {
       runId: 'instruction-delivery-control',
       dryRun: false,
+      resultStore: chatResultStore('instruction-delivery-control'),
       executor: createLiveExecutor({
         workspacePath: workspace,
         adapter,
@@ -1173,6 +1879,7 @@ describe('which branch the run takes is declared, not measured from files', () =
     const result = await runLoopGraph(loadChatGraph(), {
       runId: 'empty-reply-chat',
       dryRun: false,
+      resultStore: chatResultStore('empty-reply-chat'),
       executor: createLiveExecutor({
         workspacePath: workspace,
         adapter: new FakeAdapter({ assistantText: '' }),
@@ -1361,6 +2068,7 @@ describe('a gate whose command never comes back', () => {
         limits: { maxMinutes: 1 },
         deadlineAt: Date.now() + 600,
         archive: null,
+        received: [],
       }),
       new Promise<'never returned'>((resolve) => {
         setTimeout(() => {
@@ -1493,6 +2201,179 @@ describe('describeBound', () => {
   });
 });
 
+/**
+ * DSP-72. A run with two roots, measured per root and described honestly.
+ *
+ * The graph is the duration fixture, so the shape of the walk is the one the other
+ * tests in this file use; what differs is that the run is given two folders and the
+ * fake agent writes into three places — the working copy, the second root, and a folder
+ * that is neither.
+ */
+describe('a run with several working roots', () => {
+  const twoRootRun = async (options: {
+    readonly writeInSecond: boolean;
+    readonly writeOutside: boolean;
+  }) => {
+    const parent = scratch(`roots-${options.writeInSecond ? 'in' : 'no'}-${options.writeOutside ? 'out' : 'clean'}`);
+    const working = path.join(parent, 'duration-repo');
+    generateExperimentRepo(working, repoRoot);
+    const second = path.join(parent, 'other-repo');
+    fs.mkdirSync(second, { recursive: true });
+    fs.writeFileSync(path.join(second, 'ported.ts'), 'export const before = 1;\n', 'utf8');
+    const outside = path.join(parent, 'not-a-root');
+    fs.mkdirSync(outside, { recursive: true });
+
+    const roots = workingRootsFrom([working, second], working, process.platform === 'win32');
+    const adapter = new FakeAdapter({
+      writeRelPath: 'src/duration.ts',
+      writeContent: 'export function formatDuration(n: number): string { return `${n}s`; }\n',
+      writeAbsolute: [
+        ...(options.writeInSecond
+          ? [{ path: path.join(second, 'ported.ts'), content: 'export const before = 2;\n' }]
+          : []),
+        ...(options.writeOutside
+          ? [{ path: path.join(outside, 'escaped.txt'), content: 'written outside every root\n' }]
+          : []),
+      ],
+    });
+    const inspection = emptyInspection(working, 'composer-2', roots);
+    const result = await runLoopGraph(loadLiveGraph(), {
+      runId: 'live-two-roots',
+      dryRun: false,
+      executor: createLiveExecutor({
+        workspacePath: working,
+        workingRoots: roots,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection,
+        runProjectTest: passingTest,
+      }),
+    });
+    return { result, inspection, adapter, working, second, outside, roots };
+  };
+
+  it('passes every root to the provider as the working copy plus the others', async () => {
+    const { adapter, working, second } = await twoRootRun({
+      writeInSecond: true,
+      writeOutside: false,
+    });
+    const config = adapter.configs[0];
+    // `workspacePath` is unchanged — it is the working directory, and everything that
+    // reads it reads the same folder it read before this card.
+    assert.equal(config?.workspacePath, working);
+    assert.deepEqual([...(config?.workspacePaths ?? [])], [working, second]);
+  });
+
+  it('measures each root separately, and a root nothing touched reports nothing', async () => {
+    const changedBoth = await twoRootRun({ writeInSecond: true, writeOutside: false });
+    const bothByName = new Map(changedBoth.inspection.roots.map((root) => [root.name, root]));
+    assert.equal(bothByName.get('duration-repo')?.primary, true);
+    assert.equal(bothByName.get('other-repo')?.primary, false);
+    assert.deepEqual(
+      bothByName.get('duration-repo')?.changedFiles.map((file) => file.relPath),
+      ['src/duration.ts'],
+    );
+    assert.deepEqual(
+      bothByName.get('other-repo')?.changedFiles.map((file) => file.relPath),
+      ['ported.ts'],
+    );
+
+    // The negative control in the other direction: the same run, the same two roots,
+    // and nothing written in the second one. A per-root list that always named both
+    // roots would pass the assertion above while measuring nothing.
+    const changedOne = await twoRootRun({ writeInSecond: false, writeOutside: false });
+    const oneByName = new Map(changedOne.inspection.roots.map((root) => [root.name, root]));
+    assert.deepEqual(
+      oneByName.get('duration-repo')?.changedFiles.map((file) => file.relPath),
+      ['src/duration.ts'],
+    );
+    assert.deepEqual(oneByName.get('other-repo')?.changedFiles, []);
+    assert.deepEqual(oneByName.get('other-repo')?.addedFiles, []);
+    assert.deepEqual(oneByName.get('other-repo')?.removedFiles, []);
+    // And the second root was genuinely looked at, rather than skipped: a root with no
+    // snapshot would report no changes for the wrong reason.
+    assert.ok(oneByName.get('other-repo')?.snapshotBefore?.snapshotId.startsWith('snap-'));
+    assert.ok(oneByName.get('other-repo')?.snapshotAfter?.snapshotId.startsWith('snap-'));
+  });
+
+  it('says folders outside the roots were not observed, when one really was written', async () => {
+    const { inspection, outside } = await twoRootRun({
+      writeInSecond: false,
+      writeOutside: true,
+    });
+    // The write happened: the file is on disk, outside every root.
+    assert.equal(
+      fs.readFileSync(path.join(outside, 'escaped.txt'), 'utf8'),
+      'written outside every root\n',
+    );
+    // And the record says nothing about it — because DSpatch took no snapshot there.
+    // This is the sentence that must not say "none", and the file on disk is why.
+    assert.match(inspection.rootsNote, /not observed is not the same as none/);
+    const everyPath = [
+      ...inspection.roots.flatMap((root) => root.changedFiles.map((file) => file.relPath)),
+      ...inspection.roots.flatMap((root) => root.addedFiles.map((file) => file.relPath)),
+    ];
+    assert.equal(
+      everyPath.some((relPath) => relPath.includes('escaped')),
+      false,
+      'a file outside every root must not appear in a per-root measurement',
+    );
+    assert.equal(formatLiveInspection(inspection).includes(inspection.rootsNote), true);
+  });
+});
+
+describe('refuseLiveWorkingRoots', () => {
+  it('refuses the run and names which root is DSpatch, when it is not the first', () => {
+    const working = path.join(scratch('refuse-second'), 'duration-repo');
+    generateExperimentRepo(working, repoRoot);
+    const roots = workingRootsFrom([working, repoRoot], working, process.platform === 'win32');
+    const refusal = refuseLiveWorkingRoots(roots, path.join(repoRoot, 'app'));
+    assert.ok(refusal, 'a root that is DSpatch itself must be refused');
+    assert.equal(refusal.refused.length, 1);
+    // The name, so a person with five folders open knows which one to look at, and the
+    // path, because two folders can share a last segment.
+    assert.equal(refusal.refused[0]?.root.path, repoRoot);
+    assert.ok(refusal.message.includes(repoRoot));
+    assert.ok(refusal.message.includes(refusal.refused[0]?.root.name ?? '\u0000'));
+    // The run is refused, not the root: nothing in the message offers to continue
+    // without it, and it says so.
+    assert.match(refusal.message, /nothing was started/);
+    assert.match(refusal.message, /DSpatch does not drop them for you/);
+    // And the folder that is fine is named as fine rather than left ambiguous.
+    assert.match(refusal.message, /The other 1 folder is fine/);
+  });
+
+  it('still refuses DSpatch as a root after the drawing itself became choosable', () => {
+    // DSP-78: describeChosenLoopBinding is ready for our development loop. The
+    // danger that used to be refused by id is now refused here, by folder, and
+    // it must still bite — otherwise removing the id check would let a writing
+    // run open DSpatch's own working copy.
+    const graph = loadLoopGraph(
+      fs.readFileSync(path.join(repoRoot, 'docs', 'loop', 'graphs', 'dspatch-development-loop-runnable.graph.json'), 'utf8'),
+      { resolveRole: createFileRoleResolver(repoRoot), connectedTargets: ['cursor'] },
+    );
+    assert.equal(graph.ok, true);
+    if (graph.ok) {
+      const binding = describeChosenLoopBinding(graph.graph);
+      assert.equal(binding.ready, true);
+    }
+    const roots = workingRootsFrom([repoRoot], repoRoot, process.platform === 'win32');
+    const refusal = refuseLiveWorkingRoots(roots, path.join(repoRoot, 'app'));
+    assert.ok(refusal, 'DSpatch as a working root must still be refused');
+    assert.equal(refusal.refused[0]?.root.path, repoRoot);
+  });
+
+  it('allows a run whose every root is an ordinary folder', () => {
+    const parent = scratch('refuse-none');
+    const working = path.join(parent, 'duration-repo');
+    generateExperimentRepo(working, repoRoot);
+    const second = path.join(parent, 'other-repo');
+    fs.mkdirSync(second, { recursive: true });
+    const roots = workingRootsFrom([working, second], working, process.platform === 'win32');
+    assert.equal(refuseLiveWorkingRoots(roots, path.join(repoRoot, 'app')), null);
+  });
+});
+
 describe('refuseLiveWorkspace', () => {
   it('refuses DSpatch itself as a live workspace', () => {
     const message = refuseLiveWorkspace(repoRoot, path.join(repoRoot, 'app'));
@@ -1504,6 +2385,72 @@ describe('refuseLiveWorkspace', () => {
     const workspace = path.join(scratch('allow'), 'duration-repo');
     generateExperimentRepo(workspace, repoRoot);
     assert.equal(refuseLiveWorkspace(workspace, path.join(repoRoot, 'app')), null);
+  });
+});
+
+/**
+ * DSP-101. A result the run stores as Markdown must not reach an agent as an
+ * instruction to create a file.
+ *
+ * The card left the storage format alone — every producing step of the runnable loop
+ * still declares `markdown-file`, because where the body lives is a decision about the
+ * run and not about what an assignment turned out to need. What keeps the two apart is
+ * `report.writtenBy`, which names the coordinator throughout that drawing and makes the
+ * runner the writer, so the sentence naming a path is never sent and there is no path
+ * for an agent to mistake for somewhere in the working folders. Both halves are one
+ * edit away from being lost, which is why they are asserted rather than trusted.
+ */
+describe('a Markdown result is storage, not a file the agent is asked to create', () => {
+  const graph = loadLoopGraph(
+    fs.readFileSync(
+      path.join(repoRoot, 'docs', 'loop', 'graphs', 'dspatch-development-loop-runnable.graph.json'),
+      'utf8',
+    ),
+    { resolveRole: createFileRoleResolver(repoRoot), connectedTargets: ['cursor'] },
+  );
+  assert.equal(graph.ok, true);
+  const nodes = graph.ok ? graph.graph.nodes : [];
+
+  /** The one line of `archivePlacement` this is about, from the node's own field. */
+  function placementFor(node: LoopNode): ArchivePlacement {
+    const writtenBy = node.report?.writtenBy ?? 'self';
+    return {
+      path: `reports/001-${node.id}.md`,
+      writtenBy: writtenBy === 'self' ? node.id : writtenBy,
+      writtenByAnotherNode: writtenBy !== 'self',
+      location: `C:/DSpatch/loop-runs/a-run/reports/001-${node.id}.md`,
+    };
+  }
+
+  it('says nothing to a step whose entry the runner files for it', () => {
+    let markdownProducers = 0;
+    for (const node of nodes) {
+      if (node.produces?.form !== 'markdown-file') {
+        continue;
+      }
+      markdownProducers += 1;
+      assert.equal(
+        node.report?.writtenBy ?? 'self',
+        'coordinator',
+        `${node.id} declares a Markdown result, so somebody has to file it and it is not the step`,
+      );
+      assert.equal(
+        describeRequiredResult(node, placementFor(node)),
+        '',
+        `${node.id} must not be told to write a file`,
+      );
+    }
+    assert.ok(markdownProducers >= 4, 'the drawing should still store results as Markdown');
+  });
+
+  it('and does speak where a step files its own, so the silence above means something', () => {
+    const implementer = nodes.find((node) => node.id === 'implementer');
+    assert.ok(implementer !== undefined);
+    const own: LoopNode = { ...implementer, report: { writtenBy: 'self' } };
+    const text = describeRequiredResult(own, placementFor(own));
+    assert.match(text, /must leave its result as a Markdown file at/);
+    // And when it does speak, it says whose storage that path is in.
+    assert.match(text, /not in the folders you are working in/);
   });
 });
 
@@ -1726,6 +2673,235 @@ describe('the conversation says that the run is waiting for a person', () => {
       ),
       'active',
     );
+  });
+});
+
+/**
+ * DSP-102 end to end on the shipped runnable drawing, with a fake adapter.
+ *
+ * The unit half is in `loop-run.test.ts`, which walks the same graph with scripted
+ * products. This is the part no scripted product can show: that a reply of ordinary
+ * prose — the 22 September 2026 implementer's *"before I start, which folder?"* — is read
+ * as that outcome in the first place, and that the message it was answering did ask for
+ * the line whose absence decided the route. Two links, one run, no provider.
+ *
+ * Nothing here reads the prose for a token. The reply mentions no declaration at all, and
+ * the route is taken because the whole-line form the prompt asked for is not in it.
+ */
+describe('a step of the runnable loop that answers without naming its result', () => {
+  function loadRunnableGraph(): LoopGraph {
+    const loaded = loadLoopGraph(
+      fs.readFileSync(
+        path.join(repoRoot, 'docs', 'loop', 'graphs', 'dspatch-development-loop-runnable.graph.json'),
+        'utf8',
+      ),
+      { resolveRole: createFileRoleResolver(repoRoot), connectedTargets: ['cursor'] },
+    );
+    assert.ok(loaded.ok, 'the runnable subset must validate');
+    return loaded.graph;
+  }
+
+  it('ends the run at Stopped rather than handing a question on as delivered work', async () => {
+    const workspace = scratch('dsp-102-no-name');
+    const graph = loadRunnableGraph();
+    const mandate = 'Add a retry helper to the uploader and keep the existing tests passing.';
+    const adapter = new FakeAdapter({
+      assistantText:
+        'The bounded change is a retry helper in the uploader, with the existing tests ' +
+        'kept green. Out of scope: the upload protocol itself.\n\nRESULT: briefed',
+      laterAssistantText:
+        'Before I start: should the helper live beside the uploader or in the shared ' +
+        'utilities? The brief does not say and the two have different test setups.',
+    });
+
+    const result = await runLoopGraph(graph, {
+      runId: 'dsp-102-live',
+      dryRun: false,
+      resultStore: chatResultStore('dsp-102-live'),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection: emptyInspection(workspace, 'composer-2'),
+        promptFor: (node, step) => chatPromptFor(node, { entryId: graph.entry, mandate, step }),
+      }),
+    });
+
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.deepEqual(result.path, ['coordinator', 'implementer', 'stopped']);
+    assert.deepEqual(result.edgesTaken, ['e01', 'e02a']);
+    // Two calls, and the three that used to follow a non-result are not spent.
+    assert.equal(adapter.sends.length, 2);
+
+    // The message did ask for the line, which is what makes its absence mean something.
+    assert.match(adapter.sends[1] ?? '', /RESULT: done/);
+    assert.match(adapter.sends[1] ?? '', /RESULT: unclear/);
+
+    // And the question itself is filed, whole, before anything routed on its absence.
+    const filed = result.results.find((entry) => entry.nodeId === 'implementer');
+    assert.ok(filed, 'the step that named no result still left its account');
+    assert.match(filed.body, /beside the uploader or in the shared/);
+
+    // DSP-103 #5, on the real path rather than a scripted product: this is the one
+    // place both provenances are produced by actually reading two replies. The
+    // coordinator wrote `RESULT: briefed` and owns its outcome; the implementer wrote
+    // no such line, so `unclear` is DSpatch routing on the absence of one, and the
+    // record says which is which. Nothing about the routing differs — `e02a` is taken
+    // either way — which is why this has to be recorded rather than inferred later.
+    assert.deepEqual(filed.outcome, { name: 'unclear', source: 'engine-fallback' });
+    assert.deepEqual(result.results.find((entry) => entry.nodeId === 'coordinator')?.outcome, {
+      name: 'briefed',
+      source: 'step-declared',
+    });
+    const produced = result.journal.filter(
+      (entry) => entry.kind === 'node-produced' && entry.nodeId === 'implementer',
+    );
+    assert.equal(produced[0]?.data?.['outcomeSource'], 'engine-fallback');
+    assert.match(produced[0]?.detail ?? '', /the run selected because the reply declared none/);
+  });
+
+  /**
+   * And the route itself is the node's, not the word's (DSP-103).
+   *
+   * The same reply, the same reader, and the only difference is that the drawing no
+   * longer states where a reply declaring nothing goes. The implementer stops the run
+   * instead of reaching `stopped`, which is the migration this card makes deliberately:
+   * spelling an outcome `unclear` buys nothing now, and what a graph does not say, the
+   * run does not do.
+   */
+  it('stops the run where the drawing states no route, whatever the outcome is called', async () => {
+    const workspace = scratch('dsp-103-unstated');
+    const loaded = loadRunnableGraph();
+    const graph: LoopGraph = {
+      ...loaded,
+      nodes: loaded.nodes.map((node) => {
+        if (node.id !== 'implementer') {
+          return node;
+        }
+        const { whenUndeclared: _dropped, ...rest } = node;
+        return rest;
+      }),
+    };
+    const mandate = 'Add a retry helper to the uploader and keep the existing tests passing.';
+    const adapter = new FakeAdapter({
+      assistantText: 'The bounded change is a retry helper.\n\nRESULT: briefed',
+      laterAssistantText: 'Before I start: where should the helper live?',
+    });
+
+    const result = await runLoopGraph(graph, {
+      runId: 'dsp-103-unstated',
+      dryRun: false,
+      resultStore: chatResultStore('dsp-103-unstated'),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection: emptyInspection(workspace, 'composer-2'),
+        promptFor: (node, step) => chatPromptFor(node, { entryId: graph.entry, mandate, step }),
+      }),
+    });
+
+    assert.equal(result.status, 'runtime-fault');
+    assert.equal(result.fault?.kind, 'undeclared-product');
+    assert.equal(result.fault?.nodeId, 'implementer');
+    assert.equal(result.edgesTaken.includes('e02a'), false);
+    // The message told it so, which is what makes the stop honest rather than a trap.
+    assert.match(adapter.sends[1] ?? '', /the run stops for a person rather than choosing a name/);
+    // And its own words are filed either way.
+    assert.match(
+      result.results.find((entry) => entry.nodeId === 'implementer')?.body ?? '',
+      /where should the helper live/,
+    );
+  });
+
+  /**
+   * DSP-97, on the one path that needs a real reply to be read.
+   *
+   * The unit half is in `loop-run.test.ts`, which walks this drawing with scripted
+   * products. What no scripted product can show is the case the card is actually about: a
+   * report step that did the work of reporting, wrote an honest account of an obstacle in
+   * ordinary prose, and never put a name on the line its message asked for. Until this
+   * card that reply was plain success, took `e14` and reached `delivered`, whose ending is
+   * success — so the drawing ticked an assignment as reported on the strength of a report
+   * that said it could not be.
+   *
+   * It now ends at the terminal that says what happened and no more, and the record keeps
+   * the two things Niclas asked to be kept apart: the ending, and the evidence. The step's
+   * own account is filed before the route is chosen, and the outcome is marked
+   * `engine-fallback` — DSpatch reading the absence of a form, not the step's verdict.
+   *
+   * Nothing here reads the prose. The reply below names no result at all, and the route is
+   * taken because the whole-line form the prompt asked for is not in it.
+   */
+  it('ends a report step that named nothing at the ending that says so, not at Delivered', async () => {
+    const workspace = scratch('dsp-97-no-name');
+    const graph = loadRunnableGraph();
+    const mandate = 'Add a retry helper to the uploader and keep the existing tests passing.';
+    // One reply per call, in the order the drawing walks them. The last one is the case.
+    const replies = [
+      'The bounded change is a retry helper in the uploader.\n\nRESULT: briefed',
+      'Added the helper and ran the suite; 412 pass.\n\nRESULT: done',
+      'Ran the suite myself: exit code 0, 412 pass.\n\nRESULT: checked',
+      'The account matches the evidence and the change is in scope.\n\nRESULT: accept',
+      'I could not assemble the run report: the results the earlier steps left are not ' +
+        'readable from here, so I have nothing to summarise from and will not write a ' +
+        'summary that invents what they said.',
+    ];
+    const adapter = new FakeAdapter({ assistantText: 'unused' });
+
+    const result = await runLoopGraph(graph, {
+      runId: 'dsp-97-live',
+      dryRun: false,
+      resultStore: chatResultStore('dsp-97-live'),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection: emptyInspection(workspace, 'composer-2'),
+        promptFor: (node, step) => {
+          adapter.nextReply = replies[step.callId - 1] ?? 'unused';
+          return chatPromptFor(node, { entryId: graph.entry, mandate, step });
+        },
+      }),
+    });
+
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.deepEqual(result.path, [
+      'coordinator',
+      'implementer',
+      'verifier',
+      'implementation-review',
+      'coordinator-report',
+      'reporting-incomplete',
+    ]);
+    assert.deepEqual(result.edgesTaken, ['e01', 'e02', 'e09', 'e11', 'e14a']);
+    assert.equal(result.edgesTaken.includes('e14'), false);
+
+    // The message did ask for the line, and said where its absence goes — which is what
+    // makes routing on that absence honest rather than a trap.
+    assert.match(adapter.sends[4] ?? '', /RESULT: reported/);
+    assert.match(adapter.sends[4] ?? '', /RESULT: could-not-report/);
+    assert.match(adapter.sends[4] ?? '', /read as "could-not-report"/);
+
+    // Whose name it is. The review declared its own verdict; the report step declared
+    // none, so `could-not-report` is DSpatch routing on an absence and the record says so.
+    assert.deepEqual(result.results.find((entry) => entry.nodeId === 'coordinator-report')?.outcome, {
+      name: 'could-not-report',
+      source: 'engine-fallback',
+    });
+    assert.deepEqual(result.results.find((entry) => entry.nodeId === 'implementation-review')?.outcome, {
+      name: 'accept',
+      source: 'step-declared',
+    });
+
+    // And the two registers, kept apart. The ending says the run did not report. The
+    // reason is in the report step's own account, and the evidence about the work that was
+    // done is in the earlier steps' accounts — separately, where a person can read both.
+    const body = (nodeId: string): string =>
+      result.results.find((entry) => entry.nodeId === nodeId)?.body ?? '';
+    assert.match(body('coordinator-report'), /could not assemble the run report/);
+    assert.match(body('verifier'), /exit code 0/);
+    assert.match(body('implementation-review'), /matches the evidence/);
   });
 });
 

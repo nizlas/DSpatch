@@ -24,11 +24,15 @@ import type {
   EditorLoopRunRequest,
   EnvironmentInfo,
   ForgetProjectsResult,
+  LoopDefinitionChooseOutcome,
+  LoopDefinitionListing,
   LoopGraphOpenOutcome,
   LoopGraphOpenRequest,
   LoopEditorWindowOutcome,
   LoopGraphSaveOutcome,
   LoopGraphSaveRequest,
+  GraphSavedElsewhere,
+  UnsavedDrawing,
   MenuCommand,
   ProjectListing,
   ProjectPickOutcome,
@@ -54,6 +58,7 @@ import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/
 import type { RoleReference } from '../shared/loop-graph';
 import type { RunJournalEntry } from '../shared/loop-run';
 import type { LiveRunAnnouncement, LoopRunEvent } from '../shared/loop-run-view';
+import type { DirectoryPage, FileView, WorkspaceView } from '../shared/workspace-folders';
 
 // Sandboxed preload: only Electron modules may be imported as values.
 // Channel names are therefore typed literals so misspellings are caught.
@@ -89,9 +94,11 @@ const SCRIPTED_RUN_REPORT: BridgeChannel = 'dspatch:scripted-run-report';
 const PRESS_MENU_ITEM: BridgeChannel = 'dspatch:press-menu-item';
 const CAPTURE_WINDOW: BridgeChannel = 'dspatch:capture-window';
 const SET_WINDOW_WIDTH: BridgeChannel = 'dspatch:set-window-width';
+const EMULATE_REDUCED_MOTION: BridgeChannel = 'dspatch:emulate-reduced-motion';
 const OPEN_LOOP_GRAPH: BridgeChannel = 'dspatch:open-loop-graph';
 const SAVE_LOOP_GRAPH: BridgeChannel = 'dspatch:save-loop-graph';
 const RESOLVE_LOOP_ROLES: BridgeChannel = 'dspatch:resolve-loop-roles';
+const REVEAL_ROLE_SOURCE: BridgeChannel = 'dspatch:reveal-role-source';
 const OPEN_LOOP_EDITOR: BridgeChannel = 'dspatch:open-loop-editor';
 const START_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:start-editor-loop-run';
 const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
@@ -103,6 +110,12 @@ const CHAT_LOOP_JOURNAL: BridgeChannel = 'dspatch:chat-loop-journal';
 const CHAT_LOOP_REPLY: BridgeChannel = 'dspatch:chat-loop-reply';
 const CHAT_LOOP_ACTIVITY: BridgeChannel = 'dspatch:chat-loop-activity';
 const PREPARE_CHAT_LOOP: BridgeChannel = 'dspatch:prepare-chat-loop';
+const LIST_LOOP_DEFINITIONS: BridgeChannel = 'dspatch:list-loop-definitions';
+const CHOOSE_LOOP_DEFINITION: BridgeChannel = 'dspatch:choose-loop-definition';
+const TAKE_GRAPH_TO_EDIT: BridgeChannel = 'dspatch:take-graph-to-edit';
+const GRAPH_TO_EDIT: BridgeChannel = 'dspatch:graph-to-edit';
+const NOTE_UNSAVED_DRAWING: BridgeChannel = 'dspatch:note-unsaved-drawing';
+const GRAPH_SAVED_ELSEWHERE: BridgeChannel = 'dspatch:graph-saved-elsewhere';
 const ADD_LOOP_INSTRUCTION: BridgeChannel = 'dspatch:add-loop-instruction';
 const LOOP_INSTRUCTION_EVENT: BridgeChannel = 'dspatch:loop-instruction-event';
 const LIST_RUN_RECORDS: BridgeChannel = 'dspatch:list-run-records';
@@ -111,6 +124,14 @@ const READ_LOOP_CONTROL: BridgeChannel = 'dspatch:read-loop-control';
 const REQUEST_LOOP_PAUSE: BridgeChannel = 'dspatch:request-loop-pause';
 const CONTINUE_LOOP: BridgeChannel = 'dspatch:continue-loop';
 const SET_LOOP_MODE: BridgeChannel = 'dspatch:set-loop-mode';
+const WORKSPACE_FOLDERS: BridgeChannel = 'dspatch:workspace-folders';
+const WORKSPACE_FOLDERS_CHANGED: BridgeChannel = 'dspatch:workspace-folders-changed';
+const ADD_WORKSPACE_FOLDER: BridgeChannel = 'dspatch:add-workspace-folder';
+const REMOVE_WORKSPACE_FOLDER: BridgeChannel = 'dspatch:remove-workspace-folder';
+const OPEN_WORKSPACE_FILE: BridgeChannel = 'dspatch:open-workspace-file';
+const SAVE_WORKSPACE_FILE: BridgeChannel = 'dspatch:save-workspace-file';
+const READ_WORKSPACE_DIRECTORY: BridgeChannel = 'dspatch:read-workspace-directory';
+const READ_WORKSPACE_FILE: BridgeChannel = 'dspatch:read-workspace-file';
 
 const bridge: DspatchBridge = {
   getEnvironment: () =>
@@ -202,6 +223,8 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(CAPTURE_WINDOW, label) as Promise<boolean>,
   setWindowWidth: (width: number) =>
     ipcRenderer.invoke(SET_WINDOW_WIDTH, width) as Promise<number>,
+  emulateReducedMotion: (reduce: boolean) =>
+    ipcRenderer.invoke(EMULATE_REDUCED_MOTION, reduce) as Promise<boolean>,
 
   openLoopGraph: (request: LoopGraphOpenRequest) =>
     ipcRenderer.invoke(OPEN_LOOP_GRAPH, request) as Promise<LoopGraphOpenOutcome>,
@@ -209,6 +232,11 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(SAVE_LOOP_GRAPH, request) as Promise<LoopGraphSaveOutcome>,
   resolveLoopRoles: (references: readonly RoleReference[]) =>
     ipcRenderer.invoke(RESOLVE_LOOP_ROLES, references) as Promise<readonly ResolvedRoleEntry[]>,
+  revealRoleSource: (request: { readonly root: string; readonly path: string }) =>
+    ipcRenderer.invoke(REVEAL_ROLE_SOURCE, request) as Promise<{
+      readonly revealed: boolean;
+      readonly note: string;
+    }>,
   startEditorLoopRun: (request: EditorLoopRunRequest) =>
     ipcRenderer.invoke(START_EDITOR_LOOP_RUN, request) as Promise<EditorLoopRunOutcome>,
   cancelEditorLoopRun: () =>
@@ -257,8 +285,36 @@ const bridge: DspatchBridge = {
       ipcRenderer.removeListener(CHAT_LOOP_ACTIVITY, handler);
     };
   },
-  prepareChatLoop: (chosen: boolean) =>
-    ipcRenderer.invoke(PREPARE_CHAT_LOOP, chosen) as Promise<ChatLoopPrepareOutcome>,
+  prepareChatLoop: (chosen: boolean, definitionKey: string | null) =>
+    ipcRenderer.invoke(PREPARE_CHAT_LOOP, chosen, definitionKey) as Promise<ChatLoopPrepareOutcome>,
+  listLoopDefinitions: () =>
+    ipcRenderer.invoke(LIST_LOOP_DEFINITIONS) as Promise<LoopDefinitionListing>,
+  chooseLoopDefinition: (definitionPath: string | null) =>
+    ipcRenderer.invoke(
+      CHOOSE_LOOP_DEFINITION,
+      definitionPath,
+    ) as Promise<LoopDefinitionChooseOutcome>,
+  takeGraphToEdit: () => ipcRenderer.invoke(TAKE_GRAPH_TO_EDIT) as Promise<string | null>,
+  onGraphToEdit: (listener: () => void) => {
+    const handler = (): void => {
+      listener();
+    };
+    ipcRenderer.on(GRAPH_TO_EDIT, handler);
+    return () => {
+      ipcRenderer.removeListener(GRAPH_TO_EDIT, handler);
+    };
+  },
+  noteUnsavedDrawing: (drawing: UnsavedDrawing | null) =>
+    ipcRenderer.invoke(NOTE_UNSAVED_DRAWING, drawing) as Promise<void>,
+  onGraphSavedElsewhere: (listener: (saved: GraphSavedElsewhere) => void) => {
+    const handler = (_event: unknown, payload: GraphSavedElsewhere): void => {
+      listener(payload);
+    };
+    ipcRenderer.on(GRAPH_SAVED_ELSEWHERE, handler);
+    return () => {
+      ipcRenderer.removeListener(GRAPH_SAVED_ELSEWHERE, handler);
+    };
+  },
   addLoopInstruction: (request: AddLoopInstructionRequest) =>
     ipcRenderer.invoke(ADD_LOOP_INSTRUCTION, request) as Promise<AddLoopInstructionOutcome>,
   onLoopInstruction: (listener: (event: LoopInstructionEventPayload) => void) => {
@@ -288,6 +344,29 @@ const bridge: DspatchBridge = {
       ipcRenderer.removeListener(LOOP_CONTROL, handler);
     };
   },
+
+  workspaceFolders: () => ipcRenderer.invoke(WORKSPACE_FOLDERS) as Promise<WorkspaceView>,
+  onWorkspaceFolders: (listener: (view: WorkspaceView) => void) => {
+    const handler = (_event: unknown, payload: WorkspaceView): void => {
+      listener(payload);
+    };
+    ipcRenderer.on(WORKSPACE_FOLDERS_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(WORKSPACE_FOLDERS_CHANGED, handler);
+    };
+  },
+  addFolderToWorkspace: (folderPath?: string) =>
+    ipcRenderer.invoke(ADD_WORKSPACE_FOLDER, folderPath ?? null) as Promise<WorkspaceView>,
+  removeFolderFromWorkspace: (folderPath: string) =>
+    ipcRenderer.invoke(REMOVE_WORKSPACE_FOLDER, folderPath) as Promise<WorkspaceView>,
+  openWorkspaceFile: (filePath?: string) =>
+    ipcRenderer.invoke(OPEN_WORKSPACE_FILE, filePath ?? null) as Promise<WorkspaceView>,
+  saveWorkspaceFile: (filePath?: string) =>
+    ipcRenderer.invoke(SAVE_WORKSPACE_FILE, filePath ?? null) as Promise<WorkspaceView>,
+  readWorkspaceDirectory: (dirPath: string) =>
+    ipcRenderer.invoke(READ_WORKSPACE_DIRECTORY, dirPath) as Promise<DirectoryPage>,
+  readWorkspaceFile: (filePath: string) =>
+    ipcRenderer.invoke(READ_WORKSPACE_FILE, filePath) as Promise<FileView>,
 };
 
 // The renderer has no Node access and no other Electron access.

@@ -9,6 +9,7 @@ import type {
   Unsubscribe,
   UsageReading,
 } from '../adapter/types';
+import type { AgentAdapter } from '../adapter/agent-adapter';
 import type { AuthStatusReading, ChatAdapter } from './chat-service';
 
 /**
@@ -56,6 +57,27 @@ export const PRESENTATION_LITERALS = {
   shellLine: 'rg --glob "*.ts" -n "a && b" | head -5',
   html: '<script>alert("not a script")</script>',
 } as const;
+
+/**
+ * The first outcome a loop step's prompt offers it, or `null` for an ordinary turn.
+ *
+ * DSP-79. A loop step's prompt ends with the names the step may declare, one
+ * `RESULT: <name>` per line, and a reply that declares none routes as "could not
+ * establish" — so a canned reply would stop every loop at its first step and the
+ * window could never walk one without paying for a model. Taking the **first** name is
+ * a fixture's rule and is arbitrary on purpose: it is deterministic, it needs no
+ * understanding of the graph, and it is the reason this adapter's evidence is about the
+ * window and never about whether a verdict was right.
+ *
+ * Deliberately narrow: it reads only the instruction block this product writes, and a
+ * prompt that offers nothing gets nothing added.
+ */
+export function firstOfferedOutcome(prompt: string): string | null {
+  const offered = [...prompt.matchAll(/^RESULT: ([a-z0-9][a-z0-9-]*)$/gm)].map(
+    (match) => match[1] ?? '',
+  );
+  return offered[0] ?? null;
+}
 
 /** What the fixed reply says. `token` is echoed so a turn can be identified. */
 export function presentationReply(token: string): string {
@@ -105,7 +127,7 @@ interface SessionState {
   timers: Set<NodeJS.Timeout>;
 }
 
-export class PresentationAdapter implements ChatAdapter {
+export class PresentationAdapter implements ChatAdapter, AgentAdapter {
   readonly id = 'presentation-local';
 
   private readonly sessions = new Map<string, SessionState>();
@@ -177,7 +199,14 @@ export class PresentationAdapter implements ChatAdapter {
     state.activeRun = dspatchRunId;
 
     const token = (/\b(mark-\w+)\b/.exec(prompt)?.[1] ?? prompt.trim().slice(0, 24)) || 'this';
-    const answer = presentationReply(token);
+    // A loop step is answered with a declared outcome; an ordinary chat turn is not.
+    // Appended rather than folded in, so the Markdown the presentation scenarios read
+    // is byte for byte what it was and only a loop prompt sees anything new.
+    const declared = firstOfferedOutcome(prompt);
+    const answer =
+      declared === null
+        ? presentationReply(token)
+        : `${presentationReply(token)}\n\nRESULT: ${declared}`;
     // Chunked on whitespace, so what arrives is the partial text a real stream
     // produces — including a fence that is open for several frames, which is the
     // case the reader has to survive.
@@ -209,6 +238,23 @@ export class PresentationAdapter implements ChatAdapter {
             });
             if (index === chunks.length - 1) {
               state.activeRun = null;
+              // The whole answer once, the way the real adapter ends a turn.
+              //
+              // **This was missing, and it made the double incomplete in a way nothing
+              // noticed until a loop walked through it.** `turn-routing.ts` says the
+              // adapter emits this at the end with the same text the deltas carried,
+              // and replaces rather than appends — so the chat path read the deltas and
+              // never missed it. The loop executor reads `assistant.message` and
+              // nothing else, so a loop step run through this adapter collected an
+              // empty reply, routed as "could not establish" and filed nothing: the
+              // trial's first run reported the product failing at something the fixture
+              // had not done.
+              emit({
+                ...base,
+                type: 'assistant.message',
+                at: new Date().toISOString(),
+                text: answer,
+              });
               emit({
                 ...base,
                 type: 'run.finished',
@@ -250,6 +296,19 @@ export class PresentationAdapter implements ChatAdapter {
 
   readUsage(): Promise<readonly UsageReading[]> {
     return Promise.resolve([]);
+  }
+
+  /**
+   * Refused, and `capabilities().approvals` says `unsupported` to match.
+   *
+   * Present because this class now also satisfies {@link AgentAdapter}, so a loop run
+   * can walk in the window with no provider call. Rejecting is the honest answer: there
+   * is nothing here that could be waiting for an approval.
+   */
+  respondToApproval(): Promise<void> {
+    return Promise.reject(
+      new Error('The presentation adapter has no approvals: nothing here asks for one.'),
+    );
   }
 
   providerMessageTypes(): Record<string, number> {

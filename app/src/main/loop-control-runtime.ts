@@ -138,9 +138,9 @@ export class LoopRunController implements RunControlPort {
           ? `Already ${mode}.`
           : mode === 'interactive'
             ? 'Interactive from here: DSpatch will ask before it starts an agent or runs a command. ' +
-              'The run keeps its mandate, its graph version, its history and the budget it has already spent, ' +
+              'The run keeps its assignment, its graph version, its history and the budget it has already spent, ' +
               'and no step that has run will run again.'
-            : 'Autonomous from here: the run continues within the graph rules and the mandate it already has. ' +
+            : 'Autonomous from here: the run continues within the graph rules and the assignment it already has. ' +
               'An explicit human step still waits for an answer.',
       report: this.report(),
     };
@@ -193,7 +193,7 @@ export class LoopRunController implements RunControlPort {
     return (
       `A loop run is already in progress (${this.runId ?? 'unknown'}). ${doing} DSpatch runs one ` +
       `loop at a time, so this one was not started: no step was begun, nothing was reset and the ` +
-      `run that is walking was not disturbed. Let it finish or cancel it, then start this one.`
+      `run already going was not disturbed. Let it finish or cancel it, then start this one.`
     );
   }
 

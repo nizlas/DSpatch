@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   JSX,
   KeyboardEvent,
@@ -13,6 +13,7 @@ import type {
   AttemptReconciliation,
   AttemptState,
   CancelObservations,
+  ChatLoopCancelOutcome,
   ChatSessionInfo,
   ConnectionStatus,
   ConversationListEntry,
@@ -20,6 +21,7 @@ import type {
   ConversationSaveStatus,
   DirtyFileInfo,
   EnvironmentInfo,
+  LoopDefinitionListing,
   PresentedTestStatus,
   ProjectListEntry,
   ProjectListing,
@@ -36,6 +38,15 @@ import type {
   WorkspaceChange,
   WorkspaceReport,
 } from '../shared/bridge';
+import {
+  clampSidebarWidth,
+  describeDirectoryCap,
+  EMPTY_WORKSPACE_VIEW,
+  SIDEBAR_DEFAULT_WIDTH,
+  type DirectoryPage,
+  type FileView,
+  type WorkspaceView,
+} from '../shared/workspace-folders';
 import {
   connectionRecheckNote,
   connectionRetryPlan,
@@ -73,7 +84,6 @@ import {
 } from './scroll-follow';
 import { runScriptedWorkflow } from './workflow-script';
 import {
-  CHAT_LOOP_GRAPH_ID,
   CHAT_LOOP_WINDOW_LOOKUP,
   chatSendAfter,
   formatChatLiveLogLine,
@@ -94,6 +104,7 @@ import {
   composerKeyAction,
   handoffTrail,
   type ChatHeaderView,
+  type TrailReply,
 } from '../shared/chat-workspace';
 import {
   composerCanSend,
@@ -110,6 +121,7 @@ import {
   conversationStanding,
   loopTurnBadge,
   loopTurnBadgeText,
+  loopTurnCaption,
   loopTurnEndingLine,
   loopTurnStatusText,
   loopTurnsAfter,
@@ -281,6 +293,15 @@ function Workbench({
   const [freshness, setFreshness] = useState<TestFreshness | null>(null);
   const [stopNote, setStopNote] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceReport | null>(null);
+  /*
+    The folders open beside the chat, and how much width they take.
+
+    The main process owns the list because the File menu changes it, and a native
+    menu bar is the one part of the application the renderer cannot see. So this is
+    read once and then pushed — see `onWorkspaceFolders`.
+  */
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>(EMPTY_WORKSPACE_VIEW);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [cancelObs, setCancelObs] = useState<CancelObservations | null>(null);
   const [runState, setRunState] = useState<RunStateReport | null>(null);
   const [prompt, setPrompt] = useState('');
@@ -333,6 +354,17 @@ function Workbench({
   /** Why the sample location could not be read or changed at all. */
   const [sampleNote, setSampleNote] = useState<string | null>(null);
   const [useLoop, setUseLoop] = useState(false);
+  /**
+   * The loops this window can offer, and which one a Send would walk.
+   *
+   * DSP-70. The window holds a **definition key** — a declaration file's path — and
+   * never a graph. Both the preview and the send hand this same key back, and the main
+   * process resolves it once; that is what makes the drawing on screen before Send the
+   * drawing that runs, instead of two reads that agreed by habit.
+   */
+  const [loopDefinitions, setLoopDefinitions] = useState<LoopDefinitionListing | null>(null);
+  const [loopDefinitionKey, setLoopDefinitionKey] = useState<string | null>(null);
+  const loopDefinitionKeyRef = useRef<string | null>(null);
   const [loopLines, setLoopLines] = useState<readonly string[]>([]);
   const [loopBusy, setLoopBusy] = useState(false);
   /**
@@ -472,55 +504,6 @@ function Workbench({
   const canSend = composerCanSend(composerState);
   const routeNote = composerRouteNote(sendRoute);
 
-  /**
-   * The wait for a send that has not come back, as its own state.
-   *
-   * Non-null for as long as the send call is outstanding, **including** after the
-   * provider has announced a run. That is not an oversight: the adapter announces
-   * `run.started` before it holds anything it can cancel, so Cancel in this
-   * interval fails, and this is the interval in which stopping the wait is the
-   * action that actually works.
-   */
-  const sendPending = busy === 'sending';
-  const nothingBackYet = activeTurn === null || activeTurn.deltaCount === 0;
-  const sendWait = sendPending ? describeSendWait(waitMs ?? 0, !nothingBackYet) : null;
-  const activityText =
-    sendPending && nothingBackYet ? (sendWait?.text ?? activity.text) : activity.text;
-
-  /**
-   * The subdued running line, and the live log behind it.
-   *
-   * `null` for as long as nothing is running, which is what makes it transient:
-   * DSP-27 #5 asks for the ticker to leave the screen when the result arrives, and
-   * it is safe to let it because the loop turn above it carries the mandate, every
-   * reply and the recorded ending, and the run record on disk outlives the window.
-   */
-  const running = useMemo(
-    () =>
-      activityLine({
-        loopLines,
-        loopRunning: loopBusy,
-        chatActivityText: activityText,
-        chatRunning: sendPending || activeTurn !== null,
-      }),
-    [loopLines, loopBusy, activityText, sendPending, activeTurn],
-  );
-
-  /**
-   * §9's four questions, answered from what DSpatch has actually seen.
-   *
-   * *Who is working, on what, what are they waiting for, and what happens next.*
-   * DSP-57 #2 and #3 are this: after an interrupted call or a failed handover a
-   * person must be able to tell whether work is active, waiting, stopped or
-   * unknown, and must be offered something concrete to do about it.
-   *
-   * `stillWatching` is the load-bearing input and is deliberately not `loopBusy`.
-   * The window stops applying a run's events when the user abandons the wait, and
-   * a run in that state is one DSpatch cannot see — which is `unknown`, not
-   * `active`. `conversationStanding` turns that into `activityIsKnown: false`, and
-   * the block below is the one place allowed to draw the run's standing, so a
-   * spinner cannot be shown over a run nobody is watching.
-   */
   const newestLoopTurn = loopTurns.length === 0 ? null : (loopTurns[loopTurns.length - 1] ?? null);
   /**
    * The clock, for the one line that says how long a step has been quiet.
@@ -543,15 +526,100 @@ function Workbench({
       clearInterval(timer);
     };
   }, [loopBusy]);
+
+  /**
+   * The wait for a send that has not come back, as its own state.
+   *
+   * Non-null for as long as the send call is outstanding, **including** after the
+   * provider has announced a run. That is not an oversight: the adapter announces
+   * `run.started` before it holds anything it can cancel, so Cancel in this
+   * interval fails, and this is the interval in which stopping the wait is the
+   * action that actually works.
+   *
+   * **It speaks for the ordinary chat path and for nothing else** (DSP-87). This is
+   * where *281 s with nothing back* came from while replies were arriving on screen.
+   * `busy === 'sending'` stays true for the whole of a loop run, and the thing it was
+   * asked about — `activeTurn`, a turn in `ChatState` — is the direct chat's identity
+   * and is `null` throughout a loop run. So every loop run read as a send that had
+   * produced nothing, however much the run had produced, because the activity was
+   * being recorded against a step address and read against a chat turn. A loop run
+   * reports itself through `loopLines` and its step's own standing, below.
+   */
+  const sendPending = busy === 'sending';
+  const nothingBackYet = activeTurn === null || activeTurn.deltaCount === 0;
+  const sendWait = sendPending && !loopBusy ? describeSendWait(waitMs ?? 0, !nothingBackYet) : null;
+
+  /**
+   * What the step that is working is saying, read for the run that is working.
+   *
+   * Lifted out of `LoopTurnEntry` so that the line beside the composer and the line
+   * inside the run's own entry are one value rather than two readings that could
+   * disagree — and so that the composer's line is about the open step rather than
+   * about a send the loop path never completes.
+   */
+  const liveStep =
+    newestLoopTurn === null || newestLoopTurn.ending !== null
+      ? null
+      : runningStep(newestLoopTurn.steps ?? [], newestLoopTurn.runId);
+  const liveStanding =
+    newestLoopTurn === null || (liveStep === null && newestLoopTurn.ending !== null)
+      ? null
+      : stepStanding({ step: liveStep, stillWatching: loopBusy, nowMs });
+
+  /**
+   * The subdued running line, and the live log behind it.
+   *
+   * `null` for as long as nothing is running, which is what makes it transient:
+   * DSP-27 #5 asks for the ticker to leave the screen when the result arrives, and
+   * it is safe to let it because the loop turn above it carries the assignment, every
+   * reply and the recorded ending, and the run record on disk outlives the window.
+   */
+  const running = useMemo(
+    () =>
+      activityLine({
+        loopLines,
+        loopRunning: loopBusy,
+        loopStepText: liveStanding?.text ?? null,
+        chatActivityText: sendWait?.text ?? activity.text,
+        chatRunning: sendPending || activeTurn !== null,
+      }),
+    [loopLines, loopBusy, liveStanding, sendWait, activity.text, sendPending, activeTurn],
+  );
+  /**
+   * The status beside the composer: the working step's line, or the run's.
+   *
+   * One call decides both this and the ticker above the composer, which is the point.
+   * They used to be assembled separately, and that is how the composer came to be
+   * saying that nothing had come back while the ticker two inches above it listed the
+   * steps that had — the composer was reading the direct chat's send-wait clock,
+   * which no loop run ever stops.
+   */
+  const activityText = running === null ? activity.text : (running.stepText ?? running.text);
+
+  /**
+   * Which state the newest run is in, and whether anything about it needs doing.
+   *
+   * DSP-57 #2 and #3 are still the requirement: after an interrupted call or a failed
+   * handover a person must be able to tell whether work is stopped or unknown, and
+   * must be offered something concrete to do about it. What changed is that this now
+   * answers it in a line and only when there is something to do — DSP-87 for a
+   * working run, DSP-90 for the rest. A confirmed stop somebody asked for gets
+   * nothing, because the badge has already said the only thing they did not know.
+   *
+   * `stillWatching` is the load-bearing input and is deliberately not `loopBusy`.
+   * The window stops applying a run's events when the user abandons the wait, and
+   * a run in that state is one DSpatch cannot see — which is `unknown`, not
+   * `active`. `conversationStanding` turns that into `activityIsKnown: false`, and
+   * `RunStanding` is the one place allowed to draw a run's state, so a spinner cannot
+   * be shown over a run nobody is watching.
+   */
   const standing = useMemo(
     () =>
       conversationStanding({
         turn: newestLoopTurn,
         stillWatching: loopBusy || newestLoopTurn?.ending !== null,
-        currentStepLabel,
-        instructions: loopInstructions,
       }),
-    [newestLoopTurn, loopBusy, currentStepLabel, loopInstructions],
+    [newestLoopTurn, loopBusy],
   );
 
   /**
@@ -725,6 +793,148 @@ function Workbench({
     loopBusyRef.current = loopBusy;
   }, [loopBusy]);
 
+  /**
+   * The tick, readable from an effect that must not re-run when it changes.
+   *
+   * Beside `loopBusyRef` and for the same reason: following the workspace's loop
+   * selection (below) asks for a preview only when a graph is on screen to be wrong,
+   * and putting `useLoop` in that effect's dependencies would re-ask for one every time
+   * the tick moved.
+   */
+  const useLoopRef = useRef(false);
+  useEffect(() => {
+    useLoopRef.current = useLoop;
+  }, [useLoop]);
+
+  /**
+   * The loops on offer, re-asked when the open project changes.
+   *
+   * **A read that starts nothing** — one directory listed per folder, in the main
+   * process. A key the person has already chosen survives a refresh as long as it is
+   * still in the list, because a list arriving a moment later must not quietly change
+   * what the next Send would walk.
+   */
+  /**
+   * Re-read the list, and answer with the key that is now chosen.
+   *
+   * It answers rather than only setting state because the one caller that needs the
+   * key immediately is the `Use loop` tick: it re-reads and then asks for a preview,
+   * and reading the key out of state there would be reading the value from before
+   * this call. A key already chosen survives as long as it is still in the list.
+   */
+  /**
+   * Hold a list and the key it settles on, and answer with that key.
+   *
+   * Through the ref as well as through state, because a state updater does not run
+   * until the next render and the one caller that needs the key immediately is the
+   * `Use loop` tick: it re-reads and then asks for a preview.
+   *
+   * `prefer` is the file the person has just pointed at, and it wins only if it
+   * loaded: a declaration that will not parse is listed with its finding and is not
+   * silently made the thing the next Send would walk.
+   */
+  const holdLoopDefinitions = useCallback(
+    (listing: LoopDefinitionListing, prefer: string | null): string | null => {
+      setLoopDefinitions(listing);
+      const current = loopDefinitionKeyRef.current;
+      const settled =
+        prefer !== null &&
+        listing.choices.some((choice) => choice.key === prefer && choice.usable)
+          ? prefer
+          : current !== null && listing.choices.some((choice) => choice.key === current)
+            ? current
+            : (listing.choices.find((choice) => choice.preselected)?.key ?? null);
+      loopDefinitionKeyRef.current = settled;
+      setLoopDefinitionKey(settled);
+      return settled;
+    },
+    [],
+  );
+
+  const refreshLoopDefinitions = useCallback(async (): Promise<string | null> => {
+    let listing: LoopDefinitionListing;
+    try {
+      listing = await window.dspatch.listLoopDefinitions();
+    } catch {
+      setLoopDefinitions({ choices: [], problems: [] });
+      return null;
+    }
+    return holdLoopDefinitions(listing, null);
+  }, [holdLoopDefinitions]);
+
+  useEffect(() => {
+    void refreshLoopDefinitions();
+  }, [refreshLoopDefinitions, session?.workspacePath]);
+
+  /**
+   * Follow the workspace's own loop selection, whoever changed it (DSP-84 #1 and #6).
+   *
+   * `noteChosenLoopDefinition` is the one place the selection moves, and every move is
+   * announced with the workspace view. So the editor's `Use this loop` arrives here as
+   * an ordinary workspace change, the list is re-read — which is what makes a
+   * hand-opened definition appear in it — and the key is preferred. There is still only
+   * one selection; this window is following it rather than holding a second.
+   *
+   * The preview is re-asked only when `Use loop` is on, because that is the only state
+   * in which a graph is on screen to be wrong.
+   */
+  const followedDefinitionKey = workspaceView.loopDefinitionKey;
+  useEffect(() => {
+    if (followedDefinitionKey === null || followedDefinitionKey === loopDefinitionKeyRef.current) {
+      return;
+    }
+    void window.dspatch
+      .listLoopDefinitions()
+      .then((listing) => {
+        const settled = holdLoopDefinitions(listing, followedDefinitionKey);
+        if (useLoopRef.current && !loopBusyRef.current) {
+          void window.dspatch.prepareChatLoop(true, settled).catch(() => {
+            /* Nothing to show is not something to report here. */
+          });
+        }
+      })
+      .catch(() => {
+        /* A list that cannot be read leaves the chooser as it was. */
+      });
+  }, [followedDefinitionKey, holdLoopDefinitions]);
+
+  /**
+   * Re-read the loop that is standing by whenever this window comes back to the front.
+   *
+   * The preview and Send each resolve the chosen key from disk, so a definition edited
+   * between ticking `Use loop` and pressing Send would be walked in a version the
+   * drawing on screen never showed. Pinning the preview instead would be a second
+   * wrong thing — a picture that has quietly stopped matching the file — so the
+   * preview keeps up rather than freezing.
+   *
+   * Focus, not a watcher and not a poll. An edit is made in another application, and
+   * coming back to DSpatch to press Send is a focus event, so the refresh lands before
+   * the press. **What it does not cover, said rather than implied:** something writing
+   * the file while DSpatch already has focus, with no return to the window before
+   * Send. Closing that needs a filesystem watcher, which this stage deliberately does
+   * not have — and a run announces its own bytes the moment it starts, so the screen
+   * is corrected then at the latest.
+   */
+  useEffect(() => {
+    if (!useLoop) {
+      return;
+    }
+    const refreshPreview = (): void => {
+      // Never while a run is walking. The announcement then belongs to that run, and
+      // `runAudience` refuses to displace it anyway; not asking is the clearer half.
+      if (loopBusyRef.current) {
+        return;
+      }
+      void window.dspatch.prepareChatLoop(true, loopDefinitionKeyRef.current).catch(() => {
+        /* Nothing to show is not something to report here. */
+      });
+    };
+    window.addEventListener('focus', refreshPreview);
+    return () => {
+      window.removeEventListener('focus', refreshPreview);
+    };
+  }, [useLoop]);
+
   /** One place that moves the loop transcript, so its rules stay in one module. */
   const applyLoopTurnEvent = useCallback((event: LoopTurnEvent): void => {
     setLoopTurns((previous) => loopTurnsAfter(previous, event));
@@ -839,7 +1049,17 @@ function Workbench({
       applyLoopTurnEvent({
         kind: 'agent-replied',
         runId: reply.runId,
-        reply: { nodeId: reply.nodeId, nodeLabel: reply.nodeLabel, text: reply.text },
+        reply: {
+          nodeId: reply.nodeId,
+          nodeLabel: reply.nodeLabel,
+          text: reply.text,
+          // The run's own visit count and the message this call was sent, carried on
+          // the reply they belong to rather than looked up afterwards (DSP-94). A
+          // lookup by node and position is what would eventually address the wrong
+          // visit of a node the run entered twice.
+          occurrence: reply.occurrence,
+          ...(reply.prompt === undefined ? {} : { prompt: reply.prompt }),
+        },
       });
       // The step's turn is over, so it stops being the live one. Carried separately
       // and with the executor's own occurrence, because an empty reply becomes a
@@ -1109,7 +1329,11 @@ function Workbench({
    * say about at all.
    */
   useEffect(() => {
-    if (busy !== 'sending' || activeTurn !== null) {
+    // Not while a loop run is walking. The clock counts the interval before a *chat*
+    // turn reports anything, and a loop run's own activity arrives on a different
+    // channel entirely — counting it here is what produced a rising number labelled
+    // "nothing back" over a run that was answering (DSP-87).
+    if (busy !== 'sending' || activeTurn !== null || loopBusy) {
       waitStartedAt.current = null;
       return;
     }
@@ -1121,7 +1345,7 @@ function Workbench({
     return () => {
       clearInterval(timer);
     };
-  }, [busy, activeTurn]);
+  }, [busy, activeTurn, loopBusy]);
 
   /**
    * What the top application menu asked for.
@@ -1150,6 +1374,27 @@ function Workbench({
       }),
     [refreshSampleProjects],
   );
+
+  /**
+   * The open folders, read once and then pushed.
+   *
+   * Pushed because the File menu changes them and the renderer cannot see a native
+   * menu bar. Read once on mount because a window that opens after a workspace was
+   * restored would otherwise draw no roots until something happened.
+   */
+  useEffect(() => {
+    void window.dspatch.workspaceFolders().then(
+      (view) => {
+        setWorkspaceView(view);
+      },
+      () => {
+        /* No folders to draw is the state the window starts in. */
+      },
+    );
+    return window.dspatch.onWorkspaceFolders((view) => {
+      setWorkspaceView(view);
+    });
+  }, []);
 
   /* ----------------------------------------------------------------------- */
   /* DSP-58: following the latest, and leaving a reader where they are        */
@@ -1509,6 +1754,12 @@ function Workbench({
           setCurrentStepLabel(null);
           const runId = newChatLoopRunId();
           loopRunId.current = runId;
+          // The row this send is about to hand over, so the turn can be captioned by
+          // the loop that ran rather than by a constant. It is the name the person
+          // read in the list, beside the key the main process is about to resolve —
+          // one key, so the caption and the run cannot be about different loops.
+          const chosenRow =
+            loopDefinitions?.choices.find((choice) => choice.key === loopDefinitionKey) ?? null;
           // The mandate is echoed now, not when the run ends. A person who types and
           // sees nothing assumes it was lost, which is the complaint this answers.
           applyLoopTurnEvent({
@@ -1516,12 +1767,19 @@ function Workbench({
             runId,
             mandate: text,
             atUtc: new Date().toISOString(),
+            loop: {
+              name: chosenRow?.display.name ?? null,
+              id: chosenRow?.definitionId ?? null,
+            },
           });
           let outcome: Awaited<ReturnType<typeof window.dspatch.startChatLoopRun>>;
           try {
             outcome = await window.dspatch.startChatLoopRun({
               runId,
               mandate: text,
+              // The key the chooser is showing, so the run walks the definition the
+              // person can see they picked rather than one decided somewhere else.
+              definitionKey: loopDefinitionKey,
             });
           } catch (error) {
             // The entry is closed whatever happened to the call, because a mandate on
@@ -1578,6 +1836,19 @@ function Workbench({
           setWaitMs(null);
         }
         void refreshRunState();
+        /*
+         * **Ready again is not asked for here** (DSP-86 #6).
+         *
+         * The obvious place to put it, and the wrong one. `Use loop` is this composer's
+         * tick, so restoring the pulse from here looks like the natural home for it —
+         * but the pulse appears in the *graph view*, and in a window showing the graph
+         * view this component is not mounted at all. A restoration that lived here would
+         * fire for nobody in the one place it is meant to be seen.
+         *
+         * So the main process holds the tick, told by the same `prepareChatLoop` call
+         * the tick already makes, and raises the stand-by offer itself when a chat-loop
+         * run ends. See `offerReadyAgainAfterRun`.
+         */
       }
     },
     [
@@ -1589,6 +1860,26 @@ function Workbench({
       refreshRunState,
     ],
   );
+
+  /**
+   * What to say beside the composer about a stop the window has just asked for.
+   *
+   * **Nothing, when the stop was actually started** (DSP-90). The note the main
+   * process returns for a successful request is *Cancel requested. Completed steps
+   * are not replayed; files stay as they are* — a recovery rule, which stayed beside
+   * the composer after the run had confirmed its end, so it was still on screen at
+   * the moment the badge said *stopped short*. That is part of what Niclas met. The
+   * run's own entry already says the one thing that is not obvious — that asking is
+   * not stopping — for as long as that is true, and stops saying it when the stop is
+   * confirmed.
+   *
+   * A press that did **nothing** still speaks, and that is the whole reason this is a
+   * condition rather than a deletion: *No chat loop is in progress* is the case where
+   * the window would otherwise look as though it had done something.
+   */
+  const noteChatLoopCancel = useCallback((outcome: ChatLoopCancelOutcome): void => {
+    setStopWaitingNote(outcome.cancelled ? null : outcome.note);
+  }, []);
 
   /**
    * Say on the entry that a stop was asked for.
@@ -1620,8 +1911,7 @@ function Workbench({
     if (plan.target === 'chat-loop') {
       noteLoopStopRequested(false);
       try {
-        const outcome = await window.dspatch.cancelChatLoopRun();
-        setStopWaitingNote(outcome.note);
+        noteChatLoopCancel(await window.dspatch.cancelChatLoopRun());
       } catch (error) {
         setActionError(describeBridgeFailure(error));
       } finally {
@@ -1665,8 +1955,7 @@ function Workbench({
     if (plan.target === 'chat-loop') {
       noteLoopStopRequested(true);
       try {
-        const outcome = await window.dspatch.cancelChatLoopRun();
-        setStopWaitingNote(outcome.note);
+        noteChatLoopCancel(await window.dspatch.cancelChatLoopRun());
       } catch (error) {
         setActionError(describeBridgeFailure(error));
       } finally {
@@ -1848,6 +2137,31 @@ function Workbench({
         stay mounted — the details view is hidden rather than discarded, so opening
         it costs nothing and closing it loses nothing — and only one is on screen.
       */}
+      {/*
+        The folders to the left, the work area to the right.
+
+        One row added around what was already here, and nothing inside the chat
+        changed: the conversation keeps its own column, its own single scroller and
+        its own layout, and what it loses is the sidebar's width. The sidebar draws
+        nothing at all when no folder is open, so a window with no project looks
+        exactly as it did.
+      */}
+      <div className="shell">
+      <FolderSidebar
+        view={workspaceView}
+        width={sidebarWidth}
+        onWidth={setSidebarWidth}
+        onAdd={() => {
+          void window.dspatch.addFolderToWorkspace().then(setWorkspaceView, () => {
+            /* The main process reports its own problem on the view it pushes. */
+          });
+        }}
+        onRemove={(folderPath) => {
+          void window.dspatch.removeFolderFromWorkspace(folderPath).then(setWorkspaceView, () => {
+            /* Same: a failure to remove a link is reported on the view. */
+          });
+        }}
+      />
       <div className={`workarea${detailsOpen ? ' workarea--details' : ''}`}>
       <div className="workarea__lead">
       {showChooser && (
@@ -2043,7 +2357,20 @@ function Workbench({
                 <p className="app__note">
                   Nothing sent yet. Ask a question to read the code, or request a
                   change — a change request authorises the agent to edit files in{' '}
-                  <code>{session.workspacePath}</code>.
+                  <code>{session.workspacePath}</code>
+                  {/*
+                    DSP-72: with more than one folder open this sentence named one of them
+                    and stopped, which read as though the others were out of scope.
+
+                    Its first fix over-corrected into "the working directory of N folders
+                    this run is given", which is false here: this sentence is about an
+                    ordinary message, and an ordinary message gives the agent the working
+                    directory alone. The folders become a run's working folders when a loop
+                    run is going, which is what this now says.
+                  */}
+                  {workspaceView.folders.length > 1
+                    ? `. That is the working directory; the other ${String(workspaceView.folders.length - 1)} ${workspaceView.folders.length === 2 ? 'folder you have open reaches' : 'folders you have open reach'} the agent during a loop run, not on a message like this one. The folder list says what that does and does not mean.`
+                    : '.'}
                 </p>
               )}
               {/*
@@ -2069,8 +2396,11 @@ function Workbench({
                     /* Only the run the standing was computed from, so one run's
                        status can never be drawn against another's mandate. */
                     standing={item.turn.runId === newestLoopTurn?.runId ? standing : null}
-                    stillWatching={item.turn.runId === newestLoopTurn?.runId && loopBusy}
-                    nowMs={nowMs}
+                    /* The same reading the line beside the composer shows, rather
+                       than a second call that could answer differently. */
+                    liveStanding={
+                      item.turn.runId === newestLoopTurn?.runId ? liveStanding : null
+                    }
                   />
                 ) : (
                   <InstructionEntry
@@ -2146,11 +2476,13 @@ function Workbench({
                 className="composer__input"
                 data-ev="prompt"
                 rows={3}
-                placeholder={
-                  useLoop
-                    ? 'Describe the work. Send walks the chat loop; this text is the entry mandate. Enter sends, Shift+Enter starts a line.'
-                    : 'Ask about this project, or request a change. Enter sends, Shift+Enter starts a line.'
-                }
+                /*
+                  One sentence and the two keys, in both states (DSP-87). The long
+                  version explained what `Use loop` was about to do every time the box
+                  was empty, which is a lesson rather than a prompt — and the tick it
+                  explained is directly beside the box.
+                */
+                placeholder="Describe the task. Enter sends, Shift+Enter starts a new line."
                 value={prompt}
                 onChange={(event) => {
                   setPrompt(event.target.value);
@@ -2212,7 +2544,10 @@ function Workbench({
                 )}
                 <label
                   className="loop-toggle"
-                  title="When on, Send walks dspatch-chat-loop on this project. Off is ordinary single-agent chat."
+                  // "beside this box" until DSP-85 moved the chooser into the graph editor.
+                  // The tick is unchanged and the sentence has to keep pointing at where the
+                  // choice is actually made, or it names a control that is not there.
+                  title="When on, Send runs the loop chosen in the graph editor, on this project. Off is ordinary single-agent chat."
                 >
                   <input
                     type="checkbox"
@@ -2223,9 +2558,7 @@ function Workbench({
                       setUseLoop(next);
                       if (!next && loopBusyRef.current) {
                         noteLoopStopRequested(false);
-                        void window.dspatch.cancelChatLoopRun().then((outcome) => {
-                          setStopWaitingNote(outcome.note);
-                        });
+                        void window.dspatch.cancelChatLoopRun().then(noteChatLoopCancel);
                       }
                       /*
                        * Show the loop that has just been chosen, in the graph view if
@@ -2243,7 +2576,21 @@ function Workbench({
                        * `startChatLoopRun` reads the same file and gives its own
                        * account when it matters.
                        */
-                      void window.dspatch.prepareChatLoop(next).catch(() => {
+                      /*
+                       * Re-read the list first, then preview what it settles on.
+                       *
+                       * The list is also read when the project changes, and reading
+                       * it again here is what makes the chooser current at the moment
+                       * it appears: a definition added to the project while the window
+                       * was open is in it, and so is the project's own list if the
+                       * earlier read happened to land before the session did.
+                       */
+                      void (next
+                        ? refreshLoopDefinitions().then((key) =>
+                            window.dspatch.prepareChatLoop(true, key),
+                          )
+                        : window.dspatch.prepareChatLoop(false, null)
+                      ).catch(() => {
                         /* Nothing to show is not something to report here. */
                       });
                     }}
@@ -2251,8 +2598,22 @@ function Workbench({
                   Use loop
                 </label>
                 {/*
+                  There is no loop chooser here, and no `Choose a file…` (DSP-85 #5).
+
+                  Both moved to the graph editor, where picking a loop draws it and
+                  selects it in one act. Niclas's verdict on having them in both places
+                  was that there were too many ways to say the same thing — a dropdown
+                  here, a dropdown and a button there, all setting one stored value.
+
+                  `Use loop` stays exactly as it is: whether a message runs a loop at all
+                  is a decision about *this* message, and it belongs beside the box that
+                  sends it. Which loop it runs is a decision about the drawing, and that
+                  is in the editor. The key this window sends is the workspace's one
+                  selection, followed rather than held — see `followedDefinitionKey`.
+                */}
+                {/*
                   Directly after the switch it qualifies, and drawn only when that
-                  switch is on or a run is walking. Beside an ordinary composer it was
+                  switch is on or a run is going. Beside an ordinary composer it was
                   a mode chooser and a sentence saying no loop was running, which is
                   why it read as a second copy of `Use loop`. What it actually decides
                   is in `LoopControlBar`'s own comment and comes from
@@ -2327,26 +2688,38 @@ function Workbench({
                 </span>
               </div>
               {/*
-                Where this press would go, when that is not obvious. Null for an
-                ordinary send and for starting a walk, because saying "this will
-                send your message" under the box that sends it is noise; non-null
-                while a run is walking, where the person is entitled to know their
-                text joins that run rather than starting a second one — and non-null
-                when a send would be refused, which since the Send button went is the
-                only thing saying so.
+                Why a press of Send would be refused, and nothing else. It is null
+                for every press that works, including one that joins a running loop:
+                that one is acknowledged on the message itself, once it exists, by
+                the line `loopInstructionStatusText` writes. A refusal has nowhere
+                else to appear, and since the Send button went this is the only thing
+                that says a press did nothing.
+              */}
+              {/*
+                There is no line here naming the loop that would run next (DSP-87).
+
+                DSP-84 put one under the box, with the loop's name and its whole
+                declaration path, and DSP-85 then moved the choosing into the graph
+                editor's header — where the chooser shows the same name, permanently,
+                as a control rather than as a sentence. What was left was a paragraph
+                repeating a dropdown in another window and explaining what the *next*
+                run would do, under a box whose job is the message being typed now.
+
+                The fact is not lost: the editor's chooser is where the loop is picked
+                and where it is read back, and the run's own entry above captions
+                itself with the loop that ran.
               */}
               {routeNote !== null && (
                 <p className="app__note" data-ev="composer-route-note">
                   {routeNote}
                 </p>
               )}
-              {sendWait?.longWait === true && (
-                <p className="app__note" data-ev="long-wait">
-                  This wait is longer than anything measured in this project, and it
-                  is still not a failure. DSpatch has no way to see whether the
-                  provider is working — only whether it has said anything.
-                </p>
-              )}
+              {/*
+                There is no paragraph about a long wait either. `describeSendWait`
+                already says how long it has been in the one line beside the composer,
+                and a second, longer copy of that underneath it was the duplication
+                DSP-87 names.
+              */}
               {stopWaitingNote !== null && (
                 <p className="app__note" data-ev="stop-waiting-note">
                   {stopWaitingNote}
@@ -2550,6 +2923,7 @@ function Workbench({
         />
 
         <Environment environment={environment} connection={connection} />
+      </div>
       </div>
       </div>
     </>
@@ -5016,33 +5390,42 @@ function LoopTurnEntry({
   turn,
   index,
   standing,
-  stillWatching,
-  nowMs,
+  liveStanding,
 }: {
   readonly turn: LoopTurn;
   readonly index: number;
-  /** Where this run stands, for the run it is about. `null` for any other run. */
+  /** The state of the run this entry is about, and its note. `null` for any other. */
   readonly standing: ConversationStanding | null;
-  /** Whether the window is still receiving this run's events. */
-  readonly stillWatching: boolean;
-  readonly nowMs: number;
+  /**
+   * What the open step is doing, for the run it is about. `null` for any other run.
+   *
+   * Computed once by the window and passed in, so that this entry and the line beside
+   * the composer cannot describe one step two ways.
+   */
+  readonly liveStanding: StepStandingReport | null;
 }): JSX.Element {
   const badge = loopTurnBadge(turn);
+  const caption = loopTurnCaption(turn);
   const at = `loop-turn-${String(index)}`;
   const ending = loopTurnEndingLine(turn);
   const steps = turn.steps ?? [];
   const live = turn.ending === null ? runningStep(steps, turn.runId) : null;
-  const liveStanding =
-    live === null && turn.ending !== null
-      ? null
-      : stepStanding({ step: live, stillWatching, nowMs });
   return (
     <article className="turn turn--loop" data-ev={at}>
+      {/*
+        The loop that ran, named by the turn itself.
+
+        This used to read the constant, so every run was captioned
+        `dspatch-chat-loop` whatever had been chosen — the one place the old constant
+        was still doing damage after DSP-70 removed it from the run path. What to
+        call the loop is `loopTurnCaption`'s decision, not this component's, for the
+        reason the rest of this file gives: one wording, in the place with the test.
+      */}
       <p className="turn__loop-mark" data-ev={`${at}-mark`}>
-        Loop run · <code>{CHAT_LOOP_GRAPH_ID}</code> ·{' '}
+        Loop run · {caption.asCode ? <code>{caption.text}</code> : caption.text} ·{' '}
         {turn.restoredFrom === 'record'
           ? 'read back from this conversation’s saved record — history, not something in flight'
-          : 'your mandate, walked by the loop'}
+          : 'your assignment, run by the loop'}
       </p>
       <UserMessage text={turn.mandate} testId={`${at}-mandate`} />
       {/*
@@ -5083,6 +5466,15 @@ function LoopTurnEntry({
             <StepToolCalls
               tools={toolsForStep(steps, turn.runId, item.nodeId, item.occurrence)}
               testId={`${at}-reply-${String(itemIndex)}-tools`}
+            />
+            {/* And what it was told, beside what it answered. Closed, like the tool
+                calls above it, and absent where nothing was recorded. */}
+            <StepPrompt
+              sent={item.sent}
+              runId={turn.runId}
+              nodeId={item.nodeId}
+              nodeLabel={item.nodeLabel}
+              testId={`${at}-reply-${String(itemIndex)}-prompt`}
             />
           </div>
         ),
@@ -5127,8 +5519,15 @@ function LoopTurnEntry({
       <p className="turn__meta">
         <span className={`badge badge--${badge}`} data-ev={`${at}-status`}>
           {loopTurnBadgeText(turn)}
-        </span>{' '}
-        <span data-ev={`${at}-account`}>{ending.text}</span>
+        </span>
+        {/* The marking on its own at a stop the person asked for (DSP-90), so no
+            empty element and no stray space is left behind it. */}
+        {ending.text === '' ? null : (
+          <>
+            {' '}
+            <span data-ev={`${at}-account`}>{ending.text}</span>
+          </>
+        )}
       </p>
       {ending.hasMore && (
         <details className="turn__counts" data-ev={`${at}-account-detail`}>
@@ -5142,7 +5541,7 @@ function LoopTurnEntry({
           </p>
         </details>
       )}
-      <RunStanding standing={standing} testId={at} />
+      <RunStanding standing={standing} />
     </article>
   );
 }
@@ -5200,6 +5599,62 @@ function StepToolCalls({
           </li>
         ))}
       </ul>
+    </details>
+  );
+}
+
+/**
+ * The message one step was actually sent, on request, beside what it answered.
+ *
+ * DSP-94, from DSP-92's F5. `RecordedAgentReply.prompt` has held the whole assembled
+ * message since DSP-46 and the only readers were the record parser and a trial harness,
+ * so the question *what was this step told* could be answered only by opening a JSONL
+ * file under `%APPDATA%`. This is that string, verbatim, in the window.
+ *
+ * **It is not a new panel in the chat and it does not stand open.** DSP-87 and DSP-90
+ * removed standing paragraphs of DSpatch's own explanation about a run; this is a closed
+ * disclosure carrying source text, in the same shape and the same place as the tool calls
+ * above it, which §9 puts beside the work rather than in a log elsewhere.
+ *
+ * **What it is bound to is said in the summary, not implied by where it sits.** A run
+ * that goes round again has more than one message for one node, and the visit number here
+ * is the runner's own count off the reply — not the position of this entry in the column,
+ * which skips a visit that answered with nothing. Where the count was not recorded the
+ * summary says the node and the run and claims no visit.
+ *
+ * `pre` and not the Markdown reader, for the reason the node panel gives: the agent was
+ * sent characters, and a rendered version of them is a different thing from the thing.
+ */
+function StepPrompt({
+  sent,
+  runId,
+  nodeId,
+  nodeLabel,
+  testId,
+}: {
+  readonly sent: TrailReply['sent'];
+  readonly runId: string;
+  readonly nodeId: string;
+  readonly nodeLabel: string;
+  readonly testId: string;
+}): JSX.Element | null {
+  if (sent === null) {
+    // Nothing recorded. Said by showing nothing rather than by an empty box: a record
+    // written before the prompt was kept is not a call that was sent an empty message.
+    return null;
+  }
+  const visit =
+    sent.visit === null ? '' : `, visit ${String(sent.visit)}`;
+  return (
+    <details className="step-prompt" data-ev={testId}>
+      {/* Named so a trial can read what the disclosure claims the message belongs to,
+          which is the half of this that could be wrong without looking wrong. */}
+      <summary className="step-prompt__summary" data-ev={`${testId}-summary`}>
+        The message this step was sent — {nodeLabel} ({nodeId}){visit}, run {runId}
+      </summary>
+      <pre className="step-prompt__text" data-ev={`${testId}-text`}>
+        {sent.prompt}
+      </pre>
     </details>
   );
 }
@@ -5272,73 +5727,47 @@ function ordinalSuffix(value: number): string {
 }
 
 /**
- * Where a run stands, beside the run it is about.
+ * The one thing about a run that needs doing, beside the run it is about, or nothing.
  *
- * This used to be drawn once, at the foot of the conversation, from
- * `loopTurns[loopTurns.length - 1]` — the newest **loop** turn, wherever that sat
- * relative to newer messages. So a run that had finished kept announcing *Nobody.
- * This run has reported an end* under every ordinary reply that followed it, for
- * the rest of the session. Niclas met exactly that.
+ * This was four paragraphs under a heading — *Where this run stands, and what it left
+ * behind* — and DSP-90 is Niclas meeting it after cancelling a run himself. It is now
+ * a single line, and it is absent for every state that has nothing actionable to say,
+ * which is most of them.
  *
- * The cure is placement rather than wording: the block belongs to one run, so it
- * is rendered inside that run's own entry and inherits the conversation's order
- * for free. Nothing about a run can now outlive its position in the history.
+ * **No disclosure.** Not because a closed `details` takes room but because it would be
+ * the same prose, one click away, and the card rules it out by name: a collapsed
+ * summary holding the paragraph that was removed is a way of appearing to comply. The
+ * technical account of a run lives in the run journal under **View → Run journal
+ * (diagnostics)**, where DSP-86 put it, and that is the only place it needs to be.
  *
- * A finished run keeps its standing behind a disclosure. The short, intelligible
- * ending is the sentence above it, which is already the run's own account of
- * itself; the four questions §9 asks — who, on what, waiting for what, what next —
- * are what a *live* run needs continuously and a finished one needs on request.
+ * `data-ev="run-standing"` and `data-standing` stay on the element so that a scripted
+ * run still reads the state off the window. `data-activity-known` stays for the rule
+ * it enforces: nothing here animates over a state DSpatch cannot see. Neither is
+ * decided here — `conversationStanding` owns both, because "do not animate what you
+ * cannot see" is a rule that decays the moment it lives in a component.
+ *
+ * Placement is still per-run, which was the previous fix and still matters: it used
+ * to be drawn once at the foot of the conversation from the newest loop turn, so a
+ * finished run kept announcing itself under every later reply for the rest of the
+ * session.
  */
 function RunStanding({
   standing,
-  testId,
 }: {
   readonly standing: ConversationStanding | null;
-  readonly testId: string;
 }): JSX.Element | null {
-  if (standing === null || standing.standing === 'idle') {
+  if (standing === null || standing.actionNote === null) {
     return null;
   }
-  const block = (
-    <div
-      className={`standing standing--${standing.standing}${
-        standing.activityIsKnown && standing.standing === 'active' ? ' standing--live' : ''
-      }`}
+  return (
+    <p
+      className={`standing standing--${standing.standing}`}
       data-ev="run-standing"
       data-standing={standing.standing}
       data-activity-known={String(standing.activityIsKnown)}
     >
-      <p data-ev="standing-who">{standing.whoIsWorking}</p>
-      <p data-ev="standing-what">{standing.onWhat}</p>
-      <p data-ev="standing-waiting">{standing.waitingFor}</p>
-      <p data-ev="standing-next">{standing.whatHappensNext}</p>
-    </div>
-  );
-  /*
-   * A working run keeps its four answers, on request.
-   *
-   * They were four paragraphs, permanently, under a run that had nothing to report —
-   * *the first step to answer, nothing has come back yet* said at length for five
-   * minutes. The line that belongs there while a step works is the step's own status,
-   * which `LiveStep` draws above from what the provider actually sent; §9's four
-   * questions are what a reader asks when the short line is not enough, and a
-   * disclosure is where a question like that is answered.
-   *
-   * `stop-requested` and `unknown` stay open, because both are states a person may
-   * have to act on and neither has anything shorter to say.
-   */
-  if (standing.standing !== 'stopped' && standing.standing !== 'active') {
-    return block;
-  }
-  return (
-    <details className="standing-detail" data-ev={`${testId}-standing-detail`}>
-      <summary className="standing-detail__summary">
-        {standing.standing === 'active'
-          ? 'Who is working, on what, and what happens next'
-          : 'Where this run stands, and what it left behind'}
-      </summary>
-      {block}
-    </details>
+      {standing.actionNote}
+    </p>
   );
 }
 
@@ -5911,5 +6340,346 @@ function Fact({
         {value}
       </dd>
     </div>
+  );
+}
+
+/* --------------------------------------------------------------------------- */
+/* The folders, beside the chat (DSP-73)                                       */
+/* --------------------------------------------------------------------------- */
+
+/** One drawn line of the tree. Built from what has been read, never from the disk. */
+interface TreeRow {
+  readonly path: string;
+  readonly name: string;
+  readonly kind: 'directory' | 'file';
+  readonly depth: number;
+  readonly isRoot: boolean;
+  readonly working: boolean;
+  /**
+   * What this expanded directory could not show, or could not be read.
+   *
+   * Carried on the row so it is drawn directly under the folder it is about. A cap
+   * counted at the bottom of five hundred rows is a count nobody reads.
+   */
+  readonly note: string | null;
+}
+
+/**
+ * A named collapsible root per open folder, and a reading view for a file.
+ *
+ * **Selection is inert.** Clicking a row reads a directory or reads a file and sets
+ * two pieces of component state. There is no call from here to a session, a working
+ * copy, a loop or a run, and there is no prop that would let one in — which is DSP-73
+ * #3 held by the shape of the component rather than by care. It is the exact mistake
+ * INTERACTION_MODEL §8 records: the interface quietly deciding the work. Reading a
+ * file while a loop runs must not move the work, so reading a file cannot reach it.
+ *
+ * **Nothing recursive.** A row is drawn from `pages`, which holds one
+ * {@link DirectoryPage} per directory that has actually been expanded. A directory is
+ * drawn as expandable because it is a directory — asking whether it has children
+ * would cost the read this defers, and a folder with `node_modules` in it is
+ * survivable precisely because no code here walks a subtree.
+ */
+function FolderSidebar({
+  view,
+  width,
+  onWidth,
+  onRemove,
+  onAdd,
+}: {
+  readonly view: WorkspaceView;
+  readonly width: number;
+  readonly onWidth: (width: number) => void;
+  readonly onRemove: (folderPath: string) => void;
+  readonly onAdd: () => void;
+}): JSX.Element | null {
+  const [pages, setPages] = useState<Readonly<Record<string, DirectoryPage>>>({});
+  const [expanded, setExpanded] = useState<readonly string[]>([]);
+  const [reading, setReading] = useState<readonly string[]>([]);
+  const [opened, setOpened] = useState<FileView | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const isExpanded = (folderPath: string): boolean => expanded.includes(folderPath);
+
+  const toggleDirectory = (folderPath: string): void => {
+    if (isExpanded(folderPath)) {
+      // Collapsing keeps the page that was read. Re-expanding a folder is not a
+      // reason to ask the disk the same question again.
+      setExpanded((open) => open.filter((entry) => entry !== folderPath));
+      return;
+    }
+    setExpanded((open) => [...open, folderPath]);
+    if (pages[folderPath] !== undefined) {
+      return;
+    }
+    setReading((busy) => [...busy, folderPath]);
+    void window.dspatch.readWorkspaceDirectory(folderPath).then(
+      (page) => {
+        setPages((known) => ({ ...known, [folderPath]: page }));
+        setReading((busy) => busy.filter((entry) => entry !== folderPath));
+      },
+      (error: unknown) => {
+        setPages((known) => ({
+          ...known,
+          [folderPath]: {
+            path: folderPath,
+            entries: [],
+            total: 0,
+            problem: `DSpatch could not ask for this folder: ${String(error)}`,
+          },
+        }));
+        setReading((busy) => busy.filter((entry) => entry !== folderPath));
+      },
+    );
+  };
+
+  const openFile = (filePath: string): void => {
+    setSelected(filePath);
+    void window.dspatch.readWorkspaceFile(filePath).then(
+      (file) => {
+        setOpened(file);
+      },
+      (error: unknown) => {
+        setOpened({
+          kind: 'refused',
+          path: filePath,
+          reason: `DSpatch could not ask for this file: ${String(error)}`,
+        });
+      },
+    );
+  };
+
+  /** What an expanded directory could not show. `null` when it showed everything. */
+  const noteFor = (folderPath: string): string | null => {
+    const page = isExpanded(folderPath) ? pages[folderPath] : undefined;
+    return page === undefined ? null : (page.problem ?? describeDirectoryCap(page));
+  };
+
+  const rows: TreeRow[] = [];
+  const addRows = (folderPath: string, depth: number): void => {
+    const page = pages[folderPath];
+    if (page === undefined) {
+      return;
+    }
+    for (const entry of page.entries) {
+      rows.push({
+        path: entry.path,
+        name: entry.name,
+        kind: entry.kind,
+        depth,
+        isRoot: false,
+        working: false,
+        note: entry.kind === 'directory' ? noteFor(entry.path) : null,
+      });
+      if (entry.kind === 'directory' && isExpanded(entry.path)) {
+        addRows(entry.path, depth + 1);
+      }
+    }
+  };
+  for (const folder of view.folders) {
+    rows.push({
+      path: folder.path,
+      name: folder.name,
+      kind: 'directory',
+      depth: 0,
+      isRoot: true,
+      working: folder.working,
+      note: noteFor(folder.path),
+    });
+    if (isExpanded(folder.path)) {
+      addRows(folder.path, 1);
+    }
+  }
+
+  if (view.folders.length === 0 && view.problem === null) {
+    return null;
+  }
+
+  return (
+    <aside className="sidebar" style={{ width: `${String(width)}px` }} data-ev="sidebar">
+      <div className="sidebar__head">
+        <span className="sidebar__title">Folders</span>
+        {/* DSP-72 changed what this does, so it changed what it says. Until this card a
+            folder added here was shown and searched and reached no run, and the title
+            said exactly that. It is now one of the run's working folders: it is passed
+            to the provider, its own rules and skills load with it, and what changes
+            inside it is measured. The working directory is still the project the
+            conversation opened. */}
+        <button
+          type="button"
+          className="button button--quiet"
+          data-ev="add-folder"
+          title="Add a folder beside the ones already open. It joins the folders a run works with and its loops are looked for too. The project this conversation opened stays the working directory."
+          onClick={onAdd}
+        >
+          Add…
+        </button>
+      </div>
+
+      {view.problem !== null && (
+        <p className="app__note" data-ev="workspace-problem">
+          {view.problem}
+        </p>
+      )}
+
+      {/*
+        What this list is, and what it is not. Beside the folders rather than in a
+        tooltip, because the mistake it exists to prevent — reading a list of folders as
+        a boundary — is made by looking at the list.
+
+        DSP-64's shape, and the same disclosure the `Failure` card uses: one line that is
+        true on its own, the rest one click away. The summary **is** the headline rather
+        than a generic label above it, because in a 300 px column a labelled row would
+        cost a line to say nothing. The text is unchanged either way — what is decided
+        here is when it is on screen.
+      */}
+      {view.rootsNote !== null && (
+        <details className="sidebar__note" data-ev="workspace-roots">
+          <summary className="sidebar__note-summary" data-ev="workspace-roots-note">
+            {view.rootsNote.headline}
+          </summary>
+          <p className="sidebar__note-detail" data-ev="workspace-roots-detail">
+            {view.rootsNote.detail}
+          </p>
+        </details>
+      )}
+
+      <div className="sidebar__tree" data-ev="tree" data-row-count={String(rows.length)}>
+        {rows.map((row, index) => (
+          <Fragment key={row.path}>
+          <div
+            className={`tree-row${row.isRoot ? ' tree-row--root' : ''}${
+              selected === row.path ? ' tree-row--selected' : ''
+            }`}
+            style={{ paddingLeft: `${String(0.25 + row.depth * 0.75)}rem` }}
+          >
+            <button
+              type="button"
+              className="tree-row__label"
+              data-ev={`tree-row-${String(index)}`}
+              data-path={row.path}
+              data-kind={row.kind}
+              data-depth={String(row.depth)}
+              data-expanded={row.kind === 'directory' ? String(isExpanded(row.path)) : ''}
+              title={row.path}
+              onClick={() => {
+                if (row.kind === 'directory') {
+                  toggleDirectory(row.path);
+                } else {
+                  openFile(row.path);
+                }
+              }}
+            >
+              <span className="tree-row__mark">
+                {row.kind === 'directory' ? (isExpanded(row.path) ? '▾' : '▸') : '·'}
+              </span>
+              <span className="tree-row__name">{row.name}</span>
+            </button>
+            {row.isRoot && row.working && (
+              <span className="tree-row__badge" data-ev={`tree-root-working-${String(index)}`}>
+                project
+              </span>
+            )}
+            {/* Removing a root removes the link. Nothing on disk is touched, which is
+                why this is beside the name rather than behind a confirmation. */}
+            {row.isRoot && !row.working && (
+              <button
+                type="button"
+                className="tree-row__remove"
+                data-ev={`remove-folder-${String(index)}`}
+                title={`Remove ${row.path} from the workspace. Nothing on disk is deleted.`}
+                onClick={() => {
+                  onRemove(row.path);
+                }}
+              >
+                ×
+              </button>
+            )}
+            {reading.includes(row.path) && <span className="tree-row__note">reading …</span>}
+          </div>
+          {/* Directly under the folder it is about, so a cap counted out loud is a
+              count a person actually meets rather than one at the far end of five
+              hundred rows. */}
+          {row.note !== null && (
+            <p
+              className="tree-row__cap"
+              style={{ paddingLeft: `${String(1 + row.depth * 0.75)}rem` }}
+              data-ev={`tree-note-${row.name}`}
+            >
+              {row.note}
+            </p>
+          )}
+          </Fragment>
+        ))}
+      </div>
+
+      {opened !== null && (
+        <div className="sidebar__file" data-ev="file-view">
+          <div className="sidebar__head">
+            {/* The path as it is, not shouted: `.sidebar__title` uppercases a
+                section heading, and a file path is not one. */}
+            <span className="sidebar__filepath" title={opened.path} data-ev="file-view-path">
+              {opened.path}
+            </span>
+            <button
+              type="button"
+              className="button button--quiet"
+              data-ev="file-view-close"
+              onClick={() => {
+                setOpened(null);
+                setSelected(null);
+              }}
+            >
+              Close
+            </button>
+          </div>
+          {opened.kind === 'refused' ? (
+            <p className="app__note" data-ev="file-view-refusal">
+              {opened.reason}
+            </p>
+          ) : (
+            <>
+              {opened.note !== null && (
+                <p className="app__note" data-ev="file-view-note">
+                  {opened.note}
+                </p>
+              )}
+              {/* A reading view, and the line is held here: no editing, no saving,
+                  no selection that means anything to a run. DSP-73 says a reading
+                  view is enough at this stage and that a small editor is how this
+                  story doubles. */}
+              <pre className="sidebar__text" data-ev="file-view-text">
+                {opened.text}
+              </pre>
+            </>
+          )}
+        </div>
+      )}
+
+      {/*
+        The chat keeps the main space. This drags the sidebar between
+        SIDEBAR_MIN_WIDTH and SIDEBAR_MAX_WIDTH and can never take the window.
+      */}
+      <div
+        className="sidebar__grip"
+        data-ev="sidebar-resize"
+        role="separator"
+        aria-orientation="vertical"
+        onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          const startX = event.clientX;
+          const startWidth = width;
+          const move = (moved: PointerEvent): void => {
+            onWidth(clampSidebarWidth(startWidth + (moved.clientX - startX)));
+          };
+          const up = (): void => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+          };
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', up);
+        }}
+      />
+    </aside>
   );
 }

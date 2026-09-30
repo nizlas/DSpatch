@@ -19,11 +19,29 @@ import {
   checkAnswerGrewWhileStreaming,
   checkComposerKeysBehave,
   checkConnectionNamesAnAccount,
+  checkDeletedProseIsGone,
+  checkNeverSilentWhileAnswering,
   checkInterruptedRunKeepsItsWork,
   checkMessageJoinedTheRun,
+  checkFolderTree,
+  checkGlintFrameIsWorthReading,
+  checkLoopFiledAndHandedOver,
+  checkPulseCarriesFurther,
   checkOneThreadWithHandover,
+  checkSelectionIsInert,
+  checkStopSaysNothingExtra,
+  checkWorkingRootsReadHonestly,
+  checkWorkspaceReopened,
   type ComposerKeyObservation,
+  type DeletedProseObservation,
+  type StopAsAskedObservation,
+  type StreamingSilenceSample,
+  type WorkingRootsObservation,
+  type FolderTreeObservation,
+  type InertSelectionObservation,
+  type ReopenedWorkspaceObservation,
   type InterruptedRunObservation,
+  type LoopResultObservation,
   type MessageDuringWorkObservation,
   type ThreadObservation,
 } from '../src/renderer/workflow-gates.ts';
@@ -376,7 +394,7 @@ const NEVER_DELIVERED: LoopInstruction = { ...RECEIVED, id: 'ins-2', runEnded: t
 
 /** The window's own sentences, so the gate is matched against the product. */
 const MESSAGE_AS_IT_SHOULD_BE: MessageDuringWorkObservation = {
-  routeNoteShownInWindow: String(composerRouteNote({ kind: 'instruction', runId: 'run-1' })),
+  routeNoteShownInWindow: composerRouteNote({ kind: 'instruction', runId: 'run-1' }) ?? '',
   loopEntriesBeforeSending: 1,
   loopEntriesAfterSending: 1,
   stepRunningWhenSent: 'Do what was asked',
@@ -402,13 +420,25 @@ test('rejects a second loop run appearing when a message was sent during one', (
   assert.match(String(verdict.failure), /must never start a second run/);
 });
 
-test('rejects a window that did not say where the press would go', () => {
+/*
+ * This gate ran the other way until DSP-87, and the inversion is the point rather
+ * than an accident of wording. The window used to have to say, beside the composer
+ * and for the whole of every run, that a press would join the run rather than start
+ * a second one. Niclas read the built app and the sentence was standing there next
+ * to a message that already said what had become of it.
+ *
+ * Nothing it asserted has stopped being asserted: that no second run starts is the
+ * entry count two tests above, which measures the run rather than a promise about
+ * it, and what became of the message is the three sentences below, written after the
+ * fact about the message actually sent. What is gone is the telling in advance.
+ */
+test('rejects a standing paragraph beside the composer', () => {
   const verdict = checkMessageJoinedTheRun({
     ...MESSAGE_AS_IT_SHOULD_BE,
-    routeNoteShownInWindow: '',
+    routeNoteShownInWindow:
+      'A loop run is working. Sending adds your message to it rather than starting a ' +
+      'second run in this project.',
   });
-  // "beside the composer" since the Send button went: the note is in the same place,
-  // and it is now the only thing that says where a press would go.
   assert.match(String(verdict.failure), /beside the composer/);
 });
 
@@ -485,11 +515,9 @@ const RUNNING_TURN: LoopTurn = {
 const STOP_REQUESTED = conversationStanding({
   turn: { ...RUNNING_TURN, cancelRequested: true },
   stillWatching: true,
-  currentStepLabel: 'Do what was asked',
-  instructions: [],
 });
 
-const AFTER_THE_STOP = conversationStanding({
+const STOPPED_AS_ASKED = conversationStanding({
   turn: {
     ...RUNNING_TURN,
     cancelRequested: true,
@@ -498,24 +526,35 @@ const AFTER_THE_STOP = conversationStanding({
       text:
         'You asked this run to stop. Completed steps were not replayed and files were ' +
         'left as they are.',
+      shortText: null,
+      actionNote: null,
       terminalNodeId: null,
       terminalLabel: null,
       outcome: null,
     },
   },
   stillWatching: true,
-  currentStepLabel: 'Do what was asked',
-  instructions: [],
 });
 
+/**
+ * The window as DSP-90 leaves it at a stop somebody asked for: the marking, and
+ * nothing after it.
+ *
+ * `accountShownInWindow` is empty in the *passing* fixture, which is the inversion
+ * this card makes. It used to be the account sentence, and requiring it is what put
+ * a paragraph of internal vocabulary under Niclas's own cancellation.
+ *
+ * Both notes are taken from `conversationStanding` rather than written here, so the
+ * gate is checked against what the product actually says. A fixture with hand-written
+ * prose in it would pass a gate the product fails.
+ */
 const INTERRUPTION_AS_IT_SHOULD_BE: InterruptedRunObservation = {
   standingsSeen: ['active', 'stop-requested', 'stopped'],
-  whileStopping: STOP_REQUESTED,
-  afterTheEnd: AFTER_THE_STOP,
+  noteWhileStopping: STOP_REQUESTED.actionNote ?? '',
+  noteAfterTheEnd: STOPPED_AS_ASKED.actionNote ?? '',
+  standingDisclosuresInTheWindow: 0,
   badgeShownInWindow: 'stopped short',
-  accountShownInWindow:
-    'You asked this run to stop. Completed steps were not replayed and files were left ' +
-    'as they are.',
+  accountShownInWindow: '',
   mandateShownInWindow: 'read the files and write READING.md',
   mandateAsSent: 'read the files and write READING.md',
   earlierMandateShownInWindow: 'create NOTES.md',
@@ -523,7 +562,7 @@ const INTERRUPTION_AS_IT_SHOULD_BE: InterruptedRunObservation = {
   earlierRepliesStillShown: 2,
 };
 
-test('the standing sentences the product writes satisfy the interruption gate', () => {
+test('what the product says at an interruption satisfies the interruption gate', () => {
   assert.equal(checkInterruptedRunKeepsItsWork(INTERRUPTION_AS_IT_SHOULD_BE).failure, null);
 });
 
@@ -561,28 +600,58 @@ test('rejects a run never seen working, and one never seen stopped', () => {
 test('rejects a stop that reads as a stop before the run has said it stopped', () => {
   const verdict = checkInterruptedRunKeepsItsWork({
     ...INTERRUPTION_AS_IT_SHOULD_BE,
-    whileStopping: {
-      ...STOP_REQUESTED,
-      whoIsWorking: 'The agent has stopped.',
-    },
+    noteWhileStopping: 'The agent has stopped.',
   });
   assert.match(String(verdict.failure), /asking is not stopping/);
 });
 
-test('rejects an unanswered one of §9\u2019s four questions', () => {
+/**
+ * DSP-90's own assertion, and it replaces the test that required §9's four questions
+ * to be answered in prose at every state.
+ *
+ * The fault it reproduces is the one Niclas met: the stop is confirmed, and the
+ * window explains it anyway. The old test demanded exactly that explanation, so the
+ * two cannot both exist — which is why this is an inversion rather than an addition.
+ */
+test('rejects a confirmed stop that was explained anyway', () => {
   const verdict = checkInterruptedRunKeepsItsWork({
     ...INTERRUPTION_AS_IT_SHOULD_BE,
-    afterTheEnd: { ...AFTER_THE_STOP, waitingFor: '' },
+    noteAfterTheEnd:
+      'The run was stopped before it finished. What it had already done is still in ' +
+      'your project; nothing was undone and nothing was replayed.',
   });
-  assert.match(String(verdict.failure), /unanswered/);
+  assert.match(String(verdict.failure), /explained it anyway/);
 });
 
-test('rejects an interruption that promises nothing about repeating work', () => {
+/**
+ * And the one circumstance that may still speak there, allowed by name.
+ *
+ * Without this the gate would be *silence after a stop*, which would also forbid
+ * telling someone their run's record was lost — the case Niclas gave as an example
+ * of what must appear.
+ */
+test('allows a record that could not be written to speak at a confirmed stop', () => {
   const verdict = checkInterruptedRunKeepsItsWork({
     ...INTERRUPTION_AS_IT_SHOULD_BE,
-    afterTheEnd: { ...AFTER_THE_STOP, whatHappensNext: 'Press Send to try again.' },
+    noteAfterTheEnd:
+      'This run was not fully kept on disk: the file could not be written. What is on ' +
+      'screen is all there will be after a restart.',
   });
-  assert.match(String(verdict.failure), /nothing will be repeated/i);
+  assert.equal(verdict.failure, null);
+});
+
+/**
+ * The obvious way to appear to comply, refused.
+ *
+ * A collapsed `details` holding the same paragraphs would satisfy every assertion
+ * about what is visible while changing nothing, and the card rules it out by name.
+ */
+test('rejects a disclosure still holding a run\u2019s standing', () => {
+  const verdict = checkInterruptedRunKeepsItsWork({
+    ...INTERRUPTION_AS_IT_SHOULD_BE,
+    standingDisclosuresInTheWindow: 1,
+  });
+  assert.match(String(verdict.failure), /not a removal/);
 });
 
 test('rejects an interruption that lost the assignment or the history', () => {
@@ -642,10 +711,801 @@ test('rejects any claim of success over an interrupted run', () => {
   }
 });
 
-test('rejects an interrupted run left with nothing said about it', () => {
-  const verdict = checkInterruptedRunKeepsItsWork({
-    ...INTERRUPTION_AS_IT_SHOULD_BE,
-    accountShownInWindow: '   ',
+/**
+ * The invariant the empty account used to protect, restated for the new truth.
+ *
+ * It was never "there is a paragraph", it was "the entry is not silent about its own
+ * run". At a stop the person asked for, the marking is what says it — so an empty
+ * account is only a fault when there is no marking either, or when the window is not
+ * even showing the run as stopped.
+ */
+test('rejects an interrupted run left with neither an account nor a marking', () => {
+  assert.match(
+    String(
+      checkInterruptedRunKeepsItsWork({
+        ...INTERRUPTION_AS_IT_SHOULD_BE,
+        accountShownInWindow: '   ',
+        badgeShownInWindow: '  ',
+      }).failure,
+    ),
+    /neither an account.*nor a marking/s,
+  );
+  // A marking with no account passes, which is the whole of DSP-90 #2.
+  assert.equal(
+    checkInterruptedRunKeepsItsWork({
+      ...INTERRUPTION_AS_IT_SHOULD_BE,
+      accountShownInWindow: '   ',
+    }).failure,
+    null,
+  );
+});
+
+// --- DSP-71 and DSP-73: the folders, the tree and the inert selection -------
+//
+// The counter-examples are the point. "Expanding a directory reads that directory
+// only" is a gate that has to be able to fail, and the way it fails is a name from
+// two levels down appearing after one expansion — which is exactly what a tree that
+// read the subtree in advance would produce, and is indistinguishable from correct
+// until someone opens a folder with `node_modules` in it.
+
+const TREE_AS_IT_SHOULD_BE: FolderTreeObservation = {
+  rootsShown: ['C:/work/project', 'C:/work/project-second'],
+  namesUnderRoot: ['deep', 'many', 'picture.bin', 'readme.txt'],
+  namesOnlyDeeper: ['nested', 'leaf.txt'],
+  cappedNoteShown: 'Showing 500 of 1200 entries. 700 more are in this folder and not drawn.',
+  cappedRowsDrawn: 500,
+  cappedEntriesOnDisk: 1200,
+  cappedExpansionMs: 90,
+  textFileShown: 'MARKER-readable-text\nand a second line\n',
+  textFileMarker: 'MARKER-readable-text',
+  binaryRefusalShown: 'This looks like a binary file, so it was not opened as text.',
+};
+
+test('accepts a tree that read one directory, capped a large one and read a file', () => {
+  assert.equal(checkFolderTree(TREE_AS_IT_SHOULD_BE).failure, null);
+});
+
+test('rejects a tree that pulled in a name from deeper than the directory expanded', () => {
+  const verdict = checkFolderTree({
+    ...TREE_AS_IT_SHOULD_BE,
+    namesUnderRoot: [...TREE_AS_IT_SHOULD_BE.namesUnderRoot, 'leaf.txt'],
   });
-  assert.match(String(verdict.failure), /nothing said about how it/);
+  assert.match(String(verdict.failure), /read more than the directory it was asked for/);
+});
+
+test('rejects a large folder drawn in full', () => {
+  const verdict = checkFolderTree({
+    ...TREE_AS_IT_SHOULD_BE,
+    cappedRowsDrawn: 1200,
+  });
+  assert.match(String(verdict.failure), /the cap did not apply/);
+});
+
+test('rejects a cap applied without saying how much is not shown', () => {
+  const verdict = checkFolderTree({
+    ...TREE_AS_IT_SHOULD_BE,
+    cappedNoteShown: 'This folder is large.',
+  });
+  assert.match(String(verdict.failure), /counted out loud/);
+});
+
+test('rejects a reading view that did not show the file it opened', () => {
+  const verdict = checkFolderTree({ ...TREE_AS_IT_SHOULD_BE, textFileShown: '' });
+  assert.match(String(verdict.failure), /was not the file/);
+});
+
+test('rejects a binary file opened in silence', () => {
+  const verdict = checkFolderTree({ ...TREE_AS_IT_SHOULD_BE, binaryRefusalShown: '  ' });
+  assert.match(String(verdict.failure), /said nothing/);
+});
+
+test('rejects a window that drew one root when a workspace has several', () => {
+  const verdict = checkFolderTree({ ...TREE_AS_IT_SHOULD_BE, rootsShown: ['C:/work/project'] });
+  assert.match(String(verdict.failure), /root\(s\)/);
+});
+
+const SELECTION_AS_IT_SHOULD_BE: InertSelectionObservation = {
+  definitionBefore: 'C:/work/project/.dspatch/loops/mine.loop.json',
+  definitionAfter: 'C:/work/project/.dspatch/loops/mine.loop.json',
+  workingRootBefore: 'C:/work/project',
+  workingRootAfter: 'C:/work/project',
+  foldersBefore: ['C:/work/project', 'C:/work/project-second'],
+  foldersAfter: ['C:/work/project', 'C:/work/project-second'],
+  fileSelected: 'C:/work/project-second/readme.txt',
+};
+
+test('accepts a selection that moved nothing', () => {
+  assert.equal(checkSelectionIsInert(SELECTION_AS_IT_SHOULD_BE).failure, null);
+});
+
+test('rejects a selection that moved the working copy', () => {
+  const verdict = checkSelectionIsInert({
+    ...SELECTION_AS_IT_SHOULD_BE,
+    workingRootAfter: 'C:/work/project-second',
+  });
+  assert.match(String(verdict.failure), /a way of looking, not a way of steering/);
+});
+
+test('rejects a selection that changed the chosen loop', () => {
+  const verdict = checkSelectionIsInert({
+    ...SELECTION_AS_IT_SHOULD_BE,
+    definitionAfter: 'C:/work/project-second/.dspatch/loops/other.loop.json',
+  });
+  assert.match(String(verdict.failure), /changed the chosen loop definition/);
+});
+
+test('rejects a selection that changed the open folders', () => {
+  const verdict = checkSelectionIsInert({
+    ...SELECTION_AS_IT_SHOULD_BE,
+    foldersAfter: ['C:/work/project'],
+  });
+  assert.match(String(verdict.failure), /changed the open folders/);
+});
+
+const REOPEN_AS_IT_SHOULD_BE: ReopenedWorkspaceObservation = {
+  foldersAtStart: ['C:/one', 'C:/two', 'C:/three'],
+  foldersSaved: ['C:/one', 'C:/two', 'C:/three'],
+  definitionAtStart: 'C:/one/.dspatch/loops/mine.loop.json',
+  definitionSaved: 'C:/one/.dspatch/loops/mine.loop.json',
+  savedFileText: JSON.stringify({
+    format: 'dspatch-workspace',
+    formatVersion: 1,
+    folders: [{ path: 'C:/one' }, { path: 'C:/two' }, { path: 'C:/three' }],
+    loopDefinition: 'C:/one/.dspatch/loops/mine.loop.json',
+  }),
+};
+
+test('accepts a workspace that came back with its folders and its loop', () => {
+  assert.equal(checkWorkspaceReopened(REOPEN_AS_IT_SHOULD_BE).failure, null);
+});
+
+test('rejects a workspace that came back one folder short', () => {
+  const verdict = checkWorkspaceReopened({
+    ...REOPEN_AS_IT_SHOULD_BE,
+    foldersAtStart: ['C:/one', 'C:/two'],
+  });
+  assert.match(String(verdict.failure), /came back without C:\/three/);
+});
+
+test('rejects a workspace that came back with a different loop', () => {
+  const verdict = checkWorkspaceReopened({
+    ...REOPEN_AS_IT_SHOULD_BE,
+    definitionAtStart: 'C:/two/.dspatch/loops/other.loop.json',
+  });
+  assert.match(String(verdict.failure), /rather than the/);
+});
+
+test('rejects a saved workspace carrying a run result', () => {
+  const verdict = checkWorkspaceReopened({
+    ...REOPEN_AS_IT_SHOULD_BE,
+    savedFileText: `${REOPEN_AS_IT_SHOULD_BE.savedFileText.slice(0, -1)},"runId":"dsp-run-1"}`,
+  });
+  assert.match(String(verdict.failure), /a run result in it would be state nobody asked to keep/);
+});
+
+/* ------------------------------------------------------------------------- */
+/* DSP-79: the window's own loop filed a result and handed it over            */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * A run of the shipped chat loop as the record on disk describes it.
+ *
+ * Shaped from a real record: two agent steps, two sessions, one `result-filed` entry
+ * for `work`, and `check`'s prompt carrying `work`'s reply whole.
+ */
+const WORK_REPLY = 'I read the project. It is a duration formatter.\n\nRESULT: succeeded';
+
+const LOOP_AS_IT_SHOULD_BE: LoopResultObservation = {
+  runId: 'dsp-run-7',
+  status: 'completed',
+  resultsFiled: [{ nodeId: 'work', bytes: 62, digest: 'a1b2c3d4e5f60718' }],
+  steps: [
+    {
+      nodeId: 'work',
+      sessionId: 'dsp-session-dsp-run-7--work',
+      prompt: 'You are step "work" … Mandate: read this project.',
+      text: WORK_REPLY,
+    },
+    {
+      nodeId: 'check',
+      sessionId: 'dsp-session-dsp-run-7--check',
+      prompt: `You are step "check" … "work" left this result …\n\n${WORK_REPLY}\n`,
+      text: 'The assignment was met.\n\nRESULT: met',
+    },
+  ],
+  refusal: '',
+};
+
+test('accepts a window run that filed a result and handed it to a second agent', () => {
+  assert.equal(checkLoopFiledAndHandedOver(LOOP_AS_IT_SHOULD_BE).failure, null);
+});
+
+/**
+ * The counter-example this gate exists for.
+ *
+ * Dropping `resultsDir` from the window's chat-loop handler leaves the run with
+ * nowhere to keep results, and since the chat loop declares `consumes` the runner
+ * refuses it before it walks. Every unit test in the suite still passes; this is what
+ * the record looks like when it happens.
+ */
+test('rejects a window run that was refused for having nowhere to keep results', () => {
+  const verdict = checkLoopFiledAndHandedOver({
+    runId: 'dsp-run-8',
+    status: 'refused',
+    resultsFiled: [],
+    steps: [],
+    refusal:
+      'This graph requires at least one step to leave a result, and this run was given ' +
+      'nowhere to file one.',
+  });
+  assert.match(String(verdict.failure), /refused rather than walked/);
+  assert.match(String(verdict.failure), /nowhere to keep results/);
+});
+
+test('rejects a window run that walked but filed nothing', () => {
+  const verdict = checkLoopFiledAndHandedOver({ ...LOOP_AS_IT_SHOULD_BE, resultsFiled: [] });
+  assert.match(String(verdict.failure), /filed no result/);
+});
+
+test('rejects a filed result of no bytes, which is a journal entry about nothing', () => {
+  const verdict = checkLoopFiledAndHandedOver({
+    ...LOOP_AS_IT_SHOULD_BE,
+    resultsFiled: [{ nodeId: 'work', bytes: 0, digest: '' }],
+  });
+  assert.match(String(verdict.failure), /silence this mechanism exists to end/);
+});
+
+/** One agent asked two questions is the thing the card exists to stop being true. */
+test('rejects two steps that ran in one provider session', () => {
+  const [first, second] = LOOP_AS_IT_SHOULD_BE.steps;
+  assert.ok(first !== undefined && second !== undefined);
+  const verdict = checkLoopFiledAndHandedOver({
+    ...LOOP_AS_IT_SHOULD_BE,
+    steps: [first, { ...second, sessionId: first.sessionId }],
+  });
+  assert.match(String(verdict.failure), /one agent asked two questions/);
+});
+
+/** A record from before per-node sessions says nothing either way, and must not pass. */
+test('rejects a record that does not say which session a step ran in', () => {
+  const [first, second] = LOOP_AS_IT_SHOULD_BE.steps;
+  assert.ok(first !== undefined && second !== undefined);
+  const verdict = checkLoopFiledAndHandedOver({
+    ...LOOP_AS_IT_SHOULD_BE,
+    steps: [{ ...first, sessionId: '' }, second],
+  });
+  assert.match(String(verdict.failure), /does not say which provider session/);
+});
+
+/**
+ * Separate sessions and no handover is the worst of both, and it is the shape a
+ * `consumes` that quietly stopped working would take.
+ */
+test('rejects a second agent started without the first step\u2019s words', () => {
+  const [first, second] = LOOP_AS_IT_SHOULD_BE.steps;
+  assert.ok(first !== undefined && second !== undefined);
+  const verdict = checkLoopFiledAndHandedOver({
+    ...LOOP_AS_IT_SHOULD_BE,
+    steps: [first, { ...second, prompt: 'You are step "check" … Mandate: read this project.' }],
+  });
+  assert.match(String(verdict.failure), /told nothing about/);
+});
+
+/* ------------------------------------------------------------------------- */
+/* DSP-72: several working roots, and the sentence about them                 */
+/* ------------------------------------------------------------------------- */
+
+const HONEST_HEADLINE =
+  '2 working folders. Not a boundary: DSpatch reports what changed inside these folders ' +
+  'and cannot stop an agent leaving them.';
+
+const HONEST_DETAIL =
+  'target is the working directory. Not a boundary: DSpatch reports what changed inside ' +
+  'these folders and cannot stop an agent leaving them. These are the folders this run ' +
+  'works with. DSpatch hands them to Cursor as the session\u2019s workspace folders, and ' +
+  'Cursor\u2019s local agent runs with no filesystem confinement by default.';
+
+const ROOTS_AS_THEY_SHOULD_BE: WorkingRootsObservation = {
+  rootsGiven: ['C:/work/target', 'C:/work/source'],
+  workingRoot: 'C:/work/target',
+  noteFromMain: { headline: HONEST_HEADLINE, detail: HONEST_DETAIL },
+  noteOnScreen: { headline: HONEST_HEADLINE, detail: HONEST_DETAIL },
+  detailClosedAtFirst: true,
+  detailOpensOnClick: true,
+  definitionChosen: 'C:/elsewhere/.dspatch/loops/mine.loop.json',
+  graphMarkerOnScreen: 'MARKER-outside-loop',
+  graphMarkerExpected: 'MARKER-outside-loop',
+  refusalForOwnRepository:
+    'The working folder "DSpatch" cannot be worked in by a run, so nothing was started. ' +
+    'C:/dev/DSpatch',
+  ownRepository: 'C:/dev/DSpatch',
+};
+
+test('accepts two roots, a definition from elsewhere and a note that claims nothing', () => {
+  assert.equal(checkWorkingRootsReadHonestly(ROOTS_AS_THEY_SHOULD_BE).failure, null);
+});
+
+test('rejects a single root, because two folders were never set up', () => {
+  const verdict = checkWorkingRootsReadHonestly({
+    ...ROOTS_AS_THEY_SHOULD_BE,
+    rootsGiven: ['C:/work/target'],
+  });
+  assert.match(String(verdict.failure), /was never set up/);
+});
+
+test('rejects a definition that lives inside one of the working folders', () => {
+  const verdict = checkWorkingRootsReadHonestly({
+    ...ROOTS_AS_THEY_SHOULD_BE,
+    definitionChosen: 'C:/work/target/.dspatch/loops/mine.loop.json',
+  });
+  assert.match(String(verdict.failure), /a definition from a third place/);
+});
+
+test('rejects a graph on screen that is not the chosen definition\u2019s own', () => {
+  const verdict = checkWorkingRootsReadHonestly({
+    ...ROOTS_AS_THEY_SHOULD_BE,
+    graphMarkerOnScreen: 'MARKER-something-else',
+  });
+  assert.match(String(verdict.failure), /is not the one that reached the screen/);
+});
+
+/**
+ * The counter-example this gate exists for.
+ *
+ * A note that reads as a boundary is the defect DSP-72 can ship while every other
+ * criterion passes, so the gate has to fail on wording alone with everything else in
+ * place.
+ */
+test('rejects a note that says the agent is limited to the folders', () => {
+  const claiming = `${HONEST_DETAIL} The agent is limited to these folders.`;
+  const verdict = checkWorkingRootsReadHonestly({
+    ...ROOTS_AS_THEY_SHOULD_BE,
+    noteFromMain: { headline: HONEST_HEADLINE, detail: claiming },
+    noteOnScreen: { headline: HONEST_HEADLINE, detail: claiming },
+  });
+  assert.match(String(verdict.failure), /reads as a restriction/);
+});
+
+/**
+ * DSP-64's shape applied badly, which is the regression this pair of tests exists for.
+ *
+ * Everything else about the observation is correct — the folders, the definition, the
+ * refusal, and a full paragraph behind the disclosure that says all the right things.
+ * The only fault is that the line most people will actually read is the comfortable
+ * half. The gate has to fail on that alone.
+ */
+test('rejects a headline that leaves "not a boundary" to whoever clicks', () => {
+  const comfortable = '2 working folders, with target as the working directory.';
+  const verdict = checkWorkingRootsReadHonestly({
+    ...ROOTS_AS_THEY_SHOULD_BE,
+    noteFromMain: { headline: comfortable, detail: HONEST_DETAIL },
+    noteOnScreen: { headline: comfortable, detail: HONEST_DETAIL },
+  });
+  assert.match(String(verdict.failure), /must not come away believing they are one/);
+});
+
+test('rejects a headline that has grown back into a paragraph', () => {
+  const grown = `${HONEST_HEADLINE} ${HONEST_DETAIL} ${HONEST_DETAIL}`;
+  const verdict = checkWorkingRootsReadHonestly({
+    ...ROOTS_AS_THEY_SHOULD_BE,
+    noteFromMain: { headline: grown, detail: HONEST_DETAIL },
+    noteOnScreen: { headline: grown, detail: HONEST_DETAIL },
+  });
+  assert.match(String(verdict.failure), /the detail is where length belongs/);
+  assert.match(String(verdict.failure), /761 characters/);
+});
+
+test('rejects a detail that was already open, unasked', () => {
+  const verdict = checkWorkingRootsReadHonestly({
+    ...ROOTS_AS_THEY_SHOULD_BE,
+    detailClosedAtFirst: false,
+  });
+  assert.match(String(verdict.failure), /drawing the whole paragraph unasked/);
+});
+
+test('rejects a detail that cannot be opened, because unreachable is removed', () => {
+  const verdict = checkWorkingRootsReadHonestly({
+    ...ROOTS_AS_THEY_SHOULD_BE,
+    detailOpensOnClick: false,
+  });
+  assert.match(String(verdict.failure), /unreachable is the same as removed/);
+});
+
+test('rejects a window that describes the folders differently from the main process', () => {
+  const verdict = checkWorkingRootsReadHonestly({
+    ...ROOTS_AS_THEY_SHOULD_BE,
+    noteOnScreen: {
+      headline: HONEST_HEADLINE,
+      detail: `${HONEST_DETAIL} And something the main process never said.`,
+    },
+  });
+  assert.match(String(verdict.failure), /second description/);
+});
+
+test('rejects a run that was not refused with DSpatch among its roots', () => {
+  const verdict = checkWorkingRootsReadHonestly({
+    ...ROOTS_AS_THEY_SHOULD_BE,
+    refusalForOwnRepository: '',
+  });
+  assert.match(String(verdict.failure), /not confined to the folders it is given/);
+});
+
+test('rejects a refusal that names no folder', () => {
+  const verdict = checkWorkingRootsReadHonestly({
+    ...ROOTS_AS_THEY_SHOULD_BE,
+    refusalForOwnRepository: 'This workspace contains DSpatch, so nothing was started.',
+  });
+  assert.match(String(verdict.failure), /does not name C:\/dev\/DSpatch/);
+});
+
+// --- Never silent while answering (DSP-87) ----------------------------------
+
+/**
+ * A stream, sampled: the reply grows and the window says nothing about silence.
+ *
+ * Each sample is one instant, both halves read together, because that is the only
+ * shape in which the fault is visible. Niclas's window drew a reply and the words
+ * *281 s with nothing back* at the same time, and either half on its own is a
+ * reasonable thing for a window to show.
+ */
+const STREAM_AS_IT_SHOULD_BE: readonly StreamingSilenceSample[] = [
+  { atMs: 0, replyCharsShown: 0, toolCallsShown: 0, silenceSentencesShown: [] },
+  { atMs: 400, replyCharsShown: 38, toolCallsShown: 0, silenceSentencesShown: [] },
+  { atMs: 800, replyCharsShown: 122, toolCallsShown: 1, silenceSentencesShown: [] },
+  { atMs: 1_200, replyCharsShown: 240, toolCallsShown: 1, silenceSentencesShown: [] },
+];
+
+test('accepts a stream the window never described as silence', () => {
+  assert.equal(checkNeverSilentWhileAnswering(STREAM_AS_IT_SHOULD_BE).failure, null);
+});
+
+test('rejects the defect itself: a growing reply and a claim of nothing back', () => {
+  const verdict = checkNeverSilentWhileAnswering(
+    STREAM_AS_IT_SHOULD_BE.map((sample, at) =>
+      at === 3
+        ? { ...sample, silenceSentencesShown: ['281 s with nothing back'] }
+        : sample,
+    ),
+  );
+  assert.match(String(verdict.failure), /281 s with nothing back/);
+  assert.match(String(verdict.failure), /while it is receiving it/);
+});
+
+test('rejects a tool call arriving under a claim that nothing has', () => {
+  // Text is not the only activity, and a step running a command for four minutes
+  // writes no reply at all. Growth in either half is activity arriving.
+  const verdict = checkNeverSilentWhileAnswering([
+    { atMs: 0, replyCharsShown: 0, toolCallsShown: 0, silenceSentencesShown: [] },
+    { atMs: 500, replyCharsShown: 0, toolCallsShown: 1, silenceSentencesShown: [] },
+    {
+      atMs: 900,
+      replyCharsShown: 0,
+      toolCallsShown: 3,
+      silenceSentencesShown: ['Waiting for agent activity'],
+    },
+  ]);
+  assert.match(String(verdict.failure), /3 tool call/);
+});
+
+test('refuses to pass a trial that never saw a stream', () => {
+  // The vacuous pass, which is what a gate written the easy way would give: no
+  // sample contradicts the rule when no sample observed anything.
+  const verdict = checkNeverSilentWhileAnswering([
+    { atMs: 0, replyCharsShown: 0, toolCallsShown: 0, silenceSentencesShown: [] },
+    { atMs: 500, replyCharsShown: 0, toolCallsShown: 0, silenceSentencesShown: [] },
+  ]);
+  assert.match(String(verdict.failure), /fault in the instrument/);
+});
+
+test('leaves a genuinely quiet moment alone', () => {
+  // The sentence is not forbidden — it is the honest thing to say when nothing has
+  // arrived. What is forbidden is saying it over activity. Here it appears before
+  // the reply starts, and the samples that follow it are clean.
+  const verdict = checkNeverSilentWhileAnswering([
+    {
+      atMs: 0,
+      replyCharsShown: 0,
+      toolCallsShown: 0,
+      silenceSentencesShown: ['Waiting for agent activity'],
+    },
+    ...STREAM_AS_IT_SHOULD_BE.slice(1),
+  ]);
+  assert.equal(verdict.failure, null);
+});
+
+// --- The deletions, checked as deletions (DSP-87) ---------------------------
+
+const PROSE_AS_IT_SHOULD_BE: DeletedProseObservation = {
+  passagesFoundInDocument: [],
+  placeholderShownInWindow: 'Describe the task. Enter sends, Shift+Enter starts a new line.',
+  wordsFoundInTheConversation: [],
+};
+
+test('accepts a window with none of the four passages in it', () => {
+  assert.equal(checkDeletedProseIsGone(PROSE_AS_IT_SHOULD_BE).failure, null);
+});
+
+test('rejects a deleted passage that is merely unreachable', () => {
+  const verdict = checkDeletedProseIsGone({
+    ...PROSE_AS_IT_SHOULD_BE,
+    passagesFoundInDocument: ['This wait is longer'],
+  });
+  assert.match(String(verdict.failure), /This wait is longer/);
+});
+
+test('rejects a placeholder that has become a paragraph again', () => {
+  const verdict = checkDeletedProseIsGone({
+    ...PROSE_AS_IT_SHOULD_BE,
+    placeholderShownInWindow:
+      'Describe the work. Send runs the chat loop; this text is the entry assignment. ' +
+      'Enter sends, Shift+Enter starts a new line.',
+  });
+  assert.match(String(verdict.failure), /characters/);
+});
+
+test('refuses to delete the one fact the placeholder carries', () => {
+  // Shortening is not the objective; removing explanation is. What the two keys do
+  // cannot be seen by looking at the box, so it is the part that stays.
+  const verdict = checkDeletedProseIsGone({
+    ...PROSE_AS_IT_SHOULD_BE,
+    placeholderShownInWindow: 'Describe the task.',
+  });
+  assert.match(String(verdict.failure), /what the two keys do/);
+});
+
+test('rejects the project\u2019s own vocabulary in the conversation', () => {
+  const verdict = checkDeletedProseIsGone({
+    ...PROSE_AS_IT_SHOULD_BE,
+    wordsFoundInTheConversation: ['mandate', 'walks'],
+  });
+  assert.match(String(verdict.failure), /mandate/);
+  assert.match(String(verdict.failure), /walks/);
+});
+
+/* ------------------------------------------------------------------------- */
+/* DSP-90: a stop the person asked for, explained by nothing                  */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The window as DSP-90 leaves it: a sentence while the stop is unconfirmed, and
+ * nothing once it is.
+ *
+ * The note in the middle reading is taken from what `conversationStanding` writes, so
+ * a product that stopped saying it would fail the gate rather than the fixture.
+ */
+const STOP_AS_IT_SHOULD_BE: StopAsAskedObservation = {
+  samples: [
+    {
+      atMs: 4_100,
+      stateShown: 'stop-requested',
+      noteShown: STOP_REQUESTED.actionNote ?? '',
+      runHasReportedAnEnd: false,
+    },
+    { atMs: 4_600, stateShown: 'stopped', noteShown: '', runHasReportedAnEnd: true },
+  ],
+  badgeAfterTheStop: 'stopped short',
+  accountAfterTheStop: '',
+  noteAfterTheStop: '',
+  explanationsFoundAfterTheStop: [],
+  standingDisclosuresInTheWindow: 0,
+  stopWaitingNoteAfterTheStop: '',
+};
+
+test('accepts a stop that was asked for, confirmed, and left at that', () => {
+  assert.equal(checkStopSaysNothingExtra(STOP_AS_IT_SHOULD_BE).failure, null);
+});
+
+test('rejects the fault itself: the column explaining a confirmed stop', () => {
+  const verdict = checkStopSaysNothingExtra({
+    ...STOP_AS_IT_SHOULD_BE,
+    accountAfterTheStop:
+      'You asked this run to stop. Completed steps were not replayed and files were ' +
+      'left as they are.',
+  });
+  assert.match(String(verdict.failure), /still explained it/);
+});
+
+test('rejects a paragraph that moved beside the run instead', () => {
+  const verdict = checkStopSaysNothingExtra({
+    ...STOP_AS_IT_SHOULD_BE,
+    noteAfterTheStop: 'Nobody. This run has reported an end.',
+  });
+  assert.match(String(verdict.failure), /a note still stood beside the run/);
+});
+
+test('rejects a recovery rule left beside the composer after the stop', () => {
+  const verdict = checkStopSaysNothingExtra({
+    ...STOP_AS_IT_SHOULD_BE,
+    stopWaitingNoteAfterTheStop:
+      'Cancel requested. Completed steps are not replayed; files stay as they are.',
+  });
+  assert.match(String(verdict.failure), /still beside the composer/);
+});
+
+test('rejects a deleted explanation found anywhere in the document', () => {
+  const verdict = checkStopSaysNothingExtra({
+    ...STOP_AS_IT_SHOULD_BE,
+    explanationsFoundAfterTheStop: ['Where this run stands, and what it left behind'],
+  });
+  assert.match(String(verdict.failure), /Where this run stands/);
+});
+
+test('rejects a disclosure holding the removed prose after a stop', () => {
+  const verdict = checkStopSaysNothingExtra({
+    ...STOP_AS_IT_SHOULD_BE,
+    standingDisclosuresInTheWindow: 1,
+  });
+  assert.match(String(verdict.failure), /collapsed summary/);
+});
+
+/**
+ * The negative control, and the one that matters most on this card.
+ *
+ * Everything above is satisfied by a window that says nothing ever, which would have
+ * thrown away §4.5's one honest sentence along with the noise. A stop that was never
+ * shown as unconfirmed has to fail.
+ */
+test('refuses a window that never said the stop was unconfirmed', () => {
+  const verdict = checkStopSaysNothingExtra({
+    ...STOP_AS_IT_SHOULD_BE,
+    samples: [
+      { atMs: 4_100, stateShown: 'active', noteShown: '', runHasReportedAnEnd: false },
+      { atMs: 4_600, stateShown: 'stopped', noteShown: '', runHasReportedAnEnd: true },
+    ],
+  });
+  assert.match(String(verdict.failure), /asking is not stopping/);
+});
+
+test('refuses a trial that took no readings, or never saw the run end', () => {
+  assert.match(
+    String(checkStopSaysNothingExtra({ ...STOP_AS_IT_SHOULD_BE, samples: [] }).failure),
+    /fault in the instrument/,
+  );
+  assert.match(
+    String(
+      checkStopSaysNothingExtra({
+        ...STOP_AS_IT_SHOULD_BE,
+        samples: [
+          {
+            atMs: 4_100,
+            stateShown: 'stop-requested',
+            noteShown: STOP_REQUESTED.actionNote ?? '',
+            runHasReportedAnEnd: false,
+          },
+        ],
+      }).failure,
+    ),
+    /never reported an end/,
+  );
+});
+
+test('rejects a stop left with no marking at all', () => {
+  // The marking is what is left when the paragraph goes, so removing both is the one
+  // way this card could be taken too far.
+  const verdict = checkStopSaysNothingExtra({
+    ...STOP_AS_IT_SHOULD_BE,
+    badgeAfterTheStop: '   ',
+  });
+  assert.match(String(verdict.failure), /no marking on the run/);
+});
+
+test('lets a record that could not be written speak after the stop', () => {
+  const verdict = checkStopSaysNothingExtra({
+    ...STOP_AS_IT_SHOULD_BE,
+    noteAfterTheStop:
+      'This run was not fully kept on disk: the file could not be written. What is on ' +
+      'screen is all there will be after a restart.',
+  });
+  assert.equal(verdict.failure, null);
+});
+
+/* ------------------------------------------------------------------------- */
+/* DSP-80, second pass: the pulse's range and a frame worth sampling          */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The pulse as the window measured it after the range was widened.
+ *
+ * Real numbers from the trial rather than invented ones, so that a change to the stylesheet
+ * that quietly narrowed the range again would be caught by the first assertion below.
+ */
+const PULSE_AS_MEASURED = {
+  label: 'ready',
+  haloTrough: 0.04,
+  haloPeak: 0.78,
+  bodyTrough: 0.82,
+  bodyPeak: 1,
+  haloDurationMs: 3200,
+  bodyDurationMs: 3200,
+  labelClearanceUnits: 4.17,
+} as const;
+
+test('accepts a pulse whose ring swings more than twice as far as it used to', () => {
+  assert.equal(checkPulseCarriesFurther(PULSE_AS_MEASURED).failure, null);
+});
+
+test('refuses the range it had when Niclas called it barely noticeable', () => {
+  const verdict = checkPulseCarriesFurther({
+    ...PULSE_AS_MEASURED,
+    haloTrough: 0.08,
+    haloPeak: 0.4,
+  });
+  assert.match(String(verdict.failure), /barely noticeable/);
+});
+
+/**
+ * A wider range paid for with a slower breath is the way to satisfy one instruction and
+ * break the other, so it is the one this gate has to refuse while the numbers all improve.
+ */
+test('refuses a wider range bought by changing the rhythm', () => {
+  const verdict = checkPulseCarriesFurther({ ...PULSE_AS_MEASURED, haloDurationMs: 5000 });
+  assert.match(String(verdict.failure), /5000 ms/);
+  assert.match(String(verdict.failure), /rhythm/);
+});
+
+test('refuses a ring whose stroke reaches the node\u2019s words', () => {
+  const verdict = checkPulseCarriesFurther({
+    ...PULSE_AS_MEASURED,
+    labelClearanceUnits: -0.5,
+  });
+  assert.match(String(verdict.failure), /readability/);
+});
+
+/** A frame of the frozen glint as the trial reported it for the corner reading. */
+const FRAME_AS_MEASURED = {
+  label: 'corner',
+  leadAt: 38.25,
+  turnAcrossSpanDeg: -90,
+  screenPixelsPerUnit: 6.939,
+  samples: 134,
+  samplesOffTheCanvas: 0,
+  acrossACorner: true,
+} as const;
+
+test('accepts a corner frame that really turns a corner, on screen, at a legible size', () => {
+  assert.equal(checkGlintFrameIsWorthReading(FRAME_AS_MEASURED).failure, null);
+});
+
+/**
+ * The failure that actually happened, and it is why the gate exists.
+ *
+ * The node sat in a corner of the canvas behind the inspector panel, so the line of samples
+ * left the drawing area after two units. The profile that came back was two bright samples
+ * and thirteen units of dark, which reads exactly like a glint that is far too short.
+ */
+test('refuses a frame whose samples left the drawing area', () => {
+  const verdict = checkGlintFrameIsWorthReading({
+    ...FRAME_AS_MEASURED,
+    samplesOffTheCanvas: 91,
+  });
+  assert.match(String(verdict.failure), /outside the drawing area/);
+});
+
+test('refuses a corner reading taken on a straight side', () => {
+  const verdict = checkGlintFrameIsWorthReading({
+    ...FRAME_AS_MEASURED,
+    turnAcrossSpanDeg: 0,
+  });
+  assert.match(String(verdict.failure), /says nothing about what happens at a corner/);
+});
+
+test('refuses a straight reading that crossed a corner after all', () => {
+  const verdict = checkGlintFrameIsWorthReading({
+    ...FRAME_AS_MEASURED,
+    label: 'straight',
+    acrossACorner: false,
+  });
+  assert.match(String(verdict.failure), /not the comparison they are reported as/);
+});
+
+/**
+ * Below about two pixels per hundredth of the outline the gradient's finest pieces are
+ * smaller than a pixel, and a profile read there is a reading of the screen.
+ */
+test('refuses a frame sampled too small to tell light from resolution', () => {
+  const verdict = checkGlintFrameIsWorthReading({
+    ...FRAME_AS_MEASURED,
+    screenPixelsPerUnit: 1.1,
+  });
+  assert.match(String(verdict.failure), /reading of the screen/);
 });

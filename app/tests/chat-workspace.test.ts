@@ -390,6 +390,57 @@ describe('the activity line (DSP-27 #4, #5)', () => {
     const line = activityLine({ ...idle, chatRunning: true, chatActivityText: chat });
     assert.equal(line?.text, chat);
     assert.equal(line?.source, 'chat-events');
+    assert.equal(line?.stepText, null, 'no loop is running, so no step is open');
+  });
+
+  /*
+   * Where the run is, and what the step is doing: two facts, one call (DSP-87).
+   *
+   * The journal's newest line is written when a node is *entered* and does not move
+   * again until the next one is, so a step streaming for four minutes leaves it
+   * frozen on `Entered agent "…"`. True, and not activity. `stepText` is the half
+   * that moves, and it comes out of the same call as `text` on purpose: the defect
+   * this card was raised for was two places in the window answering "is anything
+   * happening" from two sources and disagreeing, so the cure has to be a shape in
+   * which they cannot.
+   */
+  it('reports where the run is and what the step is doing, separately', () => {
+    const line = activityLine({
+      ...idle,
+      loopRunning: true,
+      loopLines: ['Entered agent \u201cImplementer\u201d.'],
+      loopStepText: 'Working \u2014 writing a reply.',
+    });
+    assert.equal(line?.text, 'Entered agent \u201cImplementer\u201d.');
+    assert.equal(line?.stepText, 'Working \u2014 writing a reply.');
+    assert.equal(line?.source, 'loop-step');
+  });
+
+  it('has no step line between steps, and still says where the run is', () => {
+    const line = activityLine({
+      ...idle,
+      loopRunning: true,
+      loopLines: ['Entered agent \u201cImplementer\u201d.', 'Produced a report.'],
+      loopStepText: null,
+    });
+    assert.equal(line?.stepText, null);
+    assert.equal(line?.text, 'Produced a report.');
+    assert.equal(line?.source, 'loop-journal');
+  });
+
+  it('never lets the step line be the same sentence as the run line', () => {
+    // Two places showing one sentence twice is what the window did after the first
+    // attempt at this fix, and "the chat says less" is the card. They are allowed to
+    // be different or one of them absent; they may not be a duplicate.
+    for (const stepText of [null, 'Working \u2014 writing a reply.', '']) {
+      const line = activityLine({
+        ...idle,
+        loopRunning: true,
+        loopLines: ['Entered agent \u201cImplementer\u201d.'],
+        loopStepText: stepText,
+      });
+      assert.notEqual(line?.stepText, line?.text);
+    }
   });
 });
 

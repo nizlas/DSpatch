@@ -297,6 +297,8 @@ The audio application's zoom example could let users follow **wheel event → vi
 
 A persuasive agent narrative must not replace access to real code. Every proposed change group and described relationship should be traceable to evidence. Distinguish code analysis, executed tests and agent interpretation; mark uncertain relationships. The full diff and remaining changes must always be accessible.
 
+This is a requirement about **traceability, not about who starts a process**. A check an agent ran with its own tools is evidence when the command, its exit code and its output are observed and recorded; an agent's account of having run it is not. Read once as a requirement that DSpatch itself spawn every command, this sentence produced the misallocation recorded in [INTERACTION_MODEL.md §8](INTERACTION_MODEL.md#8-what-this-document-replaces). What is not exposed is recorded as unknown.
+
 <a id="prova-om-förståelsen-faktiskt-förbättras"></a>
 
 #### Test whether understanding actually improves
@@ -520,6 +522,8 @@ Interactive work may span theory, planning, experiments, coding and review over 
 
 When switching to the loop, select the current goal version, starting point and mandate. On returning to interactive work, preserve the loop's actions and pending questions. Switch at defined safe points; active tools may need separate termination. New goals or changes should invalidate affected earlier verification.
 
+[AGENT_BEHAVIOUR_AND_ORCHESTRATION.md](AGENT_BEHAVIOUR_AND_ORCHESTRATION.md) elaborates this section and section 7. Its principle is that the task decides which working method is needed, and that an open repository is available context rather than a reason to inventory it. Its design for an agent recommending a switch and the user choosing, with the run recorded as handed over rather than delivered, is a proposal for the safe points named above; it is not an agreed requirement and is not built.
+
 <a id="mål-och-metriker-som-grund-för-iteration"></a>
 
 ### Goals and metrics for iteration
@@ -537,6 +541,8 @@ Work interactively across several sessions, then run multiple autonomous iterati
 <a id="9-arkitektur-och-projektets-data"></a>
 
 ## 9 Architecture and project data
+
+[TASK_MANAGEMENT_AND_WORKING_MEMORY.md](TASK_MANAGEMENT_AND_WORKING_MEMORY.md) sets the intended direction for the persisted project state named here: the issue as a working memory that outlives an agent session, and the same issue worked on in chat, in a loop, or by switching between them. It is a statement of intended design, not of what is built.
 
 The architecture is a direction to grow towards. The first increment needs only a thin boundary between chat UI, provider adapter and persisted project state. Separate workflows from execution environments as needs become concrete. Maestro should add loops and other agent arrangements without binding the UI to one provider or topology.
 
@@ -570,6 +576,8 @@ DSP-1 verifies the stack and selected Cursor connection, including a minimal pac
 
 Each provider/execution adapter should report support for start, streaming, cancellation, resumption, model selection, approvals and cost reporting. Workflows select suitable adapters per step. Missing support must be visible; a common view must not imply identical provider behaviour.
 
+**Model selection is a user-facing requirement, not only an adapter capability.** Niclas decided on 15 September 2026 that models are chosen in two distinct places: in the external loop that builds DSpatch, tracked by [DSP-8](../backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md), and **in DSpatch itself** — interactively for ordinary chat, and specified per step for a Maestro loop — tracked by [DSP-19](../backlog/tasks/dsp-19%20-%20Choose-models-in-DSpatch-interactively-and-per-loop-step.md). The two are separate: one serves the coordinator building the product, the other serves the product's user. In both, a requested model is not a confirmed model, an unavailable model must be stated rather than silently replaced, and a fixed human choice overrides any automation and survives resumption.
+
 Provider raw events should be saveable alongside a normalised representation, supporting debugging, improved interpretation and explanation of status/cost sources. Normalised events need stable identifiers so reconnection does not duplicate results.
 
 <a id="föreslagna-informationsobjekt"></a>
@@ -595,6 +603,20 @@ A local database or structured files are both possible. Support recovery, export
 GitHub's Copilot SDK provides programmatic access to the engine behind Copilot CLI. DSpatch supplies its own UI and editor integration. The SDK is not a ready-made copy of VS Code's chat panel and does not imply automatic feature parity. It is available for TypeScript, Python and .NET, among others. [1]
 
 Documented support includes sessions, streaming, model selection, custom tools and MCP. GitHub authentication can provide Copilot access; using personal model keys has a different access and billing arrangement. Standard SDK use follows the CLI usage model. Read available models from the actual environment. [1–2]
+
+#### Content exclusion does not travel with the policy
+
+Raised by Niclas on 15 September 2026: his employer uses Copilot content exclusion, and the question is whether that protection follows the SDK or is a VS Code feature.
+
+It is neither, quite. The rule is held by GitHub — repository, organisation or enterprise administrators configure it — but **enforcement sits in each client**. The client sends the repository URL to GitHub, the server returns the policy, and the client applies it. A client without the support excludes nothing, and does so silently. [15]
+
+Coverage therefore varies by client, and one gap is the opposite of what most people assume: GitHub documents that content exclusion is **not supported in Edit and Agent modes of Copilot Chat in Visual Studio Code and other editors**. Inline suggestions and ordinary chat in those editors are covered; the two modes where Copilot edits files itself are not. [15]
+
+For the SDK the position is better but partly inferred. The Copilot SDK speaks to Copilot CLI over JSON-RPC, and the CLI gained content exclusion in general availability on 2 September 2026, for Copilot Business and Enterprise. [16] Since enforcement lives in the CLI process and the SDK is a protocol layer over it, the SDK should inherit it. GitHub's SDK compatibility page does not mention content exclusion in either direction, and older documentation still states that the CLI does not support it, so this is a reasonable reading rather than a documented guarantee. [17]
+
+Two things this does not mean. Exclusion keeps named files out of the context; it does not make processing local, and everything not excluded still leaves the machine. And the rules are path-based, so whether any particular kind of file — images, for instance — is protected depends on the configured patterns rather than on the file's type.
+
+**Consequence for DSpatch.** If a Copilot adapter is built, an organisation's content exclusion must not be assumed to apply to it. What applies depends on the client the adapter is built on, and it is a thing to measure against the actual account and organisation rather than to infer from documentation. Record it as an outstanding compatibility probe, not as a property we have.
 
 ### Cursor
 
@@ -938,6 +960,18 @@ Separate processes and techniques for keeping the UI responsive. Read 13 Septemb
 **[14]** [Tauri process model](https://v2.tauri.app/concept/process-model/) and [webview engines](https://v2.tauri.app/reference/webview-versions/)
 
 System-webview alternative: WebView2 on Windows and WebKitGTK on Linux. Read 13 September 2026.
+
+**[15]** [Content exclusion for GitHub Copilot](https://docs.github.com/en/copilot/concepts/context/content-exclusion)
+
+Who configures exclusions, the per-client support table, and the statement that the client receives the policy from the server and applies it. Carries the note that Edit and Agent modes of Copilot Chat in VS Code and other editors do not support content exclusion. Read 15 September 2026.
+
+**[16]** [Content exclusions generally available in Copilot app and CLI](https://github.blog/changelog/2026-09-02-content-exclusions-generally-available-in-copilot-app-and-cli/)
+
+GitHub changelog, 2 September 2026. Copilot CLI respects enterprise, organisation and repository exclusion policies, for Copilot Business and Enterprise. Read 15 September 2026.
+
+**[17]** [Copilot SDK compatibility](https://docs.github.com/en/copilot/how-tos/copilot-sdk/troubleshooting/compatibility)
+
+The SDK reaches only what the CLI exposes over JSON-RPC. Content exclusion is not listed as either supported or unsupported, which is why the SDK's inheritance of it is read rather than documented. Read 15 September 2026.
 
 <a id="underlag-för-nästa-version"></a>
 

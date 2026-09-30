@@ -1,10 +1,10 @@
 ---
 id: DSP-3
 title: Cancel and recover agent and test runs clearly
-status: To Do
+status: Review
 assignee: []
 created_date: '2026-09-13'
-updated_date: '2026-09-13 20:13'
+updated_date: '2026-09-15 08:19'
 labels:
   - reliability
   - ui
@@ -45,10 +45,10 @@ Test cancellation during streaming, after a file change and during a build/test;
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Cancel distinguishes a request from confirmed termination for the agent and local subprocesses; remaining processes or remote calls are visible.
-- [ ] #2 Connection failures, access failures and long waits produce an understandable status and a visible applicable action.
-- [ ] #3 Input, received responses, existing file changes and execution logs survive errors and retries in the open workspace; partial results remain reviewable.
-- [ ] #4 Ambiguous previous outcomes are reconciled before repeating an action. No change is automatically reapplied or command double-started; late events cannot complete a different run.
-- [ ] #5 Failure and cancellation scenarios cover streaming, file changes and builds/tests, clearly distinguishing simulations from actual provider and process execution.
-- [ ] #6 An interrupted or incomplete build/test is shown as interrupted or uncertain and cannot produce a passed test status.
+- [x] #1 Cancel distinguishes a request from confirmed termination for the agent and local subprocesses; remaining processes or remote calls are visible.
+- [x] #2 Connection failures, access failures and long waits produce an understandable status and a visible applicable action.
+- [x] #3 Input, received responses, existing file changes and execution logs survive errors and retries in the open workspace; partial results remain reviewable.
+- [x] #4 Ambiguous previous outcomes are reconciled before repeating an action. No change is automatically reapplied or command double-started; late events cannot complete a different run.
+- [x] #5 Failure and cancellation scenarios cover streaming, file changes and builds/tests, clearly distinguishing simulations from actual provider and process execution.
+- [x] #6 An interrupted or incomplete build/test is shown as interrupted or uncertain and cannot produce a passed test status.
 <!-- AC:END -->

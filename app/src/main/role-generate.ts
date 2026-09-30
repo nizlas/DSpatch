@@ -101,7 +101,11 @@ export function generateRoleFile(
 
   const table = options.capabilities ?? TARGET_CAPABILITIES;
   for (const requirement of source.requirements) {
-    const answer = capabilityAnswer(target, requirement.id, table);
+    // This module writes the framework's own agent definition, so the mechanisms in that
+    // file are the ones in play — `readonly: true` really does enforce `no-file-writes`
+    // for an agent Cursor starts from it. A run DSpatch walks itself loads no such file
+    // and is answered separately; see `CapabilityPath`.
+    const answer = capabilityAnswer(target, requirement.id, 'generated-agent-file', table);
     notices.push(requirementNotice(target, requirement.id, answer));
   }
   if (notices.some((notice) => notice.level === 'error')) {

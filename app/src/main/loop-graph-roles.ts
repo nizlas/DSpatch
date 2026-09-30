@@ -29,15 +29,20 @@ import type { RequirementId, ResolvedRole, RoleReference, RoleResolver } from '.
 import { parseRoleSource, sectionBodies } from './role-source';
 
 /**
- * Resolve role references against a project directory.
+ * Resolve role references against a **resource root**.
  *
- * Paths in a graph are relative to the project root rather than to the graph file, so
- * that moving a graph does not break its references. A path that climbs out of the
- * project is refused: a graph is a file that may be shared, and a role reference is not
- * a way to read arbitrary parts of the machine that opens it.
+ * The root is the one the definition names — its own folder unless it says otherwise —
+ * and not the folder the agent is working in. Those were the same thing while DSpatch
+ * had one folder, and taking the working folder as the anchor was the defect DSP-69
+ * names: a graph carried from one project to another looked for its roles inside the
+ * project it was pointed at and found nothing.
+ *
+ * A path that climbs out of the resource root is refused: a graph is a file that may be
+ * shared, and a role reference is not a way to read arbitrary parts of the machine that
+ * opens it. The root is a **read** anchor. Nothing is written under it.
  */
-export function createFileRoleResolver(projectRoot: string): RoleResolver {
-  const root = path.resolve(projectRoot);
+export function createFileRoleResolver(resourceRoot: string): RoleResolver {
+  const root = path.resolve(resourceRoot);
   const cache = new Map<string, ResolvedRole | null>();
 
   return (reference: RoleReference): ResolvedRole | null => {
@@ -56,7 +61,7 @@ function resolveOnce(root: string, reference: RoleReference): ResolvedRole | nul
   const requested = path.resolve(root, reference.source.path);
   const relative = path.relative(root, requested);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    // Outside the project. Treated as unresolvable rather than read.
+    // Outside the resource root. Treated as unresolvable rather than read.
     return null;
   }
 

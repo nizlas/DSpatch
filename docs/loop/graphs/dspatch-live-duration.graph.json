@@ -1,0 +1,122 @@
+{
+  "format": "dspatch-loop-graph",
+  "formatVersion": 1,
+  "id": "dspatch-live-duration",
+  "name": "Live duration increment",
+  "purpose": "One bounded live walk for DSP-18: an agent may edit formatDuration in an isolated experiment repository, a local gate runs the project's own tests, and the run stops. This is not the external DSpatch development loop.",
+  "target": "cursor",
+  "entry": "implementer",
+  "onRuntimeFault": "stop-and-reconcile",
+  "notes": "A handful of nodes on purpose. The runner still walks the file: changing e-fail or e-spec changes the path. The verify gate has no role and must not spend a provider turn — the live executor runs node --test itself. Do not point this graph at the DSpatch repository.",
+  "limits": {
+    "maxTasks": 1,
+    "maxCalls": 3,
+    "maxReworkRounds": 1,
+    "maxMinutes": 20,
+    "note": "Three calls is room for the writing agent and the local test gate, with one spare. The implementer node is also bounded at 15 minutes so a hung provider call cannot hold the runner."
+  },
+  "archive": {
+    "path": ".dspatch-loop/runs/<run-id>/reports/",
+    "entryPerNode": true,
+    "referenceReturned": true
+  },
+  "failureKinds": [
+    {
+      "id": "spec-error",
+      "label": "specification error",
+      "meaning": "The task's premise is wrong and the change cannot be made in place. The run stops rather than inventing a different task."
+    },
+    {
+      "id": "blocked",
+      "label": "blocked",
+      "meaning": "A concrete obstacle prevents the change: missing access, or a decision this increment cannot make."
+    }
+  ],
+  "nodes": [
+    {
+      "id": "implementer",
+      "kind": "agent",
+      "label": "Complete formatDuration",
+      "purpose": "Edit src/duration.ts in the isolated experiment repository so the existing tests pass. May write that file without asking. Must not edit tests, add dependencies, or run commands — the next node runs the tests.",
+      "role": {
+        "id": "dspatch-implementer",
+        "source": {
+          "kind": "cursor-agent-file",
+          "path": ".cursor/agents/dspatch-implementer.md"
+        }
+      },
+      "model": {
+        "policy": "fixed",
+        "model": "composer-2"
+      },
+      "limits": {
+        "maxMinutes": 15
+      },
+      "declaredFailures": ["spec-error", "blocked"],
+      "report": { "writtenBy": "self" },
+      "view": { "x": 360, "y": 80 }
+    },
+    {
+      "id": "verify",
+      "kind": "gate",
+      "label": "Run the project's tests",
+      "purpose": "Run node --test test/duration.test.ts in the isolated repository. Pass or fail is the process exit code, not an agent narrative.",
+      "outcomes": ["pass", "fail"],
+      "notes": "No role and no provider turn. The live executor starts this command itself.",
+      "view": { "x": 360, "y": 240 }
+    },
+    {
+      "id": "done",
+      "kind": "terminal",
+      "label": "Done",
+      "purpose": "The agent edited the file and the project's tests passed.",
+      "ending": "success",
+      "view": { "x": 200, "y": 400 }
+    },
+    {
+      "id": "failed",
+      "kind": "terminal",
+      "label": "Failed or abandoned",
+      "purpose": "The tests failed, or the agent declared it could not do the work.",
+      "ending": "not-success",
+      "view": { "x": 520, "y": 400 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-edit",
+      "from": "implementer",
+      "to": "verify",
+      "when": { "on": "success" },
+      "label": "edited"
+    },
+    {
+      "id": "e-spec",
+      "from": "implementer",
+      "to": "failed",
+      "when": { "on": "declared-failure", "failure": "spec-error" },
+      "label": "spec-error"
+    },
+    {
+      "id": "e-blocked",
+      "from": "implementer",
+      "to": "failed",
+      "when": { "on": "declared-failure", "failure": "blocked" },
+      "label": "blocked"
+    },
+    {
+      "id": "e-pass",
+      "from": "verify",
+      "to": "done",
+      "when": { "on": "outcome", "outcome": "pass" },
+      "label": "tests passed"
+    },
+    {
+      "id": "e-fail",
+      "from": "verify",
+      "to": "failed",
+      "when": { "on": "outcome", "outcome": "fail" },
+      "label": "tests failed"
+    }
+  ]
+}

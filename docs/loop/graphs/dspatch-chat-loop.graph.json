@@ -1,0 +1,187 @@
+{
+  "format": "dspatch-loop-graph",
+  "formatVersion": 1,
+  "id": "dspatch-chat-loop",
+  "name": "Chat loop",
+  "purpose": "One bounded loop started from ordinary chat: the composer's text is the mandate. A successful work step always goes to a checking agent. That agent discovers how this project is checked and runs those checks with its own tools. DSpatch does not ask the user for a command and does not start the project's build itself. This is not the external DSpatch development loop and not the isolated duration increment.",
+  "target": "cursor",
+  "entry": "work",
+  "onRuntimeFault": "stop-and-reconcile",
+  "notes": "Rewritten for the interaction-model correction (increment 1). Work and check are both agent nodes. There is no choose-check step, no shell gate, and no branch chosen by comparing file trees. A successful work step always reaches check; the checking agent decides whether the assignment needed a build. Snapshots and path lists remain as corroboration in the record, not as routing. Since DSP-79 the two agent nodes have two provider sessions, so the check no longer inherits the work's conversation: it is given the work's own account as a declared result (produces/consumes) and nothing else. That makes it independent of the work's reasoning; it is still the same model on the same machine, so read it as a second look rather than as an outside auditor. Removing the confirmation leaves no DSpatch-specific permission gate on ordinary work (sandbox off, autoReview off, no hooks); real OS and provider permissions still apply. Do not point this graph at the DSpatch working copy. The duration fixture (dspatch-live-duration) is a separate drawing and is not this loop.",
+  "limits": {
+    "maxTasks": 1,
+    "maxCalls": 5,
+    "maxReworkRounds": 1,
+    "maxMinutes": 45,
+    "note": "Both numbers are guesses and are recorded as guesses. 45 minutes and 5 calls are room for a writing turn plus a checking turn that may run a real build, and neither has been measured against a C++/CMake project."
+  },
+  "archive": {
+    "path": ".dspatch-loop/runs/<run-id>/reports/",
+    "entryPerNode": true,
+    "referenceReturned": true
+  },
+  "failureKinds": [
+    {
+      "id": "spec-error",
+      "label": "specification error",
+      "meaning": "The task's premise is wrong and the work cannot be done as asked. The run stops rather than inventing a different task."
+    },
+    {
+      "id": "blocked",
+      "label": "blocked",
+      "meaning": "A concrete obstacle prevents the work: missing access, or a decision this run cannot make."
+    }
+  ],
+  "nodes": [
+    {
+      "id": "work",
+      "kind": "agent",
+      "label": "Do what was asked",
+      "purpose": "Do what the Mandate asks, in the open project. May read freely, write the project's files when the mandate asks for a change, and run whatever commands the work itself requires. Say what you established and what you did not.",
+      "role": {
+        "id": "project-work",
+        "source": {
+          "kind": "role-source",
+          "path": "docs/loop/roles/project/project-work.role.md"
+        }
+      },
+      "model": {
+        "policy": "inherit"
+      },
+      "limits": {
+        "maxMinutes": 15
+      },
+      "outcomes": ["succeeded", "unclear"],
+      "whenUndeclared": "unclear",
+      "declaredFailures": ["spec-error", "blocked"],
+      "notes": "The branch is the named verdict the reply declares (RESULT: succeeded or RESULT: unclear, or a first-line SPEC_ERROR / BLOCKED). A missing or contradictory name routes as unclear — that is cheaper than a false success. whenUndeclared is where that last sentence is now written down, and it is DSP-103: until 30 September 2026 this node got that route because the word unclear was one of two spellings the engine recognised, which was a routing decision taken by a spelling and stated nowhere in the drawing. Nothing is inferred from an outcome's name any more; this line is the whole of it, and renaming the outcome would now mean renaming it here too rather than silently changing where a non-answer goes. DSpatch's before-and-after snapshot is corroboration in the record, not this branch. `produces.required` is false on purpose, and it is the one place this small loop had to choose: this step's account is required by `check`, and `consumes` enforces it there, on the one path that needs it. Requiring it here would enforce it on every path — including `unclear`, `spec-error` and `blocked`, where the drawing already ends honestly at `not-established` or `stopped`, and where a required-result fault would replace a precise ending with \"establish what happened\" about a step that has already said.",
+      "report": { "writtenBy": "self" },
+      "produces": { "required": false, "form": "stored-result", "note": "Your account of what you established and what you did not. The checking step is a different agent with none of this conversation, and what you write here is the only thing it is given about your work." },
+      "view": { "x": 360, "y": 60 }
+    },
+    {
+      "id": "check",
+      "kind": "agent",
+      "label": "Check the work",
+      "purpose": "Establish whether the assignment was met. Discover how this project is checked and run those checks with your own tools — possibly several, possibly none if the assignment was only to read. Do not ask the user to name a command.",
+      "role": {
+        "id": "project-check",
+        "source": {
+          "kind": "role-source",
+          "path": "docs/loop/roles/project/project-check.role.md"
+        }
+      },
+      "model": {
+        "policy": "inherit"
+      },
+      "limits": {
+        "maxMinutes": 20
+      },
+      "outcomes": ["met", "not-met", "could-not-check"],
+      "whenUndeclared": "could-not-check",
+      "declaredFailures": ["spec-error", "blocked"],
+      "notes": "This is an agent assignment, not a shell command DSpatch starts. A reading mandate may honestly need no build; that is a verdict the checking agent may reach, not a branch DSpatch takes by counting files. Its own session, so it did not watch the work happen: what it knows about the work is the mandate, this purpose, and the account `work` left, which is what `consumes` hands it. A missing or contradictory RESULT routes as could-not-check, and whenUndeclared above is where that is stated (DSP-103). It used to follow from the word could-not-check being one of two spellings the engine recognised; a third verdict named anything else would not have had the route, and nothing said so.",
+      "report": { "writtenBy": "self" },
+      "consumes": ["work"],
+      "view": { "x": 360, "y": 220 }
+    },
+    {
+      "id": "done",
+      "kind": "terminal",
+      "label": "Assignment met",
+      "purpose": "The checking step declared that the assignment was met. That is its named verdict. What DSpatch independently observed — snapshots, and any tool calls it recorded — is in the record beside it.",
+      "ending": "success",
+      "view": { "x": 120, "y": 400 }
+    },
+    {
+      "id": "not-met",
+      "kind": "terminal",
+      "label": "Assignment not met",
+      "purpose": "The checking step declared that the assignment was not met. What the work step changed is still in the working copy.",
+      "ending": "not-success",
+      "view": { "x": 340, "y": 400 }
+    },
+    {
+      "id": "not-established",
+      "kind": "terminal",
+      "label": "Could not establish",
+      "purpose": "The run could not establish whether the assignment was met: the work was unclear, the check could not decide, or the check was blocked or wrongly specified. This is not a pass and not a failure of the project. What changed is still in the working copy.",
+      "ending": "not-success",
+      "view": { "x": 560, "y": 400 }
+    },
+    {
+      "id": "stopped",
+      "kind": "terminal",
+      "label": "Stopped without doing the work",
+      "purpose": "The work step reported that the premise was wrong or that it was blocked, so the work was not done and nothing was checked. Its own sentence is in the conversation.",
+      "ending": "not-success",
+      "view": { "x": 100, "y": 200 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-succeeded",
+      "from": "work",
+      "to": "check",
+      "when": { "on": "outcome", "outcome": "succeeded" },
+      "label": "work succeeded",
+      "notes": "Always hand a successful work step to check. The checking agent decides what the assignment required."
+    },
+    {
+      "id": "e-unclear",
+      "from": "work",
+      "to": "not-established",
+      "when": { "on": "outcome", "outcome": "unclear" },
+      "label": "work unclear"
+    },
+    {
+      "id": "e-spec",
+      "from": "work",
+      "to": "stopped",
+      "when": { "on": "declared-failure", "failure": "spec-error" },
+      "label": "spec-error"
+    },
+    {
+      "id": "e-blocked",
+      "from": "work",
+      "to": "stopped",
+      "when": { "on": "declared-failure", "failure": "blocked" },
+      "label": "blocked"
+    },
+    {
+      "id": "e-met",
+      "from": "check",
+      "to": "done",
+      "when": { "on": "outcome", "outcome": "met" },
+      "label": "assignment met"
+    },
+    {
+      "id": "e-not-met",
+      "from": "check",
+      "to": "not-met",
+      "when": { "on": "outcome", "outcome": "not-met" },
+      "label": "assignment not met"
+    },
+    {
+      "id": "e-could-not-check",
+      "from": "check",
+      "to": "not-established",
+      "when": { "on": "outcome", "outcome": "could-not-check" },
+      "label": "could not check"
+    },
+    {
+      "id": "e-check-spec",
+      "from": "check",
+      "to": "not-established",
+      "when": { "on": "declared-failure", "failure": "spec-error" },
+      "label": "spec-error while checking"
+    },
+    {
+      "id": "e-check-blocked",
+      "from": "check",
+      "to": "not-established",
+      "when": { "on": "declared-failure", "failure": "blocked" },
+      "label": "blocked while checking"
+    }
+  ]
+}

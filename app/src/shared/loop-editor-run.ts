@@ -26,8 +26,23 @@ import {
 /** The only graph this increment will live-run. */
 export const LIVE_DURATION_GRAPH_ID = 'dspatch-live-duration';
 
-/** Our own external loop. A live writing turn must not use DSpatch as a workspace. */
-export const FORBIDDEN_LIVE_GRAPH_ID = 'dspatch-development-loop';
+/**
+ * There is no forbidden graph id, and the absence is the point (DSP-78).
+ *
+ * `FORBIDDEN_LIVE_GRAPH_ID` was `dspatch-development-loop`, and it refused that drawing
+ * **by its id, whatever folder was open**. That is broader than the danger it was
+ * standing in for: what must never happen is a writing run over DSpatch's own working
+ * copy, and which folders a run works in is a question about the run, not about the
+ * picture. Refusing the drawing meant our own development loop could not be chosen even
+ * to run against somebody else's project, which is precisely what the standalone
+ * definition is for.
+ *
+ * What refuses DSpatch now is `refuseLiveWorkingRoots`, asked of every loop about every
+ * root the run was given, and it names the folder. It is strictly narrower and strictly
+ * stronger: narrower because it lets a legitimate drawing run somewhere legitimate,
+ * stronger because a graph with a different id has never been able to get past it
+ * either.
+ */
 
 /**
  * The ordinary answers for the nodes our development loop already has.
@@ -44,7 +59,17 @@ export const ORDINARY_CANVAS_WALK: readonly DryRunDecision[] = [
   { node: 'niclas-assessment', produce: { kind: 'outcome', outcome: 'accept' } },
 ];
 
-export type LiveBindingState = 'ready' | 'forbidden' | 'unbound';
+/**
+ * `forbidden` is gone with the id check that was its only producer (DSP-78).
+ *
+ * Kept out rather than left in place unused: a state nothing can reach reads as a
+ * refusal that still exists somewhere, and the next person looking for what refuses our
+ * development loop would look here and find a plausible answer that is not the one.
+ * Both remaining states are refusals *of a binding* — this drawing has no live prompt —
+ * and neither is a refusal about a folder, which is the other question and is asked
+ * separately by `refuseLiveWorkingRoots`.
+ */
+export type LiveBindingState = 'ready' | 'unbound';
 
 export interface LiveBinding {
   readonly ready: boolean;
@@ -57,17 +82,6 @@ export function describeLiveBinding(graph: {
   readonly id: string;
   readonly name: string;
 }): LiveBinding {
-  if (graph.id === FORBIDDEN_LIVE_GRAPH_ID) {
-    return {
-      ready: false,
-      state: 'forbidden',
-      reason:
-        `Refusing to live-run "${graph.name}" (${graph.id}). That drawing is the external ` +
-        `DSpatch development loop. A live writing turn must not use DSpatch itself as a ` +
-        `workspace. Dry-run still walks this canvas as it is, and spends 0 provider turns. ` +
-        `Live is bound to ${LIVE_DURATION_GRAPH_ID} on an isolated experiment repository.`,
-    };
-  }
   if (graph.id !== LIVE_DURATION_GRAPH_ID) {
     return {
       ready: false,

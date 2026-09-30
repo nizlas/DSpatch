@@ -75,6 +75,15 @@ ordinary single-agent chat. With it on, Send walks
 the composer text is the entry mandate. `npm run editor` opens the editor
 directly.
 
+In the editor, a loop is opened through its definition. **Open the chosen loop**
+opens whatever `.loop.json` this workspace has chosen, with no file dialog, and
+**Open a loop or graph…** takes either a `.loop.json` — read as the loop it
+declares, with its roles resolved at the definition's own resource root — or a
+`.graph.json` on its own. Saving always writes to the graph, never to the
+declaration. **Open our Cursor process drawing** is a separate thing: it loads
+`docs/loop/graphs/dspatch-development-loop.graph.json`, which documents how we
+develop DSpatch in Cursor. It is not runnable and it is not the chosen loop.
+
 Nothing has to be configured first. The user gives the assignment; the agent
 investigates the project and runs whatever commands the work needs. The
 **Build and test** panel is a separate, older tool for running a command
@@ -838,6 +847,29 @@ its own, so a previous one cannot be in the way — and the second no longer mat
 for the same reason, though the lingering process itself is still DSP-62. Removing
 old sample folders is a separate action, under **Project → Old sample projects…**.
 
+`loop-result` also makes **no provider call**, and it is the first scenario to walk a
+real loop run without one. It opens a project, ticks *Use loop*, sends one mandate,
+waits for the run to report an end, and then reads the **run record the main process
+wrote to disk**: a filed result with its bytes and digest, one provider session per
+agent node, and the work step's own words inside the checking step's prompt. The run
+walks through `PresentationAdapter`, whose replies are canned and whose declared
+verdict is simply the first outcome each step offers, so the evidence is about
+DSpatch's wiring and says nothing about any model.
+
+It exists because of a hole DSP-79 made. Declaring `consumes` on the chat loop means a
+run given nowhere to keep results is refused before it walks, and the window's own
+`resultsDir` wiring is reachable from no unit test — so a single dropped option would
+turn every loop run in the product into a refusal with the whole suite still green.
+Dropping it on purpose and re-running this scenario produces exit 72 and the refusal,
+which is what a guard is for.
+
+```powershell
+$env:DSPATCH_CHAT_RUN="loop-result"
+$env:DSPATCH_CHAT_LOG="C:\somewhere\loop-result.json"
+npx electron .
+Remove-Item Env:\DSPATCH_CHAT_RUN, Env:\DSPATCH_CHAT_LOG
+```
+
 `errors` is the other scenario that makes **no provider call**: it points
 `DSPATCH_CHAT_WORKSPACE` at a directory DSpatch did not generate, asks for a sample
 project, and reads the refusal as a person meets it. Two things at once — the guard
@@ -886,6 +918,7 @@ different kinds of evidence.
 | 61 | A reply was not rendered, lost characters out of its code, or produced something executable. |
 | 62 | Chrome took the conversation's space, the session details were lost or shown unasked, or the model control is not beside the composer. |
 | 63 | An error said nothing about what to do, showed its diagnostics unasked, could not show them at all, lost words out of a refusal in being shortened, or offered no action — or a session opened over a directory DSpatch did not generate. |
+| 72 | A loop run in the window was refused, filed no result, ran two steps in one provider session, or started a second agent without the first step's own words. |
 
 `DSPATCH_SMOKE`, `DSPATCH_PROBE` and `DSPATCH_CHAT_RUN` each own the exit code.
 Setting more than one exits immediately with code 10 rather than letting them

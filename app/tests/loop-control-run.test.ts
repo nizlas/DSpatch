@@ -5,8 +5,11 @@
  * real `dspatch-development-loop.graph.json` rather than a fixture, for the reason
  * `loop-run.test.ts` gives: a fixture would let the runner and the format drift apart
  * with nothing noticing. That graph is also the one graph that has every node kind —
- * a human entry, four agents, a router, two gates and two terminals — so "what waits
+ * a human entry, agents, a router and two terminals — so "what waits
  * and what does not" can be asserted on the thing rather than on a model of it.
+ * The two review nodes used to be gates; they are agents since DSP-78. A gate
+ * still exists on `dspatch-live-duration`, and the one test that needs a command
+ * in flight uses that drawing.
  *
  * Nothing here can spend a provider turn: every run is driven by
  * `createDryRunExecutor`, which closes over no provider at all.
@@ -49,6 +52,46 @@ function developmentLoop(): LoopGraph {
   return loaded.graph;
 }
 
+function durationLoop(): LoopGraph {
+  const loaded = loadLoopGraph(
+    fs.readFileSync(path.join(repoRoot, 'docs', 'loop', 'graphs', 'dspatch-live-duration.graph.json'), 'utf8'),
+    {
+      resolveRole: createFileRoleResolver(repoRoot),
+      connectedTargets: ['cursor'],
+    },
+  );
+  assert.ok(loaded.ok, 'the duration graph must be valid before it can be run');
+  return loaded.graph;
+}
+
+/** Duration drawing plus a work step after the gate, so a pause there has somewhere to hold. */
+function durationLoopHeldAfterGate(): LoopGraph {
+  const graph = durationLoop();
+  return {
+    ...graph,
+    limits: { ...graph.limits, maxCalls: 12 },
+    nodes: [
+      ...graph.nodes,
+      {
+        id: 'after-verify',
+        kind: 'agent',
+        label: 'After verify',
+        purpose: 'Exists so a pause during the gate has a work step left to hold.',
+        outcomes: ['succeeded'],
+      },
+    ],
+    edges: [
+      ...graph.edges.map((edge) => (edge.id === 'e-pass' ? { ...edge, to: 'after-verify' } : edge)),
+      {
+        id: 'e-after-verify',
+        from: 'after-verify',
+        to: 'done',
+        when: { on: 'outcome', outcome: 'succeeded' },
+      },
+    ],
+  };
+}
+
 /** Mandate, code, verify, accept — the ordinary path through our own loop. */
 const HAPPY_PATH = [
   { node: 'niclas-mandate', produce: { kind: 'outcome' as const, outcome: 'start' } },
@@ -58,7 +101,7 @@ const HAPPY_PATH = [
 ];
 
 /**
- * The work steps on that path: three agents, one gate, one more agent.
+ * The work steps on that path: five agents. Review used to be a gate; it is not.
  *
  * Named rather than counted, because the claim is about *which* steps wait — a count
  * would still pass if a router started asking and an agent stopped.
@@ -244,7 +287,12 @@ describe('a pause lets the step finish and starts no new work step', () => {
   });
 
   it('reports pause requested while a command is still running, and names the command', async () => {
-    const graph = developmentLoop();
+    // A command in flight needs a gate. Our development loop no longer has one —
+    // review is an agent — so this uses the duration drawing, which still does.
+    // A trailing work step is added so the pause has somewhere to hold: the
+    // duration drawing's next node after the gate is a terminal, and a terminal
+    // ends the run rather than waiting.
+    const graph = durationLoopHeldAfterGate();
     const controller = new LoopRunController();
     controller.beginRun('pause-during-command');
 
@@ -252,8 +300,6 @@ describe('a pause lets the step finish and starts no new work step', () => {
     let headlineInsideTheCommand = '';
     const watched = watch(controller, {
       duringStep: (context) => {
-        // `implementation-review` is a gate: in a live run this is the step that spawns
-        // the project's own test command.
         if (context.node.kind !== 'gate') {
           return;
         }
@@ -284,7 +330,7 @@ describe('a pause lets the step finish and starts no new work step', () => {
     );
     assert.match(
       detailInsideTheCommand,
-      /the command for "Implementation review" is still running/,
+      /the command for "Run the project's tests" is still running/,
       `a person watching a command they asked to stop must be told it has not stopped. It said: ${detailInsideTheCommand}`,
     );
     assert.doesNotMatch(
@@ -294,7 +340,7 @@ describe('a pause lets the step finish and starts no new work step', () => {
     );
     assert.equal(finished, false);
     assert.ok(
-      !watched.performed.includes('coordinator-report#1'),
+      !watched.performed.includes('after-verify#1'),
       'the work step after the gate must not have been started',
     );
 
@@ -836,7 +882,11 @@ describe('the run record vocabulary is added to, not changed', () => {
     assert.deepEqual(JOURNAL_KINDS.slice(9, 11), ['run-held', 'run-released']);
     // DSP-51's pair, appended after them for the same reason they were appended: a
     // record written by an earlier build must still parse unchanged.
-    assert.deepEqual(JOURNAL_KINDS.slice(11), ['waiting-for-person', 'person-answered']);
+    assert.deepEqual(JOURNAL_KINDS.slice(11, 13), ['waiting-for-person', 'person-answered']);
+    // DSP-74's, appended after those for the same reason again. The rule this test is
+    // about is the position, not the length: every kind an older build knows is still
+    // where it was, so its records still parse.
+    assert.deepEqual(JOURNAL_KINDS.slice(13), ['result-filed']);
   });
 
   it('renders the added kinds rather than printing undefined into the journal', () => {
@@ -845,6 +895,7 @@ describe('the run record vocabulary is added to, not changed', () => {
       'run-released',
       'waiting-for-person',
       'person-answered',
+      'result-filed',
     ] as const) {
       const line = formatJournalEntry({
         seq: 1,

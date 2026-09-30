@@ -297,6 +297,16 @@ export interface RecordedAgentReply {
   readonly roleId?: string;
   /** Where that role was read from, relative to the project root. */
   readonly roleSourcePath?: string;
+  /**
+   * The provider session this step ran in.
+   *
+   * DSP-79 #1: with one session per agent node, *two consecutive agent nodes use two
+   * different provider sessions* is a claim about the run, and this is the only place
+   * a reader can check it after the fact. Absent in a record written before per-node
+   * sessions, which means **not recorded** and not "the same session" — a run of the
+   * old build genuinely shared one, and its records say nothing either way.
+   */
+  readonly sessionId?: string;
 }
 
 /**

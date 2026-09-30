@@ -20,7 +20,6 @@ import {
   describeLiveBinding,
   editorJournalOpen,
   liveRunOffer,
-  FORBIDDEN_LIVE_GRAPH_ID,
   LIVE_DURATION_GRAPH_ID,
   runCanvasGraph,
   summariseEditorRun,
@@ -38,15 +37,28 @@ function loadGraph(rel: string): LoopGraph {
 }
 
 describe('describeLiveBinding', () => {
-  it('forbids a live run of our development loop and says why', () => {
+  it('refuses our development loop for having no live binding, and no longer for its id', () => {
+    // The assertion this replaces required `state: 'forbidden'` and a sentence about
+    // DSpatch being the workspace. That refusal is gone (DSP-78): the editor's Run is
+    // bound to one fixture, so our drawing is refused here for the reason every other
+    // drawing is — there is no live prompt for it — and not for being itself.
     const graph = loadGraph('docs/loop/graphs/dspatch-development-loop.graph.json');
     const binding = describeLiveBinding(graph);
-    assert.equal(graph.id, FORBIDDEN_LIVE_GRAPH_ID);
     assert.equal(binding.ready, false);
-    assert.equal(binding.state, 'forbidden');
-    assert.match(binding.reason, /development loop/i);
-    assert.match(binding.reason, /Dry-run still walks this canvas/);
-    assert.doesNotMatch(binding.reason, /formatDuration/);
+    assert.equal(binding.state, 'unbound');
+    assert.match(binding.reason, /no live binding/);
+    assert.doesNotMatch(binding.reason, /must not use DSpatch/);
+  });
+
+  it('gives the runnable development-loop subset the same unbound answer as any other graph', () => {
+    // It is the graph the standalone definition points at, and Editor Run must not
+    // acquire an opinion about it: the id check that would have refused its sibling is
+    // gone, and nothing replaced it with a check on this one.
+    const graph = loadGraph('docs/loop/graphs/dspatch-development-loop-runnable.graph.json');
+    const binding = describeLiveBinding(graph);
+    assert.equal(binding.ready, false);
+    assert.equal(binding.state, 'unbound');
+    assert.match(binding.reason, /no live binding/);
   });
 
   it('is ready only for the duration graph, not for a just-drawn id', () => {

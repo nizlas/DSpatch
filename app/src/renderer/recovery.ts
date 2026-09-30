@@ -349,19 +349,19 @@ export function looksLikeConnectionTrouble(message: string): boolean {
 }
 
 /**
- * How long a send may be silent before the window says something about it.
+ * How long a send may be silent before the window puts a number on it.
  *
- * `NOTICE` is above the 11–12 s measured to the first text, so an ordinary turn
- * never trips it. `LONG` is where the wording changes to "unusually long" while
- * still not claiming anything is wrong, because the longest thing measured in this
- * project — 69.5 s of work after a severed connection — is longer than this.
+ * Above the 11–12 s measured to the first text, so an ordinary turn never trips it.
+ *
+ * There used to be a second threshold, `SEND_WAIT_LONG_MS`, where the wording changed
+ * again and an extra paragraph appeared under the composer. DSP-87 removed both: the
+ * number already rises, and a product that cannot see the provider has nothing to add
+ * at 45 s that it did not have at 20.
  */
 export const SEND_WAIT_NOTICE_MS = 20_000;
-export const SEND_WAIT_LONG_MS = 45_000;
 
 export interface WaitingStatus {
   readonly text: string;
-  readonly longWait: boolean;
   /**
    * Always `false`. A wait is never a verdict, and the field exists so that any
    * code tempted to render a wait as an error has to write the word `false`.
@@ -376,6 +376,20 @@ export interface WaitingStatus {
  *
  * `hasRunStarted` matters: once a run exists, Cancel means something, and the
  * status is about the run rather than about the wait.
+ *
+ * **This is about the ordinary chat path only**, and the caller is what enforces
+ * that. A loop run keeps `busy === 'sending'` for its whole length while every one
+ * of its events arrives on another channel under another identity, so a wait
+ * measured here over a loop run counted an interval nothing was ever going to end
+ * and labelled it *nothing back* — see `App.tsx`, where `sendWait` is now null while
+ * a loop run is going.
+ *
+ * **Three sentences became one** (DSP-87). The wait used to argue its case: what had
+ * been measured in earlier runs, that this was slow rather than wrong, that nothing
+ * had failed, that DSpatch could not see the provider — and then a second paragraph
+ * under the composer repeating the last of those at greater length. A number and the
+ * fact that nothing has failed is the whole of what a person can act on; the button
+ * beside it says what they can do.
  */
 export function describeSendWait(
   elapsedMs: number,
@@ -385,38 +399,19 @@ export function describeSendWait(
   if (hasRunStarted) {
     return {
       text: 'The run has started.',
-      longWait: false,
       isFailure: false,
       offerStopWaiting: true,
     };
   }
   if (elapsedMs < SEND_WAIT_NOTICE_MS) {
     return {
-      text:
-        'Sent. The provider has not reported a run yet, which is normal for the ' +
-        'first several seconds.',
-      longWait: false,
-      isFailure: false,
-      offerStopWaiting: true,
-    };
-  }
-  if (elapsedMs < SEND_WAIT_LONG_MS) {
-    return {
-      text:
-        `Still nothing back after ${String(seconds)} s. In the runs that were ` +
-        'measured here, 11–12 s passed before the first text, so this is slow ' +
-        'rather than wrong. Nothing has failed.',
-      longWait: false,
+      text: 'Sent. Nothing back yet.',
       isFailure: false,
       offerStopWaiting: true,
     };
   }
   return {
-    text:
-      `${String(seconds)} s with nothing back, which is longer than anything ` +
-      'measured here. This is still not a failure: DSpatch cannot see whether the ' +
-      'provider is working. You can stop waiting, which does not claim it stopped.',
-    longWait: true,
+    text: `Sent ${String(seconds)} s ago. Nothing back yet, and nothing has failed.`,
     isFailure: false,
     offerStopWaiting: true,
   };

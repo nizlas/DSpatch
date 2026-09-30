@@ -135,17 +135,28 @@ describe('where a press of Send goes', () => {
   });
 
   /**
-   * §7. Version 1.0 proposed a control for sending a message as an instruction
-   * rather than a question; v1.2 retires it. The note beside the button states
-   * what DSpatch will do — it must not offer the user a classification to make.
+   * DSP-87. This used to assert the opposite: that a paragraph beside the composer
+   * said *A loop run is working. Sending adds your message to it rather than starting
+   * a second run…*. It was true, and it stood under the box for the whole of every
+   * run, ahead of a message nobody had typed yet. The acknowledgement moved to the
+   * message itself, where it is about something that happened — see
+   * `loopInstructionStatusText` below, whose delivered case names the step.
+   *
+   * §7's requirement survives the move and is what the second half checks: the window
+   * states what DSpatch did with the text and never offers the person a
+   * classification to make.
    */
-  it('tells the user where the message goes without offering them a choice', () => {
+  it('says nothing beside the composer about a message that joins the run', () => {
     const note = composerRouteNote(
       composerSendRoute(composer({ loopRunning: true, loopRunId: 'chat-loop-1' })),
     );
-    assert.match(note ?? '', /adds your message to it rather than starting a second run/);
+    assert.equal(note, null);
+  });
+
+  it('offers no classification on the message itself either', () => {
+    const said = loopInstructionStatusText(received());
     for (const word of ['question', 'instruction', 'choose', 'instead send', 'type of message']) {
-      assert.equal((note ?? '').toLowerCase().includes(word), false, `offers a choice: ${word}`);
+      assert.equal(said.toLowerCase().includes(word), false, `offers a choice: ${word}`);
     }
   });
 
@@ -171,13 +182,21 @@ describe('where a press of Send goes', () => {
 });
 
 describe('received is not delivered', () => {
-  it('holds a new message as pending and says so in words', () => {
+  /**
+   * DSP-87 shortened these three sentences to one each, and the assertions moved with
+   * them rather than being dropped. What each one has to carry is unchanged: the two
+   * facts below are still the reason this sentence exists, and the second is the one
+   * that stops a person expecting the step now running to act on their message.
+   */
+  it('holds a new message as pending and says so in one line', () => {
     const list = loopInstructionsAfter([], { kind: 'received', instruction: received() });
     assert.equal(loopInstructionState(list[0]!), 'pending');
     const text = loopInstructionStatusText(list[0]!);
-    assert.match(text, /no agent has been given it yet/);
+    assert.match(text, /^Waiting\./);
     // It must not imply the running step will act on it.
-    assert.match(text, /cannot be told anything mid-way/);
+    assert.match(text, /next step/);
+    assert.equal(text.split(/(?<=\.)\s/).length, 2, 'two short sentences at most');
+    assert.ok(text.length < 80, `still short: ${String(text.length)} characters`);
   });
 
   it('names the step that took it, and only after it took it', () => {
@@ -223,8 +242,9 @@ describe('received is not delivered', () => {
     const list = loopInstructionsAfter([], { kind: 'received', instruction: received() });
     const after = loopInstructionsAfter(list, { kind: 'run-ended', runId: 'chat-loop-1' });
     assert.equal(loopInstructionState(after[0]!), 'never-delivered');
+    // One sentence now (DSP-87). The fact kept is the one §4.4 asks for — that no
+    // agent received it — and the badge beside it carries the rest.
     assert.match(loopInstructionStatusText(after[0]!), /no agent ever received it/);
-    assert.match(loopInstructionStatusText(after[0]!), /nothing was repeated because of it/);
     assert.equal(loopInstructionBadgeText(after[0]!), 'never reached an agent');
   });
 

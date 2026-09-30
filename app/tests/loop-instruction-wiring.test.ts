@@ -46,7 +46,10 @@ describe('the chat run handler carries a message to the next step', () => {
     const handler = chatRunHandler(mainSource());
     assert.match(
       handler,
-      /promptFor: \(node\) => \{[\s\S]*chatLoopInstructions\.takeFor\(request\.runId\)/,
+      // The parameter list is not the rule — DSP-79 added a second argument so a brief
+      // can name the step — so it is matched loosely. What is pinned is that the drain
+      // happens inside this callback.
+      /promptFor: \(node(?:, \w+)*\) => \{[\s\S]*chatLoopInstructions\.takeFor\(request\.runId\)/,
       'the queue must be drained inside promptFor, so a message is marked delivered at the ' +
         'instant its text enters the prompt',
     );

@@ -56,7 +56,11 @@ test('opening a project writes a versioned file, creating the directory', () => 
   assert.equal(state.recentProjects.length, 1);
 
   const onDisk: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  assert.equal((onDisk as { formatVersion: number }).formatVersion, 1);
+  // 2 since DSP-71 added `workspaces` beside `recentProjects`.
+  assert.equal(
+    (onDisk as { formatVersion: number }).formatVersion,
+    PROJECT_STORE_FORMAT_VERSION,
+  );
   assert.equal(store.read().recentProjects[0]?.openCount, 1);
   assert.equal(store.read().recentProjects[0]?.lastOpenedAtUtc, '2026-09-14T21:00:00.000Z');
 });

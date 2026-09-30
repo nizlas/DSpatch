@@ -40,10 +40,7 @@ import {
   type StepActivityState,
 } from './loop-activity';
 import { endingWithoutDetail } from './loop-chat';
-import {
-  loopInstructionState,
-  type LoopInstruction,
-} from './loop-instruction';
+import { type LoopInstruction } from './loop-instruction';
 import {
   briefRunOutcome,
   parseRunRecord,
@@ -61,6 +58,35 @@ export interface LoopAgentReply {
   readonly nodeLabel: string;
   /** Exactly what the executor collected. Never trimmed for length. */
   readonly text: string;
+  /**
+   * Which visit to this node produced it, as the **runner** counted it.
+   *
+   * DSP-94. Carried rather than recomputed, and that is the whole reason it is here:
+   * `handoffTrail` numbers the replies it is given, so a node whose first visit
+   * answered with nothing — a silent step, which never reaches the reply list — comes
+   * out of it as visit 1 on its second turn. For a caption that is a small
+   * imprecision; for binding a saved prompt to the call it was sent on it is the
+   * difference between the right message and a plausible wrong one, so the two counts
+   * are kept apart and this one is the run's.
+   *
+   * Optional: a turn written before this field means what it meant, and absent is
+   * *not recorded*.
+   */
+  readonly occurrence?: number;
+  /**
+   * The whole message this step was sent, as the run record keeps it.
+   *
+   * DSP-92's F5, closed here: the data existed on `RecordedAgentReply.prompt` from the
+   * first per-step session and nothing a person could open ever read it. It is passed
+   * through whole for the same reason `text` is — a summarised brief is not the brief
+   * — and it is shown on request rather than standing open, because it is thousands of
+   * characters of role text.
+   *
+   * Absent means *not recorded*, never *nothing was sent*: a record written before the
+   * field, or a caller that does not know the prompt, must not be shown as a call with
+   * an empty message.
+   */
+  readonly prompt?: string;
 }
 
 export type LoopEndingKind =
@@ -86,6 +112,21 @@ export interface LoopEnding {
   readonly kind: LoopEndingKind;
   /** Why the run ended, in the runner's own words where it has them. Never empty. */
   readonly text: string;
+  /**
+   * A circumstance the person has to do something about, in a sentence or two, or
+   * `null` when the ending has none.
+   *
+   * Separate from {@link text} because it is the one part of an ending that outlives
+   * the suppression of the rest (DSP-90). At a stop someone asked for and got, the
+   * column says nothing but the badge — and *the record could not be written* has to
+   * survive that, because it is a fact about their project rather than an account of
+   * a run they already know the fate of. Niclas named a file that could not be saved
+   * as the case that must still speak.
+   *
+   * Only for things with an action in them. Not a place to keep a paragraph that this
+   * card removed by rerouting it.
+   */
+  readonly actionNote: string | null;
   /**
    * The same ending in one short factual line, or `null` when {@link text} is already
    * the shortest honest thing to say.
@@ -206,6 +247,29 @@ export interface LoopTurn {
   /** `null` while the run has not reported an end. */
   readonly ending: LoopEnding | null;
   /**
+   * Which loop this run walked, for the caption above the mandate.
+   *
+   * Carried on the turn because the alternative was a constant, and the constant was
+   * wrong: every loop turn used to be captioned `dspatch-chat-loop` whatever had been
+   * chosen, so a person who picked a project's own loop by name was told in the
+   * transcript that something else had run. That is the card's whole point undone at
+   * the last inch.
+   *
+   * `name` is the definition's name as the person read it in the list — their own
+   * vocabulary, which is what a caption should echo. `id` names what ran when there is
+   * no name: the definition's id live, and the **graph's** id for a turn read back
+   * from a record, because a record carries the graph it walked and not the
+   * declaration that named it. Either way it names the thing that ran.
+   *
+   * Optional, because a turn written before this field existed still means what it
+   * meant. {@link loopTurnCaption} decides what absence reads as, rather than each
+   * caller guessing.
+   */
+  readonly loop?: {
+    readonly name: string | null;
+    readonly id: string | null;
+  };
+  /**
    * `'record'` when this entry was read back from disk rather than watched happen.
    *
    * Carried so the window can say so. A run restored after a restart is history and
@@ -222,6 +286,8 @@ export type LoopTurnEvent =
       readonly runId: string;
       readonly mandate: string;
       readonly atUtc: string;
+      /** The definition this send chose, so the caption names what ran. */
+      readonly loop?: { readonly name: string | null; readonly id: string | null };
     }
   /** An agent node finished a provider turn. Its text may be empty; see the reducer. */
   | { readonly kind: 'agent-replied'; readonly runId: string; readonly reply: LoopAgentReply }
@@ -328,6 +394,7 @@ export function loopTurnsAfter(
         cancelRequested: false,
         abandoned: false,
         ending: null,
+        ...(event.loop === undefined ? {} : { loop: event.loop }),
       },
     ];
   }
@@ -417,6 +484,9 @@ export function loopTurnsAfter(
           terminalNodeId: null,
           terminalLabel: null,
           shortText: null,
+          // The throw is the circumstance and the sentence below states it, so there
+          // is nothing to add in a second line.
+          actionNote: null,
           // No record came back, so there is nothing recorded to report. `null`
           // rather than a guessed `unresolved`: the sentence already says the
           // outcome is unknown, and inventing a recorded value the record does not
@@ -465,6 +535,9 @@ export function describeLoopEnding(
         // No shorter honest line exists: why a loop refused to start is the whole of
         // what happened, and it is already one sentence.
         shortText: null,
+        // The refusal *is* the circumstance, and it is already the whole sentence in
+        // the column. Repeating it here would put it on screen twice.
+        actionNote: null,
         text:
           reason === ''
             ? `${lead}The loop did not start and gave no reason. Nothing was run and no file was changed.`
@@ -479,6 +552,7 @@ export function describeLoopEnding(
         terminalLabel: null,
         outcome: null,
         shortText: null,
+        actionNote: null,
         text:
           note === ''
             ? `${lead}The loop could not be run and gave no reason. Treat the outcome as ` +
@@ -495,9 +569,11 @@ export function describeLoopEnding(
         terminalNodeId: null,
         terminalLabel: null,
         outcome: outcome.recorded?.ending.outcome ?? null,
-        // A stop stays in the column whole. What a reader needs from a cancelled run
-        // is what it left behind, and that is the part a short line would drop.
+        // Still no short line. Not because a cancelled run needs the long one — at a
+        // stop the person asked for, `loopTurnEndingLine` shows neither — but because
+        // a stop nobody here asked for has only this sentence to explain itself with.
         shortText: null,
+        actionNote: recordFault(outcome),
         text: withRecordedOutcome(
           outcome,
           `${lead === '' ? 'This run was stopped before it finished. ' : lead}` +
@@ -526,6 +602,7 @@ export function describeLoopEnding(
           lead === '' && recordedOutcome !== null
             ? briefRunOutcome(recordedOutcome, terminalNodeId)
             : null,
+        actionNote: recordFault(outcome),
         text: withRecordedOutcome(
           outcome,
           `${lead}${describeRunResult(outcome.result, measuredFileChanges(outcome))}`,
@@ -602,12 +679,30 @@ function withRecordedOutcome(
   if (recorded === undefined) {
     return account;
   }
-  const lost =
-    recorded.recordNote === null
-      ? ''
-      : ` This run was not fully kept on disk: ${recorded.recordNote} What is on screen is ` +
-        `all there will be after a restart.`;
-  return `${recorded.ending.outcomeText} ${account}${lost}`;
+  return `${recorded.ending.outcomeText} ${account}`;
+}
+
+/**
+ * The one thing about an ending that a person may have to act on, or `null`.
+ *
+ * A record that could not be written is the case Niclas named, and it is the reason
+ * this is a field of its own rather than a clause of the account: it is true of his
+ * project and not of the run, so it has to keep speaking at an ending whose account
+ * this card silences.
+ *
+ * It says what is wrong and what that means for him. There is no instruction to give
+ * — nothing he can press will write a record after the fact — so it stops at the
+ * consequence rather than inventing an action, which is the same discipline as the
+ * pending-message line: state the limit, do not promise a remedy.
+ */
+function recordFault(
+  outcome: Extract<ChatLoopRunOutcome, { readonly kind: 'finished' | 'cancelled' }>,
+): string | null {
+  const note = outcome.recorded?.recordNote ?? null;
+  return note === null
+    ? null
+    : `This run was not fully kept on disk: ${note} What is on screen is all there ` +
+      `will be after a restart.`;
 }
 
 function endingKindOf(status: RunStatus): LoopEndingKind {
@@ -669,8 +764,8 @@ function describeRunResult(result: RunResult, measuredFileChanges: boolean | nul
     case 'refused': {
       const refusal = result.refusal?.trim() ?? '';
       return refusal === ''
-        ? `The runner refused to walk the graph and recorded no reason. Nothing was run.`
-        : `The runner refused to walk the graph: ${refusal}`;
+        ? `The runner refused to run the graph and recorded no reason. Nothing was run.`
+        : `The runner refused to run the graph: ${refusal}`;
     }
   }
 }
@@ -694,10 +789,55 @@ function describeRunResult(result: RunResult, measuredFileChanges: boolean | nul
  * text is not technical detail about a run; it is the thing that decides whether the
  * ending means anything, and DSP-57 put it in the column deliberately.
  */
+/**
+ * Whether this run stopped because the person asked it to, and said that it had.
+ *
+ * The distinction DSP-90 turns on, and it is a conjunction of two facts DSpatch
+ * already holds rather than a new inference. `cancelRequested` is set by all three
+ * stop paths in the window — Cancel, Stop waiting, and unticking `Use loop` — and by
+ * nothing else, so it *is* "the person asked". An `ending` of kind `cancelled` is the
+ * run reporting that it stopped, which is the only thing that may be read as an end:
+ * the same separation the attempt ledger keeps between `cancel-requested` and
+ * `stopped-confirmed`, and for the same measured reason — DSP-1 saw 69.5 s of remote
+ * work continue after a severed connection, so asking is not stopping.
+ *
+ * Both halves are necessary. Without the ending it is a stop that may not have
+ * happened, which is the case Niclas wants to keep hearing about. Without the request
+ * it is a stop he did not ask for and cannot be assumed to know the cause of.
+ *
+ * `abandoned` is deliberately not consulted. It says the window gave up waiting, and
+ * an `ending` that arrived anyway settles the very thing abandoning left open.
+ */
+export function stoppedAsAsked(turn: LoopTurn): boolean {
+  return turn.cancelRequested && turn.ending?.kind === 'cancelled';
+}
+
+/**
+ * What the column says about the ending, and whether anything was held back.
+ *
+ * **A stop the person asked for and got says nothing here** (DSP-90). Niclas stopped
+ * a run himself and met *stopped short* followed by the recorded outcome, the rule
+ * that completed steps are not replayed, a definition of what reaching a terminal
+ * does and does not prove, and where to look for file changes. Every clause of that
+ * is true, and none of it was news to the person who had just pressed the button: he
+ * knows the run stopped, because he stopped it, and the badge confirms it. The
+ * technical account is not lost — it is in the run journal under **View → Run
+ * journal (diagnostics)**, which is where DSP-86 put the detail of a run.
+ *
+ * The silent-step clause goes with it. Which step produced no text is what decides
+ * whether an *ending* means anything (DSP-57), and a step that was cut off mid-answer
+ * by a person is explained by the stop they asked for.
+ *
+ * `actionNote` is the exception and is handled by the caller, through
+ * `conversationStanding`: a record that could not be written still speaks.
+ */
 export function loopTurnEndingLine(turn: LoopTurn): {
   readonly text: string;
   readonly hasMore: boolean;
 } {
+  if (stoppedAsAsked(turn)) {
+    return { text: '', hasMore: false };
+  }
   const full = loopTurnStatusText(turn);
   const short = turn.ending?.shortText ?? null;
   if (short === null) {
@@ -711,21 +851,41 @@ export function loopTurnStatusText(turn: LoopTurn): string {
   if (turn.ending !== null) {
     return `${turn.ending.text}${silence}`;
   }
-  if (turn.abandoned) {
-    return (
-      'You stopped waiting for this run. It has not reported an end, so it may still ' +
-      `be working in the project; what it reports will appear here if it arrives.${silence}`
-    );
+  /*
+   * A run that has not ended says only that it is running, whatever has been asked of
+   * it (DSP-90).
+   *
+   * Two branches used to sit here. *You stopped waiting for this run. It has not
+   * reported an end, so it may still be working in the project…* and *A stop was
+   * requested. The run has not reported an end yet, so nothing here says the agent has
+   * stopped.* Both are true, and both are now said one line further down by
+   * `conversationStanding` — with an action attached, which is what this card asks for
+   * and what neither of these had.
+   *
+   * The window walk is what found this. It photographed the unconfirmed stop and
+   * caught both on screen at once: the caption saying nothing here claims the agent
+   * stopped, and the note under it saying asking is not stopping. Two sentences for
+   * one fact is the duplication this card exists to remove, so the one with the
+   * action in it is the one that stays.
+   */
+  if (turn.abandoned || turn.cancelRequested) {
+    return `The loop is running.${silence}`;
   }
-  if (turn.cancelRequested) {
-    return (
-      'A stop was requested. The run has not reported an end yet, so nothing here says ' +
-      `the agent has stopped.${silence}`
-    );
-  }
-  return turn.replies.length === 0
-    ? `The loop is running. Nothing has come back from the agent yet.${silence}`
-    : `The agent has replied and the loop is still running.${silence}`;
+  /*
+   * A running run says it is running, and nothing about silence (DSP-87).
+   *
+   * The second sentence used to be *Nothing has come back from the agent yet*, decided
+   * by `replies` being empty — and `replies` holds **finished** replies. A step that had
+   * been streaming for four minutes, with its text drawn directly above this line, was
+   * captioned underneath as having produced nothing. The window walk found this one
+   * still on screen 958 ms into a stream, over 37 characters of visible reply, after the
+   * two louder copies of the same claim had been removed.
+   *
+   * The distinction the two branches drew is not lost: a finished reply is in the column
+   * above, as itself, and what the working step is doing is the step's own status line.
+   * Neither needed a sentence down here to announce it.
+   */
+  return `The loop is running.${silence}`;
 }
 
 /**
@@ -857,6 +1017,34 @@ const RUN_OUTCOME_BADGE: Readonly<Record<RunOutcomeKind, CapabilitySupport | nul
   unresolved: null,
 };
 
+/**
+ * What the caption above a loop turn calls the loop that ran.
+ *
+ * The name the person chose from the list when the turn has one, because that is the
+ * vocabulary they used. Otherwise an id — the definition's, or a record's graph id —
+ * which is less friendly and still true. Only when a turn carries neither does this
+ * say so, and it says *this conversation did not record which loop*, not the name of
+ * a loop that might not have run: the constant this replaced captioned every turn
+ * `dspatch-chat-loop`, and being unable to name the loop is a much smaller problem
+ * than naming the wrong one.
+ *
+ * `asCode` is for the window: an id is a machine name and reads as one.
+ */
+export function loopTurnCaption(turn: LoopTurn): {
+  readonly text: string;
+  readonly asCode: boolean;
+} {
+  const name = turn.loop?.name ?? null;
+  if (name !== null && name.trim() !== '') {
+    return { text: name, asCode: false };
+  }
+  const id = turn.loop?.id ?? null;
+  if (id !== null && id.trim() !== '') {
+    return { text: id, asCode: true };
+  }
+  return { text: 'a loop this conversation did not record by name', asCode: false };
+}
+
 export function loopTurnBadge(turn: LoopTurn): CapabilitySupport {
   const ending = turn.ending;
   if (ending === null) {
@@ -940,12 +1128,22 @@ export type RunStanding =
   | 'unknown';
 
 /**
- * §9's last paragraph as a value: who is working, on what, what are they waiting
- * for, and what happens next.
+ * Where a run stands: the state the window branches on, and a note only when
+ * something needs doing.
  *
- * Computed from what DSpatch has actually observed and nothing else. Every field
- * is a sentence a person can read; none of them is a status word, and none of them
- * claims activity that was not seen.
+ * It used to be §9's last paragraph as a value — who is working, on what, what are
+ * they waiting for, what happens next — four sentences for every state. DSP-87
+ * emptied them for a working run, on the argument that the states a person may have
+ * to act on should keep them. Niclas has now met that argument at his own
+ * cancellation and judged it wrong for the ordinary case: he pressed stop, the stop
+ * was confirmed, and he was then told the project's internal vocabulary about it.
+ *
+ * So the four questions are no longer answered here in prose. Three of them are
+ * answered by the window without a paragraph — who is working and on what by the
+ * step and the reply above, what it is waiting for by the control beside it — and
+ * `standing` still carries the state itself, which is what the six-way distinction
+ * §9 asks for actually consists of. What is left in words is the fourth question,
+ * and only when its answer is something to do.
  */
 export interface ConversationStanding {
   readonly standing: RunStanding;
@@ -957,131 +1155,126 @@ export interface ConversationStanding {
    * see" is a rule that decays the moment it lives in a component.
    */
   readonly activityIsKnown: boolean;
-  readonly whoIsWorking: string;
-  readonly onWhat: string;
-  readonly waitingFor: string;
-  /** A concrete next action within the remaining limits. Never "try again". */
-  readonly whatHappensNext: string;
+  /**
+   * One or two sentences: what the concrete circumstance is, and what to do about it.
+   * `null` whenever the state and the badge are the whole story.
+   *
+   * `null` is the common answer, including for the state Niclas complained about.
+   * Anything that appears here has to earn it by being actionable — a stop that was
+   * never confirmed, a run DSpatch lost sight of, a record that could not be written.
+   * Not a summary of a state that is already marked.
+   */
+  readonly actionNote: string | null;
 }
 
+/**
+ * `currentStepLabel` and `instructions` are gone from here, and their absence is the
+ * point (DSP-90).
+ *
+ * Both existed to fill the four sentences. The step's label named the step a stop had
+ * interrupted, and the messages counted the ones still waiting — and both facts are
+ * already on screen in the place they belong: the step names itself while it works,
+ * and a message carries its own state at the message, which is where DSP-87 put it
+ * and where §6 says a question and its answer have to be readable together. Leaving
+ * the inputs here with nothing reading them would be an invitation to grow the prose
+ * back.
+ */
 export interface StandingInput {
   /** The newest loop run in the conversation, or `null` when there is none. */
   readonly turn: LoopTurn | null;
   /** Whether the window is still receiving this run's events. */
   readonly stillWatching: boolean;
-  /** The label of the step the run last entered, when the journal named one. */
-  readonly currentStepLabel: string | null;
-  /** Messages typed into this run, for the "what happens next" sentence. */
-  readonly instructions: readonly LoopInstruction[];
 }
 
+/**
+ * Which state the run is in, and whether anything about it needs doing.
+ *
+ * Read the branches as a claim about silence. Four of the six say nothing: no run,
+ * a working run, a finished run and a stop that was asked for and confirmed. Two
+ * speak, and both are the same kind of case — DSpatch does not know whether work is
+ * still going on in the person's project, which is a fact about their machine that
+ * they may have to check for themselves.
+ *
+ * What was here before was four sentences per state, and it was written to answer §9
+ * in the column. DSP-87 removed them for a working run and argued that the other
+ * states should keep them, because they are the states a person may have to act on.
+ * The premise was right and the conclusion did not follow: *may have to act on* is
+ * not the same as *has to act on*, and a confirmed stop someone asked for is the
+ * clearest case of the difference. He pressed the button; the badge says it worked;
+ * there is nothing to do.
+ */
 export function conversationStanding(input: StandingInput): ConversationStanding {
   const turn = input.turn;
   if (turn === null) {
-    return {
-      standing: 'idle',
-      activityIsKnown: true,
-      whoIsWorking: 'Nobody. No loop run has been started in this conversation.',
-      onWhat: 'Nothing is in progress.',
-      waitingFor: 'Nothing. DSpatch is waiting for you.',
-      whatHappensNext: 'Type an assignment and send it.',
-    };
+    // Nothing has happened, so there is nothing to say about it. What to do next is
+    // in the composer's own placeholder, which is where a person is already looking.
+    return { standing: 'idle', activityIsKnown: true, actionNote: null };
   }
-  const pending = input.instructions.filter(
-    (instruction) => instruction.runId === turn.runId && loopInstructionState(instruction) === 'pending',
-  );
-  const pendingNote =
-    pending.length === 0
-      ? ''
-      : ` ${pending.length === 1 ? 'One message of yours is' : `${String(pending.length)} messages of yours are`} ` +
-        `waiting to be given to the next step that starts.`;
-  const step = input.currentStepLabel;
-  const onWhat = `The assignment you sent: “${firstLine(turn.mandate)}”.`;
-
   if (turn.ending !== null) {
-    const stopped = turn.ending.kind === 'cancelled';
+    /*
+     * An ended run, including the stop Niclas complained about.
+     *
+     * Nothing of its own. Either the badge and the ending sentence above have already
+     * said it, or — at a stop he asked for — the badge alone has, and `loopTurnEndingLine`
+     * has withheld the rest. `actionNote` is the single exception, and it is a
+     * circumstance rather than a description: a record that could not be written, or
+     * one that could not be read back in full.
+     */
     return {
       standing: 'stopped',
       activityIsKnown: true,
-      whoIsWorking: 'Nobody. This run has reported an end.',
-      onWhat,
-      waitingFor: 'Nothing. The run is over.',
-      whatHappensNext:
-        (stopped
-          ? 'The run was stopped before it finished. What it had already done is still in your project; nothing was undone and nothing was replayed. '
-          : 'The run has ended and its account is above. ') +
-        `${
-          pending.length === 0
-            ? ''
-            : `${pending.length === 1 ? 'Your message' : 'Your messages'} never reached a step, and ${pending.length === 1 ? 'it is' : 'they are'} kept here with this run. `
-        }Nothing will be repeated on its own: starting new work is an explicit send.`,
+      actionNote: turn.ending.actionNote,
     };
   }
   if (!input.stillWatching) {
     return {
       standing: 'unknown',
       activityIsKnown: false,
-      whoIsWorking:
-        'Unknown. DSpatch stopped following this run and has not seen it end, so it ' +
-        'cannot say whether an agent is still working in your project.',
-      onWhat,
-      waitingFor:
-        'Unknown. Nothing here is waiting on your behalf, and no animation on this ' +
-        'screen is evidence that anything is happening.',
-      whatHappensNext:
-        'Nothing, unless you act. DSpatch will not repeat a step whose outcome it does ' +
-        'not know. Check your project for changes, and start new work explicitly when ' +
-        `you have.${pendingNote}`,
+      actionNote:
+        'DSpatch stopped following this run and did not see it end, so an agent may still ' +
+        'be working in your project. Check the project before starting work that repeats it.',
     };
   }
   if (turn.abandoned) {
     return {
       standing: 'unknown',
       activityIsKnown: false,
-      whoIsWorking:
-        'Unknown. You stopped waiting for this run, and it has not reported an end.',
-      onWhat,
-      waitingFor: 'Unknown. It may still be working in your project.',
-      whatHappensNext:
-        'Whatever it eventually reports will appear here. Nothing is retried while its ' +
-        `outcome is unknown.${pendingNote}`,
+      actionNote:
+        'You stopped waiting and this run has not reported an end, so it may still be ' +
+        'working in your project. Whatever it reports will appear here if it arrives.',
     };
   }
   if (turn.cancelRequested) {
+    /*
+     * The case DSP-90 keeps, and the reason the card is not simply "delete it all".
+     *
+     * A stop that has been asked for and not confirmed is the one stop state a person
+     * has something to do about, and §4.5 exists because DSP-1 measured 69.5 s of
+     * remote work continuing after DSpatch stopped listening. Two sentences: what is
+     * not known, and what to do while it is not known.
+     */
     return {
       standing: 'stop-requested',
       activityIsKnown: false,
-      whoIsWorking:
-        `A stop was asked for${step === null ? '' : ` while “${step}” was the current step`}. ` +
-        'Nothing here says the agent has stopped: asking is not stopping.',
-      onWhat,
-      waitingFor: 'The run to report that it has actually stopped.',
-      whatHappensNext:
-        'When it reports an end, this entry says how it ended and what it left behind. ' +
-        `Files are not reset and completed steps are not replayed.${pendingNote}`,
+      actionNote:
+        'The stop has not been confirmed: asking is not stopping. Wait for the run to ' +
+        'report an end, or check your project for work that is still going.',
     };
   }
-  return {
-    standing: 'active',
-    activityIsKnown: true,
-    whoIsWorking:
-      step === null
-        ? 'A loop run is walking. DSpatch has not yet recorded which step it is on.'
-        : `“${step}” is the current step.`,
-    onWhat,
-    waitingFor:
-      turn.replies.length === 0
-        ? 'The first step to answer. Nothing has come back yet.'
-        : 'The current step to answer.',
-    whatHappensNext:
-      `Its reply appears here when it arrives, and the handover to the next step is ` +
-      `marked in this thread.${pendingNote}`,
-  };
-}
-
-function firstLine(text: string): string {
-  const line = text.split(/\r?\n/).find((part) => part.trim() !== '')?.trim() ?? '';
-  return line.length > 120 ? `${line.slice(0, 117)}…` : line;
+  /*
+   * A working run says nothing here, and that is DSP-87.
+   *
+   * It used to answer all four questions, and one answer was wrong for the whole of
+   * every run that had said anything: *the first step to answer, nothing has come back
+   * yet* came from `replies`, which holds **finished** replies — so a step that had
+   * been streaming for four minutes, with its text directly above, was described
+   * underneath as having produced nothing. Niclas met that as *281 s with nothing back*.
+   *
+   * While a step works, the window already shows what it is saying, what it is running
+   * and one status line for it, built by `stepStanding` from that step's own events.
+   * A paragraph beside that is a second account that can only disagree with it.
+   */
+  return { standing: 'active', activityIsKnown: true, actionNote: null };
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1126,6 +1319,11 @@ export function loopTurnsFromRecords(
         nodeId: reply.nodeId,
         nodeLabel: reply.nodeLabel,
         text: reply.text,
+        occurrence: reply.occurrence,
+        // Only where the record has one. A run recorded before DSP-46 wrote no prompt,
+        // and `undefined` here is what makes the window say nothing rather than offer
+        // an empty message as the brief that step was given.
+        ...(reply.prompt === undefined ? {} : { prompt: reply.prompt }),
       })),
       silentSteps: silent.map((reply) => ({
         nodeId: reply.nodeId,
@@ -1133,6 +1331,11 @@ export function loopTurnsFromRecords(
         occurrence: reply.occurrence,
       })),
       branches: branchesFromJournal(record.journal),
+      // The graph the record says was walked. A record does not carry the
+      // declaration's own name or id, so a restored turn is captioned by the drawing
+      // rather than by the name the person chose from a list — which is what the
+      // record knows, and saying more than it knows is what this column must not do.
+      loop: { name: null, id: identity.graphId },
       cancelRequested: record.ending?.cancelled ?? false,
       abandoned: false,
       ending: endingFromRecord(record, entry.error),
@@ -1179,10 +1382,17 @@ export function branchesFromJournal(
 }
 
 function endingFromRecord(record: ParsedRunRecord, readError: string | null): LoopEnding {
+  /*
+   * A record that cannot be read in full is the same class of fact as one that could
+   * not be written, so it travels the same way (DSP-90): as `actionNote`, which
+   * survives a stop the person asked for. A restored cancelled run is exactly that
+   * stop — `cancelRequested` comes from `ending.cancelled` — so leaving this inside
+   * `text` would have hidden a truncated record behind this card's own silence.
+   */
   const unreadable =
     readError === null && !record.truncatedLastLine
-      ? ''
-      : ` ${[
+      ? null
+      : [
           record.truncatedLastLine
             ? 'The record ends in the middle of a line, so DSpatch was writing it when it ' +
               'stopped and the last thing the run did is missing from it.'
@@ -1190,7 +1400,7 @@ function endingFromRecord(record: ParsedRunRecord, readError: string | null): Lo
           readError ?? '',
         ]
           .filter((part) => part !== '')
-          .join(' ')}`;
+          .join(' ');
   const ending = record.ending;
   if (ending === null) {
     return {
@@ -1205,12 +1415,13 @@ function endingFromRecord(record: ParsedRunRecord, readError: string | null): Lo
       // likely to need something from a person, and what is unknown about it is the
       // part a short line would leave out.
       shortText: null,
+      actionNote: unreadable,
       text:
         `This run was not finished as far as this record goes: DSpatch stopped before the ` +
         `run reported an end, so what happened after the last recorded step is unknown. ` +
         `It is not a pass and not a failure. Nothing has been repeated and nothing has ` +
         `been reset — anything the agent changed is still in your project, and the ` +
-        `history below is what was written down before DSpatch stopped.${unreadable}`,
+        `history below is what was written down before DSpatch stopped.`,
     };
   }
   return {
@@ -1231,7 +1442,8 @@ function endingFromRecord(record: ParsedRunRecord, readError: string | null): Lo
     // presented as a current finding.
     shortText:
       ending.cancelled ? null : briefRunOutcome(ending.outcome, ending.terminalNodeId),
-    text: `${ending.outcomeText} ${ending.note}${unreadable}`.trim(),
+    actionNote: unreadable,
+    text: `${ending.outcomeText} ${ending.note}`.trim(),
   };
 }
 

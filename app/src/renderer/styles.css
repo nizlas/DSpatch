@@ -100,10 +100,208 @@ body {
   color: var(--muted);
 }
 
+/* --- The folders beside the chat (DSP-73). ----------------------------------
+   One row: the sidebar at a width a person drags, and the work area taking
+   everything else. `min-width: 0` on the work area is what makes "the chat keeps
+   the main space" true rather than hoped for — without it a long unbroken line in
+   the transcript would widen the column and push the sidebar off the edge.
+
+   No new colour. The sidebar borrows --line, --muted and --text exactly as the
+   panels do; the palette is Niclas's approved starting point and this is layout. */
+.shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.sidebar {
+  position: relative;
+  flex: none;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 0.75rem 0.5rem 0;
+  border-right: 1px solid var(--line);
+  margin-right: 0.75rem;
+  overflow: hidden;
+}
+
+.sidebar__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex: none;
+  min-width: 0;
+}
+
+.sidebar__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  overflow-wrap: anywhere;
+}
+
+.sidebar__filepath {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+/* What the folder list is and is not (DSP-72), in DSP-64's shape: a headline that is
+   true on its own, the rest behind the disclosure. `flex: none` so it is never the part
+   that shrinks — this is the sentence that keeps a list of folders from being read as a
+   boundary, and a note squeezed away by a tall tree has stopped saying it. */
+.sidebar__note {
+  flex: none;
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/* `list-style: revert` for the same reason `.error-detail__summary` does it: the
+   disclosure marker is the only thing saying there is more to read. */
+.sidebar__note-summary {
+  cursor: pointer;
+  list-style: revert;
+}
+
+.sidebar__note-detail {
+  margin: 0.35rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.sidebar__tree {
+  flex: 1 1 40%;
+  min-height: 4rem;
+  overflow: auto;
+  padding-right: 0.25rem;
+}
+
+/* The reading view shares the column with the tree rather than replacing it, so
+   opening a file never takes away the thing a person was using to find the next
+   one. Both are `flex: 1 1` so a long file and a long tree divide the height
+   instead of one of them collapsing. */
+.sidebar__file {
+  flex: 1 1 60%;
+  min-height: 8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+
+.sidebar__text {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.tree-row--root > .tree-row__label {
+  font-weight: 600;
+}
+
+.tree-row--selected {
+  background: var(--line);
+  border-radius: 0.25rem;
+}
+
+.tree-row__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  background: none;
+  border: none;
+  padding: 0.125rem 0.25rem;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tree-row__mark {
+  flex: none;
+  width: 0.75rem;
+  color: var(--muted);
+}
+
+.tree-row__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-row__badge,
+.tree-row__note {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  white-space: nowrap;
+}
+
+.tree-row__cap {
+  margin: 0 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+.tree-row__remove {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 0.25rem;
+}
+
+/* The drag handle sits on the border rather than beside it, so the sidebar loses
+   no width to something whose whole job is to be grabbed. */
+.sidebar__grip {
+  position: absolute;
+  top: 0;
+  right: -0.25rem;
+  width: 0.5rem;
+  height: 100%;
+  cursor: col-resize;
+}
+
 /* The work area below the bar: the conversation, or the details over it. */
 .workarea {
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   padding-top: 0.75rem;
@@ -663,8 +861,7 @@ body {
 }
 
 /* The counting behind a turn: present, and not in the way. */
-.turn__counts > summary,
-.standing-detail__summary {
+.turn__counts > summary {
   cursor: pointer;
   color: var(--muted);
   font-size: 0.75rem;
@@ -685,10 +882,6 @@ body {
 
 .turn__counts[open] > summary {
   margin-bottom: 0.25rem;
-}
-
-.standing-detail {
-  margin: 0.5rem 0 0;
 }
 
 /* Inset inside the user's box, which is what makes that box the wider element while
@@ -943,6 +1136,12 @@ body {
   width: auto;
 }
 
+/*
+  `.loop-definition__select` is gone with the chat's chooser (DSP-85 #5). Which loop a Send
+  walks is decided in the graph editor now, where picking it also draws it; `.loop-toggle`
+  above still dresses the `Use loop` tick, which is unchanged.
+*/
+
 .loop-log {
   margin: 0.75rem 0 0;
   padding: 0.5rem 0.75rem 0.5rem 1.5rem;
@@ -1006,9 +1205,14 @@ body {
 }
 
 /*
-  Where the run stands, in §9's four terms. Deliberately quiet: this answers a
-  question rather than demanding attention, and the problems that do demand it
-  are in the header above.
+  The one thing about a run that needs doing, when there is one. One line, and
+  absent whenever the state and the badge are the whole story (DSP-90).
+
+  Deliberately quiet even so. It is a circumstance worth reading rather than an
+  alarm, and the problems that do demand attention are in the header above. There
+  is no `standing--live` any more and no pulse: the only states that reach this
+  element are ones in which DSpatch cannot see whether work is happening, so an
+  animation here would be the window claiming to see something it cannot (§9).
 */
 .standing {
   margin: 0.5rem 0 0;
@@ -1017,43 +1221,6 @@ body {
   color: var(--muted);
   font-size: 0.8125rem;
   line-height: 1.5;
-}
-
-.standing p {
-  margin: 0 0 0.25rem;
-}
-
-.standing p:last-child {
-  margin-bottom: 0;
-}
-
-/*
-  The pulse, and the one rule that matters about it: it is attached to
-  `standing--live`, which `conversationStanding` grants only when activity is
-  actually known. A run DSpatch has stopped watching gets the same block without
-  it, because an animation over an unknown state would be the window claiming to
-  see something it cannot (§9).
-*/
-.standing--live {
-  border-left-color: var(--accent, var(--line));
-  animation: standing-pulse 2.4s ease-in-out infinite;
-}
-
-@keyframes standing-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0.72;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .standing--live {
-    animation: none;
-  }
 }
 
 /* --- What a step is doing while it does it. --------------------------------
@@ -1141,6 +1308,35 @@ body {
   font-size: 0.75rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/*
+  The message a step was sent, on request (DSP-94).
+
+  Deliberately the same furniture as the tool calls above it: a closed disclosure in the
+  reply's own block, taking no room until it is asked for. The text is bounded in height
+  and scrolls inside itself, because a whole brief is a role file long and it must not
+  push the conversation off the screen when opened.
+*/
+.step-prompt {
+  margin: 0.375rem 0 0 0.625rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.step-prompt__summary {
+  cursor: pointer;
+}
+
+.step-prompt__text {
+  margin: 0.25rem 0 0;
+  padding: 0.375rem 0.5rem;
+  max-height: 24rem;
+  overflow: auto;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .files {

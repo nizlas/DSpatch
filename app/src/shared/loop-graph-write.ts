@@ -73,13 +73,21 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
     'kind',
     'label',
     'purpose',
+    // Beside `purpose`, because that is what it is: one more sentence about what this
+    // step means, on the only kind of node that has no role, no limits and no outcomes.
+    'ending',
     'role',
     'model',
     'limits',
     'requirements',
     'outcomes',
+    // Immediately after the list it names, because it only means anything against that
+    // list: it is which of those names a reply that declares none is routed on.
+    'whenUndeclared',
     'declaredFailures',
     'report',
+    'produces',
+    'consumes',
     'notes',
     'view',
   ],
@@ -88,8 +96,11 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   '/nodes/*/model': ['policy', 'model', 'description'],
   '/nodes/*/limits': ['maxTasks', 'maxCalls', 'maxReworkRounds', 'maxMinutes', 'note'],
   '/nodes/*/report': ['writtenBy', 'path'],
+  '/nodes/*/produces': ['required', 'form', 'note'],
   '/nodes/*/view': ['x', 'y'],
-  '/edges/*': ['id', 'from', 'to', 'when', 'label', 'notes'],
+  // `delivers` sits next to `when`, because the two together are what an arrival is:
+  // when it is taken, and what travels along it.
+  '/edges/*': ['id', 'from', 'to', 'when', 'delivers', 'label', 'notes'],
   '/edges/*/when': ['on', 'outcome', 'failure'],
 };
 
@@ -105,10 +116,17 @@ const INLINE_PATHS: ReadonlySet<string> = new Set([
   '/nodes/*/model',
   '/nodes/*/limits',
   '/nodes/*/report',
+  '/nodes/*/produces',
   '/nodes/*/view',
   '/nodes/*/requirements',
   '/nodes/*/outcomes',
   '/nodes/*/declaredFailures',
+  // `/nodes/*/consumes` is deliberately **not** here. A list of node ids is a list of
+  // strings, which `isInline` already writes on one line without being told — the rule
+  // below the three entries above, which predate it and are themselves redundant. It
+  // was added here during DSP-79 and removed again the same day: an entry that changes
+  // nothing teaches the next author that a list of names has to be registered, which is
+  // false, and the next one after that would look for the bug here.
   '/edges/*',
   '/edges/*/when',
 ]);

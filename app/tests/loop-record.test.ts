@@ -34,6 +34,7 @@ import {
   type RunRecordIdentity,
   type RunWalkEnding,
 } from '../src/shared/loop-record';
+import { handoffTrail, type TrailReply } from '../src/shared/chat-workspace';
 import type { RunJournalEntry } from '../src/shared/loop-run';
 import {
   loopTurnBadge,
@@ -338,8 +339,18 @@ describe('a run DSpatch was killed in the middle of', () => {
       `an interrupted run must say DSpatch stopped first. It said: ${said}`,
     );
     assert.match(said, /not a pass and not a failure/, 'and must refuse both verdicts');
+    /*
+     * The truncation moved from the account to `actionNote` (DSP-90), and the fact is
+     * asserted where it now lives rather than dropped.
+     *
+     * It moved because a record that could not be written in full is a circumstance
+     * about the person's project, not an account of a run — and `actionNote` is the
+     * one channel that still speaks at a stop they asked for. A restored cancelled
+     * run is exactly that stop, so leaving this inside the account would have hidden
+     * a truncated record behind this card's own silence.
+     */
     assert.match(
-      said,
+      turn?.ending?.actionNote ?? '',
       /ends in the middle of a line/,
       'and must say the last write did not finish, because a step may be missing',
     );
@@ -1062,6 +1073,103 @@ describe('a restored run reads silence and branches off its own record', () => {
     assert.deepEqual(turn?.silentSteps, []);
     assert.deepEqual(turn?.branches, []);
     assert.doesNotMatch(loopTurnStatusText(turn ?? ({} as never)), /said nothing at all/);
+  });
+});
+
+/**
+ * Which call a shown prompt belongs to, on a run that went round again.
+ *
+ * DSP-94, and this is the property worth a test rather than the rendering. The saved
+ * message is the strongest evidence in the record of what a step was told, and a
+ * message bound to the wrong visit would be worse than showing none: it reads as
+ * evidence and is not. The trap is concrete — `handoffTrail` numbers the replies it is
+ * handed, and a visit that answered with nothing never reaches that list, so its
+ * numbering and the runner's part company exactly when a node is entered twice.
+ */
+describe('a saved prompt is bound to the call it was sent on', () => {
+  /** One node entered twice: the first visit says nothing, the second answers. */
+  function withARevisit(): string {
+    return [
+      serialiseRecordLine({ line: 'header', formatVersion: LOOP_RUN_RECORD_VERSION, identity }),
+      serialiseRecordLine({
+        line: 'journal',
+        entry: journalEntry(1, 'run-started', 'Run of graph "dspatch-chat-loop".'),
+      }),
+      serialiseRecordLine({
+        line: 'agent-reply',
+        reply: {
+          atUtc: '2026-09-17T21:00:40.000Z',
+          nodeId: 'implementer',
+          nodeLabel: 'Do the requested work',
+          occurrence: 1,
+          text: '',
+          terminalStatus: 'completed',
+          prompt: 'FIRST VISIT: you are step "implementer" of run 1, call 1.',
+        },
+      }),
+      serialiseRecordLine({
+        line: 'agent-reply',
+        reply: {
+          atUtc: '2026-09-17T21:01:40.000Z',
+          nodeId: 'implementer',
+          nodeLabel: 'Do the requested work',
+          occurrence: 2,
+          text: 'Second time round, I made the change.',
+          terminalStatus: 'completed',
+          prompt: 'SECOND VISIT: you are continuing at step "implementer", visit 2, call 2.',
+        },
+      }),
+      // No prompt at all, as every record written before DSP-46 is.
+      serialiseRecordLine({
+        line: 'agent-reply',
+        reply: {
+          atUtc: '2026-09-17T21:02:40.000Z',
+          nodeId: 'check',
+          nodeLabel: 'Check the work',
+          occurrence: 1,
+          text: 'It builds.',
+          terminalStatus: 'completed',
+        },
+      }),
+      serialiseRecordLine({ line: 'ending', ending: ending() }),
+    ].join('');
+  }
+
+  it('shows the message of the visit that spoke, not of the visit before it', () => {
+    const turn = loopTurnsFromRecordText(withARevisit())[0];
+    const trail = handoffTrail(turn?.replies ?? []).filter(
+      (item): item is TrailReply => item.kind === 'reply',
+    );
+    const spoke = trail.find((item) => item.nodeId === 'implementer');
+
+    assert.match(
+      spoke?.sent?.prompt ?? '',
+      /^SECOND VISIT/,
+      'the message shown beside a reply must be the one that call was sent',
+    );
+    assert.equal(
+      spoke?.sent?.visit,
+      2,
+      'and it must be addressed by the runner\u2019s visit count, which is what the record keeps',
+    );
+    assert.equal(
+      spoke?.occurrence,
+      1,
+      'the trail\u2019s own count says 1 here, because the silent first visit is not in the ' +
+        'reply list — which is why the visit above is carried and not recomputed',
+    );
+  });
+
+  it('offers nothing where the record kept no prompt, rather than an empty message', () => {
+    const turn = loopTurnsFromRecordText(withARevisit())[0];
+    const trail = handoffTrail(turn?.replies ?? []).filter(
+      (item): item is TrailReply => item.kind === 'reply',
+    );
+    assert.equal(
+      trail.find((item) => item.nodeId === 'check')?.sent,
+      null,
+      'a record written before the prompt was kept is not a call that was sent nothing',
+    );
   });
 });
 

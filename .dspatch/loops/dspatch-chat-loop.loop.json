@@ -1,0 +1,11 @@
+{
+  "format": "dspatch-loop-definition",
+  "formatVersion": 1,
+  "id": "dspatch-chat-loop",
+  "name": "Simple chat loop",
+  "description": "Do what the mandate asks in the open project, then check the work. Two agent steps and four endings.",
+  "resourceRoot": "../..",
+  "resourceRootNote": "The DSpatch working copy this file is filed in, two levels up from .dspatch/loops. Its graph and the two project role files live there, so without this line the declaration would reach nothing.",
+  "graph": "docs/loop/graphs/dspatch-chat-loop.graph.json",
+  "notes": "DSpatch's own loop, declared like any other. It is found here because this folder is a folder DSpatch looks in, not because a constant names it. Being found here says nothing about what its paths mean: like every declaration, they resolve from the one root above, which this file has to name because the graph is not in the bookkeeping directory beside it. It is chosen for and run against whatever project is open in chat."
+}

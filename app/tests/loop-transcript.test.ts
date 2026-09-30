@@ -18,9 +18,11 @@ import type { CapabilitySupport } from '../src/adapter/types';
 import type { ChatLoopRunOutcome } from '../src/shared/bridge';
 import type { RunResult, RunStatus } from '../src/shared/loop-run';
 import {
+  conversationStanding,
   describeLoopEnding,
   loopTurnBadge,
   loopTurnBadgeText,
+  loopTurnCaption,
   loopTurnEndingLine,
   loopTurnStatusText,
   loopTurnsAfter,
@@ -75,10 +77,27 @@ describe('the mandate in the conversation', () => {
     const turn = only(sent());
     // What the user sees: their own words, and a sentence about what is happening.
     assert.equal(turn.mandate, 'Add a --json flag to the report command.');
-    assert.equal(
-      loopTurnStatusText(turn),
-      'The loop is running. Nothing has come back from the agent yet.',
-    );
+    assert.equal(loopTurnStatusText(turn), 'The loop is running.');
+  });
+
+  /*
+   * The second sentence, and why it went (DSP-87).
+   *
+   * It read *Nothing has come back from the agent yet* whenever `replies` was empty,
+   * and `replies` holds finished replies — so it was on screen for the whole of every
+   * streaming step, under the step's own text. The window walk caught it 958 ms into a
+   * stream over 37 drawn characters, which is the shape of the fault Niclas reported
+   * as *281 s with nothing back*.
+   *
+   * The guarantee this module is written for is untouched: the entry still always has
+   * a sentence. What it no longer has is a claim about what has arrived, which this
+   * function is in no position to make — it can see finished replies and nothing else.
+   */
+  it('never says nothing has come back, because it cannot see what has', () => {
+    const streaming = only(sent());
+    assert.equal(streaming.replies.length, 0, 'nothing has finished yet');
+    assert.doesNotMatch(loopTurnStatusText(streaming), /nothing has come back/i);
+    assert.notEqual(loopTurnStatusText(streaming).trim(), '');
   });
 
   it('does not invent a second entry for one run', () => {
@@ -89,6 +108,48 @@ describe('the mandate in the conversation', () => {
       atUtc: '2026-09-16T22:00:01.000Z',
     });
     assert.equal(only(twice).mandate, 'Add a --json flag to the report command.');
+  });
+
+  /**
+   * DSP-70, F1. The caption used to come from a constant, so every loop turn read
+   * `Loop run · dspatch-chat-loop` whatever the person had chosen — a run of a
+   * project's own loop reported in the transcript as DSpatch's chat loop. Nothing
+   * routed on it; it was simply untrue, which is the failure this project pays to
+   * avoid.
+   */
+  it('captions the turn with the loop that ran, by the name the person chose', () => {
+    const turn = only(
+      loopTurnsAfter([], {
+        kind: 'mandate-sent',
+        runId: 'chat-loop-1',
+        mandate: 'Port the parser.',
+        atUtc: '2026-09-16T22:00:00.000Z',
+        loop: { name: "The project's own loop", id: 'ported-project-loop' },
+      }),
+    );
+    assert.deepEqual(loopTurnCaption(turn), {
+      text: "The project's own loop",
+      asCode: false,
+    });
+  });
+
+  it('falls back to an id, and says so rather than naming a loop it cannot name', () => {
+    const byId = only(
+      loopTurnsAfter([], {
+        kind: 'mandate-sent',
+        runId: 'chat-loop-1',
+        mandate: 'Port the parser.',
+        atUtc: '2026-09-16T22:00:00.000Z',
+        loop: { name: null, id: 'ported-project-loop' },
+      }),
+    );
+    assert.deepEqual(loopTurnCaption(byId), { text: 'ported-project-loop', asCode: true });
+
+    // A turn from before the field existed. Unable to name it is a much smaller
+    // problem than naming the wrong one, which is what the constant did.
+    const unnamed = only(sent());
+    assert.equal(loopTurnCaption(unnamed).asCode, false);
+    assert.doesNotMatch(loopTurnCaption(unnamed).text, /dspatch-chat-loop/);
   });
 
   it('ignores a reply for a run it has no entry for', () => {
@@ -112,7 +173,10 @@ describe("the agent's own words", () => {
     const turn = only(turns);
     assert.equal(turn.replies[0]?.text, text);
     assert.equal(turn.replies[0]?.nodeLabel, 'Do the requested work');
-    assert.equal(loopTurnStatusText(turn), 'The agent has replied and the loop is still running.');
+    // One sentence for a run in flight since DSP-87, whether or not a reply has
+    // finished. The reply itself is above this line, in the column, as itself; the
+    // line's job is the run, and it said the same thing twice.
+    assert.equal(loopTurnStatusText(turn), 'The loop is running.');
   });
 
   /**
@@ -780,18 +844,30 @@ describe('the badge over a chat loop that DSpatch started no command in', () => 
 });
 
 describe('stopping a loop run', () => {
+  /**
+   * The fact is unchanged and has moved one line down the entry (DSP-90).
+   *
+   * This used to assert the caption *A stop was requested. The run has not reported an
+   * end yet, so nothing here says the agent has stopped.* The window walk photographed
+   * that caption with `conversationStanding`'s note directly underneath it saying the
+   * same thing with an action attached — two sentences for one fact, which is the
+   * duplication this card removes. The one with the action stays, so the assertion
+   * moves to it and the caption is checked for not having regrown the claim.
+   */
   it('records the request without claiming the agent stopped', () => {
     const stopping = loopTurnsAfter(sent(), {
       kind: 'stop-requested',
       runId: 'chat-loop-1',
       abandonsWait: false,
     });
-    const account = loopTurnStatusText(only(stopping));
-    assert.equal(
-      account,
-      'A stop was requested. The run has not reported an end yet, so nothing here says ' +
-        'the agent has stopped.',
-    );
+    const turn = only(stopping);
+    const note =
+      conversationStanding({ turn, stillWatching: true }).actionNote ?? '';
+    assert.match(note, /asking is not stopping/);
+    // And the caption says nothing that could be read as the agent having stopped.
+    const account = loopTurnStatusText(turn);
+    assert.equal(account, 'The loop is running.');
+    assert.equal(/has stopped|was stopped|stopped short/i.test(account), false, account);
   });
 
   it('still ends the entry when the result arrives after the user stopped waiting', () => {
@@ -800,7 +876,12 @@ describe('stopping a loop run', () => {
       runId: 'chat-loop-1',
       abandonsWait: true,
     });
-    assert.ok(loopTurnStatusText(only(abandoned)).startsWith('You stopped waiting'));
+    // Before the ending arrives, what says the run may still be working is the note
+    // beside it, not the caption (DSP-90). The caption's own sentence moved there.
+    assert.match(
+      conversationStanding({ turn: only(abandoned), stillWatching: true }).actionNote ?? '',
+      /may still be working in your project/,
+    );
     const late = loopTurnsAfter(abandoned, {
       kind: 'run-settled',
       runId: 'chat-loop-1',

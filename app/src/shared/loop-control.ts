@@ -303,7 +303,7 @@ function describeWork(step: StepRef): string {
     case 'human':
       return `asking a person about "${step.nodeLabel}"`;
     case 'bookkeeping':
-      return `walking on from "${step.nodeLabel}"`;
+      return `moving on from "${step.nodeLabel}"`;
   }
 }
 
@@ -349,7 +349,7 @@ export function describeControl(
       detail:
         state.mode === 'interactive'
           ? 'No loop is running. When one is, DSpatch will ask you before it starts an agent or runs a command.'
-          : 'No loop is running. When one is, it will continue within the graph and the mandate it is given.',
+          : 'No loop is running. When one is, it will continue within the graph and the assignment it is given.',
     };
   }
   switch (phase) {
@@ -380,7 +380,7 @@ export function describeControl(
           `${capitalise(describeInFlight(state.inFlight as StepRef))}. ${
             state.mode === 'interactive'
               ? 'You will be asked before the next agent or command starts.'
-              : 'The run continues on its own within the graph and the mandate it has.'
+              : 'The run continues on its own within the graph and the assignment it has.'
           }`,
       };
     case 'waiting-for-you': {
@@ -401,8 +401,8 @@ export function describeControl(
         headline: state.mode === 'interactive' ? 'Interactive' : 'Autonomous',
         detail:
           state.mode === 'interactive'
-            ? 'The run is walking. DSpatch will ask you before it starts an agent or runs a command.'
-            : 'The run is walking within the graph and the mandate it has.',
+            ? 'The run is going. DSpatch will ask you before it starts an agent or runs a command.'
+            : 'The run is going, within the graph and the assignment it has.',
       };
   }
 }
@@ -430,7 +430,7 @@ export const LOOP_MODE_CHOICES: readonly {
     label: 'start on their own',
     title:
       'A step that starts an agent, runs a command or hands work outside begins within the ' +
-      'graph rules and the mandate the run already has. An explicit human step still waits ' +
+      'graph rules and the assignment the run already has. An explicit human step still waits ' +
       'for an answer.',
   },
   {

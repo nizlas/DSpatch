@@ -234,6 +234,58 @@ export function providerAgentIdFor(dspatchSessionId: DspatchSessionId): string {
   );
 }
 
+/**
+ * What Cursor is told about this session's folders.
+ *
+ * `cwd` is the primary and `dirs` is every root including it, and both halves of that
+ * are the SDK's own rule rather than a choice made here: `local.cwd` throws
+ * `ConfigurationError` if given an array ("use local.dirs for multi-root workspaces"),
+ * and the SDK merges `[cwd, ...dirs]` itself, dropping duplicates by resolved path.
+ * `dirs` is omitted entirely for a single root, which is what the SDK does with a
+ * merged list of one — so a one-folder session is byte-for-byte the call DSpatch made
+ * before DSP-72.
+ *
+ * **What passing `dirs` buys, measured on this machine with no provider turn.** The
+ * merged list becomes the local runtime's `workspaceRoots`, and the runtime builds one
+ * rules service per root. Probed by instrumenting `node:fs` around
+ * `prewarmLocalWorkspace`: one root read 36 paths under it and nothing under the
+ * second folder; two roots read 36 and 32, and logged the rules load twice rather than
+ * once. Per root, the second folder supplied its `.cursor/rules`, `AGENTS.md`,
+ * `.cursor/skills`, `.cursorignore` and `.cursorrules`.
+ *
+ * **Not its MCP servers or its hooks, which this comment used to claim.** Both were read
+ * once under `cwd` and never under the second root, in both arrangements, and the SDK
+ * says why: project MCP comes from `join(projectRoot ?? workingDirectory, '.cursor',
+ * 'mcp.json')` and project hooks from `projectRoot ?? workingDirectory ??
+ * workspaceRoots[0]` — one path each, never the list. The count of reads under the
+ * second root was right; which files they were had been inferred rather than read.
+ *
+ * **What it does not buy at all.** Anything about access. The sandbox policy is derived
+ * from `cwd` alone, knows nothing of this list, and defaults to the SDK's own
+ * `{type:"insecure_none"}`. `dirs` loads configuration; it does not confine anything,
+ * and no string DSpatch shows may suggest otherwise.
+ */
+export function localOptionsFor(config: SessionConfig): {
+  readonly cwd: string;
+  readonly dirs?: string[];
+} {
+  // Windows paths differ in case without differing; elsewhere they do not. The SDK
+  // dedups on the resolved string, which on Windows would keep `C:\a` and `c:\a` as
+  // two roots and load the same folder's rules twice.
+  const fold = (folder: string): string =>
+    process.platform === 'win32' ? folder.toLowerCase() : folder;
+  const roots: string[] = [];
+  for (const folder of [config.workspacePath, ...(config.workspacePaths ?? [])]) {
+    if (folder !== '' && !roots.some((kept) => fold(kept) === fold(folder))) {
+      roots.push(folder);
+    }
+  }
+  return {
+    cwd: config.workspacePath,
+    ...(roots.length > 1 ? { dirs: roots } : {}),
+  };
+}
+
 export class CursorSdkAdapter implements AgentAdapter {
   /** The adapter identity shown in the UI: provider plus transport. */
   readonly id = 'cursor-sdk';
@@ -265,7 +317,7 @@ export class CursorSdkAdapter implements AgentAdapter {
         model: this.modelSelection(config),
         name: `DSpatch ${dspatchSessionId}`,
         ...(this.toolPolicy === 'text-only' ? { tools: [] } : {}),
-        local: { cwd: config.workspacePath },
+        local: localOptionsFor(config),
       });
     } catch (error) {
       throw toAdapterError('startSession', error);
@@ -299,7 +351,10 @@ export class CursorSdkAdapter implements AgentAdapter {
       agent = await Agent.resume(providerAgentIdFor(sessionId), {
         model: this.modelSelection(config),
         ...(this.toolPolicy === 'text-only' ? { tools: [] } : {}),
-        local: { cwd: config.workspacePath },
+        // The same roots, because `dirs` is not on `send`: a resumed session that
+        // omitted them would silently drop every root but the first, and the agent
+        // would lose the folders' rules with nothing on screen to say so.
+        local: localOptionsFor(config),
       });
     } catch (error) {
       throw toAdapterError('resume', error);

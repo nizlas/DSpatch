@@ -91,29 +91,30 @@ export function loopInstructionState(instruction: LoopInstruction): LoopInstruct
  * a provider call that has already been sent, and a window that implied otherwise
  * would be lying at the moment a person most needs to trust it. What it can say is
  * where the message is and what will happen to it next.
+ *
+ * **One line each** (DSP-87). These were two and three sentences, and they were the
+ * only acknowledgement a message sent during a run was supposed to need — so they had
+ * to carry their own weight and also argue for the standing paragraph that used to sit
+ * under the composer. That paragraph is gone; the fact each of these states is kept
+ * and the reasoning around it is not.
  */
 export function loopInstructionStatusText(instruction: LoopInstruction): string {
   const delivered = instruction.delivered;
   if (delivered !== null) {
     return (
       `Given to “${delivered.nodeLabel}” when that step started` +
-      `${delivered.occurrence > 1 ? `, on its ${ordinal(delivered.occurrence)} turn` : ''}. ` +
-      `It was put in front of that step's own task, so the agent read it before doing the work.`
+      `${delivered.occurrence > 1 ? `, on its ${ordinal(delivered.occurrence)} turn` : ''}, ` +
+      `before its own task.`
     );
   }
   if (instruction.runEnded) {
-    return (
-      'The run ended before any step was given this, so no agent ever received it. ' +
-      'It was not sent anywhere on your behalf and nothing was repeated because of it. ' +
-      'It is kept here with the run it was meant for.'
-    );
+    return 'The run ended first, so no agent ever received it.';
   }
-  return (
-    'DSpatch has this and no agent has been given it yet. A provider turn that is ' +
-    'already running cannot be told anything mid-way, so this goes to the next step ' +
-    'the run starts — or to the same step if an interrupted one is continued. ' +
-    'Nothing has been changed by it yet.'
-  );
+  // Still says *next*, because that is the limit: a provider turn already running
+  // cannot be told anything mid-way, and a person who reads this as "it has been
+  // passed on" will expect an effect that is not coming. And still says no agent
+  // has it, because that is §4.4: receipt by the window is not receipt by an agent.
+  return 'Waiting. No agent has it yet; it goes to the next step the run starts.';
 }
 
 /**
@@ -241,6 +242,35 @@ export function instructionPreamble(texts: readonly string[]): string {
         'messages. They arrived after an earlier step had already started, so this is the ' +
         'first step that can act on them. Read them as part of your assignment: they may add ' +
         'context, correct a misunderstanding or change what is wanted.',
+    // DSP-96 part 3. The half this preamble left open: the words were carried whole and
+    // attributed, and nothing said how they ranked against the mandate underneath them.
+    // Both directions are stated, because both are wrong on their own — ignoring a
+    // correction, and treating one sentence about one thing as a replacement assignment.
+    //
+    // **A correction may be about a limit.** The first wording said every limit the
+    // assignment states stands as it was, which locks the one thing the person is most
+    // likely to be writing about: "Läs inte projektet." followed by "Du får läsa README
+    // för att kontrollera detta." must leave README readable for that purpose and the
+    // rest of the project still covered. So what stands is the limits the message does
+    // not touch. What a message cannot move is technical permission and the run's
+    // bounds, which is the last sentence. `TASK_PRECEDENCE` in `loop-chat.ts` states the
+    // same rule from the assignment's side and reaches the agent in the same message;
+    // the two are checked against each other in `loop-chat.test.ts`.
+    said.length === 1
+      ? 'It is from the same person the assignment came from and it is later than the ' +
+        'assignment, so where it contradicts something you have been given, it governs. It ' +
+        'governs only the part it actually concerns: the rest of the assignment, and the ' +
+        'limits it does not touch, stand as they were. Where it does change a limit the ' +
+        'assignment stated, the later wording is the limit, for exactly what it names and ' +
+        'no further. It does not widen what you are permitted to reach or the bounds this ' +
+        'run is under.'
+      : 'They are from the same person the assignment came from and they are later than the ' +
+        'assignment, so where they contradict something you have been given, they govern. ' +
+        'They govern only the parts they actually concern: the rest of the assignment, and ' +
+        'the limits they do not touch, stand as they were. Where one does change a limit ' +
+        'the assignment stated, the later wording is the limit, for exactly what it names ' +
+        'and no further. They do not widen what you are permitted to reach or the bounds ' +
+        'this run is under.',
     '',
     INSTRUCTION_BLOCK_OPEN,
     said.join('\n\n---\n\n'),
@@ -387,22 +417,24 @@ export function composerCanSend(state: ComposerState): boolean {
 }
 
 /**
- * What the button should say it will do, or `null` when it needs no explanation.
+ * Why a press of Send would be refused, or `null` when there is nothing to say.
  *
- * Only the `instruction` route gets a line, and it is a statement rather than a
- * choice: §7 forbids making the user classify their own message, so DSpatch says
- * where the text will go and offers no switch for sending it somewhere else.
+ * **The `instruction` route says nothing here any more** (DSP-87). It used to carry a
+ * standing paragraph — *A loop run is working. Sending adds your message to it rather
+ * than starting a second run in this project…* — which sat under the composer for the
+ * whole of every run, explaining in advance something the window then says again, at
+ * the message, once it has happened. The acknowledgement a person needs is the short
+ * line on their own message in the column, which {@link loopInstructionStatusText}
+ * writes and which is about the message that was actually sent.
+ *
+ * What is left is the refusals, and those stay: a press that does nothing has to say
+ * why, and since the Send button went this is the only thing that does.
  */
 export function composerRouteNote(route: ComposerRoute): string | null {
   switch (route.kind) {
-    case 'instruction':
-      return (
-        'A loop run is working. Sending adds your message to it rather than starting a ' +
-        'second run in this project — DSpatch will show which step receives it, and say ' +
-        'so if the run ends before any step does.'
-      );
     case 'blocked':
       return route.quiet === true ? null : route.reason;
+    case 'instruction':
     case 'loop-run':
     case 'agent-turn':
       return null;

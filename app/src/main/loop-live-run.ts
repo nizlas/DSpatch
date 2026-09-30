@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { AgentAdapter } from '../adapter/agent-adapter';
 import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
 import { generateExperimentRepo } from './experiment-repo';
 import {
@@ -15,20 +16,17 @@ import {
   emptyInspection,
   formatLiveInspection,
   readLiveUsage,
-  refuseLiveWorkspace,
+  refuseLiveWorkingRoots,
   writeInspectionJson,
   type LiveAgentReply,
   type LiveCommandRecord,
   type LiveExecutorOptions,
   type LiveInspection,
+  type LivePromptStep,
 } from './loop-live';
 import type { StepActivity } from '../shared/loop-activity';
-import { describeChatLoopBinding } from '../shared/loop-chat';
-import {
-  describeLiveBinding,
-  FORBIDDEN_LIVE_GRAPH_ID,
-  LIVE_DURATION_GRAPH_ID,
-} from '../shared/loop-editor-run';
+import { describeChosenLoopBinding } from '../shared/loop-chat';
+import { describeLiveBinding, LIVE_DURATION_GRAPH_ID } from '../shared/loop-editor-run';
 import {
   formatRunJournal,
   journalToJsonl,
@@ -39,11 +37,22 @@ import {
   type StepNote,
 } from '../shared/loop-run';
 import { formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
-import type { LoopGraph, LoopNode } from '../shared/loop-graph';
+import {
+  LOOP_RUN_TOOL_POLICY,
+  writeReachOf,
+  type LoopGraph,
+  type LoopNode,
+} from '../shared/loop-graph';
 import { createFileRoleResolver } from './loop-graph-roles';
+import { createFileResultStore } from './loop-result-store';
+import {
+  describeUnobservedOutside,
+  workingRootsFrom,
+  type WorkingRoot,
+} from '../shared/working-roots';
 
 export const LIVE_GRAPH_REL = 'docs/loop/graphs/dspatch-live-duration.graph.json';
-export { FORBIDDEN_LIVE_GRAPH_ID, LIVE_DURATION_GRAPH_ID, describeLiveBinding };
+export { LIVE_DURATION_GRAPH_ID, describeLiveBinding };
 
 export type LiveBindingKind = 'editor-duration' | 'chat-loop';
 
@@ -54,7 +63,27 @@ export interface LiveCliOptions {
   readonly outDir: string | null;
   readonly modelRequested: string;
   readonly workspacePath?: string;
+  /**
+   * Every folder this run works with, the working directory first (DSP-72).
+   *
+   * Left out, the run has one root: `workspacePath`, or the generated experiment
+   * repository. The CLI leaves it out and is unchanged. The chat window supplies it
+   * from the folders a person opened, and then each root reaches the provider and is
+   * measured. A root's `path` must be one this function would have accepted on its
+   * own — the own-repository guard is applied to every one of them below.
+   */
+  readonly workingRoots?: readonly WorkingRoot[];
   readonly keepWorkspace: boolean;
+  /**
+   * Where this run's results are filed (DSP-74).
+   *
+   * A directory DSpatch owns, per run — never a working root and never the
+   * definition's resource root, so a definition cannot write its reports into the
+   * project it is reading. Left out, the run has no store: a graph that requires no
+   * result is unaffected, and one that does is refused before it starts rather than
+   * walking to a terminal with its requirements unchecked.
+   */
+  readonly resultsDir?: string;
   readonly abortSignal?: AbortSignal;
   readonly onJournalEntry?: (entry: RunJournalEntry) => void;
   /**
@@ -62,7 +91,7 @@ export interface LiveCliOptions {
    * walks dspatch-chat-loop on the project already open.
    */
   readonly bindingKind?: LiveBindingKind;
-  readonly promptFor?: (node: LoopNode) => string;
+  readonly promptFor?: (node: LoopNode, step: LivePromptStep) => string;
   /** Handed straight to the executor's gate branch, `note` and all. See {@link LiveExecutorOptions}. */
   readonly runProjectTest?: (
     workspacePath: string,
@@ -89,6 +118,21 @@ export interface LiveCliOptions {
    * CLI leaves it out — the run is autonomous and never waits.
    */
   readonly control?: RunControlPort;
+  /**
+   * Which adapter the run's agent steps go through. Left out, it is Cursor's.
+   *
+   * The seam the direct chat has had since DSP-1 and the loop run did not. It exists
+   * for the same reason: `PresentationAdapter` lets the **window** walk a run on this
+   * machine with no provider call, which is the only way to check in the window the
+   * things the window alone decides — and the window's own wiring of a result store is
+   * one of them. Without it the loop path could only be exercised by paying for a turn,
+   * so it was exercised by nothing.
+   *
+   * A factory rather than an instance, because `driveLive` owns the adapter's lifetime:
+   * it disposes what it made, and handing it something to dispose that a caller still
+   * held would be a second owner of one resource.
+   */
+  readonly createAdapter?: () => AgentAdapter;
 }
 
 export interface LiveCliDelivery {
@@ -126,7 +170,7 @@ export function runLiveLoop(options: LiveCliOptions): Promise<LiveCliDelivery> {
 export function runLiveGraph(graph: LoopGraph, options: Omit<LiveCliOptions, 'graphPath'>): Promise<LiveCliDelivery> {
   const bindingKind = options.bindingKind ?? 'editor-duration';
   const binding =
-    bindingKind === 'chat-loop' ? describeChatLoopBinding(graph) : describeLiveBinding(graph);
+    bindingKind === 'chat-loop' ? describeChosenLoopBinding(graph) : describeLiveBinding(graph);
   if (!binding.ready) {
     return Promise.reject(new Error(binding.reason));
   }
@@ -149,23 +193,94 @@ export function runLiveGraph(graph: LoopGraph, options: Omit<LiveCliOptions, 'gr
     generated = true;
   }
 
+  // The roots, with the working copy first whatever order the caller listed them in.
+  // Built here rather than trusted from the caller so that `cwd` and the record's
+  // primary are one decision: the provider scopes its local agent store by `cwd`, which
+  // makes which root is primary part of the resume key.
+  const roots = workingRootsFrom(
+    [workspacePath, ...(options.workingRoots ?? []).map((root) => root.path)],
+    workspacePath,
+    process.platform === 'win32',
+  );
+
   const appPath = path.join(options.repoRoot, 'app');
-  const refusal = refuseLiveWorkspace(workspacePath, appPath);
+  // Every root, not just the working copy. A run with DSpatch's own folder as its
+  // second root is the same mistake the guard has always refused, reached by the route
+  // this card opens.
+  const refusal = refuseLiveWorkingRoots(roots, appPath);
   if (refusal !== null) {
-    return Promise.reject(new Error(refusal));
+    return Promise.reject(new Error(refusal.message));
   }
 
-  return driveLive(graph, workspacePath, generated, options);
+  return driveLive(graph, workspacePath, roots, generated, options);
+}
+
+/**
+ * Whether this run reads the project's bytes for its snapshots, and why.
+ *
+ * DSP-91 #7, decided here because this is where both halves are to hand: the drawing, and
+ * the resolver that can reach its roles. `writeReachOf` asks the only question the format
+ * can answer about writing — which steps require `no-file-writes`, and whether anything on
+ * this path actually applies that — and a drawing where no step could write gets no project
+ * hashing at all.
+ *
+ * DSP-96 part 2 added the second half of that question, and it matters here: on the path
+ * this function is on, `no-file-writes` is a sentence in a role file, so no drawing with an
+ * agent step skips today. The decision stays a property of the drawing and the target, and
+ * never of the words in the mandate.
+ *
+ * The resolver is the same `createFileRoleResolver` the caller already built to validate
+ * the graph and build the prompts, so this costs a cache lookup per node rather than a
+ * second pass over the role files.
+ */
+function snapshotDecisionFor(
+  graph: LoopGraph,
+  repoRoot: string,
+): { readonly hashWorkingRoots: boolean; readonly reason: string } {
+  const reach = writeReachOf(graph, createFileRoleResolver(repoRoot));
+  return { hashWorkingRoots: reach.mayWrite, reason: reach.reason };
 }
 
 async function driveLive(
   graph: LoopGraph,
   workspacePath: string,
+  roots: readonly WorkingRoot[],
   generated: boolean,
   options: Omit<LiveCliOptions, 'graphPath'>,
 ): Promise<LiveCliDelivery> {
-  const inspection = emptyInspection(workspacePath, options.modelRequested);
-  const adapter = new CursorSdkAdapter({ toolPolicy: 'provider-default' });
+  const inspection = emptyInspection(workspacePath, options.modelRequested, roots);
+  // Before the walk, so the note the record carries and the behaviour the executor takes are
+  // the same decision rather than two that could disagree.
+  const snapshots = snapshotDecisionFor(graph, options.repoRoot);
+  if (!snapshots.hashWorkingRoots) {
+    inspection.rootsNote = describeUnobservedOutside(roots, snapshots.reason);
+  }
+  // Where results land, and the reason it is not derived from anything the graph says.
+  // The caller names it because the caller is the side that knows which folders belong
+  // to DSpatch and which belong to the person: `userData/loop-runs/<run>/results` for
+  // the window, the run's own output folder for the CLI. A run given neither files
+  // nothing, which the walk turns into a refusal for a graph that requires a result.
+  const resultsDir =
+    options.resultsDir ??
+    (options.outDir === null || options.outDir === '' ? null : path.join(path.resolve(options.outDir), 'results'));
+  // The policy is a named constant beside the capability table rather than a literal
+  // here, so the node panel can state what a step may do by reading the value the
+  // adapter is actually given (DSP-94, F6).
+  const adapter =
+    options.createAdapter?.() ?? new CursorSdkAdapter({ toolPolicy: LOOP_RUN_TOOL_POLICY });
+  /**
+   * What the provider says it used, from an adapter that is willing to say.
+   *
+   * `modelReported` is not on {@link AgentAdapter} — it is Cursor's own reading of what
+   * its runtime actually chose, which not every transport has. `null` is **not
+   * established**, never "the requested model": an adapter that does not report one has
+   * not reported the requested one.
+   */
+  const modelReportedBy = (sessionId: string): string | null => {
+    const reader = (adapter as unknown as { modelReported?: (id: string) => string | null })
+      .modelReported;
+    return typeof reader === 'function' ? (reader.call(adapter, sessionId) ?? null) : null;
+  };
   let workspaceKept = options.keepWorkspace || !generated;
 
   try {
@@ -180,13 +295,16 @@ async function driveLive(
       ...(options.abortSignal === undefined ? {} : { signal: options.abortSignal }),
       ...(options.control === undefined ? {} : { control: options.control }),
       ...(options.onJournalEntry === undefined ? {} : { onJournalEntry: options.onJournalEntry }),
+      ...(resultsDir === null ? {} : { resultStore: createFileResultStore(resultsDir) }),
       executor: createLiveExecutor({
         workspacePath,
+        workingRoots: roots,
         adapter,
         modelRequested: options.modelRequested,
-        modelReported: (sessionId) => adapter.modelReported(sessionId),
+        modelReported: modelReportedBy,
         abortSignal: options.abortSignal,
         inspection,
+        hashWorkingRoots: snapshots.hashWorkingRoots,
         ...(options.promptFor === undefined ? {} : { promptFor: options.promptFor }),
         ...(options.runProjectTest === undefined ? {} : { runProjectTest: options.runProjectTest }),
         ...(options.onAgentReply === undefined ? {} : { onAgentReply: options.onAgentReply }),
@@ -197,9 +315,15 @@ async function driveLive(
       }),
     });
 
-    if (inspection.sessionId !== null) {
-      await readLiveUsage(adapter, inspection.sessionId, inspection);
-      inspection.modelReported = adapter.modelReported(inspection.sessionId) ?? inspection.modelReported;
+    // Every session, not the first one. With one session per agent node (DSP-79) a run
+    // that read usage from `inspection.sessionId` alone would report the first step's
+    // cost as the run's — and the run's cost is the one the person is being charged.
+    // `readLiveUsage` appends, so the readings accumulate across sessions the way they
+    // accumulated across turns before.
+    for (const session of inspection.sessions) {
+      await readLiveUsage(adapter, session.dspatchSessionId, inspection);
+      inspection.modelReported =
+        modelReportedBy(session.dspatchSessionId) ?? inspection.modelReported;
     }
 
     const journalText = `${formatRunJournal(result)}\n${formatLiveInspection(inspection)}`;

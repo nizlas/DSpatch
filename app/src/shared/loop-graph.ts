@@ -77,9 +77,10 @@ export type NodeKind = (typeof NODE_KINDS)[number];
  *
  * Each entry is a requirement, not a mechanism, so that a target can answer it three
  * ways instead of one. `no-file-writes` is the load-bearing example: it is Cursor's
- * `readonly: true` here, it shaped this project's whole delivery contract on
- * 15 September 2026, and a target with no equivalent must not produce a role that
- * reads as though it were enforced.
+ * `readonly: true` in a generated agent file, it shaped this project's whole delivery
+ * contract on 15 September 2026, and a target with no equivalent must not produce a role
+ * that reads as though it were enforced. The same target can answer the same requirement
+ * differently depending on **how the agent is started** — see {@link CapabilityPath}.
  */
 export const REQUIREMENTS = [
   'no-file-writes',
@@ -115,8 +116,42 @@ export interface CapabilityAnswer {
   readonly evidence: 'observed' | 'documentation' | 'none';
 }
 
+/**
+ * How the agent was started, which is what decides whether a mechanism is in play.
+ *
+ * DSP-96 part 2, from DSP-92's F3. A requirement is answered by a *mechanism*, and the
+ * same framework offers different mechanisms depending on who opens the session:
+ *
+ * - `generated-agent-file` — DSpatch writes the framework's own agent definition (see
+ *   `role-generate.ts`) and the framework runs it. `readonly: true` in that file is a
+ *   real restriction applied by something other than the agent.
+ * - `dspatch-walked-run` — DSpatch's own run engine opens the session through the
+ *   adapter and sends the role as text. No agent definition is read, so a field in one
+ *   answers nothing.
+ *
+ * The distinction is not decoration. Before this existed, `no-file-writes` read
+ * `enforced` for every reader of the table, on the strength of a file the live path
+ * never writes and never loads, and the graph editor, graph validation and the run's
+ * own snapshot decision each treated a sentence in a role as a technical guarantee.
+ */
+export const CAPABILITY_PATHS = ['generated-agent-file', 'dspatch-walked-run'] as const;
+export type CapabilityPath = (typeof CAPABILITY_PATHS)[number];
+
+/**
+ * One cell of the table: the answer, and where a path answers differently.
+ *
+ * The bare answer is the `generated-agent-file` one, because that is the path the
+ * framework's own documentation describes and the one the table was written from.
+ * `whenDSpatchWalksTheRun` is filled **only** where the mechanism named above is not the
+ * mechanism in play on DSpatch's own path; absent means the same answer holds for both,
+ * and that absence is a claim like any other.
+ */
+export interface CapabilityCell extends CapabilityAnswer {
+  readonly whenDSpatchWalksTheRun?: CapabilityAnswer;
+}
+
 export type TargetCapabilities = Readonly<
-  Record<LoopTarget, Readonly<Record<RequirementId, CapabilityAnswer>>>
+  Record<LoopTarget, Readonly<Record<RequirementId, CapabilityCell>>>
 >;
 
 const NOT_RUN: CapabilityAnswer = {
@@ -144,6 +179,11 @@ const NOT_RUN_FOR_ALL = {
  * that guessed on their behalf would be exactly the "degraded file that reads as
  * though the requirement holds" that DSP-23 forbids. Filling those rows is a
  * separate, evidenced piece of work.
+ *
+ * **Every Cursor `how` below names a mechanism in a generated agent definition.** That
+ * is the path the sentences were written from, so each one that is not also the
+ * mechanism on DSpatch's own path carries a `whenDSpatchWalksTheRun` saying what is
+ * actually in play there. Three of the five do; the other two answer the same on both.
  */
 export const TARGET_CAPABILITIES: TargetCapabilities = {
   cursor: {
@@ -154,11 +194,35 @@ export const TARGET_CAPABILITIES: TargetCapabilities = {
         'the read-only specialists could not write their own reports, which is why ' +
         'docs/loop/HANDOFF.md states the delivery rule per role.',
       evidence: 'observed',
+      whenDSpatchWalksTheRun: {
+        status: 'other-means',
+        how:
+          'nothing applies it on this path, so it is an instruction in the role text and ' +
+          'the agent is trusted to follow it. DSpatch opens the session itself through ' +
+          '`CursorSdkAdapter`, which writes and loads no agent definition, so `readonly` ' +
+          'is never set; `localOptionsFor` passes `cwd` and `dirs`, and the SDK derives ' +
+          'its sandbox policy from `cwd` alone, defaulting to `{type:"insecure_none"}`. ' +
+          'An empty tool list is passed only under `toolPolicy: \'text-only\'`, which no ' +
+          'live run selects. DSpatch has measured an agent reading and writing outside ' +
+          'the folder it was given.',
+        evidence: 'observed',
+      },
     },
     'background-execution': {
       status: 'enforced',
       how: '`is_background` in the agent definition, and the run mode chosen per call.',
       evidence: 'documentation',
+      whenDSpatchWalksTheRun: {
+        status: 'other-means',
+        how:
+          '`is_background` is a field of an agent definition and this path writes none. ' +
+          'What holds instead is the transport: a walked step runs headless with no ' +
+          'human-in-the-loop flow, which the adapter reports as `approvals: ' +
+          "'unsupported'`. Nobody has established that this is the same thing Cursor " +
+          'means by background execution, so it is achieved another way rather than ' +
+          'enforced.',
+        evidence: 'observed',
+      },
     },
     'fixed-model-selection': {
       status: 'enforced',
@@ -166,6 +230,15 @@ export const TARGET_CAPABILITIES: TargetCapabilities = {
         'the `model` field in the agent definition. This repository has only ever used ' +
         '`inherit`, so a pinned slug is documented rather than observed.',
       evidence: 'documentation',
+      whenDSpatchWalksTheRun: {
+        status: 'enforced',
+        how:
+          'the `model` the adapter passes to `Agent.create` for the session, not a field ' +
+          'in any file. Still enforced, and by something outside the agent \u2014 but the ' +
+          "value comes from the run: `modelForChatNode` reads the *entry* node's fixed " +
+          'model and every session of the run is opened with it.',
+        evidence: 'observed',
+      },
     },
     'no-subagent-delegation': {
       status: 'other-means',
@@ -338,6 +411,87 @@ export interface ReportPolicy {
 /** The reserved value of {@link ReportPolicy.writtenBy}. No node may use it as an id. */
 export const REPORT_WRITTEN_BY_SELF = 'self';
 
+/**
+ * What shape a step's required result takes.
+ *
+ * `markdown-file` — the file at the step's {@link ArchivePlacement} is the result, and
+ * the bytes in it are the only copy of the body there is. `stored-result` — there is no
+ * file, and the run record holds the body. `none` — this step leaves nothing, which is
+ * worth being able to say out loud about a router or a gate in a graph where every
+ * other step leaves something.
+ */
+export type ResultForm = 'markdown-file' | 'stored-result' | 'none';
+export const RESULT_FORMS = ['markdown-file', 'stored-result', 'none'] as const;
+
+/**
+ * Whether arriving at a terminal is this loop's own idea of the assignment being met.
+ *
+ * DSP-36. Until this field the format could not say it, and DSP-26 recorded the
+ * consequence in as many words: *the format cannot say which terminals mean success, so
+ * success cannot be inferred from arrival*. Every terminal was `kind: "terminal"` and
+ * differed from every other only in `label` and `purpose` — so the one thing left to
+ * read was the wording, and a drawing that renamed *Assignment not met* to *Done* would
+ * have changed what DSpatch believed had happened. Niclas's instruction is that it must
+ * not: success is decided from what the graph **records**, never from what a node is
+ * called.
+ *
+ * **Two values, not four.** `not-success` covers *Assignment not met*, *Could not
+ * establish* and *Stopped without doing the work* alike, and it is deliberately not
+ * called `failure`: whether the project is broken, whether the work was refused and
+ * whether nothing could be decided are three different things, they are already told
+ * apart by {@link RunOutcomeKind} and by the terminal's own purpose, and a second
+ * vocabulary here would be a second place for them to disagree. All this field has to
+ * answer is the question the green tick asks.
+ *
+ * **Absent means the author has not said**, and is read as *not declared success* — a
+ * graph written before this field existed shows the ending it reached without a tick,
+ * which is the honest reading of a drawing that never claimed one.
+ *
+ * **It says nothing about verification.** `work-verified` still requires a command that
+ * ran and exited 0, and nothing here can reach it: arriving at a terminal earns nothing
+ * (DSP-26 #3, enforced in `runOutcomeFrom`). This says only *the walk ended where this
+ * loop says a met assignment ends*.
+ */
+export type TerminalEnding = 'success' | 'not-success';
+export const TERMINAL_ENDINGS = ['success', 'not-success'] as const;
+
+/**
+ * Whether this node is a terminal its own graph declares as success.
+ *
+ * One function, so that nothing reads `ending` and adds its own interpretation on the
+ * way — and so that a caller cannot reach a tick by way of a label. `false` for a node
+ * that is not a terminal, for one that declares nothing, and for `null`.
+ */
+export function terminalDeclaresSuccess(node: LoopNode | null | undefined): boolean {
+  return node !== null && node !== undefined && node.kind === 'terminal' && node.ending === 'success';
+}
+
+/**
+ * What result this step must leave.
+ *
+ * The one thing `archive` and `report` could never say. Between them they settle
+ * *where* an entry lands and *who* is responsible for filing it, and neither says
+ * **whether** anything has to be there — so a step that filed nothing at all was
+ * indistinguishable from a step whose graph simply did not ask. That gap is the whole
+ * of why a missing report could read as a delivered one.
+ *
+ * `required: true` is what the runner checks: presence, and that what is there belongs
+ * to this run and this visit. It never opens the body to decide whether the work is any
+ * good — checking that a result exists is the run engine's business, and judging it
+ * belongs to the appointed agents or to the person.
+ *
+ * Optional, and a graph that sets none of this behaves exactly as it did before this
+ * field existed. That is the point of it being a field rather than a second code path:
+ * a simple loop must work without a reporting package.
+ */
+export interface ResultPolicy {
+  /** Whether the run may go on without it. `false` records the shape without the check. */
+  readonly required: boolean;
+  readonly form: ResultForm;
+  /** What the result is for, in the author's words. Never read by the runner. */
+  readonly note?: string;
+}
+
 export interface LoopNode {
   readonly id: string;
   readonly kind: NodeKind;
@@ -345,6 +499,10 @@ export interface LoopNode {
   readonly label?: string;
   /** One sentence on what this step is for. */
   readonly purpose?: string;
+  /**
+   * What arriving here means for the assignment. Terminals only. See {@link TerminalEnding}.
+   */
+  readonly ending?: TerminalEnding;
   /** Required for `agent`; allowed on `gate` and `external`; meaningless elsewhere. */
   readonly role?: RoleReference;
   readonly model?: ModelPolicy;
@@ -358,9 +516,55 @@ export interface LoopNode {
    * only on them, never on plain success.
    */
   readonly outcomes?: readonly string[];
+  /**
+   * Which of this node's own outcomes a reply that declares none is routed on.
+   *
+   * DSP-103. Until this field existed the answer was inferred from **how an outcome was
+   * spelled**: the run gave a node the graceful "declared nothing" route if its list
+   * happened to contain the literal `unclear`, or failing that `could-not-check`, and any
+   * other spelling of the same idea stopped the run as a fault instead. Nothing in the
+   * drawing said so, so a person could only discover it by reading the prompt builder —
+   * and `AGENT_BEHAVIOUR_AND_ORCHESTRATION.md` §2 requires every control DSpatch
+   * introduces to be explicit and inspectable, which a name whose spelling silently
+   * changes the routing is not. No outcome name carries behaviour any more: this field is
+   * the whole of it, and an author writes whatever word their loop uses.
+   *
+   * **Absent means the run stops.** A node that declares outcomes and names none of them
+   * here faults with `undeclared-product` when a reply declares nothing, which is exactly
+   * what a node without one of the two old spellings already got. It is not a default
+   * anybody has to write down to keep today's behaviour of a node that had neither.
+   *
+   * **It must name one of this node's own `outcomes`.** Validation refuses anything else
+   * (`when-undeclared-not-an-outcome`), because a fallback the node cannot produce is a
+   * route the runner would refuse a step for taking. On a node declaring no outcomes it is
+   * refused for the same reason: such a node's ordinary reply is its result, and there is
+   * nothing for a missing declaration to fall back to.
+   */
+  readonly whenUndeclared?: string;
   /** The failure kinds this node may declare. Each one needs somewhere to go. */
   readonly declaredFailures?: readonly string[];
   readonly report?: ReportPolicy;
+  /** What this step must leave behind. See {@link ResultPolicy}. */
+  readonly produces?: ResultPolicy;
+  /**
+   * Which earlier steps' results this step is given, whatever brought the run here.
+   *
+   * Node ids, each resolved by the runner to the **most recent completed visit** of
+   * that node within this run. That resolution is the field's reason for existing: a
+   * loop comes back around, and handing a second Implementer's Verifier the first
+   * Implementer's report would be the same trap DSP-31 named for human answers, one
+   * layer down. Edges carried control flow and only control flow; until this field there
+   * was no way at all for a graph to say *the Verifier receives the Implementer's
+   * report*.
+   *
+   * **It is the node's standing answer and no longer its only one.** A node is reached
+   * by more than one edge, and the inputs a step needs depend on which — the Implementer
+   * arriving on a rework round needs the review that sent it back, and arriving on its
+   * first brief cannot be given one. See {@link LoopEdge.delivers}, which overrides this
+   * for the arrival that declares it and leaves every other arrival reading this field
+   * exactly as it did.
+   */
+  readonly consumes?: readonly string[];
   readonly notes?: string;
   /**
    * Where the editor drew it. Presentation only: it never affects meaning, and the
@@ -368,6 +572,29 @@ export interface LoopNode {
    * that loses its arrangement on save is a graph nobody arranges twice.
    */
   readonly view?: { readonly x: number; readonly y: number };
+}
+
+/**
+ * The outcome a reply that declares none is routed on, or `null` for "the run stops".
+ *
+ * One function, for the reason {@link terminalDeclaresSuccess} is one: the alternative is
+ * three readers of {@link LoopNode.whenUndeclared} — the prompt, the node panel and the
+ * runner — each free to disagree about what an absent or impossible value means. It lives
+ * here rather than beside any of them because all three can reach the format.
+ *
+ * A name the node does not declare answers `null`, so the engine can never produce an
+ * outcome the graph would then refuse the step for. Validation refuses that graph outright
+ * (`when-undeclared-not-an-outcome`); this is what an unvalidated one does, and stopping is
+ * the same answer a node that says nothing gets.
+ */
+export function undeclaredOutcomeOf(
+  node: Pick<LoopNode, 'outcomes' | 'whenUndeclared'>,
+): string | null {
+  const fallback = node.whenUndeclared;
+  if (fallback === undefined) {
+    return null;
+  }
+  return (node.outcomes ?? []).includes(fallback) ? fallback : null;
 }
 
 /**
@@ -390,6 +617,31 @@ export interface LoopEdge {
   readonly from: string;
   readonly to: string;
   readonly when: EdgeCondition;
+  /**
+   * Which earlier steps' results this arrival hands to the node it leads to.
+   *
+   * DSP-100. {@link LoopNode.consumes} is one list per node and the runner read it
+   * whichever edge arrived, so a node reached two ways was given the same inputs both
+   * times. On 22 September 2026 that sent an Implementer back on the review's own rework
+   * edge with the coordinator's opening brief and nothing the reviewer had written; it
+   * read the re-prompt itself as the answer to the question it had asked, wrote *"I
+   * understand the clarification."* and narrowed its own limit. The drawing already
+   * claimed otherwise in two places — this node's `notes` and the comment on
+   * `TASK_PRECEDENCE` — and only the wiring was missing.
+   *
+   * **Set, it replaces the node's list for this arrival; absent, the node's list applies
+   * unchanged.** That is what keeps every graph written before this field behaving to the
+   * byte: an edge that says nothing delivers what it always delivered. It is a
+   * replacement rather than an addition because the whole point is that a first visit
+   * must not be made to require what only a second could have — a node whose `consumes`
+   * had to be the union of every path's inputs is the shape that stops a run at its
+   * first step.
+   *
+   * **Ids, never prose, and never "everything so far".** The set a step receives stays
+   * small, deliberate and readable off the drawing; validation checks each id the same
+   * way it checks `consumes`, and the node panel shows what each arrival brings.
+   */
+  readonly delivers?: readonly string[];
   /** What the figure writes on the arrow. Falls back to the condition. */
   readonly label?: string;
   readonly notes?: string;
@@ -481,6 +733,43 @@ export interface AttributeSupport {
 }
 
 /**
+ * Which tools a run DSpatch walks opens its sessions with.
+ *
+ * DSP-94, from DSP-92's F6. This was a literal in `loop-live-run.ts` and appeared on no
+ * screen, so whether a step could touch a file at all was a run-level decision a reader
+ * had to find by opening the main process. It is a constant here, beside the capability
+ * table that already names the value that is *not* chosen, and `loop-live-run.ts` passes
+ * it to the adapter — so the panel showing it is showing what is used, not a copy.
+ *
+ * It is deliberately **not** a field on a node or a graph. Nothing in the format selects
+ * it, no drawing can vary it, and giving it a box before anything can honour one would be
+ * the opposite of disclosure. When a run needs to vary it, that is a card of its own.
+ */
+export const LOOP_RUN_TOOL_POLICY = 'provider-default' as const;
+
+/**
+ * What {@link LOOP_RUN_TOOL_POLICY} means for a person reading the node panel.
+ *
+ * Takes the value rather than closing over it, so the sentence is chosen by the policy
+ * in force and a different one cannot be described while another is passed.
+ */
+export function describeRunToolPolicy(
+  policy: 'provider-default' | 'text-only' = LOOP_RUN_TOOL_POLICY,
+): string {
+  return policy === 'text-only'
+    ? 'Every step of a run DSpatch walks opens its session with the tool policy “text-only”: the ' +
+        'adapter passes an empty tool list, so the agent can answer with text and can reach no file ' +
+        'and no command.'
+    : 'Every step of a run DSpatch walks opens its session with the tool policy “provider-default”: ' +
+        'the provider’s own tools are available, so a step can read and change files and run ' +
+        'commands in the folders it was given — and, since nothing confines the session, outside ' +
+        'them too. It is one value for the whole run, fixed in DSpatch rather than set by this ' +
+        'drawing, and the alternative the adapter offers, “text-only”, is not selected. A ' +
+        'requirement ticked on a step is an instruction the agent is expected to follow, not a ' +
+        'restriction this policy applies.';
+}
+
+/**
  * Every attribute a graph or a node may set, and whether anything acts on it.
  *
  * **Complete, and a test holds it complete.** DSP-46 #3 asks that an attribute the
@@ -496,9 +785,55 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
   { attribute: 'model', honoured: false, by: 'DSP-18 for the runner; DSP-8 decides task-aware selection' },
   { attribute: 'limits', honoured: false, by: 'DSP-18' },
   { attribute: 'requirements', honoured: false, by: 'DSP-18 to apply them; DSP-23 to generate roles from them' },
-  { attribute: 'archive', honoured: false, by: 'DSP-18' },
+  {
+    attribute: 'archive',
+    honoured: true,
+    by: 'DSP-74. The runner computes each step\'s placement from it and files the result there.',
+    caveat:
+      'A run files nothing unless it was given somewhere to file it. The live run is, and a ' +
+      'dry run is not — by construction, since a dry run reaches no filesystem — so a dry run ' +
+      'reports the path a real run would use and writes nothing at it.',
+  },
   { attribute: 'onRuntimeFault', honoured: false, by: 'DSP-18' },
-  { attribute: 'report', honoured: false, by: 'DSP-18' },
+  {
+    attribute: 'report',
+    honoured: true,
+    by: 'DSP-74. "writtenBy" decides who files the entry: the node itself, or the runner on its behalf.',
+    caveat:
+      'Who files it is honoured; a node that files its own is trusted to have done so and is ' +
+      'checked for presence, not obedience. Nothing stops a node writing somewhere else as well.',
+  },
+  {
+    attribute: 'produces',
+    honoured: true,
+    by: 'DSP-74. A required result that does not arrive stops the run as required-result-missing.',
+    caveat:
+      'Presence and provenance only. The runner never reads the body to judge whether the work ' +
+      'is any good — that belongs to the appointed agents or to the person. A dry run checks ' +
+      'nothing, because nothing was filed.',
+  },
+  {
+    attribute: 'consumes',
+    honoured: true,
+    by: 'DSP-75. The runner resolves each id to that node\'s most recent completed visit and gives the step its result.',
+    caveat:
+      'It is the node\'s answer for an arrival that declares none of its own: an edge\'s ' +
+      '"delivers" replaces it for that arrival (DSP-100). What a step then does with what it ' +
+      'was given is the step\'s business. The live executor names the received results in the ' +
+      'prompt; an executor that ignores StepContext.received receives them all the same and ' +
+      'uses none. A dry run hands nothing over, because it files nothing — and a live run of a ' +
+      'graph that hands anything over is refused unless it was given somewhere to keep results.',
+  },
+  {
+    attribute: 'delivers',
+    honoured: true,
+    by: 'DSP-100. The runner builds what a step receives from the edge it arrived on, falling back to the node\'s "consumes" where the edge says nothing.',
+    caveat:
+      'Bound to this run, the named producing node and the visit that actually took the edge, ' +
+      'so a later rework cannot be handed an older review. The same two paths that hand nothing ' +
+      'over at all still hand nothing over: a dry run files nothing, and an executor that ' +
+      'ignores StepContext.received is given them and uses none.',
+  },
   { attribute: 'view', honoured: true, by: 'DSP-22, the editor. Presentation only; it never affects meaning.' },
   {
     attribute: 'role',
@@ -524,6 +859,15 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
     attribute: 'outcomes',
     honoured: true,
     by: 'The runner routes on them and refuses a product that is not among them.',
+  },
+  {
+    attribute: 'ending',
+    honoured: true,
+    by: 'DSP-36. The graph view marks the ending a run reached and ticks it where the graph declares success.',
+    caveat:
+      'Read by the drawing and by nothing that decides anything about the work. It does not ' +
+      'reach a run\'s recorded outcome, which still requires a command that ran and exited 0, ' +
+      'and it changes no route: which terminal a run arrives at is decided by the edges.',
   },
   {
     attribute: 'declaredFailures',
@@ -610,12 +954,135 @@ export function effectiveRequirements(
   return [...seen.values()];
 }
 
+/**
+ * What a target does about a requirement, on the path the caller is asking about.
+ *
+ * The path is not optional and has no default: a caller that did not have to say which
+ * one it meant is how `no-file-writes` came to read `enforced` in the graph editor, in
+ * validation and in the snapshot decision, for runs where nothing applied it.
+ */
 export function capabilityAnswer(
   target: LoopTarget,
   requirement: RequirementId,
+  path: CapabilityPath,
   table: TargetCapabilities = TARGET_CAPABILITIES,
 ): CapabilityAnswer {
-  return table[target][requirement];
+  const cell = table[target][requirement];
+  return path === 'dspatch-walked-run' && cell.whenDSpatchWalksTheRun !== undefined
+    ? cell.whenDSpatchWalksTheRun
+    : cell;
+}
+
+/**
+ * Whether any step of this drawing could write into the run's working folders.
+ *
+ * DSP-91 #7 and AC #7/#8 together. The run engine snapshots every working root — the full
+ * bytes of every file, `fs.readFileSync` each, sha-256 over them — immediately before and
+ * immediately after every agent step and every gate, unconditionally. For the 21 September
+ * run that was **six full-content reads of a 4,734-file project** for a mandate that asked
+ * for no project work and changed nothing.
+ *
+ * The condition is a property of the drawing, never a word in the mandate: DSP-91 forbids
+ * special-casing "pi", "demo" or "liveness", and a run whose behaviour turned on the text a
+ * person typed would be exactly that. What a drawing does say is what each of its steps is
+ * allowed to do, through {@link effectiveRequirements}:
+ *
+ * - An **agent** step may write unless its role or the node requires `no-file-writes`
+ *   **and something other than the agent applies that requirement**. See below.
+ * - A **gate** starts the project's own command, which can write anything. It always may.
+ * - An **external** step is not run by this engine, but nothing here knows what it does, so
+ *   it counts as able to write. Unknown is not none.
+ * - A **router**, **human** or **terminal** step runs no tool and writes nothing.
+ *
+ * Where nothing may write, the two snapshots can only ever be equal, and taking them buys a
+ * measurement whose answer is already known at the cost of reading somebody's whole
+ * repository. Where anything may write, they stay: the before/after hash is the only thing
+ * in this product that can contradict an agent claiming it changed nothing, and losing it
+ * would trade one untruth for a worse one.
+ *
+ * A run that skips it must **say** it measured nothing rather than imply nothing changed.
+ * That is {@link import('./working-roots').describeUnobservedOutside}'s register and the
+ * reason this returns the reason as well as the verdict.
+ *
+ * **A requirement is only decisive where something other than the agent applies it**
+ * (DSP-96 part 2, from DSP-92's F3 and F12 point 4). This used to ask the drawing alone,
+ * and on DSpatch's own path `no-file-writes` is a sentence in a role file: the skip would
+ * therefore have fired exactly where the read-only guarantee is weakest, removing the one
+ * thing in the product that can contradict an agent claiming it changed nothing. So the
+ * capability table is asked too, for the path this engine actually runs on, and a
+ * requirement that is merely instructed leaves the step able to write. That is still a
+ * property of the drawing and the target and never a word in the mandate.
+ *
+ * The consequence, stated rather than left to be found: with today's table no drawing with
+ * an agent step skips hashing, because no target enforces `no-file-writes` on this path. A
+ * drawing of routers, human steps and terminals still skips, and the branch becomes
+ * reachable again for an agent step the day a path enforces the requirement — which is
+ * what "paired with something that makes read-only true" means.
+ */
+export interface WriteReach {
+  /** True when at least one step of this drawing could write into a working root. */
+  readonly mayWrite: boolean;
+  /** Which step, and why — or why none of them can. Written for a run record. */
+  readonly reason: string;
+}
+
+export function writeReachOf(
+  graph: Pick<LoopGraph, 'nodes' | 'target'>,
+  resolveRole: RoleResolver,
+  table: TargetCapabilities = TARGET_CAPABILITIES,
+): WriteReach {
+  const readOnly = capabilityAnswer(graph.target, 'no-file-writes', 'dspatch-walked-run', table);
+  for (const node of graph.nodes) {
+    if (node.kind === 'gate') {
+      return {
+        mayWrite: true,
+        reason:
+          `The gate "${node.id}" starts a command in the working folder, and a command may ` +
+          `write anything.`,
+      };
+    }
+    if (node.kind === 'external') {
+      return {
+        mayWrite: true,
+        reason:
+          `"${node.id}" is an external step. This engine does not run it and knows nothing ` +
+          `about what it does, so it is treated as able to write \u2014 unknown is not none.`,
+      };
+    }
+    if (node.kind !== 'agent') {
+      continue;
+    }
+    const role = node.role === undefined ? null : resolveRole(node.role);
+    const required = effectiveRequirements(node, role).map((entry) => entry.requirement);
+    const named = `The agent step "${node.id}"${
+      node.role === undefined ? '' : ` (role "${node.role.id}")`
+    }`;
+    if (!required.includes('no-file-writes')) {
+      return {
+        mayWrite: true,
+        reason: `${named} does not require no-file-writes, so it may write in the working folders.`,
+      };
+    }
+    if (readOnly.status !== 'enforced') {
+      return {
+        mayWrite: true,
+        reason:
+          `${named} requires no-file-writes, and on the path this run takes ${graph.target} ` +
+          `does not enforce it: ${readOnly.how} So the requirement is an instruction the ` +
+          `agent is expected to follow, which is not a reason to stop measuring whether it ` +
+          `did.`,
+      };
+    }
+  }
+  return {
+    mayWrite: false,
+    reason:
+      'No step in this drawing may write in the working folders: every agent step requires ' +
+      'no-file-writes, ' +
+      `${graph.target} enforces that on the path this run takes (${readOnly.how}), and there ` +
+      'is no gate or external step to start anything. Two snapshots of the project could ' +
+      'therefore only ever be equal.',
+  };
 }
 
 /** Whether a graph can be run by the account reading it, which is not a matter of validity. */
@@ -704,8 +1171,11 @@ export function describeTargetChange(
   }
 
   for (const requirement of required) {
-    const before = capabilityAnswer(from, requirement, table);
-    const after = capabilityAnswer(to, requirement, table);
+    // Both sides on the path this graph would be run on, which is DSpatch's own: a
+    // report that compared one framework's file mechanism with another's would be
+    // answering a question nobody asked of a drawing.
+    const before = capabilityAnswer(from, requirement, 'dspatch-walked-run', table);
+    const after = capabilityAnswer(to, requirement, 'dspatch-walked-run', table);
     if (after.status === 'unmet') {
       blocking.push(`${requirement}: ${to} cannot meet it. ${after.how}`);
       continue;

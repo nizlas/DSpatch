@@ -125,11 +125,13 @@ async function cancelDuring(
 }
 
 describe('a cancel between one step producing and the next being entered', () => {
-  it('does not run the project command a gate would have run', async () => {
+  it('does not enter the next step after a cancel', async () => {
     const graph = developmentLoop();
-    // `verifier` is the agent immediately before `implementation-review`, which is a
-    // gate: in a live run that gate spawns whatever is in the window's Command field.
-    const cancelled = await cancelDuring(graph, 'cancel-before-gate', 'verifier');
+    // `verifier` is the agent immediately before `implementation-review`. That node
+    // used to be a gate (and this test used to watch for a spawned command); it is
+    // an agent now, and the property is the same: Cancel after one step produces
+    // must stop the walk before the next node is entered, whatever kind it is.
+    const cancelled = await cancelDuring(graph, 'cancel-before-next', 'verifier');
 
     // The user-visible fact first, so a revert fails on what was done to the person's
     // machine rather than on a status code behind it.
@@ -172,17 +174,16 @@ describe('a cancel between one step producing and the next being entered', () =>
     );
   });
 
-  it('reaches that gate and runs its command when nobody cancelled', async () => {
-    // The negative control for the test above, and it is not optional: a harness that
-    // could never see the gate run would pass the assertion `commandsRun === []` on a
-    // product that runs the command every time.
+  it('reaches the next step when nobody cancelled', async () => {
+    // The negative control for the test above: a harness that never entered
+    // implementation-review would pass `!performed.includes(...)` on a product that
+    // always walks on.
     const graph = developmentLoop();
     const ordinary = await cancelDuring(graph, 'no-cancel-at-all', null);
 
-    assert.deepEqual(
-      ordinary.commandsRun,
-      ['implementation-review'],
-      `the uncancelled run has to reach the gate, or the assertion above means nothing. Its ` +
+    assert.ok(
+      ordinary.performed.includes('implementation-review'),
+      `the uncancelled run has to reach the next step, or the assertion above means nothing. Its ` +
         `walk was: ${ordinary.performed.join(' -> ')}`,
     );
     assert.equal(ordinary.result.status, 'completed');

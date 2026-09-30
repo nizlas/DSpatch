@@ -13,9 +13,11 @@ Preserve stable task/run IDs, API identifiers, commands and data formats. Keep h
 ## Read the right material
 
 1. Read [VISION.md](docs/VISION.md) when starting work on the project. It is the governing source; sections 1–3, 8 and 14–15 describe product direction and initial scope.
-2. Read [BACKLOG.md](BACKLOG.md) for development direction and workflow.
-3. Read the current task in `backlog/tasks/`, its dependencies and relevant vision sections. When continuing, read changed and task-relevant material; do not routinely reread the entire history.
-4. When running or changing the development loop, read [DEVELOPMENT_LOOP.md](docs/DEVELOPMENT_LOOP.md). The coordinator entry point is `.cursor/skills/dspatch-loop/SKILL.md`; the five specialists are in `.cursor/agents/`.
+2. Read [INTERACTION_MODEL.md](docs/INTERACTION_MODEL.md) before changing anything about how a person, the agents and Maestro share the work. It settles who decides what, and it governs that question over older wording elsewhere.
+3. Read [AGENT_BEHAVIOUR_AND_ORCHESTRATION.md](docs/AGENT_BEHAVIOUR_AND_ORCHESTRATION.md) before changing what the product's agents are told: role sources, node tasks, prompt building, what the graph editor shows of them, or what the run engine reads of the project on its own account. It draws the line between what an agent instruction decides, what the graph's workflow decides and what Maestro owns in execution, and it requires every instruction DSpatch adds to be visible and inspectable rather than built into the code. Its sections on editing instructions in the editor and on switching to interactive work are proposed designs, not agreed requirements.
+4. Read [BACKLOG.md](BACKLOG.md) for development direction and workflow.
+5. Read the current task in `backlog/tasks/`, its dependencies and relevant vision sections. When continuing, read changed and task-relevant material; do not routinely reread the entire history.
+6. When running or changing the development loop, read [DEVELOPMENT_LOOP.md](docs/DEVELOPMENT_LOOP.md). The coordinator entry point is `.cursor/skills/dspatch-loop/SKILL.md`; the five specialists are in `.cursor/agents/`.
 
 Niclas's explicit decisions govern the vision. Distinguish agreed principles from technical proposals and open questions in VISION.md. Do not change the vision to fit an implementation; document a proposed departure and its rationale. Routine, reversible choices within the agreed task need no new approval. Record durable decisions and changes of direction in the repository.
 
@@ -44,7 +46,7 @@ Niclas's explicit decisions govern the vision. Distinguish agreed principles fro
 - Preserve decisions, attempts and relevant results in the task. On interruption, record the latest verified state, remaining problems and a concrete next step. Resolve an unknown outcome before repeating the action.
 - Present questions and decision material as copyable Markdown in the normal chat report. Use separate question forms only when Niclas explicitly requests them. Collect questions that can wait until the next iteration, stating the recommendation, when an answer is needed and what can continue within the mandate. Deferral or silence is not approval. Follow the loop's reporting rules during a loop run.
 - Preserve the user's existing changes. Bind diffs and execution results to actual file content and identified snapshots, including uncommitted code. Cancellation and restart must not silently reset files, reapply changes or launch commands twice.
-- Check relevant behaviour with proportionate scope. Report what changed, why, the tested revision or snapshot, checks performed and remaining work. Distinguish provider documentation from observed functionality; missing measurements are unknown, not zero.
+- Check relevant behaviour with proportionate scope, following [proportionate verification](docs/DEVELOPMENT_LOOP.md#proportionate-verification): concentrate on what changed and on what it can reasonably affect, reuse valid earlier results, and treat full retesting as an exception needing a concrete reason stated in the report. The same section's [keep the suite worth running](docs/DEVELOPMENT_LOOP.md#keep-the-suite-worth-running) governs adding, changing and removing tests, and which group to run. Report what changed, why, the tested revision or snapshot, checks performed and remaining work. Distinguish provider documentation from observed functionality; missing measurements are unknown, not zero.
 - Do not mark UX criteria requiring Niclas's testing as accepted based on agent tests. Use `Review` when a reviewable result awaits assessment and follow BACKLOG.md's status rules.
 
 <a id="agentloopen-under-utvecklingen"></a>

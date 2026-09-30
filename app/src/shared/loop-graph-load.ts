@@ -30,9 +30,11 @@ import {
   NODE_KINDS,
   REPORT_WRITTEN_BY_SELF,
   REQUIREMENTS,
+  RESULT_FORMS,
   ROLE_SOURCE_KINDS,
   RUNTIME_FAULT_POLICIES,
   TARGET_CAPABILITIES,
+  TERMINAL_ENDINGS,
   capabilityAnswer,
   effectiveRequirements,
   namesARuntimeFault,
@@ -51,11 +53,14 @@ import type {
   ReportPolicy,
   RequirementId,
   ResolvedRole,
+  ResultForm,
+  ResultPolicy,
   RoleReference,
   RoleResolver,
   RunnableHere,
   StepLimits,
   TargetCapabilities,
+  TerminalEnding,
 } from './loop-graph';
 
 export type FindingSeverity = 'error' | 'warning' | 'notice';
@@ -536,6 +541,12 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
       findings,
     );
     const outcomes = parseStringList(entry['outcomes'], `${pointer}/outcomes`, nodeId, findings);
+    const whenUndeclared = parseWhenUndeclared(
+      entry['whenUndeclared'],
+      `${pointer}/whenUndeclared`,
+      nodeId,
+      findings,
+    );
     const declaredFailures = parseStringList(
       entry['declaredFailures'],
       `${pointer}/declaredFailures`,
@@ -543,6 +554,15 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
       findings,
     );
     const report = parseReport(entry['report'], `${pointer}/report`, nodeId, findings);
+    const produces = parseProduces(entry['produces'], `${pointer}/produces`, nodeId, findings);
+    const consumes = parseStringList(entry['consumes'], `${pointer}/consumes`, nodeId, findings);
+    const ending = parseEnding(
+      entry['ending'],
+      `${pointer}/ending`,
+      nodeId,
+      kind as NodeKind,
+      findings,
+    );
     const view = parseView(entry['view'], `${pointer}/view`, nodeId, findings);
 
     nodes.push({
@@ -550,18 +570,101 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
       kind: kind as NodeKind,
       ...(nonEmptyString(entry['label']) ? { label: entry['label'] as string } : {}),
       ...(nonEmptyString(entry['purpose']) ? { purpose: entry['purpose'] as string } : {}),
+      ...(ending ? { ending } : {}),
       ...(role ? { role } : {}),
       ...(model ? { model } : {}),
       ...(limits ? { limits } : {}),
       ...(requirements ? { requirements } : {}),
       ...(outcomes ? { outcomes } : {}),
+      ...(whenUndeclared === null ? {} : { whenUndeclared }),
       ...(declaredFailures ? { declaredFailures } : {}),
       ...(report ? { report } : {}),
+      ...(produces ? { produces } : {}),
+      ...(consumes ? { consumes } : {}),
       ...(nonEmptyString(entry['notes']) ? { notes: entry['notes'] as string } : {}),
       ...(view ? { view } : {}),
     });
   });
   return nodes;
+}
+
+/**
+ * The outcome a reply that declares none is routed on (DSP-103).
+ *
+ * A name, and only a name: whether the node can actually produce it is a question about
+ * this node's `outcomes`, which is not parsed yet when this runs, so it is asked in
+ * {@link checkNodeRouting} instead. Absent is not an error and never will be — it is what
+ * every graph written before this field says, and it means the run stops rather than
+ * choosing a route nobody drew.
+ */
+function parseWhenUndeclared(
+  value: unknown,
+  pointer: string,
+  nodeId: string,
+  findings: Findings,
+): string | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string' || value.trim() === '') {
+    findings.error(
+      'bad-when-undeclared',
+      pointer,
+      `Node "${nodeId}" has "whenUndeclared": ${JSON.stringify(value)}. It must be the name ` +
+        `of one of this node's own outcomes — the one the run takes when a reply declares ` +
+        `none of them.`,
+      { nodeId },
+    );
+    return null;
+  }
+  return value.trim();
+}
+
+/**
+ * What arriving at a terminal means, as the graph declares it (DSP-36).
+ *
+ * Refused on anything but a terminal, and refused rather than ignored: a run does not end
+ * at an agent step, so `ending` on one is either a misunderstanding of the format or an
+ * author expecting a tick somewhere no walk can stop — and both deserve to be said while
+ * the drawing is on screen rather than discovered as a mark that never appears.
+ *
+ * Absent is not an error. A graph written before this field existed is a graph whose
+ * author never claimed a success, and it keeps reading exactly as it did.
+ */
+function parseEnding(
+  value: unknown,
+  pointer: string,
+  nodeId: string,
+  kind: NodeKind,
+  findings: Findings,
+): TerminalEnding | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string' || !(TERMINAL_ENDINGS as readonly string[]).includes(value)) {
+    findings.error(
+      'bad-ending',
+      pointer,
+      `Node "${nodeId}" has "ending": ${JSON.stringify(value)}. It must be one of ` +
+        `${quoteList(TERMINAL_ENDINGS)} — whether arriving here is this loop's own idea of ` +
+        `the assignment being met. It is not a verdict about the project and it changes no ` +
+        `route.`,
+      { nodeId },
+    );
+    return null;
+  }
+  if (kind !== 'terminal') {
+    findings.error(
+      'ending-on-a-step-that-does-not-end',
+      pointer,
+      `Node "${nodeId}" is a ${kind} step and declares "ending". Only a terminal ends a ` +
+        `run, so nothing would ever arrive here to be marked. Remove it, or make the node a ` +
+        `terminal if this is where the run is meant to stop.`,
+      { nodeId },
+    );
+    return null;
+  }
+  return value as TerminalEnding;
 }
 
 function parseRole(
@@ -619,7 +722,7 @@ function parseRole(
       'bad-role-source-path',
       `${pointer}/source/path`,
       `Role "${roleId}" on node "${nodeId}" has no source "path". Paths are relative to ` +
-        `the project root, not to the graph file.`,
+        `the resource root the definition declares, not to the graph file.`,
       { nodeId },
     );
     return null;
@@ -796,6 +899,66 @@ function parseReport(
   };
 }
 
+function parseProduces(
+  value: unknown,
+  pointer: string,
+  nodeId: string,
+  findings: Findings,
+): ResultPolicy | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    findings.error(
+      'bad-produces',
+      pointer,
+      `Node "${nodeId}" has a "produces" that is not an object. It says whether this step ` +
+        `must leave a result and in what form: {"required": true, "form": "markdown-file"}.`,
+      { nodeId },
+    );
+    return null;
+  }
+  const required = value['required'];
+  if (typeof required !== 'boolean') {
+    findings.error(
+      'produces-without-required',
+      `${pointer}/required`,
+      `Node "${nodeId}" says what it produces without saying whether it is "required". That ` +
+        `is the one thing "archive" and "report" could never say, and without it there is ` +
+        `nothing for the runner to check.`,
+      { nodeId },
+    );
+    return null;
+  }
+  const form = value['form'];
+  if (typeof form !== 'string' || !(RESULT_FORMS as readonly string[]).includes(form)) {
+    findings.error(
+      'bad-result-form',
+      `${pointer}/form`,
+      `Node "${nodeId}" produces a result of form ${JSON.stringify(form)}; it must be one of ` +
+        `${quoteList(RESULT_FORMS)}.`,
+      { nodeId },
+    );
+    return null;
+  }
+  if (required && form === 'none') {
+    findings.error(
+      'required-result-with-no-form',
+      pointer,
+      `Node "${nodeId}" requires a result and gives it the form "none", which says there is ` +
+        `nothing to leave. Those cannot both be true, and a check with nothing to look for ` +
+        `would pass every time — which is the silence this field exists to end.`,
+      { nodeId },
+    );
+    return null;
+  }
+  return {
+    required,
+    form: form as ResultForm,
+    ...(nonEmptyString(value['note']) ? { note: value['note'] as string } : {}),
+  };
+}
+
 function parseView(
   value: unknown,
   pointer: string,
@@ -869,16 +1032,75 @@ function parseEdges(value: unknown, findings: Findings): readonly LoopEdge[] {
     if (when === null) {
       return;
     }
+    // An empty list is a statement — *this arrival hands over nothing* — and has to
+    // survive parsing as one, or a graph could not say that a first visit needs no
+    // earlier result. `parseStringList` returns null for a field nobody wrote, which is
+    // the silence that falls back to the node's own `consumes`.
+    const delivers = parseDelivers(entry['delivers'], `${pointer}/delivers`, edgeId, findings);
     edges.push({
       id: edgeId,
       from,
       to,
       when,
+      ...(delivers === null ? {} : { delivers }),
       ...(nonEmptyString(entry['label']) ? { label: entry['label'] as string } : {}),
       ...(nonEmptyString(entry['notes']) ? { notes: entry['notes'] as string } : {}),
     });
   });
   return edges;
+}
+
+/**
+ * What an edge says it delivers: a list of node ids, or nothing written at all.
+ *
+ * Its own function rather than {@link parseStringList} only so the findings say *edge*
+ * and carry an `edgeId`. A message reading `Node "e12": this must be a list of names`
+ * sends its reader to look for a node with an edge's id.
+ */
+function parseDelivers(
+  value: unknown,
+  pointer: string,
+  edgeId: string,
+  findings: Findings,
+): readonly string[] | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    findings.error(
+      'bad-delivers',
+      pointer,
+      `Edge "${edgeId}": "delivers" must be a list of node ids — which earlier steps' ` +
+        `results this arrival hands to the step it leads to. Leave it out entirely for the ` +
+        `step's own "consumes" to decide, and write [] to say this arrival hands over nothing.`,
+      { edgeId },
+    );
+    return null;
+  }
+  const items: string[] = [];
+  value.forEach((entry, index) => {
+    const item = nonEmptyString(entry);
+    if (item === null) {
+      findings.error(
+        'bad-name',
+        `${pointer}/${String(index)}`,
+        `Edge "${edgeId}": ${JSON.stringify(entry)} is not a usable node id.`,
+        { edgeId },
+      );
+      return;
+    }
+    if (items.includes(item)) {
+      findings.error(
+        'duplicate-name',
+        `${pointer}/${String(index)}`,
+        `Edge "${edgeId}" delivers "${item}" twice.`,
+        { edgeId },
+      );
+      return;
+    }
+    items.push(item);
+  });
+  return items;
 }
 
 function parseCondition(
@@ -1054,6 +1276,7 @@ export function checkLoopGraph(graph: LoopGraph, options: CheckOptions = {}): re
   }
 
   checkReachability(graph, byId, outgoing, pointerOf, findings);
+  checkResultFlow(graph, byId, outgoing, pointerOf, edgePointerOf, findings);
   reportNotYetHonoured(graph, findings);
 
   const connected = options.connectedTargets;
@@ -1180,6 +1403,7 @@ function checkNodeRouting(
       ids,
     );
   }
+  checkUndeclaredRoute(node, pointer, findings);
   for (const outcome of outcomes) {
     const routed = out.some((edge) => edge.when.on === 'outcome' && edge.when.outcome === outcome);
     if (!routed) {
@@ -1223,6 +1447,71 @@ function checkNodeRouting(
         pointer,
         `Nothing follows node "${node.id}" and it is not a terminal node. Either route its ` +
           `result somewhere or say the run ends there.`,
+        ids,
+      );
+    }
+  }
+}
+
+/**
+ * The two names that used to route a reply which declared nothing, and no longer do.
+ *
+ * DSP-103's migration notice, and the only place in DSpatch where either word appears in
+ * code. **It decides nothing.** Nothing routes on it, no prompt is built from it and the
+ * runner never sees it: it exists so that a drawing which relied on the old spelling meets
+ * the change while it is on screen, instead of discovering it as a run that used to reach
+ * a terminal and now stops as a fault. A node that states `whenUndeclared` — which is now
+ * the only thing that decides this — never reaches it.
+ */
+const SPELLINGS_THAT_USED_TO_ROUTE = ['unclear', 'could-not-check'] as const;
+
+/**
+ * Where a reply that declares no outcome goes, checked against what the node can produce.
+ *
+ * DSP-103. Two findings, and they are different in kind. The error is permanent: a
+ * fallback the node does not declare is a route the runner would refuse the step for
+ * taking, so it is refused here where an author can see both lists at once. The warning is
+ * a one-off migration notice and says so — see {@link SPELLINGS_THAT_USED_TO_ROUTE}.
+ */
+function checkUndeclaredRoute(node: LoopNode, pointer: string, findings: Findings): void {
+  const ids: Ids = { nodeId: node.id };
+  const outcomes = node.outcomes ?? [];
+  const fallback = node.whenUndeclared;
+
+  if (fallback !== undefined && !outcomes.includes(fallback)) {
+    findings.error(
+      'when-undeclared-not-an-outcome',
+      `${pointer}/whenUndeclared`,
+      `Node "${node.id}" routes a reply that declares no result on "${fallback}", which it ` +
+        `does not declare as an outcome. It declares ${
+          outcomes.length > 0 ? quoteList(outcomes) : 'none'
+        }. ${
+          outcomes.length > 0
+            ? `A step may only produce what its node declares, so the run would refuse this ` +
+              `step for taking a route the graph gave it.`
+            : `A node that declares no outcomes has no missing declaration to route: its ` +
+              `ordinary reply is its result. Either declare the outcomes this step chooses ` +
+              `between, or drop this field.`
+        }`,
+      ids,
+    );
+  }
+
+  if (fallback === undefined) {
+    const old = outcomes.filter((outcome) =>
+      (SPELLINGS_THAT_USED_TO_ROUTE as readonly string[]).includes(outcome),
+    );
+    if (old.length > 0) {
+      findings.warning(
+        'undeclared-route-no-longer-inferred',
+        `${pointer}/whenUndeclared`,
+        `Node "${node.id}" declares ${quoteList(old)} and does not say "whenUndeclared". ` +
+          `Until DSP-103 those two spellings were the whole of how DSpatch decided where a ` +
+          `reply that declared no result went, and this node would have taken ` +
+          `"${old[0] ?? ''}". It no longer does: a reply that declares none now stops the run ` +
+          `as an undeclared product. Add "whenUndeclared": "${old[0] ?? ''}" to keep what this ` +
+          `drawing used to do, or leave it and mean the stop. Nothing is inferred from an ` +
+          `outcome's name any more, in either direction.`,
         ids,
       );
     }
@@ -1295,7 +1584,11 @@ function checkNodeRole(
 
   const effective = effectiveRequirements(node, role);
   for (const entry of effective) {
-    const answer = capabilityAnswer(graph.target, entry.requirement, table);
+    // A graph is checked for the run DSpatch would walk. The other path — a generated
+    // agent file the framework runs — is answered where those files are written, in
+    // `role-generate.ts`, and answering it here would tell a person a mechanism holds
+    // for a run that never loads the file it lives in.
+    const answer = capabilityAnswer(graph.target, entry.requirement, 'dspatch-walked-run', table);
     const origin = entry.from === 'role' ? `role "${node.role?.id ?? ''}"` : 'this node';
     if (answer.status === 'unmet') {
       findings.error(
@@ -1402,6 +1695,181 @@ function checkReachability(
   }
 }
 
+/**
+ * What each step must leave, and whether what a step receives can ever have been left.
+ *
+ * DSP-74 and DSP-75. The runtime half of both is deliberately unforgiving — a required
+ * result that does not arrive stops the run — so the author deserves to hear about a
+ * graph that *cannot* work here, while the picture is still on screen and before a
+ * provider turn has been spent finding out.
+ *
+ * The consumes check is a reachability question and nothing cleverer: can the consumed
+ * node run before this one, on any path through the graph? It cannot tell whether it
+ * *will* on the path a particular run takes, and the runner's fault covers that. What
+ * it does catch is the case worth catching cheaply: a `consumes` naming a node that
+ * comes later, or is unreachable, or is the step itself.
+ *
+ * An edge's `delivers` gets the same three questions asked about the point the edge
+ * leaves from, which is a sharper question than the node's and the reason the two checks
+ * are not one loop. See the second half of this function.
+ */
+function checkResultFlow(
+  graph: LoopGraph,
+  byId: ReadonlyMap<string, LoopNode>,
+  outgoing: ReadonlyMap<string, readonly LoopEdge[]>,
+  pointerOf: ReadonlyMap<string, string>,
+  edgePointerOf: ReadonlyMap<string, string>,
+  findings: Findings,
+): void {
+  const canReach = (from: string, to: string): boolean => {
+    const seen = new Set<string>([from]);
+    const queue = [from];
+    while (queue.length > 0) {
+      const current = queue.shift() as string;
+      for (const edge of outgoing.get(current) ?? []) {
+        if (edge.to === to) {
+          return true;
+        }
+        if (!seen.has(edge.to) && byId.has(edge.to)) {
+          seen.add(edge.to);
+          queue.push(edge.to);
+        }
+      }
+    }
+    return false;
+  };
+
+  for (const node of graph.nodes) {
+    const pointer = pointerOf.get(node.id) ?? '/nodes';
+    const ids: Ids = { nodeId: node.id };
+    const produces = node.produces;
+
+    if (produces !== undefined && produces.required) {
+      if (node.kind === 'router' || node.kind === 'terminal') {
+        findings.error(
+          'result-required-of-a-node-that-does-no-work',
+          `${pointer}/produces`,
+          `Node "${node.id}" is a ${node.kind} and is required to leave a result. A ${
+            node.kind
+          } does no work — it ${
+            node.kind === 'router' ? 'chooses a branch' : 'ends the run'
+          } — so nothing would ever be there and every run through it would stop.`,
+          ids,
+        );
+      }
+      if (produces.form === 'markdown-file' && graph.archive === undefined && node.report?.path === undefined) {
+        findings.error(
+          'required-file-with-nowhere-to-land',
+          `${pointer}/produces`,
+          `Node "${node.id}" must leave a Markdown file and this graph says nowhere for one ` +
+            `to land. Give the graph an "archive": {"path": "..."} or this node a ` +
+            `"report": {"path": "..."}; "produces" says whether and in what form, and it is ` +
+            `"archive" and "report" that say where and who.`,
+          ids,
+        );
+      }
+    }
+
+    for (const consumedId of node.consumes ?? []) {
+      if (consumedId === node.id) {
+        findings.error(
+          'consumes-itself',
+          `${pointer}/consumes`,
+          `Node "${node.id}" receives its own result. A step cannot be given what it has not ` +
+            `produced yet — and on a second visit it would be handed the first visit's work ` +
+            `as though it were new material.`,
+          ids,
+        );
+        continue;
+      }
+      const source = byId.get(consumedId);
+      if (source === undefined) {
+        findings.error(
+          'consumes-a-missing-node',
+          `${pointer}/consumes`,
+          `Node "${node.id}" receives the result of "${consumedId}", which is not a node in ` +
+            `this graph.`,
+          ids,
+        );
+        continue;
+      }
+      if (source.produces === undefined || source.produces.form === 'none') {
+        findings.error(
+          'consumes-a-node-that-leaves-nothing',
+          `${pointer}/consumes`,
+          `Node "${node.id}" receives the result of "${consumedId}", and "${consumedId}" ` +
+            `declares no result to leave. Give it "produces", or this edge of the handover ` +
+            `is a promise nothing keeps: the run would reach "${node.id}" and stop, because ` +
+            `a step given an empty result must never simply start.`,
+          ids,
+        );
+        continue;
+      }
+      if (!canReach(consumedId, node.id)) {
+        findings.error(
+          'consumes-something-that-cannot-come-first',
+          `${pointer}/consumes`,
+          `Node "${node.id}" receives the result of "${consumedId}", and no path through this ` +
+            `graph runs "${consumedId}" before "${node.id}". Nothing would ever be there to ` +
+            `hand over.`,
+          ids,
+        );
+      }
+    }
+  }
+
+  // The same three questions of an edge that says what it delivers (DSP-100).
+  //
+  // Asked of the **edge's own source** rather than of the node it leads to, and that is
+  // the whole difference between this check and the one above. An arrival is a point in
+  // the walk: whatever it delivers has to have been able to run before the run stood at
+  // `edge.from` and took this edge. Asking whether it can run before `edge.to` would pass
+  // a graph whose loop-back reaches the target another way entirely, which is a different
+  // path from the one the edge is on.
+  for (const edge of graph.edges) {
+    if (edge.delivers === undefined) {
+      continue;
+    }
+    const pointer = `${edgePointerOf.get(edge.id) ?? '/edges'}/delivers`;
+    const ids: Ids = { edgeId: edge.id };
+    for (const deliveredId of edge.delivers) {
+      const source = byId.get(deliveredId);
+      if (source === undefined) {
+        findings.error(
+          'delivers-a-missing-node',
+          pointer,
+          `Edge "${edge.id}" delivers the result of "${deliveredId}", which is not a node in ` +
+            `this graph.`,
+          ids,
+        );
+        continue;
+      }
+      if (source.produces === undefined || source.produces.form === 'none') {
+        findings.error(
+          'delivers-a-node-that-leaves-nothing',
+          pointer,
+          `Edge "${edge.id}" delivers the result of "${deliveredId}", and "${deliveredId}" ` +
+            `declares no result to leave. Give it "produces", or this arrival is a promise ` +
+            `nothing keeps: the run would take this edge, find nothing to hand over and stop ` +
+            `at "${edge.to}", because a step given an empty result must never simply start.`,
+          ids,
+        );
+        continue;
+      }
+      if (deliveredId !== edge.from && !canReach(deliveredId, edge.from)) {
+        findings.error(
+          'delivers-something-that-cannot-come-first',
+          pointer,
+          `Edge "${edge.id}" delivers the result of "${deliveredId}", and no path through this ` +
+            `graph runs "${deliveredId}" before "${edge.from}", which is where this edge ` +
+            `starts. Nothing would ever be there to hand over.`,
+          ids,
+        );
+      }
+    }
+  }
+}
+
 function reportNotYetHonoured(graph: LoopGraph, findings: Findings): void {
   const setters = new Map<string, string[]>();
   const note = (attribute: string, where: string): void => {
@@ -1432,6 +1900,20 @@ function reportNotYetHonoured(graph: LoopGraph, findings: Findings): void {
     }
     if (node.report) {
       note('report', node.id);
+    }
+    if (node.produces) {
+      note('produces', node.id);
+    }
+    if (node.consumes && node.consumes.length > 0) {
+      note('consumes', node.id);
+    }
+    if (node.ending) {
+      note('ending', node.id);
+    }
+  }
+  for (const edge of graph.edges) {
+    if (edge.delivers !== undefined) {
+      note('delivers', `edge ${edge.id}`);
     }
   }
 

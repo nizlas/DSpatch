@@ -22,6 +22,7 @@ import {
   writeDecision,
 } from '../src/main/role-generate.ts';
 import { parseRoleSource } from '../src/main/role-source.ts';
+import { capabilityAnswer } from '../src/shared/loop-graph.ts';
 import type { TargetCapabilities } from '../src/shared/loop-graph.ts';
 
 const SOURCE = [
@@ -68,6 +69,13 @@ test('a requirement Cursor enforces becomes the Cursor field, and the source nev
   const answer = result.notices.find((notice) => notice.requirement === 'no-file-writes');
   assert.equal(answer?.level, 'note');
   assert.match(answer?.message ?? '', /enforced by cursor/);
+
+  // DSP-96 part 2, and the direction that is easy to break while fixing the other one.
+  // `readonly: true` is a real restriction **for an agent Cursor starts from this file**,
+  // and correcting what a run DSpatch walks says about itself must not make this false.
+  // The two paths are asked separately and answer differently on purpose.
+  assert.equal(capabilityAnswer('cursor', 'no-file-writes', 'generated-agent-file').status, 'enforced');
+  assert.equal(capabilityAnswer('cursor', 'no-file-writes', 'dspatch-walked-run').status, 'other-means');
 });
 
 test('a role stating no requirement gets Cursor\u2019s way of saying "no constraint"', () => {

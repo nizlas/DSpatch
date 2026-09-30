@@ -17,10 +17,13 @@ import type {
 } from '../adapter/types';
 import type { StepActivity } from './loop-activity';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from './loop-control';
+import type { DefinitionRowDisplay } from './loop-definition';
 import type { ResolvedRole, RoleReference } from './loop-graph';
 import type { ParsedRunRecord, RecordedRunEnding } from './loop-record';
 import type { RunJournalEntry, RunResult } from './loop-run';
 import type { LiveRunAnnouncement, LoopRunEvent } from './loop-run-view';
+import type { UnsavedDrawingAnswer, UnsavedDrawingOccasion } from './unsaved-drawing';
+import type { DirectoryPage, FileView, WorkspaceView } from './workspace-folders';
 
 /** Versions shown by the renderer. Obtained in the main process, never the renderer. */
 export interface RuntimeVersions {
@@ -96,7 +99,26 @@ export type MenuCommand =
    * Niclas's decision was that clearing out old sample projects is a separate act
    * a person performs, not something that happens on the way past.
    */
-  | 'show-sample-projects';
+  | 'show-sample-projects'
+  /**
+   * Open a standalone `.graph.json` for editing (DSP-85 #6).
+   *
+   * The odd one out, and named here for one reason: it is handled entirely in the main
+   * process — dialog, editor window, delivery — so no window listens for it. It is in this
+   * set because {@link DspatchBridge.pressMenuItem} presses items by command, which is how
+   * a window trial reaches a real menu item at all.
+   */
+  | 'open-graph-file'
+  /**
+   * Show the run journal in the graph editor (DSP-86 #9).
+   *
+   * The journal used to be a pane under the canvas, open whenever there was anything to
+   * put in it. It is diagnostics — a raw list of entries a person reads when something
+   * needs explaining — and it was taking a third of the height of the one view this card
+   * is about. Here it is reachable when wanted and absent the rest of the time, which is
+   * what the card asks for in those words.
+   */
+  | 'show-run-journal';
 
 /** One model the account may request, as the provider named it. */
 export interface ModelChoice {
@@ -1290,7 +1312,168 @@ export type ScriptedScenario =
    * card is about and the guard DSP-61 must not have weakened. It makes no provider
    * call: the refusal comes before an adapter exists.
    */
-  | 'errors-read-well';
+  | 'errors-read-well'
+  /**
+   * DSP-70: the graph on screen before Send is the definition that was chosen.
+   *
+   * Opens a throwaway project that declares a loop of its own, ticks `Use loop`, and
+   * reads which graph reaches the screen for each definition in the list. It makes no
+   * provider call, because which graph is on screen is decided on this machine.
+   */
+  | 'chosen-loop-runs'
+  /**
+   * DSP-79: the window's own loop run files a result and hands it to a second agent.
+   *
+   * Opens a project, ticks `Use loop`, sends one mandate, and then reads the **run
+   * record the main process wrote to disk** for a filed result, two provider sessions
+   * and the first step's words inside the second step's prompt. It makes no provider
+   * call: the run walks through `PresentationAdapter`, whose replies are canned, so
+   * the evidence is about DSpatch's wiring and says nothing about any model.
+   *
+   * It exists because declaring `consumes` on the chat loop made a run given nowhere
+   * to keep results a refusal, and the window's own result store was guarded by no
+   * test at all.
+   */
+  | 'chat-loop-files-a-result'
+  /**
+   * DSP-84: opened, chosen and run are one loop, from the editor to the walk.
+   *
+   * Drives the whole path a person walks and Niclas found broken. It opens a project,
+   * goes to the editor, opens a definition from outside every open folder, presses
+   * `Use this loop`, returns to the chat and reads whether the chooser now lists and
+   * names that same definition — then does it again with a second definition, and
+   * finally sends one mandate and reads the graph the run actually announces.
+   *
+   * It makes no provider call. The one mandate walks through `PresentationAdapter`,
+   * because *which* loop ran is decided entirely on this machine and a model would add
+   * cost and variance to a question it cannot answer.
+   */
+  | 'loop-open-choose-run'
+  /**
+   * DSP-71 and DSP-73: folders that exist, a tree beside the chat, and no steering.
+   *
+   * Two folders open together, one of them holding a directory with more entries
+   * than the cap; a root expanded once and read for what it did *not* pull in; a
+   * text file opened and a binary one refused; a file selected while a loop is
+   * chosen, to show that reading moved nothing. Then the workspace is saved, and the
+   * **second run of the same scenario over one user-data directory** is the restart:
+   * the folders and the definition come back before anything is opened.
+   *
+   * It makes no provider call. Every question here is decided on this machine.
+   * Native file dialogs are not driven — they cannot be, from a renderer — so Open
+   * Folder…, Add Folder to Workspace…, Open Workspace… and Save Workspace As… are
+   * exercised through the same main-process functions the menu items call, with a
+   * path supplied instead of a chooser. What the dialogs themselves do is untested.
+   */
+  | 'folders-and-a-tree'
+  /**
+   * DSP-72: a run given two separate folders and a definition from a third place.
+   *
+   * A project is opened, a saved workspace adds a second folder and names a
+   * `.loop.json` filed outside both, the definition is chosen and its own graph is read
+   * off the bytes on screen, and the sentence the window shows about the folders is
+   * judged for overstating what a folder list is. Then DSpatch's own working copy is
+   * added as a further root and Send is pressed, which must be refused by name.
+   *
+   * It makes no provider call — the refusal happens before an adapter exists, and the
+   * accepted path is deliberately not sent. So it evidences what a run would be *given*
+   * and says nothing about what an agent does with two roots.
+   */
+  | 'several-working-roots'
+  /**
+   * DSP-86: one graph view, before, during and after a run.
+   *
+   * The editor is put into a distinctive view — a zoom nobody lands on by accident, a
+   * scrolled canvas, a selected node — and a chat-loop run is started and walked to its
+   * end without leaving that surface. The same reading is taken before the run starts,
+   * while it is walking, while it is held waiting for the person, and after it has
+   * ended, and the claim under test is that the first and the last are the same view.
+   *
+   * It makes no provider call: the steps walk through `PresentationAdapter`, whose
+   * replies are canned. So it evidences what the graph view does around a run and says
+   * nothing about what an agent produced.
+   */
+  | 'one-graph-view'
+  /**
+   * DSP-87: what the conversation says while a reply is arriving, and what it no
+   * longer says at all.
+   *
+   * A chat-loop run is started from the composer and the window is read repeatedly
+   * *during* the stream — the status beside the composer, the step's own line, the
+   * reply as it grows — because the fault this scenario exists for was a sentence
+   * that was only wrong while text was coming in. A reading taken after the run
+   * would have found the window telling the truth.
+   *
+   * It also searches the whole document for the four passages the card deletes, which
+   * is the difference between wording that is unreachable and wording that is gone.
+   *
+   * No provider call: the steps stream through `PresentationAdapter`, slowed by
+   * `DSPATCH_PRESENTATION_DELTA_MS` so that the middle of a stream is an interval
+   * rather than an instant. So it evidences what the window says about activity it is
+   * receiving and nothing about what an agent produced.
+   */
+  | 'chat-says-less'
+  /**
+   * DSP-90: a run the script stops itself, read while it stops and after it has.
+   *
+   * Separate from `chat-says-less` rather than added to it. That scenario's subject is
+   * a run that is *working*, and its readings are taken over a deliberately slowed
+   * stream; a cancellation partway through it would end the interval it exists to
+   * sample. Two claims about two states, in two runs of a few seconds each.
+   */
+  | 'stop-i-asked-for'
+  /**
+   * DSP-88: an unsaved drawing survives a loop being switched under it.
+   *
+   * With edits on the canvas, the editor's dropdown, **Open loop…** and
+   * **File → Open Graph File…** are each used, and each of the three answers — Save,
+   * Discard changes, Cancel — is given once. Every round reads both halves of the
+   * outcome: what the chooser and the canvas show, and what is on disk. A trial that
+   * established only that a dialog appeared would miss the failure that matters.
+   *
+   * It works against throwaway copies of a loop under the temporary directory, because
+   * *Save* writes a file and the loops in the working copy are not the harness's to
+   * write. No provider call: nothing here starts a run at all.
+   */
+  | 'unsaved-edits-survive-a-switch'
+  /**
+   * DSP-80 and DSP-36: what the graph says a run is doing, and where it ended.
+   *
+   * One walk, read at each state it passes through — standing by, working, held for the
+   * person, working again, ended, standing by again, and a second run starting — with the
+   * browser's own running animations, each node's two bounding boxes and the ending marks
+   * measured at every one of them. Then two dry runs over throwaway copies of one loop
+   * whose only difference is a terminal's `ending` attribute, its label left saying
+   * *Assignment met* in both. That pair is the reading that matters: it is what
+   * distinguishes a tick decided by the recorded outcome and the graph from a tick decided
+   * by a drawing's wording.
+   *
+   * No provider call. Every state comes from the run's own journal and the loop control,
+   * and the glint deliberately depends on neither a reply nor a delta — so the stream is
+   * slowed instead, to make *no new text has arrived* an interval a sample can fall
+   * inside rather than an instant nobody can catch.
+   */
+  | 'liveness-and-an-ending'
+  /**
+   * DSP-80, second pass: how the glint and the pulse are drawn, rather than when.
+   *
+   * Niclas approved the movement and refused the light: the glint read as separate bright
+   * dashes and the pulse was barely noticeable. This scenario is the reading of the
+   * redistribution, and it runs **no loop at all** — that too is his instruction, on the
+   * grounds that a change to the distribution of light cannot break a state rule, so
+   * walking one would cost minutes and prove nothing about it.
+   *
+   * Instead one node is put into the working state and one into the ready state through
+   * `showLivenessForLook`, which sends the same two announcements real callers send
+   * through the same `receiveRunEvent`. The glint is then held still with its leading edge
+   * at a chosen point on the outline — once in the middle of a straight side and once
+   * across a corner — and the frames are captured for a reader that can sample pixels. The
+   * pulse's two extremes and the clearance between its ring and the node's words are
+   * measured here, where no pixels are needed.
+   *
+   * No provider call, no run, no project. Seconds rather than minutes.
+   */
+  | 'how-the-liveness-looks';
 
 export interface ScriptedRunPlan {
   readonly enabled: true;
@@ -1315,6 +1498,51 @@ export interface ScriptedRunPlan {
    */
   readonly nodePath: string | null;
   readonly note: string;
+  /**
+   * The saved workspace `several-working-roots` opens (DSP-72).
+   *
+   * A path rather than a folder list, because opening a workspace file is the one route
+   * by which a definition filed outside every open folder reaches the chooser without a
+   * native dialog. `undefined` for every other scenario.
+   */
+  readonly rootsWorkspaceFile?: string;
+  /** The `purpose` marker that definition's graph carries, read off the bytes on screen. */
+  readonly rootsGraphMarker?: string;
+  /** DSpatch's own working copy, which the same scenario adds in order to be refused. */
+  readonly ownRepositoryPath?: string;
+  /**
+   * The declaration files `loop-open-choose-run` opens in the editor and chooses there.
+   *
+   * Paths rather than a discovery, because the point of the scenario is a definition
+   * reached by hand: at least one of these is filed outside every folder the window has
+   * open, which is the case that could be drawn and not chosen. `undefined` for every
+   * other scenario.
+   */
+  readonly choosableDefinitions?: readonly string[];
+  /**
+   * The graph files behind those declarations, for DSP-88's scenario.
+   *
+   * Given rather than derived, because the reading that matters is what is *on disk* after
+   * each of the three answers, and a trial that worked the path out from the declaration
+   * would be checking its own arithmetic as much as the product. One path per entry in
+   * `choosableDefinitions`, in the same order. `undefined` for every other scenario.
+   */
+  readonly unsavedGraphPaths?: readonly string[];
+  /**
+   * A declaration that reads but cannot run, for the refusal half of DSP-84 #5.
+   *
+   * Broken deliberately by the harness script and filed outside every open folder, so
+   * it is reachable by hand and never discovered. `undefined` for every other scenario.
+   */
+  readonly brokenDefinition?: string;
+  /**
+   * The one graph `how-the-liveness-looks` opens on the canvas.
+   *
+   * Given rather than discovered, because that scenario opens no project at all — which is
+   * most of the reason it costs seconds — so there is no folder tree for it to find a graph
+   * in. `undefined` for every other scenario.
+   */
+  readonly lookGraphPath?: string;
 }
 
 /** Where the renderer's own observations end up. */
@@ -1487,6 +1715,22 @@ export interface DspatchBridge {
    * `DSPATCH_CHAT_RUN` and nowhere else.
    */
   setWindowWidth(width: number): Promise<number>;
+  /**
+   * Ask the window to behave as a person with *reduce motion* set. Scripted runs only.
+   *
+   * DSP-80 requires that reduced motion get a **still marking rather than nothing**, and
+   * that is a claim about what the real stylesheet does under a real media query. A
+   * renderer cannot set `prefers-reduced-motion`; it is the operating system's answer, and
+   * the only honest way to reach it is to have Chromium report the other answer — which is
+   * a main-process capability. The alternative was a trial that read the CSS text and
+   * agreed with it, which would establish that a rule was written and nothing about
+   * whether it applies.
+   *
+   * Answers `false` when the emulation could not be put in place, so a trial can say *not
+   * established* rather than quietly reading the ordinary window and calling it reduced
+   * motion. Registered with the other two — under `DSPATCH_CHAT_RUN` and nowhere else.
+   */
+  emulateReducedMotion(reduce: boolean): Promise<boolean>;
 
   /**
    * Read a loop graph file for the editor.
@@ -1507,6 +1751,20 @@ export interface DspatchBridge {
    * with no instructions.
    */
   resolveLoopRoles(references: readonly RoleReference[]): Promise<readonly ResolvedRoleEntry[]>;
+  /**
+   * Show a role's own file, in the file manager, selected.
+   *
+   * DSP-83 #1. The panel renders the role's text, and a rendered copy is not the file:
+   * the file is where an author fixes a role, and "named and openable" is the criterion.
+   * `root` is the resource root the paths in the graph are measured from — the
+   * definition's, not DSpatch's — and the main process refuses anything that resolves
+   * outside it, because a graph is a file that may be shared and a role path is not a
+   * way to point this window at an arbitrary part of the machine.
+   */
+  revealRoleSource(request: {
+    readonly root: string;
+    readonly path: string;
+  }): Promise<{ readonly revealed: boolean; readonly note: string }>;
   /**
    * Live-run the graph text the editor serialised from the canvas.
    *
@@ -1549,12 +1807,76 @@ export interface DspatchBridge {
    */
   currentLoopRun(): Promise<LiveRunAnnouncement | null>;
   /**
-   * Walk dspatch-chat-loop on the project already open in chat.
+   * Walk the chosen loop definition on the project already open in chat.
    *
    * The composer's text is the entry mandate. Switching Use loop off cancels
    * without resetting files. Editor Run is a different binding.
    */
   startChatLoopRun(request: ChatLoopRunRequest): Promise<ChatLoopRunOutcome>;
+  /**
+   * Which loops this window can offer, from the open project and DSpatch's own folder.
+   *
+   * **A read.** It lists one directory per folder and starts nothing.
+   */
+  listLoopDefinitions(): Promise<LoopDefinitionListing>;
+  /**
+   * Select a definition for the next mandate (DSP-84, DSP-85).
+   *
+   * **It starts nothing.** It records the workspace's one selection, which the chat
+   * follows rather than holding a second of; a definition that cannot run is refused
+   * with the run's own reason and the existing selection is left alone.
+   *
+   * `null` asks for a file chooser first and is DSP-85's **Open loop…**: a declaration
+   * from outside every open folder joins the same list on the same terms as a discovered
+   * one, and it is judged before it is recorded, so *opening* a loop from file and
+   * *choosing* one from the dropdown are one act with one outcome rather than two paths
+   * that can disagree.
+   */
+  chooseLoopDefinition(definitionPath: string | null): Promise<LoopDefinitionChooseOutcome>;
+  /**
+   * Take the graph file the File menu asked to have edited, if there is one.
+   *
+   * DSP-85 #6. The loop editor's own controls are about loops now, so a standalone
+   * `.graph.json` is reached from the File menu — which is in the main process, may be
+   * pressed from either window, and may have to open an editor window that does not
+   * exist yet. So the path waits here and the editor takes it: on mount, and again
+   * whenever {@link DSpatchBridge.onGraphToEdit} fires for an editor already open.
+   *
+   * **Taking clears it**, which is what makes a double delivery open the file once.
+   */
+  takeGraphToEdit(): Promise<string | null>;
+  /** That the File menu has a graph waiting to be edited. The path comes from taking. */
+  onGraphToEdit(listener: () => void): () => void;
+  /**
+   * Tell the main process that the editor is holding unsaved edits to a graph file.
+   *
+   * DSP-86. A chat-loop run reads its graph from disk, and the edited drawing lives in
+   * the editor's window and nowhere else — so without this the main process has no way
+   * to know that starting would walk an older version than the one a person is looking
+   * at. Registering it is what lets {@link DspatchBridge.startChatLoopRun} stop and ask
+   * *save these edits and run them, or cancel* instead of quietly running the file.
+   *
+   * **Two readers since DSP-88.** {@link DspatchBridge.chooseLoopDefinition} and
+   * **File → Open Graph File…** are about to draw something else over this drawing, so
+   * they ask the same question with one more answer — Save, Discard changes, Cancel —
+   * before anything switches. The registration is what both of them read, which is what
+   * keeps one drawing from being described two ways.
+   *
+   * **It writes nothing.** The text is held in memory until one of them asks about it,
+   * and `null` — sent when the drawing is saved, closed or replaced — forgets it again.
+   * The editor's own Save is unchanged and still the ordinary way to write the file.
+   */
+  noteUnsavedDrawing(drawing: UnsavedDrawing | null): Promise<void>;
+  /**
+   * That a graph file the editor has open was written by something other than Save.
+   *
+   * Two senders, both of them the question above answered with *save*: the one at the
+   * start of a run, and the one before the canvas is drawn with something else. The
+   * editor is comparing its drawing against what it last wrote, so a file written behind
+   * it would otherwise stay marked unsaved for ever — and a window claiming unsaved
+   * changes it does not have is the same kind of untruth as one hiding changes it does.
+   */
+  onGraphSavedElsewhere(listener: (saved: GraphSavedElsewhere) => void): () => void;
   cancelChatLoopRun(): Promise<ChatLoopCancelOutcome>;
   onChatLoopJournal(listener: (entry: RunJournalEntry) => void): () => void;
   /**
@@ -1588,7 +1910,7 @@ export interface DspatchBridge {
    * **A read and an announcement, nothing else.** It starts no run, opens no window
    * and writes no file, and it will not displace a run that is walking.
    */
-  prepareChatLoop(chosen: boolean): Promise<ChatLoopPrepareOutcome>;
+  prepareChatLoop(chosen: boolean, definitionKey: string | null): Promise<ChatLoopPrepareOutcome>;
   /**
    * Add a message to the run already walking, rather than starting a second one.
    *
@@ -1633,6 +1955,63 @@ export interface DspatchBridge {
   loopControl(): Promise<LoopControlReport>;
   /** Every change to who decides the next step, in every window. */
   onLoopControl(listener: (report: LoopControlReport) => void): () => void;
+
+  /* --- A workspace of open folders, and a tree beside the chat (DSP-71, DSP-73) --- */
+
+  /** The folders open now, and the loop this workspace chose. A read. */
+  workspaceFolders(): Promise<WorkspaceView>;
+  /** Every change to the open folders, however it was made — menu or window. */
+  onWorkspaceFolders(listener: (view: WorkspaceView) => void): () => void;
+  /**
+   * Add a folder beside the ones already open.
+   *
+   * With no path a native folder chooser opens; with one the folder is added
+   * directly, which is how a scripted trial reaches this at all — a native dialog
+   * cannot be driven from the renderer.
+   *
+   * **What it changes, since DSP-72.** The folder joins what is shown, what is searched
+   * for loop definitions, **and the working folders a loop run is given** — it is passed
+   * to the provider as one of the session's workspace folders, its own rules and skills
+   * load with it, and what changes inside it is measured per root. An ordinary chat
+   * message is unaffected: that path gives the agent the working directory alone.
+   *
+   * The working directory itself does not move. It is the project the chat session
+   * opened, and adding a folder here does not make a different folder primary — which
+   * matters beyond presentation, because the provider scopes its local agent store by
+   * `cwd` and a conversation is resumed against it.
+   *
+   * Until DSP-72 this contract said the call changed "nothing about a run" and named
+   * DSP-72 as where that would be decided. It has been, and this is the answer.
+   */
+  addFolderToWorkspace(folderPath?: string): Promise<WorkspaceView>;
+  /**
+   * Remove a folder from the workspace.
+   *
+   * **The link and nothing else.** No file is deleted, no folder is touched, no
+   * conversation is removed. The run's working copy cannot be removed this way at
+   * all: it is the open project, and closing a project is a different act.
+   */
+  removeFolderFromWorkspace(folderPath: string): Promise<WorkspaceView>;
+  /** Open a saved workspace: its folders, and the loop definition it chose. */
+  openWorkspaceFile(filePath?: string): Promise<WorkspaceView>;
+  /** Save the open folders and the chosen definition to a file. Writes nothing else. */
+  saveWorkspaceFile(filePath?: string): Promise<WorkspaceView>;
+  /**
+   * The children of one directory.
+   *
+   * **One `readdir`, capped, never recursive.** Expanding a folder in the tree asks
+   * this and nothing more; there is no call here that costs what the subtree costs,
+   * which is why a folder with `node_modules` in it is survivable rather than fast.
+   */
+  readWorkspaceDirectory(dirPath: string): Promise<DirectoryPage>;
+  /**
+   * One file, for reading.
+   *
+   * A reading view: binary is refused and an oversized file is truncated, both with
+   * the reason on screen. **Selecting a file changes nothing about a run** — not its
+   * working copy, not its roots, not its session. A tree is a way of looking.
+   */
+  readWorkspaceFile(filePath: string): Promise<FileView>;
 }
 
 /**
@@ -1649,11 +2028,128 @@ export type ChatLoopPrepareOutcome =
   | { readonly kind: 'stood-down' }
   | { readonly kind: 'not-shown'; readonly note: string };
 
-/** Which graph to open: the one Niclas asks for by name, or one he picks. */
+/**
+ * One loop a person can choose, as the window draws it.
+ *
+ * `key` is the declaration file's path, and it is what travels back with a preview and
+ * with a mandate. **The window never names a graph.** It names the definition it was
+ * offered, and the main process resolves that to a graph, a version and a resource
+ * root — which is the whole of DSP-70: what runs is what was chosen, rather than a
+ * constant that happened to agree with the list most of the time.
+ *
+ * `display` is `describeDefinitionRow`'s own fields, passed through rather than
+ * reworded, so the name, origin and per-row error a person reads are the ones the
+ * discovery code built and its tests hold.
+ */
+export interface LoopDefinitionChoice {
+  readonly key: string;
+  readonly definitionId: string | null;
+  /** False for a declaration that did not load. It is still listed, with its error. */
+  readonly usable: boolean;
+  /** What a window offers before the person has chosen. Exactly one row, or none. */
+  readonly preselected: boolean;
+  readonly display: DefinitionRowDisplay;
+}
+
+/**
+ * The loops found beside the folders DSpatch is looking at.
+ *
+ * `problems` are directories that exist and could not be listed — worth saying,
+ * because a folder whose loops are unreadable otherwise looks like a folder with none.
+ */
+export interface LoopDefinitionListing {
+  readonly choices: readonly LoopDefinitionChoice[];
+  readonly problems: readonly string[];
+}
+
+/**
+ * What came of selecting a definition, from the dropdown or from a file.
+ *
+ * DSP-84 made the editor able to select a definition it had open. DSP-85 made that the
+ * *only* way a loop is selected: the editor's dropdown and its **Open loop…** both
+ * arrive here, and the chat has no chooser of its own any more. One channel, because the
+ * two gestures are one act — a loop is chosen and drawn together, and a definition
+ * reached from file joins the same list on the same terms as a discovered one.
+ *
+ * **Selecting is not starting.** Nothing is run, no session is opened and no provider
+ * is called. The workspace records the key, which is the one selection the chat then
+ * follows, so there is one answer to "which loop" rather than two.
+ *
+ * **A definition that cannot run is refused here, by name, and changes nothing.**
+ * `refused` carries the run's own reason at the length a chooser can hold —
+ * `judgeChosenLoop`'s `brief`, from the same three questions the preview and Send ask —
+ * and the previously selected loop stays selected. A silent fall back to a different loop
+ * is the defect, not the remedy.
+ */
+export type LoopDefinitionChooseOutcome =
+  | {
+      readonly kind: 'chosen';
+      readonly key: string;
+      readonly name: string;
+      /** The graph a run will read, so the window can say what a save would affect. */
+      readonly graphPath: string;
+      /** Passed back so the window draws what it just selected without asking again. */
+      readonly listing: LoopDefinitionListing;
+      /**
+       * What became of an unsaved drawing this choice was about to draw over (DSP-88).
+       *
+       * `null` when there was none. Otherwise the answer the person gave, reported by the
+       * process that acted on it rather than inferred in the window from its own `dirty`
+       * flag — the window's sentence about the drawing has to be an account of what
+       * happened to it, and only one of the two knows.
+       */
+      readonly unsavedDrawing: Exclude<UnsavedDrawingAnswer, 'cancel'> | null;
+    }
+  | { readonly kind: 'refused'; readonly key: string; readonly note: string }
+  /**
+   * Nothing was chosen, drawn or recorded.
+   *
+   * Two ways to reach it, and `note` is what tells them apart. A dismissed file chooser
+   * has nothing to say — the person closed a dialog they opened. A **cancel at the
+   * unsaved-drawing question** (DSP-88) does: something was deliberately not done, and
+   * the window has to say that the drawing is still here and the selection has not moved.
+   */
+  | { readonly kind: 'cancelled'; readonly note: string | null };
+
+/**
+ * Which graph to open.
+ *
+ * Two of these name a graph file and three name a loop. The difference is the whole of
+ * DSP-82: a definition is read through the same procedure a run reads it with, so its
+ * graph resolves its roles at the definition's resource root rather than at DSpatch's
+ * own working copy. Opening a `.graph.json` directly remains available and is no longer
+ * the only way in.
+ *
+ * `development-loop` is neither. It opens the **documentation drawing** of the Cursor
+ * process we develop DSpatch with, which is not runnable and is not anybody's chosen
+ * loop. DSP-85 took its button away with the rest of the editor's open buttons: a
+ * drawing that can be neither chosen nor run has no place beside a chooser of loops, and
+ * the File menu opens it like any other graph file. It stays as a request kind because it
+ * is the one standalone graph reachable without a dialog, which is what lets a scripted
+ * check open one at all.
+ */
 export type LoopGraphOpenRequest =
   | { readonly kind: 'development-loop' }
+  /** A dialog taking either kind. Since DSP-85 the File menu's, not the editor's. */
   | { readonly kind: 'pick' }
-  | { readonly kind: 'path'; readonly path: string };
+  | { readonly kind: 'path'; readonly path: string }
+  /** A `.loop.json`, opened as the loop it declares. */
+  | { readonly kind: 'definition'; readonly path: string }
+  /** Whatever loop this workspace has chosen, with no dialog. */
+  | { readonly kind: 'chosen-loop' };
+
+/**
+ * The declaration a graph was reached through, when it was reached through one.
+ *
+ * Absent means the graph was opened directly, which is a different thing and reads as
+ * one — not as a loop whose name is missing.
+ */
+export interface OpenedLoopDefinition {
+  readonly id: string;
+  readonly name: string;
+  /** The declaration file. Deliberately not what a save writes to. */
+  readonly path: string;
+}
 
 /**
  * A role reference and what it resolved to, `null` meaning it resolves to nothing.
@@ -1676,9 +2172,16 @@ export type LoopGraphOpenOutcome =
       readonly text: string;
       /** Preserved on save, so moving a node does not rewrite every line. */
       readonly newline: '\n' | '\r\n';
-      /** Role paths are relative to this, not to the graph file. */
+      /**
+       * Role paths are relative to this, not to the graph file.
+       *
+       * The definition's resource root when there is a definition, so a loop declared
+       * outside DSpatch reaches its own roles.
+       */
       readonly projectRoot: string;
       readonly roles: readonly ResolvedRoleEntry[];
+      /** Present when a `.loop.json` was the way in. */
+      readonly definition?: OpenedLoopDefinition;
     }
   | { readonly kind: 'cancelled' }
   | {
@@ -1696,6 +2199,34 @@ export type LoopGraphSaveOutcome =
   | { readonly kind: 'written'; readonly path: string; readonly bytes: number; readonly atUtc: string }
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'failed'; readonly note: string };
+
+/**
+ * A graph the editor has edited and not written yet (DSP-86).
+ *
+ * `text` is the same serialisation Save would write, so answering *save and run* writes
+ * exactly the bytes the person is looking at rather than a second rendering of them.
+ */
+export interface UnsavedDrawing {
+  /** The graph file, which is what a run reads and what Save writes. */
+  readonly path: string;
+  readonly text: string;
+  /** For the question the person is asked. A path alone does not say which loop. */
+  readonly graphName: string;
+}
+
+/**
+ * A graph file written by the question DSpatch asks before it loses a drawing.
+ *
+ * Two senders since DSP-88, which is why the occasion travels with it: the save-or-cancel
+ * at the start of a run, and the save-or-discard before the canvas is drawn with
+ * something else. The editor has to say which one wrote its file, because *the run is
+ * walking these changes* is true of exactly one of them.
+ */
+export interface GraphSavedElsewhere {
+  readonly path: string;
+  readonly text: string;
+  readonly occasion: UnsavedDrawingOccasion;
+}
 
 /** The canvas, serialised, which is what a live run from the editor walks. */
 export interface EditorLoopRunRequest {
@@ -1742,6 +2273,14 @@ export interface LoopEditorWindowOutcome {
 export interface ChatLoopRunRequest {
   readonly runId: string;
   readonly mandate: string;
+  /**
+   * The declaration the person chose, by file path.
+   *
+   * `null` means they have not chosen and the main process offers the same default the
+   * listing marked `preselected` — one rule in one place, so the row a window shows as
+   * chosen and the row a send actually walks cannot be two different rows.
+   */
+  readonly definitionKey?: string | null;
 }
 
 /**
@@ -1814,6 +2353,20 @@ export interface ChatLoopReply {
   readonly text: string;
   /** The provider run's terminal status, or `null` if it never reported one. */
   readonly terminalStatus: string | null;
+  /**
+   * What this step was sent, whole, exactly as the record keeps it.
+   *
+   * DSP-94, from DSP-92's F5. The prompt was already written to
+   * `RecordedAgentReply.prompt` on the same call that produced this event and no
+   * user-facing surface read it, so *what was this step actually told* was a question
+   * answerable only by opening a JSONL file under `%APPDATA%`. It travels here from the
+   * same `LiveAgentReply.prompt` the record line is written from, so the conversation
+   * and the file cannot show two different messages for one call.
+   *
+   * Optional, because a caller that does not know it must not claim an empty message:
+   * absent is *not recorded* and never *nothing was sent*.
+   */
+  readonly prompt?: string;
 }
 
 /** A message typed into a run that is already walking. */
@@ -1901,9 +2454,11 @@ export type BridgeChannel =
   | 'dspatch:press-menu-item'
   | 'dspatch:capture-window'
   | 'dspatch:set-window-width'
+  | 'dspatch:emulate-reduced-motion'
   | 'dspatch:open-loop-graph'
   | 'dspatch:save-loop-graph'
   | 'dspatch:resolve-loop-roles'
+  | 'dspatch:reveal-role-source'
   | 'dspatch:open-loop-editor'
   | 'dspatch:start-editor-loop-run'
   | 'dspatch:cancel-editor-loop-run'
@@ -1915,6 +2470,12 @@ export type BridgeChannel =
   | 'dspatch:chat-loop-reply'
   | 'dspatch:chat-loop-activity'
   | 'dspatch:prepare-chat-loop'
+  | 'dspatch:list-loop-definitions'
+  | 'dspatch:choose-loop-definition'
+  | 'dspatch:take-graph-to-edit'
+  | 'dspatch:graph-to-edit'
+  | 'dspatch:note-unsaved-drawing'
+  | 'dspatch:graph-saved-elsewhere'
   | 'dspatch:add-loop-instruction'
   | 'dspatch:loop-instruction-event'
   | 'dspatch:list-run-records'
@@ -1922,4 +2483,12 @@ export type BridgeChannel =
   | 'dspatch:read-loop-control'
   | 'dspatch:request-loop-pause'
   | 'dspatch:continue-loop'
-  | 'dspatch:set-loop-mode';
+  | 'dspatch:set-loop-mode'
+  | 'dspatch:workspace-folders'
+  | 'dspatch:workspace-folders-changed'
+  | 'dspatch:add-workspace-folder'
+  | 'dspatch:remove-workspace-folder'
+  | 'dspatch:open-workspace-file'
+  | 'dspatch:save-workspace-file'
+  | 'dspatch:read-workspace-directory'
+  | 'dspatch:read-workspace-file';

@@ -24,6 +24,7 @@ import {
   NODE_RUN_STATE_MARKS,
   UNVERSIONED_CANVAS,
   applyRunEvent,
+  describePinnedDrawing,
   describeRunView,
   edgesTakenIn,
   eventBelongsTo,
@@ -31,6 +32,7 @@ import {
   nodeRunStateFor,
   nodeRunStates,
   runViewFor,
+  runViewState,
   viewIsLocked,
   type LiveRunAnnouncement,
   type LoopRunEvent,
@@ -366,17 +368,53 @@ describe('waiting, running, done and failed are told apart without animation', (
   });
 });
 
-describe('a view of a run is a view, not a drawing board', () => {
-  it('is locked while a run is on screen, and after it has ended', () => {
+describe('the graph is locked by a run and unlocked by its ending', () => {
+  it('is locked while a run walks, and unlocked the moment it ends', () => {
     const run = announcement();
     const view = runViewFor(run);
     assert.equal(viewIsLocked(view), true, 'a graph you can edit while it runs no longer describes the run');
+    /*
+     * DSP-86 #5 and #7, and this assertion is the card's whole point in one line.
+     *
+     * DSP-28 kept an ended run locked on the ground that leaving its drawing should be a
+     * deliberate act rather than a side effect of the run stopping. That reasoning was
+     * about a *separate view* the person had been switched into, and there is no longer
+     * one: the editor never went anywhere, so a lock that outlives the run is a lock only
+     * a button can lift — which is the button the card exists to remove.
+     */
     assert.equal(
       viewIsLocked(feed(view, ended(run, 'completed'))),
-      true,
-      'and what is on screen after the run is still that run\'s drawing, not the author\'s copy',
+      false,
+      'the run ending is what returns the graph to its author; no button should be needed',
     );
     assert.equal(viewIsLocked(null), false, 'with no run on screen the editor is an editor again');
+  });
+
+  /*
+   * A pause, and a step waiting for a person, are runs that have not ended. Both had to be
+   * checked rather than assumed, because both are states in which nothing is happening —
+   * and "nothing is happening" is exactly what would tempt a future reader to unlock.
+   */
+  it('keeps the lock while a run waits for a person', () => {
+    const run = announcement();
+    const waiting = feed(runViewFor(run), journal(run, entry('awaiting-human', 'coordinator')));
+    assert.equal(
+      viewIsLocked(waiting),
+      true,
+      'a run waiting for an answer is still a run, and its drawing is still the one walking',
+    );
+  });
+
+  /*
+   * `Use loop` announces the chosen loop as a stand-by offer the moment it is ticked, and
+   * under the old rule that locked the editor — ticking a box in the chat window disabled
+   * editing in the graph view for as long as it stayed ticked. It also had to stop locking
+   * for #6 to be possible at all: the Ready pulse returning after a run must return to a
+   * graph a person can edit.
+   */
+  it('does not lock for a loop that is merely standing by', () => {
+    const offer = runViewFor(announcement({ phase: 'ready' }));
+    assert.equal(viewIsLocked(offer), false, 'choosing a loop starts nothing and locks nothing');
   });
 
   /*
@@ -400,7 +438,30 @@ describe('a view of a run is a view, not a drawing board', () => {
     assert.match(said, /graph-9f3a2c/, 'the content version is the point: a name identifies nothing');
     assert.match(said, new RegExp(run.runId.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.match(said, /locked/);
-    assert.match(said, /Leaving changes nothing about the run/, 'because looking is not doing');
+    /*
+     * DSP-84 asserted *Leaving changes nothing about the run*, because there was a run
+     * view to leave. There is not, so the sentence would be an instruction to press
+     * something that no longer exists. What it had to keep saying is the half that is
+     * still true and still the reason for the lock — a run holds the drawing it started
+     * with — and the half that replaces it: the lock lifts on its own.
+     */
+    assert.match(
+      said,
+      /keeps the drawing it started with/,
+      `the pin is why the lock exists, and it outlived the view. It said: ${said}`,
+    );
+    assert.match(said, /nothing you do here stops it/, 'because looking is not doing');
+    assert.doesNotMatch(
+      said,
+      /leave the run view/i,
+      'there is no run view to leave, so telling a person to leave one is an instruction to nowhere',
+    );
+  });
+
+  it('says a finished run has given the graph back', () => {
+    const run = announcement();
+    const said = explainRunView(feed(runViewFor(run), ended(run, 'completed')) as RunView);
+    assert.match(said, /yours to edit again/, `it said: ${said}`);
   });
 
   it('does not pretend a dry run of the unsaved canvas has a content version', () => {
@@ -416,10 +477,138 @@ describe('a view of a run is a view, not a drawing board', () => {
   it('says a chosen loop is ready rather than running', () => {
     const view = runViewFor(announcement({ phase: 'ready', graphName: 'Chat loop' }));
     const said = describeRunView(view);
-    assert.match(said, /ready for a mandate/);
+    assert.match(said, /ready for a task/);
     assert.ok(
       !/running/.test(said),
       `a loop standing by must not read as work in progress. It said: ${said}`,
     );
+  });
+
+  /*
+   * The header appends `runViewState` to the name of the drawing on screen, and the
+   * sentence about a run is `describeRunView`. Two readers, and they have to be reading
+   * one function or a window can say *running* in one place and *ended* in another about
+   * one run — which is DSP-26 #1 in miniature and exactly what DSP-28 found first.
+   */
+  it('builds the sentence out of the state word, so a header cannot disagree with it', () => {
+    const run = announcement({ graphName: 'Chat loop' });
+    const view = runViewFor(run);
+    assert.ok(describeRunView(view).endsWith(runViewState(view)));
+    const finished = feed(view, ended(run, 'completed')) as RunView;
+    assert.equal(runViewState(finished), 'ended (completed)');
+    assert.ok(describeRunView(finished).endsWith(runViewState(finished)));
+  });
+});
+
+/*
+ * What "the run pins its version" means once the view stops changing.
+ *
+ * DSP-28 made the pin visible by replacing the canvas with the run's own drawing, so a
+ * person could see that the picture was not theirs. DSP-86 abolishes that replacement,
+ * which left the pin needing a way to be *reported* rather than *displayed*. The pin
+ * itself is untouched — the run still holds the bytes it started with — and these are
+ * the sentences that say so when, and only when, the drawing in front of a person is not
+ * those bytes.
+ */
+describe('the run pins a version, and the window says so when the drawing is not it', () => {
+  it('says nothing at all when the drawing on screen is the version that is running', () => {
+    assert.equal(
+      describePinnedDrawing(runViewFor(announcement()), 'same'),
+      null,
+      'a sentence on every ordinary run is the footnote DSP-86 deleted; agreement is not news',
+    );
+    assert.equal(describePinnedDrawing(null, 'different'), null, 'with no run there is no pin');
+  });
+
+  it('names the pinned version and warns that the marks belong elsewhere', () => {
+    const said = describePinnedDrawing(
+      runViewFor(announcement({ graphVersionId: 'graph-9f3a2c', graphName: 'Chat loop' })),
+      'different',
+    );
+    assert.ok(said !== null);
+    assert.match(said, /graph-9f3a2c/, 'the pinned version is the identity, not the name');
+    assert.match(
+      said,
+      /not looking at/,
+      `a person has to be told the marks are about another graph, or they will read them as ` +
+        `being about this one. It said: ${said}`,
+    );
+  });
+
+  /*
+   * Three answers rather than two. Reporting *we could not read the pinned bytes* as
+   * *they differ* would be inventing a disagreement nobody measured, which is the class
+   * of claim this whole module is written against.
+   */
+  it('keeps unreadable apart from different', () => {
+    const view = runViewFor(announcement());
+    const unreadable = describePinnedDrawing(view, 'unreadable');
+    assert.ok(unreadable !== null);
+    assert.match(unreadable, /could not read/);
+    assert.doesNotMatch(
+      unreadable,
+      /is not that version/,
+      'not knowing is not the same claim as knowing they differ',
+    );
+  });
+
+  it('does not offer a content version for a dry run of the canvas', () => {
+    const said = describePinnedDrawing(
+      runViewFor(announcement({ graphVersionId: UNVERSIONED_CANVAS })),
+      'different',
+    );
+    assert.ok(said !== null);
+    assert.doesNotMatch(said, /canvas-unversioned/, 'the placeholder is not an identity to print');
+    assert.match(said, /as it was when it started/, `it said: ${said}`);
+  });
+
+  /*
+   * A stand-by offer is not a run, and the sentence must not say one is walking. This is
+   * the case a graph file opened from File → Open Graph File… produces: the chooser still
+   * names the chosen loop, the canvas holds something else, and what a run would use
+   * is the loop rather than the drawing.
+   */
+  it('says which loop a run would use when the drawing is not that loop', () => {
+    const said = describePinnedDrawing(
+      runViewFor(announcement({ phase: 'ready', graphName: 'Chat loop' })),
+      'different',
+    );
+    assert.ok(said !== null);
+    assert.match(said, /Chat loop/);
+    assert.match(said, /A run uses the chosen loop/, `it said: ${said}`);
+    assert.doesNotMatch(said, /running|is walking/, 'nothing has been started');
+  });
+});
+
+/*
+ * The title line and the control beside it, saying one thing about one run.
+ *
+ * Report 024 left this open: the editor's title read `running now` while the control
+ * an inch to its left read `Waiting for you`. Neither was false — the run had not
+ * ended, and a step was held — but they answer different questions and sit close
+ * enough to read as one answer. `runViewState` now takes the control's phase, and the
+ * guard that matters is the second test: a phase belonging to another run is exactly
+ * the mis-addressing that produced the card this work is under.
+ */
+describe('the title line says held when the control says held', () => {
+  it('reads the hold, the pause and the pause not yet arrived', () => {
+    const view = runViewFor(announcement());
+    assert.equal(runViewState(view, 'waiting-for-you'), 'waiting for you');
+    assert.equal(runViewState(view, 'paused'), 'paused');
+    assert.match(runViewState(view, 'pause-requested'), /^running now, and stopping/);
+    assert.equal(runViewState(view, 'running'), 'running now');
+    assert.equal(runViewState(view, 'ready'), 'running now');
+  });
+
+  it('an ended run is ended whatever the control is left saying', () => {
+    const run = announcement();
+    const finished = feed(runViewFor(run), ended(run, 'completed')) as RunView;
+    assert.equal(runViewState(finished, 'waiting-for-you'), 'ended (completed)');
+  });
+
+  it('omitting the phase leaves every caller written before this unchanged', () => {
+    const view = runViewFor(announcement());
+    assert.equal(runViewState(view), 'running now');
+    assert.ok(describeRunView(view).endsWith(runViewState(view)));
   });
 });

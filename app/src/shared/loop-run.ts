@@ -36,15 +36,42 @@
  * provider to call, so it *cannot* spend a turn rather than being trusted not to.
  */
 
-import type { LoopEdge, LoopGraph, LoopNode, StepLimits } from './loop-graph';
+import type { LoopEdge, LoopGraph, LoopNode, ResultForm, StepLimits } from './loop-graph';
 import { isWorkStep, stepWorkFor, type StepHold, type StepRef } from './loop-control';
+import {
+  bodyBytes,
+  resultHandedOver,
+  storedResultRef,
+  type OutcomeSource,
+  type ProducedOutcome,
+  type RecordedResult,
+  type ResultStore,
+} from './loop-results';
 
 /** What a step produced, in the only four shapes the runner understands. */
 export type StepProduct =
   /** Done, nothing to branch on. Routes on the node's `success` edge. */
   | { readonly kind: 'success' }
-  /** One of the node's declared `outcomes`: a router's branch, a gate's verdict. */
-  | { readonly kind: 'outcome'; readonly outcome: string }
+  /**
+   * One of the node's declared `outcomes`: a router's branch, a gate's verdict.
+   *
+   * `source` is DSP-103 #5 and it changes no routing: the edge taken for an outcome is
+   * the same whoever chose it. What it changes is what the record and the next step can
+   * say.
+   *
+   * **Absent means nobody recorded it, and is read as `unknown`** (#8). It used to mean
+   * `step-declared`, which put a gate's exit code, a router's branch and every product a
+   * caller had not thought about on record as an agent's own verdict. Every producer in
+   * this build states its own instead (#9) — the reply's declared line, the engine's
+   * fallback, a gate's command, a router's configuration, a dry run standing in — so an
+   * absence here is a product from something that did not, and the record says that much
+   * and no more.
+   */
+  | {
+      readonly kind: 'outcome';
+      readonly outcome: string;
+      readonly source?: OutcomeSource;
+    }
   /** One of the node's `declaredFailures`. The dashed arrow, and it routes. */
   | { readonly kind: 'declared-failure'; readonly failure: string }
   /**
@@ -78,6 +105,24 @@ export const RUNTIME_FAULT_KINDS = [
   'no-edge-for-product',
   /** An edge points at a node that is not in the graph. */
   'edge-target-missing',
+  /**
+   * A step that had to leave a result left none, or a step that had to receive one
+   * could not be given it.
+   *
+   * Its own kind rather than `no-outcome-delivered`, and the difference is what the
+   * reconcile sentence can then say: *which* result was required, where it was
+   * expected and who was to file it. A step that produced a perfectly routable outcome
+   * and filed nothing is not a step that delivered no outcome — it is a step whose
+   * outcome says the work is done and whose evidence is absent, which is the more
+   * dangerous of the two and used to be the silent one.
+   *
+   * **Deliberately not an edge.** The format refuses a declared failure named
+   * `missing-report`, `no-result` or `not-delivered`, and that refusal is right: an
+   * edge routes onward, and a missing required result is exactly the case where
+   * nothing should route onward. Under `stop-and-reconcile` the run stops and a person
+   * establishes what happened, which is more explicit than a branch, not less.
+   */
+  'required-result-missing',
   /** The run made more transitions than the runner will make. A cycle with no exit. */
   'transition-budget-spent',
 ] as const;
@@ -92,6 +137,66 @@ export interface RuntimeFault {
   readonly detail: string;
   /** What a person has to establish before anything is repeated. */
   readonly reconcile: string;
+}
+
+/**
+ * The edge the run took to get here, as the arriving step's own address for it.
+ *
+ * DSP-100. The walk always knew which edge it had just taken and threw the fact away at
+ * the top of the next iteration, so a step could not be told why it was there and the
+ * inputs it was given could not depend on how it was reached. `null` for the entry node,
+ * which nothing routed to.
+ */
+export interface ArrivalRef {
+  readonly edgeId: string;
+  /** The node the run came from. */
+  readonly from: string;
+  /**
+   * Which visit of `from` produced the outcome that took this edge.
+   *
+   * The half of the binding nothing else can supply. "The latest result of that node" is
+   * the same answer almost always and is the wrong question: what routed the run here is
+   * one particular visit, and on the third pass round a loop the difference is a review
+   * of the wrong attempt.
+   */
+  readonly fromOccurrence: number;
+  readonly label: string | null;
+  /** What the edge says it delivers, or `null` where it says nothing and the node decides. */
+  readonly delivers: readonly string[] | null;
+}
+
+/** Which earlier steps this step is given, and what decided. */
+export interface StepInputs {
+  /** Node ids, in the order the deciding declaration lists them. */
+  readonly ids: readonly string[];
+  /** `edge` when the arrival declared them; `node` when the node's own `consumes` did. */
+  readonly from: 'edge' | 'node';
+  /** The edge that decided, or `null` when the node did. */
+  readonly edgeId: string | null;
+}
+
+/**
+ * What a step receives, decided by the edge that brought the run to it.
+ *
+ * The whole rule, in one place and as a pure function, because it is the sentence the
+ * card is about and it should be readable and testable without a walk around it:
+ * **an arrival that says what it delivers decides; one that says nothing leaves the
+ * node's own `consumes` deciding, exactly as before.**
+ *
+ * An edge's empty list is a statement and not an absence: *this arrival hands over
+ * nothing*. That is how a graph says a first visit needs no earlier result while a later
+ * arrival at the same node needs one, which is the case that stopped runs at their first
+ * step before the field existed. `undefined` — the field not written at all — is the
+ * silence that falls back, so every graph drawn before DSP-100 is untouched.
+ */
+export function inputsFor(
+  node: Pick<LoopNode, 'consumes'>,
+  arrival: Pick<ArrivalRef, 'edgeId' | 'delivers'> | null,
+): StepInputs {
+  if (arrival !== null && arrival.delivers !== null) {
+    return { ids: arrival.delivers, from: 'edge', edgeId: arrival.edgeId };
+  }
+  return { ids: node.consumes ?? [], from: 'node', edgeId: null };
 }
 
 /** What the runner hands an executor. Everything a step needs and nothing else. */
@@ -110,6 +215,21 @@ export interface StepContext {
   /** Where this step's report belongs, and who writes it. Computed from `archive` and `report`. */
   readonly archive: ArchivePlacement | null;
   /**
+   * How the run got here, or `null` at the entry node. See {@link ArrivalRef}.
+   */
+  readonly arrivedBy: ArrivalRef | null;
+  /**
+   * The earlier results this step was given, in the order the deciding declaration
+   * lists them.
+   *
+   * One entry per id in {@link inputsFor}'s answer — the arriving edge's `delivers`
+   * where it has one, and the node's own `consumes` otherwise — each resolved within
+   * *this run* to a particular visit of that node. Never partial: an input that has
+   * been left nothing stops the run before the step starts, because a step handed an
+   * empty report would go on to do work about nothing.
+   */
+  readonly received: readonly RecordedResult[];
+  /**
    * Write one line into the run's journal while this step is still running.
    *
    * The entry is recorded against this node and reaches every reader the walk's
@@ -127,6 +247,14 @@ export interface ArchivePlacement {
   readonly writtenBy: string;
   /** True when the producing node cannot file its own entry — the 15 September mistake. */
   readonly writtenByAnotherNode: boolean;
+  /**
+   * Where `path` actually is, once the run has somewhere to keep its results.
+   *
+   * `null` in a run with no store, which is what a dry run is: the placement is still
+   * computed and still reported, because saying what a real run *would* file is the
+   * whole value of a dry run, and there is simply nowhere for it to be.
+   */
+  readonly location: string | null;
 }
 
 export interface StepExecution {
@@ -138,8 +266,18 @@ export interface StepExecution {
    * provider, not because it chose not to bill.
    */
   readonly providerTurns: number;
-  /** A reference to what it produced, when there is one. */
-  readonly archiveRef?: string;
+  /**
+   * The body of what this step produced, whole, when the runner is the one to file it.
+   *
+   * One string, handed over once. The runner writes exactly these bytes and records
+   * exactly this string, so the copy on disk and the copy anything shows are the same
+   * copy — a step that returned a body here and *also* wrote its own summary somewhere
+   * would be the shape this field exists to make unnecessary.
+   *
+   * Ignored where the graph says the node files its own entry: there the file is
+   * canonical and the runner reads it rather than writing beside it.
+   */
+  readonly resultBody?: string;
 }
 
 export type StepExecutor = (context: StepContext) => Promise<StepExecution>;
@@ -189,6 +327,15 @@ export const JOURNAL_KINDS = [
   'waiting-for-person',
   /** The wait ended, with how long it took and what the person said. */
   'person-answered',
+  /**
+   * A step's required result was filed, or found where the graph said it would be.
+   *
+   * Its own line rather than a field on `node-produced`, because the two answer
+   * different questions and can disagree: a step can produce a routable outcome and
+   * leave nothing, which is the case this whole mechanism exists for. A reader
+   * reconstructing a run needs to see the outcome and the evidence as two statements.
+   */
+  'result-filed',
 ] as const;
 export type JournalKind = (typeof JOURNAL_KINDS)[number];
 
@@ -267,6 +414,15 @@ export interface RunResult {
   /** Why the runner refused to start. */
   readonly refusal: string | null;
   readonly usage: RunUsage;
+  /**
+   * What the run's steps left, in the order they left it.
+   *
+   * The run record's own copy, so a result is retrievable by run, node and visit
+   * without going back to the filesystem — `resultOfVisit` is the lookup. A run whose
+   * graph asks for nothing carries an empty list and is unchanged by this field's
+   * existence.
+   */
+  readonly results: readonly RecordedResult[];
   readonly journal: readonly RunJournalEntry[];
 }
 
@@ -370,6 +526,18 @@ export interface RunOptions {
   readonly maxTransitions?: number;
   /** Called with each entry as it is journalled, so a caller can stream it to disk. */
   readonly onJournalEntry?: (entry: RunJournalEntry) => void;
+  /**
+   * Where the results this graph requires are filed and looked for.
+   *
+   * Left out, nothing is filed and nothing is checked — which is exactly right for a
+   * graph that requires nothing, and is refused for one that does. A live run that
+   * required results and was given nowhere to keep them would either lose them or
+   * report a check it never made, and both are the silence this card exists to end. A
+   * dry run is the one exception and says so in its journal: it has no store because
+   * it reaches no filesystem at all, so it reports the placement a real run would use
+   * and writes nothing at it.
+   */
+  readonly resultStore?: ResultStore;
 }
 
 const DEFAULT_MAX_TRANSITIONS = 200;
@@ -388,6 +556,7 @@ function archivePlacement(
   node: LoopNode,
   runId: string,
   callId: number,
+  store: ResultStore | undefined,
 ): ArchivePlacement | null {
   const archive = graph.archive;
   if (!archive) {
@@ -396,11 +565,234 @@ function archivePlacement(
   const base = (node.report?.path ?? archive.path).replaceAll('<run-id>', runId);
   const writtenBy = node.report?.writtenBy ?? 'self';
   const sequence = String(callId).padStart(3, '0');
+  const path = `${base}${base.endsWith('/') ? '' : '/'}${sequence}-${node.id}.md`;
   return {
-    path: `${base}${base.endsWith('/') ? '' : '/'}${sequence}-${node.id}.md`,
+    path,
     writtenBy: writtenBy === 'self' ? node.id : writtenBy,
     writtenByAnotherNode: writtenBy !== 'self',
+    location: store?.locate(path) ?? null,
   };
+}
+
+/**
+ * Whether this graph needs somewhere to keep results, which decides whether a run
+ * without a store may start at all.
+ *
+ * **Two halves, and the second was missing until a real graph declared both.** A node
+ * that must *leave* a result obviously needs a store. So does a node that *receives*
+ * one: the result it is waiting for can only arrive through the store, so a run with
+ * nowhere to file would reach that node, find nothing, and stop with a fault blaming
+ * the producing step for an absence the run made certain of before it started. The
+ * graph is fine; the run was never equipped.
+ *
+ * Found by declaring `produces` and `consumes` on `dspatch-development-loop` and
+ * `dspatch-chat-loop` — the first shipped graphs to use either — which is precisely
+ * what DSP-74's report said fixtures would not find.
+ *
+ * The edges are asked too (DSP-100). A drawing can now hand work over on the arrival
+ * alone, with no node declaring `consumes` at all, and such a run needs a store for
+ * exactly the reason above: the result can only arrive through one.
+ */
+function requiresAResult(graph: LoopGraph): boolean {
+  return (
+    graph.nodes.some(
+      (node) =>
+        (node.produces?.required === true && node.produces.form !== 'none') ||
+        (node.consumes?.length ?? 0) > 0,
+    ) || graph.edges.some((edge) => (edge.delivers?.length ?? 0) > 0)
+  );
+}
+
+/**
+ * Why there is no usable body here, or `null` when there is one.
+ *
+ * The **only** place the runner looks inside a result, and all it looks for is whether
+ * anything is in it. A file of blank lines is not a result: there is nothing for a
+ * later step to read and nothing for a person to check, and accepting it would be the
+ * silence this whole mechanism exists to end, wearing a filename.
+ *
+ * One function so the rule is one rule. It used to be written twice, and the two copies
+ * did not agree: a runner-filed body of whitespace stopped the run while a *self-filed*
+ * file containing exactly the same whitespace was accepted, so the same content meant
+ * two different things depending on who wrote it and nothing said so.
+ *
+ * Note what it still does not do. It does not ask whether the body is long enough, has
+ * the right sections, or describes the work — that is judgement, and judgement belongs
+ * to the appointed agents or to the person.
+ */
+function noUsableBody(body: string | undefined): string | null {
+  if (body === undefined) {
+    return 'It handed back no body at all.';
+  }
+  if (body.trim() === '') {
+    return (
+      `What is there is nothing but whitespace, which is not a result: there is nothing ` +
+      `for a later step to read and nothing for a person to check.`
+    );
+  }
+  return null;
+}
+
+/**
+ * What a step left, or the fault that says it did not.
+ *
+ * The whole of the runner's judgement about results, and the list of what it does
+ * **not** do is the important half: it does not measure a body, does not compare one
+ * against a schema and does not care what the work was. It asks whether the result is
+ * there — see {@link noUsableBody} for the whole of what "there" means — and whether it
+ * belongs to this run, this node and this visit. Everything past that belongs to the
+ * appointed agents or to the person.
+ */
+function settleResult(input: {
+  readonly node: LoopNode;
+  readonly runId: string;
+  readonly occurrence: number;
+  readonly callId: number;
+  readonly placement: ArchivePlacement | null;
+  readonly execution: StepExecution;
+  readonly store: ResultStore | undefined;
+}): { readonly record: RecordedResult | null; readonly fault: RuntimeFault | null } {
+  const { node, placement, store } = input;
+  const policy = node.produces;
+  const nothing = { record: null, fault: null };
+  if (policy === undefined || policy.form === 'none' || store === undefined) {
+    return nothing;
+  }
+  const bind = (
+    form: Exclude<ResultForm, 'none'>,
+    parts: {
+      readonly ref: string;
+      readonly path: string | null;
+      readonly digest: string;
+      readonly bytes: number;
+      readonly body: string;
+      readonly filedByTheRunner: boolean;
+    },
+  ): { readonly record: RecordedResult; readonly fault: null } => {
+    // The outcome travels with the body (DSP-103 #5), because the step that receives
+    // this is given the record and nothing else: without it, "the implementer said it
+    // was done" and "the implementer said nothing and the run routed it" arrive in the
+    // same shape, and the receiving step has no way to ask.
+    const produced = producedOutcomeOf(input.execution.product);
+    return {
+      record: {
+        runId: input.runId,
+        nodeId: node.id,
+        occurrence: input.occurrence,
+        callId: input.callId,
+        form,
+        ...(produced === null ? {} : { outcome: produced }),
+        filedBy: placement?.writtenBy ?? node.id,
+        ...parts,
+      },
+      fault: null,
+    };
+  };
+  const missing = (detail: string, reconcile: string): { record: null; fault: RuntimeFault } => ({
+    record: null,
+    fault: { kind: 'required-result-missing', nodeId: node.id, detail, reconcile },
+  });
+  const whoAndWhere = (where: string): string =>
+    `"${node.id}" (visit ${String(input.occurrence)}, call ${String(input.callId)}) was to leave ` +
+    `a result ${where}, and the graph marks it required.`;
+  const stopped =
+    `The run stopped here rather than treating the absence as a delivery, and nothing was ` +
+    `repeated. Establish whether the step did the work and failed to file it, or did not do ` +
+    `it: those need different answers, and the step's own outcome cannot tell them apart. ` +
+    `Do not treat this as a declared failure: no edge was taken.`;
+
+  if (policy.form === 'stored-result') {
+    const body = input.execution.resultBody;
+    const unusable = noUsableBody(body);
+    if (unusable !== null || body === undefined) {
+      return policy.required
+        ? missing(`${whoAndWhere('in the run record')} ${unusable ?? ''}`.trim(), stopped)
+        : nothing;
+    }
+    return bind('stored-result', {
+      ref: storedResultRef(input.runId, node.id, input.occurrence),
+      path: null,
+      digest: store.digest(body),
+      bytes: bodyBytes(body),
+      body,
+      filedByTheRunner: true,
+    });
+  }
+
+  // A markdown file, and the graph has to have said where. Validation refuses a node
+  // that requires one with nowhere for it to land, so reaching this is a graph that was
+  // never validated — which the runner has to survive rather than assume away.
+  if (placement === null) {
+    return missing(
+      `${whoAndWhere('as a Markdown file')} This graph declares no archive and this node no ` +
+        `report path, so there is nowhere the file could be and nothing to check.`,
+      `The graph is at fault, not the step. Give the graph an "archive" path, or the node a ` +
+        `"report": {"path": "..."}, and validate it before running it again. ${stopped}`,
+    );
+  }
+
+  // Who files it decides what happens here, and this is `report.writtenBy` finally being
+  // acted on. A node the graph says cannot write has its body written **by the runner**,
+  // at the placement the graph computed — the 15 September mistake, closed. A node that
+  // files its own is checked for presence and nothing else: the file it wrote is the
+  // canonical body, and the runner reads it rather than writing a second one beside it.
+  if (placement.writtenByAnotherNode) {
+    const body = input.execution.resultBody;
+    const unusable = noUsableBody(body);
+    if (unusable !== null || body === undefined) {
+      return policy.required
+        ? missing(
+            `${whoAndWhere(`at ${placement.location ?? placement.path}, filed for it because ` +
+              `the graph says "${placement.writtenBy}" writes it`)} ${unusable ?? ''} There was ` +
+              `nothing to file.`.trim(),
+            stopped,
+          )
+        : nothing;
+    }
+    const written = store.put(placement.path, body);
+    if (!written.ok) {
+      return missing(
+        `${whoAndWhere(`at ${placement.location ?? placement.path}`)} It produced a body and ` +
+          `filing it failed: ${written.why}`,
+        `The step's work is not lost — it is in the run record — but it is not where the graph ` +
+          `says it belongs. ${stopped}`,
+      );
+    }
+    return bind('markdown-file', {
+      ref: placement.path,
+      path: placement.location ?? placement.path,
+      digest: written.digest,
+      bytes: written.bytes,
+      body,
+      filedByTheRunner: true,
+    });
+  }
+
+  const found = store.get(placement.path);
+  // A file of blank lines is the same absence as no file, and says so in the same
+  // words. Which of the two it is still matters to whoever reconciles it — one means
+  // the step never wrote, the other that it wrote nothing — so both are named.
+  const emptiness = found === null ? 'Nothing is there.' : noUsableBody(found.body);
+  if (found === null || emptiness !== null) {
+    return policy.required
+      ? missing(
+          `${whoAndWhere(`at ${placement.location ?? placement.path}`)} ${emptiness ?? ''} The ` +
+            `graph says this node files its own, so nobody else was going to.`,
+          stopped,
+        )
+      : nothing;
+  }
+  return bind('markdown-file', {
+    ref: placement.path,
+    path: placement.location ?? placement.path,
+    digest: found.digest,
+    bytes: found.bytes,
+    // Read back rather than taken from anything the step said about it. That is what
+    // makes the stored copy and the shown copy the same copy: there is one body, it is
+    // the bytes in the file, and nothing here can write a different one.
+    body: found.body,
+    filedByTheRunner: false,
+  });
 }
 
 /**
@@ -550,12 +942,49 @@ function productIsDeclared(node: LoopNode, product: StepProduct): string | null 
   return null;
 }
 
+/**
+ * The provenance a product states, with the absent-is-`unknown` rule applied once.
+ *
+ * DSP-103 #8. The rule lives here so the journal's sentence, the journal's structured
+ * entry and the filed record cannot each pick their own default — which is how the
+ * reversed one got into all three at once.
+ */
+function provenanceOf(product: Extract<StepProduct, { readonly kind: 'outcome' }>): OutcomeSource {
+  return product.source ?? 'unknown';
+}
+
+/**
+ * The outcome a product carries and whose it is, or `null` for a product with none.
+ *
+ * Always states a `source`, so a record this build writes never leaves the question open.
+ * {@link import('./loop-results').outcomeProvenance} is the matching reader for a record
+ * that comes back from somewhere older than the field.
+ */
+export function producedOutcomeOf(product: StepProduct): ProducedOutcome | null {
+  return product.kind === 'outcome'
+    ? { name: product.outcome, source: provenanceOf(product) }
+    : null;
+}
+
 function describeProduct(product: StepProduct): string {
   switch (product.kind) {
     case 'success':
       return 'success';
-    case 'outcome':
+    case 'outcome': {
+      // Named as the engine's only where it is the engine's, and named as unrecorded
+      // where nothing recorded it. A declared outcome, a gate's verdict and a router's
+      // branch read exactly as they always have — the structured entry beside this
+      // sentence carries which — so the journal's ordinary lines are unchanged and these
+      // two clauses are worth noticing where they do appear.
+      const provenance = provenanceOf(product);
+      if (provenance === 'engine-fallback') {
+        return `outcome "${product.outcome}", which the run selected because the reply declared none`;
+      }
+      if (provenance === 'unknown') {
+        return `outcome "${product.outcome}", with nothing recorded about who chose that name`;
+      }
       return `outcome "${product.outcome}"`;
+    }
     case 'declared-failure':
       return `declared failure "${product.failure}"`;
     case 'runtime-fault':
@@ -580,6 +1009,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
   const startedAt = now();
 
   const journal: RunJournalEntry[] = [];
+  const results: RecordedResult[] = [];
   const path: string[] = [];
   const edgesTaken: string[] = [];
   const limitsReached: string[] = [];
@@ -659,6 +1089,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         nodesExecuted,
         wallClockMs: endedAt - startedAt,
       },
+      results,
       journal,
     };
   };
@@ -711,6 +1142,34 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     return finish('refused', refusal, { refusal });
   }
 
+  // A graph that requires results, and a run with nowhere to keep them.
+  //
+  // Refused rather than started, because the alternative is a run that walks to a
+  // terminal with every required result unchecked and a status of `completed` — which
+  // is precisely "silence read as delivery", produced by the machinery that exists to
+  // prevent it. A dry run is the one honest exception and is not a special case in the
+  // checking code below: it has no store because it reaches no filesystem at all, so it
+  // says here what it would have filed and files nothing.
+  if (requiresAResult(graph) && options.resultStore === undefined) {
+    if (!options.dryRun) {
+      const refusal =
+        `This graph requires at least one step to leave a result, and this run was given ` +
+        `nowhere to file one. A run that cannot file a required result cannot check for it ` +
+        `either, and a run that reported "completed" without having checked would be the ` +
+        `silence the requirement exists to end. Nothing was executed.`;
+      return finish('refused', refusal, { refusal });
+    }
+    record(
+      'result-filed',
+      `This graph declares results and this is a dry run, which has no store and reaches no ` +
+        `filesystem. Each step below reports the entry a real run would file at the path ` +
+        `computed from the graph's archive, and nothing is written or checked. Nothing is ` +
+        `handed over either: a step that receives an earlier result gets none here, and that ` +
+        `is the dry run having filed nothing rather than a step having left nothing.`,
+      { data: { filed: false, dryRun: true } },
+    );
+  }
+
   if (maxTasks !== undefined && maxTasks < 1) {
     const refusal =
       `The graph's limits allow maxTasks ${maxTasks}, and a run is one task, so this run ` +
@@ -720,6 +1179,18 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
   }
 
   let current: LoopNode = entry;
+  /**
+   * The edge that brought the run to `current`, which is what lets a step's inputs and
+   * its brief depend on how it was reached. `null` at the entry, which nothing routed to.
+   */
+  let arrival: ArrivalRef | null = null;
+  const arrivalOn = (edge: LoopEdge, fromNode: LoopNode, fromOccurrence: number): ArrivalRef => ({
+    edgeId: edge.id,
+    from: fromNode.id,
+    fromOccurrence,
+    label: edge.label ?? null,
+    delivers: edge.delivers ?? null,
+  });
 
   for (;;) {
     const occurrence = (occurrences.get(current.id) ?? 0) + 1;
@@ -807,7 +1278,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       return fail(neverStarted(current.id, 'The operator cancelled the run.'));
     }
 
-    const placement = archivePlacement(graph, current, options.runId, callId);
+    const placement = archivePlacement(graph, current, options.runId, callId, options.resultStore);
     const deadlineAt = limits.maxMinutes === undefined ? null : now() + limits.maxMinutes * 60_000;
 
     record(
@@ -825,6 +1296,12 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           callId,
           spendsACall: spendsACall(current),
           ...(current.role ? { role: current.role.id, roleSource: current.role.source.path } : {}),
+          // Which arrival this was, because what the step is given now depends on it
+          // (DSP-100). A run record that named only the node could not explain why two
+          // visits to one node were handed different material.
+          ...(arrival === null
+            ? {}
+            : { arrivedBy: arrival.edgeId, arrivedFrom: arrival.from }),
           ...(current.model ? { model: current.model.policy } : {}),
           ...(limits.maxMinutes === undefined ? {} : { maxMinutes: limits.maxMinutes }),
           ...(placement
@@ -833,6 +1310,87 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         },
       },
     );
+
+    // What this step receives, resolved before it starts (DSP-75, DSP-100).
+    //
+    // **Decided by the arrival, not by the node alone.** `inputsFor` is the whole rule:
+    // an edge that says what it delivers decides, and one that says nothing leaves the
+    // node's `consumes` deciding exactly as it did. That is what makes a rework round
+    // carry the review that asked for it while the first visit to the same node is not
+    // made to require a result no earlier step could have left.
+    //
+    // **To a visit, never to a node**, and now to the *right* visit rather than the
+    // newest. `resultHandedOver` checks the run, the node and — where the arrival names
+    // the step it came from — the exact visit that produced the outcome that routed the
+    // run here. Handing over an earlier one would be the trap DSP-31 named for human
+    // answers: an old answer arriving at a new question, looking exactly like a fresh one.
+    //
+    // An input that has been left nothing stops the run. Validation refuses a graph whose
+    // handovers cannot be satisfied by any path through it, so arriving here means the run
+    // took a path where it genuinely was not produced — and the one thing that must not
+    // happen is the step starting with an empty input, doing the work anyway, and
+    // producing something about nothing.
+    // A run that files nothing checks nothing, on both sides.
+    //
+    // `settleResult` has always returned early when there is no store; the receiving
+    // side did not, so a dry run of any graph declaring `consumes` stopped at the first
+    // receiving node with `required-result-missing` — blaming a step for an absence the
+    // dry run itself guaranteed. A dry run is the *only* way to reach here with no
+    // store, because a live run of a graph that hands anything over is refused above.
+    const inputs = inputsFor(current, arrival);
+    const received: RecordedResult[] = [];
+    for (const wantedId of options.resultStore === undefined ? [] : inputs.ids) {
+      // The producing node the arrival itself came from is pinned to the visit that took
+      // the edge; anything else is that node's most recent completed visit in this run.
+      const pinned =
+        inputs.from === 'edge' && arrival !== null && wantedId === arrival.from
+          ? arrival.fromOccurrence
+          : undefined;
+      const found = resultHandedOver(results, {
+        runId: options.runId,
+        nodeId: wantedId,
+        ...(pinned === undefined ? {} : { occurrence: pinned }),
+      });
+      if (found === null) {
+        // Which declaration asked for this, in the words of the thing a person would go
+        // and edit. A handover that fails because of an edge sends the reader to that
+        // edge; one that fails because of a node's standing list sends them to the node.
+        const asked =
+          inputs.from === 'edge'
+            ? `arrived on edge "${String(inputs.edgeId)}"${
+                arrival?.label === null || arrival?.label === undefined
+                  ? ''
+                  : ` (${arrival.label})`
+              } from "${String(arrival?.from)}", and that edge delivers the result of ` +
+              `"${wantedId}"`
+            : `receives the result of "${wantedId}", which this node's own "consumes" declares`;
+        return fail({
+          kind: 'required-result-missing',
+          nodeId: current.id,
+          ...(inputs.edgeId === null ? {} : { edgeId: inputs.edgeId }),
+          detail:
+            `"${current.id}" (visit ${String(occurrence)}) ${asked}${
+              pinned === undefined
+                ? ''
+                : ` as that step left it on visit ${String(pinned)}`
+            }, and there is none in this run. The step was not started: a step given an ` +
+            `empty result would do its work about nothing and report it as done.`,
+          reconcile:
+            inputs.from === 'edge'
+              ? `The edge is where to look, not the node's own declaration: edge ` +
+                `"${String(inputs.edgeId)}" says this arrival delivers "${wantedId}", and on the ` +
+                `path this run took "${wantedId}" left nothing to deliver. Either the edge names ` +
+                `a step that does not run before it, or that step ran and left nothing; those ` +
+                `need different answers. The run stopped here and nothing was repeated. Do not ` +
+                `treat this as a declared failure: no edge was taken from here.`
+              : `Read the path this run took. Either "${wantedId}" has not run on it, which is a ` +
+                `question about the graph's edges, or it ran and left nothing, which is a ` +
+                `question about that step. The run stopped here and nothing was repeated. Do not ` +
+                `treat this as a declared failure: no edge was taken.`,
+        });
+      }
+      received.push(found);
+    }
 
     const startedStepAt = now();
     let execution: StepExecution;
@@ -852,6 +1410,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         limits,
         deadlineAt,
         archive: placement,
+        arrivedBy: arrival,
+        received,
         note: (kind, detail, data) => {
           record(kind, detail, {
             nodeId: current.id,
@@ -879,6 +1439,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       calls += 1;
     }
     const stepMs = now() - startedStepAt;
+    const producedOutcome = producedOutcomeOf(execution.product);
 
     record(
       'node-produced',
@@ -889,10 +1450,22 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         nodeId: current.id,
         data: {
           product: execution.product.kind,
+          // DSP-103 #5, in the structured record rather than only in the sentence. A
+          // reader reconstructing the run has to be able to separate the step's own
+          // verdict from the engine having routed on the absence of one, and `product`
+          // alone says `outcome` for both.
+          ...(producedOutcome === null
+            ? {}
+            : { outcome: producedOutcome.name, outcomeSource: producedOutcome.source }),
           stepMs,
           providerTurns: execution.providerTurns,
           callsSoFar: calls,
-          ...(execution.archiveRef === undefined ? {} : { archiveRef: execution.archiveRef }),
+          // No `archiveRef` here, deliberately. This entry used to carry one taken
+          // straight from the executor — a claim nobody checked — while `result-filed`
+          // carries the reference the runner actually filed and verified, under the
+          // same key. A reader looking up "the result's reference" could pick up
+          // either, with nothing looking wrong. There is one reference now, it is the
+          // checked one, and it is journalled in exactly one place.
           ...(placement?.writtenByAnotherNode
             ? { reportWrittenBy: placement.writtenBy, writesItsOwnReport: false }
             : {}),
@@ -938,6 +1511,58 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         `The run stopped at "${current.id}" for a human decision. This is not a fault and ` +
           `not a failure. Resuming from a journal is not implemented in this increment.`,
         { awaiting: { nodeId: current.id, question } },
+      );
+    }
+
+    // Did this step leave what it had to leave? (DSP-74.)
+    //
+    // **After the step's own outcome and before its edge.** A step that timed out, was
+    // cancelled or asked for a person has already returned above, and blaming one of
+    // those for a missing report would send a person looking for the wrong thing. A
+    // step that finished, though, is checked *before* anything routes onward: an
+    // outcome saying the work is done and no evidence that it happened is the exact
+    // case this must not wave through.
+    const settled = settleResult({
+      node: current,
+      runId: options.runId,
+      occurrence,
+      callId,
+      placement,
+      execution,
+      store: options.resultStore,
+    });
+    if (settled.fault !== null) {
+      return fail(settled.fault);
+    }
+    if (settled.record !== null) {
+      const filed = settled.record;
+      results.push(filed);
+      record(
+        'result-filed',
+        `"${current.id}" left its result ${
+          filed.path === null ? 'in the run record' : `at ${filed.path}`
+        }, ${
+          filed.filedByTheRunner
+            ? `filed by the runner${
+                placement?.writtenByAnotherNode === true
+                  ? ` because the graph says "${filed.filedBy}" writes this node's entry`
+                  : ''
+              }`
+            : 'written by the step itself and found where the graph said it would be'
+        }. ${String(filed.bytes)} bytes, sha-256 ${filed.digest.slice(0, 16)}.`,
+        {
+          nodeId: current.id,
+          data: {
+            archiveRef: filed.ref,
+            form: filed.form,
+            occurrence: filed.occurrence,
+            callId: filed.callId,
+            bytes: filed.bytes,
+            digest: filed.digest,
+            filedBy: filed.filedBy,
+            filedByTheRunner: filed.filedByTheRunner,
+          },
+        },
       );
     }
 
@@ -1039,6 +1664,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           },
         },
       );
+      arrival = arrivalOn(boundEdge, current, occurrence);
       current = boundTarget;
     } else {
       const target = nodeById.get(productEdge.to);
@@ -1076,9 +1702,16 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
             runtimeFault: false,
             reworkRound: isRework,
             transitions,
+            // What this arrival hands the next step, in the journal line for the arrival
+            // itself. A reader reconstructing a run can otherwise only see which edge was
+            // taken and not what travelled along it (DSP-100).
+            ...(productEdge.delivers === undefined
+              ? {}
+              : { delivers: productEdge.delivers.join(', ') || '(nothing)' }),
           },
         },
       );
+      arrival = arrivalOn(productEdge, current, occurrence);
       current = target;
     }
 
@@ -1223,6 +1856,20 @@ export function createDryRunExecutor(options: DryRunOptions = {}): StepExecutor 
   const used = new Set<number>();
   const unscripted = options.unscripted ?? 'first-branch';
 
+  /**
+   * The dry run named as the origin of its own outcomes (DSP-103 #9).
+   *
+   * Neither an agent's declaration nor a gate's verdict: a scripted decision was chosen
+   * by whoever wrote the script and an unscripted one is the node's first declared
+   * outcome, so `dry-run` is the most the record can support. A decision that states a
+   * source of its own keeps it, which is how a fixture reproduces a real run's provenance
+   * without a provider.
+   */
+  const fromTheDryRun = (product: StepProduct): StepProduct =>
+    product.kind === 'outcome' && product.source === undefined
+      ? { ...product, source: 'dry-run' }
+      : product;
+
   return async (context: StepContext): Promise<StepExecution> => {
     const decisions = options.decisions ?? [];
     let index = decisions.findIndex(
@@ -1249,7 +1896,7 @@ export function createDryRunExecutor(options: DryRunOptions = {}): StepExecutor 
         options.clock?.advanceMinutes(decision.minutes);
       }
       return {
-        product: decision.produce,
+        product: fromTheDryRun(decision.produce),
         summary:
           decision.summary ??
           `Scripted dry run: no provider was called, and nothing was written. ${
@@ -1280,7 +1927,10 @@ export function createDryRunExecutor(options: DryRunOptions = {}): StepExecutor 
 
     const first = declared[0];
     return {
-      product: first === undefined ? { kind: 'success' } : { kind: 'outcome', outcome: first },
+      product:
+        first === undefined
+          ? { kind: 'success' }
+          : { kind: 'outcome', outcome: first, source: 'dry-run' },
       summary:
         first === undefined
           ? 'Unscripted dry run: plain success, no provider called.'
@@ -1308,6 +1958,7 @@ const MARKERS: Readonly<Record<JournalKind, string>> = {
   'run-released': '|>',
   'waiting-for-person': '?|',
   'person-answered': '?>',
+  'result-filed': '[=',
 };
 
 /**
@@ -1330,6 +1981,17 @@ export function formatRunJournal(result: RunResult): string {
     `usage      ${result.usage.calls} calls, ${result.usage.providerTurns} provider turns, ` +
       `${result.usage.reworkRounds} rework rounds, ${result.usage.transitions} transitions`,
     `bounds     ${result.limitsReached.length > 0 ? `reached: ${result.limitsReached.join(', ')}` : 'none reached'}`,
+    `results    ${
+      result.results.length === 0
+        ? 'none required or none filed'
+        : result.results
+            .map(
+              (filed) =>
+                `${filed.nodeId}#${String(filed.occurrence)} ${filed.ref} ` +
+                `${String(filed.bytes)}B ${filed.digest.slice(0, 16)}`,
+            )
+            .join('\n           ')
+    }`,
   ];
   if (result.fault) {
     head.push(`fault      ${result.fault.kind}: ${result.fault.detail}`);

@@ -325,8 +325,18 @@ export interface ActivitySource {
    * adds to them, summarises them or guesses a next one.
    */
   readonly loopLines: readonly string[];
-  /** A loop walk is in flight. */
+  /** A loop run is in flight. */
   readonly loopRunning: boolean;
+  /**
+   * What the open step is doing, from `stepStanding`, or `null` when none is open.
+   *
+   * DSP-87. The journal's last line is written when a node is *entered* and does not
+   * move again until the next one is, so a step that streams for four minutes left
+   * this line frozen on `Entered agent "…"` — true, and not activity. The step's own
+   * standing is the thing that changes while a step works, and it is read for the run
+   * and the step the events were addressed to.
+   */
+  readonly loopStepText?: string | null;
   /** `describeActivity`'s sentence for the ordinary path, or null when there is none. */
   readonly chatActivityText: string | null;
   /** An ordinary provider turn is in flight. */
@@ -339,7 +349,23 @@ export interface ActivityLine {
    * Where the sentence came from. `'dspatch'` is one of
    * {@link ACTIVITY_OWN_SENTENCES} and says only what DSpatch itself knows.
    */
-  readonly source: 'loop-journal' | 'chat-events' | 'dspatch';
+  readonly source: 'loop-journal' | 'loop-step' | 'chat-events' | 'dspatch';
+  /**
+   * What the working step is doing, when one is open, and `null` otherwise.
+   *
+   * Beside {@link text} rather than instead of it, because they are two facts and a
+   * window shows both: {@link text} says **where** the run is, which is the journal's
+   * business and does not change while a step works, and this says **what that step
+   * is doing**, which is the half that moves. The status beside the composer is the
+   * second when there is one, and the ticker above the composer is always the first.
+   *
+   * Both come out of this one call deliberately. The defect DSP-87 was raised for was
+   * two places in the window answering "is anything happening" from two different
+   * sources — the loop's activity in one and the direct chat's send-wait clock in the
+   * other — and disagreeing. Two fields of one value cannot drift; two computations
+   * can, and did.
+   */
+  readonly stepText: string | null;
   /** The earlier real lines, oldest first, for whoever wants the whole live log. */
   readonly earlier: readonly string[];
 }
@@ -365,25 +391,32 @@ export function activityLine(source: ActivitySource): ActivityLine | null {
   if (!source.loopRunning && !source.chatRunning) {
     return null;
   }
+  // The open step's own line, forwarded rather than invented: `stepStanding` builds
+  // it from the provider events that arrived for this step and this run, and says it
+  // is waiting when none have.
+  const step = source.loopStepText ?? null;
+  const stepText = source.loopRunning && step !== null && step !== '' ? step : null;
   if (source.loopRunning) {
     const latest = source.loopLines[source.loopLines.length - 1];
     if (latest === undefined) {
       return {
         text: ACTIVITY_OWN_SENTENCES[0],
-        source: 'dspatch',
+        source: stepText === null ? 'dspatch' : 'loop-step',
+        stepText,
         earlier: [],
       };
     }
     return {
       text: latest,
-      source: 'loop-journal',
+      source: stepText === null ? 'loop-journal' : 'loop-step',
+      stepText,
       earlier: source.loopLines.slice(0, -1),
     };
   }
   if (source.chatActivityText !== null && source.chatActivityText !== '') {
-    return { text: source.chatActivityText, source: 'chat-events', earlier: [] };
+    return { text: source.chatActivityText, source: 'chat-events', stepText: null, earlier: [] };
   }
-  return { text: ACTIVITY_OWN_SENTENCES[1], source: 'dspatch', earlier: [] };
+  return { text: ACTIVITY_OWN_SENTENCES[1], source: 'dspatch', stepText: null, earlier: [] };
 }
 
 /** One agent's own words in the history, with who said them and which time round. */
@@ -396,6 +429,20 @@ export interface TrailReply {
   readonly occurrence: number;
   /** Says which time round when it is not the first, and empty when it is. */
   readonly occurrenceNote: string;
+  /**
+   * What this call was sent, and which visit the **runner** says it was.
+   *
+   * DSP-94. Both halves travel together or neither does, because either alone is a
+   * trap: a message with no visit number cannot be bound to a call on a node the run
+   * entered twice, and a visit number with no message says nothing. `null` where the
+   * reply carried no recorded prompt — an older record, or a turn the window built
+   * before the field existed.
+   *
+   * `visit` is not {@link TrailReply.occurrence} above, which counts the replies in
+   * this list. A step that answered with nothing is not in the list and is still a
+   * visit, so the two can differ, and this is the one that addresses the call.
+   */
+  readonly sent: { readonly prompt: string; readonly visit: number | null } | null;
 }
 
 /** The step between two agents, drawn from the recorded order and nothing else. */
@@ -452,7 +499,15 @@ export type TrailItem = TrailReply | TrailHandoff;
  * is the one used, matching the order the replies came in.
  */
 export function handoffTrail(
-  replies: readonly { readonly nodeId: string; readonly nodeLabel: string; readonly text: string }[],
+  replies: readonly {
+    readonly nodeId: string;
+    readonly nodeLabel: string;
+    readonly text: string;
+    /** The runner's own visit count for this call, where the caller has it. */
+    readonly occurrence?: number;
+    /** The whole message this call was sent, where the record kept one. */
+    readonly prompt?: string;
+  }[],
   branches: readonly TrailBranch[] = [],
 ): readonly TrailItem[] {
   const items: TrailItem[] = [];
@@ -489,6 +544,10 @@ export function handoffTrail(
       text: reply.text,
       occurrence,
       occurrenceNote: occurrence > 1 ? `${ordinal(occurrence)} time in this run` : '',
+      sent:
+        reply.prompt === undefined
+          ? null
+          : { prompt: reply.prompt, visit: reply.occurrence ?? null },
     });
     previous = { nodeId: reply.nodeId, nodeLabel: reply.nodeLabel };
   }

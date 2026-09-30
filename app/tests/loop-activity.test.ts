@@ -453,6 +453,7 @@ describe('the events a step forwards', () => {
         limits: {},
         deadlineAt: null,
         archive: null,
+        received: [],
         note: () => {
           /* not this test's business */
         },

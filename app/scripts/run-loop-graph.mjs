@@ -20,6 +20,13 @@
  *   npm run loop:dry-run
  *   npm run loop:live
  *   npm run loop:live -- --keep --out ../.dspatch-loop/runs/<run-id>/logs/001-implementer
+ *
+ * `--mandate` walks a drawing the way the chat window does — the text is the mandate for
+ * the entry node and every step gets a brief — on the throwaway folder `--workspace`
+ * names. That is the only way to reach a multi-step drawing from a shell:
+ *
+ *   npm run loop:live -- --graph ../docs/loop/graphs/dspatch-development-loop-runnable.graph.json \
+ *     --workspace C:/temp/scratch --mandate "..." --out ../some/logs --keep
  */
 
 import fs from 'node:fs';
@@ -33,6 +40,8 @@ import {
   LIVE_GRAPH_REL,
   runLiveLoop,
 } from '../src/main/loop-live-run';
+import { chatPromptFor } from '../src/shared/loop-chat';
+import { workingRootsFrom } from '../src/shared/working-roots';
 import { formatFindings, loadLoopGraph } from '../src/shared/loop-graph-load';
 import {
   createClock,
@@ -139,6 +148,19 @@ const SCENARIOS = {
       { node: 'niclas-assessment', produce: { kind: 'outcome', outcome: 'accept' }, minutes: 4 },
     ],
   },
+  'runnable-delivered': {
+    why:
+      'The runnable loop walked all the way to Delivered. Written for ' +
+      'dspatch-development-loop-runnable.graph.json, whose steps each declare what they must ' +
+      'name, so every one of them is scripted with a name rather than with plain success.',
+    decisions: [
+      { node: 'coordinator', produce: { kind: 'outcome', outcome: 'briefed' }, minutes: 6 },
+      { node: 'implementer', produce: { kind: 'outcome', outcome: 'done' }, minutes: 40 },
+      { node: 'verifier', produce: { kind: 'outcome', outcome: 'checked' }, minutes: 12 },
+      { node: 'implementation-review', produce: { kind: 'outcome', outcome: 'accept' }, minutes: 9 },
+      { node: 'coordinator-report', produce: { kind: 'outcome', outcome: 'reported' }, minutes: 5 },
+    ],
+  },
   'awaiting-human': {
     why:
       'Autonomy off at the first human step. The run stops with its history intact, repeats nothing ' +
@@ -150,7 +172,7 @@ const SCENARIOS = {
 
 /**
  * @param {readonly string[]} argv
- * @returns {{ graph: string, scenario: string, runId: string, out: string | null, label: string, list: boolean, live: boolean, keep: boolean, workspace: string | null, model: string }}
+ * @returns {{ graph: string, scenario: string, runId: string, out: string | null, label: string, list: boolean, live: boolean, keep: boolean, workspace: string | null, model: string, mandate: string | null }}
  */
 function parseArguments(argv) {
   /** @param {string} name @param {string} fallback */
@@ -177,7 +199,56 @@ function parseArguments(argv) {
     keep: argv.includes('--keep'),
     workspace: argv.includes('--workspace') ? value('workspace', '') : null,
     model: value('model', defaultLiveModel()),
+    mandate: argv.includes('--mandate') ? value('mandate', '') : null,
   };
+}
+
+/**
+ * The chat binding's own prompt builder, for a live run started from a shell.
+ *
+ * Without this the CLI could reach exactly one live graph: the duration fixture, whose
+ * binding supplies a fixed prompt and takes no mandate. Every multi-step drawing we have
+ * — the chat loop, the runnable development loop — is bound as `chat-loop`, where the
+ * mandate is a person's text and each step is briefed. So a drawing with more than one
+ * agent node in it could only ever be walked by opening the window and typing, and
+ * anything about what an agent is *told* could only be checked by hand.
+ *
+ * It is the same call the window makes in `main.ts`, with the window's three extras left
+ * out because a shell has none of them: no waiting instructions to drain, no folders
+ * beyond the one root, and no delivery events to emit. The prompt an agent receives is
+ * therefore the same prompt for the same graph, which is the property that makes a
+ * command-line walk evidence about the window's behaviour at all.
+ *
+ * @param {string} mandate
+ * @param {import('../src/shared/loop-graph').LoopGraph} graph
+ * @param {readonly import('../src/shared/working-roots').WorkingRoot[]} workingRoots
+ * @param {import('../src/shared/loop-graph').RoleResolver} resolveRole
+ * @returns {(node: import('../src/shared/loop-graph').LoopNode, step: import('../src/main/loop-live').LivePromptStep) => string}
+ */
+function chatBindingPrompt(mandate, graph, workingRoots, resolveRole) {
+  /**
+   * The three fields the prompt uses, as `chatRoleTextFor` in `main.ts` maps them.
+   *
+   * @param {import('../src/shared/loop-graph').LoopNode} node
+   */
+  const roleTextFor = (node) => {
+    const resolved = node.role === undefined ? null : resolveRole(node.role);
+    return resolved === null
+      ? null
+      : {
+          id: resolved.id,
+          sourcePath: resolved.sourcePath,
+          instructions: resolved.instructions ?? null,
+        };
+  };
+  return (node, step) =>
+    chatPromptFor(node, {
+      entryId: graph.entry,
+      mandate,
+      step,
+      workingRoots,
+      role: roleTextFor(node),
+    });
 }
 
 const options = parseArguments(process.argv.slice(2));
@@ -198,6 +269,16 @@ if (options.live) {
     );
     process.exit(2);
   }
+  // `--mandate` is the chat binding from a shell: the text a person would have typed.
+  // Every drawing with more than one agent node in it is bound that way, so without this
+  // the CLI's live path reached the duration fixture and nothing else.
+  if (options.mandate !== null && !options.workspace) {
+    process.stderr.write(
+      '--mandate walks a drawing on a project, so --workspace is required and must name a\n' +
+        'throwaway folder. A run over DSpatch itself is refused before it starts.\n',
+    );
+    process.exit(2);
+  }
   const abort = new AbortController();
   const onInterrupt = () => {
     abort.abort();
@@ -205,8 +286,53 @@ if (options.live) {
   process.on('SIGINT', onInterrupt);
   process.on('SIGTERM', onInterrupt);
   try {
+    const graphPath = path.resolve(process.cwd(), options.graph);
+    let chatBinding = {};
+    if (options.mandate !== null) {
+      const loaded = loadLoopGraph(fs.readFileSync(graphPath, 'utf8'), {
+        resolveRole: createFileRoleResolver(repoRoot),
+        connectedTargets: ['cursor'],
+      });
+      if (!loaded.ok) {
+        process.stderr.write(
+          `${graphPath} does not validate, so it was not run:\n\n${formatFindings(loaded.findings)}\n`,
+        );
+        process.exit(1);
+      }
+      const workspacePath = path.resolve(options.workspace ?? '');
+      chatBinding = {
+        bindingKind: 'chat-loop',
+        // What each step was actually sent, saved beside the journal.
+        //
+        // The window keeps this on `RecordedAgentReply.prompt` and a CLI run kept it
+        // nowhere, so the one artefact every argument about agent behaviour is about — the
+        // message — was the one thing a command-line walk did not leave behind. `--out` is
+        // the only condition: a run that was not asked to write anything still writes
+        // nothing.
+        ...(options.out === null || options.out === ''
+          ? {}
+          : {
+              /** @param {import('../src/main/loop-live').LiveAgentReply} reply */
+              onAgentReply: (reply) => {
+                const dir = path.join(path.resolve(options.out ?? ''), 'prompts');
+                fs.mkdirSync(dir, { recursive: true });
+                const name = `${reply.nodeId}-${String(reply.occurrence)}`;
+                fs.writeFileSync(path.join(dir, `${name}.prompt.md`), reply.prompt, 'utf8');
+                fs.writeFileSync(path.join(dir, `${name}.reply.md`), reply.text, 'utf8');
+              },
+            }),
+        promptFor: chatBindingPrompt(
+          options.mandate ?? '',
+          loaded.graph,
+          // The one root, named, because naming it is part of what a live walk is for:
+          // `runLiveGraph` builds the same list for the provider from the same path.
+          workingRootsFrom([workspacePath], workspacePath, process.platform === 'win32'),
+          createFileRoleResolver(repoRoot),
+        ),
+      };
+    }
     const delivery = await runLiveLoop({
-      graphPath: path.resolve(process.cwd(), options.graph),
+      graphPath,
       runId: options.runId,
       repoRoot,
       outDir: options.out,
@@ -214,6 +340,7 @@ if (options.live) {
       ...(options.workspace ? { workspacePath: options.workspace } : {}),
       keepWorkspace: options.keep,
       abortSignal: abort.signal,
+      ...chatBinding,
     });
     process.stdout.write(
       `graph      ${path.relative(repoRoot, path.resolve(process.cwd(), options.graph))}\n` +
@@ -253,6 +380,32 @@ if (!loaded.ok) {
       `worse than not running one.\n\n${formatFindings(loaded.findings)}\n`,
   );
   process.exit(1);
+}
+
+/*
+ * DSP-105: a scenario written for another drawing says so before anything is walked.
+ *
+ * A scenario names nodes, and the graph it is run against may not have them. Walking
+ * anyway fails partway — an unscripted node takes its first declared outcome or plain
+ * success, and where the node declares outcomes that success is a runtime fault — which
+ * reads as a defect in the graph rather than as a script pointed at the wrong drawing.
+ * The node names are the whole of the check: nothing here reads what a scenario meant.
+ */
+const graphNodeIds = new Set(loaded.graph.nodes.map((node) => node.id));
+const unknownNodes = [
+  ...new Set(
+    scenario.decisions.map((decision) => decision.node).filter((id) => !graphNodeIds.has(id)),
+  ),
+];
+if (unknownNodes.length > 0) {
+  process.stderr.write(
+    `Scenario "${options.scenario}" scripts ${String(unknownNodes.length)} node(s) that\n` +
+      `${path.relative(repoRoot, graphPath)} does not have, so it was not run: ` +
+      `${unknownNodes.join(', ')}.\n\n` +
+      'That is a scenario written for a different drawing, not a fault in this graph.\n' +
+      'Run --list to see the scenarios, or pass --graph for the one this scenario describes.\n',
+  );
+  process.exit(2);
 }
 
 const graph = scenario.limits ? { ...loaded.graph, limits: scenario.limits } : loaded.graph;

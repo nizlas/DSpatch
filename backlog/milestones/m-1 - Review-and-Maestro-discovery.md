@@ -19,4 +19,6 @@ The two surveys are independent outputs and need not wait for the user-needs wal
 
 Compare those seeds and research-derived alternatives with the evidence, explore a small selection through sketches or prototypes, and consider the relationship to Maestro loop orchestration. No feature, interaction design, editor technology or agent topology is selected merely by adding this milestone.
 
+Building the orchestration is **not** part of this milestone. [DSP-18](../tasks/dsp-18%20-%20Define-and-run-a-bounded-Maestro-loop-in-DSpatch.md), split out of DSP-15 on 15 September 2026, defines and runs one bounded Maestro loop; it depends on DSP-6 only and is deliberately unassigned to a milestone. This milestone still considers orchestration, because DSP-15 chooses between it and review features, but it does not design or implement it.
+
 The result is an evidence-based direction decision with Niclas and bounded next-story proposals. See the [research brief](../../docs/REVIEW_RESEARCH.md). This discovery is not required to close Phase 0 and does not implement the later product phases.

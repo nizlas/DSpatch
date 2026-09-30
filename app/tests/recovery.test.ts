@@ -27,7 +27,6 @@ import {
   failureHasResolved,
   restoreComposerAfterRunFailure,
   runEndingNeedsConnectionRecheck,
-  SEND_WAIT_LONG_MS,
   SEND_WAIT_NOTICE_MS,
 } from '../src/renderer/recovery.ts';
 
@@ -299,22 +298,32 @@ test('a wait is never reported as a failure, however long it gets', () => {
   }
 });
 
-test('the measured 11–12 seconds to first text does not trip a notice', () => {
-  assert.equal(describeSendWait(11_500, false).text.includes('Still nothing back'), false);
+test('the measured 11–12 seconds to first text does not put a number on screen', () => {
+  assert.doesNotMatch(describeSendWait(11_500, false).text, /\d+ s ago/);
   assert.ok(SEND_WAIT_NOTICE_MS > 12_000, 'the threshold is above what was measured');
 
   const noticed = describeSendWait(SEND_WAIT_NOTICE_MS, false);
-  assert.match(noticed.text, /Still nothing back after 20 s/);
-  assert.match(noticed.text, /slow\s+rather than wrong/);
-  assert.equal(noticed.longWait, false);
+  assert.match(noticed.text, /Sent 20 s ago/);
+  assert.match(noticed.text, /nothing has failed/);
 });
 
-test('an unusually long wait says so without claiming anything failed', () => {
-  const long = describeSendWait(SEND_WAIT_LONG_MS + 5_000, false);
-  assert.equal(long.longWait, true);
+/**
+ * DSP-87 shortened these and removed the second threshold, and the assertion that
+ * matters is the one that survived: a wait is never a verdict, at any length.
+ *
+ * What went was the argument. The line used to cite what earlier runs had measured,
+ * that this was *slow rather than wrong*, and that DSpatch could not see whether the
+ * provider was working — and then a second paragraph under the composer said the last
+ * of those again, longer. A rising number and *nothing has failed* is what a person
+ * can act on; the button beside it is what they can do about it.
+ */
+test('a long wait stays one short line and still claims nothing', () => {
+  const long = describeSendWait(300_000, false);
   assert.equal(long.isFailure, false);
-  assert.match(long.text, /not a failure/);
-  assert.match(long.text, /does not claim it stopped/);
+  assert.match(long.text, /^Sent 300 s ago\./);
+  assert.match(long.text, /nothing has failed/);
+  assert.ok(long.text.length < 80, `one line: ${String(long.text.length)} characters`);
+  assert.equal(long.text.includes('\n'), false);
 });
 
 // --- Retries are bounded ----------------------------------------------------
