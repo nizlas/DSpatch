@@ -1,10 +1,10 @@
 ---
 id: DSP-107
 title: Enable Claude Code for DSpatch's external development loop
-status: Review
+status: Done
 assignee: []
 created_date: '2026-10-20 20:20'
-updated_date: '2026-10-20 21:14'
+updated_date: '2026-10-20 21:37'
 labels:
   - development loop
 dependencies:
@@ -81,4 +81,6 @@ Suggestions (not blocking, recorded, no change made):
 Coordinator-reference conclusion (read in code by coordinator and reviewer): docs/loop/graphs/dspatch-development-loop.graph.json still points coordinator and coordinator-report at .cursor/skills/dspatch-loop/SKILL.md (cursor-skill-file). loop-graph-roles.ts resolveOnce returns the body after front matter as instructions and follows no links, so the drawing's role panel and brief preview now show the thin entry skill. No execution path sends it to a provider: the only tracked loop definition (.dspatch/loops/dspatch-chat-loop.loop.json) runs dspatch-chat-loop.graph.json; the runnable development loop resolves its coordinators through role-source docs/loop/roles/run/dspatch-run-coordinator.role.md; OPEN_LOOP_GRAPH development-loop is editor-only; a live walk of the drawing (loop:live CLI or a hand-made .loop.json) stops at its human entry node niclas-mandate (loop-live.ts returns awaiting-human); dry runs call no provider. The claude-code target blocks in role sources go to targetBlocks, not sections (role-source.ts), so walked prompts do not gain them. The external loop's coordinators (Cursor and Claude Code) read their entry skill directly and are told to read COORDINATOR.md in full. No regression; the reference remains sufficient and is pinned by app/tests/loop-node-help.test.ts. S3: if a later change lets a live run get past the human entry, point the drawing's coordinator nodes at a role-source file instead; the thin skill's relative link would not resolve in a foreign workspace, though the old full Cursor procedure was already judged wrong for a coordinator inside a run (DSP-83).
 
 Status: AC#8 checked; task moved to Review for Niclas's assessment.
+
+Accepted by Niclas (20 Oct 2026), on the basis of the implementation, the successful dspatch-reviewer custom-agent call and the recorded verification. Status Review -> Done. S1 (the editor's role panel reads 'Supports cursor, claude-code' for role sources, which could be taken as runtime support) and S3 (point the drawing's coordinator nodes at a role-source file if a live run can ever pass its human entry node) remain non-blocking observations for future work.
 <!-- SECTION:NOTES:END -->
