@@ -2,7 +2,7 @@
 role: dspatch-implementer
 title: Implementer
 summary: "Implement a bounded DSpatch change within the assigned scope and deliver code, rationale and reproducible checks."
-targets: cursor
+targets: cursor, claude-code
 requires: no-subagent-delegation
 ---
 

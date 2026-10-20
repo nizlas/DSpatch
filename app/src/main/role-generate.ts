@@ -11,8 +11,10 @@
  *
  * The capability table is DSP-21's {@link TARGET_CAPABILITIES}, not a second opinion
  * written here. Its Cursor row comes from this repository's own use of Cursor; its
- * Copilot and Claude Code rows are deliberately unknown, and this module refuses to
- * generate for either rather than emitting a file whose provenance would be a guess.
+ * Claude Code row comes from Claude Code's documentation and answers only for the file
+ * written here (DSP-107); its Copilot row is deliberately unknown, and this module
+ * refuses to generate for Copilot rather than emitting a file whose provenance would be
+ * a guess.
  *
  * ## Two decisions worth knowing before reading
  *
@@ -26,6 +28,7 @@
  * `.cursor/agents/` use CRLF, and generating LF would rewrite all five files in their
  * entirety the first time anyone ran this. The convention is a stated option with a
  * stated default rather than something inherited from whoever runs the generator.
+ * Claude Code's files had no predecessor, so they default to LF.
  */
 
 import { createHash } from 'node:crypto';
@@ -63,7 +66,7 @@ export type GenerateResult =
 export interface GenerateOptions {
   /** Where the source file lives, relative to the project root, for the provenance line. */
   readonly sourcePath: string;
-  /** Defaults to CRLF; see the note at the top of this file. */
+  /** Defaults to CRLF for Cursor and LF for Claude Code; see the note at the top of this file. */
   readonly newline?: '\r\n' | '\n';
   /** Injectable so a test can state a capability table instead of depending on today's. */
   readonly capabilities?: TargetCapabilities;
@@ -112,23 +115,30 @@ export function generateRoleFile(
     return { ok: false, notices };
   }
 
-  if (target !== 'cursor') {
-    notices.push({
-      level: 'error',
-      message:
-        `No emitter exists for \`${target}\`. It is on the map because the format has to be ` +
-        'honest about more than one framework, but nothing has been run against it from this ' +
-        'repository — whatever we believe about its role files is documentation somebody read, ' +
-        'not behaviour anybody saw. Writing a file from that would be the degraded output DSP-23 ' +
-        'forbids.',
-    });
-    return { ok: false, notices };
+  if (target === 'cursor') {
+    const newline = options.newline ?? '\r\n';
+    return { ok: true, file: renderCursorFile(source, options.sourcePath, newline), notices };
+  }
+  if (target === 'claude-code') {
+    notices.push(...claudeCodeLimits(source));
+    const newline = options.newline ?? '\n';
+    return { ok: true, file: renderClaudeCodeFile(source, options.sourcePath, newline), notices };
   }
 
-  const newline = options.newline ?? '\r\n';
-  const body = renderCursorFile(source, options.sourcePath, newline);
-  return { ok: true, file: body, notices };
+  notices.push({
+    level: 'error',
+    message:
+      `No emitter exists for \`${target}\`. It is on the map because the format has to be ` +
+      'honest about more than one framework, but nothing has been run against it from this ' +
+      'repository — whatever we believe about its role files is documentation somebody read, ' +
+      'not behaviour anybody saw. Writing a file from that would be the degraded output DSP-23 ' +
+      'forbids.',
+  });
+  return { ok: false, notices };
 }
+
+/** The targets {@link generateRoleFile} can write a file for. */
+export const EMITTED_TARGETS: readonly LoopTarget[] = ['cursor', 'claude-code'];
 
 /** How a target's answer to a requirement reads in a report. */
 function requirementNotice(
@@ -223,6 +233,108 @@ function renderCursorFile(source: RoleSource, sourcePath: string, newline: strin
   const digest = digestOf(belowProvenance);
   const text = ['---', ...provenanceComments(sourcePath, digest), belowProvenance].join(newline);
   return { path: cursorAgentPath(source.id), text, digest };
+}
+
+// --- Claude Code --------------------------------------------------------------
+
+/** Where Claude Code keeps a project sub-agent. */
+export function claudeCodeAgentPath(id: string): string {
+  return `.claude/agents/${id}.md`;
+}
+
+/** Reading and searching the project and the web; nothing that changes anything. */
+const CLAUDE_READ_TOOLS = ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch'] as const;
+/** What a role that changes files needs on top: editing, writing and a shell. */
+const CLAUDE_WRITE_TOOLS = ['Edit', 'Write', 'Bash'] as const;
+/** The tools through which a Claude Code agent starts other agents or loads skills. */
+const CLAUDE_DELEGATION_TOOLS = ['Agent', 'Skill'] as const;
+
+/**
+ * The `tools` allowlist, which is the mechanism behind three requirements at once.
+ *
+ * It is always written. Claude Code gives a sub-agent with no `tools` field every tool
+ * it has, `Agent` included, so leaving the field out would quietly grant delegation to
+ * a role that forbids it. `no-file-writes` drops the writing tools *and the shell*:
+ * Claude Code cannot hand an agent a shell that only reads, so a read-only role here
+ * cannot run `git diff` either, and {@link claudeCodeLimits} says so.
+ */
+export function claudeCodeTools(source: RoleSource): readonly string[] {
+  const required = new Set(source.requirements.map((requirement) => requirement.id));
+  return [
+    ...CLAUDE_READ_TOOLS,
+    ...(required.has('no-file-writes') ? [] : CLAUDE_WRITE_TOOLS),
+    ...(required.has('no-subagent-delegation') ? [] : CLAUDE_DELEGATION_TOOLS),
+  ];
+}
+
+/**
+ * What the Claude Code file cannot say, reported alongside the per-requirement notices.
+ *
+ * Both are true of every role that has them, and both would otherwise be invisible: the
+ * file lists the tools it grants, not the guarantees those tools fail to give.
+ */
+function claudeCodeLimits(source: RoleSource): readonly RoleNotice[] {
+  const required = new Set(source.requirements.map((requirement) => requirement.id));
+  if (required.has('no-file-writes')) {
+    return [
+      {
+        level: 'warning',
+        requirement: 'no-file-writes',
+        message:
+          'claude-code: read-only is achieved by granting no shell at all, so this role cannot ' +
+          'run any command, read-only ones such as `git diff` or `scripts/loop_snapshot.py` ' +
+          'included. Material it needs from a command must be supplied by the coordinator.',
+      },
+    ];
+  }
+  return [
+    {
+      level: 'warning',
+      message:
+        'claude-code: this role gets Edit, Write and Bash without a path limit. Any narrower ' +
+        'write scope in its prose is an instruction, not a restriction. Bash can also start ' +
+        'any program, another agent CLI included, so leaving `Agent` out of the allowlist ' +
+        'closes the delegation tool and not every route to delegation.',
+    },
+  ];
+}
+
+/**
+ * Claude Code's project sub-agent file.
+ *
+ * Fields in the order Claude Code's documentation lists them. `model` is written as
+ * `inherit` when the role fixes none, for the same reason Cursor's file says so: an
+ * absent field would let Claude Code choose by its own order, which is a decision, not
+ * the absence of one. `background` is written only when the role requires it, because
+ * `false` is not a value Claude Code documents for it.
+ */
+function renderClaudeCodeFile(source: RoleSource, sourcePath: string, newline: string): GeneratedFile {
+  const required = new Map(source.requirements.map((requirement) => [requirement.id, requirement]));
+  const fields = [
+    `name: ${source.id}`,
+    `description: "${source.summary}"`,
+    `tools: ${claudeCodeTools(source).join(', ')}`,
+    `model: ${required.get('fixed-model-selection')?.value ?? 'inherit'}`,
+    ...(required.has('background-execution') ? ['background: true'] : []),
+  ];
+
+  const blocks = source.targetBlocks
+    .filter((block) => block.target === 'claude-code')
+    .map((block) => block.body);
+
+  const belowProvenance = [
+    ...fields,
+    '---',
+    '',
+    `# ${source.title}`,
+    '',
+    ...interleave([...sectionBodies(source), ...blocks]),
+    '',
+  ].join(newline);
+
+  const digest = digestOf(belowProvenance);
+  const text = ['---', ...provenanceComments(sourcePath, digest), belowProvenance].join(newline);
+  return { path: claudeCodeAgentPath(source.id), text, digest };
 }
 
 /**

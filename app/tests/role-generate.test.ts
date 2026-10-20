@@ -16,13 +16,15 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import {
+  claudeCodeAgentPath,
+  claudeCodeTools,
   cursorAgentPath,
   generateRoleFile,
   inspectGeneratedFile,
   writeDecision,
 } from '../src/main/role-generate.ts';
 import { parseRoleSource } from '../src/main/role-source.ts';
-import { capabilityAnswer } from '../src/shared/loop-graph.ts';
+import { REQUIREMENTS, capabilityAnswer } from '../src/shared/loop-graph.ts';
 import type { TargetCapabilities } from '../src/shared/loop-graph.ts';
 
 const SOURCE = [
@@ -176,6 +178,91 @@ test('a declared target with no emitter is refused, and says what we actually kn
   assert.match(error?.message ?? '', /documentation somebody read/);
 });
 
+// --- Claude Code (DSP-107) ---------------------------------------------------
+
+const CLAUDE_SOURCE = SOURCE.replace('targets: cursor', 'targets: cursor, claude-code').replace(
+  'requires: no-file-writes',
+  'requires: no-file-writes, no-subagent-delegation',
+);
+
+function frontMatterOf(text: string): string {
+  return text.split('\n---')[0] ?? '';
+}
+
+test('a read-only Claude Code agent gets reading tools only: no writing tool, no shell, no delegation', () => {
+  const result = generate(CLAUDE_SOURCE, 'claude-code');
+  assert.ok(result.ok);
+  assert.equal(result.file.path, claudeCodeAgentPath('probe-role'));
+  assert.match(result.file.text, /^tools: Read, Grep, Glob, WebFetch, WebSearch$/m);
+  assert.match(result.file.text, /^model: inherit$/m);
+  const fields = frontMatterOf(result.file.text);
+  for (const tool of ['Edit', 'Write', 'Bash', 'Agent', 'Skill', 'NotebookEdit']) {
+    assert.ok(!new RegExp(`\\b${tool}\\b`).test(fields.split('tools:')[1] ?? ''), `${tool} must not be granted`);
+  }
+  assert.ok(!/^background:/m.test(fields), 'background is written only when required');
+  assert.ok(!/^readonly:/m.test(fields), 'Cursor’s field means nothing to Claude Code');
+  assert.ok(!result.file.text.includes('\r\n'), 'Claude Code files are LF');
+
+  // The price of read-only here is said, not left for a run to discover.
+  const shell = result.notices.find((notice) => /no shell/.test(notice.message));
+  assert.equal(shell?.level, 'warning');
+});
+
+test('a Claude Code agent that may write still gets no Agent tool, and its unlimited write scope is reported', () => {
+  const result = generate(
+    CLAUDE_SOURCE.replace('requires: no-file-writes, no-subagent-delegation', 'requires: no-subagent-delegation'),
+    'claude-code',
+  );
+  assert.ok(result.ok);
+  assert.match(result.file.text, /^tools: Read, Grep, Glob, WebFetch, WebSearch, Edit, Write, Bash$/m);
+  const scope = result.notices.find((notice) => /without a path limit/.test(notice.message));
+  assert.equal(scope?.level, 'warning');
+  assert.match(scope?.message ?? '', /not every route to delegation/);
+});
+
+test('the tools field is always written, because leaving it out would grant Agent', () => {
+  const result = generate(CLAUDE_SOURCE.replace('requires: no-file-writes, no-subagent-delegation\n', ''), 'claude-code');
+  assert.ok(result.ok);
+  assert.match(result.file.text, /^tools: .*\bAgent\b.*$/m, 'a role that permits delegation is given it explicitly');
+  assert.equal(claudeCodeTools(parsed(CLAUDE_SOURCE)).includes('Agent'), false);
+});
+
+test('background is written for Claude Code only when the role requires it', () => {
+  const result = generate(
+    CLAUDE_SOURCE.replace('no-subagent-delegation', 'no-subagent-delegation, background-execution'),
+    'claude-code',
+  );
+  assert.ok(result.ok);
+  assert.match(result.file.text, /^background: true$/m);
+});
+
+test('a claude-code block reaches the Claude Code file and never the Cursor one', () => {
+  const text = `${CLAUDE_SOURCE}\n<!-- target: claude-code -->\nOnly Claude hears this.\n<!-- end target -->\n`;
+  const claude = generate(text, 'claude-code');
+  const cursor = generate(text, 'cursor');
+  assert.ok(claude.ok && cursor.ok);
+  assert.ok(claude.file.text.includes('Only Claude hears this.'));
+  assert.ok(!cursor.file.text.includes('Only Claude hears this.'));
+});
+
+test('generated Claude Code files carry provenance, and a hand edit to the allowlist is caught', () => {
+  const result = generate(CLAUDE_SOURCE, 'claude-code');
+  assert.ok(result.ok);
+  assert.equal(inspectGeneratedFile(result.file.text).kind, 'generated');
+  const widened = result.file.text.replace('WebSearch\n', 'WebSearch, Bash\n');
+  assert.equal(inspectGeneratedFile(widened).kind, 'hand-edited');
+});
+
+test('Claude Code answers for the generated file, and stays unknown on the path DSpatch walks', () => {
+  for (const requirement of REQUIREMENTS) {
+    const file = capabilityAnswer('claude-code', requirement, 'generated-agent-file');
+    assert.equal(file.evidence, 'documentation', `${requirement}: read, not run`);
+    const walked = capabilityAnswer('claude-code', requirement, 'dspatch-walked-run');
+    assert.equal(walked.status, 'unknown', `${requirement}: no Claude Code adapter exists`);
+    assert.equal(walked.evidence, 'none');
+  }
+});
+
 test('a target block for an undeclared target is a source error, not dead prose', () => {
   const result = parseRoleSource(
     `${SOURCE}\n<!-- target: claude-code -->\nsomething\n<!-- end target -->\n`,
@@ -306,6 +393,25 @@ test('each real role source reproduces its live Cursor definition byte for byte'
       withoutProvenance(live.toString('utf8')),
       `${result.file.path} differs from what ${relativeSource} generates`,
     );
+  }
+});
+
+test('each real role source reproduces its Claude Code agent byte for byte', () => {
+  const repoRoot = path.resolve(import.meta.dirname, '..', '..');
+  const sourceDir = path.join(repoRoot, 'docs', 'loop', 'roles');
+  const names = fs.readdirSync(sourceDir).filter((name) => name.endsWith('.role.md'));
+  assert.equal(names.length, 5, 'the five specialists');
+
+  for (const name of names) {
+    const relativeSource = `docs/loop/roles/${name}`;
+    const source = parseRoleSource(fs.readFileSync(path.join(sourceDir, name), 'utf8'));
+    assert.ok(source.ok, name);
+    assert.ok(source.source.targets.includes('claude-code'), `${name} declares claude-code`);
+    const result = generateRoleFile(source.source, 'claude-code', { sourcePath: relativeSource });
+    assert.ok(result.ok, name);
+    const live = fs.readFileSync(path.join(repoRoot, result.file.path), 'utf8');
+    assert.equal(result.file.text, live, `${result.file.path} differs from what ${relativeSource} generates`);
+    assert.ok(!/^tools: .*\bAgent\b/m.test(live), `${result.file.path} must not be able to delegate`);
   }
 });
 

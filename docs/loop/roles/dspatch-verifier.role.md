@@ -2,7 +2,7 @@
 role: dspatch-verifier
 title: Verifier
 summary: "Verify a handed-off result on the specified code version using relevant real commands. Report evidence and gaps; do not modify the implementation."
-targets: cursor
+targets: cursor, claude-code
 requires: no-subagent-delegation
 ---
 

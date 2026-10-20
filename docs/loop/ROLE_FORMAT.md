@@ -84,4 +84,20 @@ Line endings are CRLF, matching the five live definitions, and normalised before
 
 ## The three targets, and what we actually know
 
-Cursor, Copilot and Claude Code are on the map. **Only Cursor is implemented.** Asking for either of the others refuses and says why: nothing has been run against them from this repository, so whatever we believe about their role files is documentation somebody read, not behaviour anybody saw. Filling in the capability table for them is separate, evidenced work.
+Cursor, Copilot and Claude Code are on the map. **Cursor and Claude Code are implemented; Copilot is not.** Asking for Copilot refuses and says why: nothing has been run against it from this repository, so whatever we believe about its role files is documentation somebody read, not behaviour anybody saw.
+
+Without `--target`, `npm run roles:generate` generates each role for every implemented target it declares. `--flat` needs `--target`, because the targets use the same file names.
+
+**Claude Code (DSP-107)** writes `.claude/agents/<role>.md` for the external development loop. Its row in `TARGET_CAPABILITIES` answers for the *generated agent file only*, from Claude Code's sub-agent documentation (read 20 October 2026):
+
+| Requirement | Mechanism in the generated file | Evidence |
+| --- | --- | --- |
+| `no-file-writes` | a `tools` allowlist of Read, Grep, Glob, WebFetch and WebSearch: no Edit, Write or Bash. The role has **no shell**, read-only commands included. | documentation |
+| `no-subagent-delegation` | the allowlist leaves out `Agent` and `Skill`. The field is always written, because an omitted `tools` inherits `Agent`. Roles with Bash could still start another agent program; generation warns about this. | documentation |
+| `tool-restriction` | the `tools` allowlist | documentation |
+| `fixed-model-selection` | `model`, written as `inherit` when the role fixes none | documentation |
+| `background-execution` | `background: true`, written only when required | documentation |
+
+Roles that may write files get Edit, Write and Bash with no path limit; a narrower write scope in their prose is an instruction. Claude Code's files use LF, since they had no predecessor. A `<!-- target: claude-code -->` block carries what only a Claude Code agent needs to be told — today, that the read-only roles have no shell.
+
+**On DSpatch's own path, every Claude Code answer is still `unknown`.** Each cell carries an explicit `whenDSpatchWalksTheRun` of *nothing has been run*, because no adapter opens a Claude Code session and every run is checked against `connectedTargets: ['cursor']`. Generating these files makes Claude Code usable for the external loop; it does not make it a runtime provider for DSpatch.

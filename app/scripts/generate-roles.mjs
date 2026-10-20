@@ -2,8 +2,10 @@
  * Generate the provider files from the role sources: `npm run roles:generate`.
  *
  * The sources live in `docs/loop/roles/`; the target decides what comes out of them.
- * Only Cursor is implemented, which is enough to be useful because that is where this
- * loop runs, and asking for another target says so rather than producing something.
+ * Cursor and Claude Code are implemented (Claude Code since DSP-107, for the external
+ * development loop only). Without `--target`, each role is generated for every
+ * implemented target it declares; asking for Copilot says why it is refused rather than
+ * producing something.
  *
  * **It writes nothing unless told to.** The default is a comparison: generate in
  * memory, compare against what is on disk, print the difference and exit non-zero if
@@ -18,6 +20,7 @@
  *   npm run roles:generate
  *   npm run roles:generate -- --out ../.dspatch-loop/staged --write
  *   npm run roles:generate -- --role dspatch-researcher
+ *   npm run roles:generate -- --target claude-code
  *   npm run roles:generate -- --target copilot
  *
  * `--out` is a *root*, not a directory of files: each target says where inside a project
@@ -36,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 
 import { LOOP_TARGETS } from '../src/shared/loop-graph';
 import {
+  EMITTED_TARGETS,
   formatNotices,
   generateRoleFile,
   inspectGeneratedFile,
@@ -49,10 +53,11 @@ const sourceDir = path.join(repoRoot, 'docs', 'loop', 'roles');
 
 /**
  * @param {readonly string[]} argv
- * @returns {{ target: string, out: string, compare: string, write: boolean, force: boolean, flat: boolean, role: string | null, help: boolean }}
+ * @returns {{ target: string | null, out: string, compare: string, write: boolean, force: boolean, flat: boolean, role: string | null, help: boolean }}
  */
 function parseArgs(argv) {
-  let target = 'cursor';
+  /** @type {string | null} */
+  let target = null;
   let out = repoRoot;
   let compare = repoRoot;
   let write = false;
@@ -105,17 +110,23 @@ function parseArgs(argv) {
 const options = parseArgs(process.argv.slice(2));
 if (options.help) {
   process.stdout.write(
-    'generate-roles [--target cursor] [--out <root>] [--compare <root>] [--role <id>]\n' +
+    'generate-roles [--target <target>] [--out <root>] [--compare <root>] [--role <id>]\n' +
       '               [--write] [--force] [--flat]\n' +
       '\n' +
+      `  Without --target, every implemented target (${EMITTED_TARGETS.join(', ')}) a role declares.\n` +
       '  Writes nothing without --write. --force is only for replacing a file that has no\n' +
       '  provenance header; a hand-edited generated file is never overwritten. --flat stages\n' +
       '  the files directly in --out instead of under the target\u2019s own subdirectories.\n',
   );
   process.exit(0);
 }
-if (!(/** @type {readonly string[]} */ (LOOP_TARGETS)).includes(options.target)) {
+if (options.target !== null && !(/** @type {readonly string[]} */ (LOOP_TARGETS)).includes(options.target)) {
   process.stderr.write(`unknown target ${options.target}; known: ${LOOP_TARGETS.join(', ')}\n`);
+  process.exit(2);
+}
+
+if (options.flat && options.target === null) {
+  process.stderr.write('--flat needs --target: the targets share file names, so one flat directory cannot hold them all\n');
   process.exit(2);
 }
 
@@ -138,16 +149,34 @@ let refused = 0;
 for (const name of sourceFiles) {
   const absolute = path.join(sourceDir, name);
   const relativeSource = path.relative(repoRoot, absolute).split(path.sep).join('/');
-  process.stdout.write(`\n${relativeSource} -> ${options.target}\n`);
 
   const parsed = parseRoleSource(fs.readFileSync(absolute, 'utf8'));
   if (!parsed.ok) {
-    process.stdout.write(`  ERROR not a valid role source:\n${formatRoleSourceProblems(parsed.problems)}\n`);
+    process.stdout.write(`\n${relativeSource}\n  ERROR not a valid role source:\n${formatRoleSourceProblems(parsed.problems)}\n`);
     failed += 1;
     continue;
   }
 
-  const result = generateRoleFile(parsed.source, /** @type {any} */ (options.target), {
+  // An explicit --target is honoured even when the role does not declare it, so the
+  // refusal and its reason are printed rather than the role silently skipped.
+  const targets =
+    options.target !== null
+      ? [options.target]
+      : EMITTED_TARGETS.filter((target) => parsed.source.targets.includes(target));
+  for (const target of targets) {
+    generateOne(parsed.source, target, relativeSource);
+  }
+}
+
+/**
+ * @param {import('../src/main/role-source').RoleSource} source
+ * @param {string} target
+ * @param {string} relativeSource
+ */
+function generateOne(source, target, relativeSource) {
+  process.stdout.write(`\n${relativeSource} -> ${target}\n`);
+
+  const result = generateRoleFile(source, /** @type {any} */ (target), {
     sourcePath: relativeSource,
   });
   if (result.notices.length > 0) {
@@ -155,7 +184,7 @@ for (const name of sourceFiles) {
   }
   if (!result.ok) {
     failed += 1;
-    continue;
+    return;
   }
 
   const { file } = result;
@@ -194,12 +223,12 @@ for (const name of sourceFiles) {
   const decision = writeDecision(inspectGeneratedFile(destinationText), { force: options.force });
   if (!options.write) {
     process.stdout.write(`  not written (no --write); writing would be ${decision.write ? 'allowed' : `refused: ${decision.reason}`}\n`);
-    continue;
+    return;
   }
   if (!decision.write) {
     process.stdout.write(`  REFUSED to write ${path.relative(repoRoot, destination)}: ${decision.reason}\n`);
     refused += 1;
-    continue;
+    return;
   }
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, generated);

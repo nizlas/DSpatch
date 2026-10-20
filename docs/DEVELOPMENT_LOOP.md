@@ -2,7 +2,7 @@
 
 # DSpatch development loop
 
-Initial draft, 13 September 2026. This workflow helps us **build DSpatch in Cursor**. The product vision and phases are in [VISION.md](VISION.md); the built-in Maestro feature comes later. A run journal and instructions do not replace Cursor's actual process and tool management.
+Initial draft, 13 September 2026. This workflow helps us **build DSpatch in Cursor**, and since DSP-107 also from Claude Code (see [Start in Claude Code](#start-in-claude-code)). The product vision and phases are in [VISION.md](VISION.md); the built-in Maestro feature comes later. A run journal and instructions do not replace Cursor's actual process and tool management.
 
 <a id="börja-i-cursor"></a>
 
@@ -34,20 +34,34 @@ Other assignments:
 
 These are chat instructions to the skill, not a separate CLI. If the skill is missing, open a new Agent chat at the correct repository root and check that the files exist. As a fallback, attach `.cursor/skills/dspatch-loop/SKILL.md` and ask the main agent to follow it as coordinator. A missing subagent tool must be reported; playing every role in one context does not count as successful loop calibration.
 
+The procedure the skill follows is [COORDINATOR.md](loop/COORDINATOR.md), shared with Claude Code. Change the procedure there; the skill holds only what is specific to Cursor.
+
+<a id="start-in-claude-code"></a>
+
+## Start in Claude Code
+
+Open a Claude Code session at the repository root, in the main checkout rather than a worktree. Claude Code reads [CLAUDE.md](../CLAUDE.md), which imports AGENTS.md. The coordinator entry point is [.claude/skills/dspatch-loop/SKILL.md](../.claude/skills/dspatch-loop/SKILL.md), invoked the same way: `/dspatch-loop calibrate`, `/dspatch-loop run DSP-N`, `/dspatch-loop resume`. It follows the same [COORDINATOR.md](loop/COORDINATOR.md) and adds Claude Code's mechanics.
+
+The five specialists are in `.claude/agents/`, generated from the same role sources as Cursor's. Claude Code registers project agents when a session starts, so a session that was running when the directory first appeared must be restarted before they can be called. They differ from Cursor's in two ways worth knowing before a run: the read-only specialists have no shell at all, so the coordinator supplies diffs, snapshot output and logs as files; and delegation is closed by leaving the `Agent` tool out of every specialist's allowlist rather than by instruction alone. [ROLE_FORMAT.md](loop/ROLE_FORMAT.md#targets) records what each requirement rests on.
+
+Running this loop from Claude Code does not make Claude Code a provider for DSpatch's own run engine. That path is still unestablished, and nothing observed here answers it.
+
 <a id="sex-roller-en-platt-anropsstruktur"></a>
 
 ## Six roles, a flat call structure
 
 | Role | Definition | Responsibility |
 | --- | --- | --- |
-| Coordinator, in the main chat | [dspatch-loop](../.cursor/skills/dspatch-loop/SKILL.md) | Mandate, context, operational plan, all delegation and status recording. |
+| Coordinator, in the main chat | [COORDINATOR.md](loop/COORDINATOR.md), entered through [Cursor's](../.cursor/skills/dspatch-loop/SKILL.md) or [Claude Code's](../.claude/skills/dspatch-loop/SKILL.md) `dspatch-loop` skill | Mandate, context, operational plan, all delegation and status recording. |
 | Backlog Planner | [Agent](../.cursor/agents/dspatch-backlog-planner.md) | Plan overview and well-specified task proposals. |
 | Researcher | [Agent](../.cursor/agents/dspatch-researcher.md) | Bounded investigation when a real uncertainty needs resolving. |
 | Implementer | [Agent](../.cursor/agents/dspatch-implementer.md) | Agreed code change and own checks. |
 | Verifier | [Agent](../.cursor/agents/dspatch-verifier.md) | Independent execution and assessment of technical evidence. |
 | Reviewer | [Agent](../.cursor/agents/dspatch-reviewer.md) | Independent review of a plan or implementation. |
 
-The coordinator calls specialists directly and sequentially, in the foreground while the user is present and in the background for an unattended run (see [limits and stopping](#gränser-och-stopp)). No specialist delegates, including to generic subagents. This is our policy, not a platform restriction: Cursor's documentation states that subagents can launch child subagents starting in Cursor 2.5. The policy keeps the call structure flat and traceable, and specialist instructions repeat it. Researcher and Backlog Planner are used when needed, not as mandatory ceremonies before every small change. Reviewer assesses substantial new plans and delivered implementations. The coordinator supplies a clear handoff so specialists need not guess what was said in the main chat.
+The specialist links are Cursor's files. Claude Code's are the same names under `.claude/agents/`; both are generated from [docs/loop/roles/](loop/roles/).
+
+The coordinator calls specialists directly and sequentially, in the foreground while the user is present and in the background for an unattended run (see [limits and stopping](#gränser-och-stopp)). No specialist delegates, including to generic subagents. In Cursor this is our policy, not a platform restriction: Cursor's documentation states that subagents can launch child subagents starting in Cursor 2.5. In Claude Code the generated specialists are given no `Agent` tool, so the platform closes that route as well, according to its documentation. The policy keeps the call structure flat and traceable, and specialist instructions repeat it. Researcher and Backlog Planner are used when needed, not as mandatory ceremonies before every small change. Reviewer assesses substantial new plans and delivered implementations. The coordinator supplies a clear handoff so specialists need not guess what was said in the main chat.
 
 <a id="planerad-förbättring-uppgiftsstyrt-modellval"></a>
 

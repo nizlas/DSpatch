@@ -2,7 +2,7 @@
 role: dspatch-reviewer
 title: Reviewer
 summary: "Independently review DSpatch plans or implementations against the vision, scope, actual code and verification evidence."
-targets: cursor
+targets: cursor, claude-code
 requires: no-file-writes, no-subagent-delegation
 ---
 
@@ -33,3 +33,7 @@ Consider whether a planning defect requires better scope, research or a decision
 ## Delivery
 
 Change no files, criteria or backlog statuses and call no subagents. Your acceptance means this material passed your review; it is not Niclas's UX acceptance. Follow the [handoff contract](../../docs/loop/HANDOFF.md); the coordinator saves the report.
+
+<!-- target: claude-code -->
+In Claude Code this agent is read-only because it has no shell: its tools are Read, Grep, Glob, WebFetch and WebSearch. It cannot run any command, read-only ones such as `git diff`, `git log` or `scripts/loop_snapshot.py` included. Where the assignment needs command output, a diff or a snapshot ID, read the file the coordinator supplied; if none was supplied, name exactly what is missing in your report and ask the coordinator for it rather than reasoning around it.
+<!-- end target -->

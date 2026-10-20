@@ -43,9 +43,9 @@ export const LOOP_GRAPH_FORMAT_VERSION = 1;
  * The frameworks on the map.
  *
  * Only `cursor` is described from behaviour anyone has seen. Claude Code is here
- * because Niclas is considering trying it, and Copilot because VISION.md asks for
- * it — for both, what this module states is documentation at best and is labelled
- * that way in {@link TARGET_CAPABILITIES}.
+ * because it takes part in the external development loop (DSP-107), and Copilot
+ * because VISION.md asks for it — for both, what this module states is documentation
+ * at best and is labelled that way in {@link TARGET_CAPABILITIES}.
  */
 export const LOOP_TARGETS = ['cursor', 'copilot', 'claude-code'] as const;
 export type LoopTarget = (typeof LOOP_TARGETS)[number];
@@ -174,11 +174,12 @@ const NOT_RUN_FOR_ALL = {
 /**
  * What each framework can actually do about a requirement.
  *
- * **Cursor's row is from this repository's own use of it; the other two rows are
- * deliberately unknown.** Nobody has run Copilot or Claude Code here, and a table
- * that guessed on their behalf would be exactly the "degraded file that reads as
- * though the requirement holds" that DSP-23 forbids. Filling those rows is a
- * separate, evidenced piece of work.
+ * **Cursor's row is from this repository's own use of it.** Copilot's row is
+ * deliberately unknown: nobody has run Copilot here, and a table that guessed on its
+ * behalf would be exactly the "degraded file that reads as though the requirement
+ * holds" that DSP-23 forbids. Claude Code's row answers only for the agent files
+ * generated for the external development loop, from documentation; on DSpatch's own
+ * path every Claude Code answer is still unknown.
  *
  * **Every Cursor `how` below names a mechanism in a generated agent definition.** That
  * is the path the sentences were written from, so each one that is not also the
@@ -257,7 +258,57 @@ export const TARGET_CAPABILITIES: TargetCapabilities = {
     },
   },
   copilot: NOT_RUN_FOR_ALL,
-  'claude-code': NOT_RUN_FOR_ALL,
+  /*
+   * DSP-107. These answers are for the agent files `role-generate.ts` writes into
+   * `.claude/agents/` so that Claude Code can take part in the *external* development
+   * loop, and they come from Claude Code's sub-agent documentation (read 20 October
+   * 2026), not from a run. Every cell carries `whenDSpatchWalksTheRun: NOT_RUN`
+   * explicitly: no adapter opens a Claude Code session, `connectedTargets` is
+   * `['cursor']` wherever a run is checked, and a generated file is not a runtime
+   * provider. Without the explicit cell `capabilityAnswer` would fall back to the
+   * generated-file answer and the product would read these as established.
+   */
+  'claude-code': {
+    'no-file-writes': {
+      status: 'enforced',
+      how:
+        'a `tools` allowlist in the sub-agent definition with no Edit, Write, NotebookEdit ' +
+        'or Bash. Claude Code documents that an agent given only listed tools cannot edit ' +
+        'files, write files or use MCP tools; the price is that the agent cannot run a ' +
+        'shell command either, read-only ones included.',
+      evidence: 'documentation',
+      whenDSpatchWalksTheRun: NOT_RUN,
+    },
+    'background-execution': {
+      status: 'enforced',
+      how:
+        '`background: true` in the sub-agent definition, which keeps it in the background ' +
+        'even when the caller asks to wait for it.',
+      evidence: 'documentation',
+      whenDSpatchWalksTheRun: NOT_RUN,
+    },
+    'fixed-model-selection': {
+      status: 'enforced',
+      how: 'the `model` field in the sub-agent definition: an alias, a full model ID, or `inherit`.',
+      evidence: 'documentation',
+      whenDSpatchWalksTheRun: NOT_RUN,
+    },
+    'no-subagent-delegation': {
+      status: 'enforced',
+      how:
+        'the `tools` allowlist leaves out `Agent` (formerly `Task`) and `Skill`. Claude Code ' +
+        'lets a sub-agent spawn its own by default, and an omitted `tools` field inherits ' +
+        '`Agent`, so the allowlist is the mechanism and is always written.',
+      evidence: 'documentation',
+      whenDSpatchWalksTheRun: NOT_RUN,
+    },
+    'tool-restriction': {
+      status: 'enforced',
+      how: 'the `tools` allowlist in the sub-agent definition; tools not listed, MCP tools included, are not available.',
+      evidence: 'documentation',
+      whenDSpatchWalksTheRun: NOT_RUN,
+    },
+  },
 };
 
 /**
