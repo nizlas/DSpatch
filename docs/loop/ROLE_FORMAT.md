@@ -98,6 +98,6 @@ Without `--target`, `npm run roles:generate` generates each role for every imple
 | `fixed-model-selection` | `model`, written as `inherit` when the role fixes none | documentation |
 | `background-execution` | `background: true`, written only when required | documentation |
 
-Roles that may write files get Edit, Write and Bash with no path limit; a narrower write scope in their prose is an instruction. Claude Code's files use LF, since they had no predecessor. A `<!-- target: claude-code -->` block carries what only a Claude Code agent needs to be told — today, that the read-only roles have no shell.
+Roles that may write files get Edit, Write and Bash with no path limit; a narrower write scope in their prose is an instruction. Claude Code's files use CRLF like Cursor's, because this repository is checked out with `core.autocrlf` and an LF file would come back as CRLF and compare as changed. A `<!-- target: claude-code -->` block carries what only a Claude Code agent needs to be told — today, that the read-only roles have no shell.
 
 **On DSpatch's own path, every Claude Code answer is still `unknown`.** Each cell carries an explicit `whenDSpatchWalksTheRun` of *nothing has been run*, because no adapter opens a Claude Code session and every run is checked against `connectedTargets: ['cursor']`. Generating these files makes Claude Code usable for the external loop; it does not make it a runtime provider for DSpatch.

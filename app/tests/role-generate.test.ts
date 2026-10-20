@@ -186,7 +186,7 @@ const CLAUDE_SOURCE = SOURCE.replace('targets: cursor', 'targets: cursor, claude
 );
 
 function frontMatterOf(text: string): string {
-  return text.split('\n---')[0] ?? '';
+  return text.replace(/\r\n/g, '\n').split('\n---')[0] ?? '';
 }
 
 test('a read-only Claude Code agent gets reading tools only: no writing tool, no shell, no delegation', () => {
@@ -201,7 +201,7 @@ test('a read-only Claude Code agent gets reading tools only: no writing tool, no
   }
   assert.ok(!/^background:/m.test(fields), 'background is written only when required');
   assert.ok(!/^readonly:/m.test(fields), 'Cursor’s field means nothing to Claude Code');
-  assert.ok(!result.file.text.includes('\r\n'), 'Claude Code files are LF');
+  assert.ok(!/[^\r]\n/.test(result.file.text), 'CRLF throughout, as the checkout writes it');
 
   // The price of read-only here is said, not left for a run to discover.
   const shell = result.notices.find((notice) => /no shell/.test(notice.message));
@@ -249,7 +249,8 @@ test('generated Claude Code files carry provenance, and a hand edit to the allow
   const result = generate(CLAUDE_SOURCE, 'claude-code');
   assert.ok(result.ok);
   assert.equal(inspectGeneratedFile(result.file.text).kind, 'generated');
-  const widened = result.file.text.replace('WebSearch\n', 'WebSearch, Bash\n');
+  const widened = result.file.text.replace('WebSearch\r\n', 'WebSearch, Bash\r\n');
+  assert.notEqual(widened, result.file.text);
   assert.equal(inspectGeneratedFile(widened).kind, 'hand-edited');
 });
 

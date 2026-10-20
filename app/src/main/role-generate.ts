@@ -28,7 +28,9 @@
  * `.cursor/agents/` use CRLF, and generating LF would rewrite all five files in their
  * entirety the first time anyone ran this. The convention is a stated option with a
  * stated default rather than something inherited from whoever runs the generator.
- * Claude Code's files had no predecessor, so they default to LF.
+ * Claude Code's files use CRLF too: they had no predecessor, but this repository is
+ * checked out with `core.autocrlf`, so an LF file would come back as CRLF and read as
+ * changed on the next comparison.
  */
 
 import { createHash } from 'node:crypto';
@@ -66,7 +68,7 @@ export type GenerateResult =
 export interface GenerateOptions {
   /** Where the source file lives, relative to the project root, for the provenance line. */
   readonly sourcePath: string;
-  /** Defaults to CRLF for Cursor and LF for Claude Code; see the note at the top of this file. */
+  /** Defaults to CRLF; see the note at the top of this file. */
   readonly newline?: '\r\n' | '\n';
   /** Injectable so a test can state a capability table instead of depending on today's. */
   readonly capabilities?: TargetCapabilities;
@@ -121,7 +123,7 @@ export function generateRoleFile(
   }
   if (target === 'claude-code') {
     notices.push(...claudeCodeLimits(source));
-    const newline = options.newline ?? '\n';
+    const newline = options.newline ?? '\r\n';
     return { ok: true, file: renderClaudeCodeFile(source, options.sourcePath, newline), notices };
   }
 

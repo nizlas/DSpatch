@@ -4,7 +4,7 @@ title: Enable Claude Code for DSpatch's external development loop
 status: In Progress
 assignee: []
 created_date: '2026-10-20 20:20'
-updated_date: '2026-10-20 20:45'
+updated_date: '2026-10-20 20:46'
 labels:
   - development loop
 dependencies:
@@ -60,4 +60,6 @@ Visible side effect: dspatch-development-loop.graph.json points its coordinator 
 Verification (20 Oct 2026, working tree on f83f476 plus the changes above): `npm run roles:generate` from app/ exit 0, all ten files identical bytes; Cursor sha256 prefixes unchanged (5a0c4a9a c824f062 3a3117e9 a4996f1f 80d4f140); `--target copilot` exit 1 (refused); `--flat` without --target exit 2, nothing written. `npm run test:loop` 571/571 pass, including 8 new Claude Code tests in role-generate.test.ts; `npm run typecheck` exit 0. Full suite not run: the change is confined to the generator, the capability table and docs, all covered by the loop group.
 
 PENDING, AC#8 (20 Oct 2026): `Agent` with subagent_type 'dspatch-reviewer' in this session returned "Agent type 'dspatch-reviewer' not found" (available: claude, claude-code-guide, Explore, general-purpose, Plan, statusline-setup). This is expected, because .claude/agents/ was created after the session started. Follow-up: in a new Claude Code session at the main checkout, call Agent with subagent_type 'dspatch-reviewer' and a read-only probe (report its name and tools, and whether it can start a subagent, writing nothing). Record the result here; check AC#8 only if the call succeeds. Also confirm that /dspatch-loop resolves to .claude/skills/dspatch-loop/SKILL.md. Task stays In Progress until then.
+
+Correction (20 Oct 2026, after commit 25257bb): Claude Code files now default to CRLF instead of LF. core.autocrlf=true would have checked the LF files out as CRLF, after which roles:generate would report them as differing and the byte-for-byte test would fail. Re-verified: roles:generate exit 0, test:loop 571/571, typecheck:node exit 0, Cursor hashes unchanged.
 <!-- SECTION:NOTES:END -->
