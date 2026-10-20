@@ -1,10 +1,10 @@
 ---
 id: DSP-107
 title: Enable Claude Code for DSpatch's external development loop
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-10-20 20:20'
-updated_date: '2026-10-20 20:46'
+updated_date: '2026-10-20 21:14'
 labels:
   - development loop
 dependencies:
@@ -27,7 +27,7 @@ Niclas asked on 20 October 2026 that Claude Code be able to take part in the ext
 - [x] #5 The product runtime path for claude-code keeps its unknown capability status
 - [x] #6 A Claude coordinator skill exists and the shared coordinator procedure has one maintained source
 - [x] #7 AGENTS.md and docs/DEVELOPMENT_LOOP.md name the right entry point for Cursor and for Claude Code
-- [ ] #8 A real call to a registered Claude specialist has been observed, or is recorded as pending with a precise follow-up
+- [x] #8 A real call to a registered Claude specialist has been observed, or is recorded as pending with a precise follow-up
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,4 +62,23 @@ Verification (20 Oct 2026, working tree on f83f476 plus the changes above): `npm
 PENDING, AC#8 (20 Oct 2026): `Agent` with subagent_type 'dspatch-reviewer' in this session returned "Agent type 'dspatch-reviewer' not found" (available: claude, claude-code-guide, Explore, general-purpose, Plan, statusline-setup). This is expected, because .claude/agents/ was created after the session started. Follow-up: in a new Claude Code session at the main checkout, call Agent with subagent_type 'dspatch-reviewer' and a read-only probe (report its name and tools, and whether it can start a subagent, writing nothing). Record the result here; check AC#8 only if the call succeeds. Also confirm that /dspatch-loop resolves to .claude/skills/dspatch-loop/SKILL.md. Task stays In Progress until then.
 
 Correction (20 Oct 2026, after commit 25257bb): Claude Code files now default to CRLF instead of LF. core.autocrlf=true would have checked the LF files out as CRLF, after which roles:generate would report them as differing and the byte-for-byte test would fail. Re-verified: roles:generate exit 0, test:loop 571/571, typecheck:node exit 0, Cursor hashes unchanged.
+
+AC#8 verified (20 Oct 2026, new Claude Code session, main checkout C:\Users\nicla\development\DSpatch, branch main, HEAD da63a32, no worktree; untracked unrelated files only).
+- Registration (observed): this session's Agent tool lists the five dspatch-* specialists; dspatch-reviewer is listed with "Tools: Read, Grep, Glob, WebFetch, WebSearch".
+- Invocation (observed): `Agent` with subagent_type "dspatch-reviewer" was accepted and ran as a background custom agent (~5 min, 43 tool uses) and returned its report through the harness. Not a general-purpose agent or fork.
+- Configuration (read from file): .claude/agents/dspatch-reviewer.md has name dspatch-reviewer, tools Read, Grep, Glob, WebFetch, WebSearch (no Edit, Write, NotebookEdit, Bash, Agent, Skill), model: inherit, provenance header and digest.
+- Agent self-report (not independent evidence): it reported exactly Read, Grep, Glob, WebFetch, WebSearch plus the harness's hand-back tool, and no Edit, Write, NotebookEdit, Bash, Agent or Skill. It agrees with the file and the listing. No file in the repository changed during the call (git status unchanged).
+- Skill discovery (observed): invoking the Skill tool with "dspatch-loop" loaded "Base directory for this skill: C:\Users\nicla\development\DSpatch\.claude\skills\dspatch-loop" with the Claude Code body. No ~/.claude/skills or ~/.claude/agents exist, so nothing user-level shadows it.
+
+Evidence supplied to the reviewer (no shell): `git diff f83f476 da63a32`, its stat, and a fresh run on HEAD da63a32: `npm run roles:generate` exit 0 (10 files identical bytes), Cursor sha256 prefixes unchanged (5a0c4a9a c824f062 3a3117e9 a4996f1f 80d4f140), .claude/agents/*.md CRLF, `npm run test:loop` 571/571 exit 0. Afterwards `npm run typecheck` exit 0 on HEAD da63a32 (reviewer's S2).
+
+Review of the combined DSP-107 change (dspatch-reviewer, implementation mode): ACCEPT, no blocking findings. AC#1-#7 supported by the diff, the code and the HEAD evidence; the COORDINATOR.md extraction loses nothing from the old Cursor skill procedure (environment-specific tool names moved to the entry skills; one tightening: a general-purpose agent playing a role is not a probe).
+Suggestions (not blocking, recorded, no change made):
+- S1: role sources now declare targets cursor, claude-code, so the editor's role panel for the runnable graph's specialists reads "Supports cursor, claude-code, declared in the file" (app/src/renderer/LoopEditor.tsx ~3644) and describeTargetChange to claude-code no longer lists those nodes under rolesWithoutSupport (app/src/shared/loop-graph.ts ~1255). Capability stays unknown and validation against ['cursor'] still refuses a claude-code graph, so AC#5 holds; the panel wording could later say "role declares" to avoid being read as runtime support.
+- S2: typecheck on HEAD was not in the supplied evidence; resolved by the run above.
+- S3 (future): see coordinator-reference conclusion.
+
+Coordinator-reference conclusion (read in code by coordinator and reviewer): docs/loop/graphs/dspatch-development-loop.graph.json still points coordinator and coordinator-report at .cursor/skills/dspatch-loop/SKILL.md (cursor-skill-file). loop-graph-roles.ts resolveOnce returns the body after front matter as instructions and follows no links, so the drawing's role panel and brief preview now show the thin entry skill. No execution path sends it to a provider: the only tracked loop definition (.dspatch/loops/dspatch-chat-loop.loop.json) runs dspatch-chat-loop.graph.json; the runnable development loop resolves its coordinators through role-source docs/loop/roles/run/dspatch-run-coordinator.role.md; OPEN_LOOP_GRAPH development-loop is editor-only; a live walk of the drawing (loop:live CLI or a hand-made .loop.json) stops at its human entry node niclas-mandate (loop-live.ts returns awaiting-human); dry runs call no provider. The claude-code target blocks in role sources go to targetBlocks, not sections (role-source.ts), so walked prompts do not gain them. The external loop's coordinators (Cursor and Claude Code) read their entry skill directly and are told to read COORDINATOR.md in full. No regression; the reference remains sufficient and is pinned by app/tests/loop-node-help.test.ts. S3: if a later change lets a live run get past the human entry, point the drawing's coordinator nodes at a role-source file instead; the thin skill's relative link would not resolve in a foreign workspace, though the old full Cursor procedure was already judged wrong for a coordinator inside a run (DSP-83).
+
+Status: AC#8 checked; task moved to Review for Niclas's assessment.
 <!-- SECTION:NOTES:END -->
