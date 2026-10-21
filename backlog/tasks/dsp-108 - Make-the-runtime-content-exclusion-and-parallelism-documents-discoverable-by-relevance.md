@@ -3,10 +3,10 @@ id: DSP-108
 title: >-
   Make the runtime, content-exclusion and parallelism documents discoverable by
   relevance
-status: Review
+status: Done
 assignee: []
 created_date: '2026-10-21 11:43'
-updated_date: '2026-10-21 11:44'
+updated_date: '2026-10-21 12:32'
 labels:
   - documentation
 dependencies: []
@@ -42,4 +42,6 @@ Implemented (21 Oct 2026, main checkout, base 0627be9):
 Checks (21 Oct 2026): the three link targets exist under docs/ with these exact names; ../../AGENTS.md#relevance-index resolves from docs/loop and the anchor is unique; git diff touches only AGENTS.md (+15) and COORDINATOR.md (1 line); CLAUDE.md diff empty. No test reads the content of AGENTS.md or COORDINATOR.md (app/tests write their own fixtures), so no test run. Reading-choice walk-through against the index text: a self-contained UI text change touches no row and is named as needing none; a Claude runtime task matches the roadmap row (runtime or provider integration) and the contract row when it affects tool access, hooks, permissions or information flows; a hook or exclusion change matches the contract row; a task on the product's subgraphs or parallelism matches the parallelism row. This checks the instructions only; it is not evidence of future agent behaviour. No agent calibration was run.
 
 Status: Review, awaiting Niclas's assessment.
+
+Accepted by Niclas (21 Oct 2026). Status Review -> Done.
 <!-- SECTION:NOTES:END -->
