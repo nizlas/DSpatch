@@ -511,6 +511,103 @@ export interface ScenarioOptions {
   readonly claudeQueryFn?: ClaudeQueryFunction;
   /** How long to keep listening after a cancelled turn's terminal event. Default 5 s. */
   readonly afterTerminalWatchMs?: number;
+  /** Substitute for {@link readSourceRevision}. Tests only. */
+  readonly sourceRevision?: () => SourceRevision;
+}
+
+// --- The DSpatch source revision a run tested (DSP-109 AC #4) ------------------
+
+/**
+ * Which DSpatch code ran: the Git state of the repository this program comes
+ * from — not the generated fixture's repository, which is recorded separately.
+ *
+ * `dirty` means **tracked** changes, staged or not (`git status --porcelain
+ * --untracked-files=no` is non-empty). Untracked files do not count, because a
+ * working checkout routinely holds unrelated scratch files. It describes the
+ * source tree when the run started; it does not prove the compiled output that
+ * actually ran was built from that tree.
+ */
+export type SourceRevision =
+  | {
+      readonly available: true;
+      readonly commit: string;
+      readonly tree: 'clean' | 'dirty';
+      readonly dirtyMeans: string;
+      /** Paths with tracked changes, as `git status --porcelain` lists them. */
+      readonly trackedChanges: readonly string[];
+      readonly sourceDir: string;
+    }
+  | { readonly available: false; readonly reason: string; readonly sourceDir: string };
+
+/** Runs `git` with `args` in `cwd` and returns stdout, or throws as execFileSync does. */
+export type GitRunner = (args: readonly string[], cwd: string) => string;
+
+const DIRTY_MEANS =
+  'tracked files modified, staged, deleted or renamed (git status --porcelain ' +
+  '--untracked-files=no is non-empty); untracked files are not counted';
+
+function defaultGitRunner(args: readonly string[], cwd: string): string {
+  return execFileSync('git', [...args], {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+}
+
+function sourceDir(): string {
+  // Compiled: dist/main. Under the test loader there is no __dirname; the tests
+  // run from app/, which is inside the same repository.
+  return typeof __dirname === 'string' ? __dirname : process.cwd();
+}
+
+function gitFailureReason(error: unknown): string {
+  const record = error as { code?: unknown; stderr?: unknown; message?: unknown } | null;
+  if (record?.code === 'ENOENT') {
+    return 'git is not available on this system';
+  }
+  const stderr =
+    typeof record?.stderr === 'string'
+      ? record.stderr
+      : Buffer.isBuffer(record?.stderr)
+        ? record.stderr.toString('utf8')
+        : '';
+  if (/not a git repository/i.test(stderr)) {
+    return 'the DSpatch source folder is not a Git repository';
+  }
+  const first = (stderr.trim() || String(record?.message ?? error)).split(/\r?\n/)[0] ?? '';
+  return `git failed: ${first.slice(0, 200)}`;
+}
+
+export function readSourceRevision(
+  run: GitRunner = defaultGitRunner,
+  dir: string = sourceDir(),
+): SourceRevision {
+  try {
+    const commit = run(['rev-parse', 'HEAD'], dir).trim();
+    if (!/^[0-9a-f]{40,64}$/.test(commit)) {
+      return {
+        available: false,
+        reason: 'git rev-parse HEAD did not return a commit',
+        sourceDir: dir,
+      };
+    }
+    const status = run(['status', '--porcelain', '--untracked-files=no'], dir);
+    const trackedChanges = status
+      .split(/\r?\n/)
+      .filter((line) => line.trim() !== '')
+      .map((line) => line.slice(3));
+    return {
+      available: true,
+      commit,
+      tree: trackedChanges.length === 0 ? 'clean' : 'dirty',
+      dirtyMeans: DIRTY_MEANS,
+      trackedChanges,
+      sourceDir: dir,
+    };
+  } catch (error) {
+    return { available: false, reason: gitFailureReason(error), sourceDir: dir };
+  }
 }
 
 /** Exit code when a run was refused before it started. */
@@ -553,6 +650,8 @@ function refuseUnauthorized(
   logPath: string,
 ): number | null {
   record['provider'] = providerOf(options);
+  // First, so a refused run says which DSpatch code refused it.
+  record['dspatchSource'] = (options.sourceRevision ?? readSourceRevision)();
   if (providerOf(options) !== 'claude') {
     return null;
   }
@@ -635,6 +734,34 @@ function providerStateLocation(
   };
 }
 
+/**
+ * The preflight's expectation beside what each init message reported. The
+ * environment check cannot prove the SDK's final identity; only this comparison,
+ * made on a live run, can confirm the approved path was the one used.
+ */
+function apiKeySourceComparison(
+  assessment: AuthenticationAssessment,
+  inits: readonly Record<string, unknown>[],
+): Record<string, unknown> {
+  const expected = assessment.preflight.expectedApiKeySource;
+  const observed = inits.map((init) =>
+    typeof init['apiKeySource'] === 'string' ? init['apiKeySource'] : null,
+  );
+  return {
+    preflightDecision: assessment.preflight.decision,
+    expected,
+    expectedBasis: assessment.preflight.expectedApiKeySourceBasis,
+    observedPerInit: observed,
+    matchesExpected:
+      expected === null || observed.length === 0
+        ? null
+        : observed.every((value) => value === expected),
+    note:
+      'expected is from the SDK type documentation; observed is what the init message ' +
+      'reported. A mismatch means the run did not use the approved path.',
+  };
+}
+
 /** What a Claude run record carries beyond the provider-generic fields. */
 function claudeObservations(
   adapter: ClaudeAgentSdkAdapter,
@@ -671,6 +798,7 @@ function claudeObservations(
             apiKeySource: first['apiKeySource'] ?? null,
           },
     initSessionIds: inits.map((init) => init['session_id'] ?? null),
+    apiKeySource: apiKeySourceComparison(adapter.authentication(), inits),
     toolsMatchConfigured:
       reportedTools === null
         ? null

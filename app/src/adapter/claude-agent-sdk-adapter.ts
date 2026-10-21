@@ -121,7 +121,8 @@ export const FIXTURE_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
  * Credentials and identity selectors that make Claude Code bill an API account,
  * a cloud provider or a federated workspace. Claude Code's documented precedence
  * puts them above a subscription login, so a stray one would silently turn a
- * run into a paid one. Passed only with a recorded API-key approval.
+ * run into a paid one. Only `ANTHROPIC_API_KEY` is ever passed, and only with a
+ * recorded API-key approval; the others are refused and stripped in every case.
  */
 export const API_CREDENTIAL_VARIABLES = [
   // API keys and bearer tokens.
@@ -146,8 +147,8 @@ export const API_CREDENTIAL_VARIABLES = [
   //
   // Deliberately not guarded: ANTHROPIC_AWS_WORKSPACE_ID, ANTHROPIC_VERTEX_PROJECT_ID,
   // ANTHROPIC_FOUNDRY_RESOURCE and CLAUDE_CODE_API_KEY_HELPER_TTL_MS. They only
-  // qualify a provider or a credential, and every provider switch and credential
-  // is already refused without an API-key approval, so on their own they are inert.
+  // qualify a provider or a credential, and every provider switch and every
+  // credential other than the direct API key is refused, so on their own they are inert.
 ] as const;
 
 /**
@@ -224,12 +225,21 @@ function guardedNames(
 }
 
 /**
+ * The one variable an API-key approval lets through: the direct Anthropic API
+ * key. Matched with the same case rule as everything else.
+ */
+export const DIRECT_API_KEY_VARIABLE = 'ANTHROPIC_API_KEY';
+
+/**
  * An explicit, recorded authorization for a live run (DSP-109 AC #3). There is
  * no default: without one, the real SDK is never called.
  *
  * - `api-key`: Niclas's explicit approval of an API-key run. `approval` is the
- *   reference to where that approval is recorded. Only this kind lets an API
- *   credential or provider switch through.
+ *   reference to where that approval is recorded. It means exactly the **direct
+ *   Anthropic API-key path**: {@link DIRECT_API_KEY_VARIABLE} set and non-empty,
+ *   and no other guarded variable (auth token, provider switch, cloud key,
+ *   profile or federation selector, custom headers, client certificate, base-URL
+ *   override) present. Anything else is refused, not passed on.
  * - `subscription`: a reference to Anthropic's permission or documentation
  *   establishing that subscription-backed SDK use is allowed for this
  *   integration. With it, every API credential variable is still refused, so
@@ -239,12 +249,93 @@ export type LiveAuthorization =
   | { readonly kind: 'api-key'; readonly approval: string }
   | { readonly kind: 'subscription'; readonly authorization: string };
 
+/**
+ * What the environment check concluded, kept apart from what the provider later
+ * reports. The check sees variable names (and whether the key is empty), so it
+ * cannot prove which identity the SDK finally uses: compare
+ * {@link expectedApiKeySource} with the init message's observed `apiKeySource`.
+ */
+export interface AuthenticationPreflight {
+  /**
+   * - `refused`: the run must not start (see `refusal`).
+   * - `direct-anthropic-api-key`: an API-key approval, and the environment holds
+   *   {@link DIRECT_API_KEY_VARIABLE} and no other guarded variable.
+   * - `no-api-credential`: no guarded variable at all; Claude Code would use
+   *   whatever login it has. Reached with a subscription authorization (not
+   *   exercised in DSP-109) or, offline, with a substituted query function.
+   */
+  readonly decision: 'refused' | 'direct-anthropic-api-key' | 'no-api-credential';
+  /**
+   * The init message's `apiKeySource` this path is expected to produce, or
+   * `null` where no single value is expected. From the installed SDK's type
+   * documentation (`ApiKeySource` in sdk.d.ts 0.3.306: "'ANTHROPIC_API_KEY'
+   * (environment variable)"), not from an observation.
+   */
+  readonly expectedApiKeySource: 'ANTHROPIC_API_KEY' | null;
+  readonly expectedApiKeySourceBasis: string | null;
+  /**
+   * What could still change the identity and that this check cannot see. Until
+   * a live run has observed the expected `apiKeySource`, the path is unconfirmed.
+   */
+  readonly notVisibleToThisCheck: readonly string[];
+}
+
 export interface AuthenticationAssessment {
   /** Names only, never values, spelled as they appear in the environment. */
   readonly credentialVariablesFound: readonly string[];
   readonly authorization: LiveAuthorization | null;
   /** Why a live run must not start, or `null` when it may. */
   readonly refusal: string | null;
+  readonly preflight: AuthenticationPreflight;
+}
+
+const NOT_VISIBLE_TO_ENVIRONMENT_CHECK: readonly string[] = Object.freeze([
+  'managed (policy) settings, which settingSources: [] does not exclude: an `env` block ' +
+    'can set or override variables, `apiKeyHelper` can supply another key, and a managed ' +
+    'provider selection can route the run to a cloud provider',
+  "an API key stored by Claude Code's /login with an Anthropic Console account " +
+    "('/login managed key')",
+  "Claude Code's own precedence rules as implemented in the installed version, which are " +
+    'documented, not observed here',
+]);
+
+function preflightFor(
+  refusal: string | null,
+  usable: LiveAuthorization | null,
+  apiFound: readonly string[],
+): AuthenticationPreflight {
+  if (refusal !== null) {
+    return {
+      decision: 'refused',
+      expectedApiKeySource: null,
+      expectedApiKeySourceBasis: null,
+      notVisibleToThisCheck: NOT_VISIBLE_TO_ENVIRONMENT_CHECK,
+    };
+  }
+  if (usable?.kind === 'api-key' && apiFound.length === 1) {
+    return {
+      decision: 'direct-anthropic-api-key',
+      expectedApiKeySource: 'ANTHROPIC_API_KEY',
+      expectedApiKeySourceBasis:
+        'expected from documentation: ApiKeySource in @anthropic-ai/claude-agent-sdk ' +
+        "sdk.d.ts 0.3.306 names 'ANTHROPIC_API_KEY' (environment variable); not yet observed",
+      notVisibleToThisCheck: NOT_VISIBLE_TO_ENVIRONMENT_CHECK,
+    };
+  }
+  return {
+    decision: 'no-api-credential',
+    expectedApiKeySource: null,
+    expectedApiKeySourceBasis: null,
+    notVisibleToThisCheck: NOT_VISIBLE_TO_ENVIRONMENT_CHECK,
+  };
+}
+
+function isDirectApiKey(name: string, caseInsensitive: boolean): boolean {
+  return (caseInsensitive ? name.toUpperCase() : name) === DIRECT_API_KEY_VARIABLE;
+}
+
+function plural(names: readonly string[], one: string, many: string): string {
+  return names.length === 1 ? one : many;
 }
 
 function usableAuthorization(
@@ -273,8 +364,11 @@ export function assessAuthentication(
   matching?: EnvironmentMatching,
 ): AuthenticationAssessment {
   const usable = usableAuthorization(authorization);
-  const { api: apiFound, token: tokenFound } = guardedNames(env, caseInsensitiveFor(matching));
+  const caseInsensitive = caseInsensitiveFor(matching);
+  const { api: apiFound, token: tokenFound } = guardedNames(env, caseInsensitive);
   const credentialVariablesFound = [...apiFound, ...tokenFound];
+  const keyNames = apiFound.filter((name) => isDirectApiKey(name, caseInsensitive));
+  const competing = apiFound.filter((name) => !isDirectApiKey(name, caseInsensitive));
 
   let refusal: string | null = null;
   if (tokenFound.length > 0) {
@@ -282,7 +376,28 @@ export function assessAuthentication(
       `${tokenFound.join(', ')} ${tokenFound.length === 1 ? 'is' : 'are'} set. DSpatch ` +
       'does not reuse Claude Code authentication tokens; remove ' +
       `${tokenFound.length === 1 ? 'it' : 'them'} from this environment.`;
-  } else if (apiFound.length > 0 && usable?.kind !== 'api-key') {
+  } else if (usable?.kind === 'api-key') {
+    // The approval covers the direct Anthropic API-key path and nothing else.
+    // Only emptiness is checked; the value is never kept or recorded.
+    const keyValue = keyNames.length === 1 ? env[keyNames[0] ?? ''] : undefined;
+    if (competing.length > 0) {
+      refusal =
+        `${competing.join(', ')} ${plural(competing, 'is', 'are')} set. The recorded ` +
+        `API-key approval covers only the direct Anthropic API-key path ` +
+        `(${DIRECT_API_KEY_VARIABLE} alone), and ${plural(competing, 'this variable', 'these variables')} ` +
+        'could select another credential, provider or endpoint. Remove ' +
+        `${plural(competing, 'it', 'them')}; the run will not start.`;
+    } else if (keyNames.length > 1) {
+      refusal =
+        `${keyNames.join(', ')} are all set and name the same variable on this system. ` +
+        'Keep exactly one; the run will not start.';
+    } else if (keyValue === undefined || keyValue.trim() === '') {
+      refusal =
+        `An API-key approval is recorded, but ${DIRECT_API_KEY_VARIABLE} is ` +
+        `${keyNames.length === 0 ? 'not set' : 'empty'}. Without it Claude Code would ` +
+        'fall back to another login, which the approval does not cover. The run will not start.';
+    }
+  } else if (apiFound.length > 0) {
     refusal =
       `${apiFound.join(', ')} ${apiFound.length === 1 ? 'is' : 'are'} set, which would ` +
       'make this run bill an API or cloud account. No API-key approval is recorded ' +
@@ -294,15 +409,21 @@ export function assessAuthentication(
       "Without one, the SDK would fall back to Claude Code's own login, which is not " +
       'established as authorized for this integration. The run will not start.';
   }
-  return { credentialVariablesFound, authorization: usable, refusal };
+  return {
+    credentialVariablesFound,
+    authorization: usable,
+    refusal,
+    preflight: preflightFor(refusal, usable, apiFound),
+  };
 }
 
 /**
  * The environment the SDK subprocess receives: a copy of the one that was
  * assessed, so a variable set later cannot reach the subprocess unchecked.
- * Claude Code OAuth variables are always removed; API credentials and provider
- * switches are removed unless an API-key approval was given. Matching follows
- * the same case rule as the assessment. No credential is ever added.
+ * Claude Code OAuth variables are always removed. Every other guarded variable
+ * is removed too, except {@link DIRECT_API_KEY_VARIABLE} under an API-key
+ * approval. Matching follows the same case rule as the assessment. No
+ * credential is ever added.
  */
 export function providerEnvironment(
   env: Readonly<Record<string, string | undefined>>,
@@ -316,7 +437,10 @@ export function providerEnvironment(
     if (found === 'claude-code-token') {
       continue;
     }
-    if (found === 'api' && authorization?.kind !== 'api-key') {
+    if (
+      found === 'api' &&
+      !(authorization?.kind === 'api-key' && isDirectApiKey(name, caseInsensitive))
+    ) {
       continue;
     }
     copy[name] = value;
@@ -395,7 +519,16 @@ interface ClaudeRun {
   cancelRequested: boolean;
   terminalEmitted: boolean;
   streamPumpFinished: boolean;
+  /** Text of the completed top-level text blocks, in order. */
   assistantText: string;
+  /**
+   * Top-level text deltas not yet covered by a completed text block: the block
+   * being streamed now. Cleared when an assistant message with a text block
+   * arrives, which assumes (as the per-block messages of `includePartialMessages`
+   * suggest, not observed) that a block's completed message comes before the next
+   * block's deltas. Used only when the run ends early; see `finishRun`.
+   */
+  pendingText: string;
   pump: Promise<void> | null;
 }
 
@@ -412,6 +545,11 @@ interface SessionState {
   readonly initMessages: unknown[];
   readonly resultMessages: unknown[];
   readonly observedSessionIds: string[];
+  /**
+   * Every run whose stream has not ended yet, including one waiting for the
+   * previous turn. `dispose` stops all of them, not only `lastRun`.
+   */
+  readonly outstanding: Set<ClaudeRun>;
   /** True once the provider has reported this session, so later turns resume it. */
   established: boolean;
   activeRun: ClaudeRun | null;
@@ -574,6 +712,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       initMessages: [],
       resultMessages: [],
       observedSessionIds: [],
+      outstanding: new Set(),
       established: false,
       activeRun: null,
       lastRun: null,
@@ -615,17 +754,31 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       terminalEmitted: false,
       streamPumpFinished: false,
       assistantText: '',
+      pendingText: '',
       pump: null,
     };
     const previous = state.lastRun;
     state.activeRun = run;
     state.lastRun = run;
+    state.outstanding.add(run);
 
     if (previous?.pump != null && !previous.streamPumpFinished) {
       const ended = await settlesWithin(previous.pump, PREVIOUS_TURN_EXIT_MS);
+      if (this.disposed) {
+        // Disposed while waiting: `dispose` has stopped the previous turn, and
+        // this one must not start a provider process after it.
+        run.cancelRequested = true;
+        this.finishRun(state, run, 'cancelled');
+        this.markPumpFinished(state, run);
+        throw new ClaudeAdapterError(
+          'This adapter instance was disposed while the turn waited for the previous ' +
+            'one to finish, so the turn was not started.',
+        );
+      }
       if (!ended) {
         state.activeRun = null;
         state.lastRun = previous;
+        state.outstanding.delete(run);
         throw new ClaudeAdapterError(
           `The previous turn in session "${sessionId}" is still delivering messages ` +
             `after ${String(PREVIOUS_TURN_EXIT_MS)} ms, so a new turn was not started.`,
@@ -644,11 +797,11 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
 
     try {
       const queryFn = await this.queryFunction();
-      if (run.cancelRequested) {
-        // Cancelled while waiting for the previous turn or for the SDK to load:
-        // the provider is never started, rather than started already aborted.
+      if (run.cancelRequested || this.disposed) {
+        // Cancelled (or disposed) while waiting for the previous turn or for the
+        // SDK to load: the provider is never started, rather than started aborted.
         this.finishRun(state, run, 'cancelled');
-        run.streamPumpFinished = true;
+        this.markPumpFinished(state, run);
         return { dspatchRunId: run.dspatchRunId };
       }
       run.handle = queryFn({ prompt, options: this.optionsFor(state, run) });
@@ -660,7 +813,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           ? {}
           : { providerCode: adapterError.providerCode }),
       });
-      run.streamPumpFinished = true;
+      this.markPumpFinished(state, run);
       throw adapterError;
     }
     run.pump = this.pump(state, run, run.handle);
@@ -756,11 +909,19 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     const pumps: Promise<void>[] = [];
     for (const state of states) {
       state.listeners.clear();
-      const run = state.lastRun;
-      if (run !== null && !run.streamPumpFinished) {
+      // Every outstanding run, not only the latest: a turn waiting in `send`
+      // replaces `lastRun` while the previous turn's query may still be open.
+      for (const run of [...state.outstanding]) {
+        if (run.streamPumpFinished) {
+          continue;
+        }
+        run.cancelRequested = true;
         try {
-          run.cancelRequested = true;
           run.abortController.abort();
+        } catch {
+          // Shutdown path: a failed abort must not prevent the close or the exit.
+        }
+        try {
           run.handle?.close?.();
         } catch {
           // Shutdown path: a failed close must not prevent the app from exiting.
@@ -870,8 +1031,13 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           });
         }
       }
-      run.streamPumpFinished = true;
+      this.markPumpFinished(state, run);
     }
+  }
+
+  private markPumpFinished(state: SessionState, run: ClaudeRun): void {
+    run.streamPumpFinished = true;
+    state.outstanding.delete(run);
   }
 
   private handleMessage(state: SessionState, run: ClaudeRun, message: SDKMessage): void {
@@ -919,6 +1085,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         }
         const delta = asRecord(event['delta']);
         if (delta['type'] === 'text_delta' && typeof delta['text'] === 'string') {
+          run.pendingText += delta['text'];
           this.emit(state, { ...base, type: 'assistant.delta', text: delta['text'] });
         } else if (delta['type'] === 'thinking_delta' && typeof delta['thinking'] === 'string') {
           this.emit(state, { ...base, type: 'reasoning.delta', text: delta['thinking'] });
@@ -933,8 +1100,10 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         for (const entry of content) {
           const block = asRecord(entry);
           if (block['type'] === 'text' && topLevel && typeof block['text'] === 'string') {
-            // Complete blocks, one per message; the deltas above carry the same text.
+            // Complete blocks, one per message; the deltas above carry the same text,
+            // so the deltas received so far are now covered and are not kept twice.
             run.assistantText += block['text'];
+            run.pendingText = '';
           } else if (block['type'] === 'tool_use' && typeof block['id'] === 'string') {
             const name = typeof block['name'] === 'string' ? block['name'] : 'unknown';
             state.toolNames.set(block['id'], name);
@@ -1032,14 +1201,21 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       state.activeRun = null;
     }
     run.status = status;
-    if (run.assistantText !== '') {
+    // A finished run's message is the completed blocks, as the provider gave them.
+    // A run that ended early (cancelled or error) also keeps the received deltas of
+    // the block that was interrupted, so the text received is not lost; the
+    // `run.finished` status that follows is what marks it as incomplete — the same
+    // representation as the Cursor adapter, whose message on an early end is
+    // likewise only what had arrived.
+    const text = status === 'finished' ? run.assistantText : run.assistantText + run.pendingText;
+    if (text !== '') {
       this.emit(state, {
         type: 'assistant.message',
         dspatchSessionId: state.dspatchSessionId,
         dspatchRunId: run.dspatchRunId,
         at: nowIso(),
         rawProviderEvent: null,
-        text: run.assistantText,
+        text,
       });
     }
     this.emit(state, {

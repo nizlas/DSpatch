@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-10-21 15:08'
-updated_date: '2026-10-21 18:28'
+updated_date: '2026-10-21 19:18'
 labels:
   - integration
 dependencies: []
@@ -89,4 +89,16 @@ Findings carried to the live portion (not blocking the offline result):
 - Packaging, not addressed (out of scope): ~300 MB larger artifact; claude.exe cannot run from inside asar (needs asarUnpack or pathToClaudeCodeExecutable); loading the ESM-only SDK from asar in Electron 44 is unverified.
 
 Status: Review. Next step: when Niclas authorizes a live path (Anthropic permission or documentation for subscription use, or an explicit API-key approval with credential and spend limit), run AC #3-#7 with the existing subcommands; nothing in the offline portion needs repeating unless the code changes.
+
+Rework (21 Oct 2026): back to In Progress for a bounded offline correction pass on four independent review findings against c00a972 (published on main): (1) bind an API-key approval to the direct Anthropic API-key path and refuse missing or conflicting authentication; (2) keep streamed text of an interrupted later block in the final message without presenting it as complete; (3) dispose must reach a previous turn's still-open query while the next turn waits; (4) record the tested DSpatch source revision (clean/dirty/unavailable) in Claude experiment records. Offline only; AC #3 stays blocked, AC #4-#7 NOT_RUN.
+
+Offline correction pass completed (21 Oct 2026, loop run 20261021-190117-dsp109fix, base c00a972): Implementer, Verifier (all four PASS offline), Reviewer ACCEPT; no rework round. Verified candidate snapshot sha256:8357f06d8eb6f550891437d80f35fcaf17fc083ec46bb0cdc42e6ed6605f537d, committed as the next local commit (not pushed).
+1. API-key approval bound to the direct path (claude-agent-sdk-adapter.ts assessAuthentication ~:360-414, preflightFor ~:105-134, providerEnvironment ~:427-445): an api-key approval now means ANTHROPIC_API_KEY alone, present and non-empty; any competing guarded variable, two spellings under case folding, or a missing/empty key is refused before query(); the subprocess keeps only the key. OAuth refusal, refusal without authorization and win32 folding unchanged; names only. Records carry a preflight decision (refused / direct-anthropic-api-key / no-api-credential) with the documented expected apiKeySource 'ANTHROPIC_API_KEY' (sdk.d.ts 0.3.306, not observed) and what the check cannot see (managed settings env/apiKeyHelper/provider selection, a stored /login Console key, the CLI's precedence), and separately the observed apiKeySource with matchesExpected (experiment-work.ts ~:737-763).
+2. Interrupted-block text kept (adapter ~:1087-1106, finishRun ~:1210): a cancelled or failed run's assistant.message is the completed blocks plus the interrupted block's received deltas; a finished run is unchanged; the run.finished status marks it incomplete, as for the Cursor adapter. Assumes (unobserved) that a block's completed message precedes the next block's deltas; if not, text could be lost, never duplicated.
+3. Dispose reaches the previous query (adapter ~:760-807, dispose ~:902-937): every run is owned in an outstanding set until its stream ends; dispose aborts and closes all, bounded at 5 s, idempotent; a send waiting for the previous turn rejects without calling queryFn.
+4. Tested DSpatch revision (experiment-work.ts readSourceRevision ~:556-609, record.dspatchSource ~:654): DSpatch source repository commit, clean/dirty (dirty = tracked changes, untracked not counted, listed) or unavailable with reason; written also on refused runs; describes the source tree, not the compiled dist/.
+Tests: provider group 26/26 (6 new, 1 changed whose premise was the defect); typecheck exit 0; Verifier probes: 25 guard cases, 26/26 with the real SDK import blocked, readSourceRevision on this checkout returned c00a972 dirty. CursorSdkAdapter and types.ts unchanged. No live call, no credential access. The Implementer's attempted 'npx eslint' downloaded eslint into the npm cache only (no project config; nothing in the repository changed).
+For the live increment (Reviewer S1, decision for Niclas before AC #3's live run): either a missing or mismatching apiKeySource under direct-anthropic-api-key makes the scenario exit non-zero, or the run is judged untrusted unless matchesExpected is true; aborting on a mismatching init message needs the message order observed first. Other suggestions, not done: reword chat-service.ts:3364-3366 and turn-routing.ts:226-227 when next touched (S2); name CLAUDE_CONFIG_DIR among what the environment check cannot see (S3); a missing source folder would be reported as 'git is not available' (S4); quoted paths (S5).
+Live-only uncertainties: whether a direct-key run reports apiKeySource 'ANTHROPIC_API_KEY' without override; the real block/delta order; whether abort and close end a real open query promptly; the subscription path is unexercised.
+Status: Review. AC #3 blocked; AC #4-#7 NOT_RUN.
 <!-- SECTION:NOTES:END -->

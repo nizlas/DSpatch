@@ -27,6 +27,7 @@ import type { AgentEvent } from '../src/adapter/types.ts';
 import {
   EXIT_REFUSED,
   parseScenarioArgs,
+  readSourceRevision,
   scenarioCancelReply,
   scenarioTwoTurn,
 } from '../src/main/experiment-work.ts';
@@ -417,6 +418,122 @@ test('dispose aborts a running turn, is idempotent and does not throw', async ()
   await assert.rejects(adapter.startSession(startConfig(workspace('after'))), /disposed/);
 });
 
+const lastFinished = (events: AgentEvent[]) => {
+  const last = events.at(-1);
+  return last?.type === 'run.finished' ? last.status : null;
+};
+const finalTexts = (events: AgentEvent[]) =>
+  events.flatMap((event) => (event.type === 'assistant.message' ? [event.text] : []));
+
+test('a cancelled run keeps the interrupted block\'s streamed text after a completed block', async () => {
+  const partial = 'Partial explanation that should survive.';
+  const { queryFn } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield delta(call, 'Intro. ');
+    yield assistant(call, [{ type: 'text', text: 'Intro. ' }]);
+    yield delta(call, partial);
+    await untilAborted(call.options['abortController'].signal);
+    // The stream ends before the second block completes.
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('partial')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'Explain');
+    while (!seen.events.some((event) => event.type === 'assistant.delta' && event.text === partial)) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await adapter.cancel(handle.dspatchSessionId);
+    await finished;
+    assert.deepEqual(finalTexts(seen.events), [`Intro. ${partial}`]);
+    assert.equal(lastFinished(seen.events), 'cancelled');
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('a failed run keeps the interrupted block\'s text; a finished run is the completed blocks only', async () => {
+  const { queryFn } = fakeSdk(async function* (call, index) {
+    yield init(call);
+    yield delta(call, 'A. ');
+    yield assistant(call, [{ type: 'text', text: 'A. ' }]);
+    yield delta(call, 'B.');
+    if (index === 0) {
+      throw new Error('connection lost');
+    }
+    yield assistant(call, [{ type: 'text', text: 'B.' }]);
+    yield result(call);
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('partial-error')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    let finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'one');
+    await finished;
+    assert.deepEqual(finalTexts(seen.events), ['A. B.']);
+    assert.equal(lastFinished(seen.events), 'error');
+
+    seen.events.length = 0;
+    finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'two');
+    await finished;
+    // No duplication: the deltas are covered by the completed blocks.
+    assert.deepEqual(finalTexts(seen.events), ['A. B.']);
+    assert.equal(lastFinished(seen.events), 'finished');
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('dispose stops a previous turn whose stream is still open while the next turn waits', async () => {
+  const closed: boolean[] = [];
+  const signals: AbortSignal[] = [];
+  const queryFn = ((params: { prompt: string; options: Record<string, any> }) => {
+    const index = signals.length;
+    const call = { prompt: params.prompt, options: params.options };
+    const signal: AbortSignal = params.options['abortController'].signal;
+    signals.push(signal);
+    closed.push(false);
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+      signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+    const generator = (async function* () {
+      yield init(call);
+      yield result(call);
+      // The result is in, but the iterator stays open until closed or aborted.
+      await held;
+    })();
+    return Object.assign(generator, {
+      close: () => {
+        closed[index] = true;
+        release();
+      },
+    });
+  }) as any;
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const handle = await adapter.startSession(startConfig(workspace('dispose-waiting')));
+  const seen = collect(adapter, handle.dspatchSessionId);
+  const finished = seen.nextFinish();
+  await adapter.send(handle.dspatchSessionId, 'first');
+  await finished;
+  assert.equal(adapter.streamPumpFinished(handle.dspatchSessionId), false);
+
+  const second = adapter.send(handle.dspatchSessionId, 'second');
+  second.catch(() => undefined);
+  await new Promise((resolve) => setImmediate(resolve));
+  await adapter.dispose();
+
+  await assert.rejects(second, /disposed while the turn waited/);
+  assert.equal(signals.length, 1, 'the waiting turn never called query()');
+  assert.equal(signals[0]?.aborted, true);
+  assert.equal(closed[0], true);
+  await adapter.dispose();
+});
+
 // --- Authentication ------------------------------------------------------------
 
 test('the authentication guard names variables, never values, and refuses by default', () => {
@@ -503,7 +620,8 @@ const FAMILIES = {
 } as const;
 const matchExact = { caseInsensitive: false };
 
-test('provider switches and cloud keys pass only with an API-key approval; stripped otherwise', () => {
+test('provider switches and cloud keys are refused and stripped, with or without an API-key approval', () => {
+  const approval = { kind: 'api-key' as const, approval: 'r' };
   for (const name of [...FAMILIES.providerSwitch, ...FAMILIES.cloudKey]) {
     const value = `secret-value-of-${name}`;
     const env = { ...CLEAN_ENV, [name]: value };
@@ -513,9 +631,15 @@ test('provider switches and cloud keys pass only with an API-key approval; strip
     assert.equal(JSON.stringify(refused).includes(value), false, name);
     assert.equal(name in providerEnvironment(env, null, matchExact), false, `${name} stripped`);
 
-    const approval = { kind: 'api-key' as const, approval: 'r' };
-    assert.equal(assessAuthentication(env, approval, true, matchExact).refusal, null, name);
-    assert.equal(providerEnvironment(env, approval, matchExact)[name], value, `${name} kept when approved`);
+    // An API-key approval means the direct key alone; this one is a competitor.
+    const withKey = { ...env, ANTHROPIC_API_KEY: 'sk-ant-synthetic' };
+    const competing = assessAuthentication(withKey, approval, true, matchExact);
+    assert.match(competing.refusal ?? '', new RegExp(`${name} is set.*covers only the direct Anthropic API-key path`), name);
+    assert.equal(competing.preflight.decision, 'refused', name);
+    assert.equal(JSON.stringify(competing).includes(value), false, name);
+    const passed = providerEnvironment(withKey, approval, matchExact);
+    assert.equal(name in passed, false, `${name} stripped when approved`);
+    assert.equal(passed['ANTHROPIC_API_KEY'], 'sk-ant-synthetic');
   }
   // The one CLAUDE_CODE_USE_ variable that only controls a tool is left alone.
   const tool = { ...CLEAN_ENV, CLAUDE_CODE_USE_POWERSHELL_TOOL: '0' };
@@ -567,6 +691,64 @@ test('Claude Code OAuth variables are refused and stripped even with an API-key 
     assert.equal(JSON.stringify(assessed).includes(value), false);
     assert.equal(name in providerEnvironment(env, approval, matchExact), false);
   }
+});
+
+test('an API-key approval means the direct ANTHROPIC_API_KEY path alone', () => {
+  const approval = { kind: 'api-key' as const, approval: 'test-only reference' };
+  const key = 'sk-ant-synthetic-direct';
+  const refusalOf = (env: Record<string, string | undefined>, matching = matchExact) =>
+    assessAuthentication(env, approval, true, matching);
+
+  // No key at all, or an empty one: the approval covers nothing that is there.
+  assert.match(refusalOf({ ...CLEAN_ENV }).refusal ?? '', /ANTHROPIC_API_KEY is not set/);
+  assert.match(refusalOf({ ...CLEAN_ENV, ANTHROPIC_API_KEY: '  ' }).refusal ?? '', /ANTHROPIC_API_KEY is empty/);
+
+  // A key with a competitor: refused by name, values never in the assessment.
+  for (const competitor of ['ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS']) {
+    const env = { ...CLEAN_ENV, ANTHROPIC_API_KEY: key, [competitor]: 'synthetic-competitor' };
+    const assessed = refusalOf(env);
+    assert.match(assessed.refusal ?? '', new RegExp(`^${competitor} is set`), competitor);
+    assert.equal(assessed.preflight.decision, 'refused');
+    assert.equal(assessed.preflight.expectedApiKeySource, null);
+    const text = JSON.stringify(assessed);
+    assert.equal(text.includes(key) || text.includes('synthetic-competitor'), false, competitor);
+    // Defence in depth: even if it started, only the key would reach the subprocess.
+    assert.deepEqual(providerEnvironment(env, approval, matchExact), { ...CLEAN_ENV, ANTHROPIC_API_KEY: key });
+  }
+
+  // The permitted configuration: the key alone, unrelated variables kept.
+  const permitted = { ...CLEAN_ENV, ANTHROPIC_API_KEY: key, CLAUDE_CONFIG_DIR: 'x' };
+  const ok = refusalOf(permitted);
+  assert.equal(ok.refusal, null);
+  assert.equal(ok.preflight.decision, 'direct-anthropic-api-key');
+  assert.equal(ok.preflight.expectedApiKeySource, 'ANTHROPIC_API_KEY');
+  assert.match(ok.preflight.expectedApiKeySourceBasis ?? '', /expected from documentation.*not yet observed/);
+  assert.ok(ok.preflight.notVisibleToThisCheck.some((entry) => /managed/.test(entry)));
+  assert.equal(JSON.stringify(ok).includes(key), false);
+  assert.deepEqual(providerEnvironment(permitted, approval, matchExact), permitted);
+
+  // Lower case, where the rule is case-insensitive: the same decisions.
+  const folding = { caseInsensitive: true };
+  assert.equal(refusalOf({ ...CLEAN_ENV, anthropic_api_key: key }, folding).refusal, null);
+  assert.match(
+    refusalOf({ ...CLEAN_ENV, anthropic_api_key: key, anthropic_auth_token: 't' }, folding).refusal ?? '',
+    /^anthropic_auth_token is set/,
+  );
+  assert.deepEqual(
+    providerEnvironment({ ...CLEAN_ENV, anthropic_api_key: key, claude_code_use_vertex: '1' }, approval, folding),
+    { ...CLEAN_ENV, anthropic_api_key: key },
+  );
+  assert.match(
+    refusalOf({ ...CLEAN_ENV, ANTHROPIC_API_KEY: key, anthropic_api_key: key }, folding).refusal ?? '',
+    /name the same variable/,
+  );
+  // Where case matters, a lower-case key is not the key.
+  assert.match(refusalOf({ ...CLEAN_ENV, anthropic_api_key: key }).refusal ?? '', /ANTHROPIC_API_KEY is not set/);
+
+  // Without guarded variables and without an API-key approval: no expectation.
+  const none = assessAuthentication(CLEAN_ENV, null, false, matchExact);
+  assert.equal(none.preflight.decision, 'no-api-credential');
+  assert.equal(none.preflight.expectedApiKeySource, null);
 });
 
 test('on a case-insensitive environment, names match and are stripped whatever their case', () => {
@@ -745,6 +927,74 @@ test('two-turn asks for the nonce back in a second send on the same session', as
   assert.match(record.crossProcessResume, /not tested/);
   assert.equal(calls[0]?.options['sessionId'], record.session.providerSessionId);
   assert.equal(calls[1]?.options['resume'], record.session.providerSessionId);
+});
+
+test('the DSpatch source revision is clean, dirty or unavailable with a reason', () => {
+  const sha = 'c00a972aa63f46048447595ee203f780532a2694';
+  const runner = (status: string) => (args: readonly string[]) =>
+    args[0] === 'rev-parse' ? `${sha}\n` : status;
+
+  const clean = readSourceRevision(runner(''), '/src');
+  assert.deepEqual(
+    { available: clean.available, commit: clean.available ? clean.commit : null, tree: clean.available ? clean.tree : null },
+    { available: true, commit: sha, tree: 'clean' },
+  );
+  const dirty = readSourceRevision(runner(' M app/src/x.ts\nM  docs/y.md\n'), '/src');
+  assert.equal(dirty.available && dirty.tree, 'dirty');
+  assert.deepEqual(dirty.available ? dirty.trackedChanges : null, ['app/src/x.ts', 'docs/y.md']);
+  assert.match(dirty.available ? dirty.dirtyMeans : '', /untracked files are not counted/);
+
+  const failing = (error: unknown) => () => {
+    throw error;
+  };
+  const noGit = readSourceRevision(failing(Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' })), '/src');
+  assert.deepEqual(noGit, { available: false, reason: 'git is not available on this system', sourceDir: '/src' });
+  const notRepo = readSourceRevision(
+    failing(Object.assign(new Error('Command failed'), { status: 128, stderr: 'fatal: not a git repository (or any of the parent directories): .git\n' })),
+    '/src',
+  );
+  assert.equal(notRepo.available ? null : notRepo.reason, 'the DSpatch source folder is not a Git repository');
+  const other = readSourceRevision(failing(Object.assign(new Error('Command failed'), { stderr: 'fatal: bad object HEAD\n' })), '/src');
+  assert.equal(other.available ? null : other.reason, 'git failed: fatal: bad object HEAD');
+  assert.equal(readSourceRevision(() => 'not-a-sha', '/src').available, false);
+});
+
+test('refused and completed Claude records carry the source revision and the apiKeySource comparison', async () => {
+  const revision = { available: false as const, reason: 'test substitute', sourceDir: '/src' };
+  const refusedLog = path.join(tempRoot('rev-refused-log'), 'record.json');
+  const { queryFn } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield result(call);
+  });
+  assert.equal(
+    await scenarioTwoTurn(workspace('rev-refused'), refusedLog, {
+      provider: 'claude',
+      env: scenarioEnv(),
+      claudeQueryFn: queryFn,
+      sourceRevision: () => revision,
+    }),
+    EXIT_REFUSED,
+  );
+  assert.deepEqual(readRecord(refusedLog).dspatchSource, revision);
+  assert.equal(readRecord(refusedLog).authentication.preflight.decision, 'refused');
+
+  // The substitute's init reports 'none', so the expected key source is not matched:
+  // the comparison is recorded, not assumed.
+  const ranLog = path.join(tempRoot('rev-ran-log'), 'record.json');
+  await scenarioTwoTurn(workspace('rev-ran'), ranLog, {
+    provider: 'claude',
+    authorization: { kind: 'api-key', approval: 'test-only reference' },
+    env: scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-synthetic' }),
+    claudeQueryFn: queryFn,
+    sourceRevision: () => revision,
+  });
+  const ran = readRecord(ranLog);
+  assert.deepEqual(ran.dspatchSource, revision);
+  assert.equal(ran.claude.apiKeySource.preflightDecision, 'direct-anthropic-api-key');
+  assert.equal(ran.claude.apiKeySource.expected, 'ANTHROPIC_API_KEY');
+  assert.deepEqual(ran.claude.apiKeySource.observedPerInit, ['none', 'none']);
+  assert.equal(ran.claude.apiKeySource.matchesExpected, false);
+  assert.equal(JSON.stringify(ran).includes('sk-ant-synthetic'), false);
 });
 
 test('scenario flags: provider and recorded authorization', () => {
