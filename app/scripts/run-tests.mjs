@@ -106,6 +106,10 @@ const AREAS = {
       { file: 'chat-service.test.ts', heavy: true },
     ],
   },
+  provider: {
+    what: 'provider adapters and their experiment scenarios, with a substituted provider',
+    files: ['claude-agent-sdk-adapter.test.ts'],
+  },
   project: {
     what: 'what DSpatch does to real folders: git state, sample projects, the test repository',
     files: [

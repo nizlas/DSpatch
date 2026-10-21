@@ -3,10 +3,10 @@ id: DSP-109
 title: >-
   Run the shared fixture through Claude's agent harness, behind the existing
   adapter
-status: To Do
+status: Review
 assignee: []
 created_date: '2026-10-21 15:08'
-updated_date: '2026-10-21 17:38'
+updated_date: '2026-10-21 18:28'
 labels:
   - integration
 dependencies: []
@@ -37,8 +37,8 @@ Dependencies: none on backlog cards (DSP-1/4/71/72 reused, not required). No Cop
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 npm run typecheck exits 0; new deterministic adapter tests with a substituted query function pass (event mapping, one run per session, abort -> 'cancelled', more than one root refused, missing values null not 0, dispose idempotent, live scenarios refuse to start with an API credential in the environment unless an explicit API-key approval is recorded), as does the loop test group; commands and results recorded
-- [ ] #2 The Cursor path is unchanged: the diff shows CursorSdkAdapter unchanged and scenarioCodeChange's Cursor branch (experiment-work.ts:461-551) differing only in types and the provider choice; no new billed Cursor run unless that check fails
+- [x] #1 npm run typecheck exits 0; new deterministic adapter tests with a substituted query function pass (event mapping, one run per session, abort -> 'cancelled', more than one root refused, missing values null not 0, dispose idempotent, live scenarios refuse to start with an API credential in the environment unless an explicit API-key approval is recorded), as does the loop test group; commands and results recorded
+- [x] #2 The Cursor path is unchanged: the diff shows CursorSdkAdapter unchanged and scenarioCodeChange's Cursor branch (experiment-work.ts:461-551) differing only in types and the provider choice; no new billed Cursor run unless that check fails
 - [ ] #3 Before any live run, an authorized authentication and billing path is established and recorded: either Anthropic's permission or applicable documentation establishing that subscription-backed SDK use is allowed for this integration, or Niclas's explicit approval of an API-key run with its credential and spend limit; the run environment holds only the approved credential, no Claude Code token is reused or extracted, and the init message's apiKeySource matches the approved path. Until then the live criteria #4-#7 are not attempted and the task reports PARTIAL with this blocker rather than claiming end-to-end verification
 - [ ] #4 One live code-change run with provider claude on Windows, on a freshly generated fixture, records testFailedBefore true, testPassedAfter true, onlyTargetFileChanged true, the real git diff, the init message's claude_code_version, model, tools (exactly the configured set; Agent or Task present fails this criterion), cwd, permissionMode 'dontAsk', apiKeySource, permission_denials, SDK and Node versions and the tested DSpatch revision
 - [ ] #5 One live cancel-reply run records cancellation after streamed text began, terminal status 'cancelled', events after the terminal event, whether any tool call started after cancel() resolved, the time from cancel to the terminal event, no content change in the fixture and the process exiting
@@ -65,4 +65,28 @@ Clarification (Niclas, 21 Oct 2026, after reviewing the authentication restricti
 - Any live API-key test stays behind an explicit approval gate; no API charges without Niclas's approval.
 - Report the remaining live-test blocker honestly: PARTIAL, not end-to-end verification.
 Card edits: the Authentication scope line, AC #1 (live scenarios refuse an API credential unless an explicit API-key approval is recorded) and AC #3 (an authorized path: Anthropic permission/documentation, or Niclas's explicit API-key approval) now say this. Status stays To Do; implementation not started. Remaining blocker for #3-#7: no authorized live authentication path yet.
+
+Current focus (21 Oct 2026): loop run started from main at 415bd4d (= origin/main), main checkout, no worktree. Mandate: offline portion only (AC #1, #2); AC #3-#7 not run (no authorized live authentication). Next: Implementer call for the adapter, fixture generalisation and deterministic tests.
+
+Offline portion delivered (21 Oct 2026, loop run 20261021-175003-dsp109, main checkout, base 415bd4d). Verified candidate: snapshot sha256:4b8463c15811bf0e663eb0aeb1ece7f5e198da96cc49c517dac0ff343b4f1537, committed as the next local commit. Calls: Implementer (1), Verifier (2), Reviewer REWORK (3), Implementer rework round 1 incl. a coordinator addendum (4-5), Verifier re-check (6), Reviewer ACCEPT (7). Reports and logs are local and Git-ignored under .dspatch-loop/runs/20261021-175003-dsp109/.
+
+What exists now:
+- app/src/adapter/claude-agent-sdk-adapter.ts: ClaudeAgentSdkAdapter (id claude-agent-sdk, provider 'claude') behind AgentAdapter, main process only (excluded from the renderer tsconfig). One query() per turn, first with sessionId and later with resume (deterministic UUID); cancel via AbortController, and a cancel before query() ends the run as cancelled without calling it; one run per session; null not 0; dispose idempotent; capabilities: approvals unsupported, usageReporting unknown, cross-process resume unsupported, no containment claim. Fixture policy tools [Read, Glob, Grep, Edit], allowedTools [Read(/**), Edit(/src/**)], permissionMode dontAsk only (bypassPermissions, acceptEdits, auto, default, plan refused), settingSources [], one root. The SDK is imported for types only; its runtime import happens only on a real send that the guard admitted.
+- Authentication guard (names only, never values; case-insensitive on win32): refuses and strips API/cloud credentials, profile and WIF selectors, every CLAUDE_CODE_USE_* provider switch except CLAUDE_CODE_USE_POWERSHELL_TOOL, ANTHROPIC_CUSTOM_HEADERS, the CLAUDE_CODE_CLIENT_* credentials and every ANTHROPIC_*BASE_URL override unless an explicit API-key approval is recorded; always refuses and strips CLAUDE_CODE_OAUTH_* (no Claude Code token reuse); refuses a live run with no recorded authorization at all, because the SDK would otherwise fall back to Claude Code's own login. Four qualifier variables (ANTHROPIC_AWS_WORKSPACE_ID, ANTHROPIC_VERTEX_PROJECT_ID, ANTHROPIC_FOUNDRY_RESOURCE, CLAUDE_CODE_API_KEY_HELPER_TTL_MS) are deliberately inert. The list follows Claude Code's env-vars documentation read 21 Oct 2026 (not observed).
+- app/src/main/experiment-work.ts: generalised to AgentAdapter with --provider; new cancel-reply and two-turn subcommands; approval flags (--api-key-approval, --subscription-authorization) refused on a Cursor run; live Claude scenarios run the guard before creating the adapter.
+- app/src/adapter/types.ts: ProviderId gains 'claude'. agent-adapter.ts: stale comment fixed. app/tests/claude-agent-sdk-adapter.test.ts: 20 deterministic tests with a substituted query function, in a new 'provider' test area (run-tests.mjs). Dependency @anthropic-ai/claude-agent-sdk 0.3.306 pinned exactly.
+
+AC #1 PASS: npm run typecheck exit 0; provider group 20/20; loop group 571/571; chat group 296/296 (run because the install changed shared dependencies); Verifier's independent 93-check guard script 0 failures.
+AC #2 PASS: cursor-sdk-adapter.ts unchanged (git diff --quiet exit 0); scenarioCodeChange's Cursor branch differs only in its signature, the provider choice, the shared adapter factory (same CursorSdkAdapter constructor) and no-op Claude hooks. Recorded additive changes, accepted by the Reviewer as not a behaviour change of the Cursor run: Cursor run records gain provider: 'cursor' and a per-turn firstTextMs; the CLI now parses every --argument as a flag and refuses unknown ones (no existing invocation used one).
+AC #3-#7: NOT_RUN, BLOCKED on an authorized live authentication path (Niclas's clarification of 21 Oct 2026). No live SDK request, no API key, no subscription-backed SDK run and no Claude Code token access happened in this run.
+
+Findings carried to the live portion (not blocking the offline result):
+- Use apiKeySource from the init message as the observed backstop against the approved path (Reviewer R2), including for a managed-settings apiKeyHelper, which no environment rule covers. The installed types report apiKeySource 'none' for a subscription login, a bearer token and a cloud provider alike, so the guard's record of which variables were present must sit beside it.
+- The init message has no managed-policy field; 'not shown in the init message' is the expected AC #7 value.
+- Open for AC #5/#6: if a first turn is cancelled before any message arrives, the next turn may send sessionId again and be refused; design a fix after a live run shows whether the provider persisted that session. The event mapping is checked against SDK 0.3.306's type definitions only.
+- Refusal wording could say 'could route or bill the run elsewhere' for base-URL, header and mTLS variables (Reviewer R1, cosmetic).
+- Dependencies: top-level zod moved 3.25.76 -> 4.6.7; @cursor/sdk keeps its own nested zod 3.25.76 (npm ls zod exit 0). npm audit --package-lock-only: 17 (11 moderate, 6 high) before and after, same packages; the install added none. The SDK brings a Windows claude.exe (~282 MB) and peer dependencies @anthropic-ai/sdk, @modelcontextprotocol/sdk, zod 4; no install scripts.
+- Packaging, not addressed (out of scope): ~300 MB larger artifact; claude.exe cannot run from inside asar (needs asarUnpack or pathToClaudeCodeExecutable); loading the ESM-only SDK from asar in Electron 44 is unverified.
+
+Status: Review. Next step: when Niclas authorizes a live path (Anthropic permission or documentation for subscription use, or an explicit API-key approval with credential and spend limit), run AC #3-#7 with the existing subcommands; nothing in the offline portion needs repeating unless the code changes.
 <!-- SECTION:NOTES:END -->

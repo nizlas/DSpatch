@@ -9,8 +9,11 @@
  * being an object exposed by the adapter.
  */
 
-/** Providers named in VISION section 10. Neither is connected yet. */
-export type ProviderId = 'cursor' | 'copilot';
+/**
+ * Providers. `cursor` and `copilot` are named in VISION section 10; `claude` is
+ * Claude's own agent harness through the Claude Agent SDK (DSP-109).
+ */
+export type ProviderId = 'cursor' | 'copilot' | 'claude';
 
 /**
  * DSpatch creates its own identifiers rather than adopting a provider's format.

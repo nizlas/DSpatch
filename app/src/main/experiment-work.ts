@@ -1,9 +1,18 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import tls from 'node:tls';
 
+import type { AgentAdapter } from '../adapter/agent-adapter';
+import {
+  assessAuthentication,
+  ClaudeAgentSdkAdapter,
+  type AuthenticationAssessment,
+  type ClaudeQueryFunction,
+  type LiveAuthorization,
+} from '../adapter/claude-agent-sdk-adapter';
 import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
 import type { AgentEvent, UsageReading } from '../adapter/types';
 import {
@@ -26,9 +35,18 @@ import {
  *
  * Every scenario writes a JSON record. The record is the evidence; this program's
  * log lines are only for watching it happen.
+ *
+ * DSP-109 added a provider choice (`--provider=cursor|claude`, Cursor by default)
+ * to `code-change`, and two provider-generic scenarios, `cancel-reply` and
+ * `two-turn`. A Claude run refuses to start unless {@link guardClaudeRun} passes:
+ * an authorization must be recorded (`--api-key-approval=<reference>` or
+ * `--subscription-authorization=<reference>`), and an API credential variable in
+ * the environment is refused without an API-key approval.
  */
 
 const DEFAULT_MODEL = 'claude-haiku-4-5';
+/** A Claude run's default model, by the SDK's own model name. */
+const DEFAULT_CLAUDE_MODEL = 'claude-haiku-4-5';
 const TURN_TIMEOUT_MS = 300_000;
 
 function log(message: string): void {
@@ -70,6 +88,7 @@ interface TurnLog {
   finalMessage: string | null;
   sendResolvedMs: number | null;
   firstActivityMs: number | null;
+  firstTextMs: number | null;
   finishedMs: number | null;
   terminalStatus: string | null;
   error: { message: string; providerCode: string | null } | null;
@@ -85,16 +104,25 @@ interface Recorder {
   waitForFinish(turn: TurnLog): Promise<void>;
   /** Resolves at the first delta or tool call of the current turn. */
   firstActivity(): Promise<void>;
+  /**
+   * Resolves at the first non-empty **assistant text** delta of the current turn,
+   * or at its terminal event if none came. Unlike {@link firstActivity}, a tool
+   * call does not resolve it.
+   */
+  firstAssistantText(): Promise<void>;
+  /** Milliseconds since the current turn was sent, on the events' clock. */
+  elapsedMs(): number;
   stop(): void;
 }
 
-function makeRecorder(adapter: CursorSdkAdapter, sessionId: string): Recorder {
+function makeRecorder(adapter: AgentAdapter, sessionId: string): Recorder {
   const turns: TurnLog[] = [];
   let current: TurnLog | null = null;
   let t0 = 0;
   let terminalSeen = false;
   let resolveFinished: (() => void) | null = null;
   let resolveActivity: (() => void) | null = null;
+  let resolveText: (() => void) | null = null;
 
   const unsubscribe = adapter.subscribe(sessionId, (event: AgentEvent) => {
     const turn = current;
@@ -170,6 +198,12 @@ function makeRecorder(adapter: CursorSdkAdapter, sessionId: string): Recorder {
       resolveActivity = null;
       resolve?.();
     }
+    if (turn.firstTextMs === null && event.type === 'assistant.delta' && event.text !== '') {
+      turn.firstTextMs = atMs;
+      const resolve = resolveText;
+      resolveText = null;
+      resolve?.();
+    }
     if (event.type === 'run.finished') {
       terminalSeen = true;
       const resolve = resolveFinished;
@@ -178,11 +212,15 @@ function makeRecorder(adapter: CursorSdkAdapter, sessionId: string): Recorder {
       const activity = resolveActivity;
       resolveActivity = null;
       activity?.();
+      const text = resolveText;
+      resolveText = null;
+      text?.();
     }
   });
 
   const finishedPromises = new Map<TurnLog, Promise<void>>();
   const activityPromises = new Map<TurnLog, Promise<void>>();
+  const textPromises = new Map<TurnLog, Promise<void>>();
 
   return {
     turns,
@@ -196,6 +234,7 @@ function makeRecorder(adapter: CursorSdkAdapter, sessionId: string): Recorder {
         finalMessage: null,
         sendResolvedMs: null,
         firstActivityMs: null,
+        firstTextMs: null,
         finishedMs: null,
         terminalStatus: null,
         error: null,
@@ -217,6 +256,12 @@ function makeRecorder(adapter: CursorSdkAdapter, sessionId: string): Recorder {
         turn,
         new Promise<void>((resolve) => {
           resolveActivity = resolve;
+        }),
+      );
+      textPromises.set(
+        turn,
+        new Promise<void>((resolve) => {
+          resolveText = resolve;
         }),
       );
       log(`${label}: sending (${String(prompt.length)} chars)`);
@@ -275,6 +320,34 @@ function makeRecorder(adapter: CursorSdkAdapter, sessionId: string): Recorder {
           clearTimeout(timer);
         }
       }
+    },
+    async firstAssistantText() {
+      const turn = current;
+      if (turn === null) {
+        throw new Error('firstAssistantText called with no turn in flight');
+      }
+      const text = textPromises.get(turn);
+      if (text === undefined) {
+        throw new Error('no text promise');
+      }
+      let timer: NodeJS.Timeout | null = null;
+      try {
+        await Promise.race([
+          text,
+          new Promise<void>((_resolve, reject) => {
+            timer = setTimeout(() => {
+              reject(new Error('no assistant text delta within 120 s'));
+            }, 120_000);
+          }),
+        ]);
+      } finally {
+        if (timer !== null) {
+          clearTimeout(timer);
+        }
+      }
+    },
+    elapsedMs() {
+      return round(performance.now() - t0);
     },
     stop() {
       unsubscribe();
@@ -416,27 +489,244 @@ function requireEmptyDir(dir: string): string {
   return resolved;
 }
 
-function modelRequested(): string {
+function modelRequested(provider: ExperimentProvider = 'cursor'): string {
+  if (provider === 'claude') {
+    return process.env['DSPATCH_EXPERIMENT_CLAUDE_MODEL'] ?? DEFAULT_CLAUDE_MODEL;
+  }
   return process.env['DSPATCH_EXPERIMENT_MODEL'] ?? DEFAULT_MODEL;
 }
 
+// --- Provider choice (DSP-109) ----------------------------------------------
+
+export type ExperimentProvider = 'cursor' | 'claude';
+
+/** How a scenario is run. Every default is what the Cursor path always did. */
+export interface ScenarioOptions {
+  readonly provider?: ExperimentProvider;
+  /** Recorded authorization for a Claude run. Required; see {@link guardClaudeRun}. */
+  readonly authorization?: LiveAuthorization | null;
+  /** The environment a Claude run is assessed against and given. Default `process.env`. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  /** A substitute for the SDK's `query()`. Tests only. */
+  readonly claudeQueryFn?: ClaudeQueryFunction;
+  /** How long to keep listening after a cancelled turn's terminal event. Default 5 s. */
+  readonly afterTerminalWatchMs?: number;
+}
+
+/** Exit code when a run was refused before it started. */
+export const EXIT_REFUSED = 4;
+
+/**
+ * Whether a Claude run may start, from variable names only.
+ *
+ * Always requires a recorded authorization, even where the adapter itself would
+ * not (a substituted query function): these scenarios are the live entry points,
+ * so the rule is checked here the same way whatever stands behind the adapter.
+ */
+export function guardClaudeRun(options: ScenarioOptions): AuthenticationAssessment {
+  return assessAuthentication(options.env ?? process.env, options.authorization, true);
+}
+
+function providerOf(options: ScenarioOptions): ExperimentProvider {
+  return options.provider ?? 'cursor';
+}
+
+function createAdapter(options: ScenarioOptions): CursorSdkAdapter | ClaudeAgentSdkAdapter {
+  if (providerOf(options) === 'claude') {
+    return new ClaudeAgentSdkAdapter({
+      authorization: options.authorization ?? null,
+      env: options.env ?? process.env,
+      ...(options.claudeQueryFn === undefined ? {} : { queryFn: options.claudeQueryFn }),
+    });
+  }
+  return new CursorSdkAdapter({ toolPolicy: 'provider-default' });
+}
+
+/**
+ * For a Claude run: assess, record, and write a refusal record if it must not
+ * start. Returns the exit code when refused, or `null` to go on. A Cursor run is
+ * not assessed here; its login lives in Cursor's own store.
+ */
+function refuseUnauthorized(
+  options: ScenarioOptions,
+  record: Record<string, unknown>,
+  logPath: string,
+): number | null {
+  record['provider'] = providerOf(options);
+  if (providerOf(options) !== 'claude') {
+    return null;
+  }
+  const assessment = guardClaudeRun(options);
+  record['authentication'] = assessment;
+  if (assessment.refusal === null) {
+    return null;
+  }
+  log(`REFUSED: ${assessment.refusal}`);
+  record['refused'] = true;
+  record['exitCode'] = EXIT_REFUSED;
+  record['finishedAtUtc'] = new Date().toISOString();
+  writeRecord(logPath, record);
+  return EXIT_REFUSED;
+}
+
+function sdkPackageVersion(): string | null {
+  const starts = [typeof __dirname === 'string' ? __dirname : null, process.cwd()].filter(
+    (start): start is string => start !== null,
+  );
+  for (const start of starts) {
+    let dir = path.resolve(start);
+    for (;;) {
+      const candidate = path.join(
+        dir,
+        'node_modules',
+        '@anthropic-ai',
+        'claude-agent-sdk',
+        'package.json',
+      );
+      try {
+        const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8')) as { version?: unknown };
+        return typeof parsed.version === 'string' ? parsed.version : null;
+      } catch {
+        // Not here; go up.
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) {
+        break;
+      }
+      dir = parent;
+    }
+  }
+  return null;
+}
+
+/**
+ * Where Claude Code keeps the session transcript, as documented and as observed.
+ *
+ * Documented: `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`, or under
+ * `CLAUDE_CONFIG_DIR` when it is set. Observed: which `projects/*` folders hold a
+ * file named for the session ID — existence only; nothing is read from them.
+ */
+function providerStateLocation(
+  env: Readonly<Record<string, string | undefined>>,
+  providerSessionId: string,
+): Record<string, unknown> {
+  const configDir = env['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude');
+  const projects = path.join(configDir, 'projects');
+  const observed: string[] = [];
+  try {
+    for (const entry of fs.readdirSync(projects, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        const file = path.join(projects, entry.name, `${providerSessionId}.jsonl`);
+        if (fs.existsSync(file)) {
+          observed.push(file);
+        }
+      }
+    }
+  } catch {
+    // No projects folder: nothing was observed there, which is the honest answer.
+  }
+  return {
+    documented:
+      '~/.claude/projects/<encoded-cwd>/<session-id>.jsonl, or under CLAUDE_CONFIG_DIR ' +
+      'when it is set (provider documentation, not an observation)',
+    configDirSource: env['CLAUDE_CONFIG_DIR'] === undefined ? 'default' : 'CLAUDE_CONFIG_DIR',
+    configDir,
+    observedTranscriptFiles: observed,
+  };
+}
+
+/** What a Claude run record carries beyond the provider-generic fields. */
+function claudeObservations(
+  adapter: ClaudeAgentSdkAdapter,
+  sessionId: string,
+  providerSessionId: string,
+  options: ScenarioOptions,
+): Record<string, unknown> {
+  const inits = adapter
+    .initMessages(sessionId)
+    .map((message) => message as Record<string, unknown>);
+  const results = adapter
+    .resultMessages(sessionId)
+    .map((message) => message as Record<string, unknown>);
+  const first = inits[0];
+  const configured = [...adapter.permissionPolicy().tools].sort();
+  const reportedTools = Array.isArray(first?.['tools']) ? (first['tools'] as unknown[]) : null;
+  const managedKeys =
+    first === undefined ? [] : Object.keys(first).filter((key) => /managed|policy/i.test(key));
+  return {
+    sdkVersion: sdkPackageVersion(),
+    node: process.versions.node,
+    permissions: adapter.permissionPolicy(),
+    authentication: adapter.authentication(),
+    init:
+      first === undefined
+        ? null
+        : {
+            session_id: first['session_id'] ?? null,
+            claude_code_version: first['claude_code_version'] ?? null,
+            model: first['model'] ?? null,
+            tools: first['tools'] ?? null,
+            cwd: first['cwd'] ?? null,
+            permissionMode: first['permissionMode'] ?? null,
+            apiKeySource: first['apiKeySource'] ?? null,
+          },
+    initSessionIds: inits.map((init) => init['session_id'] ?? null),
+    toolsMatchConfigured:
+      reportedTools === null
+        ? null
+        : JSON.stringify(reportedTools.map(String).sort()) === JSON.stringify(configured),
+    agentOrTaskToolPresent:
+      reportedTools === null
+        ? null
+        : reportedTools.some((tool) => tool === 'Agent' || tool === 'Task'),
+    managedPolicy:
+      first === undefined
+        ? 'no init message was received'
+        : managedKeys.length === 0
+          ? 'not shown in the init message'
+          : Object.fromEntries(managedKeys.map((key) => [key, first[key]])),
+    results: results.map((result) => ({
+      subtype: result['subtype'] ?? null,
+      is_error: result['is_error'] ?? null,
+      usage: result['usage'] ?? null,
+      modelUsage: result['modelUsage'] ?? null,
+      permission_denials: result['permission_denials'] ?? null,
+      totalCostUsdEstimate: result['total_cost_usd'] ?? null,
+      totalCostNote: "the SDK's own local estimate; not a charge and not a billing reading",
+    })),
+    providerSessionIdsObserved: adapter.providerSessionIdsObserved(sessionId),
+    providerMessageTypes: adapter.providerMessageTypes(sessionId),
+    streamPumpFinished: adapter.streamPumpFinished(sessionId),
+    providerState: providerStateLocation(options.env ?? process.env, providerSessionId),
+    capabilities: adapter.capabilities(),
+  };
+}
+
+function providerSessionIdOf(record: Record<string, unknown>): string {
+  const session = record['session'] as { providerSessionId?: unknown } | undefined;
+  return typeof session?.providerSessionId === 'string' ? session.providerSessionId : '';
+}
+
 async function openSession(
-  adapter: CursorSdkAdapter,
+  adapter: AgentAdapter,
   workspacePath: string,
   record: Record<string, unknown>,
+  provider: ExperimentProvider = 'cursor',
 ): Promise<{ sessionId: string; recorder: Recorder }> {
   const handle = await adapter.startSession({
-    provider: 'cursor',
-    modelRequested: modelRequested(),
+    provider,
+    modelRequested: modelRequested(provider),
     workspacePath,
   });
   record['session'] = {
     dspatchSessionId: handle.dspatchSessionId,
     providerSessionId: handle.providerSessionId,
     createdAt: handle.createdAt,
-    modelRequested: modelRequested(),
+    modelRequested: modelRequested(provider),
     workspacePath,
-    toolPolicy: 'provider-default',
+    ...(adapter instanceof ClaudeAgentSdkAdapter
+      ? { adapter: adapter.id, permissions: adapter.permissionPolicy() }
+      : { toolPolicy: 'provider-default' }),
   };
   log(
     `session ${handle.dspatchSessionId} -> ${handle.providerSessionId} ` +
@@ -458,7 +748,11 @@ const CHANGE_REQUEST =
   'dependencies, and do not run any commands. Reply with the single word DONE when ' +
   'the file is saved.';
 
-async function scenarioCodeChange(repoDir: string, logPath: string): Promise<number> {
+export async function scenarioCodeChange(
+  repoDir: string,
+  logPath: string,
+  options: ScenarioOptions = {},
+): Promise<number> {
   const target = path.resolve(repoDir);
   const record: Record<string, unknown> = {
     scenario: 'substep 5 — bounded code change, tested (AC#6)',
@@ -467,6 +761,10 @@ async function scenarioCodeChange(repoDir: string, logPath: string): Promise<num
     testRepo: target,
     changeRequest: CHANGE_REQUEST,
   };
+  const refused = refuseUnauthorized(options, record, logPath);
+  if (refused !== null) {
+    return refused;
+  }
   const nodeExe = process.execPath;
   const testArgs = ['--test', 'test/duration.test.ts'];
 
@@ -476,10 +774,15 @@ async function scenarioCodeChange(repoDir: string, logPath: string): Promise<num
   record['testBeforeChange'] = testBefore;
   log(`test before change: exit ${String(testBefore.exitCode)}`);
 
-  const adapter = new CursorSdkAdapter({ toolPolicy: 'provider-default' });
+  const adapter = createAdapter(options);
   let exitCode = 1;
   try {
-    const { sessionId, recorder } = await openSession(adapter, target, record);
+    const { sessionId, recorder } = await openSession(
+      adapter,
+      target,
+      record,
+      providerOf(options),
+    );
     try {
       const turn = await recorder.send('change-request', CHANGE_REQUEST);
       await recorder.waitForFinish(turn);
@@ -542,12 +845,46 @@ async function scenarioCodeChange(repoDir: string, logPath: string): Promise<num
     log(`FAILURE: ${String(record['failure'])}`);
     exitCode = 3;
   } finally {
+    recordClaudeObservations(adapter, record, options);
     await adapter.dispose();
     record['exitCode'] = exitCode;
     record['finishedAtUtc'] = new Date().toISOString();
     writeRecord(logPath, record);
   }
   return exitCode;
+}
+
+/**
+ * Add the Claude-specific observations to a record, also after a failure, so a
+ * failed live run still says what the init message showed. Nothing for Cursor.
+ */
+function recordClaudeObservations(
+  adapter: AgentAdapter,
+  record: Record<string, unknown>,
+  options: ScenarioOptions,
+): void {
+  if (!(adapter instanceof ClaudeAgentSdkAdapter)) {
+    return;
+  }
+  const session = record['session'] as { dspatchSessionId?: unknown } | undefined;
+  if (typeof session?.dspatchSessionId !== 'string') {
+    record['claude'] = {
+      permissions: adapter.permissionPolicy(),
+      authentication: adapter.authentication(),
+      note: 'no session was started, so nothing was observed from the provider',
+    };
+    return;
+  }
+  try {
+    record['claude'] = claudeObservations(
+      adapter,
+      session.dspatchSessionId,
+      providerSessionIdOf(record),
+      options,
+    );
+  } catch (error) {
+    record['claude'] = { observationError: describeError(error) };
+  }
 }
 
 function gitText(cwd: string, args: readonly string[]): string {
@@ -570,7 +907,7 @@ function describeError(error: unknown): Record<string, unknown> {
 }
 
 async function readUsage(
-  adapter: CursorSdkAdapter,
+  adapter: AgentAdapter,
   sessionId: string,
 ): Promise<Record<string, unknown>> {
   try {
@@ -1196,23 +1533,313 @@ async function scenarioSever(workspaceDir: string, logPath: string): Promise<num
   return exitCode;
 }
 
+// --- DSP-109: cancel a streaming reply ----------------------------------------
+
+/**
+ * A read-only prompt long enough that the reply is still streaming when it is
+ * cancelled. It asks for text, not files, so a content change in the fixture
+ * afterwards is a finding rather than the point.
+ */
+export const CANCEL_REPLY_PROMPT =
+  'Read every file in this repository, one at a time. Then, for each file, write a ' +
+  'long explanation of what it does, line by line, in your reply. Do not edit, create ' +
+  'or delete any file, and do not run any commands.';
+
+/**
+ * Cancel once streamed assistant text has begun — waited for specifically, since
+ * `firstActivity()` also resolves on a tool call — and record what came after:
+ * the terminal status, events after the terminal event, any tool call started
+ * after `cancel()` resolved, the time from cancel to the terminal event, and
+ * whether the fixture's content changed.
+ */
+export async function scenarioCancelReply(
+  repoDir: string,
+  logPath: string,
+  options: ScenarioOptions = {},
+): Promise<number> {
+  const target = path.resolve(repoDir);
+  const record: Record<string, unknown> = {
+    scenario: 'DSP-109 cancel-reply — cancel after streamed assistant text began',
+    startedAtUtc: new Date().toISOString(),
+    node: process.versions.node,
+    testRepo: target,
+    prompt: CANCEL_REPLY_PROMPT,
+  };
+  const refused = refuseUnauthorized(options, record, logPath);
+  if (refused !== null) {
+    return refused;
+  }
+  const watchMs = options.afterTerminalWatchMs ?? 5_000;
+  const before = snapshotTree(target);
+  const adapter = createAdapter(options);
+  let exitCode = 1;
+  try {
+    const { sessionId, recorder } = await openSession(
+      adapter,
+      target,
+      record,
+      providerOf(options),
+    );
+    try {
+      const turn = await recorder.send('cancelled-reply', CANCEL_REPLY_PROMPT);
+      await recorder.firstAssistantText();
+      const textBegan = turn.firstTextMs !== null && turn.terminalStatus === null;
+      const cancelStartedMs = recorder.elapsedMs();
+      const cancelStartedAt = performance.now();
+      let cancelError: Record<string, unknown> | null = null;
+      if (textBegan) {
+        log(`assistant text began at ${String(turn.firstTextMs)} ms; cancelling`);
+        try {
+          await adapter.cancel(sessionId);
+        } catch (error) {
+          cancelError = describeError(error);
+        }
+      }
+      const cancelResolvedMs = recorder.elapsedMs();
+      // By position, not by clock: two events in the same tenth of a millisecond
+      // would otherwise be impossible to order.
+      const toolCallsBeforeCancelResolved = turn.toolCalls.length;
+
+      let terminalAfterCancelMs: number | null = null;
+      let waitError: Record<string, unknown> | null = null;
+      try {
+        await recorder.waitForFinish(turn);
+        terminalAfterCancelMs = round(performance.now() - cancelStartedAt);
+      } catch (error) {
+        waitError = describeError(error);
+      }
+      // Keep listening: whatever arrives now arrives after the terminal event.
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, watchMs);
+      });
+
+      const after = snapshotTree(target);
+      const diff = diffSnapshots(before, after);
+      const noContentChange =
+        diff.changed.length === 0 && diff.added.length === 0 && diff.removed.length === 0;
+      const toolCallsStartedAfterCancelResolved = turn.toolCalls
+        .slice(toolCallsBeforeCancelResolved)
+        .filter((call) => call.phase === 'started');
+      record['cancellation'] = {
+        cancelledAfterTextBegan: textBegan,
+        firstTextMsAfterSend: turn.firstTextMs,
+        cancelStartedMsAfterSend: cancelStartedMs,
+        cancelResolvedMsAfterSend: cancelResolvedMs,
+        cancelError,
+        terminalEventMsAfterCancelCall: terminalAfterCancelMs,
+        waitError,
+        terminalStatus: turn.terminalStatus,
+        runError: turn.error,
+        watchedAfterTerminalMs: watchMs,
+        eventsAfterTerminal: turn.events.filter((event) => event.afterTerminal),
+        toolCallsStartedAfterCancelResolved,
+      };
+      record['contentDiff'] = diff;
+      record['noContentChange'] = noContentChange;
+      record['verdict'] = {
+        cancelledAfterTextBegan: textBegan,
+        terminalStatusCancelled: turn.terminalStatus === 'cancelled',
+        noContentChange,
+        toolCallStartedAfterCancelResolved: toolCallsStartedAfterCancelResolved.length > 0,
+      };
+      record['turns'] = recorder.turns;
+      record['capabilities'] = adapter.capabilities();
+      exitCode =
+        textBegan && turn.terminalStatus === 'cancelled' && noContentChange ? 0 : 2;
+    } finally {
+      recorder.stop();
+    }
+  } catch (error) {
+    record['failure'] = describeError(error);
+    log(`FAILURE: ${String((record['failure'] as { message: string }).message)}`);
+    exitCode = 3;
+  } finally {
+    recordClaudeObservations(adapter, record, options);
+    await adapter.dispose();
+    record['exitCode'] = exitCode;
+    record['finishedAtUtc'] = new Date().toISOString();
+    // The process exiting is observed from outside: this record is written last.
+    record['processExitNote'] =
+      'this program exits after writing this record; whether it did is observed by the caller';
+    writeRecord(logPath, record);
+  }
+  return exitCode;
+}
+
+// --- DSP-109: two turns in one session ------------------------------------------
+
+/**
+ * A short code that is easy to compare and hard to produce by accident. The same
+ * method as `probe-cursor.ts`, copied rather than shared.
+ */
+function newNonce(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let nonce = '';
+  for (let index = 0; index < 10; index += 1) {
+    nonce += alphabet[Math.floor(Math.random() * alphabet.length)] ?? 'X';
+  }
+  return nonce;
+}
+
+/**
+ * Turn one plants a nonce this program generated; turn two — a second `send` in
+ * the same adapter instance — asks for it back. Continuity across processes is
+ * not tested here.
+ */
+export async function scenarioTwoTurn(
+  repoDir: string,
+  logPath: string,
+  options: ScenarioOptions = {},
+): Promise<number> {
+  const target = path.resolve(repoDir);
+  const nonce = newNonce();
+  const firstPrompt =
+    `Remember this token exactly: ${nonce}. Do not use any tool. ` +
+    'Reply with the single word NOTED.';
+  const secondPrompt =
+    'What was the token I asked you to remember in my previous message? Do not use any ' +
+    'tool. Reply with the token only.';
+  const record: Record<string, unknown> = {
+    scenario: 'DSP-109 two-turn — a second send in the same adapter instance',
+    startedAtUtc: new Date().toISOString(),
+    node: process.versions.node,
+    testRepo: target,
+    nonce,
+    prompts: [firstPrompt, secondPrompt],
+    crossProcessResume: 'not tested: both turns ran in one process and one adapter instance',
+  };
+  const refused = refuseUnauthorized(options, record, logPath);
+  if (refused !== null) {
+    return refused;
+  }
+  const adapter = createAdapter(options);
+  let exitCode = 1;
+  try {
+    const { sessionId, recorder } = await openSession(
+      adapter,
+      target,
+      record,
+      providerOf(options),
+    );
+    try {
+      const first = await recorder.send('turn-1', firstPrompt);
+      await recorder.waitForFinish(first);
+      const second = await recorder.send('turn-2', secondPrompt);
+      await recorder.waitForFinish(second);
+
+      const answer = second.finalMessage ?? second.deltaText;
+      const containsNonce = answer.includes(nonce);
+      const initSessionIds =
+        adapter instanceof ClaudeAgentSdkAdapter
+          ? adapter
+              .initMessages(sessionId)
+              .map((init) => (init as Record<string, unknown>)['session_id'] ?? null)
+          : null;
+      const sameProviderSession =
+        initSessionIds === null
+          ? null
+          : initSessionIds.length === 2 &&
+            initSessionIds[0] !== null &&
+            initSessionIds[0] === initSessionIds[1];
+      record['continuity'] = {
+        turnStatuses: [first.terminalStatus, second.terminalStatus],
+        secondAnswer: answer,
+        secondAnswerContainsNonce: containsNonce,
+        providerSessionIdPerTurn: initSessionIds,
+        sameProviderSessionBothTurns: sameProviderSession,
+      };
+      record['turns'] = recorder.turns;
+      record['capabilities'] = adapter.capabilities();
+      exitCode =
+        first.terminalStatus === 'finished' &&
+        second.terminalStatus === 'finished' &&
+        containsNonce &&
+        sameProviderSession !== false
+          ? 0
+          : 2;
+    } finally {
+      recorder.stop();
+    }
+  } catch (error) {
+    record['failure'] = describeError(error);
+    log(`FAILURE: ${String((record['failure'] as { message: string }).message)}`);
+    exitCode = 3;
+  } finally {
+    recordClaudeObservations(adapter, record, options);
+    await adapter.dispose();
+    record['exitCode'] = exitCode;
+    record['finishedAtUtc'] = new Date().toISOString();
+    writeRecord(logPath, record);
+  }
+  return exitCode;
+}
+
 // --- Entry point ------------------------------------------------------------
 
 function usage(): string {
   return [
-    'usage: node dist/main/experiment-work.js <subcommand> [args]',
+    'usage: node dist/main/experiment-work.js <subcommand> [args] [flags]',
     '  make-repo     <repoDir>',
-    '  code-change   <repoDir> <logPath>',
+    '  code-change   <repoDir> <logPath>            [provider flags]',
+    '  cancel-reply  <repoDir> <logPath>            [provider flags]',
+    '  two-turn      <repoDir> <logPath>            [provider flags]',
     '  probes        <workspaceDir> <outsideDir> <logPath>',
     '  net-shell     <workspaceDir> <logPath>',
     '  cancel-stream <workspaceDir> <logPath>',
     '  cancel-test   <repoDir> <logPath>',
     '  sever         <workspaceDir> <logPath>',
+    '',
+    'provider flags (DSP-109):',
+    '  --provider=cursor|claude                  default cursor',
+    '  --api-key-approval=<reference>            records an explicit API-key approval',
+    '  --subscription-authorization=<reference>  records the authorization for',
+    '                                            subscription-backed use',
+    'A claude run refuses to start without one of the last two, and refuses an API',
+    'credential variable in its environment without an API-key approval.',
   ].join('\n');
 }
 
+/** Split `--name=value` flags from positional arguments. Exported for tests. */
+export function parseScenarioArgs(argv: readonly string[]): {
+  readonly positional: string[];
+  readonly options: ScenarioOptions;
+} {
+  const positional: string[] = [];
+  let provider: ExperimentProvider = 'cursor';
+  let authorization: LiveAuthorization | null = null;
+  for (const arg of argv) {
+    if (!arg.startsWith('--')) {
+      positional.push(arg);
+      continue;
+    }
+    const [name, ...rest] = arg.slice(2).split('=');
+    const value = rest.join('=');
+    if (name === 'provider') {
+      if (value !== 'cursor' && value !== 'claude') {
+        throw new Error(`--provider must be cursor or claude, not "${value}".\n${usage()}`);
+      }
+      provider = value;
+    } else if (name === 'api-key-approval') {
+      authorization = { kind: 'api-key', approval: value };
+    } else if (name === 'subscription-authorization') {
+      authorization = { kind: 'subscription', authorization: value };
+    } else {
+      throw new Error(`Unknown flag ${arg}.\n${usage()}`);
+    }
+  }
+  if (provider === 'cursor' && authorization !== null) {
+    // An approval meant for a Claude run must not vanish into a Cursor run.
+    throw new Error(
+      '--api-key-approval and --subscription-authorization apply only to ' +
+        '--provider=claude; this run is a Cursor run.',
+    );
+  }
+  return { positional, options: { provider, authorization } };
+}
+
 async function main(): Promise<number> {
-  const [subcommand, ...args] = process.argv.slice(2);
+  const { positional, options } = parseScenarioArgs(process.argv.slice(2));
+  const [subcommand, ...args] = positional;
   const arg = (index: number): string => {
     const value = args[index];
     if (value === undefined) {
@@ -1220,6 +1847,13 @@ async function main(): Promise<number> {
     }
     return value;
   };
+
+  const providerAware = ['code-change', 'cancel-reply', 'two-turn'];
+  if (options.provider !== 'cursor' && !providerAware.includes(subcommand ?? '')) {
+    throw new Error(
+      `--provider=${String(options.provider)} applies only to ${providerAware.join(', ')}.`,
+    );
+  }
 
   switch (subcommand) {
     case 'make-repo': {
@@ -1233,7 +1867,11 @@ async function main(): Promise<number> {
       return 0;
     }
     case 'code-change':
-      return scenarioCodeChange(arg(0), arg(1));
+      return scenarioCodeChange(arg(0), arg(1), options);
+    case 'cancel-reply':
+      return scenarioCancelReply(arg(0), arg(1), options);
+    case 'two-turn':
+      return scenarioTwoTurn(arg(0), arg(1), options);
     case 'probes':
       return scenarioProbes(arg(0), arg(1), arg(2));
     case 'net-shell':
@@ -1250,11 +1888,15 @@ async function main(): Promise<number> {
   }
 }
 
-main()
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((error: unknown) => {
-    process.stderr.write(`${String(error instanceof Error ? error.stack : error)}\n`);
-    process.exitCode = 70;
-  });
+// Run only as a program. A test imports the scenarios without starting one; under
+// the test loader this file is an ES module, where `require` does not exist.
+if (typeof require !== 'undefined' && require.main === module) {
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error: unknown) => {
+      process.stderr.write(`${String(error instanceof Error ? error.stack : error)}\n`);
+      process.exitCode = 70;
+    });
+}

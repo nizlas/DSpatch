@@ -26,8 +26,9 @@ import type {
  * VISION section 14 already requires just one writing run at a time in Phase 0.
  * If `send` is called while a run is active, reject the call rather than queue it.
  *
- * No provider implementation exists yet. `NotImplementedAdapter` is the sole
- * implementation in substep 2 and calls no provider.
+ * Implementations: `CursorSdkAdapter` (Cursor's SDK), `ClaudeAgentSdkAdapter`
+ * (Claude's Agent SDK, DSP-109), and `NotImplementedAdapter`, which calls no
+ * provider.
  */
 export interface AgentAdapter {
   /**
