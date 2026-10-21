@@ -18,6 +18,21 @@ Preserve stable task/run IDs, API identifiers, commands and data formats. Keep h
 4. Read [BACKLOG.md](BACKLOG.md) for development direction and workflow.
 5. Read the current task in `backlog/tasks/`, its dependencies and relevant vision sections. When continuing, read changed and task-relevant material; do not routinely reread the entire history.
 6. When running or changing the development loop, read [DEVELOPMENT_LOOP.md](docs/DEVELOPMENT_LOOP.md). The coordinator procedure is [docs/loop/COORDINATOR.md](docs/loop/COORDINATOR.md). Enter it from your environment: in Cursor through `.cursor/skills/dspatch-loop/SKILL.md` with the five specialists in `.cursor/agents/`; in Claude Code through `.claude/skills/dspatch-loop/SKILL.md` with the five specialists in `.claude/agents/`. Both sets of specialists are generated from `docs/loop/roles/`; edit the role sources, not the generated files.
+7. When the task touches an area in the [relevance index](#relevance-index) below, read that document's relevant sections and the cross-references they depend on before planning, implementing or reviewing the affected work.
+
+<a id="relevance-index"></a>
+
+### Relevance index
+
+| Document | Read when the task touches |
+| --- | --- |
+| [RUNTIME_PLATFORM_ROADMAP.md](docs/RUNTIME_PLATFORM_ROADMAP.md) | Runtime or provider integration, SDK, AHP or hosting, session handling, persistent workspaces, or platform and Linux support. |
+| [DSPATCH_CONTENT_EXCLUSION_CONTRACT.md](docs/DSPATCH_CONTENT_EXCLUSION_CONTRACT.md) | Content exclusion, information flows, tool access, hooks, permissions or workplace security requirements, including runtime and transport changes that affect those control points. |
+| [CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md](docs/CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md) | The product's parallelism, subgraphs, handover contracts between slices, integration of partial results, and dialogue-based construction and analysis of graphs. |
+
+A task can touch several of these; read each one that applies. A task that touches none, such as a self-contained UI text change, needs none of them. They are not full reading at every start: when continuing, read only material that changed or has newly become applicable, provided the earlier relevant context is still available. Calling a specialist in the external development loop does not by itself make the parallelism document relevant; that document is about the product's parallelism, not about this loop.
+
+Keep their status apart. The roadmap and the content-exclusion contract are drafts proposing a direction and a contract; the parallelism document records an agreed product direction, not a verified implementation. A reference to one of them grants no new implementation mandate and is not evidence that a runtime supports anything.
 
 Niclas's explicit decisions govern the vision. Distinguish agreed principles from technical proposals and open questions in VISION.md. Do not change the vision to fit an implementation; document a proposed departure and its rationale. Routine, reversible choices within the agreed task need no new approval. Record durable decisions and changes of direction in the repository.
 
