@@ -758,8 +758,154 @@ function apiKeySourceComparison(
         : observed.every((value) => value === expected),
     note:
       'expected is from the SDK type documentation; observed is what the init message ' +
-      'reported. A mismatch means the run did not use the approved path.',
+      'reported. A mismatch means the run did not use the approved path. The scenario ' +
+      "verdict uses the record's authenticationVerification, which also counts turns.",
   };
+}
+
+/**
+ * Exit code when the scenario's own criteria were met but a direct API-key run's
+ * authentication was not verified (status `mismatch` or `unconfirmed`). Only ever
+ * replaces 0; every other code keeps its meaning and its cause.
+ */
+export const EXIT_AUTHENTICATION_UNVERIFIED = 5;
+
+/**
+ * - `verified`: direct API-key preflight, and every turn's init message reported
+ *   the expected `apiKeySource`.
+ * - `mismatch`: direct API-key preflight, and at least one init message reported
+ *   a different `apiKeySource`.
+ * - `unconfirmed`: direct API-key preflight, no different value seen, but some
+ *   turn has no observation (no init message, no `apiKeySource` in it, init
+ *   messages and turns not one-to-one, or no turn sent).
+ * - `not-applicable`: any other preflight; `apiKeySource` cannot verify it and the
+ *   exit code is not affected.
+ */
+export type AuthenticationVerificationStatus =
+  | 'verified'
+  | 'mismatch'
+  | 'unconfirmed'
+  | 'not-applicable';
+
+const VERDICT_CHECK_NOTE =
+  'a verdict check after observation: it compares what the init messages reported ' +
+  'with what the preflight expected once the turns have run. It does not establish ' +
+  'authentication before the first provider request and does not prevent charges ' +
+  'already incurred.';
+
+/**
+ * Whether the approved authentication path was the one observed, turn by turn.
+ * One init message is expected per turn (one `query()` each); when the counts
+ * differ the observations cannot be assigned to turns and the result is at best
+ * `unconfirmed`. Names and documented enum values only, never credential values.
+ */
+export function verifyAuthentication(
+  assessment: AuthenticationAssessment,
+  inits: readonly Record<string, unknown>[],
+  turnLabels: readonly string[],
+): Record<string, unknown> & { readonly status: AuthenticationVerificationStatus } {
+  const decision = assessment.preflight.decision;
+  const expected = assessment.preflight.expectedApiKeySource;
+  const observedPerInit = inits.map((init) =>
+    typeof init['apiKeySource'] === 'string' ? init['apiKeySource'] : null,
+  );
+  const base = {
+    preflightDecision: decision,
+    expected,
+    observedPerInit,
+    turnsSent: turnLabels.length,
+    initMessagesObserved: inits.length,
+    note: VERDICT_CHECK_NOTE,
+  };
+  if (decision !== 'direct-anthropic-api-key' || expected === null) {
+    return {
+      ...base,
+      status: 'not-applicable',
+      reason:
+        decision === 'no-api-credential'
+          ? 'no direct API-key path was approved; the installed SDK types (sdk.d.ts 0.3.306) ' +
+            "document apiKeySource 'none' alike for a claude.ai OAuth login, a bearer token " +
+            'and a third-party cloud provider, so it cannot verify which path was used; the ' +
+            'exit code is not changed'
+          : `preflight decision '${decision}' expects no apiKeySource; the exit code is not changed`,
+    };
+  }
+  const attributable = inits.length === turnLabels.length;
+  const observedPerTurn = attributable
+    ? turnLabels.map((turn, index) => ({ turn, apiKeySource: observedPerInit[index] ?? null }))
+    : null;
+  const different = observedPerInit.filter(
+    (value): value is string => value !== null && value !== expected,
+  );
+  const missingTurns =
+    observedPerTurn?.filter((entry) => entry.apiKeySource === null).map((entry) => entry.turn) ??
+    [];
+  let status: AuthenticationVerificationStatus;
+  let reason: string;
+  if (different.length > 0) {
+    status = 'mismatch';
+    reason = `an init message reported apiKeySource ${different
+      .map((value) => `'${value}'`)
+      .join(', ')} where '${expected}' was expected`;
+  } else if (turnLabels.length === 0) {
+    status = 'unconfirmed';
+    reason = 'no turn was sent, so nothing was observed';
+  } else if (!attributable) {
+    status = 'unconfirmed';
+    reason = `${String(inits.length)} init message(s) for ${String(
+      turnLabels.length,
+    )} turn(s): observations cannot be assigned to turns, so at least one turn is unverified`;
+  } else if (missingTurns.length > 0) {
+    status = 'unconfirmed';
+    reason = `no apiKeySource was observed for turn(s) ${missingTurns.join(', ')}`;
+  } else {
+    status = 'verified';
+    reason = `every turn's init message reported apiKeySource '${expected}'`;
+  }
+  return { ...base, observedPerTurn, status, reason };
+}
+
+/**
+ * For a Claude run: record the authentication verification and return the exit
+ * code it implies. A scenario failure keeps its code; only a would-be success of a
+ * direct API-key run whose authentication was not verified becomes
+ * {@link EXIT_AUTHENTICATION_UNVERIFIED}. Cursor runs are returned unchanged.
+ */
+function applyAuthenticationVerdict(
+  adapter: AgentAdapter,
+  record: Record<string, unknown>,
+  turns: readonly TurnLog[],
+  scenarioExitCode: number,
+): number {
+  if (!(adapter instanceof ClaudeAgentSdkAdapter)) {
+    return scenarioExitCode;
+  }
+  const session = record['session'] as { dspatchSessionId?: unknown } | undefined;
+  let inits: Record<string, unknown>[] = [];
+  if (typeof session?.dspatchSessionId === 'string') {
+    try {
+      inits = adapter
+        .initMessages(session.dspatchSessionId)
+        .map((message) => message as Record<string, unknown>);
+    } catch {
+      // The session is gone: nothing observed, which leaves the result unconfirmed.
+    }
+  }
+  const verification = verifyAuthentication(
+    adapter.authentication(),
+    inits,
+    turns.map((turn) => turn.label),
+  );
+  const unverified = verification.status === 'mismatch' || verification.status === 'unconfirmed';
+  const exitCode =
+    scenarioExitCode === 0 && unverified ? EXIT_AUTHENTICATION_UNVERIFIED : scenarioExitCode;
+  record['authenticationVerification'] = {
+    ...verification,
+    scenarioExitCode,
+    exitCode,
+  };
+  log(`authentication verification: ${verification.status} (${String(verification['reason'])})`);
+  return exitCode;
 }
 
 /** What a Claude run record carries beyond the provider-generic fields. */
@@ -904,6 +1050,7 @@ export async function scenarioCodeChange(
 
   const adapter = createAdapter(options);
   let exitCode = 1;
+  let turns: readonly TurnLog[] = [];
   try {
     const { sessionId, recorder } = await openSession(
       adapter,
@@ -911,6 +1058,7 @@ export async function scenarioCodeChange(
       record,
       providerOf(options),
     );
+    turns = recorder.turns;
     try {
       const turn = await recorder.send('change-request', CHANGE_REQUEST);
       await recorder.waitForFinish(turn);
@@ -974,6 +1122,7 @@ export async function scenarioCodeChange(
     exitCode = 3;
   } finally {
     recordClaudeObservations(adapter, record, options);
+    exitCode = applyAuthenticationVerdict(adapter, record, turns, exitCode);
     await adapter.dispose();
     record['exitCode'] = exitCode;
     record['finishedAtUtc'] = new Date().toISOString();
@@ -1701,6 +1850,7 @@ export async function scenarioCancelReply(
   const before = snapshotTree(target);
   const adapter = createAdapter(options);
   let exitCode = 1;
+  let turns: readonly TurnLog[] = [];
   try {
     const { sessionId, recorder } = await openSession(
       adapter,
@@ -1708,6 +1858,7 @@ export async function scenarioCancelReply(
       record,
       providerOf(options),
     );
+    turns = recorder.turns;
     try {
       const turn = await recorder.send('cancelled-reply', CANCEL_REPLY_PROMPT);
       await recorder.firstAssistantText();
@@ -1783,6 +1934,7 @@ export async function scenarioCancelReply(
     exitCode = 3;
   } finally {
     recordClaudeObservations(adapter, record, options);
+    exitCode = applyAuthenticationVerdict(adapter, record, turns, exitCode);
     await adapter.dispose();
     record['exitCode'] = exitCode;
     record['finishedAtUtc'] = new Date().toISOString();
@@ -1842,6 +1994,7 @@ export async function scenarioTwoTurn(
   }
   const adapter = createAdapter(options);
   let exitCode = 1;
+  let turns: readonly TurnLog[] = [];
   try {
     const { sessionId, recorder } = await openSession(
       adapter,
@@ -1849,6 +2002,7 @@ export async function scenarioTwoTurn(
       record,
       providerOf(options),
     );
+    turns = recorder.turns;
     try {
       const first = await recorder.send('turn-1', firstPrompt);
       await recorder.waitForFinish(first);
@@ -1894,6 +2048,7 @@ export async function scenarioTwoTurn(
     exitCode = 3;
   } finally {
     recordClaudeObservations(adapter, record, options);
+    exitCode = applyAuthenticationVerdict(adapter, record, turns, exitCode);
     await adapter.dispose();
     record['exitCode'] = exitCode;
     record['finishedAtUtc'] = new Date().toISOString();
@@ -1924,6 +2079,9 @@ function usage(): string {
     '                                            subscription-backed use',
     'A claude run refuses to start without one of the last two, and refuses an API',
     'credential variable in its environment without an API-key approval.',
+    'Exit 5: a Claude run with an API-key approval met its own criteria, but not',
+    "every turn's init message reported apiKeySource 'ANTHROPIC_API_KEY'. This is",
+    'checked after the turns ran; it does not prevent charges already incurred.',
   ].join('\n');
 }
 

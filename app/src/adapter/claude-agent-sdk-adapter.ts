@@ -524,9 +524,18 @@ interface ClaudeRun {
   /**
    * Top-level text deltas not yet covered by a completed text block: the block
    * being streamed now. Cleared when an assistant message with a text block
-   * arrives, which assumes (as the per-block messages of `includePartialMessages`
-   * suggest, not observed) that a block's completed message comes before the next
-   * block's deltas. Used only when the run ends early; see `finishRun`.
+   * arrives. Used only when the run ends early; see `finishRun`.
+   *
+   * Documented (https://code.claude.com/docs/en/agent-sdk/streaming-output,
+   * "Message flow", accessed 21 Oct 2026): with partial messages enabled, each
+   * block's `AssistantMessage` arrives before that block's `content_block_stop`
+   * and before the next block's start; if that holds, clearing here does not drop
+   * the next block's deltas. The same page's "Handle a stream that's cut off" documents
+   * `message_stop` and, for a cut text block, `content_block_stop`, for Claude
+   * Code v2.1.290+ (bundled from SDK v0.3.290; installed here 0.3.306).
+   * Not documented: whether a cut text block still gets its `AssistantMessage` —
+   * which is why this text is kept for an early end. None of this ordering has
+   * been observed in this repository.
    */
   pendingText: string;
   pump: Promise<void> | null;

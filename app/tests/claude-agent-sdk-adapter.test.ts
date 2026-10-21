@@ -25,6 +25,7 @@ import {
 } from '../src/adapter/claude-agent-sdk-adapter.ts';
 import type { AgentEvent } from '../src/adapter/types.ts';
 import {
+  EXIT_AUTHENTICATION_UNVERIFIED,
   EXIT_REFUSED,
   parseScenarioArgs,
   readSourceRevision,
@@ -55,11 +56,12 @@ function fakeSdk(script: Script) {
 
 const sessionOf = (call: Call): string => call.options.sessionId ?? call.options.resume;
 
-const init = (call: Call) => ({
+/** `apiKeySource: null` leaves the field out of the init message. */
+const init = (call: Call, apiKeySource: string | null = 'none') => ({
   type: 'system',
   subtype: 'init',
   session_id: sessionOf(call),
-  apiKeySource: 'none',
+  ...(apiKeySource === null ? {} : { apiKeySource }),
   claude_code_version: '2.9.0-test',
   cwd: call.options.cwd,
   tools: ['Read', 'Glob', 'Grep', 'Edit'],
@@ -849,7 +851,7 @@ test('two-turn refuses with nothing recorded, even with a clean environment', as
 
 test('cancel-reply cancels after text began and records what came after', async () => {
   const { queryFn } = fakeSdk(async function* (call) {
-    yield init(call);
+    yield init(call, 'ANTHROPIC_API_KEY');
     // A tool call first: the scenario must not cancel on it.
     yield assistant(call, [{ type: 'tool_use', id: 't-1', name: 'Read', input: {} }]);
     yield toolResult(call, 't-1');
@@ -897,6 +899,10 @@ test('cancel-reply cancels after text began and records what came after', async 
   assert.equal(record.claude.managedPolicy, 'not shown in the init message');
   assert.deepEqual(record.claude.providerState.observedTranscriptFiles, []);
   assert.equal(record.claude.providerState.configDirSource, 'CLAUDE_CONFIG_DIR');
+  assert.equal(record.authenticationVerification.status, 'verified');
+  assert.deepEqual(record.authenticationVerification.observedPerTurn, [
+    { turn: 'cancelled-reply', apiKeySource: 'ANTHROPIC_API_KEY' },
+  ]);
 });
 
 test('two-turn asks for the nonce back in a second send on the same session', async () => {
@@ -925,6 +931,12 @@ test('two-turn asks for the nonce back in a second send on the same session', as
   assert.equal(record.continuity.secondAnswerContainsNonce, true);
   assert.equal(record.continuity.sameProviderSessionBothTurns, true);
   assert.match(record.crossProcessResume, /not tested/);
+  // The substitute reports 'none'; with no direct API-key path that verifies nothing
+  // and changes nothing.
+  assert.equal(record.authenticationVerification.status, 'not-applicable');
+  assert.equal(record.authenticationVerification.preflightDecision, 'no-api-credential');
+  assert.match(record.authenticationVerification.reason, /cannot verify/);
+  assert.equal(record.authenticationVerification.exitCode, 0);
   assert.equal(calls[0]?.options['sessionId'], record.session.providerSessionId);
   assert.equal(calls[1]?.options['resume'], record.session.providerSessionId);
 });
@@ -981,7 +993,7 @@ test('refused and completed Claude records carry the source revision and the api
   // The substitute's init reports 'none', so the expected key source is not matched:
   // the comparison is recorded, not assumed.
   const ranLog = path.join(tempRoot('rev-ran-log'), 'record.json');
-  await scenarioTwoTurn(workspace('rev-ran'), ranLog, {
+  const ranCode = await scenarioTwoTurn(workspace('rev-ran'), ranLog, {
     provider: 'claude',
     authorization: { kind: 'api-key', approval: 'test-only reference' },
     env: scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-synthetic' }),
@@ -994,6 +1006,10 @@ test('refused and completed Claude records carry the source revision and the api
   assert.equal(ran.claude.apiKeySource.expected, 'ANTHROPIC_API_KEY');
   assert.deepEqual(ran.claude.apiKeySource.observedPerInit, ['none', 'none']);
   assert.equal(ran.claude.apiKeySource.matchesExpected, false);
+  // This substitute never answers with the nonce, so the scenario's own failure (2)
+  // stands; the mismatch is recorded beside it.
+  assert.equal(ranCode, 2);
+  assert.equal(ran.authenticationVerification.status, 'mismatch');
   assert.equal(JSON.stringify(ran).includes('sk-ant-synthetic'), false);
 });
 
@@ -1014,4 +1030,137 @@ test('scenario flags: provider and recorded authorization', () => {
     () => parseScenarioArgs(['--provider=cursor', '--subscription-authorization=r']),
     /apply only to --provider=claude/,
   );
+});
+
+// --- S1: authentication observations decide a direct API-key run's verdict ---------
+
+/**
+ * A two-turn run with an API-key approval whose init messages report the given
+ * sources, one per turn (`null` leaves the field out, `'no-init'` sends no
+ * init message). `answerNonce: false` makes turn two forget the token.
+ */
+async function twoTurnWithSources(
+  name: string,
+  sources: readonly (string | null)[],
+  answerNonce = true,
+) {
+  const remembered = new Map<string, string>();
+  const { queryFn } = fakeSdk(async function* (call, index) {
+    const session = sessionOf(call);
+    const source = sources[index] ?? null;
+    if (source !== 'no-init') {
+      yield init(call, source);
+    }
+    const planted = /token exactly: ([A-Z0-9]+)/.exec(call.prompt)?.[1];
+    if (planted !== undefined) {
+      remembered.set(session, planted);
+    }
+    const answer =
+      planted !== undefined ? 'NOTED' : answerNonce ? (remembered.get(session) ?? '?') : 'I do not know';
+    yield delta(call, answer);
+    yield assistant(call, [{ type: 'text', text: answer }]);
+    yield result(call, { result: answer });
+  });
+  const logPath = path.join(tempRoot(`s1-${name}-log`), 'record.json');
+  const code = await scenarioTwoTurn(workspace(`s1-${name}`), logPath, {
+    provider: 'claude',
+    authorization: { kind: 'api-key', approval: 'test-only reference' },
+    env: scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-synthetic-s1' }),
+    claudeQueryFn: queryFn,
+  });
+  const text = fs.readFileSync(logPath, 'utf8');
+  assert.equal(text.includes('sk-ant-synthetic-s1'), false);
+  const record = JSON.parse(text);
+  return { code, record, verification: record.authenticationVerification };
+}
+
+test('a direct API-key run succeeds only when every turn reports the expected apiKeySource', async () => {
+  const matched = await twoTurnWithSources('match', ['ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY']);
+  assert.equal(matched.code, 0, JSON.stringify(matched.verification));
+  assert.equal(matched.verification.status, 'verified');
+  assert.equal(matched.verification.expected, 'ANTHROPIC_API_KEY');
+  assert.deepEqual(matched.verification.observedPerTurn, [
+    { turn: 'turn-1', apiKeySource: 'ANTHROPIC_API_KEY' },
+    { turn: 'turn-2', apiKeySource: 'ANTHROPIC_API_KEY' },
+  ]);
+  assert.match(matched.verification.note, /after observation/);
+  assert.match(matched.verification.note, /does not establish authentication before the first provider request/);
+  assert.equal(matched.record.exitCode, 0);
+
+  const mismatched = await twoTurnWithSources('mismatch', ['none', 'none']);
+  assert.equal(mismatched.code, EXIT_AUTHENTICATION_UNVERIFIED);
+  assert.equal(mismatched.verification.status, 'mismatch');
+  assert.equal(mismatched.verification.scenarioExitCode, 0);
+  assert.equal(mismatched.record.exitCode, EXIT_AUTHENTICATION_UNVERIFIED);
+
+  const missing = await twoTurnWithSources('missing', [null, null]);
+  assert.equal(missing.code, EXIT_AUTHENTICATION_UNVERIFIED);
+  assert.equal(missing.verification.status, 'unconfirmed');
+  assert.deepEqual(missing.verification.observedPerInit, [null, null]);
+  assert.match(missing.verification.reason, /turn-1, turn-2/);
+});
+
+test('one matching turn does not hide a missing or different observation in the other', async () => {
+  const secondMissing = await twoTurnWithSources('mixed-missing', ['ANTHROPIC_API_KEY', null]);
+  assert.equal(secondMissing.code, EXIT_AUTHENTICATION_UNVERIFIED);
+  assert.equal(secondMissing.verification.status, 'unconfirmed');
+  assert.deepEqual(secondMissing.verification.observedPerTurn, [
+    { turn: 'turn-1', apiKeySource: 'ANTHROPIC_API_KEY' },
+    { turn: 'turn-2', apiKeySource: null },
+  ]);
+
+  const secondDifferent = await twoTurnWithSources('mixed-different', ['ANTHROPIC_API_KEY', 'none']);
+  assert.equal(secondDifferent.code, EXIT_AUTHENTICATION_UNVERIFIED);
+  assert.equal(secondDifferent.verification.status, 'mismatch');
+
+  // No init message at all in turn two: the one observation cannot cover both turns.
+  // The scenario already fails (2) on its own provider-session check, and keeps that code.
+  const secondNoInit = await twoTurnWithSources('mixed-no-init', ['ANTHROPIC_API_KEY', 'no-init']);
+  assert.equal(secondNoInit.code, 2);
+  assert.equal(secondNoInit.record.continuity.sameProviderSessionBothTurns, false);
+  assert.equal(secondNoInit.verification.status, 'unconfirmed');
+  assert.equal(secondNoInit.verification.observedPerTurn, null);
+  assert.equal(secondNoInit.verification.initMessagesObserved, 1);
+  assert.equal(secondNoInit.verification.turnsSent, 2);
+});
+
+test('a scenario failure keeps its own code whatever the authentication shows', async () => {
+  const forgot = await twoTurnWithSources('no-nonce', ['ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY'], false);
+  assert.equal(forgot.code, 2);
+  assert.equal(forgot.verification.status, 'verified');
+  assert.equal(forgot.record.continuity.secondAnswerContainsNonce, false);
+
+  const forgotAndMismatched = await twoTurnWithSources('no-nonce-mismatch', ['none', 'none'], false);
+  assert.equal(forgotAndMismatched.code, 2);
+  assert.equal(forgotAndMismatched.verification.status, 'mismatch');
+  assert.equal(forgotAndMismatched.verification.exitCode, 2);
+});
+
+test('cancel-reply with an API-key approval is not a success when apiKeySource differs or is not observed', async () => {
+  for (const [source, status] of [
+    ['none', 'mismatch'],
+    ['no-init', 'unconfirmed'],
+  ] as const) {
+    const { queryFn } = fakeSdk(async function* (call) {
+      if (source !== 'no-init') {
+        yield init(call, source);
+      }
+      yield delta(call, 'File one does');
+      await untilAborted(call.options['abortController'].signal);
+      yield result(call, { subtype: 'error_during_execution', is_error: true, errors: ['aborted'] });
+    });
+    const logPath = path.join(tempRoot(`s1-cr-${source}-log`), 'record.json');
+    const code = await scenarioCancelReply(workspace(`s1-cr-${source}`), logPath, {
+      provider: 'claude',
+      authorization: { kind: 'api-key', approval: 'test-only reference' },
+      env: scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-synthetic-s1' }),
+      claudeQueryFn: queryFn,
+      afterTerminalWatchMs: 20,
+    });
+    const record = readRecord(logPath);
+    assert.equal(record.verdict.terminalStatusCancelled, true, 'the scenario itself succeeded');
+    assert.equal(code, EXIT_AUTHENTICATION_UNVERIFIED, source);
+    assert.equal(record.authenticationVerification.status, status);
+    assert.equal(record.authenticationVerification.scenarioExitCode, 0);
+  }
 });
