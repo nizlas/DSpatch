@@ -453,6 +453,62 @@ export function providerEnvironment(
 /** What `query()` returns, as far as this adapter uses it. */
 export interface ClaudeQueryHandle extends AsyncIterable<SDKMessage> {
   close?(): void;
+  /**
+   * The SDK's `Query.accountInfo()` (sdk.d.ts 0.3.306: "Get information about the
+   * authenticated account", returning `AccountInfo`). Optional so a substitute
+   * may leave it out; a missing method is a missing observation.
+   */
+  accountInfo?(): Promise<unknown>;
+}
+
+// --- Observations bound to runs ----------------------------------------------------
+
+/** One `system`/`init` message and the DSpatch run whose `query()` produced it. */
+export interface InitObservation {
+  readonly dspatchRunId: DspatchRunId;
+  readonly message: unknown;
+}
+
+/**
+ * The `AccountInfo` fields DSpatch keeps. All four are documented in sdk.d.ts
+ * 0.3.306 and hold no secret. `email` and `organization` are never copied.
+ */
+export const ACCOUNT_INFO_FIELDS = [
+  'apiProvider',
+  'subscriptionType',
+  'tokenSource',
+  'apiKeySource',
+] as const;
+export type AccountInfoField = (typeof ACCOUNT_INFO_FIELDS)[number];
+
+/**
+ * What one run's `accountInfo()` gave. `unavailable` is a missing observation,
+ * never an error of the run itself. A field that is absent or not a string is
+ * `null`.
+ */
+export type AccountObservation =
+  | {
+      readonly dspatchRunId: DspatchRunId;
+      readonly status: 'observed';
+      readonly fields: Readonly<Record<AccountInfoField, string | null>>;
+    }
+  | {
+      readonly dspatchRunId: DspatchRunId;
+      readonly status: 'unavailable';
+      readonly reason: string;
+    };
+
+/** How long a run's `accountInfo()` may take before it counts as unavailable. */
+const ACCOUNT_INFO_WAIT_MS = 10_000;
+
+function accountFields(info: unknown): Record<AccountInfoField, string | null> {
+  const record = asRecord(info);
+  const fields = {} as Record<AccountInfoField, string | null>;
+  for (const field of ACCOUNT_INFO_FIELDS) {
+    const value = record[field];
+    fields[field] = typeof value === 'string' ? value : null;
+  }
+  return fields;
 }
 
 /** The SDK's `query()`, or a substitute with the same shape. */
@@ -551,7 +607,10 @@ interface SessionState {
   readonly runReadings: Map<DspatchRunId, UsageReading[]>;
   readonly messageTypes: Map<string, number>;
   readonly toolNames: Map<string, string>;
-  readonly initMessages: unknown[];
+  /** Every init message with the run that produced it, in arrival order. */
+  readonly initObservations: InitObservation[];
+  /** One bounded `accountInfo()` read per run that called `query()`, in run order. */
+  readonly accountReads: Promise<AccountObservation>[];
   readonly resultMessages: unknown[];
   readonly observedSessionIds: string[];
   /**
@@ -718,7 +777,8 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       runReadings: new Map(),
       messageTypes: new Map(),
       toolNames: new Map(),
-      initMessages: [],
+      initObservations: [],
+      accountReads: [],
       resultMessages: [],
       observedSessionIds: [],
       outstanding: new Set(),
@@ -814,6 +874,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         return { dspatchRunId: run.dspatchRunId };
       }
       run.handle = queryFn({ prompt, options: this.optionsFor(state, run) });
+      state.accountReads.push(readAccount(run.dspatchRunId, run.handle));
     } catch (error) {
       const adapterError = toAdapterError('send', error);
       this.finishRun(state, run, run.cancelRequested ? 'cancelled' : 'error', {
@@ -947,9 +1008,26 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
 
   // --- Observations for run records (beyond AgentAdapter) ----------------------
 
-  /** The `system`/`init` messages seen, unchanged. */
+  /** The `system`/`init` messages seen, unchanged, in arrival order. */
   initMessages(sessionId: DspatchSessionId): readonly unknown[] {
-    return [...this.requireSession(sessionId).initMessages];
+    return this.requireSession(sessionId).initObservations.map((entry) => entry.message);
+  }
+
+  /**
+   * The init messages with the DSpatch run whose `query()` produced each one, in
+   * arrival order. Use this, not positions, to say which turn reported what.
+   */
+  initObservations(sessionId: DspatchSessionId): readonly InitObservation[] {
+    return [...this.requireSession(sessionId).initObservations];
+  }
+
+  /**
+   * What each run's `accountInfo()` gave, in run order: only
+   * {@link ACCOUNT_INFO_FIELDS}, never `email` or `organization`. Waits for reads
+   * still under way, each bounded by its own timeout, so this always settles.
+   */
+  async accountObservations(sessionId: DspatchSessionId): Promise<readonly AccountObservation[]> {
+    return Promise.all(this.requireSession(sessionId).accountReads);
   }
 
   /** The `result` messages seen, unchanged. */
@@ -1077,7 +1155,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     switch (type) {
       case 'system': {
         if (subtype === 'init') {
-          state.initMessages.push(message);
+          state.initObservations.push({ dspatchRunId: run.dspatchRunId, message });
           if (typeof raw['model'] === 'string') {
             state.modelReportedValue = raw['model'];
           }
@@ -1261,6 +1339,55 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       }
     }
   }
+}
+
+/**
+ * One run's account observation, read once through the SDK's documented
+ * `Query.accountInfo()`. Chosen over `initializationResult()` because it returns
+ * only `AccountInfo`, not commands, models and agents nothing here uses. Never
+ * rejects: a missing method, a failure or no answer within
+ * {@link ACCOUNT_INFO_WAIT_MS} is an `unavailable` observation. Only the
+ * {@link ACCOUNT_INFO_FIELDS} are kept.
+ */
+function readAccount(
+  dspatchRunId: DspatchRunId,
+  handle: ClaudeQueryHandle,
+): Promise<AccountObservation> {
+  const unavailable = (reason: string): AccountObservation => ({
+    dspatchRunId,
+    status: 'unavailable',
+    reason,
+  });
+  if (typeof handle.accountInfo !== 'function') {
+    return Promise.resolve(unavailable('the query handle offers no accountInfo()'));
+  }
+  let call: Promise<unknown>;
+  try {
+    call = Promise.resolve(handle.accountInfo());
+  } catch (error) {
+    call = Promise.reject(error);
+  }
+  const read = call.then(
+    (info): AccountObservation => ({ dspatchRunId, status: 'observed', fields: accountFields(info) }),
+    (error: unknown) =>
+      unavailable(
+        `accountInfo() failed: ${error instanceof Error ? error.name : 'UnknownError'}`,
+      ),
+  );
+  let timer: NodeJS.Timeout | null = null;
+  const timeout = new Promise<AccountObservation>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(
+        unavailable(`accountInfo() did not answer within ${String(ACCOUNT_INFO_WAIT_MS)} ms`),
+      );
+    }, ACCOUNT_INFO_WAIT_MS);
+    timer.unref();
+  });
+  return Promise.race([read, timeout]).finally(() => {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  });
 }
 
 /** True if `promise` settles within `ms`. The timer never outlives the answer. */

@@ -9,8 +9,10 @@ import type { AgentAdapter } from '../adapter/agent-adapter';
 import {
   assessAuthentication,
   ClaudeAgentSdkAdapter,
+  type AccountObservation,
   type AuthenticationAssessment,
   type ClaudeQueryFunction,
+  type InitObservation,
   type LiveAuthorization,
 } from '../adapter/claude-agent-sdk-adapter';
 import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
@@ -129,7 +131,9 @@ function makeRecorder(adapter: AgentAdapter, sessionId: string): Recorder {
     if (turn === null) {
       return;
     }
-    if (turn.runId === '') {
+    // Bound by the run's own start event, so a late event of the previous run,
+    // arriving after this turn was sent, cannot claim the turn.
+    if (turn.runId === '' && event.type === 'run.started') {
       turn.runId = event.dspatchRunId;
     }
     if (event.dspatchRunId !== turn.runId) {
@@ -265,7 +269,10 @@ function makeRecorder(adapter: AgentAdapter, sessionId: string): Recorder {
         }),
       );
       log(`${label}: sending (${String(prompt.length)} chars)`);
-      await adapter.send(sessionId, prompt);
+      const reference = await adapter.send(sessionId, prompt);
+      if (turn.runId === '') {
+        turn.runId = reference.dspatchRunId;
+      }
       turn.sendResolvedMs = round(performance.now() - t0);
       return turn;
     },
@@ -657,6 +664,9 @@ function refuseUnauthorized(
   }
   const assessment = guardClaudeRun(options);
   record['authentication'] = assessment;
+  if (assessment.authorization?.kind === 'subscription') {
+    record['authorizationScope'] = SUBSCRIPTION_AUTHORIZATION_SCOPE;
+  }
   if (assessment.refusal === null) {
     return null;
   }
@@ -764,139 +774,358 @@ function apiKeySourceComparison(
 }
 
 /**
- * Exit code when the scenario's own criteria were met but a direct API-key run's
- * authentication was not verified (status `mismatch` or `unconfirmed`). Only ever
- * replaces 0; every other code keeps its meaning and its cause.
+ * Exit code when the scenario's own criteria were met but a Claude run's
+ * authentication was not verified: a direct API-key run whose status is
+ * `mismatch` or `unconfirmed`, or a subscription-authorized run whose status is
+ * `conflicting` or `unconfirmed`. Only ever replaces 0; every other code keeps its
+ * meaning and its cause.
  */
 export const EXIT_AUTHENTICATION_UNVERIFIED = 5;
 
 /**
- * - `verified`: direct API-key preflight, and every turn's init message reported
- *   the expected `apiKeySource`.
- * - `mismatch`: direct API-key preflight, and at least one init message reported
- *   a different `apiKeySource`.
- * - `unconfirmed`: direct API-key preflight, no different value seen, but some
- *   turn has no observation (no init message, no `apiKeySource` in it, init
- *   messages and turns not one-to-one, or no turn sent).
- * - `not-applicable`: any other preflight; `apiKeySource` cannot verify it and the
- *   exit code is not affected.
+ * - `verified`: direct API-key preflight, and each turn's own run produced exactly
+ *   one init message, reporting the expected `apiKeySource`, and no init message
+ *   came from a run outside the turns.
+ * - `mismatch`: direct API-key preflight, and some init message reported a
+ *   different `apiKeySource`.
+ * - `conflicting`: subscription authorization, and some init message or account
+ *   observation reported an API-key source (an `apiKeySource` other than `'none'`)
+ *   or an `apiProvider` other than `'firstParty'`.
+ * - `unconfirmed`: nothing contradicts the expected path, but the observations do
+ *   not establish it. For a direct API-key run: a turn without exactly one init
+ *   message of its own, one without `apiKeySource`, an init message from a run that
+ *   is not a turn, or no turn sent. For a subscription-authorized run: always, at
+ *   best — see {@link verifyAuthentication}.
+ * - `not-applicable`: any other preflight; the exit code is not affected.
  */
 export type AuthenticationVerificationStatus =
   | 'verified'
   | 'mismatch'
+  | 'conflicting'
   | 'unconfirmed'
   | 'not-applicable';
 
 const VERDICT_CHECK_NOTE =
-  'a verdict check after observation: it compares what the init messages reported ' +
-  'with what the preflight expected once the turns have run. It does not establish ' +
-  'authentication before the first provider request and does not prevent charges ' +
-  'already incurred.';
+  'a verdict check after observation: it compares what the init messages (and, for a ' +
+  'subscription-authorized run, accountInfo()) reported with what the authorization ' +
+  'allows once the turns have run. It does not establish authentication before the ' +
+  'first provider request and does not prevent charges already incurred.';
 
 /**
- * Whether the approved authentication path was the one observed, turn by turn.
- * One init message is expected per turn (one `query()` each); when the counts
- * differ the observations cannot be assigned to turns and the result is at best
- * `unconfirmed`. Names and documented enum values only, never credential values.
+ * The scope of a subscription authorization, recorded in every
+ * subscription-authorized run record. Niclas's decision of 21 Oct 2026.
+ */
+export const SUBSCRIPTION_AUTHORIZATION_SCOPE =
+  "Niclas's decision, 21 Oct 2026, based on " +
+  'https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan ' +
+  'and https://code.claude.com/docs/en/legal-and-compliance: personal, single-user use on ' +
+  "Niclas's home computer, through Anthropic's own login flow and the unmodified Claude " +
+  'Code binary, with no token handling by DSpatch. Not a basis for distributing DSpatch ' +
+  'or offering authentication to others.';
+
+/** One turn as the verdict needs it: its label and the DSpatch run it started. */
+export interface TurnRun {
+  readonly label: string;
+  /** `''` when the turn never got a run. */
+  readonly runId: string;
+}
+
+/** What the adapter observed, each item bound to the run that produced it. */
+export interface RunObservations {
+  readonly inits: readonly InitObservation[];
+  readonly accounts: readonly AccountObservation[];
+}
+
+function stringField(message: unknown, field: string): string | null {
+  const value =
+    typeof message === 'object' && message !== null
+      ? (message as Record<string, unknown>)[field]
+      : undefined;
+  return typeof value === 'string' ? value : null;
+}
+
+/** The init messages of one turn's own run. A turn without a run has none. */
+function initsOf(turn: TurnRun, inits: readonly InitObservation[]): InitObservation[] {
+  return turn.runId === '' ? [] : inits.filter((init) => init.dspatchRunId === turn.runId);
+}
+
+/** Observations whose run is not one of the turns: they cannot be attributed. */
+function unattributed<T extends { readonly dspatchRunId: string }>(
+  items: readonly T[],
+  turns: readonly TurnRun[],
+): T[] {
+  return items.filter(
+    (item) => !turns.some((turn) => turn.runId !== '' && turn.runId === item.dspatchRunId),
+  );
+}
+
+const quoted = (values: readonly (string | null)[]): string =>
+  values.map((value) => (value === null ? 'absent' : `'${value}'`)).join(', ');
+
+/**
+ * Whether the authorized authentication path was the one observed, run by run.
+ *
+ * Every observation is bound to the DSpatch run whose `query()` produced it, and a
+ * turn is judged only by its own run's observations: a duplicate in one run never
+ * stands in for another, and an observation from a run that is not a turn makes
+ * the result at best `unconfirmed`. Names and documented enum values only, never
+ * credential values, and never `email` or `organization`.
+ *
+ * **Direct API-key path**: as described for {@link AuthenticationVerificationStatus}.
+ *
+ * **Subscription path** (preflight `no-api-credential` under a subscription
+ * authorization), using only what sdk.d.ts 0.3.306 defines:
+ * - `conflicting` if any init message or account observation, of any run, has an
+ *   `apiKeySource` other than `'none'` (the documented API-key sources), or any
+ *   account observation has an `apiProvider` other than `'firstParty'` ("Anthropic
+ *   OAuth login only applies when firstParty").
+ * - otherwise `unconfirmed`. Its `subscriptionEvidence` says why:
+ *   `insufficient` when a turn lacks exactly one init message of its own with
+ *   `apiKeySource`, lacks an account observation, or its account observation lacks
+ *   `apiProvider`, `subscriptionType` or `tokenSource`, or when an observation is
+ *   unattributable; `consistent-but-undefined` when every turn shows
+ *   `apiKeySource 'none'`, `apiProvider 'firstParty'` and both other fields. Even
+ *   then it is not `verified`: `'none'` is documented alike for a claude.ai OAuth
+ *   login, a bearer token and a third-party provider, and the contract defines no
+ *   values for `subscriptionType` or `tokenSource`. The values are recorded for
+ *   Niclas to judge.
  */
 export function verifyAuthentication(
   assessment: AuthenticationAssessment,
-  inits: readonly Record<string, unknown>[],
-  turnLabels: readonly string[],
+  observations: RunObservations,
+  turns: readonly TurnRun[],
 ): Record<string, unknown> & { readonly status: AuthenticationVerificationStatus } {
   const decision = assessment.preflight.decision;
   const expected = assessment.preflight.expectedApiKeySource;
-  const observedPerInit = inits.map((init) =>
-    typeof init['apiKeySource'] === 'string' ? init['apiKeySource'] : null,
-  );
+  const { inits, accounts } = observations;
   const base = {
     preflightDecision: decision,
+    authorizationKind: assessment.authorization?.kind ?? null,
     expected,
-    observedPerInit,
-    turnsSent: turnLabels.length,
+    // Raw, per run, in arrival order: what each init message reported.
+    observedPerInit: inits.map((init) => ({
+      dspatchRunId: init.dspatchRunId,
+      apiKeySource: stringField(init.message, 'apiKeySource'),
+      session_id: stringField(init.message, 'session_id'),
+    })),
+    accountObservations: accounts,
+    turnsSent: turns.length,
     initMessagesObserved: inits.length,
     note: VERDICT_CHECK_NOTE,
   };
-  if (decision !== 'direct-anthropic-api-key' || expected === null) {
+  const strayInits = unattributed(inits, turns);
+  const strayAccounts = unattributed(accounts, turns);
+
+  if (decision === 'direct-anthropic-api-key' && expected !== null) {
+    const observedPerTurn = turns.map((turn) => {
+      const own = initsOf(turn, inits);
+      return {
+        turn: turn.label,
+        dspatchRunId: turn.runId === '' ? null : turn.runId,
+        initMessages: own.length,
+        apiKeySources: own.map((init) => stringField(init.message, 'apiKeySource')),
+      };
+    });
+    const different = inits
+      .map((init) => stringField(init.message, 'apiKeySource'))
+      .filter((value): value is string => value !== null && value !== expected);
+    const notOne = observedPerTurn.filter((entry) => entry.initMessages !== 1);
+    const missingField = observedPerTurn.filter(
+      (entry) => entry.initMessages === 1 && entry.apiKeySources[0] === null,
+    );
+    let status: AuthenticationVerificationStatus;
+    let reason: string;
+    if (different.length > 0) {
+      status = 'mismatch';
+      reason = `an init message reported apiKeySource ${quoted(different)} where '${expected}' was expected`;
+    } else if (turns.length === 0) {
+      status = 'unconfirmed';
+      reason = 'no turn was sent, so nothing was observed';
+    } else if (notOne.length > 0) {
+      status = 'unconfirmed';
+      reason = `each turn's own run must produce exactly one init message; ${notOne
+        .map((entry) => `${entry.turn} has ${String(entry.initMessages)}`)
+        .join(', ')}`;
+    } else if (strayInits.length > 0) {
+      status = 'unconfirmed';
+      reason = `${String(strayInits.length)} init message(s) came from a run that is not one of the turns`;
+    } else if (missingField.length > 0) {
+      status = 'unconfirmed';
+      reason = `no apiKeySource was observed for turn(s) ${missingField
+        .map((entry) => entry.turn)
+        .join(', ')}`;
+    } else {
+      status = 'verified';
+      reason = `each turn's own init message reported apiKeySource '${expected}'`;
+    }
+    return { ...base, observedPerTurn, status, reason };
+  }
+
+  if (decision === 'no-api-credential' && assessment.authorization?.kind === 'subscription') {
+    const observedPerTurn = turns.map((turn) => {
+      const own = initsOf(turn, inits);
+      const account =
+        turn.runId === ''
+          ? null
+          : (accounts.find((entry) => entry.dspatchRunId === turn.runId) ?? null);
+      return {
+        turn: turn.label,
+        dspatchRunId: turn.runId === '' ? null : turn.runId,
+        initMessages: own.length,
+        initApiKeySources: own.map((init) => stringField(init.message, 'apiKeySource')),
+        account,
+      };
+    });
+    const conflicts: string[] = [];
+    for (const init of inits) {
+      const source = stringField(init.message, 'apiKeySource');
+      if (source !== null && source !== 'none') {
+        conflicts.push(`run ${init.dspatchRunId}: init message apiKeySource '${source}'`);
+      }
+    }
+    for (const account of accounts) {
+      if (account.status !== 'observed') {
+        continue;
+      }
+      const { apiKeySource, apiProvider } = account.fields;
+      if (apiKeySource !== null && apiKeySource !== 'none') {
+        conflicts.push(`run ${account.dspatchRunId}: accountInfo apiKeySource '${apiKeySource}'`);
+      }
+      if (apiProvider !== null && apiProvider !== 'firstParty') {
+        conflicts.push(`run ${account.dspatchRunId}: accountInfo apiProvider '${apiProvider}'`);
+      }
+    }
+    const gaps: string[] = [];
+    if (turns.length === 0) {
+      gaps.push('no turn was sent');
+    }
+    if (strayInits.length + strayAccounts.length > 0) {
+      gaps.push(
+        `${String(strayInits.length + strayAccounts.length)} observation(s) came from a run ` +
+          'that is not one of the turns',
+      );
+    }
+    for (const entry of observedPerTurn) {
+      if (entry.initMessages !== 1) {
+        gaps.push(`${entry.turn}: ${String(entry.initMessages)} init messages, not exactly one`);
+      } else if (entry.initApiKeySources[0] === null) {
+        gaps.push(`${entry.turn}: no apiKeySource in the init message`);
+      }
+      if (entry.account === null) {
+        gaps.push(`${entry.turn}: no account observation`);
+      } else if (entry.account.status === 'unavailable') {
+        gaps.push(`${entry.turn}: account information unavailable (${entry.account.reason})`);
+      } else {
+        const absent = (['apiProvider', 'subscriptionType', 'tokenSource'] as const).filter(
+          (field) => entry.account?.status === 'observed' && entry.account.fields[field] === null,
+        );
+        if (absent.length > 0) {
+          gaps.push(`${entry.turn}: accountInfo has no ${absent.join(', ')}`);
+        }
+      }
+    }
+    const observedValues = {
+      apiProvider: distinctAccountValues(accounts, 'apiProvider'),
+      subscriptionType: distinctAccountValues(accounts, 'subscriptionType'),
+      tokenSource: distinctAccountValues(accounts, 'tokenSource'),
+      accountApiKeySource: distinctAccountValues(accounts, 'apiKeySource'),
+      initApiKeySource: [
+        ...new Set(inits.map((init) => stringField(init.message, 'apiKeySource'))),
+      ],
+    };
+    let status: AuthenticationVerificationStatus;
+    let subscriptionEvidence: 'conflicting' | 'insufficient' | 'consistent-but-undefined';
+    let reason: string;
+    if (conflicts.length > 0) {
+      status = 'conflicting';
+      subscriptionEvidence = 'conflicting';
+      reason =
+        `an API-key source or a non-firstParty provider was observed (${conflicts.join('; ')}); ` +
+        'a subscription-authorized run must show neither';
+    } else if (gaps.length > 0) {
+      status = 'unconfirmed';
+      subscriptionEvidence = 'insufficient';
+      reason = `the observations are incomplete: ${gaps.join('; ')}`;
+    } else {
+      status = 'unconfirmed';
+      subscriptionEvidence = 'consistent-but-undefined';
+      reason =
+        "every turn observed apiKeySource 'none' and apiProvider 'firstParty', with " +
+        `subscriptionType ${quoted(observedValues.subscriptionType)} and tokenSource ` +
+        `${quoted(observedValues.tokenSource)}. The SDK contract (sdk.d.ts 0.3.306) defines ` +
+        "no values for subscriptionType or tokenSource and documents apiKeySource 'none' " +
+        'alike for a claude.ai OAuth login, a bearer token and a third-party provider, so ' +
+        'these observations cannot confirm a subscription login. Recorded for Niclas to judge.';
+    }
     return {
       ...base,
-      status: 'not-applicable',
-      reason:
-        decision === 'no-api-credential'
-          ? 'no direct API-key path was approved; the installed SDK types (sdk.d.ts 0.3.306) ' +
-            "document apiKeySource 'none' alike for a claude.ai OAuth login, a bearer token " +
-            'and a third-party cloud provider, so it cannot verify which path was used; the ' +
-            'exit code is not changed'
-          : `preflight decision '${decision}' expects no apiKeySource; the exit code is not changed`,
+      authorizationScope: SUBSCRIPTION_AUTHORIZATION_SCOPE,
+      observedPerTurn,
+      observedValues,
+      subscriptionEvidence,
+      status,
+      reason,
     };
   }
-  const attributable = inits.length === turnLabels.length;
-  const observedPerTurn = attributable
-    ? turnLabels.map((turn, index) => ({ turn, apiKeySource: observedPerInit[index] ?? null }))
-    : null;
-  const different = observedPerInit.filter(
-    (value): value is string => value !== null && value !== expected,
-  );
-  const missingTurns =
-    observedPerTurn?.filter((entry) => entry.apiKeySource === null).map((entry) => entry.turn) ??
-    [];
-  let status: AuthenticationVerificationStatus;
-  let reason: string;
-  if (different.length > 0) {
-    status = 'mismatch';
-    reason = `an init message reported apiKeySource ${different
-      .map((value) => `'${value}'`)
-      .join(', ')} where '${expected}' was expected`;
-  } else if (turnLabels.length === 0) {
-    status = 'unconfirmed';
-    reason = 'no turn was sent, so nothing was observed';
-  } else if (!attributable) {
-    status = 'unconfirmed';
-    reason = `${String(inits.length)} init message(s) for ${String(
-      turnLabels.length,
-    )} turn(s): observations cannot be assigned to turns, so at least one turn is unverified`;
-  } else if (missingTurns.length > 0) {
-    status = 'unconfirmed';
-    reason = `no apiKeySource was observed for turn(s) ${missingTurns.join(', ')}`;
-  } else {
-    status = 'verified';
-    reason = `every turn's init message reported apiKeySource '${expected}'`;
-  }
-  return { ...base, observedPerTurn, status, reason };
+
+  return {
+    ...base,
+    status: 'not-applicable',
+    reason:
+      decision === 'no-api-credential'
+        ? 'no direct API-key path was approved and no subscription authorization is recorded; ' +
+          'the exit code is not changed'
+        : `preflight decision '${decision}' expects no apiKeySource; the exit code is not changed`,
+  };
+}
+
+function distinctAccountValues(
+  accounts: readonly AccountObservation[],
+  field: 'apiProvider' | 'subscriptionType' | 'tokenSource' | 'apiKeySource',
+): (string | null)[] {
+  return [
+    ...new Set(
+      accounts.flatMap((account) => (account.status === 'observed' ? [account.fields[field]] : [])),
+    ),
+  ];
 }
 
 /**
  * For a Claude run: record the authentication verification and return the exit
- * code it implies. A scenario failure keeps its code; only a would-be success of a
- * direct API-key run whose authentication was not verified becomes
- * {@link EXIT_AUTHENTICATION_UNVERIFIED}. Cursor runs are returned unchanged.
+ * code it implies. A scenario failure keeps its code; only a would-be success
+ * whose authentication was not verified (`mismatch`, `conflicting` or
+ * `unconfirmed`) becomes {@link EXIT_AUTHENTICATION_UNVERIFIED}. Cursor runs are
+ * returned unchanged.
  */
-function applyAuthenticationVerdict(
+async function applyAuthenticationVerdict(
   adapter: AgentAdapter,
   record: Record<string, unknown>,
   turns: readonly TurnLog[],
   scenarioExitCode: number,
-): number {
+): Promise<number> {
   if (!(adapter instanceof ClaudeAgentSdkAdapter)) {
     return scenarioExitCode;
   }
   const session = record['session'] as { dspatchSessionId?: unknown } | undefined;
-  let inits: Record<string, unknown>[] = [];
+  let inits: readonly InitObservation[] = [];
+  let accounts: readonly AccountObservation[] = [];
   if (typeof session?.dspatchSessionId === 'string') {
     try {
-      inits = adapter
-        .initMessages(session.dspatchSessionId)
-        .map((message) => message as Record<string, unknown>);
+      inits = adapter.initObservations(session.dspatchSessionId);
+      accounts = await adapter.accountObservations(session.dspatchSessionId);
     } catch {
       // The session is gone: nothing observed, which leaves the result unconfirmed.
     }
   }
   const verification = verifyAuthentication(
     adapter.authentication(),
-    inits,
-    turns.map((turn) => turn.label),
+    { inits, accounts },
+    turns.map((turn) => ({ label: turn.label, runId: turn.runId })),
   );
-  const unverified = verification.status === 'mismatch' || verification.status === 'unconfirmed';
+  const unverified =
+    verification.status === 'mismatch' ||
+    verification.status === 'conflicting' ||
+    verification.status === 'unconfirmed';
   const exitCode =
     scenarioExitCode === 0 && unverified ? EXIT_AUTHENTICATION_UNVERIFIED : scenarioExitCode;
   record['authenticationVerification'] = {
@@ -906,6 +1135,60 @@ function applyAuthenticationVerdict(
   };
   log(`authentication verification: ${verification.status} (${String(verification['reason'])})`);
   return exitCode;
+}
+
+/**
+ * Whether both turns ran in the same provider session, judged by each turn's own
+ * run: positive only when each run produced exactly one init message and both
+ * report the same `session_id`.
+ */
+export function sessionContinuity(
+  inits: readonly InitObservation[],
+  turns: readonly TurnRun[],
+): {
+  readonly perTurn: readonly {
+    turn: string;
+    dspatchRunId: string | null;
+    sessionIds: (string | null)[];
+  }[];
+  readonly same: boolean;
+  readonly reason: string;
+} {
+  const perTurn = turns.map((turn) => ({
+    turn: turn.label,
+    dspatchRunId: turn.runId === '' ? null : turn.runId,
+    sessionIds: initsOf(turn, inits).map((init) => stringField(init.message, 'session_id')),
+  }));
+  const notOne = perTurn.filter((entry) => entry.sessionIds.length !== 1);
+  const stray = unattributed(inits, turns);
+  if (turns.length !== 2) {
+    return { perTurn, same: false, reason: `${String(turns.length)} turn(s), not two` };
+  }
+  if (notOne.length > 0) {
+    return {
+      perTurn,
+      same: false,
+      reason: `each turn's own run must produce exactly one init message; ${notOne
+        .map((entry) => `${entry.turn} has ${String(entry.sessionIds.length)}`)
+        .join(', ')}`,
+    };
+  }
+  if (stray.length > 0) {
+    return {
+      perTurn,
+      same: false,
+      reason: `${String(stray.length)} init message(s) came from a run that is not one of the turns`,
+    };
+  }
+  const [first, second] = perTurn.map((entry) => entry.sessionIds[0] ?? null);
+  if (first === null || first === undefined || first !== second) {
+    return {
+      perTurn,
+      same: false,
+      reason: `the turns reported session_id ${quoted([first ?? null, second ?? null])}`,
+    };
+  }
+  return { perTurn, same: true, reason: `both turns' own init messages reported session_id '${first}'` };
 }
 
 /** What a Claude run record carries beyond the provider-generic fields. */
@@ -944,6 +1227,18 @@ function claudeObservations(
             apiKeySource: first['apiKeySource'] ?? null,
           },
     initSessionIds: inits.map((init) => init['session_id'] ?? null),
+    // Every init message with the run that produced it, in arrival order.
+    initObservations: adapter.initObservations(sessionId).map((entry, index) => {
+      const message = entry.message as Record<string, unknown>;
+      return {
+        arrival: index,
+        dspatchRunId: entry.dspatchRunId,
+        session_id: message['session_id'] ?? null,
+        apiKeySource: message['apiKeySource'] ?? null,
+        model: message['model'] ?? null,
+        claude_code_version: message['claude_code_version'] ?? null,
+      };
+    }),
     apiKeySource: apiKeySourceComparison(adapter.authentication(), inits),
     toolsMatchConfigured:
       reportedTools === null
@@ -1122,7 +1417,7 @@ export async function scenarioCodeChange(
     exitCode = 3;
   } finally {
     recordClaudeObservations(adapter, record, options);
-    exitCode = applyAuthenticationVerdict(adapter, record, turns, exitCode);
+    exitCode = await applyAuthenticationVerdict(adapter, record, turns, exitCode);
     await adapter.dispose();
     record['exitCode'] = exitCode;
     record['finishedAtUtc'] = new Date().toISOString();
@@ -1934,7 +2229,7 @@ export async function scenarioCancelReply(
     exitCode = 3;
   } finally {
     recordClaudeObservations(adapter, record, options);
-    exitCode = applyAuthenticationVerdict(adapter, record, turns, exitCode);
+    exitCode = await applyAuthenticationVerdict(adapter, record, turns, exitCode);
     await adapter.dispose();
     record['exitCode'] = exitCode;
     record['finishedAtUtc'] = new Date().toISOString();
@@ -2011,24 +2306,22 @@ export async function scenarioTwoTurn(
 
       const answer = second.finalMessage ?? second.deltaText;
       const containsNonce = answer.includes(nonce);
-      const initSessionIds =
+      // Judged per turn, by the init messages of that turn's own run.
+      const continuity =
         adapter instanceof ClaudeAgentSdkAdapter
-          ? adapter
-              .initMessages(sessionId)
-              .map((init) => (init as Record<string, unknown>)['session_id'] ?? null)
+          ? sessionContinuity(adapter.initObservations(sessionId), [
+              { label: first.label, runId: first.runId },
+              { label: second.label, runId: second.runId },
+            ])
           : null;
-      const sameProviderSession =
-        initSessionIds === null
-          ? null
-          : initSessionIds.length === 2 &&
-            initSessionIds[0] !== null &&
-            initSessionIds[0] === initSessionIds[1];
+      const sameProviderSession = continuity === null ? null : continuity.same;
       record['continuity'] = {
         turnStatuses: [first.terminalStatus, second.terminalStatus],
         secondAnswer: answer,
         secondAnswerContainsNonce: containsNonce,
-        providerSessionIdPerTurn: initSessionIds,
+        providerSessionIdPerTurn: continuity === null ? null : continuity.perTurn,
         sameProviderSessionBothTurns: sameProviderSession,
+        sameProviderSessionReason: continuity === null ? null : continuity.reason,
       };
       record['turns'] = recorder.turns;
       record['capabilities'] = adapter.capabilities();
@@ -2048,7 +2341,7 @@ export async function scenarioTwoTurn(
     exitCode = 3;
   } finally {
     recordClaudeObservations(adapter, record, options);
-    exitCode = applyAuthenticationVerdict(adapter, record, turns, exitCode);
+    exitCode = await applyAuthenticationVerdict(adapter, record, turns, exitCode);
     await adapter.dispose();
     record['exitCode'] = exitCode;
     record['finishedAtUtc'] = new Date().toISOString();
@@ -2079,9 +2372,13 @@ function usage(): string {
     '                                            subscription-backed use',
     'A claude run refuses to start without one of the last two, and refuses an API',
     'credential variable in its environment without an API-key approval.',
-    'Exit 5: a Claude run with an API-key approval met its own criteria, but not',
-    "every turn's init message reported apiKeySource 'ANTHROPIC_API_KEY'. This is",
-    'checked after the turns ran; it does not prevent charges already incurred.',
+    'Exit 5: a Claude run met its own criteria, but its authentication was not',
+    "verified. With an API-key approval: not every turn's own init message reported",
+    "apiKeySource 'ANTHROPIC_API_KEY'. With a subscription authorization: always at",
+    'best, since the SDK contract cannot confirm a subscription login; the record',
+    "says whether the observations conflict (an API-key source, or apiProvider not",
+    "'firstParty') or are consistent but undefined. Checked after the turns ran; it",
+    'does not prevent charges already incurred.',
   ].join('\n');
 }
 

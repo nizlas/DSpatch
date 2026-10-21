@@ -43,15 +43,34 @@ interface Call {
 
 type Script = (call: Call, index: number) => AsyncGenerator<unknown, void>;
 
-function fakeSdk(script: Script) {
+/**
+ * What a substitute's `accountInfo()` does for the query with this index: answer
+ * with the object, reject with the error, or (`undefined`) not exist at all.
+ */
+type AccountScript = (index: number) => Record<string, unknown> | Error | undefined;
+
+function fakeSdk(script: Script, account?: AccountScript) {
   const calls: Call[] = [];
   const queryFn = (params: { prompt: string; options: Record<string, any> }) => {
     const call = { prompt: params.prompt, options: params.options };
     calls.push(call);
-    const generator = script(call, calls.length - 1);
-    return Object.assign(generator, { close: () => undefined });
+    const index = calls.length - 1;
+    const generator = script(call, index);
+    const info = account?.(index);
+    return Object.assign(
+      generator,
+      { close: () => undefined },
+      info === undefined
+        ? {}
+        : { accountInfo: () => (info instanceof Error ? Promise.reject(info) : Promise.resolve(info)) },
+    );
   };
   return { queryFn: queryFn as any, calls };
+}
+
+/** Each turn's own init messages' apiKeySource, without the generated run IDs. */
+function perTurnSources(verification: { observedPerTurn: Array<{ turn: string; apiKeySources: unknown[] }> }) {
+  return verification.observedPerTurn.map(({ turn, apiKeySources }) => ({ turn, apiKeySources }));
 }
 
 const sessionOf = (call: Call): string => call.options.sessionId ?? call.options.resume;
@@ -900,8 +919,8 @@ test('cancel-reply cancels after text began and records what came after', async 
   assert.deepEqual(record.claude.providerState.observedTranscriptFiles, []);
   assert.equal(record.claude.providerState.configDirSource, 'CLAUDE_CONFIG_DIR');
   assert.equal(record.authenticationVerification.status, 'verified');
-  assert.deepEqual(record.authenticationVerification.observedPerTurn, [
-    { turn: 'cancelled-reply', apiKeySource: 'ANTHROPIC_API_KEY' },
+  assert.deepEqual(perTurnSources(record.authenticationVerification), [
+    { turn: 'cancelled-reply', apiKeySources: ['ANTHROPIC_API_KEY'] },
   ]);
 });
 
@@ -927,16 +946,17 @@ test('two-turn asks for the nonce back in a second send on the same session', as
     claudeQueryFn: queryFn,
   });
   const record = readRecord(logPath);
-  assert.equal(code, 0, JSON.stringify(record.failure ?? record.continuity));
+  // The scenario itself succeeded. The substitute offers no accountInfo(), so this
+  // subscription-authorized run is unconfirmed and its 0 becomes 5.
+  assert.equal(code, EXIT_AUTHENTICATION_UNVERIFIED, JSON.stringify(record.failure ?? record.continuity));
   assert.equal(record.continuity.secondAnswerContainsNonce, true);
   assert.equal(record.continuity.sameProviderSessionBothTurns, true);
   assert.match(record.crossProcessResume, /not tested/);
-  // The substitute reports 'none'; with no direct API-key path that verifies nothing
-  // and changes nothing.
-  assert.equal(record.authenticationVerification.status, 'not-applicable');
+  assert.equal(record.authenticationVerification.status, 'unconfirmed');
+  assert.equal(record.authenticationVerification.subscriptionEvidence, 'insufficient');
   assert.equal(record.authenticationVerification.preflightDecision, 'no-api-credential');
-  assert.match(record.authenticationVerification.reason, /cannot verify/);
-  assert.equal(record.authenticationVerification.exitCode, 0);
+  assert.match(record.authenticationVerification.reason, /offers no accountInfo\(\)/);
+  assert.equal(record.authenticationVerification.scenarioExitCode, 0);
   assert.equal(calls[0]?.options['sessionId'], record.session.providerSessionId);
   assert.equal(calls[1]?.options['resume'], record.session.providerSessionId);
 });
@@ -1041,15 +1061,18 @@ test('scenario flags: provider and recorded authorization', () => {
  */
 async function twoTurnWithSources(
   name: string,
-  sources: readonly (string | null)[],
+  sources: readonly (string | null | readonly (string | null)[])[],
   answerNonce = true,
+  subscription?: { readonly account?: AccountScript },
 ) {
   const remembered = new Map<string, string>();
   const { queryFn } = fakeSdk(async function* (call, index) {
     const session = sessionOf(call);
     const source = sources[index] ?? null;
-    if (source !== 'no-init') {
-      yield init(call, source);
+    // A list sends one init message per entry, possibly none.
+    const sent = Array.isArray(source) ? source : source === 'no-init' ? [] : [source as string | null];
+    for (const one of sent) {
+      yield init(call, one);
     }
     const planted = /token exactly: ([A-Z0-9]+)/.exec(call.prompt)?.[1];
     if (planted !== undefined) {
@@ -1060,12 +1083,15 @@ async function twoTurnWithSources(
     yield delta(call, answer);
     yield assistant(call, [{ type: 'text', text: answer }]);
     yield result(call, { result: answer });
-  });
+  }, subscription?.account);
   const logPath = path.join(tempRoot(`s1-${name}-log`), 'record.json');
   const code = await scenarioTwoTurn(workspace(`s1-${name}`), logPath, {
     provider: 'claude',
-    authorization: { kind: 'api-key', approval: 'test-only reference' },
-    env: scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-synthetic-s1' }),
+    authorization:
+      subscription === undefined
+        ? { kind: 'api-key', approval: 'test-only reference' }
+        : { kind: 'subscription', authorization: 'test-only reference' },
+    env: subscription === undefined ? scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-synthetic-s1' }) : scenarioEnv(),
     claudeQueryFn: queryFn,
   });
   const text = fs.readFileSync(logPath, 'utf8');
@@ -1079,10 +1105,15 @@ test('a direct API-key run succeeds only when every turn reports the expected ap
   assert.equal(matched.code, 0, JSON.stringify(matched.verification));
   assert.equal(matched.verification.status, 'verified');
   assert.equal(matched.verification.expected, 'ANTHROPIC_API_KEY');
-  assert.deepEqual(matched.verification.observedPerTurn, [
-    { turn: 'turn-1', apiKeySource: 'ANTHROPIC_API_KEY' },
-    { turn: 'turn-2', apiKeySource: 'ANTHROPIC_API_KEY' },
+  assert.deepEqual(perTurnSources(matched.verification), [
+    { turn: 'turn-1', apiKeySources: ['ANTHROPIC_API_KEY'] },
+    { turn: 'turn-2', apiKeySources: ['ANTHROPIC_API_KEY'] },
   ]);
+  // Each turn is judged by its own run, and the two turns are different runs.
+  const runIds = matched.verification.observedPerTurn.map((entry: { dspatchRunId: string }) => entry.dspatchRunId);
+  assert.deepEqual(runIds, matched.record.turns.map((turn: { runId: string }) => turn.runId));
+  assert.notEqual(runIds[0], runIds[1]);
+  assert.equal(matched.record.continuity.sameProviderSessionBothTurns, true);
   assert.match(matched.verification.note, /after observation/);
   assert.match(matched.verification.note, /does not establish authentication before the first provider request/);
   assert.equal(matched.record.exitCode, 0);
@@ -1096,7 +1127,10 @@ test('a direct API-key run succeeds only when every turn reports the expected ap
   const missing = await twoTurnWithSources('missing', [null, null]);
   assert.equal(missing.code, EXIT_AUTHENTICATION_UNVERIFIED);
   assert.equal(missing.verification.status, 'unconfirmed');
-  assert.deepEqual(missing.verification.observedPerInit, [null, null]);
+  assert.deepEqual(
+    missing.verification.observedPerInit.map((entry: { apiKeySource: unknown }) => entry.apiKeySource),
+    [null, null],
+  );
   assert.match(missing.verification.reason, /turn-1, turn-2/);
 });
 
@@ -1104,9 +1138,9 @@ test('one matching turn does not hide a missing or different observation in the 
   const secondMissing = await twoTurnWithSources('mixed-missing', ['ANTHROPIC_API_KEY', null]);
   assert.equal(secondMissing.code, EXIT_AUTHENTICATION_UNVERIFIED);
   assert.equal(secondMissing.verification.status, 'unconfirmed');
-  assert.deepEqual(secondMissing.verification.observedPerTurn, [
-    { turn: 'turn-1', apiKeySource: 'ANTHROPIC_API_KEY' },
-    { turn: 'turn-2', apiKeySource: null },
+  assert.deepEqual(perTurnSources(secondMissing.verification), [
+    { turn: 'turn-1', apiKeySources: ['ANTHROPIC_API_KEY'] },
+    { turn: 'turn-2', apiKeySources: [null] },
   ]);
 
   const secondDifferent = await twoTurnWithSources('mixed-different', ['ANTHROPIC_API_KEY', 'none']);
@@ -1119,7 +1153,10 @@ test('one matching turn does not hide a missing or different observation in the 
   assert.equal(secondNoInit.code, 2);
   assert.equal(secondNoInit.record.continuity.sameProviderSessionBothTurns, false);
   assert.equal(secondNoInit.verification.status, 'unconfirmed');
-  assert.equal(secondNoInit.verification.observedPerTurn, null);
+  assert.deepEqual(perTurnSources(secondNoInit.verification), [
+    { turn: 'turn-1', apiKeySources: ['ANTHROPIC_API_KEY'] },
+    { turn: 'turn-2', apiKeySources: [] },
+  ]);
   assert.equal(secondNoInit.verification.initMessagesObserved, 1);
   assert.equal(secondNoInit.verification.turnsSent, 2);
 });
@@ -1163,4 +1200,129 @@ test('cancel-reply with an API-key approval is not a success when apiKeySource d
     assert.equal(record.authenticationVerification.status, status);
     assert.equal(record.authenticationVerification.scenarioExitCode, 0);
   }
+});
+
+// --- Observations bound to runs, and the subscription observation check ------------
+
+test('two init messages in one run and none in the other neither verify nor show continuity', async () => {
+  // The case an independent review reproduced: equal totals, wrong owners.
+  const twice = await twoTurnWithSources('twice-then-none', [['ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY'], []]);
+  assert.notEqual(twice.code, 0);
+  assert.notEqual(twice.verification.status, 'verified');
+  assert.equal(twice.verification.status, 'unconfirmed');
+  assert.match(twice.verification.reason, /turn-1 has 2, turn-2 has 0/);
+  assert.equal(twice.record.continuity.sameProviderSessionBothTurns, false);
+  assert.match(twice.record.continuity.sameProviderSessionReason, /turn-1 has 2, turn-2 has 0/);
+  // The raw observations stay, per run and in arrival order: both from turn one's run.
+  const turnOneRun = twice.record.turns[0].runId;
+  assert.deepEqual(
+    twice.verification.observedPerInit.map((entry: { dspatchRunId: string }) => entry.dspatchRunId),
+    [turnOneRun, turnOneRun],
+  );
+  assert.deepEqual(
+    twice.record.claude.initObservations.map((entry: { arrival: number; dspatchRunId: string }) => [entry.arrival, entry.dspatchRunId]),
+    [[0, turnOneRun], [1, turnOneRun]],
+  );
+  // The scenario's own continuity check fails first, so its code stands.
+  assert.equal(twice.code, 2);
+});
+
+const SYNTHETIC_EMAIL = 'person@example.invalid';
+const SYNTHETIC_ORGANIZATION = 'Synthetic Organization AB';
+
+/** A consistent account answer, with the two fields DSpatch must never copy. */
+const consistentAccount = (overrides: Record<string, unknown> = {}) => ({
+  email: SYNTHETIC_EMAIL,
+  organization: SYNTHETIC_ORGANIZATION,
+  subscriptionType: 'synthetic-plan',
+  tokenSource: 'synthetic-token-source',
+  apiKeySource: 'none',
+  apiProvider: 'firstParty',
+  ...overrides,
+});
+
+function assertNoAccountIdentity(record: Record<string, any>): void {
+  const text = JSON.stringify(record);
+  assert.equal(text.includes(SYNTHETIC_EMAIL), false, 'email recorded');
+  assert.equal(text.includes(SYNTHETIC_ORGANIZATION), false, 'organization recorded');
+}
+
+test('a subscription-authorized run with consistent observations is unconfirmed, with the values recorded', async () => {
+  const run = await twoTurnWithSources('sub-consistent', ['none', 'none'], true, {
+    account: () => consistentAccount(),
+  });
+  assert.equal(run.verification.status, 'unconfirmed');
+  assert.equal(run.verification.subscriptionEvidence, 'consistent-but-undefined');
+  assert.match(run.verification.reason, /defines no values for subscriptionType or tokenSource/);
+  assert.match(run.verification.reason, /'synthetic-plan'/);
+  assert.deepEqual(run.verification.observedValues, {
+    apiProvider: ['firstParty'],
+    subscriptionType: ['synthetic-plan'],
+    tokenSource: ['synthetic-token-source'],
+    accountApiKeySource: ['none'],
+    initApiKeySource: ['none'],
+  });
+  assert.deepEqual(run.verification.observedPerTurn[0].account.fields, {
+    apiProvider: 'firstParty',
+    subscriptionType: 'synthetic-plan',
+    tokenSource: 'synthetic-token-source',
+    apiKeySource: 'none',
+  });
+  // The scenario succeeded; the contract cannot confirm a subscription login.
+  assert.equal(run.verification.scenarioExitCode, 0);
+  assert.equal(run.code, EXIT_AUTHENTICATION_UNVERIFIED);
+  assert.equal(run.record.continuity.sameProviderSessionBothTurns, true);
+  assert.match(run.record.authorizationScope, /personal, single-user use/);
+  assert.match(run.record.authorizationScope, /Not a basis for distributing DSpatch/);
+  assertNoAccountIdentity(run.record);
+});
+
+test('a subscription-authorized run fails on an observed API-key source or a non-firstParty provider', async () => {
+  const cases = [
+    { name: 'sub-init-key', sources: ['none', 'ANTHROPIC_API_KEY'], account: () => consistentAccount(), match: /init message apiKeySource 'ANTHROPIC_API_KEY'/ },
+    { name: 'sub-account-key', sources: ['none', 'none'], account: () => consistentAccount({ apiKeySource: '/login managed key' }), match: /accountInfo apiKeySource '\/login managed key'/ },
+    { name: 'sub-provider', sources: ['none', 'none'], account: (index: number) => consistentAccount(index === 1 ? { apiProvider: 'bedrock' } : {}), match: /accountInfo apiProvider 'bedrock'/ },
+  ];
+  for (const { name, sources, account, match } of cases) {
+    const run = await twoTurnWithSources(name, sources, true, { account });
+    assert.equal(run.verification.status, 'conflicting', name);
+    assert.equal(run.verification.subscriptionEvidence, 'conflicting', name);
+    assert.match(run.verification.reason, match, name);
+    assert.equal(run.verification.scenarioExitCode, 0, name);
+    assert.equal(run.code, EXIT_AUTHENTICATION_UNVERIFIED, name);
+    assertNoAccountIdentity(run.record);
+  }
+});
+
+test('missing or incomplete account information leaves a subscription-authorized run unconfirmed', async () => {
+  const cases = [
+    { name: 'sub-no-method', account: () => undefined, match: /offers no accountInfo\(\)/ },
+    { name: 'sub-rejects', account: () => new Error('synthetic failure'), match: /accountInfo\(\) failed: Error/ },
+    { name: 'sub-no-token-source', account: () => consistentAccount({ tokenSource: undefined }), match: /accountInfo has no tokenSource/ },
+    { name: 'sub-no-provider', account: (index: number) => consistentAccount(index === 1 ? { apiProvider: undefined, subscriptionType: undefined } : {}), match: /turn-2: accountInfo has no apiProvider, subscriptionType/ },
+  ];
+  for (const { name, account, match } of cases) {
+    const run = await twoTurnWithSources(name, ['none', 'none'], true, { account });
+    assert.equal(run.verification.status, 'unconfirmed', name);
+    assert.equal(run.verification.subscriptionEvidence, 'insufficient', name);
+    assert.match(run.verification.reason, match, name);
+    assert.equal(run.code, EXIT_AUTHENTICATION_UNVERIFIED, name);
+    assertNoAccountIdentity(run.record);
+  }
+  // An init message without apiKeySource is a gap too, even with good account information.
+  const noField = await twoTurnWithSources('sub-init-no-field', ['none', null], true, { account: () => consistentAccount() });
+  assert.equal(noField.verification.subscriptionEvidence, 'insufficient');
+  assert.match(noField.verification.reason, /turn-2: no apiKeySource in the init message/);
+});
+
+test('a subscription-authorized scenario failure keeps its own code', async () => {
+  const forgot = await twoTurnWithSources('sub-no-nonce', ['none', 'none'], false, { account: () => consistentAccount() });
+  assert.equal(forgot.code, 2);
+  assert.equal(forgot.verification.status, 'unconfirmed');
+  const forgotConflicting = await twoTurnWithSources('sub-no-nonce-conflict', ['ANTHROPIC_API_KEY', 'none'], false, {
+    account: () => consistentAccount(),
+  });
+  assert.equal(forgotConflicting.code, 2);
+  assert.equal(forgotConflicting.verification.status, 'conflicting');
+  assert.equal(forgotConflicting.verification.exitCode, 2);
 });
