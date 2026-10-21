@@ -4,6 +4,7 @@ title: Honour a requirement with a platform mechanism where one exists
 status: To Do
 assignee: []
 created_date: '2026-09-20 09:03'
+updated_date: '2026-10-21 15:10'
 labels: []
 dependencies:
   - DSP-74
@@ -24,3 +25,9 @@ AgentOptions.disallowedTools accepts task, documented as disallow task to preven
 - [ ] #2 A capability row changes only with an observation recorded beside it.
 - [ ] #3 A resumed session still has the restriction.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Note (21 Oct 2026, from plan run 20261021-133119-plan-rt, approved by Niclas): for claude-code on the walked-run path, the Claude harness's tools set may answer tool-restriction and no-subagent-delegation once DSP-109 observes it. The capability rows move only with recorded evidence (AC #2). No new dependency.
+<!-- SECTION:NOTES:END -->

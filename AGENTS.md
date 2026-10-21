@@ -26,7 +26,7 @@ Preserve stable task/run IDs, API identifiers, commands and data formats. Keep h
 
 | Document | Read when the task touches |
 | --- | --- |
-| [RUNTIME_PLATFORM_ROADMAP.md](docs/RUNTIME_PLATFORM_ROADMAP.md) | Runtime or provider integration, SDK, AHP or hosting, session handling, persistent workspaces, or platform and Linux support. |
+| [RUNTIME_PLATFORM_ROADMAP.md](docs/RUNTIME_PLATFORM_ROADMAP.md) | Runtime or provider integration, SDK, AHP or hosting, session handling, persistent workspaces, remote development, or platform and Linux support. |
 | [DSPATCH_CONTENT_EXCLUSION_CONTRACT.md](docs/DSPATCH_CONTENT_EXCLUSION_CONTRACT.md) | Content exclusion, information flows, tool access, hooks, permissions or workplace security requirements, including runtime and transport changes that affect those control points. |
 | [CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md](docs/CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md) | The product's parallelism, subgraphs, handover contracts between slices, integration of partial results, and dialogue-based construction and analysis of graphs. |
 

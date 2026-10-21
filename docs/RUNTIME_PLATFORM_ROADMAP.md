@@ -1,7 +1,7 @@
 # DSpatch: Runtime, Workspaces and Platform Evolution
 **Architecture direction and phased delivery plan**
 
-Version 0.2 | 19 October 2026 | Draft for Niclas Danielsson
+Version 0.3 | 21 October 2026 | Draft for Niclas Danielsson. v0.3 adds section 1.2 (agreed runtime order and the remote-development requirement); everything else is unchanged from v0.2.
 
 ## 1. Recommended direction
 
@@ -53,6 +53,30 @@ A development launch on Linux, manual relocation of a missing root, explicit con
 Keep the working Cursor route. AHP must demonstrate concrete lifecycle or maintenance benefit before migration; needing a substantial new bridge is a reason to pause and reassess, not to expand the project automatically. App/canvas, Dynamic Workflows and DeepInfra remain separate options or bounded experiments, not new dependencies for the four deliveries.
 
 This clarification changes delivery discipline, not the security requirements. The companion content-exclusion contract remains at v0.1. No implementation, runtime test or security acceptance is claimed by this update.
+
+<a id="agreed-runtime-order"></a>
+
+## 1.2. Agreed runtime order and remote development — v0.3, 21 October 2026
+
+Niclas approved this order on 21 October 2026, from the reviewed plan of loop run 20261021-133119-plan-rt. It amends the sequence in section 1 and the P3/P4B notes; where they differ, this section governs. It is a direction, not an implementation or a verified capability.
+
+### Runtime order
+
+1. **Claude first, at home.** Claude is the prioritized home runtime: DSpatch work runs through Claude's own agent harness (tool set, permission rules and modes, sessions), not only Claude models through Cursor. The first step is a thin Claude Agent SDK adapter behind the existing `AgentAdapter`, exercised from the command line on the existing synthetic fixture on Windows (DSP-109); Linux follows later in a separate clone. It is also the diagnostic baseline for later comparisons. Authentication prefers Niclas's Claude subscription where the supported SDK flow permits it; API-key billing is a separate option and must never be fallen back to silently.
+2. **AHP early and independently.** A bounded, prompt-free investigation of the VS Code Agent Host on the work computer, in the approved VS Code/Copilot environment (DSP-110), runs alongside step 1 and does not depend on it. A fixture-and-lifecycle comparison through the host (PROP-B1, recorded on DSP-110) follows both. AHP remains an investigation, not a migration commitment or a complete remote development solution, and Claude does not have to run inside VS Code for it.
+3. **Copilot stays a separate workplace track.** The Copilot SDK probe and integration (P3) and the content-exclusion integration (P4A) proceed on the work computer under that environment's security and content-exclusion policies. Claude and personal Anthropic credentials are not used there, and a home Copilot account is not a prerequisite for the Claude track.
+4. P1 (persistent workspaces) and P2 (local Linux) are unchanged and reuse their existing cards.
+
+### Remote development
+
+DSpatch must support, relatively early, an arrangement like VS Code Remote: the Electron/React UI runs and renders locally on a laptop, while the repository, agents, scripts, Git operations, builds and tests run on a remote development machine. This matters for moving an existing autonomous orchestration project from VS Code to DSpatch.
+
+- File contents, images and other binary files included, can be transferred to the local client and rendered there. SSH may be the transport; graphical forwarding over SSH is slow in the work environment while SCP-style transfer works well, so low SSH bandwidth is not assumed.
+- A conversation and its durable task history are reachable from both the laptop and the development machine without manually transferring chat context.
+- Three capabilities stay distinct: shared durable conversation and task context; provider-session resumption, used where supported and otherwise replaced by an explicitly new session built from DSpatch's persisted context (section 2); and long-running autonomous Maestro execution without an attached client, which is a further capability.
+- Content exclusion and authorization boundaries stay explicit. A person viewing a file or an image locally does not grant an agent or external model access to it.
+
+The first remote milestone demonstrates local rendering, remote repository access and execution, and shared durable conversation context (DSP-111). Until then, runtime work preserves the separation it needs, keeping provider and execution code in the main process behind `AgentAdapter` without assuming that the renderer and the execution share a machine or filesystem, but builds no remote infrastructure.
 
 <!-- pagebreak -->
 
@@ -196,7 +220,7 @@ P4A and P4B can proceed independently after the minimal runtime baseline. Mandat
 
 **Controlled parallelism and dialogue-based graph design:** preserve explicit subgraphs, handover contracts, one editable graph model and verification of the integrated result. A sequential first delivery must not silently become a permanent limitation. [P4]
 
-**Remote/headless execution:** make Windows-client/Linux-runtime operation, unattended Maestro and recovery after host restart separate later milestones.
+**Remote/headless execution:** make Windows-client/Linux-runtime operation, unattended Maestro and recovery after host restart separate later milestones. Since v0.3 a first remote milestone (local rendering, remote execution, shared durable conversation context) is brought forward; see [section 1.2](#agreed-runtime-order). Unattended Maestro and recovery after host restart remain later milestones.
 
 ### Two documents, not another competing vision
 
