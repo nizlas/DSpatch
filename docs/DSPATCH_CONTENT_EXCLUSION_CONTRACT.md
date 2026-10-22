@@ -1,15 +1,15 @@
 # DSpatch: Content-Exclusion Integration and Verification
 **Proposed integration contract and verification plan**
 
-Version 0.1 | 19 October 2026 | Draft pending R&D Tools requirements
+Version 0.2 | 22 October 2026 | Draft pending requirements from the responsible tooling team. Organization-specific references are generalized; technical requirements and verification status are unchanged.
 
 ## 1. Scope and known requirements
 
 Provide a narrow, testable path for using centrally maintained content-exclusion controls with DSpatch's Copilot runtime. Prefer reuse of the actual control implementation rather than an independently maintained copy of its glob rules.
 
-Niclas reports that R&D Tools permits an SDK-based application if content exclusion satisfies its rules. The supplied example includes `axis-hooks.json`, Bash/PowerShell pre/post scripts, 15-second timeouts and a separate global-pattern configuration. The executable scripts, helper code and written requirements have not yet been reviewed. Exact script execution versus an equivalent improved implementation remains open. [U1]
+Niclas reports that the responsible tooling team permits an SDK-based application if content exclusion satisfies its rules. The supplied example includes a managed hook configuration (referred to here by the illustrative filename `managed-hooks.json`), Bash/PowerShell pre/post scripts, 15-second timeouts and a separate global-pattern configuration. The executable scripts, helper code and written requirements have not yet been reviewed. Exact script execution versus an equivalent improved implementation remains open. [U1]
 
-No implementation or security test has been performed for this document. Integration success, observed enforcement and acceptance under the existing R&D Tools process are separate outcomes. The document does not modify organizational policy or grant permission to process real workplace material.
+No implementation or security test has been performed for this document. Integration success, observed enforcement and acceptance under the responsible tooling team's existing process are separate outcomes. The document does not modify organizational policy or grant permission to process real workplace material.
 
 ### Define the information-flow boundary
 
@@ -23,7 +23,7 @@ The reported `~/.copilot/hooks` directory is GitHub's user-hook location even wh
 
 ### Relationship to the runtime roadmap
 
-The initial SDK probe uses synthetic material, does not implement DSpatch content exclusion and must not disable mandatory controls already installed. It establishes compatibility, not workplace readiness. The verified policy path is required before the real workplace pilot. Home providers do not automatically inherit the Axis configuration. [S1]
+The initial SDK probe uses synthetic material, does not implement DSpatch content exclusion and must not disable mandatory controls already installed. It establishes compatibility, not workplace readiness. The verified policy path is required before the real workplace pilot. Home providers do not automatically inherit the workplace configuration. [S1]
 
 <!-- pagebreak -->
 
@@ -47,7 +47,7 @@ The post-hook must reproduce the script's actual function. A name containing “
 
 Missing configuration, script failure, malformed payload, timeout and malformed decision output are distinct cases. GitHub documents timeout of command hooks as proceeding to the normal permission flow rather than automatically denying. A stricter DSpatch wrapper would therefore change behavior and must be treated as an explicit decision, not invisible compatibility. [W1]
 
-Proposed workplace behavior: prevent an affected operation when its mandatory control cannot be established, report why, and provide a recovery path. Confirm the exact rule with R&D Tools. Never silently degrade a workplace runtime into the synthetic-test configuration.
+Proposed workplace behavior: prevent an affected operation when its mandatory control cannot be established, report why, and provide a recovery path. Confirm the exact rule with the responsible tooling team. Never silently degrade a workplace runtime into the synthetic-test configuration.
 
 ### Enforcement follows execution
 
@@ -80,7 +80,7 @@ Use synthetic protected files and sentinel values, not actual secrets, footage o
 
 ### Two evidence layers
 
-**Deterministic bridge tests** use controlled substitute scripts to exercise payload conversion, output parsing, ordering, timeout and process handling. They do not certify the Axis scripts or provider context assembly.
+**Deterministic bridge tests** use controlled substitute scripts to exercise payload conversion, output parsing, ordering, timeout and process handling. They do not certify the managed scripts or provider context assembly.
 
 **End-to-end tests** use the actual managed package in the intended runtime/platform. Verify prevention and output at the best observable boundary; state what remains dependent on provider behavior or organizational assurance.
 
@@ -90,7 +90,7 @@ A successful Windows/direct-SDK test does not certify Linux/AHP. Reuse test case
 
 ## 4. Open decisions and rollout gate
 
-### Questions to settle with R&D Tools
+### Questions to settle with the responsible tooling team
 
 | Decision | Integration consequence |
 | --- | --- |
@@ -121,6 +121,6 @@ Preserve meaningful differences from the original scripts as explicit design dec
 
 **W2:** [VS Code Agent Host architecture](https://code.visualstudio.com/docs/agents/concepts/agent-host) and [AHP/ACP responsibility boundary](https://microsoft.github.io/agent-host-protocol/guide/ahp-and-acp.html): independent host execution, client coordination and backend responsibilities.
 
-**S1:** Companion *DSpatch: Runtime, Workspaces and Platform Evolution*, v0.1. Existing working-memory and orchestration documents remain the product principles; this draft narrows their application to mandatory control integration.
+**S1:** Companion [*DSpatch: Runtime, Workspaces and Platform Evolution*](RUNTIME_PLATFORM_ROADMAP.md), v0.4. Existing working-memory and orchestration documents remain the product principles; this draft narrows their application to mandatory control integration.
 
-**Status:** requirements incomplete; no script modification, security verification, workplace deployment or repository update performed.
+**Status:** requirements incomplete; no script modification, security verification or workplace deployment performed. This revision updates documentation only.

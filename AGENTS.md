@@ -8,6 +8,10 @@ Use **English** for maintained repository content: READMEs, vision and technical
 
 Preserve stable task/run IDs, API identifiers, commands and data formats. Keep historical raw logs, quotations and verification evidence verbatim and label their original language; add an English explanation when needed. Existing filenames and legacy anchors may remain for link compatibility. This is a language change, not a reason to add a localisation framework or alter product scope.
 
+## Public repository content
+
+Use generic organization names, internal-project examples and configuration filenames in maintained public content. Preserve technical requirements and whether a statement is reported, proposed or verified. Do not copy private endpoints, credentials, centrally supplied policy files or internal discussions into the repository. Clearly label illustrative filenames; keep public provider/product names and API identifiers accurate. A cleanup commit changes the current files, not earlier Git history.
+
 <a id="läs-rätt-underlag"></a>
 
 ## Read the right material

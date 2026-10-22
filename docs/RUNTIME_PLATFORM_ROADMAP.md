@@ -1,7 +1,7 @@
 # DSpatch: Runtime, Workspaces and Platform Evolution
 **Architecture direction and phased delivery plan**
 
-Version 0.3 | 21 October 2026 | Draft for Niclas Danielsson. v0.3 adds section 1.2 (agreed runtime order and the remote-development requirement); everything else is unchanged from v0.2.
+Version 0.4 | 22 October 2026 | Draft for Niclas Danielsson. v0.3 added section 1.2 (agreed runtime order and the remote-development requirement). v0.4 makes organization-specific references generic; technical requirements and verification status are unchanged.
 
 ## 1. Recommended direction
 
@@ -16,13 +16,13 @@ This is a proposed sequence, not a new implementation mandate. The document pres
 | 1 / P1: Persistent workspaces | Reopen folders, unfinished changes, the selected graph and relevant history links. | A new storage framework, universal recovery or background execution. |
 | 2 / P2: Local Linux | Run the existing DSpatch/Cursor path on the home Linux machine. | Remote/headless operation, every distribution or polished packaging. |
 | 3 / P3: Copilot SDK | Complete the same small synthetic task in DSpatch, with a real diff and verified result. | A large custom session server or advanced Copilot orchestration. |
-| 4 / P4A: Axis controls | Reuse and verify the managed controls on the selected workplace path. | A replacement policy engine or certification of every provider/host combination. |
+| 4 / P4A: Managed workplace controls | Reuse and verify the managed controls on the selected workplace path. | A replacement policy engine or certification of every provider/host combination. |
 
 P0 is the implementer's initial baseline check, not a separate project. P3a and P3b form one delivery; P5 is real use and evaluation, not another infrastructure phase. P4B is a bounded, conditional AHP investigation, not a migration commitment or a prerequisite for these deliveries. Existing phase labels remain as references in the detailed notes.
 
 ### Changed organizational premise
 
-Niclas reports that R&D Tools permits an SDK-based application when content exclusion satisfies its rules. A central hook configuration and exclusion-pattern file have been supplied, but script internals and written requirements have not yet been reviewed. Whether an equivalent, more precise implementation is acceptable remains open. [U1]
+Niclas reports that the responsible tooling team permits an SDK-based application when content exclusion satisfies its rules. A central hook configuration and exclusion-pattern file have been supplied, but script internals and written requirements have not yet been reviewed. Whether an equivalent, more precise implementation is acceptable remains open. [U1]
 
 Standalone DSpatch can therefore be the main direction for both home and work, conditional on the stated requirements. Copilot App remains an option, not an assumed approval prerequisite. Common code does not imply shared credentials, workplace/home data or policy settings.
 
@@ -44,7 +44,7 @@ Normally use one coherent implementation with tests, one independent review and 
 
 **Before acceptance:** run relevant regression checks and a small end-to-end test in the actual target environment. Reuse one task and verification fixture across supported combinations. Record the tested revision, environment and outcome; a model reply alone is not evidence.
 
-**For runtime or security changes:** rerun the affected integration and safety scenarios, including applicable failure and recovery paths. Broaden testing when impact is uncertain. A hook-bridge change warrants security checks; an unrelated label edit does not automatically warrant every live-agent test. Substitute-script tests do not certify the real Axis package. Start with one intended workplace combination rather than claiming all combinations are verified.
+**For runtime or security changes:** rerun the affected integration and safety scenarios, including applicable failure and recovery paths. Broaden testing when impact is uncertain. A hook-bridge change warrants security checks; an unrelated label edit does not automatically warrant every live-agent test. Substitute-script tests do not certify the actual managed control package. Start with one intended workplace combination rather than claiming all combinations are verified.
 
 ### Simplify features, not essential guarantees
 
@@ -52,7 +52,7 @@ A development launch on Linux, manual relocation of a missing root, explicit con
 
 Keep the working Cursor route. AHP must demonstrate concrete lifecycle or maintenance benefit before migration; needing a substantial new bridge is a reason to pause and reassess, not to expand the project automatically. App/canvas, Dynamic Workflows and DeepInfra remain separate options or bounded experiments, not new dependencies for the four deliveries.
 
-This clarification changes delivery discipline, not the security requirements. The companion content-exclusion contract remains at v0.1. No implementation, runtime test or security acceptance is claimed by this update.
+This clarification changes delivery discipline, not the security requirements. At the time of this delivery-discipline clarification, the companion content-exclusion contract was v0.1. No implementation, runtime test or security acceptance is claimed by this update.
 
 <a id="agreed-runtime-order"></a>
 
@@ -116,7 +116,7 @@ A Git worktree can isolate changes but is not a security sandbox. Parallel write
 
 Read the actual local branch, ongoing workspace work and relevant task notes. Identify what already works, what is in flight and the smallest missing behavior. Record the current runnable Windows/Cursor baseline and versions. Link existing cards rather than allocating duplicate tasks from the older remote snapshot.
 
-**Exit gate:** a bounded workspace change with acceptance scenarios and no dependency on AHP, Copilot App or Axis script availability. The project's existing backlog remains the status ledger; this roadmap records direction and dependencies, not a competing live status table.
+**Exit gate:** a bounded workspace change with acceptance scenarios and no dependency on AHP, Copilot App or managed control script availability. The project's existing backlog remains the status ledger; this roadmap records direction and dependencies, not a competing live status table.
 
 ### P1 — Persistent workspaces, first useful slice
 
@@ -180,7 +180,7 @@ Start requirements/script review when material becomes available. Use the compan
 
 First test whether the selected runtime already loads the centrally distributed hooks correctly. Prefer that native route when it meets the requirement. Otherwise implement a thin SDK-callback-to-script bridge. Establish exactly one intended pre/post invocation; do not duplicate rule matching in DSpatch or accidentally run the same managed script twice. GitHub distinguishes user hooks from machine-wide Policy Hooks and documents command-hook failure semantics. [W4]
 
-Integration success and security acceptance are separate gates. A stricter timeout response is an intentional change to agree, not a claim of identical wrapper behavior. Real workplace use requires the evidence and verification expected by R&D Tools; no additional approval bureaucracy is presumed.
+Integration success and security acceptance are separate gates. A stricter timeout response is an intentional change to agree, not a claim of identical wrapper behavior. Real workplace use requires the evidence and verification expected by the responsible tooling team; no additional approval bureaucracy is presumed.
 
 ### P4B — AHP suitability probe, Copilot first
 
@@ -206,7 +206,7 @@ P4A and P4B can proceed independently after the minimal runtime baseline. Mandat
 
 ### P5 — Useful work, without unnecessary dependencies
 
-**Home pilot:** after workspace continuity and the relevant runtime/platform checks, try a bounded real DAL bug or feature. Preserve a baseline, inspect the diff and independently verify it. This does not need to wait for Axis policy acceptance or AHP migration.
+**Home pilot:** after workspace continuity and the relevant runtime/platform checks, try a bounded real DAL bug or feature. Preserve a baseline, inspect the diff and independently verify it. This does not need to wait for workplace policy acceptance or AHP migration.
 
 **Work pilot:** use a real workplace task only after the selected runtime/platform/information flows satisfy P4A. A successful synthetic home test does not establish that assurance.
 
@@ -232,6 +232,6 @@ Maintain this roadmap and the companion content-exclusion contract as Markdown s
 
 **U1:** Niclas's statements/configuration in this conversation; organizational requirements and scripts remain pending review. **P1–P4:** existing DSpatch overall vision, working-memory principles, agent-behavior guidance, and controlled-parallelism/dialogue-based graph design (30 September 2026). These describe intended behavior.
 
-**R1–R3:** repository reference in section 2; `app/src/main/project-store.ts`, `app/src/adapter/agent-adapter.ts`, and `BACKLOG.md`. Local state must be reconciled. **S1:** companion *Content-Exclusion Integration and Verification*, v0.1.
+**R1–R3:** repository reference in section 2; `app/src/main/project-store.ts`, `app/src/adapter/agent-adapter.ts`, and `BACKLOG.md`. Local state must be reconciled. **S1:** companion [*Content-Exclusion Integration and Verification*](DSPATCH_CONTENT_EXCLUSION_CONTRACT.md), v0.2.
 
 **W1:** [VS Code Agent Host](https://code.visualstudio.com/docs/agents/concepts/agent-host). **W2:** [AHP and ACP](https://microsoft.github.io/agent-host-protocol/guide/ahp-and-acp.html). **W3:** [Cursor ACP](https://cursor.com/docs/cli/acp). **W4:** [Copilot hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference). Pin versions and recheck applicable contracts before implementation.

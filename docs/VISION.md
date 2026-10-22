@@ -528,7 +528,7 @@ When switching to the loop, select the current goal version, starting point and 
 
 ### Goals and metrics for iteration
 
-Autonomous tasks should specify the desired result, initial state, permitted changes, measurement method and stopping conditions. Criteria may be qualitative or measurable, such as passing tests or better ReID performance within latency and memory limits; no numerical targets are fixed here.
+Autonomous tasks should specify the desired result, initial state, permitted changes, measurement method and stopping conditions. Criteria may be qualitative or measurable, such as passing tests or better task accuracy within latency and memory limits; no numerical targets are fixed here.
 
 Measurement protocols, data and goal versions must accompany each iteration for meaningful comparison. Lack of improvement, contradictory results, unclear specifications or resource limits may trigger a stop or human assessment. A better metric alone is insufficient if other quality requirements deteriorate.
 
@@ -606,7 +606,7 @@ Documented support includes sessions, streaming, model selection, custom tools a
 
 #### Content exclusion does not travel with the policy
 
-Raised by Niclas on 15 September 2026: his employer uses Copilot content exclusion, and the question is whether that protection follows the SDK or is a VS Code feature.
+Raised on 15 September 2026 for a managed development environment: does Copilot content-exclusion protection follow the SDK, or is it a VS Code feature?
 
 It is neither, quite. The rule is held by GitHub — repository, organisation or enterprise administrators configure it — but **enforcement sits in each client**. The client sends the repository URL to GitHub, the server returns the policy, and the client applies it. A client without the support excludes nothing, and does so silently. [15]
 
@@ -885,7 +885,7 @@ The idea expanded into agent-network orchestration, using Copilot and potentiall
 
 ### Naming tradition and decisions
 
-The first name was DS Code, Danielssons Studio Code, deliberately close to VS Code in pronunciation. Inspiration came from CVAT, Computer Vision Annotation Tool, and the team's VSAT, Visual Similarity Annotation Tool. The tradition combines a credible expansion with playful similarity.
+The first name was DS Code, Danielssons Studio Code, deliberately close to VS Code in pronunciation. The naming idea combines a descriptive expansion with playful similarity to an established tool name.
 
 DS Code was dropped because “Code” misses the workflow emphasis and similarity to VS Code could raise a trademark question. Microsoft identifies VS Code as its trademark; PRV describes confusion risk for similar names in similar product areas. DSpatch is the chosen product name and Maestro an internal working name; availability and rights have not been checked. [9–10]
 
