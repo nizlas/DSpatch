@@ -12,13 +12,22 @@
  */
 
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
 
 import {
   assessAuthentication,
+  CANCEL_ABORT_WAIT_MS,
+  CANCEL_DENY_REASON,
+  CANCEL_INTERRUPT_WAIT_MS,
+  CANCEL_KILL_WAIT_MS,
+  CANCEL_STOP_REASON,
   ClaudeAgentSdkAdapter,
+  STDERR_TAIL_BYTES,
+  STDERR_TAIL_LABEL,
   FIXTURE_PERMISSIONS,
   providerEnvironment,
   providerSessionIdFor,
@@ -37,8 +46,21 @@ import { tempRoot } from './support/fixtures.ts';
 // --- A substitute query() ------------------------------------------------------
 
 interface Call {
-  readonly prompt: string;
+  /** The text of the prompt's one message, set once the substitute has read the iterable. */
+  prompt: string;
+  /** Every message the prompt iterable yielded (streaming input). */
+  readonly promptMessages: unknown[];
   readonly options: Record<string, any>;
+  /** How many times the handle's interrupt() was called. */
+  interrupts: number;
+  /** Resolves at the first interrupt() call. */
+  readonly interrupted: Promise<void>;
+  /** Resolves when the handle's close() is called (as `dispose` does). */
+  readonly closed: Promise<void>;
+  /** The fake process spawned through the adapter's option inside query(), if any. */
+  child: any;
+  /** Set by a script to keep the process running after the script ends. */
+  holdProcess: boolean;
 }
 
 type Script = (call: Call, index: number) => AsyncGenerator<unknown, void>;
@@ -49,24 +71,228 @@ type Script = (call: Call, index: number) => AsyncGenerator<unknown, void>;
  */
 type AccountScript = (index: number) => Record<string, unknown> | Error | undefined;
 
-function fakeSdk(script: Script, account?: AccountScript) {
+/** What the substitute's interrupt() does: resolve with the value, reject with an Error, or be missing. */
+type InterruptScript = (index: number) => unknown;
+const NO_INTERRUPT = Symbol('no interrupt()');
+
+/** How the substitute treats the process. */
+interface FakeProcess {
+  /** Spawn through `options.spawnClaudeCodeProcess` inside query(). Default true. */
+  readonly spawn?: boolean;
+  /** The fake process exits when it is killed. */
+  readonly exitOnKill?: boolean;
+  /** The spawn fails as for a missing executable (no pid, ENOENT). */
+  readonly failSpawn?: boolean;
+  /** Extra environment variables the substitute passes when spawning, per query. */
+  readonly spawnEnv?: (index: number) => Record<string, string>;
+}
+
+/**
+ * A substitute `query()`. Like SDK 0.3.306 (sdk.mjs: the transport spawns in the
+ * Query's construction unless `deferSpawn`), it spawns synchronously inside
+ * query() through the adapter's documented `spawnClaudeCodeProcess`, which in
+ * these tests reaches the returned `spawnProcess` — a fake; nothing is started.
+ * The fake process exits (code 0) when the script ends, unless the script set
+ * `call.holdProcess`. Pass `spawnProcess` to every adapter built on this.
+ */
+function fakeSdk(
+  script: Script,
+  account?: AccountScript,
+  interrupt?: InterruptScript,
+  fake: FakeProcess = {},
+) {
   const calls: Call[] = [];
-  const queryFn = (params: { prompt: string; options: Record<string, any> }) => {
-    const call = { prompt: params.prompt, options: params.options };
+  const spawner = fakeSpawner({
+    ...(fake.exitOnKill === true ? { exitOnKill: true } : {}),
+    ...(fake.failSpawn === true ? { failSpawn: true } : {}),
+  });
+  const queryFn = (params: { prompt: AsyncIterable<unknown>; options: Record<string, any> }) => {
+    let markInterrupted: () => void = () => undefined;
+    let markClosed: () => void = () => undefined;
+    const call: Call = {
+      prompt: '',
+      promptMessages: [],
+      options: params.options,
+      interrupts: 0,
+      interrupted: new Promise<void>((resolve) => {
+        markInterrupted = resolve;
+      }),
+      closed: new Promise<void>((resolve) => {
+        markClosed = resolve;
+      }),
+      child: null,
+      holdProcess: false,
+    };
     calls.push(call);
     const index = calls.length - 1;
-    const generator = script(call, index);
+    if (fake.spawn !== false && typeof params.options['spawnClaudeCodeProcess'] === 'function') {
+      call.child = spawnVia(call, fake.spawnEnv?.(index) ?? {});
+    }
+    // Like the SDK, read the streaming-input prompt before the turn's messages.
+    const generator = (async function* () {
+      try {
+        for await (const message of params.prompt) {
+          call.promptMessages.push(message);
+        }
+        const content = (call.promptMessages[0] as { message?: { content?: unknown } } | undefined)
+          ?.message?.content;
+        call.prompt = typeof content === 'string' ? content : '';
+        yield* script(call, index);
+      } finally {
+        const child = call.child;
+        if (
+          child !== null &&
+          child.pid !== undefined &&
+          !call.holdProcess &&
+          child.exitCode === null &&
+          child.signalCode === null
+        ) {
+          child.exit(0);
+        }
+      }
+    })();
     const info = account?.(index);
+    const behaviour = interrupt === undefined ? { still_queued: [] } : interrupt(index);
     return Object.assign(
       generator,
-      { close: () => undefined },
+      { close: () => markClosed() },
       info === undefined
         ? {}
         : { accountInfo: () => (info instanceof Error ? Promise.reject(info) : Promise.resolve(info)) },
+      behaviour === NO_INTERRUPT
+        ? {}
+        : {
+            interrupt: () => {
+              call.interrupts += 1;
+              markInterrupted();
+              return behaviour instanceof Error ? Promise.reject(behaviour) : Promise.resolve(behaviour);
+            },
+          },
     );
   };
-  return { queryFn: queryFn as any, calls };
+  return { queryFn: queryFn as any, calls, spawnProcess: spawner.spawnProcess, spawned: spawner.spawned };
 }
+
+// --- A substitute process and clock ------------------------------------------------
+
+/** A stand-in for Node's ChildProcess: nothing is started. */
+function fakeChild(options: { exitOnKill?: boolean; failSpawn?: boolean } = {}) {
+  const child = new EventEmitter() as any;
+  child.pid = options.failSpawn === true ? undefined : 4242;
+  if (options.failSpawn === true) {
+    // What Node does for a missing executable: no pid, then an `error` event.
+    setImmediate(() =>
+      child.emit('error', Object.assign(new Error('spawn C:/synthetic/claude-test.exe ENOENT'), { code: 'ENOENT' })),
+    );
+  }
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.exitCode = null;
+  child.signalCode = null;
+  child.killed = false;
+  child.kills = [] as string[];
+  child.exit = (code: number | null, signal: string | null = null) => {
+    child.exitCode = code;
+    child.signalCode = signal;
+    child.emit('exit', code, signal);
+  };
+  child.kill = (signal: string) => {
+    child.kills.push(signal);
+    child.killed = true;
+    if (options.exitOnKill === true) {
+      setImmediate(() => child.exit(null, signal));
+    }
+    return true;
+  };
+  return child;
+}
+
+/** A substitute for Node's spawn that records what it was given and returns fake children. */
+function fakeSpawner(options: { exitOnKill?: boolean; failSpawn?: boolean } = {}) {
+  const spawned: Array<{ command: string; args: string[]; options: Record<string, any>; child: any }> = [];
+  const spawnProcess = (command: string, args: string[], spawnOptions: Record<string, any>) => {
+    const child = fakeChild(options);
+    spawned.push({ command, args, options: spawnOptions, child });
+    return child;
+  };
+  return { spawnProcess: spawnProcess as any, spawned };
+}
+
+/** What the SDK does at query time: start the process through the documented option. */
+function spawnVia(call: Call, extraEnv: Record<string, string> = {}) {
+  return call.options['spawnClaudeCodeProcess']({
+    command: 'C:/synthetic/claude-test.exe',
+    args: ['--output-format', 'stream-json', '--input-format', 'stream-json'],
+    cwd: call.options['cwd'],
+    env: { ...call.options['env'], CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', ...extraEnv },
+    signal: new AbortController().signal,
+  });
+}
+
+/** Timers that fire only when a test advances them. */
+class ManualTimers {
+  private now = 0;
+  private next = 1;
+  private readonly due = new Map<number, { at: number; callback: () => void }>();
+
+  setTimeout = (callback: () => void, ms: number): unknown => {
+    const id = this.next++;
+    this.due.set(id, { at: this.now + ms, callback });
+    return id;
+  };
+
+  clearTimeout = (handle: unknown): void => {
+    this.due.delete(handle as number);
+  };
+
+  get pending(): number {
+    return this.due.size;
+  }
+
+  async advance(ms: number): Promise<void> {
+    const target = this.now + ms;
+    for (;;) {
+      const next = [...this.due.entries()]
+        .filter(([, timer]) => timer.at <= target)
+        .sort((left, right) => left[1].at - right[1].at)[0];
+      if (next === undefined) {
+        break;
+      }
+      this.due.delete(next[0]);
+      this.now = next[1].at;
+      next[1].callback();
+      await settle();
+    }
+    this.now = target;
+    await settle();
+  }
+}
+
+/** Let promises and stream callbacks run. */
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 20; turn += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+async function until(condition: () => boolean, what: string): Promise<void> {
+  for (let turn = 0; turn < 2_000; turn += 1) {
+    if (condition()) {
+      return;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail(`timed out waiting for ${what}`);
+}
+
+const terminals = (events: AgentEvent[]) => events.filter((event) => event.type === 'run.finished');
+const lastFinished = (events: AgentEvent[]) => {
+  const last = events.at(-1);
+  return last?.type === 'run.finished' ? last.status : null;
+};
+const finalTexts = (events: AgentEvent[]) =>
+  events.flatMap((event) => (event.type === 'assistant.message' ? [event.text] : []));
 
 /** Each turn's own init messages' apiKeySource, without the generated run IDs. */
 function perTurnSources(verification: { observedPerTurn: Array<{ turn: string; apiKeySources: unknown[] }> }) {
@@ -198,7 +424,7 @@ function startConfig(dir: string, extra: Record<string, unknown> = {}) {
 // --- The adapter ---------------------------------------------------------------
 
 test('maps the SDK stream to DSpatch events and passes the fixture configuration', async () => {
-  const { queryFn, calls } = fakeSdk(async function* (call) {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
     yield init(call);
     yield delta(call, 'thinking…', 'thinking_delta');
     yield delta(call, 'Hello ');
@@ -213,6 +439,7 @@ test('maps the SDK stream to DSpatch events and passes the fixture configuration
   const dir = workspace('mapping');
   const adapter = new ClaudeAgentSdkAdapter({
     queryFn,
+    spawnProcess,
     env: { ...CLEAN_ENV, ANTHROPIC_API_KEY: undefined },
   });
   try {
@@ -267,6 +494,16 @@ test('maps the SDK stream to DSpatch events and passes the fixture configuration
     assert.equal(options['allowDangerouslySkipPermissions'], undefined);
     assert.ok(options['abortController'] instanceof AbortController);
     assert.equal('ANTHROPIC_API_KEY' in (options['env'] ?? {}), false);
+    // DSP-115 (S4): streaming input, one message, then the iterable ends.
+    assert.deepEqual(calls[0]?.promptMessages, [
+      { type: 'user', message: { role: 'user', content: 'Explain src/a.ts' }, parent_tool_use_id: null },
+    ]);
+    // One PreToolUse hook without a matcher, and the process wrapper.
+    assert.deepEqual(Object.keys(options['hooks'] ?? {}), ['PreToolUse']);
+    assert.equal(options['hooks'].PreToolUse.length, 1);
+    assert.equal(options['hooks'].PreToolUse[0].matcher, undefined);
+    assert.equal(options['hooks'].PreToolUse[0].hooks.length, 1);
+    assert.equal(typeof options['spawnClaudeCodeProcess'], 'function');
 
     assert.equal(adapter.modelReported(handle.dspatchSessionId), 'claude-haiku-4-5');
     assert.deepEqual(adapter.providerSessionIdsObserved(handle.dspatchSessionId), [
@@ -291,14 +528,14 @@ test('one run per session; the next turn resumes the same provider session', asy
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const { queryFn, calls } = fakeSdk(async function* (call, index) {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call, index) {
     yield init(call);
     if (index === 0) {
       await gate;
     }
     yield result(call);
   });
-  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
   try {
     const handle = await adapter.startSession(startConfig(workspace('one-run')));
     const seen = collect(adapter, handle.dspatchSessionId);
@@ -321,51 +558,676 @@ test('one run per session; the next turn resumes the same provider session', asy
   }
 });
 
-test('abort through cancel() ends the turn as cancelled', async () => {
-  const { queryFn, calls } = fakeSdk(async function* (call) {
+// --- Cancellation (DSP-115) ------------------------------------------------------
+//
+// These show the adapter's logic and configuration against a substituted query()
+// and process: the order of events, the waits and escalation, the hook's answers
+// and the records. They cannot show what Claude Code does with an interrupt, a hook
+// deny or `continue: false`, how long it takes, or whether the provider stops
+// working — only a live run can.
+
+test('cancel() emits run.cancel_requested and resolves at once; a result after it is recorded but the end waits for the stream and the process exit', async () => {
+  let releaseStream: () => void = () => undefined;
+  const streamGate = new Promise<void>((resolve) => {
+    releaseStream = resolve;
+  });
+  let child: any = null;
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    child = call.child;
+    // The stream may end before the process exits: the test exits it itself.
+    call.holdProcess = true;
     yield init(call);
     yield delta(call, 'Starting a long answer');
-    await untilAborted(call.options['abortController'].signal);
-    throw abortError();
+    await call.interrupted;
+    yield result(call, { subtype: 'error_during_execution', is_error: true, errors: ['interrupted'] });
+    await streamGate;
   });
-  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
   try {
     const handle = await adapter.startSession(startConfig(workspace('cancel')));
     const seen = collect(adapter, handle.dspatchSessionId);
-    const finished = seen.nextFinish();
-    await adapter.send(handle.dspatchSessionId, 'Write a lot');
-    while (!seen.events.some((event) => event.type === 'assistant.delta')) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    await adapter.cancel(handle.dspatchSessionId);
-    assert.equal(calls[0]?.options['abortController'].signal.aborted, true);
-    await finished;
-    const last = seen.events.at(-1);
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'Write a lot');
+    await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the first delta');
+
+    const cancelling = adapter.cancel(handle.dspatchSessionId);
+    // Emitted before cancel() resolves, and interrupt() called once, without waiting for it.
+    assert.equal(seen.events.at(-1)?.type, 'run.cancel_requested');
+    assert.equal(calls[0]?.interrupts, 1);
+    await cancelling;
+
+    // S1: the result arrives and is recorded with its usage, but the run has not ended.
+    await until(() => seen.events.some((event) => event.type === 'usage'), 'the result');
+    await settle();
+    assert.equal(terminals(seen.events).length, 0);
+    assert.equal(adapter.hasActiveRun(handle.dspatchSessionId), true);
+    assert.equal((await adapter.readUsage({ of: 'run', dspatchRunId })).length, 4);
+
+    // The stream ends: still no terminal, because the process has not been seen to exit.
+    releaseStream();
+    await settle();
+    assert.equal(terminals(seen.events).length, 0);
+
+    child.exit(0);
+    await settle();
+    const ends = terminals(seen.events);
+    assert.equal(ends.length, 1);
+    const last = ends[0];
     assert.equal(last?.type === 'run.finished' ? last.status : null, 'cancelled');
+    assert.equal(last?.type === 'run.finished' ? last.end : null, 'stopped');
+    assert.equal(seen.events.at(-1)?.type, 'run.finished');
+    assert.equal(calls[0]?.options['abortController'].signal.aborted, false, 'never aborted');
+    assert.equal(calls[0]?.interrupts, 1);
+    assert.equal(timers.pending, 0);
+
+    const record = adapter.cancellation(handle.dspatchSessionId, dspatchRunId);
+    assert.equal(record?.interrupt.status, 'resolved');
+    assert.deepEqual(record?.interrupt.receipt, { still_queued: [] });
+    assert.equal(record?.resultAfterRequest?.subtype, 'error_during_execution');
+    assert.equal(record?.endEvidence?.kind, 'process-exit');
+    assert.equal(record?.endEvidence?.process?.exitCode, 0);
+    assert.equal(record?.abortRequestedAtUtc, null);
+    assert.equal(record?.killRequestedAtUtc, null);
+    assert.equal(record?.providerWorkAfterEnd, 'unknown');
+    assert.ok((record?.cancelRequestedAtUtc ?? '') <= (record?.endAtUtc ?? ''));
     assert.equal(adapter.hasActiveRun(handle.dspatchSessionId), false);
   } finally {
     await adapter.dispose();
   }
 });
 
-test('an error result after abort is still reported as cancelled; without abort it is an error', async () => {
-  const { queryFn } = fakeSdk(async function* (call, index) {
+test('cancel after the result arrived is refused: the run already ended, exactly once', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield result(call);
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('cancel-late')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'quick');
+    await finished;
+    await assert.rejects(adapter.cancel(handle.dspatchSessionId), /no run in progress to cancel/);
+    await settle();
+    assert.equal(terminals(seen.events).length, 1);
+    assert.equal(lastFinished(seen.events), 'finished');
+    assert.equal(seen.events.some((event) => event.type === 'run.cancel_requested'), false);
+    assert.equal(calls[0]?.interrupts, 0);
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('cancel just before the stream ends, with no result: stopped, and the usage is unknown rather than zero', async () => {
+  let child: any = null;
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
+    child = call.child;
+    yield init(call);
+    yield delta(call, 'Almost done');
+    await call.interrupted;
+    child.exit(0);
+  });
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('cancel-end')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const finished = seen.nextFinish();
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'Write');
+    await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+    await adapter.cancel(handle.dspatchSessionId);
+    await finished;
+    await settle();
+    assert.equal(terminals(seen.events).length, 1);
+    const last = terminals(seen.events)[0];
+    assert.equal(last?.type === 'run.finished' ? last.end : null, 'stopped');
+    assert.deepEqual(finalTexts(seen.events), ['Almost done']);
+    assert.deepEqual(await adapter.readUsage({ of: 'run', dspatchRunId }), []);
+    assert.equal(adapter.cancellation(handle.dspatchSessionId, dspatchRunId)?.resultAfterRequest, null);
+    assert.equal(timers.pending, 0);
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('the PreToolUse hook passes before the request, denies with continue:false after it, and passes again in the next run', async () => {
+  const answers: unknown[] = [];
+  const hookOf = (call: Call) => call.options['hooks'].PreToolUse[0].hooks[0];
+  const ask = (call: Call, tool: string, id: string) =>
+    hookOf(call)(
+      {
+        hook_event_name: 'PreToolUse',
+        tool_name: tool,
+        tool_input: {},
+        tool_use_id: id,
+        session_id: sessionOf(call),
+        transcript_path: '',
+        cwd: call.options['cwd'],
+      },
+      id,
+      { signal: new AbortController().signal },
+    );
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call, index) {
     yield init(call);
     if (index === 0) {
+      answers.push(await ask(call, 'Read', 't-1'));
+      yield assistant(call, [{ type: 'tool_use', id: 't-1', name: 'Read', input: {} }]);
+      await call.interrupted;
+      // The tool that was already running finishes; the next one is denied.
+      yield toolResult(call, 't-1');
+      yield assistant(call, [{ type: 'tool_use', id: 't-2', name: 'Glob', input: {} }]);
+      answers.push(await ask(call, 'Glob', 't-2'));
+      yield toolResult(call, 't-2', true);
+      return;
+    }
+    answers.push(await ask(call, 'Grep', 't-3'));
+    yield result(call);
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('hook')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    let finished = seen.nextFinish();
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'Look around');
+    await until(() => seen.events.some((event) => event.type === 'tool.started'), 'the first tool');
+    await adapter.cancel(handle.dspatchSessionId);
+    await finished;
+
+    finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'Again');
+    await finished;
+
+    assert.deepEqual(answers, [
+      {},
+      {
+        continue: false,
+        stopReason: CANCEL_STOP_REASON,
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: CANCEL_DENY_REASON,
+        },
+      },
+      {},
+    ]);
+    assert.deepEqual(
+      adapter.hookFirings(handle.dspatchSessionId).map((firing) => [firing.toolName, firing.toolUseId, firing.decision]),
+      [
+        ['Read', 't-1', 'pass'],
+        ['Glob', 't-2', 'deny'],
+        ['Grep', 't-3', 'pass'],
+      ],
+    );
+    // S2/S3: tool work after the request, by the same rule as the DSP-109 baseline.
+    const record = adapter.cancellation(handle.dspatchSessionId, dspatchRunId);
+    assert.deepEqual(record?.hook, {
+      matcher: null,
+      permissionDecisionReason: CANCEL_DENY_REASON,
+      stopReason: CANCEL_STOP_REASON,
+    });
+    assert.deepEqual(record?.toolUseBlocksAfterRequest.map((entry) => entry.toolUseId), ['t-2']);
+    assert.deepEqual(
+      record?.toolResultsAfterRequest.map((entry) => [entry.toolUseId, entry.status, entry.deniedByHook]),
+      [
+        ['t-1', 'ok', false],
+        ['t-2', 'error', true],
+      ],
+    );
+    // t-1 started before the request and ran; t-2 was denied.
+    assert.equal(record?.toolResultsNotDeniedAfterRequest, 1);
+    assert.equal(record?.toolResultsOkAfterRequest, 1);
+    // Stopped on the stream end plus the observed exit of the substitute's process.
+    assert.equal(record?.endEvidence?.kind, 'process-exit');
+    assert.equal(record?.endEvidence?.process?.exitCode, 0);
+    assert.equal(record?.end, 'stopped');
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('no end after interrupt(): abort at the bound, never before; a repeated cancel does nothing; the end after the abort is forced', async () => {
+  let child: any = null;
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    child = call.child;
+    yield init(call);
+    yield delta(call, 'Ignoring the interrupt');
+    await untilAborted(call.options['abortController'].signal);
+    child.exit(null, 'SIGTERM');
+  });
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('escalate')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'Write');
+    await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+    await adapter.cancel(handle.dspatchSessionId);
+    const signal: AbortSignal = calls[0]?.options['abortController'].signal;
+
+    await timers.advance(CANCEL_INTERRUPT_WAIT_MS - 1);
+    assert.equal(signal.aborted, false, 'no abort before the bound');
+    await adapter.cancel(handle.dspatchSessionId);
+    assert.equal(seen.events.filter((event) => event.type === 'run.cancel_requested').length, 1);
+    assert.equal(calls[0]?.interrupts, 1);
+
+    await timers.advance(1);
+    assert.equal(signal.aborted, true);
+    await settle();
+    const ends = terminals(seen.events);
+    assert.equal(ends.length, 1);
+    assert.equal(ends[0]?.type === 'run.finished' ? ends[0].end : null, 'forced');
+    const record = adapter.cancellation(handle.dspatchSessionId, dspatchRunId);
+    assert.notEqual(record?.abortRequestedAtUtc, null);
+    assert.equal(record?.killRequestedAtUtc, null);
+    assert.equal(record?.endEvidence?.process?.signal, 'SIGTERM');
+    assert.equal(timers.pending, 0);
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('no exit after the abort: the process is killed, and if it still does not exit the end is unconfirmed and new turns are refused until it does', async () => {
+  let releaseStream: () => void = () => undefined;
+  const streamGate = new Promise<void>((resolve) => {
+    releaseStream = resolve;
+  });
+  const children: any[] = [];
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call, index) {
+    children.push(call.child);
+    yield init(call);
+    if (index === 0) {
+      call.holdProcess = true;
+      yield delta(call, 'Stuck');
+      await streamGate;
+      return;
+    }
+    yield result(call);
+  });
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('unconfirmed')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'Write');
+    await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+    await adapter.cancel(handle.dspatchSessionId);
+
+    await timers.advance(CANCEL_INTERRUPT_WAIT_MS);
+    assert.equal(calls[0]?.options['abortController'].signal.aborted, true);
+    await timers.advance(CANCEL_ABORT_WAIT_MS);
+    assert.deepEqual(children[0].kills, ['SIGKILL']);
+    assert.equal(terminals(seen.events).length, 0);
+    await timers.advance(CANCEL_KILL_WAIT_MS);
+
+    const ends = terminals(seen.events);
+    assert.equal(ends.length, 1);
+    assert.equal(ends[0]?.type === 'run.finished' ? ends[0].status : null, 'cancelled');
+    assert.equal(ends[0]?.type === 'run.finished' ? ends[0].end : null, 'unconfirmed');
+    const record = adapter.cancellation(handle.dspatchSessionId, dspatchRunId);
+    assert.equal(record?.killSignalSent, true);
+    assert.deepEqual(
+      [record?.endEvidence?.kind, record?.endEvidence?.streamEnded, record?.endEvidence?.process?.exitedAtUtc],
+      ['none', false, null],
+    );
+    await assert.rejects(adapter.send(handle.dspatchSessionId, 'next'), /was not seen to stop/);
+
+    // A late stream end and exit: nothing more is emitted for the ended run, and the session is usable again.
+    const before = seen.events.length;
+    releaseStream();
+    children[0].exit(null, 'SIGKILL');
+    await settle();
+    assert.equal(seen.events.length, before, 'nothing after the terminal event');
+    const finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'next');
+    await finished;
+    assert.equal(lastFinished(seen.events), 'finished');
+    assert.equal(calls.length, 2);
+    assert.equal(timers.pending, 0);
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('a kill that makes the process exit ends the run as forced', async () => {
+  let child: any = null;
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
+    child = call.child;
+    yield init(call);
+    yield delta(call, 'Stuck');
+    await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  }, undefined, undefined, { exitOnKill: true });
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('killed')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'Write');
+    await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+    await adapter.cancel(handle.dspatchSessionId);
+    await timers.advance(CANCEL_INTERRUPT_WAIT_MS + CANCEL_ABORT_WAIT_MS);
+    await settle();
+    const ends = terminals(seen.events);
+    assert.equal(ends.length, 1);
+    assert.equal(ends[0]?.type === 'run.finished' ? ends[0].end : null, 'forced');
+    const record = adapter.cancellation(handle.dspatchSessionId, dspatchRunId);
+    assert.notEqual(record?.killRequestedAtUtc, null);
+    assert.equal(record?.endEvidence?.process?.signal, 'SIGKILL');
+    assert.equal(timers.pending, 0);
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('an interrupt() rejection is recorded and escalates to the abort at once', async () => {
+  let child: any = null;
+  const { queryFn, calls, spawnProcess } = fakeSdk(
+    async function* (call) {
+      child = call.child;
+      yield init(call);
+      yield delta(call, 'Text');
       await untilAborted(call.options['abortController'].signal);
+      child.exit(0);
+    },
+    undefined,
+    () => new Error('control channel closed'),
+  );
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('interrupt-rejected')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'Write');
+    await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+    await adapter.cancel(handle.dspatchSessionId);
+    await settle();
+    // No clock advanced: the rejection itself escalated.
+    assert.equal(calls[0]?.options['abortController'].signal.aborted, true);
+    const ends = terminals(seen.events);
+    assert.equal(ends.length, 1);
+    assert.equal(ends[0]?.type === 'run.finished' ? ends[0].end : null, 'forced');
+    const record = adapter.cancellation(handle.dspatchSessionId, dspatchRunId);
+    assert.equal(record?.interrupt.status, 'rejected');
+    assert.match(record?.interrupt.error ?? '', /control channel closed/);
+    assert.equal(timers.pending, 0);
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('dispose during each wait of the stop sequence clears its timers and emits nothing more', async () => {
+  for (const [stage, elapsed] of [
+    ['after the interrupt', 0],
+    ['after the abort', CANCEL_INTERRUPT_WAIT_MS],
+    ['after the kill', CANCEL_INTERRUPT_WAIT_MS + CANCEL_ABORT_WAIT_MS],
+  ] as const) {
+    const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
+      yield init(call);
+      yield delta(call, 'Stuck');
+      await call.closed;
+    });
+    const timers = new ManualTimers();
+    const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+    const handle = await adapter.startSession(startConfig(workspace('dispose-stop')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    await adapter.send(handle.dspatchSessionId, 'Write');
+    await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+    await adapter.cancel(handle.dspatchSessionId);
+    await timers.advance(elapsed);
+    assert.equal(timers.pending, 1, `one wait is pending ${stage}`);
+    const before = seen.events.length;
+    await adapter.dispose();
+    assert.equal(timers.pending, 0, `the timer is cleared ${stage}`);
+    await timers.advance(CANCEL_INTERRUPT_WAIT_MS + CANCEL_ABORT_WAIT_MS + CANCEL_KILL_WAIT_MS);
+    assert.equal(seen.events.length, before, `nothing emitted ${stage}`);
+    assert.equal(terminals(seen.events).length, 0);
+  }
+});
+
+test('a query handle whose process was never observed has no confirmed end: unconfirmed, and new turns are refused', async () => {
+  const { queryFn, calls, spawnProcess, spawned } = fakeSdk(
+    async function* (call) {
+      yield init(call);
+      yield delta(call, 'Text');
+      await call.interrupted;
+      // The stream ends, but no process was ever observed.
+    },
+    undefined,
+    undefined,
+    { spawn: false },
+  );
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('no-process')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'Write');
+    await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+    await adapter.cancel(handle.dspatchSessionId);
+    await settle();
+    assert.equal(terminals(seen.events).length, 0, 'a stream end alone is not a confirmed end');
+    await timers.advance(CANCEL_INTERRUPT_WAIT_MS);
+    assert.equal(calls[0]?.options['abortController'].signal.aborted, true);
+    await timers.advance(CANCEL_ABORT_WAIT_MS + CANCEL_KILL_WAIT_MS);
+    const ends = terminals(seen.events);
+    assert.equal(ends.length, 1);
+    assert.equal(ends[0]?.type === 'run.finished' ? ends[0].end : null, 'unconfirmed');
+    const record = adapter.cancellation(handle.dspatchSessionId, dspatchRunId);
+    assert.deepEqual(record?.endEvidence, { kind: 'none', streamEnded: true, process: null });
+    assert.equal(record?.killRequestedAtUtc, null, 'nothing to kill');
+    assert.equal(spawned.length, 0);
+    await assert.rejects(adapter.send(handle.dspatchSessionId, 'next'), /was not seen to stop/);
+    assert.equal(timers.pending, 0);
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('a spawn that fails (missing executable) ends a cancelled run with spawn-failed evidence', async () => {
+  const { queryFn, spawnProcess } = fakeSdk(
+    async function* (call) {
+      yield init(call);
+      await call.interrupted;
+      throw new Error('ProcessTransport is not ready for writing');
+    },
+    undefined,
+    undefined,
+    { failSpawn: true },
+  );
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('spawn-failed')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'Write');
+    await settle();
+    await adapter.cancel(handle.dspatchSessionId);
+    await settle();
+    const ends = terminals(seen.events);
+    assert.equal(ends.length, 1);
+    assert.equal(ends[0]?.type === 'run.finished' ? ends[0].end : null, 'stopped');
+    const record = adapter.cancellation(handle.dspatchSessionId, dspatchRunId);
+    assert.equal(record?.endEvidence?.kind, 'spawn-failed');
+    assert.equal(record?.endEvidence?.process?.pid, null);
+    assert.match(record?.endEvidence?.process?.spawnError ?? '', /ENOENT/);
+    assert.match(record?.streamError ?? '', /not ready/);
+    assert.equal(timers.pending, 0);
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('the CLI stderr tail is kept (last 4096 bytes, labelled raw), recorded with the process and added to a stream error', async () => {
+  const early = 'E'.repeat(5_000);
+  const last = 'Error: synthetic CLI failure at the end of stderr';
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call, index) {
+    yield init(call);
+    call.child.stderr.write(early);
+    call.child.stderr.write(last);
+    await new Promise((resolve) => setImmediate(resolve));
+    if (index === 0) {
+      throw new Error('Claude Code process exited with code 1');
+    }
+    yield delta(call, 'Text');
+    await call.interrupted;
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('stderr')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    let finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'one');
+    await finished;
+    const failed = terminals(seen.events)[0];
+    const message = failed?.type === 'run.finished' ? (failed.error?.message ?? '') : '';
+    assert.match(message, /exited with code 1/);
+    assert.match(message, /raw Claude Code CLI stderr output/);
+    assert.ok(message.endsWith(last), 'the tail ends with the last bytes written');
+    assert.equal(message.includes(early), false, 'earlier output beyond the bound is dropped');
+
+    finished = seen.nextFinish();
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'two');
+    await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+    await adapter.cancel(handle.dspatchSessionId);
+    await finished;
+    const tail = adapter.cancellation(handle.dspatchSessionId, dspatchRunId)?.endEvidence?.process?.stderrTail;
+    assert.equal(tail?.label, STDERR_TAIL_LABEL);
+    assert.equal(tail?.bytes, STDERR_TAIL_BYTES);
+    assert.equal(tail?.truncated, true);
+    assert.ok(tail?.text.endsWith(last));
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('a cancel while the turn waits for the previous one is reported after run.started, and not at all if the turn never starts', async () => {
+  // The first turn's stream stays open after its result until released.
+  const releases: Array<() => void> = [];
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield result(call);
+    await new Promise<void>((resolve) => releases.push(resolve));
+  });
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('cancel-waiting')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    let finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'first');
+    await finished;
+
+    // 1. The turn starts after the wait: run.started, then the request, then the end.
+    const second = adapter.send(handle.dspatchSessionId, 'second');
+    await settle();
+    await adapter.cancel(handle.dspatchSessionId);
+    assert.equal(seen.events.some((event) => event.type === 'run.cancel_requested'), false);
+    finished = seen.nextFinish();
+    releases.shift()?.();
+    const { dspatchRunId } = await second;
+    await finished;
+    assert.deepEqual(
+      seen.events.filter((event) => event.dspatchRunId === dspatchRunId).map((event) => event.type),
+      ['run.started', 'run.cancel_requested', 'run.finished'],
+    );
+    assert.equal(lastFinished(seen.events), 'cancelled');
+    assert.equal(calls.length, 1, 'the cancelled turn never called query()');
+
+    // 2. The turn never starts (the previous one is still open after the bound): no event at all.
+    finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'third');
+    await finished;
+    const before = seen.events.length;
+    const fourth = adapter.send(handle.dspatchSessionId, 'fourth');
+    fourth.catch(() => undefined);
+    await settle();
+    await adapter.cancel(handle.dspatchSessionId);
+    await timers.advance(15_000);
+    await assert.rejects(fourth, /still delivering messages/);
+    assert.deepEqual(seen.events.slice(before), [], 'no orphan run.cancel_requested');
+    assert.equal(adapter.hasActiveRun(handle.dspatchSessionId), false);
+  } finally {
+    for (const release of releases) {
+      release();
+    }
+    await adapter.dispose();
+  }
+});
+
+test('the process wrapper starts what the SDK asks for, unchanged, and refuses an environment the guard would have stripped', async () => {
+  const { queryFn, calls, spawnProcess, spawned } = fakeSdk(
+    async function* (call) {
+      yield init(call);
+      yield result(call);
+    },
+    undefined,
+    undefined,
+    // The second query's SDK would hand the wrapper an environment the guard had stripped.
+    { spawnEnv: (index) => (index === 1 ? { CLAUDE_CODE_OAUTH_TOKEN: 'synthetic-token' } : {}) },
+  );
+  const adapter = new ClaudeAgentSdkAdapter({
+    queryFn,
+    env: { ...CLEAN_ENV, ANTHROPIC_API_KEY: 'sk-ant-synthetic-wrapper' },
+    authorization: { kind: 'api-key', approval: 'test-only reference' },
+    spawnProcess,
+  });
+  try {
+    const dir = workspace('wrapper');
+    const handle = await adapter.startSession(startConfig(dir));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    let finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'one');
+    await finished;
+    // Like the SDK's query(), the substitute throws when the spawn is refused.
+    const refused = await adapter.send(handle.dspatchSessionId, 'two').then(
+      () => null,
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+
+    assert.equal(spawned.length, 1, 'the second, refused environment never reached spawn');
+    assert.equal(calls[0]?.child.pid, 4242);
+    const [first] = spawned;
+    assert.equal(first?.command, 'C:/synthetic/claude-test.exe');
+    assert.deepEqual(first?.args, ['--output-format', 'stream-json', '--input-format', 'stream-json']);
+    assert.equal(first?.options['cwd'], dir);
+    // The approved key passes through; nothing is added beyond what the SDK gave.
+    assert.deepEqual(first?.options['env'], {
+      ...CLEAN_ENV,
+      ANTHROPIC_API_KEY: 'sk-ant-synthetic-wrapper',
+      CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
+    });
+    assert.ok(first?.options['signal'] instanceof AbortSignal);
+    assert.deepEqual(first?.options['stdio'], ['pipe', 'pipe', 'pipe']);
+    assert.equal(first?.options['windowsHide'], true);
+    assert.match(String(refused), /CLAUDE_CODE_OAUTH_TOKEN/);
+    assert.equal(String(refused).includes('synthetic-token'), false);
+    assert.equal(lastFinished(seen.events), 'error');
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('an error result after a cancel is recorded but does not end the run; without a cancel it is an error', async () => {
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call, index) {
+    yield init(call);
+    if (index === 0) {
+      await call.interrupted;
     }
     yield result(call, { subtype: 'error_during_execution', is_error: true, errors: ['interrupted'] });
   });
-  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
   try {
     const handle = await adapter.startSession(startConfig(workspace('cancel-result')));
     const seen = collect(adapter, handle.dspatchSessionId);
     let finished = seen.nextFinish();
-    await adapter.send(handle.dspatchSessionId, 'one');
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'one');
     await adapter.cancel(handle.dspatchSessionId);
     await finished;
     let last = seen.events.at(-1);
     assert.equal(last?.type === 'run.finished' ? last.status : null, 'cancelled');
+    assert.equal(last?.type === 'run.finished' ? last.end : null, 'stopped');
+    assert.equal(last?.type === 'run.finished' ? last.error : null, undefined);
+    assert.equal(adapter.cancellation(handle.dspatchSessionId, dspatchRunId)?.endEvidence?.kind, 'process-exit');
 
     finished = seen.nextFinish();
     await adapter.send(handle.dspatchSessionId, 'two');
@@ -380,8 +1242,8 @@ test('an error result after abort is still reported as cancelled; without abort 
 });
 
 test('more than one working folder is refused with a clear error', async () => {
-  const { queryFn, calls } = fakeSdk(async function* () {});
-  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* () {});
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
   try {
     const first = workspace('root-a');
     const second = workspace('root-b');
@@ -402,11 +1264,11 @@ test('more than one working folder is refused with a clear error', async () => {
 });
 
 test('a missing usage value is null, never 0', async () => {
-  const { queryFn } = fakeSdk(async function* (call) {
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
     yield init(call);
     yield result(call, { usage: { input_tokens: 5 } });
   });
-  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
   try {
     const handle = await adapter.startSession(startConfig(workspace('usage')));
     const seen = collect(adapter, handle.dspatchSessionId);
@@ -428,12 +1290,12 @@ test('a missing usage value is null, never 0', async () => {
 });
 
 test('dispose aborts a running turn, is idempotent and does not throw', async () => {
-  const { queryFn, calls } = fakeSdk(async function* (call) {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
     yield init(call);
     await untilAborted(call.options['abortController'].signal);
     throw abortError();
   });
-  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
   const handle = await adapter.startSession(startConfig(workspace('dispose')));
   await adapter.send(handle.dspatchSessionId, 'run until stopped');
   await adapter.dispose();
@@ -442,24 +1304,17 @@ test('dispose aborts a running turn, is idempotent and does not throw', async ()
   await assert.rejects(adapter.startSession(startConfig(workspace('after'))), /disposed/);
 });
 
-const lastFinished = (events: AgentEvent[]) => {
-  const last = events.at(-1);
-  return last?.type === 'run.finished' ? last.status : null;
-};
-const finalTexts = (events: AgentEvent[]) =>
-  events.flatMap((event) => (event.type === 'assistant.message' ? [event.text] : []));
-
 test('a cancelled run keeps the interrupted block\'s streamed text after a completed block', async () => {
   const partial = 'Partial explanation that should survive.';
-  const { queryFn } = fakeSdk(async function* (call) {
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
     yield init(call);
     yield delta(call, 'Intro. ');
     yield assistant(call, [{ type: 'text', text: 'Intro. ' }]);
     yield delta(call, partial);
-    await untilAborted(call.options['abortController'].signal);
+    await call.interrupted;
     // The stream ends before the second block completes.
   });
-  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
   try {
     const handle = await adapter.startSession(startConfig(workspace('partial')));
     const seen = collect(adapter, handle.dspatchSessionId);
@@ -478,7 +1333,7 @@ test('a cancelled run keeps the interrupted block\'s streamed text after a compl
 });
 
 test('a failed run keeps the interrupted block\'s text; a finished run is the completed blocks only', async () => {
-  const { queryFn } = fakeSdk(async function* (call, index) {
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call, index) {
     yield init(call);
     yield delta(call, 'A. ');
     yield assistant(call, [{ type: 'text', text: 'A. ' }]);
@@ -489,7 +1344,7 @@ test('a failed run keeps the interrupted block\'s text; a finished run is the co
     yield assistant(call, [{ type: 'text', text: 'B.' }]);
     yield result(call);
   });
-  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
   try {
     const handle = await adapter.startSession(startConfig(workspace('partial-error')));
     const seen = collect(adapter, handle.dspatchSessionId);
@@ -538,6 +1393,7 @@ test('dispose stops a previous turn whose stream is still open while the next tu
       },
     });
   }) as any;
+  // This substitute never spawns (no cancel here), so no spawner is needed.
   const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
   const handle = await adapter.startSession(startConfig(workspace('dispose-waiting')));
   const seen = collect(adapter, handle.dspatchSessionId);
@@ -613,8 +1469,8 @@ test('the authentication guard names variables, never values, and refuses by def
 });
 
 test('the adapter refuses to start a session the guard refuses, and never calls query()', async () => {
-  const { queryFn, calls } = fakeSdk(async function* () {});
-  const withKey = new ClaudeAgentSdkAdapter({ queryFn, env: { ...CLEAN_ENV, ANTHROPIC_API_KEY: 'k' } });
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* () {});
+  const withKey = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: { ...CLEAN_ENV, ANTHROPIC_API_KEY: 'k' } });
   await assert.rejects(withKey.startSession(startConfig(workspace('guard-key'))), /No API-key approval is recorded/);
   await withKey.dispose();
 
@@ -643,11 +1499,11 @@ test('the adapter refuses to start a session the guard refuses, and never calls 
 // connectors out or whether Options.title removed the claude-haiku-5-5 call.
 
 test('every query() carries strictMcpConfig, the session title and the fixture policy; a policy without strictMcpConfig is refused', async () => {
-  const { queryFn, calls } = fakeSdk(async function* (call) {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
     yield init(call);
     yield result(call);
   });
-  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
   try {
     const handle = await adapter.startSession(startConfig(workspace('config-sent')));
     const seen = collect(adapter, handle.dspatchSessionId);
@@ -684,7 +1540,7 @@ test('every query() carries strictMcpConfig, the session title and the fixture p
 
 test('a run record keeps the init mcp_servers (name and status only), the session title and usage of models DSpatch did not request', async () => {
   const remembered = new Map<string, string>();
-  const { queryFn } = fakeSdk(async function* (call, index) {
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call, index) {
     const session = sessionOf(call);
     // Turn one: a synthetic connector as a live init without strictMcpConfig might list it;
     // turn two: none, as a live init under strictMcpConfig should.
@@ -718,6 +1574,7 @@ test('a run record keeps the init mcp_servers (name and status only), the sessio
     authorization: { kind: 'api-key', approval: 'test-only reference' },
     env: scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-synthetic-shape' }),
     claudeQueryFn: queryFn,
+    claudeSpawnProcess: spawnProcess,
   });
   const text = fs.readFileSync(logPath, 'utf8');
   const record = JSON.parse(text);
@@ -904,9 +1761,10 @@ test('on a case-insensitive environment, names match and are stripped whatever t
 });
 
 test('the adapter applies the case rule it is given before any query()', async () => {
-  const { queryFn, calls } = fakeSdk(async function* () {});
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* () {});
   const adapter = new ClaudeAgentSdkAdapter({
     queryFn,
+    spawnProcess,
     env: { ...CLEAN_ENV, claude_code_oauth_token: 't' },
     caseInsensitiveEnv: true,
   });
@@ -916,11 +1774,11 @@ test('the adapter applies the case rule it is given before any query()', async (
 });
 
 test('a turn cancelled before query() is called never calls it and ends as cancelled', async () => {
-  const { queryFn, calls } = fakeSdk(async function* (call) {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
     yield init(call);
     yield result(call);
   });
-  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
   try {
     const handle = await adapter.startSession(startConfig(workspace('early-cancel')));
     const seen = collect(adapter, handle.dspatchSessionId);
@@ -931,11 +1789,16 @@ test('a turn cancelled before query() is called never calls it and ends as cance
       }
     });
     const finished = seen.nextFinish();
-    await adapter.send(handle.dspatchSessionId, 'never sent');
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'never sent');
     await finished;
     assert.equal(calls.length, 0);
     const last = seen.events.at(-1);
     assert.equal(last?.type === 'run.finished' ? last.status : null, 'cancelled');
+    assert.equal(last?.type === 'run.finished' ? last.end : null, 'stopped');
+    assert.equal(seen.events.filter((event) => event.type === 'run.cancel_requested').length, 1);
+    const record = adapter.cancellation(handle.dspatchSessionId, dspatchRunId);
+    assert.equal(record?.endEvidence?.kind, 'not-started');
+    assert.equal(record?.interrupt.status, 'not-called');
     assert.equal(adapter.hasActiveRun(handle.dspatchSessionId), false);
   } finally {
     await adapter.dispose();
@@ -954,7 +1817,7 @@ function readRecord(file: string): Record<string, any> {
 }
 
 test('cancel-reply refuses with an API credential and no approval, recording names only', async () => {
-  const { queryFn, calls } = fakeSdk(async function* () {});
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* () {});
   const dir = workspace('cr-refused');
   const logPath = path.join(tempRoot('cr-refused-log'), 'record.json');
   const secret = 'sk-ant-should-never-appear';
@@ -962,6 +1825,7 @@ test('cancel-reply refuses with an API credential and no approval, recording nam
     provider: 'claude',
     env: scenarioEnv({ ANTHROPIC_API_KEY: secret }),
     claudeQueryFn: queryFn,
+    claudeSpawnProcess: spawnProcess,
   });
   assert.equal(code, EXIT_REFUSED);
   assert.equal(calls.length, 0);
@@ -974,12 +1838,13 @@ test('cancel-reply refuses with an API credential and no approval, recording nam
 });
 
 test('two-turn refuses with nothing recorded, even with a clean environment', async () => {
-  const { queryFn, calls } = fakeSdk(async function* () {});
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* () {});
   const logPath = path.join(tempRoot('tt-refused-log'), 'record.json');
   const code = await scenarioTwoTurn(workspace('tt-refused'), logPath, {
     provider: 'claude',
     env: scenarioEnv(),
     claudeQueryFn: queryFn,
+    claudeSpawnProcess: spawnProcess,
   });
   assert.equal(code, EXIT_REFUSED);
   assert.equal(calls.length, 0);
@@ -987,19 +1852,32 @@ test('two-turn refuses with nothing recorded, even with a clean environment', as
 });
 
 test('cancel-reply cancels after text began and records what came after', async () => {
-  const { queryFn } = fakeSdk(async function* (call) {
+  const hookOf = (call: Call) => call.options['hooks'].PreToolUse[0].hooks[0];
+  const ask = (call: Call, tool: string, id: string) =>
+    hookOf(call)(
+      { hook_event_name: 'PreToolUse', tool_name: tool, tool_input: {}, tool_use_id: id, session_id: sessionOf(call), transcript_path: '', cwd: call.options['cwd'] },
+      id,
+      { signal: new AbortController().signal },
+    );
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
+    const child = call.child;
     yield init(call, 'ANTHROPIC_API_KEY');
     // A tool call first: the scenario must not cancel on it.
+    await ask(call, 'Read', 't-1');
     yield assistant(call, [{ type: 'tool_use', id: 't-1', name: 'Read', input: {} }]);
     yield toolResult(call, 't-1');
     yield delta(call, 'File one does');
-    await untilAborted(call.options['abortController'].signal);
+    await call.interrupted;
     // A macrotask later, so "after cancel() resolved" is an ordering, not a race.
     await new Promise((resolve) => setTimeout(resolve, 5));
-    // Work that arrives after cancel() resolved, then the terminal result, then a straggler.
+    // The in-flight response still asks for a tool; the hook denies it. Then the
+    // result, a straggler, and the process exit.
     yield assistant(call, [{ type: 'tool_use', id: 't-2', name: 'Glob', input: {} }]);
+    await ask(call, 'Glob', 't-2');
+    yield toolResult(call, 't-2', true);
     yield result(call, { subtype: 'error_during_execution', is_error: true, errors: ['aborted'] });
     yield delta(call, ' late text');
+    child.exit(0);
   });
   const dir = workspace('cr-run');
   const logPath = path.join(tempRoot('cr-run-log'), 'record.json');
@@ -1008,6 +1886,7 @@ test('cancel-reply cancels after text began and records what came after', async 
     authorization: { kind: 'api-key', approval: 'test-only reference' },
     env: scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-test-value' }),
     claudeQueryFn: queryFn,
+    claudeSpawnProcess: spawnProcess,
     afterTerminalWatchMs: 20,
   });
   const record = readRecord(logPath);
@@ -1018,6 +1897,8 @@ test('cancel-reply cancels after text began and records what came after', async 
     terminalStatusCancelled: true,
     noContentChange: true,
     toolCallStartedAfterCancelResolved: true,
+    end: 'stopped',
+    endUnconfirmed: false,
   });
   const turn = record.turns[0];
   assert.ok(turn.firstActivityMs <= turn.firstTextMs, 'the tool call came before the text');
@@ -1025,11 +1906,46 @@ test('cancel-reply cancels after text began and records what came after', async 
     record.cancellation.toolCallsStartedAfterCancelResolved.map((call: { name: string }) => call.name),
     ['Glob'],
   );
-  assert.deepEqual(
-    record.cancellation.eventsAfterTerminal.map((event: { type: string }) => event.type),
-    ['assistant.delta'],
-  );
+  // The terminal waits for the stream and the process: nothing arrives after it.
+  assert.deepEqual(record.cancellation.eventsAfterTerminal, []);
   assert.equal(typeof record.cancellation.terminalEventMsAfterCancelCall, 'number');
+  assert.equal(typeof record.cancellation.terminalEventMsAfterCancelRequested, 'number');
+  // S2/S3: the request's absolute time, what acted, and tool work after the request.
+  assert.match(record.cancellation.cancelRequestedAtUtc, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(record.cancellation.end, 'stopped');
+  assert.equal(record.cancellation.endEvidence.kind, 'process-exit');
+  assert.equal(record.cancellation.toolUseBlocksAfterRequest, 1);
+  assert.equal(record.cancellation.toolUseBlocksAfterRequestExecuted, 0);
+  assert.equal(record.cancellation.toolResultsNotDeniedAfterRequest, 0);
+  assert.equal(record.cancellation.toolResultsOkAfterRequest, 0);
+  assert.equal(record.cancellation.providerWorkAfterEnd, 'unknown');
+  assert.equal(record.cancellation.adapter.interrupt.status, 'resolved');
+  assert.equal(record.cancellation.adapter.resultAfterRequest.subtype, 'error_during_execution');
+  assert.match(record.cancellation.adapter.providerWorkAfterEndNote, /may still be processed and billed/);
+  assert.deepEqual(
+    record.claude.hookFirings.map((firing: { toolName: string; decision: string }) => [firing.toolName, firing.decision]),
+    [
+      ['Read', 'pass'],
+      ['Glob', 'deny'],
+    ],
+  );
+  // S5: the text DSpatch adds to the conversation is in the record.
+  assert.deepEqual(record.claude.cancelHook, {
+    event: 'PreToolUse',
+    matcher: null,
+    permissionDecisionReason: CANCEL_DENY_REASON,
+    stopReason: CANCEL_STOP_REASON,
+  });
+  // The denied call is told apart from the one that ran.
+  assert.deepEqual(
+    turn.toolCalls
+      .filter((call: { phase: string }) => call.phase === 'finished')
+      .map((call: { toolCallId: string; status: string }) => [call.toolCallId, call.status]),
+    [
+      ['t-1', 'ok'],
+      ['t-2', 'error'],
+    ],
+  );
   assert.equal(record.claude.init.permissionMode, 'dontAsk');
   assert.equal(record.claude.toolsMatchConfigured, true);
   assert.equal(record.claude.agentOrTaskToolPresent, false);
@@ -1044,7 +1960,7 @@ test('cancel-reply cancels after text began and records what came after', async 
 
 test('two-turn asks for the nonce back in a second send on the same session', async () => {
   const remembered = new Map<string, string>();
-  const { queryFn, calls } = fakeSdk(async function* (call) {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
     const session = sessionOf(call);
     yield init(call);
     const planted = /token exactly: ([A-Z0-9]+)/.exec(call.prompt)?.[1];
@@ -1062,6 +1978,7 @@ test('two-turn asks for the nonce back in a second send on the same session', as
     authorization: { kind: 'subscription', authorization: 'test-only reference' },
     env: scenarioEnv(),
     claudeQueryFn: queryFn,
+    claudeSpawnProcess: spawnProcess,
   });
   const record = readRecord(logPath);
   // The scenario itself succeeded. The substitute offers no accountInfo(), so this
@@ -1112,7 +2029,7 @@ test('the DSpatch source revision is clean, dirty or unavailable with a reason',
 test('refused and completed Claude records carry the source revision and the apiKeySource comparison', async () => {
   const revision = { available: false as const, reason: 'test substitute', sourceDir: '/src' };
   const refusedLog = path.join(tempRoot('rev-refused-log'), 'record.json');
-  const { queryFn } = fakeSdk(async function* (call) {
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
     yield init(call);
     yield result(call);
   });
@@ -1121,6 +2038,7 @@ test('refused and completed Claude records carry the source revision and the api
       provider: 'claude',
       env: scenarioEnv(),
       claudeQueryFn: queryFn,
+      claudeSpawnProcess: spawnProcess,
       sourceRevision: () => revision,
     }),
     EXIT_REFUSED,
@@ -1136,6 +2054,7 @@ test('refused and completed Claude records carry the source revision and the api
     authorization: { kind: 'api-key', approval: 'test-only reference' },
     env: scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-synthetic' }),
     claudeQueryFn: queryFn,
+    claudeSpawnProcess: spawnProcess,
     sourceRevision: () => revision,
   });
   const ran = readRecord(ranLog);
@@ -1184,7 +2103,7 @@ async function twoTurnWithSources(
   subscription?: { readonly account?: AccountScript },
 ) {
   const remembered = new Map<string, string>();
-  const { queryFn } = fakeSdk(async function* (call, index) {
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call, index) {
     const session = sessionOf(call);
     const source = sources[index] ?? null;
     // A list sends one init message per entry, possibly none.
@@ -1211,6 +2130,7 @@ async function twoTurnWithSources(
         : { kind: 'subscription', authorization: 'test-only reference' },
     env: subscription === undefined ? scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-synthetic-s1' }) : scenarioEnv(),
     claudeQueryFn: queryFn,
+    claudeSpawnProcess: spawnProcess,
   });
   const text = fs.readFileSync(logPath, 'utf8');
   assert.equal(text.includes('sk-ant-synthetic-s1'), false);
@@ -1296,12 +2216,12 @@ test('cancel-reply with an API-key approval is not a success when apiKeySource d
     ['none', 'mismatch'],
     ['no-init', 'unconfirmed'],
   ] as const) {
-    const { queryFn } = fakeSdk(async function* (call) {
+    const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
       if (source !== 'no-init') {
         yield init(call, source);
       }
       yield delta(call, 'File one does');
-      await untilAborted(call.options['abortController'].signal);
+      await call.interrupted;
       yield result(call, { subtype: 'error_during_execution', is_error: true, errors: ['aborted'] });
     });
     const logPath = path.join(tempRoot(`s1-cr-${source}-log`), 'record.json');
@@ -1310,6 +2230,7 @@ test('cancel-reply with an API-key approval is not a success when apiKeySource d
       authorization: { kind: 'api-key', approval: 'test-only reference' },
       env: scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-synthetic-s1' }),
       claudeQueryFn: queryFn,
+      claudeSpawnProcess: spawnProcess,
       afterTerminalWatchMs: 20,
     });
     const record = readRecord(logPath);

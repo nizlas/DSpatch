@@ -66,6 +66,13 @@ export interface AgentAdapter {
    *
    * Neither provider documents whether an in-flight remote model call is actually
    * stopped. Measure this rather than assuming it.
+   *
+   * Resolving means the cancellation was **requested**, not that the run has
+   * stopped. The run ends with its one terminal `run.finished` (status
+   * `cancelled`). An adapter may emit `run.cancel_requested` first and may report
+   * how the run ended in `run.finished.end` (see `RunEnd`); a `run.finished`
+   * without `end` — as from the Cursor adapter — means "not reported", never
+   * "stopped".
    */
   cancel(sessionId: DspatchSessionId): Promise<void>;
 

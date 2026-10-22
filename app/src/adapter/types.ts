@@ -189,6 +189,7 @@ export interface ModelInfo {
  */
 export type AgentEventType =
   | 'run.started'
+  | 'run.cancel_requested'
   | 'assistant.delta'
   | 'assistant.message'
   | 'reasoning.delta'
@@ -216,8 +217,32 @@ interface AgentEventBase {
   readonly rawProviderEvent: unknown;
 }
 
+/**
+ * How a cancelled run ended, as far as the adapter could establish it (DSP-115).
+ *
+ * - `stopped`: the run stopped on the adapter's first, gentle request, and the
+ *   adapter has evidence that the provider's local work ended.
+ * - `forced`: the adapter had to escalate (abort, and possibly kill a process)
+ *   and then has that evidence.
+ * - `unconfirmed`: the adapter gave up waiting without that evidence. The run is
+ *   reported as ended so the window is not stuck, but the provider's local work
+ *   may still be going; an adapter refuses new turns that would collide with it.
+ *
+ * What counts as evidence is the adapter's to document. A `run.finished` without
+ * `end` means **not reported** — never `stopped`. In no case does `end` say
+ * anything about work the provider had already started on its side: requests
+ * already sent may still be processed and billed.
+ */
+export type RunEnd = 'stopped' | 'forced' | 'unconfirmed';
+
 export type AgentEvent =
   | (AgentEventBase & { readonly type: 'run.started' })
+  /**
+   * The user asked to cancel the run. Not an end: events may still follow, and the
+   * run ends only with its one terminal `run.finished`. Additive (DSP-115); an
+   * adapter that does not emit it reports the cancel through `run.finished` only.
+   */
+  | (AgentEventBase & { readonly type: 'run.cancel_requested' })
   | (AgentEventBase & {
       readonly type: 'assistant.delta' | 'assistant.message' | 'reasoning.delta';
       readonly text: string;
@@ -245,6 +270,8 @@ export type AgentEvent =
       readonly type: 'run.finished';
       readonly status: TerminalRunStatus;
       readonly error?: AdapterError;
+      /** See {@link RunEnd}. Absent means not reported. */
+      readonly end?: RunEnd;
     });
 
 /** Remove a subscription. Idempotent. */

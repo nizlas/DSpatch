@@ -8,9 +8,12 @@ import tls from 'node:tls';
 import type { AgentAdapter } from '../adapter/agent-adapter';
 import {
   assessAuthentication,
+  CANCEL_DENY_REASON,
+  CANCEL_STOP_REASON,
   ClaudeAgentSdkAdapter,
   type AccountObservation,
   type AuthenticationAssessment,
+  type ClaudeProcessSpawner,
   type ClaudeQueryFunction,
   type InitObservation,
   type LiveAuthorization,
@@ -93,9 +96,23 @@ interface TurnLog {
   firstTextMs: number | null;
   finishedMs: number | null;
   terminalStatus: string | null;
+  /** `run.finished.end` (DSP-115); `null` when the adapter did not report one. */
+  end: string | null;
+  /** When `run.cancel_requested` arrived, on the events' clock; `null` if it did not. */
+  cancelRequestedMs: number | null;
   error: { message: string; providerCode: string | null } | null;
   readonly usageEvents: Array<{ atMs: number; readings: readonly UsageReading[] }>;
-  readonly toolCalls: Array<{ atMs: number; name: string; phase: string }>;
+  /**
+   * `status` is the `tool.finished` status (`ok` or `error`), so a call a hook denied
+   * (reported as an error) is told apart from one that ran; absent on `started`.
+   */
+  readonly toolCalls: Array<{
+    atMs: number;
+    name: string;
+    phase: string;
+    toolCallId: string;
+    status?: string;
+  }>;
   readonly approvals: unknown[];
 }
 
@@ -162,8 +179,17 @@ function makeRecorder(adapter: AgentAdapter, sessionId: string): Recorder {
           atMs,
           name: event.name,
           phase: event.type === 'tool.started' ? 'started' : 'finished',
+          toolCallId: event.toolCallId,
+          ...(event.type === 'tool.finished' ? { status: event.status } : {}),
         });
-        detail = { name: event.name };
+        detail =
+          event.type === 'tool.finished'
+            ? { name: event.name, status: event.status }
+            : { name: event.name };
+        break;
+      }
+      case 'run.cancel_requested': {
+        turn.cancelRequestedMs = atMs;
         break;
       }
       case 'approval.requested': {
@@ -178,13 +204,14 @@ function makeRecorder(adapter: AgentAdapter, sessionId: string): Recorder {
       case 'run.finished': {
         turn.finishedMs = atMs;
         turn.terminalStatus = event.status;
+        turn.end = event.end ?? null;
         if (event.error !== undefined) {
           turn.error = {
             message: event.error.message,
             providerCode: event.error.providerCode ?? null,
           };
         }
-        detail = { status: event.status, error: turn.error };
+        detail = { status: event.status, error: turn.error, end: turn.end };
         break;
       }
       default:
@@ -241,6 +268,8 @@ function makeRecorder(adapter: AgentAdapter, sessionId: string): Recorder {
         firstTextMs: null,
         finishedMs: null,
         terminalStatus: null,
+        end: null,
+        cancelRequestedMs: null,
         error: null,
         usageEvents: [],
         toolCalls: [],
@@ -516,6 +545,8 @@ export interface ScenarioOptions {
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** A substitute for the SDK's `query()`. Tests only. */
   readonly claudeQueryFn?: ClaudeQueryFunction;
+  /** A substitute for Node's `spawn` in the Claude adapter's process wrapper. Tests only. */
+  readonly claudeSpawnProcess?: ClaudeProcessSpawner;
   /** How long to keep listening after a cancelled turn's terminal event. Default 5 s. */
   readonly afterTerminalWatchMs?: number;
   /** Substitute for {@link readSourceRevision}. Tests only. */
@@ -641,6 +672,9 @@ function createAdapter(options: ScenarioOptions): CursorSdkAdapter | ClaudeAgent
       authorization: options.authorization ?? null,
       env: options.env ?? process.env,
       ...(options.claudeQueryFn === undefined ? {} : { queryFn: options.claudeQueryFn }),
+      ...(options.claudeSpawnProcess === undefined
+        ? {}
+        : { spawnProcess: options.claudeSpawnProcess }),
     });
   }
   return new CursorSdkAdapter({ toolPolicy: 'provider-default' });
@@ -1380,6 +1414,16 @@ function claudeObservations(
     authentication: adapter.authentication(),
     sessionTitle: adapter.sessionTitle(sessionId),
     sessionTitleNote: SESSION_TITLE_NOTE,
+    // DSP-115 (S5): the text DSpatch's cancel hook adds to the conversation, and
+    // every call of the hook, so a pass before a cancel shows as well as a deny.
+    cancelHook: {
+      event: 'PreToolUse',
+      matcher: null,
+      permissionDecisionReason: CANCEL_DENY_REASON,
+      stopReason: CANCEL_STOP_REASON,
+    },
+    hookFirings: adapter.hookFirings(sessionId),
+    promptInput: 'streaming input: a one-message AsyncIterable<SDKUserMessage> per turn',
     init:
       first === undefined
         ? null
@@ -2298,6 +2342,12 @@ export const CANCEL_REPLY_PROMPT =
  * the terminal status, events after the terminal event, any tool call started
  * after `cancel()` resolved, the time from cancel to the terminal event, and
  * whether the fixture's content changed.
+ *
+ * DSP-115: for Claude, also the adapter's cancellation record — the absolute time
+ * of the request, hook firings, the interrupt outcome, abort and kill times, tool
+ * work after the request and how the run ended (`end` and its evidence). An
+ * `unconfirmed` end is not a success (exit code 2). Provider work after the end is
+ * recorded as unknown.
  */
 export async function scenarioCancelReply(
   repoDir: string,
@@ -2369,19 +2419,60 @@ export async function scenarioCancelReply(
       const toolCallsStartedAfterCancelResolved = turn.toolCalls
         .slice(toolCallsBeforeCancelResolved)
         .filter((call) => call.phase === 'started');
+      // DSP-115: the adapter's own account of the cancellation (Claude only). It
+      // separates the request from the confirmed end, says which mechanism acted
+      // (hook firings, interrupt outcome, abort, kill) and counts tool work after
+      // the request by the same rule as the reconciled DSP-109 baseline.
+      const adapterCancellation =
+        adapter instanceof ClaudeAgentSdkAdapter && turn.runId !== ''
+          ? adapter.cancellation(sessionId, turn.runId)
+          : null;
+      const endUnconfirmed = turn.end === 'unconfirmed';
       record['cancellation'] = {
         cancelledAfterTextBegan: textBegan,
         firstTextMsAfterSend: turn.firstTextMs,
         cancelStartedMsAfterSend: cancelStartedMs,
         cancelResolvedMsAfterSend: cancelResolvedMs,
         cancelError,
+        // Absolute time of the request, so the provider transcript can be aligned
+        // without inference (DSP-109's record had only relative times).
+        cancelRequestedAtUtc: adapterCancellation?.cancelRequestedAtUtc ?? null,
+        cancelRequestedEventMsAfterSend: turn.cancelRequestedMs,
         terminalEventMsAfterCancelCall: terminalAfterCancelMs,
+        terminalEventMsAfterCancelRequested:
+          turn.cancelRequestedMs === null || turn.finishedMs === null
+            ? null
+            : round(turn.finishedMs - turn.cancelRequestedMs),
         waitError,
         terminalStatus: turn.terminalStatus,
+        // `null` means the adapter did not report how the run ended (Cursor), not "stopped".
+        end: turn.end,
+        endEvidence: adapterCancellation?.endEvidence ?? null,
         runError: turn.error,
         watchedAfterTerminalMs: watchMs,
         eventsAfterTerminal: turn.events.filter((event) => event.afterTerminal),
         toolCallsStartedAfterCancelResolved,
+        // S3: tool_use blocks the stream delivered after the request, how many of
+        // them ran by the reconciled DSP-109 baseline's rule, and the tool results
+        // after the request (not denied by the hook; and of those, status ok).
+        toolUseBlocksAfterRequest:
+          adapterCancellation === null ? null : adapterCancellation.toolUseBlocksAfterRequest.length,
+        // The baseline's rule: of the tool_use blocks after the request, the ones
+        // followed by a result that was not a hook denial ("executed").
+        toolUseBlocksAfterRequestExecuted:
+          adapterCancellation === null
+            ? null
+            : adapterCancellation.toolUseBlocksAfterRequest.filter((block) =>
+                adapterCancellation.toolResultsAfterRequest.some(
+                  (outcome) => outcome.toolUseId === block.toolUseId && !outcome.deniedByHook,
+                ),
+              ).length,
+        toolResultsNotDeniedAfterRequest:
+          adapterCancellation === null ? null : adapterCancellation.toolResultsNotDeniedAfterRequest,
+        toolResultsOkAfterRequest:
+          adapterCancellation === null ? null : adapterCancellation.toolResultsOkAfterRequest,
+        adapter: adapterCancellation,
+        providerWorkAfterEnd: 'unknown',
       };
       record['contentDiff'] = diff;
       record['noContentChange'] = noContentChange;
@@ -2390,11 +2481,15 @@ export async function scenarioCancelReply(
         terminalStatusCancelled: turn.terminalStatus === 'cancelled',
         noContentChange,
         toolCallStartedAfterCancelResolved: toolCallsStartedAfterCancelResolved.length > 0,
+        end: turn.end,
+        endUnconfirmed,
       };
       record['turns'] = recorder.turns;
       record['capabilities'] = adapter.capabilities();
       exitCode =
-        textBegan && turn.terminalStatus === 'cancelled' && noContentChange ? 0 : 2;
+        textBegan && turn.terminalStatus === 'cancelled' && noContentChange && !endUnconfirmed
+          ? 0
+          : 2;
     } finally {
       recorder.stop();
     }
