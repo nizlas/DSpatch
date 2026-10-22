@@ -777,25 +777,28 @@ function apiKeySourceComparison(
  * Exit code when the scenario's own criteria were met but a Claude run's
  * authentication was not verified: a direct API-key run whose status is
  * `mismatch` or `unconfirmed`, or a subscription-authorized run whose status is
- * `conflicting` or `unconfirmed`. Only ever replaces 0; every other code keeps its
- * meaning and its cause.
+ * `mismatch`, `conflicting` or `unconfirmed`. A `verified` run keeps the
+ * scenario's own code, so a passing subscription run exits 0. Only ever replaces
+ * 0; every other code keeps its meaning and its cause.
  */
 export const EXIT_AUTHENTICATION_UNVERIFIED = 5;
 
 /**
  * - `verified`: direct API-key preflight, and each turn's own run produced exactly
  *   one init message, reporting the expected `apiKeySource`, and no init message
- *   came from a run outside the turns.
+ *   came from a run outside the turns; or a subscription authorization, and every
+ *   turn met the accepted rule ({@link ACCEPTED_SUBSCRIPTION_RULE}).
  * - `mismatch`: direct API-key preflight, and some init message reported a
- *   different `apiKeySource`.
+ *   different `apiKeySource`; or a subscription authorization, and some account
+ *   observation reported a `subscriptionType` other than the accepted plan.
  * - `conflicting`: subscription authorization, and some init message or account
  *   observation reported an API-key source (an `apiKeySource` other than `'none'`)
  *   or an `apiProvider` other than `'firstParty'`.
  * - `unconfirmed`: nothing contradicts the expected path, but the observations do
- *   not establish it. For a direct API-key run: a turn without exactly one init
- *   message of its own, one without `apiKeySource`, an init message from a run that
- *   is not a turn, or no turn sent. For a subscription-authorized run: always, at
- *   best — see {@link verifyAuthentication}.
+ *   not establish it: a turn without exactly one init message of its own, one
+ *   without `apiKeySource`, an init message from a run that is not a turn, no turn
+ *   sent, or (subscription) a missing or unavailable account observation or one
+ *   without `apiProvider` or `subscriptionType` — see {@link verifyAuthentication}.
  * - `not-applicable`: any other preflight; the exit code is not affected.
  */
 export type AuthenticationVerificationStatus =
@@ -809,7 +812,9 @@ const VERDICT_CHECK_NOTE =
   'a verdict check after observation: it compares what the init messages (and, for a ' +
   'subscription-authorized run, accountInfo()) reported with what the authorization ' +
   'allows once the turns have run. It does not establish authentication before the ' +
-  'first provider request and does not prevent charges already incurred.';
+  'first provider request and does not prevent charges already incurred. A verified ' +
+  'status identifies the authentication path the provider reported; it is not a ' +
+  'billing proof.';
 
 /**
  * The scope of a subscription authorization, recorded in every
@@ -822,6 +827,33 @@ export const SUBSCRIPTION_AUTHORIZATION_SCOPE =
   "Niclas's home computer, through Anthropic's own login flow and the unmodified Claude " +
   'Code binary, with no token handling by DSpatch. Not a basis for distributing DSpatch ' +
   'or offering authentication to others.';
+
+/**
+ * The subscription path Niclas accepted on 22 Oct 2026 for his personal Claude
+ * Max experiment, judged for every turn separately: the turn's init message and
+ * the turn's `accountInfo()` must report these values. Documented names and
+ * values only (sdk.d.ts 0.3.306: `ApiKeySource` :133, `AccountInfo.apiProvider`
+ * :32; `'Claude Max'` is the `subscriptionType` the 22 Oct 2026 probe observed,
+ * which the contract types as a plain string).
+ */
+export const ACCEPTED_SUBSCRIPTION_RULE = Object.freeze({
+  initApiKeySource: 'none',
+  accountApiProvider: 'firstParty',
+  accountSubscriptionType: 'Claude Max',
+});
+
+/** The decision behind {@link ACCEPTED_SUBSCRIPTION_RULE}, recorded in every subscription verdict. */
+export const SUBSCRIPTION_RULE_BASIS =
+  'Niclas, 22 Oct 2026: accepted for his personal Claude Max experiment; init ' +
+  "apiKeySource 'none' + accountInfo apiProvider 'firstParty' + subscriptionType " +
+  "'Claude Max', judged per turn; missing tokenSource recorded, not blocking; not a " +
+  'billing proof';
+
+/** Recorded when an observed account carried no `tokenSource`. */
+const TOKEN_SOURCE_ABSENT_NOTE =
+  'tokenSource is an optional AccountInfo field (sdk.d.ts 0.3.306 :27) that Claude ' +
+  'Code 2.1.306 did not send in the 22 Oct 2026 probe; its absence is recorded and ' +
+  'does not block the accepted rule';
 
 /** One turn as the verdict needs it: its label and the DSpatch run it started. */
 export interface TurnRun {
@@ -874,21 +906,33 @@ const quoted = (values: readonly (string | null)[]): string =>
  * **Direct API-key path**: as described for {@link AuthenticationVerificationStatus}.
  *
  * **Subscription path** (preflight `no-api-credential` under a subscription
- * authorization), using only what sdk.d.ts 0.3.306 defines:
+ * authorization), by the rule Niclas accepted on 22 Oct 2026 for his personal
+ * Claude Max experiment ({@link ACCEPTED_SUBSCRIPTION_RULE}), judged for every
+ * turn separately:
  * - `conflicting` if any init message or account observation, of any run, has an
- *   `apiKeySource` other than `'none'` (the documented API-key sources), or any
- *   account observation has an `apiProvider` other than `'firstParty'` ("Anthropic
- *   OAuth login only applies when firstParty").
- * - otherwise `unconfirmed`. Its `subscriptionEvidence` says why:
- *   `insufficient` when a turn lacks exactly one init message of its own with
- *   `apiKeySource`, lacks an account observation, or its account observation lacks
- *   `apiProvider`, `subscriptionType` or `tokenSource`, or when an observation is
- *   unattributable; `consistent-but-undefined` when every turn shows
- *   `apiKeySource 'none'`, `apiProvider 'firstParty'` and both other fields. Even
- *   then it is not `verified`: `'none'` is documented alike for a claude.ai OAuth
- *   login, a bearer token and a third-party provider, and the contract defines no
- *   values for `subscriptionType` or `tokenSource`. The values are recorded for
- *   Niclas to judge.
+ *   `apiKeySource` other than `'none'` (the documented API-key sources; an absent
+ *   account value is not a conflict), or any account observation has an
+ *   `apiProvider` other than `'firstParty'` ("Anthropic OAuth login only applies
+ *   when firstParty"). A conflict wins over everything below.
+ * - otherwise `mismatch` if an account observation reported a `subscriptionType`
+ *   other than `'Claude Max'`: not evidence of an API path, but not the accepted
+ *   plan.
+ * - otherwise `unconfirmed` (`subscriptionEvidence: 'insufficient'`) when required
+ *   data is missing: no turn sent, an unattributable observation, a turn without
+ *   exactly one init message of its own or without `apiKeySource`, an account
+ *   observation missing or unavailable, or one without `apiProvider` or
+ *   `subscriptionType`. A missing `tokenSource` is **not** a gap: the field is
+ *   optional in the contract and Claude Code 2.1.306 did not send it on 22 Oct
+ *   2026; its absence is recorded as `tokenSourceObserved: false`.
+ * - otherwise `verified` (`subscriptionEvidence: 'rule-met'`): every turn's own
+ *   run produced exactly one init message with `apiKeySource 'none'` and an
+ *   observed account with `apiProvider 'firstParty'` and `subscriptionType
+ *   'Claude Max'`.
+ *
+ * The rule identifies the subscription path for this experiment; it is not a
+ * billing proof, and the record says so ({@link SUBSCRIPTION_RULE_BASIS}). The
+ * earlier `consistent-but-undefined` outcome, which kept every subscription run at
+ * exit 5 until Niclas had judged the observed values, is superseded by this rule.
  */
 export function verifyAuthentication(
   assessment: AuthenticationAssessment,
@@ -962,37 +1006,58 @@ export function verifyAuthentication(
   }
 
   if (decision === 'no-api-credential' && assessment.authorization?.kind === 'subscription') {
+    const rule = ACCEPTED_SUBSCRIPTION_RULE;
     const observedPerTurn = turns.map((turn) => {
       const own = initsOf(turn, inits);
       const account =
         turn.runId === ''
           ? null
           : (accounts.find((entry) => entry.dspatchRunId === turn.runId) ?? null);
+      const initApiKeySources = own.map((init) => stringField(init.message, 'apiKeySource'));
+      const fields = account?.status === 'observed' ? account.fields : null;
       return {
         turn: turn.label,
         dspatchRunId: turn.runId === '' ? null : turn.runId,
         initMessages: own.length,
-        initApiKeySources: own.map((init) => stringField(init.message, 'apiKeySource')),
+        initApiKeySources,
         account,
+        // Whether the optional field came, whatever the verdict; `null` without an
+        // observed account.
+        tokenSourceObserved: fields === null ? null : fields.tokenSource !== null,
+        // The accepted rule, judged for this turn alone.
+        meetsAcceptedRule:
+          own.length === 1 &&
+          initApiKeySources[0] === rule.initApiKeySource &&
+          fields !== null &&
+          fields.apiProvider === rule.accountApiProvider &&
+          fields.subscriptionType === rule.accountSubscriptionType,
       };
     });
+    const observedAccounts = accounts.filter(
+      (account): account is Extract<AccountObservation, { status: 'observed' }> =>
+        account.status === 'observed',
+    );
     const conflicts: string[] = [];
     for (const init of inits) {
       const source = stringField(init.message, 'apiKeySource');
-      if (source !== null && source !== 'none') {
+      if (source !== null && source !== rule.initApiKeySource) {
         conflicts.push(`run ${init.dspatchRunId}: init message apiKeySource '${source}'`);
       }
     }
-    for (const account of accounts) {
-      if (account.status !== 'observed') {
-        continue;
-      }
-      const { apiKeySource, apiProvider } = account.fields;
-      if (apiKeySource !== null && apiKeySource !== 'none') {
+    const mismatches: string[] = [];
+    for (const account of observedAccounts) {
+      const { apiKeySource, apiProvider, subscriptionType } = account.fields;
+      if (apiKeySource !== null && apiKeySource !== rule.initApiKeySource) {
         conflicts.push(`run ${account.dspatchRunId}: accountInfo apiKeySource '${apiKeySource}'`);
       }
-      if (apiProvider !== null && apiProvider !== 'firstParty') {
+      if (apiProvider !== null && apiProvider !== rule.accountApiProvider) {
         conflicts.push(`run ${account.dspatchRunId}: accountInfo apiProvider '${apiProvider}'`);
+      }
+      if (subscriptionType !== null && subscriptionType !== rule.accountSubscriptionType) {
+        mismatches.push(
+          `run ${account.dspatchRunId}: accountInfo subscriptionType '${subscriptionType}' ` +
+            `is not '${rule.accountSubscriptionType}'`,
+        );
       }
     }
     const gaps: string[] = [];
@@ -1016,7 +1081,8 @@ export function verifyAuthentication(
       } else if (entry.account.status === 'unavailable') {
         gaps.push(`${entry.turn}: account information unavailable (${entry.account.reason})`);
       } else {
-        const absent = (['apiProvider', 'subscriptionType', 'tokenSource'] as const).filter(
+        // tokenSource is deliberately not here: optional, recorded, not blocking.
+        const absent = (['apiProvider', 'subscriptionType'] as const).filter(
           (field) => entry.account?.status === 'observed' && entry.account.fields[field] === null,
         );
         if (absent.length > 0) {
@@ -1032,9 +1098,14 @@ export function verifyAuthentication(
       initApiKeySource: [
         ...new Set(inits.map((init) => stringField(init.message, 'apiKeySource'))),
       ],
+      // False when any observed account lacked the optional field, or none was observed.
+      tokenSourceObserved:
+        observedAccounts.length > 0 &&
+        observedAccounts.every((account) => account.fields.tokenSource !== null),
     };
+    const turnsOutsideRule = observedPerTurn.filter((entry) => !entry.meetsAcceptedRule);
     let status: AuthenticationVerificationStatus;
-    let subscriptionEvidence: 'conflicting' | 'insufficient' | 'consistent-but-undefined';
+    let subscriptionEvidence: 'conflicting' | 'mismatch' | 'insufficient' | 'rule-met';
     let reason: string;
     if (conflicts.length > 0) {
       status = 'conflicting';
@@ -1042,26 +1113,45 @@ export function verifyAuthentication(
       reason =
         `an API-key source or a non-firstParty provider was observed (${conflicts.join('; ')}); ` +
         'a subscription-authorized run must show neither';
+    } else if (mismatches.length > 0) {
+      status = 'mismatch';
+      subscriptionEvidence = 'mismatch';
+      reason =
+        `a value outside the accepted rule was observed (${mismatches.join('; ')}): not ` +
+        'evidence of an API path, but not the accepted plan' +
+        (gaps.length > 0 ? `; the observations are also incomplete: ${gaps.join('; ')}` : '');
     } else if (gaps.length > 0) {
       status = 'unconfirmed';
       subscriptionEvidence = 'insufficient';
       reason = `the observations are incomplete: ${gaps.join('; ')}`;
-    } else {
+    } else if (turnsOutsideRule.length > 0) {
+      // Unreachable while the checks above are complete; kept so the rule fails
+      // closed rather than open if they ever are not.
       status = 'unconfirmed';
-      subscriptionEvidence = 'consistent-but-undefined';
+      subscriptionEvidence = 'insufficient';
+      reason = `not every turn met the accepted rule: ${turnsOutsideRule
+        .map((entry) => entry.turn)
+        .join(', ')}`;
+    } else {
+      status = 'verified';
+      subscriptionEvidence = 'rule-met';
       reason =
-        "every turn observed apiKeySource 'none' and apiProvider 'firstParty', with " +
-        `subscriptionType ${quoted(observedValues.subscriptionType)} and tokenSource ` +
-        `${quoted(observedValues.tokenSource)}. The SDK contract (sdk.d.ts 0.3.306) defines ` +
-        "no values for subscriptionType or tokenSource and documents apiKeySource 'none' " +
-        'alike for a claude.ai OAuth login, a bearer token and a third-party provider, so ' +
-        'these observations cannot confirm a subscription login. Recorded for Niclas to judge.';
+        `every turn's own init message reported apiKeySource '${rule.initApiKeySource}' and ` +
+        `its accountInfo reported apiProvider '${rule.accountApiProvider}' and ` +
+        `subscriptionType '${rule.accountSubscriptionType}' (the accepted rule)` +
+        (observedValues.tokenSourceObserved
+          ? ''
+          : '; tokenSource was not sent (recorded, not blocking)');
     }
     return {
       ...base,
       authorizationScope: SUBSCRIPTION_AUTHORIZATION_SCOPE,
+      acceptedRule: rule,
+      ruleBasis: SUBSCRIPTION_RULE_BASIS,
       observedPerTurn,
       observedValues,
+      tokenSourceNote: observedValues.tokenSourceObserved ? null : TOKEN_SOURCE_ABSENT_NOTE,
+      findings: { conflicts, mismatches, gaps },
       subscriptionEvidence,
       status,
       reason,
@@ -1191,11 +1281,84 @@ export function sessionContinuity(
   return { perTurn, same: true, reason: `both turns' own init messages reported session_id '${first}'` };
 }
 
+/** A finite number field of an object, or `null`: a missing value is never 0. */
+function numberField(message: unknown, field: string): number | null {
+  const value =
+    typeof message === 'object' && message !== null
+      ? (message as Record<string, unknown>)[field]
+      : undefined;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * The init message's `mcp_servers` (sdk.d.ts 0.3.306 :6176-6183) as name and
+ * status only — no configuration, URL, source or tool list — or `null` when the
+ * message carries no such list. Empty is what `strictMcpConfig: true` should
+ * give; the 22 Oct 2026 probe, without it, showed a claude.ai connector's tools
+ * in `tools` (this field was not recorded then).
+ */
+function mcpServersOf(
+  init: unknown,
+): { readonly name: string | null; readonly status: string | null }[] | null {
+  const servers =
+    typeof init === 'object' && init !== null
+      ? (init as Record<string, unknown>)['mcp_servers']
+      : undefined;
+  if (!Array.isArray(servers)) {
+    return null;
+  }
+  return servers.map((entry) => ({
+    name: stringField(entry, 'name'),
+    status: stringField(entry, 'status'),
+  }));
+}
+
+const UNREQUESTED_MODEL_USAGE_NOTE =
+  "not requested by DSpatch; Claude Code's own background functionality (documented), " +
+  'cause not established offline. Token counts as the result message reports them.';
+
+/**
+ * The `modelUsage` entries (sdk.d.ts 0.3.306 :5925) keyed by a model DSpatch did
+ * not request. Token counts only; a missing number is `null`. `null` when the
+ * result carries no `modelUsage` or the requested model is unknown.
+ */
+function unrequestedModelUsageOf(
+  modelUsage: unknown,
+  requestedModel: string | null,
+): Record<string, Record<string, number | string | null>> | null {
+  if (typeof modelUsage !== 'object' || modelUsage === null || requestedModel === null) {
+    return null;
+  }
+  return Object.fromEntries(
+    Object.entries(modelUsage as Record<string, unknown>)
+      .filter(([model]) => model !== requestedModel)
+      .map(([model, usage]) => [
+        model,
+        {
+          inputTokens: numberField(usage, 'inputTokens'),
+          outputTokens: numberField(usage, 'outputTokens'),
+          cacheReadInputTokens: numberField(usage, 'cacheReadInputTokens'),
+          cacheCreationInputTokens: numberField(usage, 'cacheCreationInputTokens'),
+          canonicalModel: stringField(usage, 'canonicalModel'),
+        },
+      ]),
+  );
+}
+
+const SESSION_TITLE_NOTE =
+  'passed as Options.title on every query() (sdk.d.ts 0.3.306: the session uses it ' +
+  'instead of auto-generating one from the first user message; on resume the ' +
+  'persisted title takes precedence). It makes the provider transcript traceable to ' +
+  'the DSpatch session; whether the background title request, the most likely but ' +
+  'not established source of the unrequested claude-haiku-5-5 usage on 22 Oct 2026, ' +
+  'disappears is to be observed live.';
+
 /** What a Claude run record carries beyond the provider-generic fields. */
 function claudeObservations(
   adapter: ClaudeAgentSdkAdapter,
   sessionId: string,
   providerSessionId: string,
+  modelRequested: string | null,
   options: ScenarioOptions,
 ): Record<string, unknown> {
   const inits = adapter
@@ -1207,6 +1370,7 @@ function claudeObservations(
   const first = inits[0];
   const configured = [...adapter.permissionPolicy().tools].sort();
   const reportedTools = Array.isArray(first?.['tools']) ? (first['tools'] as unknown[]) : null;
+  const firstServers = mcpServersOf(first);
   const managedKeys =
     first === undefined ? [] : Object.keys(first).filter((key) => /managed|policy/i.test(key));
   return {
@@ -1214,6 +1378,8 @@ function claudeObservations(
     node: process.versions.node,
     permissions: adapter.permissionPolicy(),
     authentication: adapter.authentication(),
+    sessionTitle: adapter.sessionTitle(sessionId),
+    sessionTitleNote: SESSION_TITLE_NOTE,
     init:
       first === undefined
         ? null
@@ -1225,6 +1391,7 @@ function claudeObservations(
             cwd: first['cwd'] ?? null,
             permissionMode: first['permissionMode'] ?? null,
             apiKeySource: first['apiKeySource'] ?? null,
+            mcp_servers: firstServers,
           },
     initSessionIds: inits.map((init) => init['session_id'] ?? null),
     // Every init message with the run that produced it, in arrival order.
@@ -1237,6 +1404,7 @@ function claudeObservations(
         apiKeySource: message['apiKeySource'] ?? null,
         model: message['model'] ?? null,
         claude_code_version: message['claude_code_version'] ?? null,
+        mcp_servers: mcpServersOf(message),
       };
     }),
     apiKeySource: apiKeySourceComparison(adapter.authentication(), inits),
@@ -1244,6 +1412,8 @@ function claudeObservations(
       reportedTools === null
         ? null
         : JSON.stringify(reportedTools.map(String).sort()) === JSON.stringify(configured),
+    // What the next live run should show as 0 under strictMcpConfig; null without a list.
+    mcpServersObservedInInit: firstServers === null ? null : firstServers.length,
     agentOrTaskToolPresent:
       reportedTools === null
         ? null
@@ -1259,6 +1429,8 @@ function claudeObservations(
       is_error: result['is_error'] ?? null,
       usage: result['usage'] ?? null,
       modelUsage: result['modelUsage'] ?? null,
+      unrequestedModelUsage: unrequestedModelUsageOf(result['modelUsage'], modelRequested),
+      unrequestedModelUsageNote: UNREQUESTED_MODEL_USAGE_NOTE,
       permission_denials: result['permission_denials'] ?? null,
       totalCostUsdEstimate: result['total_cost_usd'] ?? null,
       totalCostNote: "the SDK's own local estimate; not a charge and not a billing reading",
@@ -1438,7 +1610,9 @@ function recordClaudeObservations(
   if (!(adapter instanceof ClaudeAgentSdkAdapter)) {
     return;
   }
-  const session = record['session'] as { dspatchSessionId?: unknown } | undefined;
+  const session = record['session'] as
+    | { dspatchSessionId?: unknown; modelRequested?: unknown }
+    | undefined;
   if (typeof session?.dspatchSessionId !== 'string') {
     record['claude'] = {
       permissions: adapter.permissionPolicy(),
@@ -1452,6 +1626,7 @@ function recordClaudeObservations(
       adapter,
       session.dspatchSessionId,
       providerSessionIdOf(record),
+      typeof session.modelRequested === 'string' ? session.modelRequested : null,
       options,
     );
   } catch (error) {
@@ -2374,11 +2549,12 @@ function usage(): string {
     'credential variable in its environment without an API-key approval.',
     'Exit 5: a Claude run met its own criteria, but its authentication was not',
     "verified. With an API-key approval: not every turn's own init message reported",
-    "apiKeySource 'ANTHROPIC_API_KEY'. With a subscription authorization: always at",
-    'best, since the SDK contract cannot confirm a subscription login; the record',
-    "says whether the observations conflict (an API-key source, or apiProvider not",
-    "'firstParty') or are consistent but undefined. Checked after the turns ran; it",
-    'does not prevent charges already incurred.',
+    "apiKeySource 'ANTHROPIC_API_KEY'. With a subscription authorization: not every",
+    "turn met the accepted rule (init apiKeySource 'none', accountInfo apiProvider",
+    "'firstParty' and subscriptionType 'Claude Max'; Niclas, 22 Oct 2026); the record",
+    'says whether the observations conflict, mismatch or are incomplete. Checked',
+    'after the turns ran: it identifies the path the provider reported, does not',
+    'prevent charges already incurred, and is not a billing proof.',
   ].join('\n');
 }
 

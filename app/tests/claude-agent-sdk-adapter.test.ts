@@ -75,8 +75,8 @@ function perTurnSources(verification: { observedPerTurn: Array<{ turn: string; a
 
 const sessionOf = (call: Call): string => call.options.sessionId ?? call.options.resume;
 
-/** `apiKeySource: null` leaves the field out of the init message. */
-const init = (call: Call, apiKeySource: string | null = 'none') => ({
+/** `apiKeySource: null` leaves the field out of the init message; `extra` overrides any field. */
+const init = (call: Call, apiKeySource: string | null = 'none', extra: Record<string, unknown> = {}) => ({
   type: 'system',
   subtype: 'init',
   session_id: sessionOf(call),
@@ -92,6 +92,7 @@ const init = (call: Call, apiKeySource: string | null = 'none') => ({
   skills: [],
   plugins: [],
   uuid: 'u-init',
+  ...extra,
 });
 
 const delta = (call: Call, text: string, kind = 'text_delta') => ({
@@ -259,6 +260,8 @@ test('maps the SDK stream to DSpatch events and passes the fixture configuration
     assert.deepEqual(options['allowedTools'], ['Read(/**)', 'Edit(/src/**)']);
     assert.equal(options['permissionMode'], 'dontAsk');
     assert.deepEqual(options['settingSources'], []);
+    assert.equal(options['strictMcpConfig'], true);
+    assert.equal(options['title'], handle.dspatchSessionId);
     assert.equal(options['includePartialMessages'], true);
     assert.equal(options['canUseTool'], undefined);
     assert.equal(options['allowDangerouslySkipPermissions'], undefined);
@@ -630,6 +633,121 @@ test('the adapter refuses to start a session the guard refuses, and never calls 
       mode,
     );
   }
+});
+
+// --- The configuration DSpatch sends and records (DSP-109, 22 Oct 2026) ----------
+//
+// These check what the substituted query() receives and what the record keeps.
+// They are not evidence of tool isolation or of the background title request
+// disappearing: only a live run shows whether strictMcpConfig kept the claude.ai
+// connectors out or whether Options.title removed the claude-haiku-5-5 call.
+
+test('every query() carries strictMcpConfig, the session title and the fixture policy; a policy without strictMcpConfig is refused', async () => {
+  const { queryFn, calls } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield result(call);
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('config-sent')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    let finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'first');
+    await finished;
+    finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'second');
+    await finished;
+    assert.equal(calls.length, 2);
+    // The first query starts the session, the second resumes it; both carry the same configuration.
+    for (const call of calls) {
+      assert.equal(call.options['strictMcpConfig'], true);
+      assert.equal(call.options['title'], handle.dspatchSessionId);
+      assert.deepEqual(call.options['settingSources'], []);
+      assert.deepEqual(call.options['tools'], ['Read', 'Glob', 'Grep', 'Edit']);
+      assert.deepEqual(call.options['allowedTools'], ['Read(/**)', 'Edit(/src/**)']);
+      assert.equal(call.options['permissionMode'], 'dontAsk');
+      assert.equal(call.options['mcpServers'], undefined, 'DSpatch passes no MCP server of its own');
+    }
+    assert.equal(adapter.sessionTitle(handle.dspatchSessionId), handle.dspatchSessionId);
+    assert.equal(adapter.permissionPolicy().strictMcpConfig, true);
+    assert.equal(FIXTURE_PERMISSIONS.strictMcpConfig, true);
+  } finally {
+    await adapter.dispose();
+  }
+  // Refused in the same way as the forbidden permission modes: nothing is sent.
+  assert.throws(
+    () => new ClaudeAgentSdkAdapter({ queryFn, permissions: { ...FIXTURE_PERMISSIONS, strictMcpConfig: false as any } }),
+    /without strictMcpConfig true/,
+  );
+  assert.equal(calls.length, 2);
+});
+
+test('a run record keeps the init mcp_servers (name and status only), the session title and usage of models DSpatch did not request', async () => {
+  const remembered = new Map<string, string>();
+  const { queryFn } = fakeSdk(async function* (call, index) {
+    const session = sessionOf(call);
+    // Turn one: a synthetic connector as a live init without strictMcpConfig might list it;
+    // turn two: none, as a live init under strictMcpConfig should.
+    yield init(call, 'ANTHROPIC_API_KEY', {
+      mcp_servers:
+        index === 0
+          ? [{ name: 'synthetic-connector', status: 'connected', source: 'synthetic-scope', config: { url: 'https://synthetic.invalid/mcp' } }]
+          : [],
+    });
+    const planted = /token exactly: ([A-Z0-9]+)/.exec(call.prompt)?.[1];
+    if (planted !== undefined) {
+      remembered.set(session, planted);
+    }
+    const answer = planted !== undefined ? 'NOTED' : (remembered.get(session) ?? '?');
+    yield delta(call, answer);
+    yield assistant(call, [{ type: 'text', text: answer }]);
+    yield result(call, {
+      result: answer,
+      modelUsage:
+        index === 0
+          ? {
+              'claude-haiku-4-5': { inputTokens: 10, outputTokens: 72, cacheReadInputTokens: 0, cacheCreationInputTokens: 5994, costUSD: 0.012 },
+              'synthetic-background-model': { inputTokens: 1203, outputTokens: 15, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.0001 },
+            }
+          : { 'claude-haiku-4-5': { inputTokens: 20, outputTokens: 135, cacheReadInputTokens: 5994, cacheCreationInputTokens: 6131, costUSD: 0.013 } },
+    });
+  });
+  const logPath = path.join(tempRoot('record-shape-log'), 'record.json');
+  const code = await scenarioTwoTurn(workspace('record-shape'), logPath, {
+    provider: 'claude',
+    authorization: { kind: 'api-key', approval: 'test-only reference' },
+    env: scenarioEnv({ ANTHROPIC_API_KEY: 'sk-ant-synthetic-shape' }),
+    claudeQueryFn: queryFn,
+  });
+  const text = fs.readFileSync(logPath, 'utf8');
+  const record = JSON.parse(text);
+  assert.equal(code, 0, JSON.stringify(record.failure ?? record.authenticationVerification));
+  assert.equal(text.includes('sk-ant-synthetic-shape'), false);
+
+  // Name and status only: the synthetic source and URL never reach the record.
+  assert.deepEqual(record.claude.init.mcp_servers, [{ name: 'synthetic-connector', status: 'connected' }]);
+  assert.equal(record.claude.mcpServersObservedInInit, 1);
+  assert.equal(text.includes('synthetic.invalid'), false);
+  assert.equal(text.includes('synthetic-scope'), false);
+  assert.deepEqual(
+    record.claude.initObservations.map((entry: { mcp_servers: unknown }) => entry.mcp_servers),
+    [[{ name: 'synthetic-connector', status: 'connected' }], []],
+  );
+  assert.equal(record.claude.toolsMatchConfigured, true);
+
+  assert.equal(record.claude.sessionTitle, record.session.dspatchSessionId);
+  assert.match(record.claude.sessionTitleNote, /observed live/);
+  assert.equal(record.session.permissions.strictMcpConfig, true);
+  assert.equal(record.claude.permissions.strictMcpConfig, true);
+
+  // Only the model DSpatch did not request is listed, with its token counts.
+  assert.deepEqual(record.claude.results[0].unrequestedModelUsage, {
+    'synthetic-background-model': { inputTokens: 1203, outputTokens: 15, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, canonicalModel: null },
+  });
+  assert.deepEqual(record.claude.results[1].unrequestedModelUsage, {});
+  assert.match(record.claude.results[0].unrequestedModelUsageNote, /not requested by DSpatch/);
+  assert.match(record.claude.results[0].unrequestedModelUsageNote, /cause not established offline/);
+  assert.match(record.claude.results[0].totalCostNote, /estimate/);
 });
 
 // B1: every documented family, refused and stripped, by name only. The values
@@ -1230,13 +1348,16 @@ test('two init messages in one run and none in the other neither verify nor show
 const SYNTHETIC_EMAIL = 'person@example.invalid';
 const SYNTHETIC_ORGANIZATION = 'Synthetic Organization AB';
 
-/** A consistent account answer, with the two fields DSpatch must never copy. */
-const consistentAccount = (overrides: Record<string, unknown> = {}) => ({
+/**
+ * An account answer meeting the accepted rule (Niclas, 22 Oct 2026), shaped as the
+ * 22 Oct 2026 probe reported it — `tokenSource` and `apiKeySource` absent — with
+ * the two fields DSpatch must never copy. Synthetic apart from the three values the
+ * rule names, which are the SDK's documented names and the observed plan name.
+ */
+const acceptedAccount = (overrides: Record<string, unknown> = {}) => ({
   email: SYNTHETIC_EMAIL,
   organization: SYNTHETIC_ORGANIZATION,
-  subscriptionType: 'synthetic-plan',
-  tokenSource: 'synthetic-token-source',
-  apiKeySource: 'none',
+  subscriptionType: 'Claude Max',
   apiProvider: 'firstParty',
   ...overrides,
 });
@@ -1247,41 +1368,117 @@ function assertNoAccountIdentity(record: Record<string, any>): void {
   assert.equal(text.includes(SYNTHETIC_ORGANIZATION), false, 'organization recorded');
 }
 
-test('a subscription-authorized run with consistent observations is unconfirmed, with the values recorded', async () => {
-  const run = await twoTurnWithSources('sub-consistent', ['none', 'none'], true, {
-    account: () => consistentAccount(),
+test('a subscription-authorized run is verified when every turn meets the accepted rule; a missing tokenSource is recorded, not blocking', async () => {
+  const absent = await twoTurnWithSources('sub-accepted', ['none', 'none'], true, {
+    account: () => acceptedAccount(),
   });
-  assert.equal(run.verification.status, 'unconfirmed');
-  assert.equal(run.verification.subscriptionEvidence, 'consistent-but-undefined');
-  assert.match(run.verification.reason, /defines no values for subscriptionType or tokenSource/);
-  assert.match(run.verification.reason, /'synthetic-plan'/);
-  assert.deepEqual(run.verification.observedValues, {
+  assert.equal(absent.code, 0, JSON.stringify(absent.verification));
+  assert.equal(absent.record.exitCode, 0);
+  assert.equal(absent.verification.status, 'verified');
+  assert.equal(absent.verification.subscriptionEvidence, 'rule-met');
+  assert.equal(absent.verification.scenarioExitCode, 0);
+  assert.equal(absent.verification.exitCode, 0);
+  assert.deepEqual(absent.verification.acceptedRule, {
+    initApiKeySource: 'none',
+    accountApiProvider: 'firstParty',
+    accountSubscriptionType: 'Claude Max',
+  });
+  assert.match(absent.verification.ruleBasis, /Niclas, 22 Oct 2026/);
+  assert.match(absent.verification.ruleBasis, /judged per turn/);
+  assert.match(absent.verification.ruleBasis, /not a billing proof/);
+  assert.match(absent.verification.note, /not a billing proof/);
+  assert.match(absent.record.authorizationScope, /personal, single-user use/);
+  assert.match(absent.record.authorizationScope, /Not a basis for distributing DSpatch/);
+  assert.match(absent.verification.authorizationScope, /personal, single-user use/);
+  // Judged per turn: each turn met the rule by its own run; neither got a tokenSource.
+  assert.deepEqual(
+    absent.verification.observedPerTurn.map((entry: { turn: string; meetsAcceptedRule: boolean; tokenSourceObserved: boolean | null }) => [entry.turn, entry.meetsAcceptedRule, entry.tokenSourceObserved]),
+    [['turn-1', true, false], ['turn-2', true, false]],
+  );
+  assert.deepEqual(absent.verification.observedPerTurn[0].account.fields, {
+    apiProvider: 'firstParty',
+    subscriptionType: 'Claude Max',
+    tokenSource: null,
+    apiKeySource: null,
+  });
+  assert.deepEqual(absent.verification.observedValues, {
     apiProvider: ['firstParty'],
-    subscriptionType: ['synthetic-plan'],
+    subscriptionType: ['Claude Max'],
+    tokenSource: [null],
+    accountApiKeySource: [null],
+    initApiKeySource: ['none'],
+    tokenSourceObserved: false,
+  });
+  assert.match(absent.verification.tokenSourceNote, /optional/);
+  assert.match(absent.verification.tokenSourceNote, /does not block/);
+  assert.match(absent.verification.reason, /tokenSource was not sent \(recorded, not blocking\)/);
+  assert.deepEqual(absent.verification.findings, { conflicts: [], mismatches: [], gaps: [] });
+  assert.equal(absent.record.continuity.sameProviderSessionBothTurns, true);
+  assertNoAccountIdentity(absent.record);
+
+  // The same rule with the optional fields present: verified as well, and recorded.
+  const present = await twoTurnWithSources('sub-accepted-token', ['none', 'none'], true, {
+    account: () => acceptedAccount({ tokenSource: 'synthetic-token-source', apiKeySource: 'none' }),
+  });
+  assert.equal(present.code, 0, JSON.stringify(present.verification));
+  assert.equal(present.verification.status, 'verified');
+  assert.equal(present.verification.tokenSourceNote, null);
+  assert.deepEqual(present.verification.observedValues, {
+    apiProvider: ['firstParty'],
+    subscriptionType: ['Claude Max'],
     tokenSource: ['synthetic-token-source'],
     accountApiKeySource: ['none'],
     initApiKeySource: ['none'],
+    tokenSourceObserved: true,
   });
-  assert.deepEqual(run.verification.observedPerTurn[0].account.fields, {
-    apiProvider: 'firstParty',
-    subscriptionType: 'synthetic-plan',
-    tokenSource: 'synthetic-token-source',
-    apiKeySource: 'none',
+  assert.deepEqual(
+    present.verification.observedPerTurn.map((entry: { tokenSourceObserved: boolean | null }) => entry.tokenSourceObserved),
+    [true, true],
+  );
+  assertNoAccountIdentity(present.record);
+});
+
+test('a subscriptionType outside the accepted rule is a mismatch, and a conflict wins over it', async () => {
+  const pro = await twoTurnWithSources('sub-pro', ['none', 'none'], true, {
+    account: () => acceptedAccount({ subscriptionType: 'Claude Pro' }),
   });
-  // The scenario succeeded; the contract cannot confirm a subscription login.
-  assert.equal(run.verification.scenarioExitCode, 0);
-  assert.equal(run.code, EXIT_AUTHENTICATION_UNVERIFIED);
-  assert.equal(run.record.continuity.sameProviderSessionBothTurns, true);
-  assert.match(run.record.authorizationScope, /personal, single-user use/);
-  assert.match(run.record.authorizationScope, /Not a basis for distributing DSpatch/);
-  assertNoAccountIdentity(run.record);
+  assert.equal(pro.verification.status, 'mismatch');
+  assert.equal(pro.verification.subscriptionEvidence, 'mismatch');
+  assert.match(pro.verification.reason, /subscriptionType 'Claude Pro' is not 'Claude Max'/);
+  assert.match(pro.verification.reason, /not evidence of an API path, but not the accepted plan/);
+  assert.equal(pro.verification.scenarioExitCode, 0);
+  assert.equal(pro.code, EXIT_AUTHENTICATION_UNVERIFIED);
+  assert.equal(pro.record.exitCode, EXIT_AUTHENTICATION_UNVERIFIED);
+  assert.equal(pro.verification.findings.mismatches.length, 2);
+  assertNoAccountIdentity(pro.record);
+
+  // One turn outside the rule is enough; the other turn's own result is still recorded.
+  const secondPro = await twoTurnWithSources('sub-pro-second', ['none', 'none'], true, {
+    account: (index) => acceptedAccount(index === 1 ? { subscriptionType: 'Claude Pro' } : {}),
+  });
+  assert.equal(secondPro.verification.status, 'mismatch');
+  assert.deepEqual(
+    secondPro.verification.observedPerTurn.map((entry: { meetsAcceptedRule: boolean }) => entry.meetsAcceptedRule),
+    [true, false],
+  );
+  assert.equal(secondPro.code, EXIT_AUTHENTICATION_UNVERIFIED);
+
+  // A conflicting observation takes precedence over a mismatch.
+  const both = await twoTurnWithSources('sub-pro-bedrock', ['none', 'none'], true, {
+    account: () => acceptedAccount({ subscriptionType: 'Claude Pro', apiProvider: 'bedrock' }),
+  });
+  assert.equal(both.verification.status, 'conflicting');
+  assert.equal(both.verification.subscriptionEvidence, 'conflicting');
+  assert.match(both.verification.reason, /accountInfo apiProvider 'bedrock'/);
+  assert.equal(both.verification.findings.mismatches.length, 2);
+  assert.equal(both.code, EXIT_AUTHENTICATION_UNVERIFIED);
 });
 
 test('a subscription-authorized run fails on an observed API-key source or a non-firstParty provider', async () => {
   const cases = [
-    { name: 'sub-init-key', sources: ['none', 'ANTHROPIC_API_KEY'], account: () => consistentAccount(), match: /init message apiKeySource 'ANTHROPIC_API_KEY'/ },
-    { name: 'sub-account-key', sources: ['none', 'none'], account: () => consistentAccount({ apiKeySource: '/login managed key' }), match: /accountInfo apiKeySource '\/login managed key'/ },
-    { name: 'sub-provider', sources: ['none', 'none'], account: (index: number) => consistentAccount(index === 1 ? { apiProvider: 'bedrock' } : {}), match: /accountInfo apiProvider 'bedrock'/ },
+    { name: 'sub-init-key', sources: ['none', 'ANTHROPIC_API_KEY'], account: () => acceptedAccount(), match: /init message apiKeySource 'ANTHROPIC_API_KEY'/ },
+    { name: 'sub-account-key', sources: ['none', 'none'], account: () => acceptedAccount({ apiKeySource: '/login managed key' }), match: /accountInfo apiKeySource '\/login managed key'/ },
+    { name: 'sub-provider', sources: ['none', 'none'], account: (index: number) => acceptedAccount(index === 1 ? { apiProvider: 'bedrock' } : {}), match: /accountInfo apiProvider 'bedrock'/ },
   ];
   for (const { name, sources, account, match } of cases) {
     const run = await twoTurnWithSources(name, sources, true, { account });
@@ -1290,37 +1487,70 @@ test('a subscription-authorized run fails on an observed API-key source or a non
     assert.match(run.verification.reason, match, name);
     assert.equal(run.verification.scenarioExitCode, 0, name);
     assert.equal(run.code, EXIT_AUTHENTICATION_UNVERIFIED, name);
+    assert.match(run.verification.ruleBasis, /22 Oct 2026/, name);
     assertNoAccountIdentity(run.record);
   }
 });
 
 test('missing or incomplete account information leaves a subscription-authorized run unconfirmed', async () => {
   const cases = [
-    { name: 'sub-no-method', account: () => undefined, match: /offers no accountInfo\(\)/ },
-    { name: 'sub-rejects', account: () => new Error('synthetic failure'), match: /accountInfo\(\) failed: Error/ },
-    { name: 'sub-no-token-source', account: () => consistentAccount({ tokenSource: undefined }), match: /accountInfo has no tokenSource/ },
-    { name: 'sub-no-provider', account: (index: number) => consistentAccount(index === 1 ? { apiProvider: undefined, subscriptionType: undefined } : {}), match: /turn-2: accountInfo has no apiProvider, subscriptionType/ },
+    { name: 'sub-no-method', account: () => undefined, match: /offers no accountInfo\(\)/, perTurn: [false, false] },
+    { name: 'sub-unavailable-second', account: (index: number) => (index === 1 ? new Error('synthetic failure') : acceptedAccount()), match: /turn-2: account information unavailable \(accountInfo\(\) failed: Error\)/, perTurn: [true, false] },
+    { name: 'sub-no-plan', account: () => acceptedAccount({ subscriptionType: undefined }), match: /accountInfo has no subscriptionType/, perTurn: [false, false] },
+    { name: 'sub-no-provider-second', account: (index: number) => acceptedAccount(index === 1 ? { apiProvider: undefined } : {}), match: /turn-2: accountInfo has no apiProvider/, perTurn: [true, false] },
   ];
-  for (const { name, account, match } of cases) {
+  for (const { name, account, match, perTurn } of cases) {
     const run = await twoTurnWithSources(name, ['none', 'none'], true, { account });
     assert.equal(run.verification.status, 'unconfirmed', name);
     assert.equal(run.verification.subscriptionEvidence, 'insufficient', name);
     assert.match(run.verification.reason, match, name);
+    assert.equal(run.verification.scenarioExitCode, 0, name);
     assert.equal(run.code, EXIT_AUTHENTICATION_UNVERIFIED, name);
+    // One accepted turn never stands in for the other.
+    assert.deepEqual(
+      run.verification.observedPerTurn.map((entry: { meetsAcceptedRule: boolean }) => entry.meetsAcceptedRule),
+      perTurn,
+      name,
+    );
     assertNoAccountIdentity(run.record);
   }
-  // An init message without apiKeySource is a gap too, even with good account information.
-  const noField = await twoTurnWithSources('sub-init-no-field', ['none', null], true, { account: () => consistentAccount() });
+  // An init message without apiKeySource is a gap too, even with an accepted account.
+  const noField = await twoTurnWithSources('sub-init-no-field', ['none', null], true, { account: () => acceptedAccount() });
+  assert.equal(noField.verification.status, 'unconfirmed');
   assert.equal(noField.verification.subscriptionEvidence, 'insufficient');
   assert.match(noField.verification.reason, /turn-2: no apiKeySource in the init message/);
+  assert.equal(noField.code, EXIT_AUTHENTICATION_UNVERIFIED);
+
+  // Turn one accepted, turn two without an init message of its own: unconfirmed, no
+  // continuity, and the scenario's own 2 stands.
+  const noInit = await twoTurnWithSources('sub-no-init-second', ['none', 'no-init'], true, { account: () => acceptedAccount() });
+  assert.equal(noInit.verification.status, 'unconfirmed');
+  assert.match(noInit.verification.reason, /turn-2: 0 init messages, not exactly one/);
+  assert.deepEqual(
+    noInit.verification.observedPerTurn.map((entry: { meetsAcceptedRule: boolean }) => entry.meetsAcceptedRule),
+    [true, false],
+  );
+  assert.equal(noInit.record.continuity.sameProviderSessionBothTurns, false);
+  assert.equal(noInit.code, 2);
+
+  // Two init messages in turn one and none in turn two: equal totals, wrong owners, never verified.
+  const twice = await twoTurnWithSources('sub-twice-then-none', [['none', 'none'], []], true, { account: () => acceptedAccount() });
+  assert.equal(twice.verification.status, 'unconfirmed');
+  assert.match(twice.verification.reason, /turn-1: 2 init messages, not exactly one; turn-2: 0 init messages, not exactly one/);
+  assert.equal(twice.record.continuity.sameProviderSessionBothTurns, false);
+  assert.equal(twice.code, 2);
 });
 
-test('a subscription-authorized scenario failure keeps its own code', async () => {
-  const forgot = await twoTurnWithSources('sub-no-nonce', ['none', 'none'], false, { account: () => consistentAccount() });
+test('a subscription-authorized scenario failure keeps its own code, verified or not', async () => {
+  // The nonce is not returned: the scenario's 2 stands although the rule was met.
+  const forgot = await twoTurnWithSources('sub-no-nonce', ['none', 'none'], false, { account: () => acceptedAccount() });
   assert.equal(forgot.code, 2);
-  assert.equal(forgot.verification.status, 'unconfirmed');
+  assert.equal(forgot.verification.status, 'verified');
+  assert.equal(forgot.verification.scenarioExitCode, 2);
+  assert.equal(forgot.verification.exitCode, 2);
+  assert.equal(forgot.record.continuity.secondAnswerContainsNonce, false);
   const forgotConflicting = await twoTurnWithSources('sub-no-nonce-conflict', ['ANTHROPIC_API_KEY', 'none'], false, {
-    account: () => consistentAccount(),
+    account: () => acceptedAccount(),
   });
   assert.equal(forgotConflicting.code, 2);
   assert.equal(forgotConflicting.verification.status, 'conflicting');

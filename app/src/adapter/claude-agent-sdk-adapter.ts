@@ -82,8 +82,18 @@ export class ClaudeAdapterError extends Error implements AdapterError {
  * - `permissionMode: 'dontAsk'` denies anything that would have prompted, and
  *   the SDK documents that `canUseTool` is then never called — so nothing waits
  *   on a prompt nobody can answer.
- * - `settingSources: []` loads no user, project or local settings file. Managed
- *   (policy) settings are not controlled by this option.
+ * - `settingSources: []` loads no user, project or local settings file. It does
+ *   not cover managed (policy) settings, `~/.claude.json` (always read; it holds
+ *   MCP server configurations) or the claude.ai connectors fetched for a
+ *   claude.ai login: the 22 Oct 2026 probe, run without `strictMcpConfig`,
+ *   listed eight `mcp__claude_ai_Claude_Docs__*` tools beside the four
+ *   configured ones.
+ * - `strictMcpConfig: true` is the control for that: only MCP servers passed
+ *   through `mcpServers` (none here) are used; project `.mcp.json`, user
+ *   settings, plugins and claude.ai connectors are ignored (sdk.d.ts 0.3.306
+ *   :2341-2348; the SDK's online TypeScript reference, read 22 Oct 2026, names
+ *   the connectors explicitly). Documented, not yet observed: a live run's init
+ *   `mcp_servers` and `tools` show whether it held.
  *
  * None of this is containment. `cwd` scopes permission rules; it does not
  * confine the process (types.ts, "Roots, not permissions").
@@ -98,6 +108,8 @@ export interface ClaudePermissionPolicy {
    */
   readonly permissionMode: 'dontAsk';
   readonly settingSources: readonly [];
+  /** Always `true` (see above). A policy without it is refused. */
+  readonly strictMcpConfig: true;
 }
 
 /** The DSP-109 fixture configuration. Recorded in every run record. */
@@ -106,6 +118,7 @@ export const FIXTURE_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
   allowedTools: Object.freeze(['Read(/**)', 'Edit(/src/**)']),
   permissionMode: 'dontAsk',
   settingSources: Object.freeze([]) as readonly [],
+  strictMcpConfig: true,
 }) as ClaudePermissionPolicy;
 
 // --- Authentication guard ------------------------------------------------------
@@ -724,6 +737,14 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           'permission prompt.',
       );
     }
+    if ((this.permissions.strictMcpConfig as boolean) !== true) {
+      throw new ClaudeAdapterError(
+        "A permission policy without strictMcpConfig true is not used by DSpatch's " +
+          'Claude adapter: the subprocess would attach MCP servers from project ' +
+          '.mcp.json, user settings, plugins and claude.ai connectors, none of which ' +
+          'DSpatch configured.',
+      );
+    }
     const env = { ...(options.env ?? process.env) };
     const matching =
       options.caseInsensitiveEnv === undefined
@@ -1056,6 +1077,11 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     return this.requireSession(sessionId).modelReportedValue;
   }
 
+  /** The title passed as `Options.title` on every `query()` of this session. For run records. */
+  sessionTitle(sessionId: DspatchSessionId): string {
+    return sessionTitleFor(this.requireSession(sessionId));
+  }
+
   hasActiveRun(sessionId: DspatchSessionId): boolean {
     return this.sessions.get(sessionId)?.activeRun != null;
   }
@@ -1079,6 +1105,17 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       allowedTools: [...this.permissions.allowedTools],
       permissionMode: this.permissions.permissionMode,
       settingSources: [],
+      // Only the MCP servers passed here (none) — not project `.mcp.json`, user
+      // settings, plugins or claude.ai connectors. See ClaudePermissionPolicy.
+      strictMcpConfig: this.permissions.strictMcpConfig,
+      // The title DSpatch chooses (sdk.d.ts 0.3.306 :2461-2469: the session uses
+      // it instead of auto-generating one from the first user message; on
+      // `resume` the persisted title — the same value — takes precedence). It makes
+      // the provider transcript traceable to the DSpatch session and, per the
+      // documentation, skips the background title request: the most likely, not
+      // established, source of the unrequested claude-haiku-5-5 usage in the
+      // 22 Oct 2026 probe. Whether that call disappears is to be observed live.
+      title: sessionTitleFor(state),
       includePartialMessages: true,
       abortController: run.abortController,
       env: { ...this.subprocessEnv },
@@ -1339,6 +1376,11 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       }
     }
   }
+}
+
+/** The session title passed to the provider: the DSpatch session id, so the transcript names it. */
+function sessionTitleFor(state: SessionState): string {
+  return state.dspatchSessionId;
 }
 
 /**
