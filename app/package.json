@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "DSpatch – a workspace for agent-assisted development. Runnable skeleton from DSP-1 substep 2.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "main": "dist/main/main.js",
   "engines": {
     "node": ">=22.12.0"

@@ -52,3 +52,9 @@ The Backlog configuration and tasks already exist in `backlog/`; no new `backlog
 Planning reads the current working copy. Backlog's automatic remote calls and cross-branch searches are disabled in this initial setup. Fetch and publish changes explicitly with Git when needed. No MCP connection is required to read or update the plan.
 
 See also [Backlog.md's official documentation](https://github.com/MrLesk/Backlog.md).
+
+## License
+
+DSpatch is licensed under the [MIT License](LICENSE).
+
+Third-party dependencies and agent providers remain subject to their own licenses and terms.
