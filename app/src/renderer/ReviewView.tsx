@@ -233,7 +233,11 @@ function OpenReview({
     dirty.current = false;
     void bridge.saveState(latest.current).then(
       (result) => {
-        setSaving(dirty.current);
+        if (!result.saved) {
+          // Still unsaved: the next change, closing the view or unloading tries again.
+          dirty.current = true;
+        }
+        setSaving(result.saved && dirty.current);
         setSave(result.saved ? { at: result.at } : { at: result.at, error: result.error ?? 'not saved' });
       },
       (error: unknown) => {
@@ -612,9 +616,9 @@ function Header({
         </div>
       </div>
       <div className="rv-header-side">
-        <div className={save?.error === undefined ? 'rv-saved' : 'rv-error'}>
+        <div className={save?.error !== undefined ? 'rv-error' : saving ? 'rv-sub' : 'rv-saved'} role="status">
           {save?.error !== undefined
-            ? `Record NOT saved: ${save.error}`
+            ? `Record NOT saved — your latest changes exist only in this window and are retried with the next change. Reason: ${save.error}`
             : saving
               ? 'Saving…'
               : save === null
