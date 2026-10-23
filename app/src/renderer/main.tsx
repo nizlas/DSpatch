@@ -4,8 +4,10 @@ import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
 import { LoopEditor } from './LoopEditor';
+import { ReviewView } from './ReviewView';
 import './styles.css';
 import './loop-editor.css';
+import './review.css';
 
 const host = document.getElementById('root');
 
@@ -21,8 +23,10 @@ if (host === null) {
  * added beside it without touching it: `#editor` chooses, and `npm run editor` opens
  * the window on that hash.
  */
-function chosenView(): 'editor' | 'chat' {
-  return window.location.hash.replace(/^#/, '') === 'editor' ? 'editor' : 'chat';
+function chosenView(): 'editor' | 'chat' | 'review' {
+  const hash = window.location.hash.replace(/^#/, '');
+  // `#review`: the standalone review surface (`npm run review`). It needs no chat.
+  return hash === 'editor' ? 'editor' : hash === 'review' ? 'review' : 'chat';
 }
 
 /** The hash the window was opened on, which decides whether it has a chat to keep. */
@@ -46,7 +50,7 @@ const initialView = chosenView();
  * one until the user asks for it; `npm run editor` therefore stays what it was.
  */
 function Surfaces(): JSX.Element {
-  const [view, setView] = useState<'editor' | 'chat'>(initialView);
+  const [view, setView] = useState<'editor' | 'chat' | 'review'>(initialView);
 
   useEffect(() => {
     function follow(): void {
@@ -76,6 +80,7 @@ function Surfaces(): JSX.Element {
         </div>
       )}
       {view === 'editor' && <LoopEditor />}
+      {view === 'review' && <ReviewView />}
     </>
   );
 }

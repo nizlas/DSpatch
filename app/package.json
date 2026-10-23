@@ -16,6 +16,7 @@
     "build:renderer": "vite build",
     "dev": "npm run build:node && node scripts/dev.mjs",
     "editor": "npm run build:node && node scripts/editor.mjs",
+    "review": "npm run build:node && node scripts/review.mjs",
     "loop:dry-run": "node --import ./scripts/ts-resolve.mjs scripts/run-loop-graph.mjs",
     "loop:live": "node --import ./scripts/ts-resolve.mjs scripts/run-loop-graph.mjs --live",
     "roles:generate": "node --import ./scripts/ts-resolve.mjs scripts/generate-roles.mjs",

@@ -88,6 +88,7 @@ import { ownRepositoryRoot } from './own-repository';
 import { PROBE_EXIT, runCursorProbe } from './probe-cursor';
 import { ProjectStore } from './project-store';
 import { readDirectoryPage, readFileForViewing } from './workspace-tree';
+import { registerReviewIpc } from './review-ipc';
 import {
   addFolderTo,
   folderDisplayName,
@@ -4481,6 +4482,15 @@ function main(): void {
     // for the list before there was one to prefer.
     restoreRememberedWorkspace();
     registerIpc();
+    // The review surface (`#review`): read-only git at a fixed revision pair, no adapter.
+    registerReviewIpc({
+      recordsDir: path.join(app.getPath('userData'), 'reviews'),
+      initialDefinition: process.env['DSPATCH_REVIEW_DEFINITION'] ?? null,
+      window: () => mainWindow,
+      log: (message) => {
+        log(`[review] ${message}`);
+      },
+    });
     mainWindow = createWindow();
 
     if (smokeMode) {
