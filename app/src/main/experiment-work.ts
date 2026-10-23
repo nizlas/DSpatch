@@ -13,8 +13,10 @@ import {
   ClaudeAgentSdkAdapter,
   type AccountObservation,
   type AuthenticationAssessment,
+  type CancelTimers,
   type ClaudeProcessSpawner,
   type ClaudeQueryFunction,
+  type EndEvidence,
   type InitObservation,
   type LiveAuthorization,
 } from '../adapter/claude-agent-sdk-adapter';
@@ -43,7 +45,10 @@ import {
  *
  * DSP-109 added a provider choice (`--provider=cursor|claude`, Cursor by default)
  * to `code-change`, and two provider-generic scenarios, `cancel-reply` and
- * `two-turn`. A Claude run refuses to start unless {@link guardClaudeRun} passes:
+ * `two-turn`; DSP-115 added `cancel-then-follow-up`, a cancel-reply followed by a
+ * follow-up turn in the same adapter instance and session when the cancel ended
+ * with a confirmed process exit. A Claude run refuses to start unless
+ * {@link guardClaudeRun} passes:
  * an authorization must be recorded (`--api-key-approval=<reference>` or
  * `--subscription-authorization=<reference>`), and an API credential variable in
  * the environment is refused without an API-key approval.
@@ -547,6 +552,8 @@ export interface ScenarioOptions {
   readonly claudeQueryFn?: ClaudeQueryFunction;
   /** A substitute for Node's `spawn` in the Claude adapter's process wrapper. Tests only. */
   readonly claudeSpawnProcess?: ClaudeProcessSpawner;
+  /** Substitute timers for the Claude adapter's cancellation waits. Tests only. */
+  readonly claudeTimers?: CancelTimers;
   /** How long to keep listening after a cancelled turn's terminal event. Default 5 s. */
   readonly afterTerminalWatchMs?: number;
   /** Substitute for {@link readSourceRevision}. Tests only. */
@@ -675,6 +682,7 @@ function createAdapter(options: ScenarioOptions): CursorSdkAdapter | ClaudeAgent
       ...(options.claudeSpawnProcess === undefined
         ? {}
         : { spawnProcess: options.claudeSpawnProcess }),
+      ...(options.claudeTimers === undefined ? {} : { timers: options.claudeTimers }),
     });
   }
   return new CursorSdkAdapter({ toolPolicy: 'provider-default' });
@@ -2354,14 +2362,201 @@ export async function scenarioCancelReply(
   logPath: string,
   options: ScenarioOptions = {},
 ): Promise<number> {
-  const target = path.resolve(repoDir);
-  const record: Record<string, unknown> = {
-    scenario: 'DSP-109 cancel-reply — cancel after streamed assistant text began',
-    startedAtUtc: new Date().toISOString(),
-    node: process.versions.node,
-    testRepo: target,
-    prompt: CANCEL_REPLY_PROMPT,
+  return cancelReply(repoDir, logPath, options, false);
+}
+
+/** The first turn of `cancel-then-follow-up`: the cancel-reply prompt with a marker. */
+export function cancelReplyPromptWithMarker(marker: string): string {
+  return `The reference code for this request is ${marker}. ${CANCEL_REPLY_PROMPT}`;
+}
+
+/** Asks for the marker without repeating it. */
+export const FOLLOW_UP_PROMPT =
+  'What was the reference code in my previous message? Do not use any tool. ' +
+  'Reply with the code only.';
+
+/**
+ * DSP-115: `cancel-reply`, then — only when the cancel ended `stopped` with a
+ * confirmed process exit — a follow-up turn in the same adapter instance and
+ * DSpatch session, before `dispose()`, asking for a marker the first prompt
+ * carried. The Claude adapter resumes the same provider session for it. With
+ * any other end (`forced`, `unconfirmed`, or no cancel) no follow-up is sent and
+ * the record says why (exit code 2). Continuity across processes is not tested.
+ */
+export async function scenarioCancelThenFollowUp(
+  repoDir: string,
+  logPath: string,
+  options: ScenarioOptions = {},
+): Promise<number> {
+  return cancelReply(repoDir, logPath, options, true);
+}
+
+/**
+ * Why a follow-up must not be sent after this cancel, or `null` when it may: only
+ * a cancelled turn that ended `stopped` with the observed process's exit.
+ */
+function followUpBlocker(
+  textBegan: boolean,
+  cancelError: Record<string, unknown> | null,
+  turn: TurnLog,
+  endEvidence: EndEvidence | null,
+): string | null {
+  if (!textBegan) {
+    return 'no cancel was made: assistant text had not begun while the turn was running';
+  }
+  if (cancelError !== null) {
+    return `cancel() failed: ${String(cancelError['message'])}`;
+  }
+  if (turn.terminalStatus === null) {
+    return 'the cancelled turn reached no terminal event, so its end is unknown';
+  }
+  if (turn.terminalStatus !== 'cancelled') {
+    return `the turn ended '${turn.terminalStatus}', not 'cancelled'`;
+  }
+  if (turn.end === 'unconfirmed') {
+    return (
+      "the end was 'unconfirmed': the Claude Code process was not seen to exit, and a " +
+      'new turn would resume the provider session while that process may still be writing it'
+    );
+  }
+  if (turn.end === 'forced') {
+    return (
+      "the end was 'forced' (abort or kill, not the interrupt); the follow-up is sent " +
+      "only after an end 'stopped' with a confirmed process exit"
+    );
+  }
+  if (turn.end !== 'stopped') {
+    return `the adapter reported ${turn.end === null ? 'no end' : `end '${turn.end}'`}, not 'stopped'`;
+  }
+  if (endEvidence?.kind !== 'process-exit' || (endEvidence.process?.exitedAtUtc ?? null) === null) {
+    return (
+      "end 'stopped' without a confirmed process exit (evidence " +
+      `'${endEvidence?.kind ?? 'none'}')`
+    );
+  }
+  return null;
+}
+
+/**
+ * Send the follow-up and record it. True only when it finished, its own run's
+ * init message reported the first turn's provider session, and the answer
+ * contains the marker. Tool calls are recorded, not judged.
+ */
+async function sendFollowUp(
+  adapter: AgentAdapter,
+  sessionId: string,
+  recorder: Recorder,
+  first: TurnLog,
+  marker: string,
+  record: Record<string, unknown>,
+): Promise<boolean> {
+  const claude = adapter instanceof ClaudeAgentSdkAdapter ? adapter : null;
+  const resultsBefore = claude === null ? 0 : claude.resultMessages(sessionId).length;
+  // Overwritten below; if send() throws, the record still shows it was attempted.
+  record['followUp'] = {
+    started: true,
+    prompt: FOLLOW_UP_PROMPT,
+    outcome: 'send() failed; see failure',
   };
+  const second = await recorder.send('follow-up', FOLLOW_UP_PROMPT);
+  let waitError: Record<string, unknown> | null = null;
+  try {
+    await recorder.waitForFinish(second);
+  } catch (error) {
+    waitError = describeError(error);
+  }
+  const answer = second.finalMessage ?? second.deltaText;
+  const answerContainsMarker = answer.includes(marker);
+  const inits = claude === null ? [] : claude.initObservations(sessionId);
+  const own = initsOf(second, inits);
+  const firstOwn = initsOf(first, inits);
+  const continuity =
+    claude === null
+      ? null
+      : sessionContinuity(inits, [
+          { label: first.label, runId: first.runId },
+          { label: second.label, runId: second.runId },
+        ]);
+  // The cancelled run's stream had ended (a confirmed end requires it) before the
+  // follow-up was sent, so the result messages after this point are the follow-up's.
+  const results =
+    claude === null
+      ? []
+      : claude
+          .resultMessages(sessionId)
+          .slice(resultsBefore)
+          .map((message) => message as Record<string, unknown>);
+  const sameProviderSession = continuity === null ? null : continuity.same;
+  record['followUp'] = {
+    started: true,
+    dspatchRunId: second.runId === '' ? null : second.runId,
+    prompt: FOLLOW_UP_PROMPT,
+    promptContainsMarker: FOLLOW_UP_PROMPT.includes(marker),
+    terminalStatus: second.terminalStatus,
+    end: second.end,
+    runError: second.error,
+    waitError,
+    initMessages: own.length,
+    session_id: own.length === 1 ? stringField(own[0]?.message, 'session_id') : null,
+    apiKeySource: own.length === 1 ? stringField(own[0]?.message, 'apiKeySource') : null,
+    firstTurnProviderSessionId:
+      firstOwn.length === 1 ? stringField(firstOwn[0]?.message, 'session_id') : null,
+    sameProviderSessionAsFirstTurn: sameProviderSession,
+    sameProviderSessionReason: continuity === null ? null : continuity.reason,
+    answer,
+    answerContainsMarker,
+    toolCallsStarted: second.toolCalls.filter((call) => call.phase === 'started').length,
+    toolCallsExpected: 0,
+    toolCalls: second.toolCalls,
+    results: results.map((result) => ({
+      subtype: result['subtype'] ?? null,
+      is_error: result['is_error'] ?? null,
+      result: result['result'] ?? null,
+      usage: result['usage'] ?? null,
+      modelUsage: result['modelUsage'] ?? null,
+      totalCostUsdEstimate: result['total_cost_usd'] ?? null,
+      totalCostNote: "the SDK's own local estimate; not a charge and not a billing reading",
+    })),
+    usageEvents: second.usageEvents,
+  };
+  log(
+    `follow-up: ${String(second.terminalStatus)}, same provider session ` +
+      `${String(sameProviderSession)}, marker recalled ${String(answerContainsMarker)}`,
+  );
+  return second.terminalStatus === 'finished' && sameProviderSession === true && answerContainsMarker;
+}
+
+async function cancelReply(
+  repoDir: string,
+  logPath: string,
+  options: ScenarioOptions,
+  withFollowUp: boolean,
+): Promise<number> {
+  const target = path.resolve(repoDir);
+  // A marker only this program knows, so a recalled one came through the session.
+  const marker = withFollowUp ? newNonce() : null;
+  const firstPrompt = marker === null ? CANCEL_REPLY_PROMPT : cancelReplyPromptWithMarker(marker);
+  const record: Record<string, unknown> =
+    marker === null
+      ? {
+          scenario: 'DSP-109 cancel-reply — cancel after streamed assistant text began',
+          startedAtUtc: new Date().toISOString(),
+          node: process.versions.node,
+          testRepo: target,
+          prompt: CANCEL_REPLY_PROMPT,
+        }
+      : {
+          scenario:
+            'DSP-115 cancel-then-follow-up — cancel after streamed assistant text began, ' +
+            'then a follow-up turn in the same adapter instance and session',
+          startedAtUtc: new Date().toISOString(),
+          node: process.versions.node,
+          testRepo: target,
+          prompt: firstPrompt,
+          marker,
+          followUpPrompt: FOLLOW_UP_PROMPT,
+          crossProcessResume: 'not tested: both turns ran in one process and one adapter instance',
+        };
   const refused = refuseUnauthorized(options, record, logPath);
   if (refused !== null) {
     return refused;
@@ -2380,7 +2575,7 @@ export async function scenarioCancelReply(
     );
     turns = recorder.turns;
     try {
-      const turn = await recorder.send('cancelled-reply', CANCEL_REPLY_PROMPT);
+      const turn = await recorder.send('cancelled-reply', firstPrompt);
       await recorder.firstAssistantText();
       const textBegan = turn.firstTextMs !== null && turn.terminalStatus === null;
       const cancelStartedMs = recorder.elapsedMs();
@@ -2486,10 +2681,34 @@ export async function scenarioCancelReply(
       };
       record['turns'] = recorder.turns;
       record['capabilities'] = adapter.capabilities();
-      exitCode =
-        textBegan && turn.terminalStatus === 'cancelled' && noContentChange && !endUnconfirmed
-          ? 0
-          : 2;
+      const cancelCriteriaMet =
+        textBegan && turn.terminalStatus === 'cancelled' && noContentChange && !endUnconfirmed;
+      let followUpMet = true;
+      if (marker !== null) {
+        // Never a new turn unless the cancelled one stopped and its process exited.
+        const blocker = followUpBlocker(
+          textBegan,
+          cancelError,
+          turn,
+          adapterCancellation?.endEvidence ?? null,
+        );
+        if (blocker === null) {
+          followUpMet = await sendFollowUp(adapter, sessionId, recorder, turn, marker, record);
+        } else {
+          log(`follow-up not sent: ${blocker}`);
+          record['followUp'] = { started: false, reason: blocker };
+          followUpMet = false;
+        }
+        const followUp = record['followUp'] as Record<string, unknown>;
+        record['verdict'] = {
+          ...(record['verdict'] as Record<string, unknown>),
+          followUpStarted: followUp['started'] === true,
+          followUpFinished: followUp['terminalStatus'] === 'finished',
+          followUpSameProviderSession: followUp['sameProviderSessionAsFirstTurn'] === true,
+          followUpRecalledMarker: followUp['answerContainsMarker'] === true,
+        };
+      }
+      exitCode = cancelCriteriaMet && followUpMet ? 0 : 2;
     } finally {
       recorder.stop();
     }
@@ -2629,6 +2848,7 @@ function usage(): string {
     '  code-change   <repoDir> <logPath>            [provider flags]',
     '  cancel-reply  <repoDir> <logPath>            [provider flags]',
     '  two-turn      <repoDir> <logPath>            [provider flags]',
+    '  cancel-then-follow-up <repoDir> <logPath>    [provider flags]',
     '  probes        <workspaceDir> <outsideDir> <logPath>',
     '  net-shell     <workspaceDir> <logPath>',
     '  cancel-stream <workspaceDir> <logPath>',
@@ -2650,6 +2870,15 @@ function usage(): string {
     'says whether the observations conflict, mismatch or are incomplete. Checked',
     'after the turns ran: it identifies the path the provider reported, does not',
     'prevent charges already incurred, and is not a billing proof.',
+    '',
+    'cancel-then-follow-up (DSP-115): cancel-reply with a generated reference code in',
+    "the first prompt. Only if the cancel ended 'stopped' with a confirmed process",
+    'exit, a follow-up turn in the same adapter instance and session asks for the code',
+    "without repeating it (Claude resumes the same provider session). Exit 0 only if",
+    'the cancel-reply criteria hold and the follow-up finished on the same provider',
+    'session with the code in its answer. Exit 2 also when no follow-up was sent',
+    "(end 'forced' or 'unconfirmed', or no cancel; the record's followUp.reason says",
+    'why) or it did not meet those criteria. Exit 5 as above, over both turns.',
   ].join('\n');
 }
 
@@ -2691,8 +2920,28 @@ export function parseScenarioArgs(argv: readonly string[]): {
   return { positional, options: { provider, authorization } };
 }
 
-async function main(): Promise<number> {
-  const { positional, options } = parseScenarioArgs(process.argv.slice(2));
+/** What a test may put behind a command line: never set from the command line itself. */
+export type ScenarioSubstitutes = Pick<
+  ScenarioOptions,
+  | 'env'
+  | 'claudeQueryFn'
+  | 'claudeSpawnProcess'
+  | 'claudeTimers'
+  | 'afterTerminalWatchMs'
+  | 'sourceRevision'
+>;
+
+/**
+ * Parse a command line and run its subcommand: what the program does with
+ * `process.argv`. Exported so a test can run a command line with substitutes.
+ */
+export async function runScenarioCommand(
+  argv: readonly string[],
+  substitutes: ScenarioSubstitutes = {},
+): Promise<number> {
+  const parsed = parseScenarioArgs(argv);
+  const { positional } = parsed;
+  const options: ScenarioOptions = { ...parsed.options, ...substitutes };
   const [subcommand, ...args] = positional;
   const arg = (index: number): string => {
     const value = args[index];
@@ -2702,7 +2951,7 @@ async function main(): Promise<number> {
     return value;
   };
 
-  const providerAware = ['code-change', 'cancel-reply', 'two-turn'];
+  const providerAware = ['code-change', 'cancel-reply', 'two-turn', 'cancel-then-follow-up'];
   if (options.provider !== 'cursor' && !providerAware.includes(subcommand ?? '')) {
     throw new Error(
       `--provider=${String(options.provider)} applies only to ${providerAware.join(', ')}.`,
@@ -2726,6 +2975,8 @@ async function main(): Promise<number> {
       return scenarioCancelReply(arg(0), arg(1), options);
     case 'two-turn':
       return scenarioTwoTurn(arg(0), arg(1), options);
+    case 'cancel-then-follow-up':
+      return scenarioCancelThenFollowUp(arg(0), arg(1), options);
     case 'probes':
       return scenarioProbes(arg(0), arg(1), arg(2));
     case 'net-shell':
@@ -2745,7 +2996,7 @@ async function main(): Promise<number> {
 // Run only as a program. A test imports the scenarios without starting one; under
 // the test loader this file is an ES module, where `require` does not exist.
 if (typeof require !== 'undefined' && require.main === module) {
-  main()
+  runScenarioCommand(process.argv.slice(2))
     .then((code) => {
       process.exitCode = code;
     })

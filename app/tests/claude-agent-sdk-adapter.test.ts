@@ -34,11 +34,15 @@ import {
 } from '../src/adapter/claude-agent-sdk-adapter.ts';
 import type { AgentEvent } from '../src/adapter/types.ts';
 import {
+  CANCEL_REPLY_PROMPT,
   EXIT_AUTHENTICATION_UNVERIFIED,
   EXIT_REFUSED,
+  FOLLOW_UP_PROMPT,
   parseScenarioArgs,
   readSourceRevision,
+  runScenarioCommand,
   scenarioCancelReply,
+  scenarioCancelThenFollowUp,
   scenarioTwoTurn,
 } from '../src/main/experiment-work.ts';
 import { tempRoot } from './support/fixtures.ts';
@@ -1892,6 +1896,12 @@ test('cancel-reply cancels after text began and records what came after', async 
   const record = readRecord(logPath);
   assert.equal(code, 0, JSON.stringify(record.failure ?? record.verdict));
   assert.equal(JSON.stringify(record).includes('sk-ant-test-value'), false);
+  // DSP-115: the plain cancel-reply record is unchanged by the follow-up path.
+  assert.equal(record.scenario, 'DSP-109 cancel-reply — cancel after streamed assistant text began');
+  assert.equal(record.prompt, CANCEL_REPLY_PROMPT);
+  for (const key of ['marker', 'followUpPrompt', 'followUp', 'crossProcessResume']) {
+    assert.equal(key in record, false, key);
+  }
   assert.deepEqual(record.verdict, {
     cancelledAfterTextBegan: true,
     terminalStatusCancelled: true,
@@ -2476,4 +2486,254 @@ test('a subscription-authorized scenario failure keeps its own code, verified or
   assert.equal(forgotConflicting.code, 2);
   assert.equal(forgotConflicting.verification.status, 'conflicting');
   assert.equal(forgotConflicting.verification.exitCode, 2);
+});
+
+// --- DSP-115: a follow-up turn after a confirmed cancel ----------------------------
+
+/** A provider session ID the follow-up's init message reports instead of the resumed one. */
+const OTHER_PROVIDER_SESSION = '00000000-0000-4000-8000-0000000000ff';
+
+/**
+ * The first query streams text until it is interrupted, then its stream and its
+ * process end (`stopped`); the second answers with the marker its session was
+ * given in the first prompt, unless told otherwise. Every query reports an
+ * account that meets the accepted subscription rule.
+ */
+function followUpSdk(behaviour: { readonly recall?: boolean; readonly reportSession?: string } = {}) {
+  const remembered = new Map<string, string>();
+  return fakeSdk(async function* (call, index) {
+    const session = sessionOf(call);
+    if (index === 0) {
+      yield init(call);
+      const marker = /reference code for this request is ([A-Z0-9]+)/.exec(call.prompt)?.[1];
+      if (marker !== undefined) {
+        remembered.set(session, marker);
+      }
+      yield delta(call, 'File one does');
+      await call.interrupted;
+      // The stream ends; the substitute's process exits with it (code 0).
+      return;
+    }
+    yield init(call, 'none', behaviour.reportSession === undefined ? {} : { session_id: behaviour.reportSession });
+    const answer = behaviour.recall === false ? 'I do not know' : (remembered.get(session) ?? 'I do not know');
+    yield delta(call, answer);
+    yield assistant(call, [{ type: 'text', text: answer }]);
+    yield result(call, { result: answer });
+  }, () => acceptedAccount());
+}
+
+const SUBSCRIPTION = { kind: 'subscription' as const, authorization: 'test-only reference' };
+
+async function cancelThenFollowUp(name: string, behaviour: { readonly recall?: boolean; readonly reportSession?: string } = {}) {
+  const sdk = followUpSdk(behaviour);
+  const logPath = path.join(tempRoot(`fu-${name}-log`), 'record.json');
+  const code = await scenarioCancelThenFollowUp(workspace(`fu-${name}`), logPath, {
+    provider: 'claude',
+    authorization: SUBSCRIPTION,
+    env: scenarioEnv(),
+    claudeQueryFn: sdk.queryFn,
+    claudeSpawnProcess: sdk.spawnProcess,
+    afterTerminalWatchMs: 20,
+  });
+  return { code, record: readRecord(logPath), calls: sdk.calls };
+}
+
+test('cancel-then-follow-up: after a stopped cancel with a process exit, one follow-up resumes the same session and recalls the marker', async () => {
+  const { code, record, calls } = await cancelThenFollowUp('stopped');
+  assert.equal(code, 0, JSON.stringify(record.failure ?? record.verdict));
+  assert.equal(record.exitCode, 0);
+  const marker: string = record.marker;
+  assert.match(marker, /^[A-Z0-9]{10}$/);
+
+  // The cancel-reply part: unchanged criteria, ended stopped by the process exit.
+  assert.deepEqual(record.verdict, {
+    cancelledAfterTextBegan: true,
+    terminalStatusCancelled: true,
+    noContentChange: true,
+    toolCallStartedAfterCancelResolved: false,
+    end: 'stopped',
+    endUnconfirmed: false,
+    followUpStarted: true,
+    followUpFinished: true,
+    followUpSameProviderSession: true,
+    followUpRecalledMarker: true,
+  });
+  assert.equal(record.cancellation.endEvidence.kind, 'process-exit');
+  assert.equal(calls[0]?.interrupts, 1);
+
+  // Exactly one follow-up query, resuming the session the first turn started.
+  assert.equal(calls.length, 2);
+  const providerSessionId: string = record.session.providerSessionId;
+  assert.equal(calls[0]?.options['sessionId'], providerSessionId);
+  assert.equal(calls[1]?.options['resume'], providerSessionId);
+  assert.equal(calls[1]?.options['sessionId'], undefined);
+  assert.ok(calls[0]?.prompt.includes(marker), 'the first prompt carries the marker');
+  assert.ok(calls[0]?.prompt.includes(CANCEL_REPLY_PROMPT), 'and the cancel-reply instruction');
+  assert.equal(calls[1]?.prompt, FOLLOW_UP_PROMPT);
+  assert.equal(calls[1]?.prompt.includes(marker), false, 'the follow-up does not repeat the marker');
+
+  // Same adapter instance and DSpatch session: both runs are in this session's record.
+  const [first, second] = record.turns;
+  assert.deepEqual(record.turns.map((turn: { label: string }) => turn.label), ['cancelled-reply', 'follow-up']);
+  assert.deepEqual(
+    record.claude.initObservations.map((entry: { dspatchRunId: string }) => entry.dspatchRunId),
+    [first.runId, second.runId],
+  );
+
+  const followUp = record.followUp;
+  assert.equal(followUp.started, true);
+  assert.equal(followUp.dspatchRunId, second.runId);
+  assert.equal(followUp.terminalStatus, 'finished');
+  assert.equal(followUp.prompt, FOLLOW_UP_PROMPT);
+  assert.equal(followUp.promptContainsMarker, false);
+  assert.equal(followUp.initMessages, 1);
+  assert.equal(followUp.session_id, providerSessionId);
+  assert.equal(followUp.apiKeySource, 'none');
+  assert.equal(followUp.firstTurnProviderSessionId, providerSessionId);
+  assert.equal(followUp.sameProviderSessionAsFirstTurn, true);
+  assert.equal(followUp.answer, marker);
+  assert.equal(followUp.answerContainsMarker, true);
+  assert.equal(followUp.toolCallsStarted, 0);
+  assert.deepEqual(followUp.toolCalls, []);
+  assert.equal(followUp.results.length, 1);
+  assert.equal(followUp.results[0].subtype, 'success');
+  assert.equal(followUp.results[0].usage.output_tokens, 7);
+  assert.match(followUp.results[0].totalCostNote, /not a charge/);
+  assert.equal(followUp.usageEvents.length, 1);
+
+  // The authentication rule, judged for both turns by their own runs.
+  assert.equal(record.authenticationVerification.status, 'verified');
+  assert.deepEqual(
+    record.authenticationVerification.observedPerTurn.map((entry: { turn: string; meetsAcceptedRule: boolean }) => [entry.turn, entry.meetsAcceptedRule]),
+    [['cancelled-reply', true], ['follow-up', true]],
+  );
+  assertNoAccountIdentity(record);
+});
+
+test('cancel-then-follow-up: an answer without the marker, or another provider session, is not a success', async () => {
+  const forgot = await cancelThenFollowUp('forgot', { recall: false });
+  assert.equal(forgot.code, 2);
+  assert.equal(forgot.record.exitCode, 2);
+  assert.equal(forgot.calls.length, 2);
+  assert.equal(forgot.record.followUp.terminalStatus, 'finished');
+  assert.equal(forgot.record.followUp.sameProviderSessionAsFirstTurn, true);
+  assert.equal(forgot.record.followUp.answerContainsMarker, false);
+  assert.equal(forgot.record.verdict.followUpRecalledMarker, false);
+  // The scenario's own 2 stands although authentication was verified.
+  assert.equal(forgot.record.authenticationVerification.status, 'verified');
+  assert.equal(forgot.record.authenticationVerification.scenarioExitCode, 2);
+
+  const elsewhere = await cancelThenFollowUp('other-session', { reportSession: OTHER_PROVIDER_SESSION });
+  assert.equal(elsewhere.code, 2);
+  assert.equal(elsewhere.record.exitCode, 2);
+  const followUp = elsewhere.record.followUp;
+  assert.equal(followUp.terminalStatus, 'finished');
+  assert.equal(followUp.answerContainsMarker, true);
+  assert.equal(followUp.session_id, OTHER_PROVIDER_SESSION);
+  assert.equal(followUp.firstTurnProviderSessionId, elsewhere.record.session.providerSessionId);
+  assert.equal(followUp.sameProviderSessionAsFirstTurn, false);
+  assert.match(followUp.sameProviderSessionReason, /reported session_id/);
+  assert.equal(elsewhere.record.verdict.followUpSameProviderSession, false);
+});
+
+test('cancel-then-follow-up: a forced or unconfirmed end starts no follow-up and is recorded as a non-zero outcome', async () => {
+  // Forced: interrupt() rejects, the abort ends the stream and the process exits.
+  const forced = fakeSdk(
+    async function* (call) {
+      yield init(call);
+      yield delta(call, 'File one does');
+      await untilAborted(call.options['abortController'].signal);
+    },
+    () => acceptedAccount(),
+    () => new Error('control channel closed'),
+  );
+  const forcedLog = path.join(tempRoot('fu-forced-log'), 'record.json');
+  const forcedCode = await scenarioCancelThenFollowUp(workspace('fu-forced'), forcedLog, {
+    provider: 'claude',
+    authorization: SUBSCRIPTION,
+    env: scenarioEnv(),
+    claudeQueryFn: forced.queryFn,
+    claudeSpawnProcess: forced.spawnProcess,
+    afterTerminalWatchMs: 20,
+  });
+  const forcedRecord = readRecord(forcedLog);
+  assert.equal(forcedCode, 2);
+  assert.equal(forcedRecord.exitCode, 2);
+  assert.equal(forced.calls.length, 1, 'no follow-up query()');
+  assert.equal(forcedRecord.cancellation.end, 'forced');
+  assert.equal(forcedRecord.followUp.started, false);
+  assert.match(forcedRecord.followUp.reason, /'forced'/);
+  assert.equal(forcedRecord.verdict.followUpStarted, false);
+  assert.equal(forcedRecord.turns.length, 1);
+
+  // Unconfirmed: the process never exits, through the interrupt, abort and kill bounds.
+  const timers = new ManualTimers();
+  const held = fakeSdk(async function* (call) {
+    call.holdProcess = true;
+    yield init(call);
+    yield delta(call, 'File one does');
+    // The stream stays open until dispose closes the query.
+    await call.closed;
+  }, () => acceptedAccount());
+  const heldLog = path.join(tempRoot('fu-unconfirmed-log'), 'record.json');
+  const running = scenarioCancelThenFollowUp(workspace('fu-unconfirmed'), heldLog, {
+    provider: 'claude',
+    authorization: SUBSCRIPTION,
+    env: scenarioEnv(),
+    claudeQueryFn: held.queryFn,
+    claudeSpawnProcess: held.spawnProcess,
+    claudeTimers: timers,
+    afterTerminalWatchMs: 20,
+  });
+  await until(() => held.calls[0]?.interrupts === 1, 'the interrupt');
+  await timers.advance(CANCEL_INTERRUPT_WAIT_MS);
+  await timers.advance(CANCEL_ABORT_WAIT_MS);
+  await timers.advance(CANCEL_KILL_WAIT_MS);
+  const heldCode = await running;
+  const heldRecord = readRecord(heldLog);
+  assert.equal(heldCode, 2);
+  assert.equal(held.calls.length, 1, 'no follow-up query()');
+  assert.deepEqual(held.calls[0]?.child.kills, ['SIGKILL']);
+  assert.equal(heldRecord.cancellation.end, 'unconfirmed');
+  assert.equal(heldRecord.followUp.started, false);
+  assert.match(heldRecord.followUp.reason, /'unconfirmed'/);
+  assert.equal(heldRecord.turns.length, 1);
+});
+
+test('the cancel-then-follow-up command line reaches the new path and runs the cancel and then the follow-up', async () => {
+  const sdk = followUpSdk();
+  const dir = workspace('fu-command');
+  const logPath = path.join(tempRoot('fu-command-log'), 'record.json');
+  const argv = [
+    'cancel-then-follow-up',
+    dir,
+    logPath,
+    '--provider=claude',
+    '--subscription-authorization=test-only reference',
+  ];
+  assert.deepEqual(parseScenarioArgs(argv), {
+    positional: ['cancel-then-follow-up', dir, logPath],
+    options: { provider: 'claude', authorization: SUBSCRIPTION },
+  });
+  const code = await runScenarioCommand(argv, {
+    env: scenarioEnv(),
+    claudeQueryFn: sdk.queryFn,
+    claudeSpawnProcess: sdk.spawnProcess,
+    afterTerminalWatchMs: 20,
+  });
+  const record = readRecord(logPath);
+  assert.equal(code, 0, JSON.stringify(record.failure ?? record.verdict));
+  assert.match(record.scenario, /cancel-then-follow-up/);
+  assert.equal(record.authentication.authorization.kind, 'subscription');
+  assert.equal(sdk.calls.length, 2);
+  assert.equal(sdk.calls[0]?.interrupts, 1, 'the first turn was cancelled');
+  assert.equal(record.cancellation.end, 'stopped');
+  assert.equal(sdk.calls[1]?.options['resume'], record.session.providerSessionId);
+  assert.equal(record.followUp.answerContainsMarker, true);
+
+  // The provider flag is accepted for the new subcommand; the old one is untouched.
+  await assert.rejects(
+    runScenarioCommand(['net-shell', dir, logPath, '--provider=claude', '--subscription-authorization=r']),
+    /applies only to code-change, cancel-reply, two-turn, cancel-then-follow-up/,
+  );
 });
