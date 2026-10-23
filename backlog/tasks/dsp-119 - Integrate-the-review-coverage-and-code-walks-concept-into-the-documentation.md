@@ -1,10 +1,10 @@
 ---
 id: DSP-119
 title: Integrate the review coverage and code walks concept into the documentation
-status: Review
+status: Done
 assignee: []
 created_date: '2026-10-23 14:56'
-updated_date: '2026-10-23 16:47'
+updated_date: '2026-10-23 17:03'
 labels:
   - documentation
   - review
@@ -45,4 +45,12 @@ Result (23 Oct 2026, run 20261023-170000-dsp119doc, base df13447, accepted candi
 Open questions for Niclas (in the document): (1) "Code accepted" - the source makes it a review outcome, VISION 3.4 a provisional mode name; (2) whether a walk pilot comes first - DSP-13 argues against a generated walkthrough as the first investment and ranks a planted-defect probe highest; VISION 3.4 lets prepared walks test the interaction first; DSP-14 recommends and DSP-15 records Niclas's decision.
 
 Niclas's answers (23 Oct 2026). Question 1: "Code accepted" names a review outcome, not a mode; VISION 3.4 corrected (version 1.13, decision-table row). "Concise" is the low-explanation teaching mode, independent of review depth; selecting it neither implies acceptance nor reduces review rigour. Acceptance by the user and acceptance through explicitly delegated agent review stay distinct; acceptance applies to the reviewed scope and revision and is not a guarantee of correctness. Question 2: the decision process is kept - DSP-14 recommends and Niclas decides in DSP-15; the vision permits a prepared-walk pilot but does not prioritise it over the planted-defect probe; no pilot is authorised now. REVIEW_COVERAGE_AND_CODE_WALKS.md 1.1 records both answers by reference to VISION 3.4. No push, no implementation.
+
+Accepted by Niclas (23 Oct 2026) on the reported reviews (calls 1-4: REWORK, ACCEPT, REWORK, ACCEPT) and his recorded decisions. No further content changes; no pilot authorised.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+DSP-119 is done (accepted by Niclas, 23 Oct 2026). docs/REVIEW_COVERAGE_AND_CODE_WALKS.md holds the full English translation of his Swedish source (22 Oct 2026, v1.0), with all eight sections and both tables, source provenance kept apart from the document version, and links to the decisions that own each point (40b26cb). Niclas's decisions (453107f, VISION 1.13 section 3.4): "Code accepted" names a review outcome for the reviewed scope and revision, keeping acceptance by the user apart from explicitly delegated agent review, and is no guarantee of correctness; "Concise" is the low-explanation teaching mode, independent of review depth, implying no acceptance and no reduced rigour; a prepared-walk pilot is permitted but not ranked above the planted-defect probe, DSP-14 recommends and Niclas decides in DSP-15, and no pilot is authorised now. Still open in the document, needing no decision before a pilot: the exact counting rule and the actual depth and teaching levels.
+<!-- SECTION:FINAL_SUMMARY:END -->

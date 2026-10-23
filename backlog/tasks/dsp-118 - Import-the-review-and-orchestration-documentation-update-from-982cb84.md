@@ -1,10 +1,10 @@
 ---
 id: DSP-118
 title: Import the review and orchestration documentation update from 982cb84
-status: Review
+status: Done
 assignee: []
 created_date: '2026-10-23 14:35'
-updated_date: '2026-10-23 14:48'
+updated_date: '2026-10-23 17:03'
 labels:
   - documentation
   - review
@@ -47,4 +47,12 @@ Checks: links and anchors in the four changed documents resolve (scratch link ch
 Open question for Niclas: working-memory section 11 says an early review pilot can use "an isolated branch and worktree", while CLAUDE.md and the loop default to the main checkout unless Niclas asks for a worktree. Read as a future explicit request, there is no conflict; the text was kept.
 
 Open question answered by Niclas (23 Oct 2026): section 11's worktree sentence is an option for a future pilot, not an authorization to create a branch or worktree and not an override of CLAUDE.md. Section 11 now reads: "An early review pilot may use an isolated branch and worktree when explicitly requested by the user; otherwise, follow the repository's default checkout policy." The preceding sentence became "A review pilot can proceed alongside runtime work when it uses an agreed input boundary." No branch, worktree or pilot was created.
+
+Accepted by Niclas (23 Oct 2026) on the reported documentation review and his recorded decision on the pilot worktree option. No further content changes.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+DSP-118 is done (accepted by Niclas, 23 Oct 2026). Imported his documentation update prepared from 982cb84: VISION.md 1.12 with section 3.4, AGENT_BEHAVIOUR_AND_ORCHESTRATION.md 1.1 with section 5, TASK_MANAGEMENT_AND_WORKING_MEMORY.md 0.3 with section 11, and a cross-reference in REVIEW_RESEARCH.md (3584cdf). Review edits: an explicit 3.4 anchor, the implementation snapshot names cross-process resume as unverified and describes DSP-117 by its criteria, and a link to the roadmap's persistence distinction. Niclas's answer on section 11's worktree sentence: an option for a future pilot on his explicit request, otherwise the default checkout policy (df13447). Prose only; no pilot, runtime work or live call.
+<!-- SECTION:FINAL_SUMMARY:END -->
