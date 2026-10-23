@@ -198,7 +198,7 @@ The standalone-review decision in [VISION.md section 3.3](VISION.md#33-review-as
 
 A proposed review record identifies the repository and exact content assessed, the reviewed ranges, findings, decisions and unresolved questions. For uncommitted work it needs a stable identification of actual content, not just a directory path. It distinguishes human review, agent review and an explicit decision to skip review. It records whose decision it was and the reason where relevant.
 
-Walkthrough progress, acceptance and test evidence are separate information. A completed walk is not automatically an approved change. A teaching conversation is not a correctness verdict. The coverage proposal is described in [VISION.md section 3.4](VISION.md#34-walkthrough-coverage-and-levels-of-engagement); its exact schema remains open.
+Walkthrough progress, acceptance and test evidence are separate information. A completed walk is not automatically an approved change. A teaching conversation is not a correctness verdict. The coverage proposal is described in [VISION.md section 3.4](VISION.md#34-walkthrough-coverage-and-levels-of-engagement) and in detail in [REVIEW_COVERAGE_AND_CODE_WALKS.md](REVIEW_COVERAGE_AND_CODE_WALKS.md); its exact schema remains open.
 
 ### Connect to task memory when available
 

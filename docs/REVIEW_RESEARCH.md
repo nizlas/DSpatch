@@ -16,7 +16,7 @@ A complete conventional diff is the Phase 0 baseline. Its layout and implementat
 
 Since 23 October 2026 review is a standalone capability; [VISION.md, section 3.3](VISION.md#33-review-as-a-standalone-capability) records the decision and its limits. For this study, assess each concept first with only a repository and a chosen diff or revision, then with the optional supplementary material: task requirements, the implementer's rationale and verification results.
 
-[VISION.md, section 3.4](VISION.md#34-walkthrough-coverage-and-levels-of-engagement) describes walkthrough coverage, path-based walks and levels of engagement as candidates for a bounded pilot. Treat them as hypotheses for this study, alongside the concept seeds below; they are not selected designs.
+[VISION.md, section 3.4](VISION.md#34-walkthrough-coverage-and-levels-of-engagement) describes walkthrough coverage, path-based walks and levels of engagement as candidates for a bounded pilot. Treat them as hypotheses for this study, alongside the concept seeds below; they are not selected designs. [REVIEW_COVERAGE_AND_CODE_WALKS.md](REVIEW_COVERAGE_AND_CODE_WALKS.md) holds the detailed concept and its open questions.
 
 ## Questions to investigate
 

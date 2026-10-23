@@ -342,7 +342,7 @@ The decision constrains review's input and dependencies, not its interaction des
 
 ### 3.4 Walkthrough coverage and levels of engagement
 
-The following design proposal develops Niclas's review discussion. The independence decision in section 3.3 is agreed; the interaction details here remain candidates for a bounded pilot and the research in section 3.2. This section does not authorise a large implementation or claim that review coverage is already available.
+The following design proposal develops Niclas's review discussion. The independence decision in section 3.3 is agreed; the interaction details here remain candidates for a bounded pilot and the research in section 3.2. This section does not authorise a large implementation or claim that review coverage is already available. The detailed concept, translated from Niclas's source document of 22 October 2026, is in [REVIEW_COVERAGE_AND_CODE_WALKS.md](REVIEW_COVERAGE_AND_CODE_WALKS.md).
 
 #### Start with an overview of the change
 
