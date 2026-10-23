@@ -2,17 +2,17 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { JSX, ReactNode } from 'react';
 
 import { Markdown } from './Markdown';
+import { Inline, TokensView, asLocation, capitalise, fileName, rangeText, useFiles, useRows, type Files } from './review-code';
+import { FileTree, WalkTimeline, stationsOf, unitLabel } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
 import {
   DEFAULT_PREFERENCES,
-  buildDiffRows,
   computeCoverage,
   currentHunkDecisions,
-  highlightLines,
   placeKey,
   referenceRows,
+  type CodeLevel,
   type CodeLocation,
-  type CodeReference,
   type CoverageSummary,
   type DiffFile,
   type DiffHunk,
@@ -24,13 +24,11 @@ import {
   type ReviewBridge,
   type ReviewBundle,
   type ReviewDecision,
-  type ReviewFileOutcome,
   type ReviewNote,
   type ReviewOpenOutcome,
   type ReviewSearchHit,
   type ReviewState,
   type RevisionSide,
-  type Token,
   type Walk,
   type WalkStep,
 } from '../shared/review-model';
@@ -63,7 +61,7 @@ const GAP_CONTEXT = 3;
 
 type CodeView = 'before' | 'both' | 'after';
 type CodeScope = 'focus' | 'file';
-type LeftTab = 'walks' | 'files' | 'coverage' | 'notes' | 'search';
+type LeftTab = 'walks' | 'coverage' | 'notes' | 'search';
 
 function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -75,14 +73,6 @@ function timeOf(iso: string, lang: Lang): string {
   }
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(lang === 'sv' ? 'sv-SE' : 'en-GB');
-}
-
-function rangeText(location: { start: number; end: number }): string {
-  return location.start === location.end ? String(location.start) : `${String(location.start)}–${String(location.end)}`;
-}
-
-function fileName(path: string): string {
-  return path.split('/').pop() ?? path;
 }
 
 function short(sha: string): string {
@@ -109,10 +99,6 @@ function hunkLocation(hunk: DiffHunk): CodeLocation {
     : { path: hunk.path, side: 'base', start: hunk.baseStart, end: hunk.baseStart + hunk.baseCount - 1 };
 }
 
-function asLocation(ref: CodeReference): CodeLocation {
-  return { path: ref.path, side: ref.side, start: ref.start, end: ref.end };
-}
-
 function findStep(bundle: ReviewBundle, stepId: string | null): { walk: Walk; step: WalkStep; index: number } | null {
   if (stepId === null) {
     return null;
@@ -125,112 +111,6 @@ function findStep(bundle: ReviewBundle, stepId: string | null): { walk: Walk; st
     }
   }
   return null;
-}
-
-/** A one-line prepared text: `code names` in backticks are shown as code, nothing else is parsed. */
-function Inline({ text }: { readonly text: string }): JSX.Element {
-  const parts = text.split(/`([^`]+)`/);
-  return (
-    <>
-      {parts.map((part, index) => (index % 2 === 1 ? <code key={index}>{part}</code> : part))}
-    </>
-  );
-}
-
-function capitalise(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-// --- File contents --------------------------------------------------------------
-
-type Files = {
-  get: (side: RevisionSide, path: string) => ReviewFileOutcome | null;
-  load: (side: RevisionSide, path: string) => void;
-};
-
-function useFiles(bridge: ReviewBridge | undefined): Files {
-  const cache = useRef(new Map<string, ReviewFileOutcome>());
-  const pending = useRef(new Set<string>());
-  const [, setTick] = useState(0);
-  const load = useCallback(
-    (side: RevisionSide, path: string) => {
-      const key = `${side}:${path}`;
-      if (bridge === undefined || cache.current.has(key) || pending.current.has(key)) {
-        return;
-      }
-      pending.current.add(key);
-      void bridge.readFile(side, path).then((outcome) => {
-        cache.current.set(key, outcome);
-        pending.current.delete(key);
-        setTick((value) => value + 1);
-      });
-    },
-    [bridge],
-  );
-  const get = useCallback((side: RevisionSide, path: string) => cache.current.get(`${side}:${path}`) ?? null, []);
-  return useMemo(() => ({ get, load }), [get, load]);
-}
-
-/** The side of a diff that does not exist (an added or a deleted file). */
-const NO_LINES: ReviewFileOutcome = { kind: 'text', lines: [] };
-
-/** A file's rows: the real diff when it changed, otherwise the file at one side. */
-function useRows(
-  files: Files,
-  path: string,
-  diffFile: DiffFile | null,
-  plainSide: RevisionSide,
-): { rows: DiffRow[]; error: string | null; tokens: { base: Token[][]; target: Token[][] } } | null {
-  const inDiff = diffFile !== null && !diffFile.binary;
-  const needBase = inDiff ? diffFile.status !== 'added' : plainSide === 'base';
-  const needTarget = inDiff ? diffFile.status !== 'deleted' : plainSide === 'target';
-  useEffect(() => {
-    if (needBase) {
-      files.load('base', path);
-    }
-    if (needTarget) {
-      files.load('target', path);
-    }
-  }, [files, path, needBase, needTarget]);
-  const base = needBase ? files.get('base', path) : NO_LINES;
-  const target = needTarget ? files.get('target', path) : NO_LINES;
-  return useMemo(() => {
-    if (base === null || target === null) {
-      return null;
-    }
-    const empty = { base: [], target: [] };
-    if (base.kind === 'failed' || target.kind === 'failed') {
-      return { rows: [], error: base.kind === 'failed' ? base.error : target.kind === 'failed' ? target.error : '', tokens: empty };
-    }
-    if (base.kind === 'binary' || target.kind === 'binary' || diffFile?.binary === true) {
-      return { rows: [], error: 'binary', tokens: empty };
-    }
-    const baseLines = base.kind === 'text' ? base.lines : [];
-    const targetLines = target.kind === 'text' ? target.lines : [];
-    const tokens = { base: highlightLines(baseLines, path), target: highlightLines(targetLines, path) };
-    if (inDiff) {
-      try {
-        return { rows: buildDiffRows(baseLines, targetLines, diffFile.hunks), error: null, tokens };
-      } catch (error) {
-        return { rows: [], error: error instanceof Error ? error.message : String(error), tokens: empty };
-      }
-    }
-    if ((plainSide === 'base' ? base : target).kind === 'missing') {
-      return { rows: [], error: 'missing', tokens: empty };
-    }
-    const lines = plainSide === 'base' ? baseLines : targetLines;
-    return {
-      rows: lines.map((text, index) => ({
-        kind: 'context' as const,
-        baseLine: plainSide === 'base' ? index + 1 : null,
-        targetLine: plainSide === 'target' ? index + 1 : null,
-        text,
-        hunkId: null,
-      })),
-      error: null,
-      tokens,
-    };
-  }, [base, target, inDiff, diffFile, plainSide, path]);
 }
 
 // --- The view ----------------------------------------------------------------------
@@ -334,6 +214,17 @@ function OpenReview({
   const [scope, setScope] = useState<CodeScope>('focus');
   const [noticeOpen, setNoticeOpen] = useState(bundle.stateNotice !== null);
   const files = useFiles(bridge);
+  const [treePaths, setTreePaths] = useState<readonly string[]>([]);
+  useEffect(() => {
+    if (bridge === undefined) {
+      return;
+    }
+    void bridge.listFiles('target').then((paths) => {
+      const deleted = bundle.files.filter((file) => file.status === 'deleted').map((file) => file.path);
+      setTreePaths([...paths, ...deleted.filter((path) => !paths.includes(path))]);
+    });
+  }, [bridge, bundle]);
+  const changedFiles = useMemo(() => new Map(bundle.files.map((file) => [file.path, file])), [bundle]);
 
   // Persist every change. Decisions, notes and walked marks are written at once;
   // moving around and arranging the view shortly after. Whatever is still unsaved
@@ -411,6 +302,9 @@ function OpenReview({
     current === null || place === null || away !== null
       ? null
       : (bundle.referenceProblems.find((problem) => problem.stepId === current.step.id && problem.refId === place.focus.id)?.problem ?? null);
+  const level: CodeLevel = state.ui.level ?? 'unit';
+  const stations = useMemo(() => (current === null ? [] : stationsOf(current.walk)), [current?.walk]);
+  const activeStation = current === null ? -1 : stations.findIndex((entry) => entry.stepId === current.step.id && entry.placeIndex === placeIndex);
   const focus: CodeLocation | null = away ?? (place === null ? null : asLocation(place.focus));
   const contexts: readonly CodeLocation[] = away === null && place !== null ? place.context.map(asLocation) : [];
 
@@ -477,6 +371,51 @@ function OpenReview({
     },
     [update],
   );
+
+  const setLevel = useCallback(
+    (next: CodeLevel) => {
+      update((value) => ({ ...value, ui: { ...value.ui, level: next } }));
+    },
+    [update],
+  );
+
+  /** One station forward or back; past the end of a walk, into the next or previous walk. */
+  const moveStation = useCallback(
+    (delta: number) => {
+      if (current === null || activeStation < 0) {
+        return;
+      }
+      const target = stations[activeStation + delta];
+      if (target !== undefined) {
+        goToStep(target.stepId, target.placeIndex);
+        return;
+      }
+      const walks = bundle.definition.walks;
+      const walkIndex = walks.indexOf(current.walk);
+      const neighbour = walks[walkIndex + delta];
+      if (neighbour === undefined) {
+        return;
+      }
+      const neighbourStations = stationsOf(neighbour);
+      const entry = delta > 0 ? neighbourStations[0] : neighbourStations[neighbourStations.length - 1];
+      if (entry !== undefined) {
+        goToStep(entry.stepId, entry.placeIndex);
+      }
+    },
+    [current, activeStation, stations, bundle, goToStep],
+  );
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (!event.altKey || (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft')) {
+        return;
+      }
+      event.preventDefault();
+      moveStation(event.key === 'ArrowRight' ? 1 : -1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [moveStation]);
 
   const setHighlightWalk = useCallback(
     (on: boolean) => {
@@ -590,7 +529,7 @@ function OpenReview({
       <div className={tab === 'coverage' || tab === 'notes' ? 'rv-body rv-body-wide' : 'rv-body'}>
         <nav className="rv-left">
           <div className="rv-tabs" role="tablist">
-            {(['walks', 'files', 'coverage', 'notes', 'search'] as const).map((key) => (
+            {(['walks', 'coverage', 'notes', 'search'] as const).map((key) => (
               <button
                 key={key}
                 type="button"
@@ -605,23 +544,31 @@ function OpenReview({
           </div>
           <div className="rv-left-body">
             {tab === 'walks' && (
-              <WalkList bundle={bundle} state={state} words={words} lang={lang} onStep={goToStep} onToggle={toggleWalk} />
-            )}
-            {tab === 'files' && (
-              <FileList
-                files={bundle.files}
-                coverage={coverageByHunk}
-                current={focus?.path ?? null}
-                words={words}
-                onOpen={(file) => {
-                  const hunk = file.hunks[0];
-                  goAway(
-                    hunk === undefined
-                      ? { path: file.path, side: file.status === 'deleted' ? 'base' : 'target', start: 1, end: 1 }
-                      : hunkLocation(hunk),
-                  );
-                }}
-              />
+              <div className="rv-walks-tab">
+                {pick(bundle.definition.overview, lang) !== '' && (
+                  <Collapsible title={words.overviewTitle} defaultOpen={state.shownSteps[bundle.definition.walks[0]?.steps[0]?.id ?? ''] === undefined}>
+                    <div className="rv-explanation">
+                      <Markdown text={pick(bundle.definition.overview, lang)} />
+                    </div>
+                  </Collapsible>
+                )}
+                <WalkList bundle={bundle} state={state} words={words} lang={lang} onStep={goToStep} onToggle={toggleWalk} />
+                <FileTree
+                  paths={treePaths}
+                  changed={changedFiles}
+                  current={focus?.path ?? null}
+                  words={words}
+                  onOpen={(path) => {
+                    const file = changedFiles.get(path);
+                    const hunk = file?.hunks[0];
+                    goAway(
+                      hunk === undefined
+                        ? { path, side: file?.status === 'deleted' ? 'base' : 'target', start: 1, end: 1 }
+                        : hunkLocation(hunk),
+                    );
+                  }}
+                />
+              </div>
             )}
             {tab === 'coverage' && <CoverageTable coverage={coverage} words={words} onOpen={(hunk) => goAway(hunkLocation(hunk))} />}
             {tab === 'notes' && (
@@ -642,7 +589,51 @@ function OpenReview({
               </button>
             </div>
           )}
-          {focus === null ? (
+          {away === null && current !== null && activeStation >= 0 ? (
+            <>
+              <WalkNavBar
+                stations={stations}
+                active={activeStation}
+                stepId={current.step.id}
+                placeIndex={placeIndex}
+                placeCount={current.step.places.length}
+                place={place}
+                canBack={activeStation > 0 || bundle.definition.walks.indexOf(current.walk) > 0}
+                canForward={
+                  activeStation < stations.length - 1 ||
+                  bundle.definition.walks.indexOf(current.walk) < bundle.definition.walks.length - 1
+                }
+                onMove={moveStation}
+                level={level}
+                onLevel={setLevel}
+                view={view}
+                onView={setView}
+                highlightWalk={state.ui.highlightWalk}
+                onHighlightWalk={setHighlightWalk}
+                words={words}
+                lang={lang}
+              />
+              {placeProblem !== null && <div className="rv-error rv-problem">{words.view.invalidReference(placeProblem)}</div>}
+              <WalkTimeline
+                walk={current.walk}
+                stations={stations}
+                active={activeStation}
+                onActivate={(index) => {
+                  const target = stations[index];
+                  if (target !== undefined) {
+                    goToStep(target.stepId, target.placeIndex);
+                  }
+                }}
+                diffFiles={bundle.files}
+                files={files}
+                level={level}
+                view={view}
+                highlightWalk={state.ui.highlightWalk}
+                words={words}
+                lang={lang}
+              />
+            </>
+          ) : focus === null ? (
             <div className="rv-empty" />
           ) : (
             <CodePane
@@ -669,7 +660,6 @@ function OpenReview({
         <aside className="rv-right">
           {current !== null && away === null && place !== null && (
             <StepPanel
-              bundle={bundle}
               walk={current.walk}
               step={current.step}
               index={current.index}
@@ -679,7 +669,6 @@ function OpenReview({
               words={words}
               lang={lang}
               onPlace={(index) => goToStep(current.step.id, index)}
-              onStep={goToStep}
               onOpenEvidence={goAway}
             />
           )}
@@ -896,6 +885,11 @@ function WalkList({
               </span>
               <span className="rv-sub rv-walk-count">{words.walkProgress(opened, walk.steps.length)}</span>
             </button>
+            {isOpen && pick(walk.purpose, lang) !== '' && (
+              <p className="rv-walk-purpose">
+                <Inline text={pick(walk.purpose, lang)} />
+              </p>
+            )}
             {isOpen && (
               <ol className="rv-steps">
                 {walk.steps.map((step) => {
@@ -923,45 +917,6 @@ function WalkList({
         );
       })}
     </div>
-  );
-}
-
-function FileList({
-  files,
-  coverage,
-  current,
-  words,
-  onOpen,
-}: {
-  readonly files: readonly DiffFile[];
-  readonly coverage: ReadonlyMap<string, HunkCoverage>;
-  readonly current: string | null;
-  readonly words: ReviewWords;
-  readonly onOpen: (file: DiffFile) => void;
-}): JSX.Element {
-  return (
-    <ul className="rv-files">
-      {files.map((file) => {
-        const decided = file.hunks.map((hunk) => coverage.get(hunk.id)?.decision?.outcome ?? null);
-        const accepted = decided.filter((outcome) => outcome === 'accepted').length;
-        const exempted = decided.filter((outcome) => outcome === 'exempted').length;
-        return (
-          <li key={file.path}>
-            <button type="button" className={current === file.path ? 'rv-file rv-file-on' : 'rv-file'} onClick={() => onOpen(file)}>
-              <span className="rv-path" title={file.path}>
-                {fileName(file.path)}
-              </span>
-              <span className="rv-sub">
-                {words.status[file.status]} · +{file.added} −{file.deleted} ·{' '}
-                {file.binary ? words.filesTab.binary : words.filesTab.hunks(file.hunks.length)}
-                {accepted + exempted > 0 && ` · ${words.filesTab.decided(accepted, exempted, file.hunks.length - accepted - exempted)}`}
-              </span>
-              <span className="rv-sub rv-dir">{file.path.split('/').slice(0, -1).join('/')}</span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 
@@ -1231,7 +1186,6 @@ function Browse({
 // --- Right column ---------------------------------------------------------------------
 
 function StepPanel({
-  bundle,
   walk,
   step,
   index,
@@ -1241,10 +1195,8 @@ function StepPanel({
   words,
   lang,
   onPlace,
-  onStep,
   onOpenEvidence,
 }: {
-  readonly bundle: ReviewBundle;
   readonly walk: Walk;
   readonly step: WalkStep;
   readonly index: number;
@@ -1254,13 +1206,9 @@ function StepPanel({
   readonly words: ReviewWords;
   readonly lang: Lang;
   readonly onPlace: (index: number) => void;
-  readonly onStep: (stepId: string) => void;
   readonly onOpenEvidence: (location: CodeLocation) => void;
 }): JSX.Element {
   const [sources, setSources] = useState(false);
-  const previous = walk.steps[index - 1];
-  const next = walk.steps[index + 1];
-  const nextWalk = bundle.definition.walks[bundle.definition.walks.indexOf(walk) + 1];
   const active = placeIndex;
   const invalid = new Set(referenceProblems.filter((problem) => problem.stepId === step.id).map((problem) => problem.refId));
   const summaryLabels = [...new Set(step.evidence.map((entry) => entry.label))];
@@ -1269,6 +1217,11 @@ function StepPanel({
       <div className="rv-walk-title">
         {walk.id} · <Inline text={pick(walk.title, lang)} />
       </div>
+      {pick(walk.purpose, lang) !== '' && (
+        <div className="rv-purpose">
+          <Inline text={pick(walk.purpose, lang)} />
+        </div>
+      )}
       <h2>
         <span className="rv-step-id">{step.id}</span> <Inline text={pick(step.title, lang)} />
       </h2>
@@ -1301,6 +1254,11 @@ function StepPanel({
               </li>
             ))}
           </ol>
+          {step.places[active]?.from !== null && step.places[active]?.from !== undefined && (
+            <div className="rv-place-from">
+              ← <Inline text={pick(step.places[active]?.from?.label ?? { sv: '', en: '' }, lang)} />
+            </div>
+          )}
           <div className="rv-place-nav">
             <button type="button" disabled={active === 0} onClick={() => onPlace(active - 1)}>
               ↑ {words.previousPlace}
@@ -1359,24 +1317,7 @@ function StepPanel({
         </div>
       )}
 
-      <div className="rv-step-nav">
-        <button type="button" disabled={previous === undefined} onClick={() => previous !== undefined && onStep(previous.id)}>
-          {words.previousStep}
-        </button>
-        <button
-          type="button"
-          disabled={next === undefined && nextWalk === undefined}
-          onClick={() => {
-            const target = next ?? nextWalk?.steps[0];
-            if (target !== undefined) {
-              onStep(target.id);
-            }
-          }}
-        >
-          {next === undefined && nextWalk !== undefined ? words.nextWalk(nextWalk.id) : words.nextStep}
-        </button>
-      </div>
-      <p className="rv-sub rv-center">{words.navigationNote}</p>
+
     </section>
   );
 }
@@ -1613,26 +1554,93 @@ function NotesHere({
   );
 }
 
-// --- Code ---------------------------------------------------------------------------------
+// --- Fixed navigation -----------------------------------------------------------------------
 
-function TokensView({ tokens }: { readonly tokens: readonly Token[] | undefined }): JSX.Element {
-  if (tokens === undefined) {
-    return <></>;
-  }
+/**
+ * Always in the same place above the code: where you are, back and forward one code
+ * place at a time, and how much code to show. Moving approves nothing.
+ */
+function WalkNavBar({
+  stations,
+  active,
+  stepId,
+  placeIndex,
+  placeCount,
+  place,
+  canBack,
+  canForward,
+  onMove,
+  level,
+  onLevel,
+  view,
+  onView,
+  highlightWalk,
+  onHighlightWalk,
+  words,
+  lang,
+}: {
+  readonly stations: readonly unknown[];
+  readonly active: number;
+  readonly stepId: string;
+  readonly placeIndex: number;
+  readonly placeCount: number;
+  readonly place: Place | null;
+  readonly canBack: boolean;
+  readonly canForward: boolean;
+  readonly onMove: (delta: number) => void;
+  readonly level: CodeLevel;
+  readonly onLevel: (level: CodeLevel) => void;
+  readonly view: CodeView;
+  readonly onView: (view: CodeView) => void;
+  readonly highlightWalk: boolean;
+  readonly onHighlightWalk: (on: boolean) => void;
+  readonly words: ReviewWords;
+  readonly lang: Lang;
+}): JSX.Element {
+  void stations;
+  void active;
   return (
-    <>
-      {tokens.map((token, index) =>
-        token.kind === 'plain' ? (
-          token.text
-        ) : (
-          <span key={index} className={`rv-tk-${token.kind}`}>
-            {token.text}
-          </span>
-        ),
-      )}
-    </>
+    <div className="rv-navbar">
+      <div className="rv-navbar-row">
+        <button type="button" className="rv-nav-button" disabled={!canBack} onClick={() => onMove(-1)}>
+          {words.nav.previous}
+        </button>
+        <div className="rv-nav-where">
+          <span className="rv-sub">{words.nav.placeOf(stepId, placeIndex + 1, placeCount)}</span>
+          {place !== null && (
+            <span className="rv-nav-label">
+              <Inline text={pick(place.label, lang)} />
+            </span>
+          )}
+        </div>
+        <button type="button" className="rv-nav-button rv-nav-next" disabled={!canForward} onClick={() => onMove(1)}>
+          {words.nav.next}
+        </button>
+      </div>
+      <div className="rv-navbar-row rv-navbar-controls">
+        <span className="rv-seg" role="group" aria-label={words.levels.label}>
+          {(['change', 'unit', 'file'] as const).map((value) => (
+            <button key={value} type="button" className={level === value ? 'rv-on' : ''} aria-pressed={level === value} onClick={() => onLevel(value)}>
+              {value === 'change' ? words.levels.change : value === 'file' ? words.levels.file : unitLabel(place, words)}
+            </button>
+          ))}
+        </span>
+        <span className="rv-seg" role="group">
+          {(['before', 'both', 'after'] as const).map((value) => (
+            <button key={value} type="button" className={view === value ? 'rv-on' : ''} aria-pressed={view === value} onClick={() => onView(value)}>
+              {words.view[value]}
+            </button>
+          ))}
+        </span>
+        <label className="rv-check rv-walk-toggle">
+          <input type="checkbox" checked={highlightWalk} onChange={(event) => onHighlightWalk(event.target.checked)} /> {words.view.highlightWalk}
+        </label>
+      </div>
+    </div>
   );
 }
+
+// --- Code ---------------------------------------------------------------------------------
 
 function CodePane({
   focus,

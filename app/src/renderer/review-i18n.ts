@@ -1,4 +1,4 @@
-import type { EvidenceLabel, Lang, LocalText } from '../shared/review-model';
+import type { EvidenceLabel, Lang, LocalText, UnitKind } from '../shared/review-model';
 
 /**
  * The review surface's own words, in its two display languages.
@@ -77,6 +77,22 @@ export interface ReviewWords {
     readonly legendWalk: string;
   };
   readonly side: { readonly base: string; readonly target: string };
+  readonly levels: {
+    readonly change: string;
+    readonly file: string;
+    readonly context: string;
+    readonly unit: Record<UnitKind, string>;
+    readonly label: string;
+  };
+  readonly timeline: { readonly label: string; readonly hint: string; readonly call: string };
+  readonly nav: {
+    readonly previous: string;
+    readonly next: string;
+    readonly placeOf: (stepId: string, index: number, total: number) => string;
+  };
+  readonly tree: { readonly title: string; readonly onlyChanged: string };
+  readonly overviewTitle: string;
+  readonly purpose: string;
   readonly status: Record<'added' | 'modified' | 'deleted' | 'type-changed', string>;
   readonly decisions: {
     readonly changesHere: string;
@@ -242,6 +258,34 @@ const sv: ReviewWords = {
     legendWalk: 'Övriga ställen i walken',
   },
   side: { base: 'gamla versionen', target: 'nya versionen' },
+  levels: {
+    change: 'Ändringen',
+    file: 'Hela filen',
+    context: 'Sammanhanget',
+    unit: {
+      function: 'Funktionen',
+      method: 'Metoden',
+      constructor: 'Konstruktorn',
+      declaration: 'Deklarationen',
+      type: 'Typen',
+      class: 'Klassen',
+      member: 'Medlemmen',
+    },
+    label: 'Visa',
+  },
+  timeline: {
+    label: 'Walkens kodställen i tidsordning',
+    hint: 'Shift + scrollhjul, eller dra med höger musknapp, flyttar i tiden. Alt + ← / → stegar.',
+    call: 'anrop',
+  },
+  nav: {
+    previous: '← Föregående',
+    next: 'Nästa →',
+    placeOf: (stepId, index, total) => `${stepId} · kodställe ${String(index)} av ${String(total)}`,
+  },
+  tree: { title: 'Filer', onlyChanged: 'Bara ändrade' },
+  overviewTitle: 'Om ändringen',
+  purpose: 'Syfte',
   status: { added: 'ny fil', modified: 'ändrad', deleted: 'borttagen', 'type-changed': 'typ ändrad' },
   decisions: {
     changesHere: 'Ändringar på det här stället',
@@ -427,6 +471,34 @@ const en: ReviewWords = {
     legendWalk: 'Other places in the walk',
   },
   side: { base: 'old version', target: 'new version' },
+  levels: {
+    change: 'The change',
+    file: 'Whole file',
+    context: 'The context',
+    unit: {
+      function: 'The function',
+      method: 'The method',
+      constructor: 'The constructor',
+      declaration: 'The declaration',
+      type: 'The type',
+      class: 'The class',
+      member: 'The member',
+    },
+    label: 'Show',
+  },
+  timeline: {
+    label: 'The walk’s code places in time order',
+    hint: 'Shift + scroll wheel, or drag with the right mouse button, moves in time. Alt + ← / → steps.',
+    call: 'call',
+  },
+  nav: {
+    previous: '← Previous',
+    next: 'Next →',
+    placeOf: (stepId, index, total) => `${stepId} · place ${String(index)} of ${String(total)}`,
+  },
+  tree: { title: 'Files', onlyChanged: 'Changed only' },
+  overviewTitle: 'About the change',
+  purpose: 'Purpose',
   status: { added: 'new file', modified: 'changed', deleted: 'deleted', 'type-changed': 'type changed' },
   decisions: {
     changesHere: 'Changes at this place',

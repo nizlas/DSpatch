@@ -89,7 +89,29 @@ export interface Place {
   readonly label: LocalText;
   readonly focus: CodeReference;
   readonly context: readonly CodeReference[];
+  /**
+   * The code unit the focus lies in — function, method, declaration or type — found
+   * when the material was prepared (for TypeScript by parsing it). The default view.
+   */
+  readonly unit: PlaceUnit | null;
+  /** Where the walk arrives from: the call or read that leads here. */
+  readonly from: PlaceLink | null;
 }
+
+export type UnitKind = 'function' | 'method' | 'constructor' | 'declaration' | 'type' | 'class' | 'member';
+
+export interface PlaceUnit {
+  readonly ref: CodeReference;
+  readonly kind: UnitKind;
+  readonly name: string;
+}
+
+export interface PlaceLink {
+  readonly ref: CodeReference;
+  readonly label: LocalText;
+}
+
+const UNIT_KINDS: readonly UnitKind[] = ['function', 'method', 'constructor', 'declaration', 'type', 'class', 'member'];
 
 export interface StepEvidence {
   readonly label: EvidenceLabel;
@@ -115,6 +137,8 @@ export interface WalkStep {
 export interface Walk {
   readonly id: string;
   readonly title: LocalText;
+  /** What the walk is for. */
+  readonly purpose: LocalText;
   readonly question: LocalText;
   readonly steps: readonly WalkStep[];
 }
@@ -130,6 +154,8 @@ export interface ReviewDefinition {
   readonly teachingMode: string;
   /** Where the material came from and its limits. */
   readonly provenance: LocalText;
+  /** What the change as a whole is for: the sum of the walks. Markdown. */
+  readonly overview: LocalText;
   /** Languages every text is written in. A version 1 file has none: its text is shown as written. */
   readonly languages: readonly Lang[];
   readonly walks: readonly Walk[];
@@ -314,6 +340,7 @@ export function parseReviewDefinition(raw: unknown): {
   }
   const teachingMode = typeof raw['teachingMode'] === 'string' ? raw['teachingMode'] : '';
   const provenance = text(raw, 'provenance', 'file', false);
+  const overview = text(raw, 'overview', 'file', false);
   const walksRaw = raw['walks'];
   const walks: Walk[] = [];
   const seenIds = new Set<string>();
@@ -353,7 +380,13 @@ export function parseReviewDefinition(raw: unknown): {
           }
         });
       }
-      walks.push({ id, title: text(walkRaw, 'title', where), question: text(walkRaw, 'question', where), steps });
+      walks.push({
+        id,
+        title: text(walkRaw, 'title', where),
+        purpose: text(walkRaw, 'purpose', where, false),
+        question: text(walkRaw, 'question', where),
+        steps,
+      });
     });
   }
   return {
@@ -365,6 +398,7 @@ export function parseReviewDefinition(raw: unknown): {
       target,
       teachingMode,
       provenance,
+      overview,
       languages: v2 ? LANGS : [],
       walks,
     },
@@ -410,8 +444,38 @@ function parseStepV2(raw: Record<string, unknown>, stepId: string, where: string
           }
         });
       }
+      let unit: PlaceUnit | null = null;
+      const unitRaw = placeRaw['unit'];
+      if (isRecord(unitRaw)) {
+        const unitRef = parseReference(unitRaw, refId(`${placeId}.unit`, placeWhere), `${placeWhere}.unit`, problems, 'context', true);
+        const kind = unitRaw['kind'];
+        if (!UNIT_KINDS.includes(kind as UnitKind)) {
+          problems.push({ where: `${placeWhere}.unit`, problem: `"kind" must be one of ${UNIT_KINDS.join(', ')}.` });
+        } else if (unitRef !== null) {
+          unit = { ref: { ...unitRef, role: 'context' }, kind: kind as UnitKind, name: typeof unitRaw['name'] === 'string' ? unitRaw['name'] : '' };
+        }
+      } else if (unitRaw !== undefined) {
+        problems.push({ where: placeWhere, problem: '"unit" must be an object when present.' });
+      }
+      let from: PlaceLink | null = null;
+      const fromRaw = placeRaw['from'];
+      if (isRecord(fromRaw)) {
+        const fromRef = parseReference(fromRaw, refId(`${placeId}.from`, placeWhere), `${placeWhere}.from`, problems, 'context', true);
+        if (fromRef !== null) {
+          from = { ref: { ...fromRef, role: 'context' }, label: localText(fromRaw, 'label', `${placeWhere}.from`, problems, { required: true, bilingual: true }) };
+        }
+      } else if (fromRaw !== undefined) {
+        problems.push({ where: placeWhere, problem: '"from" must be an object when present.' });
+      }
       if (focus !== null && placeId !== '') {
-        places.push({ id: placeId, label: localText(placeRaw, 'label', placeWhere, problems, { required: true, bilingual: true }), focus, context });
+        places.push({
+          id: placeId,
+          label: localText(placeRaw, 'label', placeWhere, problems, { required: true, bilingual: true }),
+          focus,
+          context,
+          unit,
+          from,
+        });
       }
     });
   }
@@ -434,7 +498,15 @@ function parseStepV2(raw: Record<string, unknown>, stepId: string, where: string
     places,
     evidence: parseEvidence(raw['evidence'], `${stepId}.evidence`, problems, true),
     evidenceRefs,
-    refs: [...places.flatMap((place) => [place.focus, ...place.context]), ...evidenceRefs],
+    refs: [
+      ...places.flatMap((place) => [
+        place.focus,
+        ...place.context,
+        ...(place.unit === null ? [] : [place.unit.ref]),
+        ...(place.from === null ? [] : [place.from.ref]),
+      ]),
+      ...evidenceRefs,
+    ],
   };
 }
 
@@ -458,7 +530,7 @@ function parseStepV1(raw: Record<string, unknown>, stepId: string, where: string
         evidenceRefs.push(ref);
       } else {
         const label = ref.note ?? { sv: `${ref.path}:${String(ref.start)}`, en: `${ref.path}:${String(ref.start)}` };
-        places.push({ id, label, focus: ref, context: [] });
+        places.push({ id, label, focus: ref, context: [], unit: null, from: null });
       }
     });
   }
@@ -855,7 +927,11 @@ export interface ReviewUi {
   readonly openWalks: readonly string[];
   /** The light purple overview of every place in the current walk. */
   readonly highlightWalk: boolean;
+  /** How much code a place shows: the change, its unit (default), or the whole file. */
+  readonly level?: CodeLevel;
 }
+
+export type CodeLevel = 'change' | 'unit' | 'file';
 
 export const DEFAULT_UI: ReviewUi = { openWalks: [], highlightWalk: false };
 
@@ -928,7 +1004,8 @@ function isUi(value: unknown): value is ReviewUi {
     isRecord(value) &&
     Array.isArray(value['openWalks']) &&
     value['openWalks'].every((entry) => typeof entry === 'string') &&
-    typeof value['highlightWalk'] === 'boolean'
+    typeof value['highlightWalk'] === 'boolean' &&
+    (value['level'] === undefined || value['level'] === 'change' || value['level'] === 'unit' || value['level'] === 'file')
   );
 }
 

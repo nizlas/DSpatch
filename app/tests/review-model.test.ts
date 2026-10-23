@@ -604,3 +604,63 @@ test('opened coverage counts only the focus of opened places; declared context c
   assert.equal(coverage.hunks[0]?.shown, 'full', 'the focus was on screen');
   assert.equal(coverage.hunks[1]?.shown, 'none', 'context was not on screen until asked for');
 });
+
+test('a place can name its enclosing unit and where the walk arrives from; both are validated, neither is coverage', () => {
+  const { definition, problems } = parseReviewDefinition({
+    format: 'dspatch-review/2',
+    title: { sv: 't', en: 't' },
+    overview: { sv: 'Översikt', en: 'Overview' },
+    repository: '.',
+    base: REVISIONS.base,
+    target: REVISIONS.target,
+    walks: [
+      {
+        id: 'W1',
+        title: { sv: 'w', en: 'w' },
+        purpose: { sv: 'Syfte', en: 'Purpose' },
+        question: { sv: 'q', en: 'q' },
+        steps: [
+          {
+            id: 'W1.1',
+            title: { sv: 's', en: 's' },
+            summary: { sv: 's', en: 's' },
+            body: { sv: 'b', en: 'b' },
+            places: [
+              {
+                id: 'p1',
+                label: { sv: 'l', en: 'l' },
+                focus: { path: 'src/x.ts', start: 2, end: 3 },
+                unit: { path: 'src/x.ts', start: 1, end: 5, kind: 'method', name: 'run', anchor: 'run' },
+                from: { path: 'src/y.ts', start: 8, end: 8, label: { sv: 'Anropas från y', en: 'Called from y' } },
+              },
+              {
+                id: 'p2',
+                label: { sv: 'l', en: 'l' },
+                focus: { path: 'src/x.ts', start: 4, end: 4 },
+                unit: { path: 'src/x.ts', start: 1, end: 5, kind: 'gadget' },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  assert.ok(definition !== null);
+  assert.equal(definition.overview.en, 'Overview');
+  assert.equal(definition.walks[0]?.purpose.sv, 'Syfte');
+  const place = definition.walks[0]?.steps[0]?.places[0];
+  assert.deepEqual([place?.unit?.kind, place?.unit?.name, place?.unit?.ref.id, place?.unit?.ref.role], ['method', 'run', 'p1.unit', 'context']);
+  assert.deepEqual([place?.from?.ref.id, place?.from?.ref.path, place?.from?.label.en], ['p1.from', 'src/y.ts', 'Called from y']);
+  assert.equal(definition.walks[0]?.steps[0]?.places[1]?.unit, null, 'an unknown kind is reported, not guessed');
+  assert.match(problems.map((problem) => problem.problem).join('\n'), /"kind" must be one of/);
+  // Unit and from are checked like every reference but are never planned coverage.
+  const ids = definition.walks[0]?.steps[0]?.refs.map((ref) => `${ref.id}:${ref.role}`);
+  assert.ok(ids?.includes('p1.unit:context') && ids.includes('p1.from:context'));
+});
+
+test('the chosen code level is kept with the view arrangement', () => {
+  const state = emptyReviewState(REVISIONS, 'def.json', 'hash');
+  const stored = { ...state, ui: { openWalks: [], highlightWalk: false, level: 'file' } };
+  assert.equal(adoptStoredState(JSON.parse(JSON.stringify(stored)), REVISIONS)?.ui.level, 'file');
+  assert.equal(adoptStoredState({ ...state, ui: { openWalks: [], highlightWalk: false, level: 'everything' } }, REVISIONS), null);
+});
