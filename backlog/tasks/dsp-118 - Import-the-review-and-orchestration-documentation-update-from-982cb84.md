@@ -4,7 +4,7 @@ title: Import the review and orchestration documentation update from 982cb84
 status: Review
 assignee: []
 created_date: '2026-10-23 14:35'
-updated_date: '2026-10-23 14:37'
+updated_date: '2026-10-23 14:48'
 labels:
   - documentation
   - review
@@ -45,4 +45,6 @@ Review edits beyond the supplied prose (exact text in the commit diff): (1) expl
 Status snapshot checked against the cards: DSP-109, DSP-115, DSP-116 Done; DSP-117 To Do; live cancellation and same-session follow-up were in the experiment program; DSP-116 offline only.
 Checks: links and anchors in the four changed documents resolve (scratch link check; pre-existing encoded backlog links not affected); the seven consistency points hold across VISION 3.3/3.4, orchestration section 5 and working-memory section 11, with RUNTIME_PLATFORM_ROADMAP section 2 owning the shared-runtime responsibilities; no organization-specific wording. No application tests (prose only).
 Open question for Niclas: working-memory section 11 says an early review pilot can use "an isolated branch and worktree", while CLAUDE.md and the loop default to the main checkout unless Niclas asks for a worktree. Read as a future explicit request, there is no conflict; the text was kept.
+
+Open question answered by Niclas (23 Oct 2026): section 11's worktree sentence is an option for a future pilot, not an authorization to create a branch or worktree and not an override of CLAUDE.md. Section 11 now reads: "An early review pilot may use an isolated branch and worktree when explicitly requested by the user; otherwise, follow the repository's default checkout policy." The preceding sentence became "A review pilot can proceed alongside runtime work when it uses an agreed input boundary." No branch, worktree or pilot was created.
 <!-- SECTION:NOTES:END -->
