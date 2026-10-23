@@ -2,7 +2,9 @@
 
 Vision and governing document for agentic software development
 
-Niclas Danielsson | 14 September 2026 | Version 1.10
+Niclas Danielsson | 23 October 2026 | Version 1.11
+
+Change in version 1.11: record Niclas's decision that review is a standalone capability that works from a repository and a chosen diff or revision (section 3.3). It gives no mandate for a separate app or a large rebuild.
 
 Change in version 1.10: continue through DSP-6, then undertake bounded HCI and prior-art discovery and review the next direction with Niclas. Record five early review concepts as hypotheses. Phase 0's conventional diff remains a baseline and does not fix the future review interaction, code-view implementation or Maestro topology.
 
@@ -67,6 +69,7 @@ DSpatch is the project's chosen product name. DS stands for Danielssons Studio. 
 | Initial integration and testing | Decision, 13 September 2026 | Cursor on Niclas's home computer. Consider VS Code/Copilot in technical decisions; no implementation or testing is required in Phase 0. |
 | First milestone | Decision, 13 September 2026 | Interactive chat, real code changes, complete text diff and build/test, including cancellation, persisted history and manual testing. |
 | Continuation and discovery | Decision, 14 September 2026 | Continue through DSP-6, then study human interaction, prior work and emerging review concepts before agreeing the next direction for review and Maestro. The concept designs remain open. |
+| Standalone review | Decision, 23 October 2026 | Review has value without DSpatch's orchestration. Section 3.3 records its input, its use of the shared agent connection and its limits. |
 | Technology stack | Decision, 13 September 2026 | TypeScript, React and Electron. Section 9.1 explains rationale and verification. |
 | Platforms | Decision, 13 September 2026 | Windows and Linux targets. Aim for a consistent workspace; implement and test on Windows first. |
 | Data storage | Open | Select the storage engine and format in subsequent increments. |
@@ -318,6 +321,20 @@ Concept seeds recorded on 14 September 2026 are **open design hypotheses**, not 
 - **“Zoomable minimap” or another overview of changes.** Explore ways to move between an overall change picture and local detail without losing orientation.
 
 The [research brief](REVIEW_RESEARCH.md) describes a bounded study, candidate comparisons and evaluation. Research can suggest alternatives, combine concepts or show that an idea is not useful. No particular navigation model, layout, code renderer, minimap or explanation generator is selected here. Retain full code/diff access and revision-linked evidence while testing whether understanding actually improves.
+
+<a id="33-review-as-a-standalone-capability"></a>
+
+### 3.3 Review as a standalone capability
+
+Niclas decided on 23 October 2026 that review has value of its own. A person must be able to use it without DSpatch's orchestration.
+
+- **Input.** Review works from a repository and a chosen diff or revision. It does not need the history of the implementer that produced the change.
+- **Supplementary material.** Task requirements, the implementer's rationale and verification results are optional. Review assesses the implementer's claims critically: they are material to check, not evidence, as [explanations must be checkable](#förklaringen-måste-gå-att-kontrollera) requires.
+- **No dependence on orchestration.** Review does not depend on the graph editor, Maestro or a coordinator. When a workflow runs review, the workflow supplies the input; it is not a precondition for reviewing.
+- **Shared agent connection.** Review uses the same agent connection and SDK adapters as the rest of DSpatch. [RUNTIME_PLATFORM_ROADMAP.md, section 2](RUNTIME_PLATFORM_ROADMAP.md#keep-the-product-common) records what that covers.
+- **Same repository for now.** Review starts in this repository with a shared implementation. A separate app, packaging or releases are future possibilities, not decisions. The decision gives no mandate for a large rebuild; existing code is adapted when a concrete task needs it.
+
+The decision constrains review's input and dependencies, not its interaction design. The concept seeds in section 3.2 and the [research brief](REVIEW_RESEARCH.md) remain open.
 
 <a id="4-maestro-och-agentnätverket"></a>
 

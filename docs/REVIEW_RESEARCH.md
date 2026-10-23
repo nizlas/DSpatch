@@ -14,6 +14,8 @@ Continue the existing product plan through DSP-6. Then use the resulting workspa
 
 A complete conventional diff is the Phase 0 baseline. Its layout and implementation do not become the permanent design just because they shipped first. Preserve access to actual code, changes and revision-linked evidence; avoid speculative architecture until a concrete experiment needs it.
 
+Since 23 October 2026 review is a standalone capability; [VISION.md, section 3.3](VISION.md#33-review-as-a-standalone-capability) records the decision and its limits. For this study, assess each concept first with only a repository and a chosen diff or revision, then with the optional supplementary material: task requirements, the implementer's rationale and verification results.
+
 ## Questions to investigate
 
 - Where do people lose their place while following control flow, data flow or changes across files?
@@ -82,6 +84,8 @@ Use comparable tasks and vary the order where practical so prior exposure does n
 Consider review during interactive work, after an autonomous attempt and across several attempts. What should the user see first, how can they inspect the evidence, and what happens to their review when a new candidate appears?
 
 Assess which concrete information a promising interaction needs: for example goals, attempts, candidate revisions, changes, test results or decision history. Separate those needs from speculative storage schemas and UI architecture. The initial study need not implement an orchestrator or a general graph engine.
+
+These questions concern review when a workflow supplies its input. Review without a workflow is covered by [VISION.md, section 3.3](VISION.md#33-review-as-a-standalone-capability).
 
 Discuss the next increment across both directions: improve human code understanding, introduce a bounded Maestro workflow, or combine a small amount of each if the dependency and user value are clear. Autonomy is not a prerequisite for review innovation; human-interactive work remains a full mode.
 

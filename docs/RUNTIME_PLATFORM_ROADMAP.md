@@ -1,7 +1,7 @@
 # DSpatch: Runtime, Workspaces and Platform Evolution
 **Architecture direction and phased delivery plan**
 
-Version 0.4 | 22 October 2026 | Draft for Niclas Danielsson. v0.3 added section 1.2 (agreed runtime order and the remote-development requirement). v0.4 makes organization-specific references generic; technical requirements and verification status are unchanged.
+Version 0.5 | 23 October 2026 | Draft for Niclas Danielsson. v0.3 added section 1.2 (agreed runtime order and the remote-development requirement). v0.4 makes organization-specific references generic; technical requirements and verification status are unchanged. v0.5 records in section 2 that review reuses the shared agent connection.
 
 ## 1. Recommended direction
 
@@ -82,11 +82,15 @@ The first remote milestone demonstrates local rendering, remote repository acces
 
 ## 2. Common architecture and persistence
 
+<a id="keep-the-product-common"></a>
+
 ### Keep the product common
 
 DSpatch should retain one graph editor, graph model, task-memory model, result contract and evidence presentation. A direct SDK connection, an AHP connection and an App-hosted canvas are different integrations, not different definitions of a completed task.
 
 Separate the responsibilities logically: the workspace identifies working roots; task memory preserves goals and decisions; Maestro owns graph transitions; the agent runtime owns its model–tool loop; the hosting adapter handles sessions and transport; mandatory policy constrains the permitted execution path. These boundaries do not require six new packages or a generic plugin framework. Extend existing interfaces only when a concrete integration requires it. [P1–P3]
+
+**Review uses the same agent connection.** Review is a standalone capability ([VISION.md, section 3.3](VISION.md#33-review-as-a-standalone-capability)), not a separate integration. It reaches models through the same `AgentAdapter` and SDK adapters as the rest of DSpatch, with the same authentication rules, tool control, cancellation and session handling. A capability that review needs is added to the shared adapter, not to a separate provider path. This adds no work to the current runtime increments.
 
 The observed repository reference is `f83f476acae4b15f0f87eb5309ee795dfe6f7b83`, dated 30 September 2026. It already contains versioned workspace records in `project-store.ts` and a session-oriented `AgentAdapter`. That snapshot may lag the local branch. Do not interpret the plan as a request to rebuild the stores, restart completed calibration or replace the existing primary-root/conversation relationship. [R1–R3]
 
