@@ -66,6 +66,9 @@ export interface ReviewWords {
     readonly hiddenLines: (count: number) => string;
     readonly reading: string;
     readonly fileMissing: (path: string, side: string) => string;
+    readonly nothingBefore: string;
+    readonly nothingAfter: string;
+    readonly invalidReference: (problem: string) => string;
     readonly binary: string;
     readonly selectLine: string;
     readonly legendOld: string;
@@ -156,10 +159,11 @@ export interface ReviewWords {
     readonly validated: (all: number, anchored: number) => string;
     readonly problems: string;
     readonly languagesMissing: string;
+    readonly definitionHistory: (count: number) => string;
   };
   readonly notices: {
     readonly unusable: (keptAs: string) => string;
-    readonly definitionChanged: (stale: number) => string;
+    readonly definitionChanged: (stale: number, carried: number) => string;
     readonly dismiss: string;
   };
 }
@@ -227,6 +231,9 @@ const sv: ReviewWords = {
     hiddenLines: (count) => `⋯ visa ${String(count)} oförändrade rader`,
     reading: 'Läser filen …',
     fileMissing: (path, side) => `${path} finns inte i ${side}.`,
+    nothingBefore: 'Ingen gammal kod här – de här raderna är nya.',
+    nothingAfter: 'Ingen ny kod här – de här raderna är borttagna.',
+    invalidReference: (problem) => `Kodreferensen kunde inte bekräftas mot versionen: ${problem}`,
     binary: 'Binärt innehåll visas inte.',
     selectLine: 'Välj raden för en anteckning (skift-klick utökar)',
     legendOld: 'Före (gammal kod)',
@@ -330,12 +337,16 @@ const sv: ReviewWords = {
       `Alla ${String(all)} kodreferenser i walkarna har kontrollerats mot sin version (sökväg och rader); ${String(anchored)} av dem även mot sin ankartext.`,
     problems: 'Problem i definitionen',
     languagesMissing: 'Den här definitionen har bara text på ett språk; den visas som den är skriven.',
+    definitionHistory: (count) =>
+      `Posten har använts med ${String(count)} tidigare version${count === 1 ? '' : 'er'} av walk-definitionen.`,
   },
   notices: {
     unusable: (keptAs) =>
       `En sparad post för den här granskningen kunde inte användas och sparades oförändrad som ${keptAs}. Granskningen börjar med en tom post.`,
-    definitionChanged: (stale) =>
+    definitionChanged: (stale, carried) =>
       `Walk-definitionen har ändrats sedan posten sparades. Dina anteckningar och beslut gäller samma ändring och finns kvar.${
+        carried > 0 ? ` ${String(carried)} steg som du öppnat eller markerat som genomgångna har samma id som förut och visas fortfarande så, men deras text kan ha skrivits om.` : ''
+      }${
         stale > 0 ? ` ${String(stale)} markeringar av öppnade kodställen gäller den tidigare definitionen; de finns kvar i posten men räknas inte.` : ''
       }`,
     dismiss: 'Stäng',
@@ -405,6 +416,9 @@ const en: ReviewWords = {
     hiddenLines: (count) => `⋯ show ${String(count)} unchanged lines`,
     reading: 'Reading the file…',
     fileMissing: (path, side) => `${path} does not exist in the ${side}.`,
+    nothingBefore: 'No old code here – these lines are new.',
+    nothingAfter: 'No new code here – these lines were removed.',
+    invalidReference: (problem) => `The code reference could not be confirmed against the version: ${problem}`,
     binary: 'Binary content is not shown.',
     selectLine: 'Select this line for a note (shift-click extends)',
     legendOld: 'Before (old code)',
@@ -508,12 +522,16 @@ const en: ReviewWords = {
       `All ${String(all)} code references in the walks were checked against their version (path and lines); ${String(anchored)} of them also against their anchor text.`,
     problems: 'Problems in the definition',
     languagesMissing: 'This definition has text in only one language; it is shown as written.',
+    definitionHistory: (count) =>
+      `This record has been used with ${String(count)} earlier version${count === 1 ? '' : 's'} of the walk definition.`,
   },
   notices: {
     unusable: (keptAs) =>
       `A stored record for this review could not be used and was kept unchanged as ${keptAs}. The review starts with an empty record.`,
-    definitionChanged: (stale) =>
+    definitionChanged: (stale, carried) =>
       `The walk definition has changed since the record was saved. Your notes and decisions are about the same change and are kept.${
+        carried > 0 ? ` ${String(carried)} steps you opened or marked walked through have the same id as before and are still shown that way, but their text may have been rewritten.` : ''
+      }${
         stale > 0 ? ` ${String(stale)} marks of opened code places belong to the earlier definition; they stay in the record but are not counted.` : ''
       }`,
     dismiss: 'Close',

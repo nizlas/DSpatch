@@ -838,6 +838,18 @@
   color: #f78c6c;
 }
 
+.rv-nothing {
+  padding: 0.3rem 0.8rem;
+  color: var(--muted);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-style: italic;
+}
+
+.rv-problem {
+  padding: 0.25rem 0.7rem;
+  font-size: 0.82rem;
+}
+
 .rv-gap,
 .rv-more {
   display: flex;

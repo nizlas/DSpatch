@@ -189,8 +189,20 @@ export class ReviewService {
             // Said, not hidden: decisions are about hunks of this revision pair and
             // stay valid; "opened" marks from the earlier walks are kept but no
             // longer counted when they name no place of this definition.
-            stateNotice = { kind: 'definition-changed', staleOpenedMarks: staleOpenedMarks(definition, stored) };
-            state = { ...stored, definitionHash };
+            const stepIds = new Set(definition.walks.flatMap((walk) => walk.steps.map((step) => step.id)));
+            const carried = new Set(
+              [...Object.keys(stored.shownSteps), ...Object.keys(stored.walkedSteps)].filter((id) => stepIds.has(id)),
+            );
+            stateNotice = {
+              kind: 'definition-changed',
+              staleOpenedMarks: staleOpenedMarks(definition, stored),
+              carriedStepMarks: carried.size,
+            };
+            state = {
+              ...stored,
+              definitionHash,
+              previousDefinitionHashes: [...stored.previousDefinitionHashes, stored.definitionHash],
+            };
           }
         }
       }

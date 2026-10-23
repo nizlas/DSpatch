@@ -491,9 +491,10 @@ test('a version 2 definition needs both languages, gives each place a focus and 
   assert.equal(step?.places[0]?.focus.id, 'p1');
   assert.equal(step?.places[0]?.focus.side, 'target', 'side defaults to target');
   assert.equal(step?.places[0]?.context[0]?.id, 'p1.context1');
+  // Context is shown on request and is not planned coverage unless declared "walk".
   assert.deepEqual(step?.refs.map((ref) => [ref.id, ref.role]), [
     ['p1', 'walk'],
-    ['p1.context1', 'walk'],
+    ['p1.context1', 'context'],
     ['e1', 'evidence'],
   ]);
   // A missing language is reported and filled from the other, never left blank.
@@ -562,4 +563,44 @@ test('preferences accept only the two display languages', () => {
   assert.deepEqual(adoptPreferences({ language: 'en' }), { language: 'en' });
   assert.deepEqual(adoptPreferences({ language: 'de' }), { language: 'sv' });
   assert.deepEqual(adoptPreferences(null), { language: 'sv' });
+});
+
+test('opened coverage counts only the focus of opened places; declared context counts as planned', () => {
+  const { definition } = parseReviewDefinition({
+    format: 'dspatch-review/2',
+    title: { sv: 't', en: 't' },
+    repository: '.',
+    base: REVISIONS.base,
+    target: REVISIONS.target,
+    walks: [
+      {
+        id: 'W1',
+        title: { sv: 'w', en: 'w' },
+        question: { sv: 'q', en: 'q' },
+        steps: [
+          {
+            id: 'W1.1',
+            title: { sv: 's', en: 's' },
+            summary: { sv: 's', en: 's' },
+            body: { sv: 'b', en: 'b' },
+            places: [
+              {
+                id: 'p1',
+                label: { sv: 'l', en: 'l' },
+                focus: { path: 'src/x.ts', start: 2, end: 3 },
+                context: [{ path: 'src/y.ts', start: 1, end: 9, role: 'walk' }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  assert.ok(definition !== null);
+  const { files } = fixture();
+  const opened = { ...emptyReviewState(REVISIONS, 'def.json', 'hash'), shownRefs: { 'W1.1@p1': 't' } };
+  const coverage = computeCoverage(definition, files, opened);
+  assert.equal(coverage.hunks[1]?.planned, 'full', 'declared context is planned');
+  assert.equal(coverage.hunks[0]?.shown, 'full', 'the focus was on screen');
+  assert.equal(coverage.hunks[1]?.shown, 'none', 'context was not on screen until asked for');
 });

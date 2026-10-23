@@ -215,7 +215,10 @@ test('the record is saved, reopened as left, and refused for another revision pa
     fs.writeFileSync(fixture.definitionPath, text);
     const third = await open(fixture);
     assert.equal(third.bundle.state.notes.length, 1);
-    assert.deepEqual(third.bundle.stateNotice, { kind: 'definition-changed', staleOpenedMarks: 0 });
+    assert.deepEqual(third.bundle.stateNotice, { kind: 'definition-changed', staleOpenedMarks: 0, carriedStepMarks: 1 });
+    // The earlier definition is remembered, so the change stays visible after this notice.
+    assert.equal(third.bundle.state.previousDefinitionHashes.length, 1);
+    assert.equal(third.bundle.state.previousDefinitionHashes[0], second.bundle.definitionHash);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }

@@ -246,9 +246,14 @@ export function ReviewView(): JSX.Element {
       setOutcome({ kind: 'failed', error: 'The review bridge is missing from this window (preload).' });
       return;
     }
-    void bridge.getPreferences().then((preferences) => {
-      setLangState(preferences.language);
-    });
+    void bridge.getPreferences().then(
+      (preferences) => {
+        setLangState(preferences.language);
+      },
+      (error: unknown) => {
+        setLangError(String(error));
+      },
+    );
     void bridge.initial().then(setOutcome);
   }, [bridge]);
 
@@ -398,9 +403,14 @@ function OpenReview({
   const coverageByHunk = useMemo(() => new Map(coverage.hunks.map((entry) => [entry.hunk.id, entry])), [coverage]);
 
   const current = findStep(bundle, state.position.stepId);
-  const place: Place | null =
-    current === null ? null : (current.step.places[state.position.refIndex] ?? current.step.places[0] ?? null);
   const away = state.position.away;
+  const placeIndex =
+    current === null ? 0 : Math.max(0, Math.min(state.position.refIndex, current.step.places.length - 1));
+  const place: Place | null = current === null ? null : (current.step.places[placeIndex] ?? null);
+  const placeProblem =
+    current === null || place === null || away !== null
+      ? null
+      : (bundle.referenceProblems.find((problem) => problem.stepId === current.step.id && problem.refId === place.focus.id)?.problem ?? null);
   const focus: CodeLocation | null = away ?? (place === null ? null : asLocation(place.focus));
   const contexts: readonly CodeLocation[] = away === null && place !== null ? place.context.map(asLocation) : [];
 
@@ -555,6 +565,7 @@ function OpenReview({
     <div className="rv">
       <Header
         bundle={bundle}
+        history={state.previousDefinitionHashes.length}
         words={words}
         lang={lang}
         onLang={onLang}
@@ -569,7 +580,7 @@ function OpenReview({
           <span>
             {bundle.stateNotice.kind === 'unusable'
               ? words.notices.unusable(bundle.stateNotice.keptAs)
-              : words.notices.definitionChanged(bundle.stateNotice.staleOpenedMarks)}
+              : words.notices.definitionChanged(bundle.stateNotice.staleOpenedMarks, bundle.stateNotice.carriedStepMarks)}
           </span>
           <button type="button" onClick={() => setNoticeOpen(false)}>
             {words.notices.dismiss}
@@ -649,6 +660,7 @@ function OpenReview({
               onHighlightWalk={current === null ? null : setHighlightWalk}
               selection={selection}
               onSelect={setSelection}
+              problem={placeProblem}
               words={words}
             />
           )}
@@ -661,7 +673,8 @@ function OpenReview({
               walk={current.walk}
               step={current.step}
               index={current.index}
-              placeIndex={state.position.refIndex}
+              placeIndex={placeIndex}
+              referenceProblems={bundle.referenceProblems}
               state={state}
               words={words}
               lang={lang}
@@ -738,6 +751,7 @@ function Collapsible({
 
 function Header({
   bundle,
+  history,
   words,
   lang,
   onLang,
@@ -748,6 +762,7 @@ function Header({
   onChoose,
 }: {
   readonly bundle: ReviewBundle;
+  readonly history: number;
   readonly words: ReviewWords;
   readonly lang: Lang;
   readonly onLang: (lang: Lang) => void;
@@ -805,6 +820,12 @@ function Header({
               <code>{bundle.definitionPath}</code>
               <br />
               {pick(bundle.definition.provenance, lang)}
+              {history > 0 && (
+                <>
+                  <br />
+                  {words.detailsPanel.definitionHistory(history)}
+                </>
+              )}
               {bundle.definition.languages.length < 2 && (
                 <>
                   <br />
@@ -1215,6 +1236,7 @@ function StepPanel({
   step,
   index,
   placeIndex,
+  referenceProblems,
   state,
   words,
   lang,
@@ -1227,6 +1249,7 @@ function StepPanel({
   readonly step: WalkStep;
   readonly index: number;
   readonly placeIndex: number;
+  readonly referenceProblems: ReviewBundle['referenceProblems'];
   readonly state: ReviewState;
   readonly words: ReviewWords;
   readonly lang: Lang;
@@ -1238,7 +1261,8 @@ function StepPanel({
   const previous = walk.steps[index - 1];
   const next = walk.steps[index + 1];
   const nextWalk = bundle.definition.walks[bundle.definition.walks.indexOf(walk) + 1];
-  const active = Math.min(placeIndex, step.places.length - 1);
+  const active = placeIndex;
+  const invalid = new Set(referenceProblems.filter((problem) => problem.stepId === step.id).map((problem) => problem.refId));
   const summaryLabels = [...new Set(step.evidence.map((entry) => entry.label))];
   return (
     <section className="rv-step-panel">
@@ -1272,6 +1296,7 @@ function StepPanel({
                 >
                   <span className="rv-place-number">{position + 1}</span>
                   <Markdown text={pick(entry.label, lang)} />
+                  {invalid.has(entry.focus.id) && <span className="rv-error"> ⚠</span>}
                 </button>
               </li>
             ))}
@@ -1623,6 +1648,7 @@ function CodePane({
   onHighlightWalk,
   selection,
   onSelect,
+  problem,
   words,
 }: {
   readonly focus: CodeLocation;
@@ -1638,6 +1664,7 @@ function CodePane({
   readonly onHighlightWalk: ((on: boolean) => void) | null;
   readonly selection: CodeLocation | null;
   readonly onSelect: (location: CodeLocation | null) => void;
+  readonly problem: string | null;
   readonly words: ReviewWords;
 }): JSX.Element {
   const content = useRows(files, focus.path, diffFile, focus.side);
@@ -1657,12 +1684,19 @@ function CodePane({
     }
     return set;
   }, [overlay, rows, focus.path]);
-  const contextRange = useMemo(() => {
-    const indexes = contexts
-      .filter((location) => location.path === focus.path)
-      .flatMap((location) => referenceRows(rows, location).indexes);
-    return indexes.length === 0 ? null : { first: Math.min(...indexes), last: Math.max(...indexes) };
-  }, [contexts, rows, focus.path]);
+  // Each context range on its own: separate ranges never merge into one long span.
+  const contextRows = useMemo(
+    () =>
+      contexts
+        .filter((location) => location.path === focus.path)
+        .map((location) => referenceRows(rows, location).indexes)
+        .filter((indexes) => indexes.length > 0),
+    [contexts, rows, focus.path],
+  );
+  const contextRange =
+    contextRows.length === 0
+      ? null
+      : { first: Math.min(...contextRows.map((indexes) => indexes[0] ?? 0)), last: Math.max(...contextRows.map((indexes) => indexes[indexes.length - 1] ?? 0)) };
   const selectionSet = useMemo(() => (selection === null ? new Set<number>() : new Set(referenceRows(rows, selection).indexes)), [selection, rows]);
 
   const changed = focused.changed;
@@ -1706,15 +1740,33 @@ function CodePane({
     }
     const first = focused.indexes[0] ?? 0;
     const last = focused.indexes[focused.indexes.length - 1] ?? first;
-    let from = first - FOCUS_MARGIN - extra.above;
-    let to = last + FOCUS_MARGIN + extra.below;
-    if (extra.context && contextRange !== null) {
-      from = Math.min(from, contextRange.first);
-      to = Math.max(to, contextRange.last);
-    }
+    const from = first - FOCUS_MARGIN - extra.above;
+    const to = last + FOCUS_MARGIN + extra.below;
     keep.fill(true, Math.max(0, from), Math.min(rows.length, to + 1));
+    if (extra.context) {
+      for (const indexes of contextRows) {
+        indexes.forEach((index) => {
+          keep[index] = true;
+        });
+      }
+    }
+    // Rows between ranges stay folded until opened.
+    let index = 0;
+    while (index < keep.length) {
+      if (keep[index] === true) {
+        index += 1;
+        continue;
+      }
+      const start = index;
+      while (index < keep.length && keep[index] !== true) {
+        index += 1;
+      }
+      if (openGaps.has(start)) {
+        keep.fill(true, start, index);
+      }
+    }
     return keep;
-  }, [rows, scope, focusSet, focused, extra, contextRange, openGaps, diffFile]);
+  }, [rows, scope, focusSet, focused, extra, contextRows, openGaps, diffFile]);
 
   // Bring the focused change into view: its first changed row, not the top of a range.
   const scrollKey = `${focus.path}:${focus.side}:${String(focus.start)}:${String(focus.end)}:${scope}:${effectiveView}`;
@@ -1764,6 +1816,7 @@ function CodePane({
     }
     let firstFocus = true;
     let firstChange = true;
+    let hiddenNoted = false;
     let index = scope === 'focus' ? Math.max(0, firstVisible) : 0;
     const end = scope === 'focus' ? lastVisible : rows.length - 1;
     while (index <= end && index >= 0) {
@@ -1786,6 +1839,17 @@ function CodePane({
         break;
       }
       if (hidden(row)) {
+        // Say so where the focus had lines that this view leaves out.
+        if (focusSet.has(index) && !hiddenNoted) {
+          hiddenNoted = true;
+          if (!focused.indexes.some((focusIndex) => !hidden(rows[focusIndex] as DiffRow))) {
+            body.push(
+              <div key={`none-${String(index)}`} className="rv-nothing">
+                {effectiveView === 'before' ? words.view.nothingBefore : words.view.nothingAfter}
+              </div>,
+            );
+          }
+        }
         index += 1;
         continue;
       }
@@ -1881,6 +1945,7 @@ function CodePane({
           </label>
         )}
       </div>
+      {problem !== null && <div className="rv-error rv-problem">{words.view.invalidReference(problem)}</div>}
       <div className="rv-legend-bar" aria-hidden="true">
         {changed && (
           <>
@@ -1888,7 +1953,9 @@ function CodePane({
             <span className="rv-key rv-new">{words.view.legendNew}</span>
           </>
         )}
-        {!changed && <span className="rv-key rv-neutral-focus">{words.view.legendFocus}</span>}
+        {focused.indexes.some((index) => rows[index]?.kind === 'context') && (
+          <span className="rv-key rv-neutral-focus">{words.view.legendFocus}</span>
+        )}
         {highlightWalk && <span className="rv-key rv-walk-mark">{words.view.legendWalk}</span>}
       </div>
       <div className="rv-lines" ref={container}>

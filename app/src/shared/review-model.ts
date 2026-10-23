@@ -403,7 +403,8 @@ function parseStepV2(raw: Record<string, unknown>, stepId: string, where: string
       } else if (Array.isArray(contextRaw)) {
         contextRaw.forEach((entry: unknown, contextIndex) => {
           const contextId = refId(`${placeId}.context${String(contextIndex + 1)}`, placeWhere);
-          const ref = parseReference(entry, contextId, `${placeWhere}.context[${String(contextIndex)}]`, problems, 'walk', true);
+          // Context is shown on request and never counts as covered by the walk.
+          const ref = parseReference(entry, contextId, `${placeWhere}.context[${String(contextIndex)}]`, problems, 'context', true);
           if (ref !== null) {
             context.push(ref);
           }
@@ -837,6 +838,11 @@ export interface ReviewState {
   readonly shownRefs: Readonly<Record<string, string>>;
   /** How the reviewer has arranged the view. Never affects progress or decisions. */
   readonly ui: ReviewUi;
+  /**
+   * Hashes of earlier walk definitions this record was used with, oldest first.
+   * Kept so a change of the prepared walks stays visible after the first notice.
+   */
+  readonly previousDefinitionHashes: readonly string[];
   /** Step id → when the reviewer marked it walked through. Not an acceptance. */
   readonly walkedSteps: Readonly<Record<string, string>>;
   readonly decisions: readonly ReviewDecision[];
@@ -868,6 +874,7 @@ export function emptyReviewState(revisions: RevisionPair, definitionPath: string
     shownSteps: {},
     shownRefs: {},
     ui: DEFAULT_UI,
+    previousDefinitionHashes: [],
     walkedSteps: {},
     decisions: [],
     notes: [],
@@ -900,6 +907,8 @@ export function adoptStoredState(raw: unknown, revisions: RevisionPair): ReviewS
     !stringMap(raw['walkedSteps']) ||
     (raw['shownRefs'] !== undefined && !stringMap(raw['shownRefs'])) ||
     (raw['ui'] !== undefined && !isUi(raw['ui'])) ||
+    (raw['previousDefinitionHashes'] !== undefined &&
+      !(Array.isArray(raw['previousDefinitionHashes']) && raw['previousDefinitionHashes'].every((entry) => typeof entry === 'string'))) ||
     !Array.isArray(raw['decisions']) ||
     !Array.isArray(raw['notes']) ||
     typeof raw['definitionHash'] !== 'string'
@@ -910,6 +919,7 @@ export function adoptStoredState(raw: unknown, revisions: RevisionPair): ReviewS
     ...(raw as unknown as ReviewState),
     shownRefs: (raw['shownRefs'] as Record<string, string> | undefined) ?? {},
     ui: (raw['ui'] as ReviewUi | undefined) ?? DEFAULT_UI,
+    previousDefinitionHashes: (raw['previousDefinitionHashes'] as string[] | undefined) ?? [],
   };
 }
 
@@ -1041,14 +1051,17 @@ function stepRefs(definition: ReviewDefinition, stepIds: ReadonlySet<string> | n
   return refs;
 }
 
-/** The focus and context of every place that has been on screen. */
+/**
+ * The focus of every place that has been on screen. Context is not counted: it is
+ * shown only when the reviewer asks for it.
+ */
 function shownReferences(definition: ReviewDefinition, shown: Readonly<Record<string, string>>): CodeReference[] {
   const refs: CodeReference[] = [];
   for (const walk of definition.walks) {
     for (const step of walk.steps) {
       for (const place of step.places) {
         if (shown[placeKey(step.id, place.id)] !== undefined) {
-          refs.push(place.focus, ...place.context);
+          refs.push(place.focus);
         }
       }
     }
@@ -1361,7 +1374,13 @@ export interface ReviewBundle {
 /** What happened to a stored record when the review opened. The view words it. */
 export type ReviewStateNotice =
   | { readonly kind: 'unusable'; readonly keptAs: string }
-  | { readonly kind: 'definition-changed'; readonly staleOpenedMarks: number };
+  | {
+      readonly kind: 'definition-changed';
+      /** "Opened" marks naming no place of this definition: kept, not counted. */
+      readonly staleOpenedMarks: number;
+      /** Steps marked opened or walked through under the earlier definition. Kept and still shown. */
+      readonly carriedStepMarks: number;
+    };
 
 export type ReviewOpenOutcome =
   | { readonly kind: 'opened'; readonly bundle: ReviewBundle }
