@@ -4,7 +4,7 @@ title: Integrate the review coverage and code walks concept into the documentati
 status: Review
 assignee: []
 created_date: '2026-10-23 14:56'
-updated_date: '2026-10-23 15:05'
+updated_date: '2026-10-23 16:47'
 labels:
   - documentation
   - review
@@ -43,4 +43,6 @@ Result (23 Oct 2026, run 20261023-170000-dsp119doc, base df13447, accepted candi
 - Cross-references: VISION 3.4 (one sentence, no version bump, accepted by the Reviewer), REVIEW_RESEARCH, TASK_MANAGEMENT section 11, AGENTS.md relevance-index row and status sentence.
 - Review: Reviewer call 1 REWORK (B1 open question 2 misdescribed the source and blurred who decides; B2 questions 3-4 were not conflicts and question 4 compared different axes; S1-S7 fidelity and wording); coordinator applied all (S1 hedged); call 2 ACCEPT. Link check 0 broken.
 Open questions for Niclas (in the document): (1) "Code accepted" - the source makes it a review outcome, VISION 3.4 a provisional mode name; (2) whether a walk pilot comes first - DSP-13 argues against a generated walkthrough as the first investment and ranks a planted-defect probe highest; VISION 3.4 lets prepared walks test the interaction first; DSP-14 recommends and DSP-15 records Niclas's decision.
+
+Niclas's answers (23 Oct 2026). Question 1: "Code accepted" names a review outcome, not a mode; VISION 3.4 corrected (version 1.13, decision-table row). "Concise" is the low-explanation teaching mode, independent of review depth; selecting it neither implies acceptance nor reduces review rigour. Acceptance by the user and acceptance through explicitly delegated agent review stay distinct; acceptance applies to the reviewed scope and revision and is not a guarantee of correctness. Question 2: the decision process is kept - DSP-14 recommends and Niclas decides in DSP-15; the vision permits a prepared-walk pilot but does not prioritise it over the planted-defect probe; no pilot is authorised now. REVIEW_COVERAGE_AND_CODE_WALKS.md 1.1 records both answers by reference to VISION 3.4. No push, no implementation.
 <!-- SECTION:NOTES:END -->

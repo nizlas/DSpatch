@@ -2,7 +2,9 @@
 
 Vision and governing document for agentic software development
 
-Niclas Danielsson | 23 October 2026 | Version 1.12
+Niclas Danielsson | 23 October 2026 | Version 1.13
+
+Change in version 1.13: record Niclas's decision that "Code accepted" names a review outcome, not a mode, and that "Concise" is the low-explanation teaching mode, chosen independently of review depth (section 3.4). The first-pilot paragraph permits a prepared-walk pilot without ranking it above the planted-defect probe; no pilot is authorised now.
 
 Change in version 1.12: explain the relationship between orchestration, independent review and the shared agent connection. Record walkthrough coverage and learning modes as design proposals, not implemented features. Based on repository revision `982cb84`; prepared 23 October 2026.
 
@@ -71,6 +73,7 @@ DSpatch is the project's chosen product name. DS stands for Danielssons Studio. 
 | Initial integration and testing | Decision, 13 September 2026 | Cursor on Niclas's home computer. Consider VS Code/Copilot in technical decisions; no implementation or testing is required in Phase 0. |
 | First milestone | Decision, 13 September 2026 | Interactive chat, real code changes, complete text diff and build/test, including cancellation, persisted history and manual testing. |
 | Continuation and discovery | Decision, 14 September 2026 | Continue through DSP-6, then study human interaction, prior work and emerging review concepts before agreeing the next direction for review and Maestro. The concept designs remain open. |
+| Review outcome naming | Decision, 23 October 2026 | "Code accepted" names a review outcome, not a mode; "Concise" is a teaching mode independent of review depth. Section 3.4. |
 | Standalone review | Decision, 23 October 2026 | Review has value without DSpatch's orchestration. Section 3.3 records its input, its use of the shared agent connection and its limits. |
 | Technology stack | Decision, 13 September 2026 | TypeScript, React and Electron. Section 9.1 explains rationale and verification. |
 | Platforms | Decision, 13 September 2026 | Windows and Linux targets. Aim for a consistent workspace; implement and test on Windows first. |
@@ -342,7 +345,7 @@ The decision constrains review's input and dependencies, not its interaction des
 
 ### 3.4 Walkthrough coverage and levels of engagement
 
-The following design proposal develops Niclas's review discussion. The independence decision in section 3.3 is agreed; the interaction details here remain candidates for a bounded pilot and the research in section 3.2. This section does not authorise a large implementation or claim that review coverage is already available. The detailed concept, translated from Niclas's source document of 22 October 2026, is in [REVIEW_COVERAGE_AND_CODE_WALKS.md](REVIEW_COVERAGE_AND_CODE_WALKS.md).
+The following design proposal develops Niclas's review discussion. The independence decision in section 3.3 and the naming decision recorded below are agreed; the other interaction details here remain candidates for a bounded pilot and the research in section 3.2. This section does not authorise a large implementation or claim that review coverage is already available. The detailed concept, translated from Niclas's source document of 22 October 2026, is in [REVIEW_COVERAGE_AND_CODE_WALKS.md](REVIEW_COVERAGE_AND_CODE_WALKS.md).
 
 #### Start with an overview of the change
 
@@ -364,9 +367,11 @@ Walks can be prioritised by likely consequence and uncertainty. Priority helps a
 
 The user can move from an overview to line-level reasoning and back without losing their position or progress. Review depth and teaching are separate choices. A short explanation can still cover a demanding correctness question; a long teaching discussion need not imply that the code was accepted.
 
-In a correctness-focused mode, provisionally called "Code accepted", the agent helps assess whether the change satisfies its requirements and identifies defects, risks and missing evidence. The label is an engagement preference, not an automatic verdict or a guarantee that no bugs exist.
+Teaching modes set how much the agent explains; review depth sets how thoroughly the change is examined. The two are chosen independently. In the low-explanation teaching mode, called "Concise", the agent explains only what the review needs: what the change does, whether it meets its intent, and which defects, risks and gaps in evidence exist. Selecting Concise neither implies acceptance nor reduces the rigour of the review.
 
-In a learning-focused mode, provisionally called "Teach me something new", the same review can explain unfamiliar language features or design concepts when useful. A developer learning GDScript, for example, could ask how a signal connects the changed function to its caller, then return to the review. The person can adjust the assumed level of knowledge. Teaching must not replace the assessment of the actual change.
+In a learning-focused teaching mode, provisionally called "Teach me something new", the same review can explain unfamiliar language features or design concepts when useful. A developer learning GDScript, for example, could ask how a signal connects the changed function to its caller, then return to the review. The person can adjust the assumed level of knowledge. Teaching must not replace the assessment of the actual change.
+
+"Code accepted" names a review outcome, not a mode (Niclas's decision, 23 October 2026). It records that a reviewed scope was accepted at the reviewed revision, either by the user or through explicitly delegated agent review, and the record keeps which; delegated agent acceptance does not become acceptance by the user. Acceptance applies to that scope and revision only and is not a guarantee of correctness.
 
 #### Use integration as additional evidence
 
@@ -379,6 +384,8 @@ The same review should remain useful when those inputs are unavailable, or when 
 A useful first pilot can use one fixed change with a file overview, a small set of meaningful walks, range highlighting and explicit review decisions. Prepared walks can test whether the interaction helps before automatic generation is integrated. Use the existing agent connection when agent assistance is added; do not create another SDK integration.
 
 The pilot should test whether the person can explain the behavioural change, locate a relevant risk and identify what remains unreviewed. Compare with a conventional diff. Time saved is useful, but apparent speed without understanding is not success. Automatic preservation of coverage across new revisions, separate packaging and a complete graph workflow are later decisions.
+
+This describes a possible pilot, not a priority or an authorisation. The vision permits a prepared-walk pilot but does not rank it above the [planted-defect probe](research/dsp-13-comprehension-research.md#12-assessing-comprehension-orientation-and-confidence-with-one-user-ac4) that the DSP-13 research ranks as the highest-value cheap experiment. DSP-14 makes a recommendation and Niclas decides the direction in DSP-15. No pilot is authorised now.
 
 <a id="4-maestro-och-agentnätverket"></a>
 
