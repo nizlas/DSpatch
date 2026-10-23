@@ -12,9 +12,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  REVIEW_CHANNELS,
   adoptStoredState,
   buildDiffRows,
+  checkFileRequest,
   checkReference,
+  checkStateForSave,
   computeCoverage,
   currentHunkDecisions,
   emptyReviewState,
@@ -251,9 +254,13 @@ test('coverage keeps planned, shown, walked and decided apart — none implies a
   assert.equal(coverage.remainingLines, 4, 'nothing is decided until someone decides it');
 
   // Shown and walked through: progress, still no decision.
+  // Opening a step is not having seen all of it: only references put on screen count.
+  const opened: ReviewState = { ...fresh, shownSteps: { 'W1.1': 't' } };
+  assert.equal(computeCoverage(definition, files, opened).hunks[0]?.shown, 'none');
   const progressed: ReviewState = {
     ...fresh,
     shownSteps: { 'W1.1': 't', 'W1.2': 't' },
+    shownRefs: { 'W1.1#0': 't', 'W1.2#0': 't' },
     walkedSteps: { 'W1.1': 't' },
   };
   coverage = computeCoverage(definition, files, progressed);
@@ -330,13 +337,89 @@ test('open findings and questions are counted on the hunks their location touche
   assert.equal(coverage.openQuestions, 1, 'but it is still counted overall');
 });
 
-test('a stored record is adopted only for the same revision pair', () => {
+test('a stored record is adopted only for the same revision pair and in the expected shape', () => {
   const state = emptyReviewState(REVISIONS, 'def.json', 'hash');
   const stored: unknown = JSON.parse(JSON.stringify(state));
   assert.ok(adoptStoredState(stored, REVISIONS) !== null);
   assert.equal(adoptStoredState(stored, { ...REVISIONS, target: 'c'.repeat(40) }), null);
   assert.equal(adoptStoredState({ ...state, version: 2 }, REVISIONS), null);
   assert.equal(adoptStoredState('nonsense', REVISIONS), null);
+  assert.equal(adoptStoredState({ ...state, decisions: undefined }, REVISIONS), null, 'missing decisions');
+  assert.equal(adoptStoredState({ ...state, position: { stepId: 3 } }, REVISIONS), null, 'damaged position');
+  // A record written before per-reference "shown" existed is read with none shown.
+  const { shownRefs: _dropped, ...older } = state;
+  assert.deepEqual(adoptStoredState(older, REVISIONS)?.shownRefs, {});
+});
+
+test('the main process accepts only human decisions and notes at the open revision pair', () => {
+  const state = emptyReviewState(REVISIONS, 'def.json', 'hash');
+  const decision: ReviewDecision = {
+    id: 'd',
+    scope: { kind: 'hunk', path: 'a.ts', hunkId: 'H1' },
+    outcome: 'accepted',
+    reason: '',
+    by: { kind: 'human' },
+    at: 't',
+    revisions: REVISIONS,
+  };
+  assert.equal(checkStateForSave({ ...state, decisions: [decision] }, REVISIONS), null);
+  assert.match(
+    checkStateForSave(
+      { ...state, decisions: [{ ...decision, by: { kind: 'agent-delegated', adapterId: 'x', mandate: 'y' } }] },
+      REVISIONS,
+    ) ?? '',
+    /Only decisions made by a person/,
+  );
+  assert.match(
+    checkStateForSave({ ...state, decisions: [{ ...decision, revisions: { ...REVISIONS, target: 'c'.repeat(40) } }] }, REVISIONS) ?? '',
+    /different revision pair/,
+  );
+  assert.match(checkStateForSave({ ...state, revisions: { ...REVISIONS, base: 'c'.repeat(40) } }, REVISIONS) ?? '', /shape/);
+});
+
+test('file requests from the view name a side and a repository-relative path', () => {
+  assert.equal(checkFileRequest('target', 'src/a.ts'), null);
+  assert.ok(checkFileRequest('middle', 'src/a.ts') !== null);
+  assert.ok(checkFileRequest('base', '') !== null);
+  assert.ok(checkFileRequest('base', '/etc/passwd') !== null);
+  assert.ok(checkFileRequest('base', 'src\\a.ts') !== null);
+  assert.ok(checkFileRequest('base', 42) !== null);
+});
+
+test('a deleted line that starts with "-- " is a deletion, not a file header', () => {
+  const [file] = parseDiff(
+    parseNameStatus('M\0q.sql\0'),
+    ['diff --git a/q.sql b/q.sql', '--- a/q.sql', '+++ b/q.sql', '@@ -2 +1,0 @@', '--- a comment', '@@ -4,0 +3 @@', '+++ x', ''].join('\n'),
+  );
+  assert.deepEqual(
+    file?.hunks.map((hunk) => [hunk.baseStart, hunk.baseCount, hunk.targetStart, hunk.targetCount]),
+    [
+      [2, 1, 1, 0],
+      [4, 0, 3, 1],
+    ],
+  );
+});
+
+test('a definition naming a short or symbolic revision is warned about', () => {
+  const { problems } = parseReviewDefinition({
+    format: 'dspatch-review/1',
+    title: 't',
+    repository: '.',
+    base: 'main',
+    target: 'b'.repeat(40),
+    walks: [{ id: 'W', title: 't', question: 'q', steps: [{ id: 'S', title: 't', text: 't', refs: [{ path: 'a', side: 'target', start: 1, end: 1, role: 'walk' }] }] }],
+  });
+  assert.deepEqual(problems.map((problem) => problem.problem.slice(0, 33)), ['"base" is "main", not a full comm']);
+});
+
+test('the preload repeats every review channel name exactly', async () => {
+  const fs = await import('node:fs');
+  const preload = fs.readFileSync(new URL('../src/preload/preload.ts', import.meta.url), 'utf8');
+  for (const channel of Object.values(REVIEW_CHANNELS)) {
+    assert.ok(preload.includes(`'${channel}'`), channel);
+  }
+  const literal = preload.match(/'dspatch:review-[a-z-]+'/g) ?? [];
+  assert.deepEqual([...new Set(literal)].sort(), Object.values(REVIEW_CHANNELS).map((channel) => `'${channel}'`).sort());
 });
 
 test('highlighting keeps every character and carries block comments and template strings across lines', () => {

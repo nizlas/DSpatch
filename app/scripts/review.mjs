@@ -23,8 +23,10 @@ const electronExecutable = /** @type {string} */ (
   /** @type {unknown} */ (require('electron'))
 );
 
-const definition = process.argv[2];
-const electronArgs = process.argv.slice(3);
+// The definition is the first argument that is not an option; options go to Electron.
+const args = process.argv.slice(2);
+const definition = args.find((arg) => !arg.startsWith('-'));
+const electronArgs = args.filter((arg) => arg !== definition);
 
 const server = await createServer({
   configFile: path.join(appDir, 'vite.config.mts'),

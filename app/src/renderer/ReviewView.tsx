@@ -58,12 +58,13 @@ const LABEL_TEXT: Record<EvidenceLabel, string> = {
   'not-observed': 'Not observed',
 };
 
+/** What each label means in general. What exactly was substituted is the claim's to say. */
 const LABEL_HELP: Record<EvidenceLabel, string> = {
   analysis: 'A possible path read from the code. Not observed in any run.',
-  'test-simulated': 'Observed in a test with a substituted SDK and/or manual timers.',
+  'test-simulated': 'Observed in a test in which parts of the system are substituted; the claim names the test.',
   'test-real-substitute':
-    'Observed with a real local process standing in for the provider process; the SDK and timers are still simulated.',
-  'not-observed': 'Nothing in the preparation observed this.',
+    'Observed with a real local process standing in for another; the claim says what it stands in for and what stayed simulated.',
+  'not-observed': 'Nothing recorded has observed this.',
 };
 
 const CONTEXT_LINES = 3;
@@ -216,28 +217,56 @@ function OpenReview({
   const [selection, setSelection] = useState<CodeLocation | null>(null);
   const files = useFiles(bridge);
 
-  // Persist every change, shortly after it happens. The record is the reviewer's; a
+  // Persist every change. The record is the reviewer's: decisions, notes and walked
+  // marks are written at once; moving around is written shortly after. Whatever is
+  // still unsaved is written when the view goes away or the window unloads, and a
   // failed save is shown, never swallowed.
+  const latest = useRef(state);
+  latest.current = state;
+  const dirty = useRef(false);
+  const urgent = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const flush = useCallback(() => {
+    if (!dirty.current || bridge === undefined) {
+      return;
+    }
+    dirty.current = false;
+    void bridge.saveState(latest.current).then((result) => {
+      setSaving(dirty.current);
+      setSave(result.saved ? { at: result.at } : { at: result.at, error: result.error ?? 'not saved' });
+    });
+  }, [bridge]);
+
   const firstRender = useRef(true);
   useEffect(() => {
     if (firstRender.current) {
       firstRender.current = false;
       return;
     }
-    if (bridge === undefined) {
-      return;
-    }
-    const timer = setTimeout(() => {
-      void bridge.saveState(state).then((result) => {
-        setSave(result.saved ? { at: result.at } : { at: result.at, error: result.error ?? 'not saved' });
-      });
-    }, 250);
+    dirty.current = true;
+    setSaving(true);
+    const timer = setTimeout(flush, urgent.current ? 0 : 250);
+    urgent.current = false;
     return () => {
       clearTimeout(timer);
     };
-  }, [state, bridge]);
+  }, [state, flush]);
+
+  useEffect(() => {
+    window.addEventListener('beforeunload', flush);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      flush();
+    };
+  }, [flush]);
 
   const update = useCallback((change: (current: ReviewState) => ReviewState) => {
+    setState((current) => change(current));
+  }, []);
+
+  /** For the reviewer's own record — decisions, notes, walked marks: save at once. */
+  const record = useCallback((change: (current: ReviewState) => ReviewState) => {
+    urgent.current = true;
     setState((current) => change(current));
   }, []);
 
@@ -259,13 +288,23 @@ function OpenReview({
   const shownLocation: CodeLocation | null =
     away ?? (currentRef === null ? null : { path: currentRef.path, side: currentRef.side, start: currentRef.start, end: currentRef.end });
 
-  // Showing a step is recorded as shown — and only that.
+  // Showing a step's code is recorded as shown — per reference, and only that.
+  const shownKey = current === null ? null : `${current.step.id}#${String(state.position.refIndex)}`;
   useEffect(() => {
-    if (current !== null && away === null && state.shownSteps[current.step.id] === undefined) {
-      const stepId = current.step.id;
-      update((value) => ({ ...value, shownSteps: { ...value.shownSteps, [stepId]: new Date().toISOString() } }));
+    if (current === null || away !== null || shownKey === null) {
+      return;
     }
-  }, [current, away, state.shownSteps, update]);
+    if (state.shownSteps[current.step.id] !== undefined && state.shownRefs[shownKey] !== undefined) {
+      return;
+    }
+    const stepId = current.step.id;
+    const at = new Date().toISOString();
+    update((value) => ({
+      ...value,
+      shownSteps: value.shownSteps[stepId] === undefined ? { ...value.shownSteps, [stepId]: at } : value.shownSteps,
+      shownRefs: value.shownRefs[shownKey] === undefined ? { ...value.shownRefs, [shownKey]: at } : value.shownRefs,
+    }));
+  }, [current, away, shownKey, state.shownSteps, state.shownRefs, update]);
 
   const goToStep = useCallback(
     (stepId: string, refIndex = 0) => {
@@ -304,7 +343,7 @@ function OpenReview({
 
   const toggleWalked = useCallback(
     (stepId: string) => {
-      update((value) => {
+      record((value) => {
         const walked = { ...value.walkedSteps };
         if (walked[stepId] === undefined) {
           walked[stepId] = new Date().toISOString();
@@ -314,12 +353,12 @@ function OpenReview({
         return { ...value, walkedSteps: walked };
       });
     },
-    [update],
+    [record],
   );
 
   const decide = useCallback(
     (decision: Omit<ReviewDecision, 'id' | 'at' | 'by' | 'revisions'>) => {
-      update((value) => ({
+      record((value) => ({
         ...value,
         decisions: [
           ...value.decisions,
@@ -333,13 +372,13 @@ function OpenReview({
         ],
       }));
     },
-    [update],
+    [record],
   );
 
   const addNote = useCallback(
     (note: Pick<ReviewNote, 'kind' | 'text' | 'location' | 'stepId'>) => {
       const at = new Date().toISOString();
-      update((value) => ({
+      record((value) => ({
         ...value,
         notes: [
           ...value.notes,
@@ -347,19 +386,19 @@ function OpenReview({
         ],
       }));
     },
-    [update],
+    [record],
   );
 
   const setNoteStatus = useCallback(
     (id: string, status: 'open' | 'resolved', resolution: string) => {
-      update((value) => ({
+      record((value) => ({
         ...value,
         notes: value.notes.map((note) =>
           note.id === id ? { ...note, status, resolution, updatedAt: new Date().toISOString() } : note,
         ),
       }));
     },
-    [update],
+    [record],
   );
 
   // Open on the first step if the record has no position yet.
@@ -376,7 +415,7 @@ function OpenReview({
 
   return (
     <div className="rv">
-      <Header bundle={bundle} save={save} coverage={coverage} onChoose={onChoose} />
+      <Header bundle={bundle} save={save} saving={saving} coverage={coverage} onChoose={onChoose} />
       <div className={tab === 'coverage' || tab === 'notes' ? 'rv-body rv-body-wide' : 'rv-body'}>
         <nav className="rv-left">
           <div className="rv-tabs" role="tablist">
@@ -527,16 +566,21 @@ function hunkLocation(hunk: DiffHunk): CodeLocation {
 function Header({
   bundle,
   save,
+  saving,
   coverage,
   onChoose,
 }: {
   readonly bundle: ReviewBundle;
   readonly save: { at: string; error?: string } | null;
+  readonly saving: boolean;
   readonly coverage: CoverageSummary;
   readonly onChoose: () => void;
 }): JSX.Element {
   const [details, setDetails] = useState(false);
   const problems = bundle.definitionProblems.length + bundle.referenceProblems.length;
+  const references = bundle.definition.walks.flatMap((walk) => walk.steps.flatMap((step) => step.refs));
+  const referenceCount = references.length;
+  const anchoredCount = references.filter((ref) => ref.anchor !== undefined).length;
   return (
     <header className="rv-header">
       <div className="rv-identity">
@@ -562,11 +606,13 @@ function Header({
       </div>
       <div className="rv-header-side">
         <div className={save?.error === undefined ? 'rv-saved' : 'rv-error'}>
-          {save === null
-            ? 'Nothing recorded yet'
-            : save.error === undefined
-              ? `Record saved ${timeOf(save.at)}`
-              : `Record NOT saved: ${save.error}`}
+          {save?.error !== undefined
+            ? `Record NOT saved: ${save.error}`
+            : saving
+              ? 'Saving…'
+              : save === null
+                ? 'Nothing recorded yet'
+                : `Record saved ${timeOf(save.at)}`}
         </div>
         <div className="rv-sub">
           Open findings {coverage.openFindings} · open questions {coverage.openQuestions}
@@ -603,7 +649,10 @@ function Header({
                 here and is never simulated.
               </p>
               {problems === 0 ? (
-                <p>Every walk reference was checked against its revision: path, line range and anchor text.</p>
+                <p>
+                  All {referenceCount} walk references were checked against their revision for path and line
+                  range; {anchoredCount} of them also for their anchor text.
+                </p>
               ) : (
                 <ul className="rv-error">
                   {bundle.definitionProblems.map((problem) => (
@@ -642,7 +691,7 @@ function WalkList({
   return (
     <div className="rv-walks">
       <p className="rv-legend">
-        <span className="rv-mark-shown">●</span> shown <span className="rv-mark-walked">✓</span> marked walked
+        <span className="rv-mark-shown">●</span> opened <span className="rv-mark-walked">✓</span> marked walked
         through by you. Neither is a review decision.
       </p>
       {bundle.definition.walks.map((walk) => (
@@ -763,7 +812,7 @@ function CoverageTable({
             </td>
           </tr>
           <tr>
-            <th>Shown in a walk step</th>
+            <th>In walk references you opened</th>
             <td>
               {coverage.shownLines.full} lines
               {coverage.shownLines.partialHunks > 0 ? ` + ${String(coverage.shownLines.partialHunks)} hunks partly` : ''}
@@ -816,7 +865,7 @@ function CoverageTable({
             <th>Hunk</th>
             <th>Lines</th>
             <th>Planned</th>
-            <th>Shown</th>
+            <th>Opened</th>
             <th>Walked</th>
             <th>Decision</th>
             <th>Open</th>
@@ -1170,7 +1219,7 @@ function StepPanel({
           {next === undefined && nextWalk !== undefined ? `Next walk (${nextWalk.id}) →` : 'Next →'}
         </button>
       </div>
-      <p className="rv-sub">Moving between steps records only that a step was shown. It approves nothing.</p>
+      <p className="rv-sub">Moving between steps records only which step and code you opened. It approves nothing.</p>
       <div className="rv-walked">
         <button
           type="button"
@@ -1181,7 +1230,7 @@ function StepPanel({
           {walked === undefined ? 'Mark this step walked through' : 'Walked through ✓ — undo'}
         </button>
         <span className="rv-sub">
-          {state.shownSteps[step.id] === undefined ? '' : `First shown ${timeOf(state.shownSteps[step.id] ?? '')}. `}
+          {state.shownSteps[step.id] === undefined ? '' : `First opened ${timeOf(state.shownSteps[step.id] ?? '')}. `}
           Walked through is your note of progress, not acceptance.
         </span>
       </div>
@@ -1661,7 +1710,7 @@ function HunkBar({
       <div>
         <span className="rv-step-id">{hunk.id}</span> {hunkRangeText(hunk)} · {entry.lines} changed lines · in a
         walk: {planText(entry.planned)}
-        {entry.plannedBy.length > 0 ? ` (${entry.plannedBy.join(', ')})` : ''} · shown: {planText(entry.shown)} ·
+        {entry.plannedBy.length > 0 ? ` (${entry.plannedBy.join(', ')})` : ''} · opened in walk: {planText(entry.shown)} ·
         walked: {planText(entry.walked)} ·{' '}
         <strong className={decision === null ? '' : `rv-decision-${decision.outcome}`}>{decisionText(decision)}</strong>
         {entry.openFindings > 0 && <span className="rv-error"> · {entry.openFindings} open finding(s)</span>}

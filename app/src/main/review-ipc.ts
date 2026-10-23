@@ -1,23 +1,15 @@
 import { dialog, ipcMain, type BrowserWindow } from 'electron';
 
-import type { ReviewOpenOutcome, ReviewState, RevisionSide } from '../shared/review-model';
+import { REVIEW_CHANNELS, type ReviewOpenOutcome, type RevisionSide } from '../shared/review-model';
 import { ReviewService } from './review-service';
 
-/**
+/*
  * The review surface's channels, registered from `main.ts` with one call.
  *
  * Kept out of `bridge.ts`'s channel union on purpose: review is a standalone
  * capability (VISION §3.3) and these channels touch no chat, loop or adapter state.
- * Nothing here calls an agent adapter.
+ * Nothing here calls an agent adapter. Renderer input is checked in the service.
  */
-export const REVIEW_CHANNELS = {
-  initial: 'dspatch:review-initial',
-  choose: 'dspatch:review-choose',
-  readFile: 'dspatch:review-read-file',
-  listFiles: 'dspatch:review-list-files',
-  search: 'dspatch:review-search',
-  saveState: 'dspatch:review-save-state',
-} as const;
 
 export interface ReviewIpcOptions {
   readonly recordsDir: string;
@@ -61,5 +53,5 @@ export function registerReviewIpc(options: ReviewIpcOptions): void {
   );
   ipcMain.handle(REVIEW_CHANNELS.listFiles, (_event, side: RevisionSide) => service.listFiles(side));
   ipcMain.handle(REVIEW_CHANNELS.search, (_event, side: RevisionSide, query: string) => service.search(side, query));
-  ipcMain.handle(REVIEW_CHANNELS.saveState, (_event, state: ReviewState) => service.saveState(state));
+  ipcMain.handle(REVIEW_CHANNELS.saveState, (_event, state: unknown) => service.saveState(state));
 }

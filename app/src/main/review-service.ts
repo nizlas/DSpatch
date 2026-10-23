@@ -5,7 +5,9 @@ import path from 'node:path';
 
 import {
   adoptStoredState,
+  checkFileRequest,
   checkReference,
+  checkStateForSave,
   emptyReviewState,
   parseDiff,
   parseNameStatus,
@@ -64,7 +66,7 @@ function gitBuffer(repository: string, args: readonly string[]): Promise<Buffer 
         if (error !== null) {
           const text = stderr.toString('utf8');
           // `git show <sha>:<path>` for a path that is not in that commit.
-          if (/does not exist in|exists on disk, but not in|bad revision|invalid object name/i.test(text)) {
+          if (/does not exist in|exists on disk, but not in|bad revision|invalid object name|not a valid object name/i.test(text)) {
             resolve(null);
             return;
           }
@@ -131,7 +133,8 @@ export class ReviewService {
       const target = await commit(repository, definition.target);
       const parent = (await git(repository, ['rev-list', '--parents', '-n', '1', target.sha])).trim().split(' ')[1];
 
-      const diffArgs = ['--no-renames', '--no-ext-diff', '--no-color', base.sha, target.sha];
+      // No renames, external diff drivers or text conversion: the diff is of the stored bytes.
+      const diffArgs = ['--no-renames', '--no-ext-diff', '--no-textconv', '--no-color', base.sha, target.sha];
       const nameStatus = parseNameStatus(await git(repository, ['diff', '--name-status', '-z', ...diffArgs]));
       const unified = await git(repository, ['diff', '-U0', '--src-prefix=a/', '--dst-prefix=b/', ...diffArgs]);
       const files: DiffFile[] = [...parseDiff(nameStatus, unified)];
@@ -164,9 +167,20 @@ export class ReviewService {
       let state: ReviewState = emptyReviewState(revisions, absolute, definitionHash);
       let stateNote = '';
       if (fs.existsSync(recordPath)) {
-        const stored = adoptStoredState(JSON.parse(fs.readFileSync(recordPath, 'utf8')), revisions);
+        let parsed: unknown = null;
+        try {
+          parsed = JSON.parse(fs.readFileSync(recordPath, 'utf8'));
+        } catch {
+          parsed = null;
+        }
+        const stored = adoptStoredState(parsed, revisions);
         if (stored === null) {
-          stateNote = 'A stored record for this review did not match its revision pair and was not used.';
+          // Kept aside, never overwritten: it may be the only copy of someone's work.
+          const aside = `${recordPath}.unusable-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+          fs.renameSync(recordPath, aside);
+          stateNote =
+            'A stored record for this review could not be used (unreadable, damaged or for another revision ' +
+            `pair). It was kept unchanged as ${aside}, and this review starts with an empty record.`;
         } else {
           state = stored;
           if (stored.definitionHash !== definitionHash) {
@@ -208,6 +222,10 @@ export class ReviewService {
     if (open === null) {
       return { kind: 'failed', error: 'No review is open.' };
     }
+    const invalid = checkFileRequest(side, filePath);
+    if (invalid !== null) {
+      return { kind: 'failed', error: invalid };
+    }
     const key = `${side}:${filePath}`;
     const cached = open.cache.get(key);
     if (cached !== undefined) {
@@ -216,7 +234,8 @@ export class ReviewService {
     let outcome: ReviewFileOutcome;
     try {
       const sha = side === 'base' ? open.base : open.target;
-      const bytes = await gitBuffer(open.repository, ['show', `${sha}:${filePath}`]);
+      // The stored blob, never a textconv rendering of it.
+      const bytes = await gitBuffer(open.repository, ['cat-file', 'blob', `${sha}:${filePath}`]);
       if (bytes === null) {
         outcome = { kind: 'missing' };
       } else if (bytes.subarray(0, 8000).includes(0)) {
@@ -233,7 +252,7 @@ export class ReviewService {
 
   async listFiles(side: RevisionSide): Promise<readonly string[]> {
     const open = this.open;
-    if (open === null) {
+    if (open === null || (side !== 'base' && side !== 'target')) {
       return [];
     }
     const out = await git(open.repository, ['ls-tree', '-r', '-z', '--name-only', side === 'base' ? open.base : open.target]);
@@ -245,8 +264,11 @@ export class ReviewService {
     query: string,
   ): Promise<{ hits: readonly ReviewSearchHit[]; truncated: boolean; error?: string }> {
     const open = this.open;
-    if (open === null || query.trim() === '') {
+    if (open === null || typeof query !== 'string' || query.trim() === '') {
       return { hits: [], truncated: false };
+    }
+    if (side !== 'base' && side !== 'target') {
+      return { hits: [], truncated: false, error: 'The revision side must be "base" or "target".' };
     }
     const sha = side === 'base' ? open.base : open.target;
     const out = await new Promise<{ stdout: string; error?: string }>((resolve) => {
@@ -289,19 +311,20 @@ export class ReviewService {
     return { hits, truncated: false };
   }
 
-  saveState(state: ReviewState): { saved: boolean; at: string; error?: string } {
+  saveState(state: unknown): { saved: boolean; at: string; error?: string } {
     const open = this.open;
     const at = new Date().toISOString();
     if (open === null) {
       return { saved: false, at, error: 'No review is open.' };
     }
-    if (state.revisions.base !== open.base || state.revisions.target !== open.target) {
-      return { saved: false, at, error: 'The record names a different revision pair than the open review.' };
+    const refused = checkStateForSave(state, { base: open.base, target: open.target });
+    if (refused !== null) {
+      return { saved: false, at, error: refused };
     }
     try {
       fs.mkdirSync(path.dirname(open.recordPath), { recursive: true });
       const temporary = `${open.recordPath}.tmp`;
-      fs.writeFileSync(temporary, `${JSON.stringify({ ...state, savedAt: at }, null, 2)}\n`, 'utf8');
+      fs.writeFileSync(temporary, `${JSON.stringify({ ...(state as ReviewState), savedAt: at }, null, 2)}\n`, 'utf8');
       fs.renameSync(temporary, open.recordPath);
       return { saved: true, at };
     } catch (error) {

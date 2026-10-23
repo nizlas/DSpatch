@@ -235,3 +235,53 @@ test('a definition naming something that is not a commit fails with the reason',
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
+
+test('a damaged record is kept aside unchanged and the review still opens, saying so', async () => {
+  const fixture = makeFixture();
+  try {
+    const first = await open(fixture);
+    assert.equal(first.service.saveState(first.bundle.state).saved, true);
+    const [recordName] = fs.readdirSync(fixture.records);
+    assert.ok(recordName !== undefined);
+    const recordPath = path.join(fixture.records, recordName);
+    fs.writeFileSync(recordPath, '{ "version": 1, "revisions": ');
+    const second = await open(fixture);
+    assert.match(second.bundle.stateNote, /could not be used/);
+    assert.deepEqual(second.bundle.state.decisions, []);
+    const aside = fs.readdirSync(fixture.records).filter((name) => name.includes('.unusable-'));
+    assert.equal(aside.length, 1);
+    assert.equal(fs.readFileSync(path.join(fixture.records, aside[0] ?? ''), 'utf8'), '{ "version": 1, "revisions": ');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('the service refuses agent provenance, other revisions and malformed file requests from the view', async () => {
+  const fixture = makeFixture();
+  try {
+    const { service, bundle } = await open(fixture);
+    const decision = {
+      id: 'd1',
+      scope: { kind: 'hunk' as const, path: 'src/keep.ts', hunkId: 'H2' },
+      outcome: 'accepted' as const,
+      reason: '',
+      at: 't',
+      revisions: bundle.state.revisions,
+    };
+    assert.equal(service.saveState({ ...bundle.state, decisions: [{ ...decision, by: { kind: 'human' } }] }).saved, true);
+    const agent = service.saveState({
+      ...bundle.state,
+      decisions: [{ ...decision, by: { kind: 'agent-delegated', adapterId: 'x', mandate: 'y' } }],
+    });
+    assert.equal(agent.saved, false);
+    assert.match(agent.error ?? '', /Only decisions made by a person/);
+    assert.equal(service.saveState('nonsense').saved, false);
+
+    assert.equal((await service.readFile('target', '')).kind, 'failed');
+    assert.equal((await service.readFile('middle' as 'target', 'src/keep.ts')).kind, 'failed');
+    assert.deepEqual(await service.listFiles('middle' as 'target'), []);
+    assert.ok((await service.search('middle' as 'target', 'needle')).error !== undefined);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});

@@ -144,6 +144,17 @@ export function parseReviewDefinition(raw: unknown): {
   const repository = str(raw, 'repository', 'file', problems);
   const base = str(raw, 'base', 'file', problems);
   const target = str(raw, 'target', 'file', problems);
+  for (const [key, value] of [
+    ['base', base],
+    ['target', target],
+  ] as const) {
+    if (value !== '' && !/^[0-9a-f]{40}$/i.test(value)) {
+      problems.push({
+        where: 'file',
+        problem: `"${key}" is "${value}", not a full commit SHA. It was resolved when the review opened, but a branch or short name can move; name the commit in full.`,
+      });
+    }
+  }
   const teachingMode = typeof raw['teachingMode'] === 'string' ? raw['teachingMode'] : '';
   const provenance = typeof raw['provenance'] === 'string' ? raw['provenance'] : '';
   const walksRaw = raw['walks'];
@@ -376,15 +387,18 @@ export function parseDiff(
     const hunks: DiffHunk[] = [];
     let added = 0;
     let deleted = 0;
+    // File headers come before the first hunk. After it, a line that starts with
+    // `--- ` is a deleted line whose text begins with `-- `, not a header.
+    let inHunks = false;
     for (const line of lines) {
-      if (line.startsWith('Binary files ')) {
+      if (!inHunks && line.startsWith('Binary files ')) {
         binary = true;
-      } else if (line.startsWith('--- ')) {
+      } else if (!inHunks && line.startsWith('--- ')) {
         const named = stripPathPrefix(line.slice(4), 'a/');
         if (named !== null && named !== entry.path) {
           throw new Error(`Diff section ${String(index + 1)} names ${named}, expected ${entry.path}.`);
         }
-      } else if (line.startsWith('+++ ')) {
+      } else if (!inHunks && line.startsWith('+++ ')) {
         const named = stripPathPrefix(line.slice(4), 'b/');
         if (named !== null && named !== entry.path) {
           throw new Error(`Diff section ${String(index + 1)} names ${named}, expected ${entry.path}.`);
@@ -392,6 +406,7 @@ export function parseDiff(
       } else {
         const match = HUNK_HEADER.exec(line);
         if (match !== null) {
+          inHunks = true;
           hunkNumber += 1;
           const baseCount = match[2] === undefined ? 1 : Number(match[2]);
           const targetCount = match[4] === undefined ? 1 : Number(match[4]);
@@ -539,8 +554,13 @@ export interface ReviewState {
   readonly definitionPath: string;
   readonly definitionHash: string;
   readonly position: ReviewPosition;
-  /** Step id → when it was first shown. Being shown is not being reviewed. */
+  /** Step id → when it was first opened. Being shown is not being reviewed. */
   readonly shownSteps: Readonly<Record<string, string>>;
+  /**
+   * `stepId#refIndex` → when that reference was first on screen. Coverage counts
+   * these, so a step's second reference is not "shown" until it has been opened.
+   */
+  readonly shownRefs: Readonly<Record<string, string>>;
   /** Step id → when the reviewer marked it walked through. Not an acceptance. */
   readonly walkedSteps: Readonly<Record<string, string>>;
   readonly decisions: readonly ReviewDecision[];
@@ -556,6 +576,7 @@ export function emptyReviewState(revisions: RevisionPair, definitionPath: string
     definitionHash,
     position: { walkId: null, stepId: null, refIndex: 0, away: null, codeMode: 'diff' },
     shownSteps: {},
+    shownRefs: {},
     walkedSteps: {},
     decisions: [],
     notes: [],
@@ -576,7 +597,27 @@ export function adoptStoredState(raw: unknown, revisions: RevisionPair): ReviewS
   if (!isRecord(stored) || stored['base'] !== revisions.base || stored['target'] !== revisions.target) {
     return null;
   }
-  return raw as unknown as ReviewState;
+  const position = raw['position'];
+  const stringMap = (value: unknown): value is Record<string, string> =>
+    isRecord(value) && Object.values(value).every((entry) => typeof entry === 'string');
+  if (
+    !isRecord(position) ||
+    (position['stepId'] !== null && typeof position['stepId'] !== 'string') ||
+    typeof position['refIndex'] !== 'number' ||
+    (position['codeMode'] !== 'diff' && position['codeMode'] !== 'file') ||
+    !stringMap(raw['shownSteps']) ||
+    !stringMap(raw['walkedSteps']) ||
+    (raw['shownRefs'] !== undefined && !stringMap(raw['shownRefs'])) ||
+    !Array.isArray(raw['decisions']) ||
+    !Array.isArray(raw['notes']) ||
+    typeof raw['definitionHash'] !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    ...(raw as unknown as ReviewState),
+    shownRefs: (raw['shownRefs'] as Record<string, string> | undefined) ?? {},
+  };
 }
 
 /** The current decision for each hunk: the latest entry whose scope includes it. */
@@ -690,6 +731,21 @@ function stepRefs(definition: ReviewDefinition, stepIds: ReadonlySet<string> | n
   return refs;
 }
 
+/** The references that have actually been on screen, by `stepId#refIndex`. */
+function shownReferences(definition: ReviewDefinition, shown: Readonly<Record<string, string>>): CodeReference[] {
+  const refs: CodeReference[] = [];
+  for (const walk of definition.walks) {
+    for (const step of walk.steps) {
+      step.refs.forEach((ref, index) => {
+        if (shown[`${step.id}#${String(index)}`] !== undefined) {
+          refs.push(ref);
+        }
+      });
+    }
+  }
+  return refs;
+}
+
 function noteTouchesHunk(note: ReviewNote, hunk: DiffHunk): boolean {
   const location = note.location;
   if (location === null || location.path !== hunk.path) {
@@ -714,7 +770,7 @@ export function computeCoverage(
   state: ReviewState,
 ): CoverageSummary {
   const allRefs = stepRefs(definition, null);
-  const shownRefs = stepRefs(definition, new Set(Object.keys(state.shownSteps)));
+  const shownRefs = shownReferences(definition, state.shownRefs);
   const walkedRefs = stepRefs(definition, new Set(Object.keys(state.walkedSteps)));
   const decisions = currentHunkDecisions(state.decisions);
   const hunks: HunkCoverage[] = [];
@@ -896,6 +952,62 @@ function findClosingQuote(line: string, from: number, quote: string): number {
 }
 
 // --- The bridge between the main process and the view ------------------------------
+
+/**
+ * The review surface's IPC channels. `preload.ts` repeats them as literals because
+ * the sandboxed preload cannot load this module; a test compares the two.
+ */
+export const REVIEW_CHANNELS = {
+  initial: 'dspatch:review-initial',
+  choose: 'dspatch:review-choose',
+  readFile: 'dspatch:review-read-file',
+  listFiles: 'dspatch:review-list-files',
+  search: 'dspatch:review-search',
+  saveState: 'dspatch:review-save-state',
+} as const;
+
+/** Validate a renderer-supplied revision side and repository path before git sees them. */
+export function checkFileRequest(side: unknown, filePath: unknown): string | null {
+  if (side !== 'base' && side !== 'target') {
+    return 'The revision side must be "base" or "target".';
+  }
+  if (
+    typeof filePath !== 'string' ||
+    filePath === '' ||
+    filePath.includes('\0') ||
+    filePath.includes('\\') ||
+    filePath.startsWith('/')
+  ) {
+    return 'A repository-relative file path with forward slashes is required.';
+  }
+  return null;
+}
+
+/**
+ * What the main process accepts as a record to save: the open revision pair, and
+ * decisions and notes only from a person at that pair. Agent provenance is
+ * reserved for delegated review, which this increment does not have.
+ */
+export function checkStateForSave(state: unknown, revisions: RevisionPair): string | null {
+  if (adoptStoredState(state, revisions) === null) {
+    return 'The record does not have the expected shape for the open revision pair.';
+  }
+  const record = state as ReviewState;
+  for (const decision of record.decisions) {
+    if (decision.by.kind !== 'human') {
+      return 'Only decisions made by a person can be recorded here; delegated agent review is not available.';
+    }
+    if (decision.revisions.base !== revisions.base || decision.revisions.target !== revisions.target) {
+      return 'A decision names a different revision pair than the open review.';
+    }
+  }
+  for (const note of record.notes) {
+    if (note.revisions.base !== revisions.base || note.revisions.target !== revisions.target) {
+      return 'A note names a different revision pair than the open review.';
+    }
+  }
+  return null;
+}
 
 export interface ReviewCommit {
   readonly sha: string;
