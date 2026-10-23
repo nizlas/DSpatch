@@ -317,11 +317,11 @@ export class ReviewService {
     if (open === null) {
       return { saved: false, at, error: 'No review is open.' };
     }
-    const refused = checkStateForSave(state, { base: open.base, target: open.target });
-    if (refused !== null) {
-      return { saved: false, at, error: refused };
-    }
     try {
+      const refused = checkStateForSave(state, { base: open.base, target: open.target });
+      if (refused !== null) {
+        return { saved: false, at, error: refused };
+      }
       fs.mkdirSync(path.dirname(open.recordPath), { recursive: true });
       const temporary = `${open.recordPath}.tmp`;
       fs.writeFileSync(temporary, `${JSON.stringify({ ...(state as ReviewState), savedAt: at }, null, 2)}\n`, 'utf8');
