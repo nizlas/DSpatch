@@ -38,7 +38,10 @@ import type {
   UsageReading,
 } from '../src/adapter/types.ts';
 import { ChatService, type ChatAdapter } from '../src/main/chat-service.ts';
-import { ConversationStore } from '../src/main/conversation-store.ts';
+import {
+  ConversationStore,
+  type ConversationWriteResult,
+} from '../src/main/conversation-store.ts';
 import type { ChatSessionInfo, StoredConversation } from '../src/shared/bridge.ts';
 import { tempRoot } from './support/fixtures.ts';
 
@@ -136,8 +139,13 @@ class FakeAdapter implements ChatAdapter {
     return Promise.resolve({ dspatchRunId } as RunReference);
   }
 
+  /** `false`: a cancel the provider never confirms, so the confirmation timer decides. */
+  cancelEmitsFinish = true;
+
   cancel(): Promise<void> {
-    this.emit({ type: 'run.finished', status: 'cancelled' });
+    if (this.cancelEmitsFinish) {
+      this.emit({ type: 'run.finished', status: 'cancelled' });
+    }
     return Promise.resolve();
   }
 
@@ -193,7 +201,12 @@ interface Harness {
  * A service over the store, with a map standing in for the project store's
  * "which conversation belongs to this folder" pointers (main.ts `recordOpened`).
  */
-function serviceOver(name: string, store: ConversationStore, pointers: Map<string, string>): Harness {
+function serviceOver(
+  name: string,
+  store: ConversationStore,
+  pointers: Map<string, string>,
+  cancelConfirmMs = 40,
+): Harness {
   const adapter = new FakeAdapter();
   const logs: string[] = [];
   const service = new ChatService({
@@ -214,7 +227,7 @@ function serviceOver(name: string, store: ConversationStore, pointers: Map<strin
       }
       return null;
     },
-    timings: { cancelConfirmMs: 40, cancelWatchMs: 60 },
+    timings: { cancelConfirmMs, cancelWatchMs: 60 },
   });
   return {
     service,
@@ -245,7 +258,7 @@ async function seed(
   project: string,
   label: string,
   exitCode: number,
-  options: { readonly leaveUnknown?: boolean } = {},
+  options: { readonly leaveUnknown?: boolean; readonly extraAnswered?: boolean } = {},
 ): Promise<string> {
   const earlier = serviceOver(`${label}-seed`, store, new Map());
   try {
@@ -258,6 +271,10 @@ async function seed(
       command: nodeCommand(`process.exit(${String(exitCode)})`),
       cwd: '',
     });
+    if (options.extraAnswered === true) {
+      await earlier.service.sendPrompt(`${label}-earlier-3`);
+      earlier.adapter.answer(`${label}-answer-3`);
+    }
     if (options.leaveUnknown === true) {
       // Never answered: closing the session records it as an unknown outcome.
       await earlier.service.sendPrompt(`${label}-never-answered`);
@@ -561,12 +578,18 @@ test('WS-1 #11: an unresolved attempt blocks its own working copy, nested ones t
 
     await live.open(projectA);
     await assert.rejects(() => live.service.sendPrompt('a-2'), /unresolved/);
-    assert.deepEqual(live.service.getRunState().needsAcknowledgement.agentTurn, [unresolvedId]);
+    assert.deepEqual(
+      live.service.getRunState().needsAcknowledgement.agentTurn.map((ref) => ref.attemptId),
+      [unresolvedId],
+    );
 
     // A folder inside A's working copy is the same working copy.
     await live.open(nestedSpelling);
     await assert.rejects(() => live.service.sendPrompt('c-1'), /unresolved/);
-    assert.deepEqual(live.service.getRunState().needsAcknowledgement.agentTurn, [unresolvedId]);
+    assert.deepEqual(
+      live.service.getRunState().needsAcknowledgement.agentTurn.map((ref) => ref.attemptId),
+      [unresolvedId],
+    );
   } finally {
     await live.service.dispose();
   }
@@ -711,7 +734,7 @@ test('WS-1 (N3): a store that cannot be listed at the first open is listed again
 
     await live.open(nested);
     assert.deepEqual(
-      live.service.getRunState().needsAcknowledgement.agentTurn,
+      live.service.getRunState().needsAcknowledgement.agentTurn.map((ref) => ref.attemptId),
       ['dsp-attempt-0004'],
       'P\'s unresolved attempt is held and blocks its nested folder',
     );
@@ -831,4 +854,476 @@ test('WS-1 #12: no open, switch, read-back or close removes a message, attempt o
   const fileB = saved(store, idB);
   assert.deepEqual(prompts(fileB), ['B-earlier-1', 'B-earlier-2', 'B-now-1']);
   assert.equal(fileB.testRuns.length, 1);
+});
+
+// --- WS-1 follow-up: a hidden conversation's saves (verifier 001, scenario A) -------
+
+/**
+ * A real store whose writes of named conversations fail on demand, the way a full
+ * disk, a read-only file or a lock would. Only `write` is replaced; reading, listing
+ * and the file format are the store's own.
+ */
+class FailingStore extends ConversationStore {
+  readonly failFor = new Set<string>();
+
+  /** A narrower rule: fail only those writes of `failFor` for which this is true. */
+  failIf: ((conversation: StoredConversation) => boolean) | null = null;
+
+  override write(conversation: StoredConversation): ConversationWriteResult {
+    if (
+      this.failFor.has(conversation.conversationId) &&
+      (this.failIf === null || this.failIf(conversation))
+    ) {
+      return {
+        filePath: this.filePathFor(conversation.conversationId),
+        error: 'Injected write failure (test).',
+        bytesWritten: null,
+      };
+    }
+    return super.write(conversation);
+  }
+}
+
+function failingStoreFor(name: string): FailingStore {
+  return new FailingStore(path.join(makeDir(`${name}-userdata`), 'conversations'));
+}
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/**
+ * A command whose shell exits with `code` at once while a grandchild keeps its output
+ * open for `holdMs`. DSpatch waits for the output to close, so the result arrives
+ * later and was never killed: a switch in between finds the shell already gone.
+ */
+function exitsWhileOutputStaysOpen(code: number, holdMs: number): string {
+  const leaf = path.join(makeDir('leaf'), 'leaf.js');
+  fs.writeFileSync(leaf, `setTimeout(function () {}, ${String(holdMs)});\n`, 'utf8');
+  return process.platform === 'win32'
+    ? `start /b "" "${process.execPath}" "${leaf}" & exit /b ${String(code)}`
+    : `"${process.execPath}" "${leaf}" & exit ${String(code)}`;
+}
+
+test('WS-1 follow-up (A1): a hidden conversation\'s result whose save failed is told, kept and written at close', async () => {
+  const store = failingStoreFor('a1');
+  const projectA = makeProject('a1-project-a', 'a.txt', 'project A\n');
+  const projectB = makeProject('a1-project-b', 'b.txt', 'project B\n');
+  const idA = await seed(store, projectA, 'A', 0);
+  const idB = await seed(store, projectB, 'B', 0);
+  const seededRuns = saved(store, idA).testRuns.length;
+  const pointers = new Map([
+    [projectA, idA],
+    [projectB, idB],
+  ]);
+  const live = serviceOver('a1-live', store, pointers);
+  let disposed = false;
+  let resultId = '';
+  try {
+    await live.open(projectA);
+    const pending = live.service.runWorkspaceTest({
+      command: nodeCommand('setTimeout(function () {}, 20000)'),
+      cwd: '',
+    });
+    await sleep(300);
+    // Only the save that carries the result fails; the switch's own save of A works.
+    store.failFor.add(idA);
+    store.failIf = (conversation) => conversation.testRuns.length > seededRuns;
+    await live.open(projectB);
+    const outcome = await pending;
+    resultId = outcome.attemptId ?? '';
+    assert.equal(outcome.verdict, 'interrupted');
+    assert.equal(saved(store, idA).testRuns.length, seededRuns, 'the result is not on disk yet');
+
+    // The window is told, naming A, although B is the conversation on screen.
+    const status = live.service.conversationSaveStatus();
+    assert.equal(status.conversationId, idB);
+    assert.equal(status.error, null, 'B itself was saved');
+    assert.deepEqual(
+      status.otherConversations.map((other) => other.conversationId),
+      [idA],
+    );
+    assert.match(live.service.saveError() ?? '', new RegExp(idA));
+
+    // A later successful save of B does not clear A's failure.
+    await live.service.sendPrompt('B-now-1');
+    live.adapter.answer('B-answer-now-1');
+    assert.deepEqual(
+      live.service.conversationSaveStatus().otherConversations.map((other) => other.conversationId),
+      [idA],
+    );
+
+    // The store works again before the window closes, and closing writes A.
+    store.failFor.clear();
+    await live.service.dispose();
+    disposed = true;
+    assert.deepEqual(live.service.conversationSaveStatus().otherConversations, []);
+  } finally {
+    if (!disposed) {
+      await live.service.dispose();
+    }
+  }
+  const fileA = saved(store, idA);
+  assert.deepEqual(testRunIds(fileA).slice(seededRuns), [resultId]);
+  assert.equal(fileA.testRuns.at(-1)?.verdict, 'interrupted');
+  assert.equal(
+    fileA.attempts.find((attempt) => attempt.attemptId === resultId)?.state,
+    'stopped-confirmed',
+  );
+
+  const next = serviceOver('a1-next', store, pointers);
+  try {
+    await next.open(projectA);
+    const attempt = next.service
+      .getRunState()
+      .attempts.find((entry) => entry.attemptId === resultId);
+    assert.equal(attempt?.state, 'stopped-confirmed', 'read back as it ended, not as unknown');
+    assert.deepEqual(next.service.getRunState().needsAcknowledgement.command, []);
+  } finally {
+    await next.service.dispose();
+  }
+});
+
+for (const storeAtClose of ['working again', 'still failing'] as const) {
+  test(`WS-1 follow-up (A2): a hidden conversation's late real result, its save failing, the store ${storeAtClose} at close`, async () => {
+    const slug = storeAtClose === 'working again' ? 'a2-healthy' : 'a2-broken';
+    const store = failingStoreFor(slug);
+    const projectA = makeProject(`${slug}-project-a`, 'a.txt', 'project A\n');
+    const projectB = makeProject(`${slug}-project-b`, 'b.txt', 'project B\n');
+    const idA = await seed(store, projectA, 'A', 0);
+    const idB = await seed(store, projectB, 'B', 0);
+    const seededRuns = saved(store, idA).testRuns.length;
+    const pointers = new Map([
+      [projectA, idA],
+      [projectB, idB],
+    ]);
+    const live = serviceOver(`${slug}-live`, store, pointers);
+    let disposed = false;
+    let resultId = '';
+    try {
+      await live.open(projectA);
+      fs.writeFileSync(path.join(projectA, 'a.txt'), 'project A, changed and now failing\n');
+      const pending = live.service.runWorkspaceTest({
+        command: exitsWhileOutputStaysOpen(1, 2500),
+        cwd: '',
+      });
+      await sleep(700);
+      store.failFor.add(idA);
+      await live.open(projectB);
+      const outcome = await pending;
+      resultId = outcome.attemptId ?? '';
+      // Not killed by the switch: the shell had already ended, so this is a real result.
+      assert.equal(outcome.killedByDspatch, false);
+      assert.equal(outcome.verdict, 'failed');
+      assert.equal(saved(store, idA).testRuns.length, seededRuns, 'the result is not on disk yet');
+      assert.deepEqual(
+        live.service.conversationSaveStatus().otherConversations.map((other) => other.conversationId),
+        [idA],
+        'the window is told which conversation is not on disk',
+      );
+      if (storeAtClose === 'working again') {
+        store.failFor.clear();
+      }
+      await live.service.dispose();
+      disposed = true;
+    } finally {
+      if (!disposed) {
+        await live.service.dispose();
+      }
+    }
+
+    const fileA = saved(store, idA);
+    const next = serviceOver(`${slug}-next`, store, pointers);
+    try {
+      await next.open(projectA);
+      const attempt = next.service
+        .getRunState()
+        .attempts.find((entry) => entry.attemptId === resultId);
+      if (storeAtClose === 'working again') {
+        assert.deepEqual(testRunIds(fileA).slice(seededRuns), [resultId]);
+        assert.equal(fileA.testRuns.at(-1)?.verdict, 'failed');
+        assert.equal(attempt?.state, 'completed', 'the end DSpatch saw is what comes back');
+        assert.deepEqual(next.service.getRunState().needsAcknowledgement.command, []);
+      } else {
+        // Nothing reached the disk, so the restart cannot know the ending, and says
+        // only what it knows: no claim that the command was still going at close.
+        assert.equal(fileA.testRuns.length, seededRuns);
+        assert.equal(attempt?.state, 'outcome-unknown');
+        assert.doesNotMatch(attempt?.stateReason ?? '', /DSpatch was closed while this was still going/);
+        assert.match(attempt?.stateReason ?? '', /could not be saved/);
+        assert.deepEqual(
+          next.service.getRunState().needsAcknowledgement.command.map((ref) => ref.attemptId),
+          [resultId],
+        );
+        assert.notEqual(next.service.getTestFreshness().kind, 'current', 'no pass for this code');
+      }
+    } finally {
+      await next.service.dispose();
+    }
+  });
+}
+
+test('WS-1 follow-up (A3): a cancellation timer that settles a hidden conversation\'s turn saves it', async () => {
+  const store = storeFor('a3');
+  const projectA = makeProject('a3-project-a', 'a.txt', 'project A\n');
+  const projectB = makeProject('a3-project-b', 'b.txt', 'project B\n');
+  const live = serviceOver('a3-live', store, new Map(), 1000);
+  try {
+    const idA = (await live.open(projectA)).conversationId;
+    live.adapter.cancelEmitsFinish = false;
+    await live.service.sendPrompt('A-long-turn');
+    await live.service.cancelRun();
+    await live.open(projectB);
+    assert.equal(
+      saved(store, idA).attempts[0]?.state,
+      'cancel-requested',
+      'the switch saved A before the timer fired',
+    );
+    await sleep(1600);
+    const turn = saved(store, idA).attempts[0];
+    assert.equal(turn?.state, 'outcome-unknown');
+    assert.match(turn?.stateReason ?? '', /No terminal event arrived/);
+  } finally {
+    await live.service.dispose();
+  }
+});
+
+// --- WS-1 follow-up: acknowledgements name one attempt in one conversation (scenario B)
+
+/** A conversation saved by another store, so its IDs start at 0001 again, copied in. */
+async function seedElsewhere(
+  store: ConversationStore,
+  project: string,
+  label: string,
+  options: { readonly leaveUnknown?: boolean; readonly extraAnswered?: boolean } = {},
+): Promise<string> {
+  const elsewhere = storeFor(`${label}-elsewhere`);
+  const conversationId = await seed(elsewhere, project, label, 0, options);
+  fs.mkdirSync(path.dirname(store.filePathFor(conversationId)), { recursive: true });
+  fs.copyFileSync(elsewhere.filePathFor(conversationId), store.filePathFor(conversationId));
+  return conversationId;
+}
+
+function acknowledgedIn(
+  store: ConversationStore,
+  conversationId: string,
+  attemptId: string,
+): string | null {
+  return (
+    saved(store, conversationId).attempts.find((attempt) => attempt.attemptId === attemptId)
+      ?.acknowledgedAtUtc ?? null
+  );
+}
+
+const SHARED_ID = 'dsp-attempt-0004';
+
+for (const layout of ['same folder', 'nested folder'] as const) {
+  test(`WS-1 follow-up (B2, ${layout}): one ID in two conversations is two attempts to acknowledge`, async () => {
+    const slug = layout === 'same folder' ? 'b2-same' : 'b2-nested';
+    const store = storeFor(slug);
+    const parent = makeProject(`${slug}-parent`, 'p.txt', 'parent\n');
+    const nested = path.join(parent, 'sub');
+    fs.mkdirSync(nested);
+    fs.writeFileSync(path.join(nested, 's.txt'), 'nested\n', 'utf8');
+    const idX = await seedElsewhere(store, parent, 'X', { leaveUnknown: true });
+    const idY = await seedElsewhere(store, layout === 'same folder' ? parent : nested, 'Y', {
+      leaveUnknown: true,
+    });
+    assert.equal(saved(store, idX).attempts.at(-1)?.attemptId, SHARED_ID);
+    assert.equal(saved(store, idY).attempts.at(-1)?.attemptId, SHARED_ID);
+    // Same folder: X is current and Y held. Nested: Y on the nested folder is current
+    // and X, over the folder containing it, is held.
+    const pointers = new Map(
+      layout === 'same folder'
+        ? [[parent, idX]]
+        : [
+            [parent, idX],
+            [nested, idY],
+          ],
+    );
+    const openAt = layout === 'same folder' ? parent : nested;
+
+    const live = serviceOver(`${slug}-live`, store, pointers);
+    try {
+      await live.open(openAt);
+      const need = live.service.getRunState().needsAcknowledgement.agentTurn;
+      assert.deepEqual(
+        need.map((ref) => `${String(ref.conversationId)}:${ref.attemptId}`).sort(),
+        [`${idX}:${SHARED_ID}`, `${idY}:${SHARED_ID}`].sort(),
+      );
+      // The refusal tells the two apart rather than naming one ID twice.
+      await assert.rejects(
+        () => live.service.sendPrompt('m-1'),
+        (error: Error) => {
+          assert.doesNotMatch(error.message, /dsp-attempt-0004, dsp-attempt-0004/);
+          assert.match(error.message, new RegExp(idX));
+          assert.match(error.message, new RegExp(idY));
+          return true;
+        },
+      );
+      // An ID alone names neither of two attempts; naming one leaves the other blocking.
+      await assert.rejects(() => live.service.sendPrompt('m-2', [SHARED_ID]), /unresolved/);
+      await assert.rejects(
+        () =>
+          live.service.sendPrompt(
+            'm-3',
+            need.filter((ref) => ref.conversationId === idX),
+          ),
+        (error: Error) => {
+          assert.match(error.message, new RegExp(idY));
+          return true;
+        },
+      );
+      assert.equal(acknowledgedIn(store, idX, SHARED_ID), null);
+      assert.equal(acknowledgedIn(store, idY, SHARED_ID), null);
+    } finally {
+      await live.service.dispose();
+    }
+
+    const next = serviceOver(`${slug}-next`, store, pointers);
+    try {
+      await next.open(openAt);
+      const need = next.service.getRunState().needsAcknowledgement.agentTurn;
+      assert.equal(need.length, 2, 'both still block after a restart');
+      await assert.rejects(() => next.service.sendPrompt('n-1'), /unresolved/);
+      // Naming both, as the window does, acknowledges each in its own file.
+      await next.service.sendPrompt('n-2', need);
+      next.adapter.answer('n-answer-2');
+      assert.notEqual(acknowledgedIn(store, idX, SHARED_ID), null);
+      assert.notEqual(acknowledgedIn(store, idY, SHARED_ID), null);
+    } finally {
+      await next.service.dispose();
+    }
+  });
+}
+
+test('WS-1 follow-up (B3): naming the unresolved one of two attempts sharing an ID leaves the settled one alone', async () => {
+  const store = storeFor('b3');
+  const project = makeProject('b3-project', 'p.txt', 'project\n');
+  const idX = await seedElsewhere(store, project, 'X', { leaveUnknown: true });
+  const idY = await seedElsewhere(store, project, 'Y', { extraAnswered: true });
+  assert.equal(
+    saved(store, idY).attempts.find((attempt) => attempt.attemptId === SHARED_ID)?.state,
+    'completed',
+  );
+  const live = serviceOver('b3-live', store, new Map([[project, idY]]));
+  try {
+    await live.open(project);
+    const need = live.service.getRunState().needsAcknowledgement.agentTurn;
+    assert.deepEqual(
+      need.map((ref) => `${String(ref.conversationId)}:${ref.attemptId}`),
+      [`${idX}:${SHARED_ID}`],
+    );
+    await live.service.sendPrompt('y-1', need);
+    live.adapter.answer('y-answer-1');
+    assert.notEqual(acknowledgedIn(store, idX, SHARED_ID), null);
+    assert.equal(acknowledgedIn(store, idY, SHARED_ID), null);
+  } finally {
+    await live.service.dispose();
+  }
+});
+
+test('WS-1 follow-up (B4): acknowledging a message does not lift another conversation\'s command block with the same ID', async () => {
+  const store = storeFor('b4');
+  const project = makeProject('b4-project', 'p.txt', 'project\n');
+  const idX = await seedElsewhere(store, project, 'X', { leaveUnknown: true });
+  const idY = await seedElsewhere(store, project, 'Y', { leaveUnknown: true });
+  // Y's 0004 stands for an older build's command left running at close.
+  const fileY = store.filePathFor(idY);
+  const raw = JSON.parse(fs.readFileSync(fileY, 'utf8')) as {
+    attempts: Record<string, unknown>[];
+    messages: { prompt: string }[];
+  };
+  const commandAttempt = raw.attempts.find((attempt) => attempt['attemptId'] === SHARED_ID);
+  assert.ok(commandAttempt);
+  Object.assign(commandAttempt, {
+    kind: 'command',
+    label: 'npm test (left running at close by an older build)',
+    state: 'running',
+    providerRunId: null,
+    localPid: 4242,
+  });
+  raw.messages = raw.messages.filter((message) => message.prompt !== 'Y-never-answered');
+  fs.writeFileSync(fileY, `${JSON.stringify(raw, null, 2)}\n`, 'utf8');
+  assert.equal(store.read(idY).conversation?.attempts.at(-1)?.kind, 'command');
+
+  const run = (service: ChatService) =>
+    service.runWorkspaceTest({ command: nodeCommand('process.exit(0)'), cwd: '' });
+  const live = serviceOver('b4-live', store, new Map([[project, idX]]));
+  try {
+    await live.open(project);
+    await assert.rejects(() => run(live.service), /unresolved/);
+    const message = live.service.getRunState().needsAcknowledgement.agentTurn;
+    await live.service.sendPrompt('x-1', message);
+    live.adapter.answer('x-answer-1');
+    assert.notEqual(acknowledgedIn(store, idX, SHARED_ID), null);
+    assert.equal(acknowledgedIn(store, idY, SHARED_ID), null, 'the command was not acknowledged');
+    await assert.rejects(() => run(live.service), /unresolved/);
+    assert.deepEqual(
+      live.service
+        .getRunState()
+        .needsAcknowledgement.command.map((ref) => `${String(ref.conversationId)}:${ref.attemptId}`),
+      [`${idY}:${SHARED_ID}`],
+    );
+  } finally {
+    await live.service.dispose();
+  }
+});
+
+// --- Review 005 S1 and S4 -----------------------------------------------------------
+
+test('WS-1 follow-up (S1): an off-screen save failure reaches the save status with no other call', async () => {
+  // The window polls this status on a slow interval and has no other way to learn of
+  // it, so it must change by itself when the main process alone did something.
+  const store = failingStoreFor('s1-status');
+  const projectA = makeProject('s1-status-project-a', 'a.txt', 'project A\n');
+  const projectB = makeProject('s1-status-project-b', 'b.txt', 'project B\n');
+  const live = serviceOver('s1-status-live', store, new Map(), 1000);
+  try {
+    const idA = (await live.open(projectA)).conversationId;
+    live.adapter.cancelEmitsFinish = false;
+    await live.service.sendPrompt('A-long-turn');
+    await live.service.cancelRun();
+    await live.open(projectB);
+    store.failFor.add(idA);
+    assert.deepEqual(live.service.conversationSaveStatus().otherConversations, []);
+    // From here only the confirmation timer in the service acts.
+    await sleep(1600);
+    const status = live.service.conversationSaveStatus();
+    assert.equal(status.error, null);
+    assert.deepEqual(
+      status.otherConversations.map((other) => `${other.conversationId}:${String(other.readOnly)}`),
+      [`${idA}:false`],
+    );
+  } finally {
+    store.failFor.clear();
+    await live.service.dispose();
+  }
+});
+
+test('WS-1 #11 (close): a conversation held only as a blocker from disk is not rewritten at close', async () => {
+  const store = storeFor('s4');
+  const parent = makeProject('s4-parent', 'p.txt', 'parent\n');
+  const nested = path.join(parent, 'sub');
+  fs.mkdirSync(nested);
+  fs.writeFileSync(path.join(nested, 's.txt'), 'nested\n', 'utf8');
+  const idParent = await seed(store, parent, 'P', 0, { leaveUnknown: true });
+  const before = fs.readFileSync(store.filePathFor(idParent));
+
+  const live = serviceOver('s4-live', store, new Map());
+  try {
+    await live.open(nested);
+    assert.deepEqual(
+      live.service
+        .getRunState()
+        .needsAcknowledgement.agentTurn.map((ref) => String(ref.conversationId)),
+      [idParent],
+      'the parent conversation is held, as a blocker only',
+    );
+    await assert.rejects(() => live.service.sendPrompt('nested-1'), /unresolved/);
+  } finally {
+    await live.service.dispose();
+  }
+  assert.deepEqual(fs.readFileSync(store.filePathFor(idParent)), before, 'byte for byte');
 });

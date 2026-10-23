@@ -21,7 +21,9 @@ import type {
 } from '../adapter/types';
 import type {
   AbandonOutcome,
+  AttemptAcknowledgement,
   AttemptInfo,
+  AttemptKind,
   AttemptReconciliation,
   BaselineInfo,
   CancelObservations,
@@ -734,6 +736,30 @@ interface ActiveCommand {
 }
 
 /**
+ * The acknowledgements from the window that can name an attempt, and nothing else.
+ *
+ * They arrive over IPC, so their shape is not guaranteed by the type. An entry that is
+ * neither an attempt ID nor `{conversationId, attemptId}` names no attempt and is
+ * dropped here, which can only leave a gate closed, never open one.
+ */
+function wellFormedAcknowledgements(
+  acknowledgements: readonly unknown[],
+): AttemptAcknowledgement[] {
+  if (!Array.isArray(acknowledgements)) {
+    return [];
+  }
+  return acknowledgements.filter(
+    (entry): entry is AttemptAcknowledgement =>
+      typeof entry === 'string' ||
+      (typeof entry === 'object' &&
+        entry !== null &&
+        typeof (entry as { attemptId?: unknown }).attemptId === 'string' &&
+        ((entry as { conversationId?: unknown }).conversationId === null ||
+          typeof (entry as { conversationId?: unknown }).conversationId === 'string')),
+  );
+}
+
+/**
  * Whether two working copies are the same folder or one is inside the other.
  *
  * The repeat block's unit (WS-1 #11, plan section 7): one writing run per working
@@ -875,8 +901,18 @@ export class ChatService {
    */
   private openedHistory: RestoredHistory | null = null;
 
-  /** The most recent save failure, so the window can say the work is not safe. */
-  private lastSaveError: string | null = null;
+  /**
+   * The latest save failure of each conversation, until that conversation is saved.
+   *
+   * Per conversation rather than one "last error" (WS-1 follow-up): a conversation
+   * that is not on screen is still saved when something of its own changes, and with
+   * one shared field its failure was never shown and the next conversation's
+   * successful save erased it (verifier 001, A1/A2).
+   */
+  private readonly saveErrors = new Map<
+    string,
+    { readonly error: string; readonly readOnly: boolean }
+  >();
 
   /**
    * The recap DSpatch still owes the provider, or `null`.
@@ -1528,12 +1564,13 @@ export class ChatService {
    */
   async sendPrompt(
     prompt: string,
-    acknowledgedAttemptIds: readonly string[] = [],
+    acknowledgedAttemptIds: readonly AttemptAcknowledgement[] = [],
   ): Promise<{ readonly dspatchRunId: string }> {
     const { adapter, session } = this.requireSession();
     if (prompt.trim() === '') {
       throw new Error('An empty prompt is not sent.');
     }
+    const acknowledged = wellFormedAcknowledgements(acknowledgedAttemptIds);
     // The block belongs to the working copy (WS-1 #11): this conversation's attempts
     // and those of every held conversation over the same or a nested folder.
     const ledger = this.currentLedger();
@@ -1541,7 +1578,7 @@ export class ChatService {
     const decision = AttemptLedger.mayRepeatAcross(
       [ledger, ...sharing.map((held) => held.ledger)],
       'agent-turn',
-      acknowledgedAttemptIds,
+      acknowledged,
     );
     if (!decision.allowed) {
       throw new Error(decision.reason);
@@ -1549,7 +1586,8 @@ export class ChatService {
     this.acknowledgeInWorkingCopy(
       ledger,
       sharing,
-      acknowledgedAttemptIds,
+      'agent-turn',
+      acknowledged,
       `A new message was sent with this attempt left unresolved. ${decision.reason}`,
     );
     // A cancellation watch that is still running belongs to the run that was
@@ -1904,6 +1942,9 @@ export class ChatService {
               `${String(this.cancelConfirmGraceMs)} ms)`) +
           '; outcome recorded as unknown',
       );
+      // The conversation may no longer be on screen, and nothing else would save it
+      // until it is opened again or the window closes (WS-1 follow-up, A3).
+      this.saveLedgerOwner(ledger);
     }, window.ms);
     timer.unref?.();
   }
@@ -1997,7 +2038,7 @@ export class ChatService {
     // is unknown may still hold the working directory — on Windows that also
     // prevents the folder from being replaced — so running it again is not a
     // neutral act and is not done on DSpatch's own initiative.
-    const acknowledged = request.acknowledgedAttemptIds ?? [];
+    const acknowledged = wellFormedAcknowledgements(request.acknowledgedAttemptIds ?? []);
     const ledger = this.currentLedger();
     const sharing = this.conversationsSharingWorkingCopy();
     const decision = AttemptLedger.mayRepeatAcross(
@@ -2011,6 +2052,7 @@ export class ChatService {
     this.acknowledgeInWorkingCopy(
       ledger,
       sharing,
+      'command',
       acknowledged,
       `The command was run again with this attempt left unresolved. ${decision.reason}`,
     );
@@ -2241,9 +2283,37 @@ export class ChatService {
     return this.conversationId;
   }
 
-  /** The last save failure, so the window can say the work is not on disk. */
+  /**
+   * A save failure the window should state: the current conversation's, or else that
+   * of another held conversation, named. `null` when every held conversation's latest
+   * save succeeded.
+   */
   saveError(): string | null {
-    return this.lastSaveError;
+    const current = this.conversationId === null ? null : this.saveErrors.get(this.conversationId);
+    if (current !== undefined && current !== null) {
+      return current.error;
+    }
+    const [other] = this.otherSaveErrors();
+    return other === undefined
+      ? null
+      : `Conversation ${other.conversationId}: ${other.error}`;
+  }
+
+  private otherSaveErrors(): {
+    readonly conversationId: string;
+    readonly filePath: string | null;
+    readonly error: string;
+    readonly readOnly: boolean;
+  }[] {
+    const store = this.options.conversations?.() ?? null;
+    return [...this.saveErrors]
+      .filter(([conversationId]) => conversationId !== this.conversationId)
+      .map(([conversationId, failure]) => ({
+        conversationId,
+        filePath: store === null ? null : store.filePathFor(conversationId),
+        error: failure.error,
+        readOnly: failure.readOnly,
+      }));
   }
 
   /**
@@ -2264,7 +2334,8 @@ export class ChatService {
         conversationId === null || store === null
           ? null
           : store.filePathFor(conversationId),
-      error: this.lastSaveError,
+      error: conversationId === null ? null : (this.saveErrors.get(conversationId)?.error ?? null),
+      otherConversations: this.otherSaveErrors(),
     };
   }
 
@@ -2406,7 +2477,7 @@ export class ChatService {
     /** What could not be adopted, in words, or `null` when everything was. */
     readonly note: string | null;
   } {
-    const ledger = new AttemptLedger(undefined, this.attemptSequence);
+    const ledger = new AttemptLedger(undefined, this.attemptSequence, conversation.conversationId);
     const outcome = ledger.restore(conversation.attempts);
     const held: HeldConversation = {
       conversationId: conversation.conversationId,
@@ -2448,7 +2519,7 @@ export class ChatService {
       conversationId,
       projectPath,
       createdAtUtc: nowIso(),
-      ledger: new AttemptLedger(undefined, this.attemptSequence),
+      ledger: new AttemptLedger(undefined, this.attemptSequence, conversationId),
       carriedMessages: [],
       testRuns: [],
       lastTest: null,
@@ -2611,17 +2682,22 @@ export class ChatService {
     );
   }
 
-  /** Record acknowledgements in this working copy, and save any other file they changed. */
+  /**
+   * Record acknowledgements in this working copy, for the kind of work being gated
+   * only, and save any other file they changed.
+   */
   private acknowledgeInWorkingCopy(
     ledger: AttemptLedger,
     sharing: readonly HeldConversation[],
-    attemptIds: readonly string[],
+    kind: AttemptKind,
+    acknowledgements: readonly AttemptAcknowledgement[],
     note: string,
   ): void {
     const touched = AttemptLedger.acknowledgeAcross(
       ledger,
       sharing.map((held) => held.ledger),
-      attemptIds,
+      kind,
+      acknowledgements,
       note,
     );
     for (const held of sharing) {
@@ -2675,6 +2751,13 @@ export class ChatService {
     };
   }
 
+  /** Save the conversation a ledger belongs to, whether or not it is on screen. */
+  private saveLedgerOwner(ledger: AttemptLedger): void {
+    if (ledger.owner !== null && this.held.get(ledger.owner)?.ledger === ledger) {
+      this.saveConversation(ledger.owner);
+    }
+  }
+
   /**
    * Save a conversation: the current one unless another is named.
    *
@@ -2684,13 +2767,16 @@ export class ChatService {
    * was never written down as `running` cannot be reconciled as unknown after a
    * restart, and that reconciliation is the point of AC#3. Another conversation is
    * named when something of its own changes while it is not on screen: a command it
-   * started ending late, or an acknowledgement of its attempt.
+   * started ending late, a confirmation timer settling its attempt, or an
+   * acknowledgement of its attempt.
    *
    * Every save is built from that conversation's own held record, so no save can write
    * one conversation's records into another's file (WS-1 #12).
    *
-   * Failures are recorded and swallowed. The work on screen is real whether or not it
-   * reached the disk, and the window says so through {@link saveError}.
+   * Failures are recorded per conversation and swallowed. The work on screen is real
+   * whether or not it reached the disk, and the window says so, naming the
+   * conversation, through {@link conversationSaveStatus}; closing the window tries
+   * again ({@link dispose}).
    */
   private saveConversation(conversationId: string | null = this.conversationId): void {
     const store = this.options.conversations?.() ?? null;
@@ -2713,8 +2799,15 @@ export class ChatService {
       return;
     }
     const written = store.write(record);
-    if (conversationId === this.conversationId) {
-      this.lastSaveError = written.error;
+    // Kept for this conversation only: a later save of another one says nothing about
+    // whether this one reached the disk.
+    if (written.error === null) {
+      this.saveErrors.delete(conversationId);
+    } else {
+      this.saveErrors.set(conversationId, {
+        error: written.error,
+        readOnly: written.readOnly === true,
+      });
     }
     if (written.error === null) {
       held.lastSavedDigest = digest;
@@ -3273,6 +3366,8 @@ export class ChatService {
             'it is gone is unknown. It may still be holding the working ' +
             'directory open.',
         );
+        // Typically after a switch, with the conversation off screen (verifier 001, A5).
+        this.saveLedgerOwner(ledger);
       }
     }, this.cancelConfirmMs);
     timer.unref?.();
@@ -3297,10 +3392,49 @@ export class ChatService {
 
   async dispose(): Promise<void> {
     await this.closeSession();
+    this.saveHeldAtClose();
     const adapter = this.adapter;
     this.adapter = null;
     if (adapter !== null) {
       await adapter.dispose();
+    }
+  }
+
+  /**
+   * At window close, save every held conversation that differs from what was last
+   * saved, not only the one on screen (WS-1 follow-up, verifier 001 A1/A2).
+   *
+   * A conversation off screen changes when a command it started ends late or a timer
+   * settles its attempt, and its own save at that moment can fail; this is the retry
+   * before the window's memory of it is gone. The digest comparison in
+   * {@link saveConversation} skips any whose body is unchanged.
+   *
+   * A conversation this run has neither saved nor failed to save is skipped: it was
+   * only read, as a blocker for a shared working copy, and nothing of it changed.
+   * Rewriting it would contradict {@link holdBlockersFromDisk}'s promise that nothing
+   * is written to such a file unless an acknowledgement changes it.
+   *
+   * Each failure is logged for its conversation and does not stop the others.
+   */
+  private saveHeldAtClose(): void {
+    for (const [conversationId, held] of this.held) {
+      if (held.lastSavedDigest === null && !this.saveErrors.has(conversationId)) {
+        continue;
+      }
+      try {
+        this.saveConversation(conversationId);
+      } catch (error) {
+        this.options.log(
+          `[conversation] ${conversationId} could not be saved at close: ${describeError(error)}`,
+        );
+      }
+      const failed = this.saveErrors.get(conversationId);
+      if (failed !== undefined) {
+        this.options.log(
+          `[conversation] ${conversationId} is not on disk as last held; its last ` +
+            `successful save is what the next start reads: ${failed.error}`,
+        );
+      }
     }
   }
 

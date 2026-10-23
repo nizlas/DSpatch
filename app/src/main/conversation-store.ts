@@ -68,6 +68,11 @@ export interface ConversationWriteResult {
   /** Non-null when the conversation was not saved, and says why. */
   readonly error: string | null;
   readonly bytesWritten: number | null;
+  /**
+   * `true` when the file was refused because DSpatch must not overwrite it (a newer
+   * or unreadable format). Trying again cannot help, so the window must not promise it.
+   */
+  readonly readOnly?: boolean;
 }
 
 export interface ConversationReadResult {
@@ -216,9 +221,9 @@ export class ConversationStore {
         error:
           `${filePath} was written by a DSpatch this build does not recognise, so ` +
           `it has been left exactly as it is: ${existing.error ?? 'unknown reason'} ` +
-          'This conversation is not being saved. Everything on screen is still ' +
-          'there, and the file on disk is intact.',
+          'This conversation is not being saved, and the file on disk is intact.',
         bytesWritten: null,
+        readOnly: true,
       };
     }
     const body = `${JSON.stringify({ ...conversation, appVersion: this.appVersion }, null, 2)}\n`;
@@ -237,8 +242,9 @@ export class ConversationStore {
       return {
         filePath,
         error:
-          `this conversation could not be saved, so it will not be there after a ` +
-          `restart: ${describe(error)}`,
+          `this conversation could not be saved (${describe(error)}). Any version ` +
+          'saved earlier is still on disk unchanged; what changed since then exists ' +
+          'only in this window.',
         bytesWritten: null,
       };
     }

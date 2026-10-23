@@ -1,6 +1,8 @@
 import type {
+  AttemptAcknowledgement,
   AttemptInfo,
   AttemptKind,
+  AttemptRef,
   AttemptReconciliation,
   AttemptState,
   AttemptStep,
@@ -102,8 +104,19 @@ export interface RepeatDecision {
    *
    * Empty as well once every unresolved attempt has already been acknowledged:
    * there is nothing left for the caller to name. See {@link AttemptLedger.mayRepeat}.
+   *
+   * IDs only, and therefore possibly the same ID twice when two conversations hold it;
+   * {@link acknowledgeable} is the same list with each attempt's conversation.
    */
   readonly acknowledgeableAttemptIds: readonly string[];
+  /** {@link acknowledgeableAttemptIds}, each with the conversation that holds it. */
+  readonly acknowledgeable: readonly AttemptRef[];
+}
+
+/** An attempt record with the conversation whose ledger holds it. */
+interface OwnedRecord {
+  readonly owner: string | null;
+  readonly record: AttemptRecord;
 }
 
 const KIND_LABEL: Record<AttemptKind, string> = {
@@ -145,12 +158,23 @@ export class AttemptLedger {
 
   private readonly sequence: AttemptSequence;
 
+  /**
+   * The conversation this ledger belongs to, or `null` for none.
+   *
+   * Part of every attempt's identity outside the ledger: across conversations an
+   * attempt is `{conversationId, attemptId}`, because IDs saved by earlier builds can
+   * repeat (WS-1 follow-up). Acknowledgements and the run state use it.
+   */
+  readonly owner: string | null;
+
   constructor(
     now: () => string = () => new Date().toISOString(),
     sequence: AttemptSequence = { last: 0 },
+    owner: string | null = null,
   ) {
     this.now = now;
     this.sequence = sequence;
+    this.owner = owner;
   }
 
   /**
@@ -182,7 +206,7 @@ export class AttemptLedger {
     };
     this.attempts.push(record);
     this.record(record, 'waiting', 'Attempt opened.', true);
-    return describe(record);
+    return describe(record, this.owner);
   }
 
   /**
@@ -242,22 +266,29 @@ export class AttemptLedger {
       this.sequence.last = Math.max(this.sequence.last, this.counter);
 
       const stateAtClose = stored.state;
+      // Worded from what the file shows, not from what happened at close. The file is
+      // the last save that succeeded, and a later one can have failed: verifier 001
+      // measured a command whose end DSpatch saw, could not save, and was then
+      // described after the restart as "still going" when DSpatch closed.
       if (stateAtClose === 'waiting' || stateAtClose === 'running') {
         this.transition(
           record,
           'outcome-unknown',
-          'DSpatch was closed while this was still going, so it stopped receiving ' +
-            'the events that would have said how it ended. Whether the work ' +
-            'finished, failed or is still running somewhere is unknown — closing a ' +
-            'window is not an ending. Nothing has been repeated on your behalf.',
+          'The last saved record of this conversation shows this as still going, and ' +
+            'no ending reached the file: either DSpatch was closed while it ran and ' +
+            'stopped receiving the events that would have said how it ended, or its ' +
+            'end was seen and could not be saved. Whether the work finished, failed ' +
+            'or is still running somewhere is unknown — closing a window is not an ' +
+            'ending. Nothing has been repeated on your behalf.',
         );
       } else if (stateAtClose === 'cancel-requested') {
         this.transition(
           record,
           'outcome-unknown',
-          'A stop had been asked for and no end had been confirmed when DSpatch ' +
-            'closed, so the ending was never established and cannot be now. This ' +
-            'is recorded as unknown rather than as stopped.',
+          'The last saved record of this conversation shows a stop asked for and no ' +
+            'end confirmed, and no ending reached the file afterwards (DSpatch closed ' +
+            'first, or a later save failed), so the ending cannot be ' +
+            'established now. This is recorded as unknown rather than as stopped.',
         );
       } else if (stateAtClose === 'outcome-unknown') {
         this.record(
@@ -365,11 +396,11 @@ export class AttemptLedger {
 
   get(attemptId: string): AttemptInfo | null {
     const record = this.attempts.find((entry) => entry.attemptId === attemptId);
-    return record === undefined ? null : describe(record);
+    return record === undefined ? null : describe(record, this.owner);
   }
 
   all(): readonly AttemptInfo[] {
-    return this.attempts.map(describe);
+    return this.attempts.map((record) => describe(record, this.owner));
   }
 
   /** Every attempt in the shape that is written to disk. Nothing derived. */
@@ -394,7 +425,7 @@ export class AttemptLedger {
     for (let index = this.attempts.length - 1; index >= 0; index -= 1) {
       const record = this.attempts[index];
       if (record !== undefined && record.kind === kind) {
-        return describe(record);
+        return describe(record, this.owner);
       }
     }
     return null;
@@ -406,7 +437,7 @@ export class AttemptLedger {
         (record) =>
           !isSettled(record.state) && (kind === undefined || record.kind === kind),
       )
-      .map(describe);
+      .map((record) => describe(record, this.owner));
   }
 
   /**
@@ -442,9 +473,13 @@ export class AttemptLedger {
    */
   mayRepeat(
     kind: AttemptKind,
-    acknowledgedAttemptIds: readonly string[] = [],
+    acknowledgedAttemptIds: readonly AttemptAcknowledgement[] = [],
   ): RepeatDecision {
-    return AttemptLedger.decide(this.attempts, kind, acknowledgedAttemptIds);
+    return AttemptLedger.decide(this.owned(), kind, acknowledgedAttemptIds);
+  }
+
+  private owned(): OwnedRecord[] {
+    return this.attempts.map((record) => ({ owner: this.owner, record }));
   }
 
   /**
@@ -459,10 +494,10 @@ export class AttemptLedger {
   static mayRepeatAcross(
     ledgers: readonly AttemptLedger[],
     kind: AttemptKind,
-    acknowledgedAttemptIds: readonly string[] = [],
+    acknowledgedAttemptIds: readonly AttemptAcknowledgement[] = [],
   ): RepeatDecision {
     return AttemptLedger.decide(
-      ledgers.flatMap((ledger) => ledger.attempts),
+      ledgers.flatMap((ledger) => ledger.owned()),
       kind,
       acknowledgedAttemptIds,
     );
@@ -471,37 +506,81 @@ export class AttemptLedger {
   /**
    * Record acknowledgements where they belong, and say which ledgers changed.
    *
-   * An ID is acknowledged in every given ledger that holds it unresolved, and only
-   * there, so naming an ID from one working copy cannot acknowledge an attempt that
-   * belongs to another: the caller passes only the ledgers of the working copy being
-   * acted in. An ID no ledger holds unresolved is acknowledged in `current` if it is
-   * there at all, which is what a single ledger always did.
+   * Each acknowledgement names one attempt of the `kind` being gated, and only that
+   * attempt is acknowledged (WS-1 follow-up). Verifier 001 measured the rule this
+   * replaces, "every ledger that holds the ID unresolved", acknowledging two attempts
+   * in two conversations with one ID, and a message's acknowledgement acknowledging
+   * another conversation's command and lifting the command block.
+   *
+   * - An {@link AttemptRef} acknowledges that attempt in the ledger of the conversation
+   *   it names, if that ledger is among those given and holds it **unresolved** with
+   *   this kind. A settled attempt is acknowledged only in `current`, as before: in
+   *   another conversation's record the note ("left unresolved") would be false
+   *   (review 005 S3).
+   * - A bare ID acknowledges the one unresolved attempt of this kind that carries it in
+   *   the given ledgers. When two carry it, it acknowledges neither: it does not say
+   *   which was seen. When none is unresolved, `current`'s attempt of this kind with
+   *   that ID is acknowledged if there is one, which is what a single ledger always did.
+   *
+   * The caller passes only the ledgers of the working copy being acted in, so nothing
+   * here can acknowledge an attempt that belongs to another.
    */
   static acknowledgeAcross(
     current: AttemptLedger,
     others: readonly AttemptLedger[],
-    attemptIds: readonly string[],
+    kind: AttemptKind,
+    acknowledgements: readonly AttemptAcknowledgement[],
     note: string,
   ): readonly AttemptLedger[] {
-    const touched = new Set<AttemptLedger>();
-    for (const attemptId of attemptIds) {
-      const holders = [current, ...others].filter((ledger) =>
-        ledger.attempts.some(
-          (record) => record.attemptId === attemptId && !isSettled(record.state),
-        ),
+    const ledgers = [current, ...others];
+    const holds = (ledger: AttemptLedger, attemptId: string, unresolvedOnly: boolean): boolean =>
+      ledger.attempts.some(
+        (record) =>
+          record.attemptId === attemptId &&
+          record.kind === kind &&
+          (!unresolvedOnly || !isSettled(record.state)),
       );
-      const targets =
-        holders.length > 0
-          ? holders
-          : current.attempts.some((record) => record.attemptId === attemptId)
-            ? [current]
-            : [];
-      for (const ledger of targets) {
-        ledger.acknowledge(attemptId, note);
-        touched.add(ledger);
+    const touched = new Set<AttemptLedger>();
+    for (const acknowledgement of acknowledgements) {
+      let target: AttemptLedger | null = null;
+      let attemptId: string;
+      if (typeof acknowledgement === 'string') {
+        attemptId = acknowledgement;
+        const holders = ledgers.filter((ledger) => holds(ledger, attemptId, true));
+        if (holders.length === 1) {
+          target = holders[0] ?? null;
+        } else if (holders.length === 0 && holds(current, attemptId, false)) {
+          target = current;
+        }
+      } else {
+        attemptId = acknowledgement.attemptId;
+        const { conversationId } = acknowledgement;
+        target =
+          ledgers.find(
+            (ledger) => ledger.owner === conversationId && holds(ledger, attemptId, true),
+          ) ??
+          (current.owner === conversationId && holds(current, attemptId, false)
+            ? current
+            : null);
+      }
+      if (target !== null) {
+        target.acknowledgeKind(attemptId, kind, note);
+        touched.add(target);
       }
     }
     return [...touched];
+  }
+
+  /** {@link acknowledge}, for the record of this kind only. */
+  private acknowledgeKind(attemptId: string, kind: AttemptKind, note: string): void {
+    const record = this.attempts.find(
+      (entry) => entry.attemptId === attemptId && entry.kind === kind,
+    );
+    if (record === undefined) {
+      return;
+    }
+    record.acknowledgedAtUtc ??= this.now();
+    this.record(record, record.state, note, true);
   }
 
   /**
@@ -521,9 +600,8 @@ export class AttemptLedger {
       ...others.flatMap((ledger) => ledger.unresolved()),
       ...current.all(),
     ];
-    const needing = (kind: AttemptKind): readonly string[] => [
-      ...new Set(AttemptLedger.mayRepeatAcross(ledgers, kind).acknowledgeableAttemptIds),
-    ];
+    const needing = (kind: AttemptKind): readonly AttemptRef[] =>
+      AttemptLedger.mayRepeatAcross(ledgers, kind).acknowledgeable;
     return {
       attempts,
       unresolved: attempts.filter((attempt) => !isSettled(attempt.state)),
@@ -536,53 +614,67 @@ export class AttemptLedger {
   }
 
   private static decide(
-    records: readonly AttemptRecord[],
+    records: readonly OwnedRecord[],
     kind: AttemptKind,
-    acknowledgedAttemptIds: readonly string[],
+    acknowledgements: readonly AttemptAcknowledgement[],
   ): RepeatDecision {
     const blocking = records.filter(
-      (record) => record.kind === kind && !isSettled(record.state),
+      ({ record }) => record.kind === kind && !isSettled(record.state),
     );
-    const running = blocking.find((record) => record.state === 'running');
+    // How an attempt is written in a sentence: its ID, and its conversation as well
+    // when another blocking attempt here carries the same ID. Otherwise the text would
+    // read "dsp-attempt-0004, dsp-attempt-0004" and name nothing (WS-1 follow-up).
+    const name = (entry: OwnedRecord): string =>
+      blocking.filter(({ record }) => record.attemptId === entry.record.attemptId).length > 1
+        ? `${entry.record.attemptId} (conversation ${entry.owner ?? 'none'})`
+        : entry.record.attemptId;
+    const running = blocking.find(({ record }) => record.state === 'running');
     if (running !== undefined) {
       return {
         allowed: false,
-        blockedBy: running.attemptId,
+        blockedBy: running.record.attemptId,
         reason:
-          `${running.attemptId} is running (${KIND_LABEL[kind]}) and has not ` +
+          `${name(running)} is running (${KIND_LABEL[kind]}) and has not ` +
           'ended. Stop it first: starting a second one now would leave two ' +
           'pieces of work in the same place with no way to tell their effects ' +
           'apart.',
         acknowledgeableAttemptIds: [],
+        acknowledgeable: [],
       };
     }
-    const ambiguous = blocking.filter((record) => AMBIGUOUS.includes(record.state));
+    const ambiguous = blocking.filter(({ record }) => AMBIGUOUS.includes(record.state));
     if (ambiguous.length === 0) {
       return {
         allowed: true,
         blockedBy: null,
         reason: 'Nothing of this kind is unresolved.',
         acknowledgeableAttemptIds: [],
+        acknowledgeable: [],
       };
     }
-    const ids = ambiguous.map((record) => record.attemptId);
+    // Named by this call: a reference to this attempt in this conversation, or its ID
+    // alone where no other attempt here carries that ID.
+    const namedHere = (entry: OwnedRecord): boolean =>
+      acknowledgements.some((acknowledgement) =>
+        typeof acknowledgement === 'string'
+          ? acknowledgement === entry.record.attemptId &&
+            ambiguous.filter(({ record }) => record.attemptId === acknowledgement).length === 1
+          : acknowledgement.attemptId === entry.record.attemptId &&
+            acknowledgement.conversationId === entry.owner,
+      );
     const unnamed = ambiguous.filter(
-      (record) =>
-        record.acknowledgedAtUtc === null &&
-        !acknowledgedAttemptIds.includes(record.attemptId),
+      (entry) => entry.record.acknowledgedAtUtc === null && !namedHere(entry),
     );
     if (unnamed.length === 0) {
       const alreadySeen = ambiguous.filter(
-        (record) =>
-          record.acknowledgedAtUtc !== null &&
-          !acknowledgedAttemptIds.includes(record.attemptId),
+        (entry) => entry.record.acknowledgedAtUtc !== null && !namedHere(entry),
       );
       return {
         allowed: true,
         blockedBy: null,
         reason:
-          `Proceeding with ${ids.join(', ')} left unresolved (${ambiguous
-            .map((record) => `${record.attemptId}: "${record.state}"`)
+          `Proceeding with ${ambiguous.map(name).join(', ')} left unresolved (${ambiguous
+            .map((entry) => `${name(entry)}: "${entry.record.state}"`)
             .join('; ')}). ${
             ambiguous.length === 1 ? 'It stays' : 'They stay'
           } on the record as unresolved rather than being marked stopped.` +
@@ -591,8 +683,8 @@ export class AttemptLedger {
             : ' Already acknowledged, and therefore not asked about again in this ' +
               `conversation: ${alreadySeen
                 .map(
-                  (record) =>
-                    `${record.attemptId} at ${String(record.acknowledgedAtUtc)}`,
+                  (entry) =>
+                    `${name(entry)} at ${String(entry.record.acknowledgedAtUtc)}`,
                 )
                 .join('; ')}.`),
         // Nothing left for the caller to name. Returning every ambiguous ID here
@@ -600,19 +692,27 @@ export class AttemptLedger {
         // `report()` reads this list, and a non-empty list means "you have not
         // seen these yet", which had stopped being true.
         acknowledgeableAttemptIds: [],
+        acknowledgeable: [],
       };
     }
-    const first = unnamed[0] as AttemptRecord;
+    const first = unnamed[0] as OwnedRecord;
+    // All of them, as report 006 requires, minus any whose acknowledgement is
+    // already on the record. The argument is deliberately not consulted here:
+    // it is one caller's one-shot claim, while `acknowledgedAtUtc` is the
+    // durable fact, and this list is what the window offers next.
+    const acknowledgeable = ambiguous.filter(
+      ({ record }) => record.acknowledgedAtUtc === null,
+    );
     return {
       allowed: false,
-      blockedBy: first.attemptId,
+      blockedBy: first.record.attemptId,
       reason:
         `${String(unnamed.length)} ${KIND_LABEL[kind]} attempt${
           unnamed.length === 1 ? '' : 's'
         } ${unnamed.length === 1 ? 'is' : 'are'} unresolved and ${
           unnamed.length === 1 ? 'has' : 'have'
-        } not been named: ${unnamed.map((record) => record.attemptId).join(', ')}. ` +
-        `${first.attemptId} is in state "${first.state}": ${first.stateReason} ` +
+        } not been named: ${unnamed.map(name).join(', ')}. ` +
+        `${name(first)} is in state "${first.record.state}": ${first.record.stateReason} ` +
         'DSpatch will not repeat this by itself while that is unresolved. Confirm ' +
         `that you have seen ${
           unnamed.length === 1 ? 'it' : 'all of them'
@@ -620,13 +720,11 @@ export class AttemptLedger {
           unnamed.length === 1 ? 'the earlier attempt' : 'those attempts'
         } still recorded as unresolved. You are asked this once per attempt, not ` +
         'once per message.',
-      // All of them, as report 006 requires, minus any whose acknowledgement is
-      // already on the record. The argument is deliberately not consulted here:
-      // it is one caller's one-shot claim, while `acknowledgedAtUtc` is the
-      // durable fact, and this list is what the window offers next.
-      acknowledgeableAttemptIds: ambiguous
-        .filter((record) => record.acknowledgedAtUtc === null)
-        .map((record) => record.attemptId),
+      acknowledgeableAttemptIds: acknowledgeable.map(({ record }) => record.attemptId),
+      acknowledgeable: acknowledgeable.map(({ owner, record }) => ({
+        conversationId: owner,
+        attemptId: record.attemptId,
+      })),
     };
   }
 
@@ -863,9 +961,10 @@ export function attemptOrdinal(attemptId: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function describe(record: AttemptRecord): AttemptInfo {
+function describe(record: AttemptRecord, owner: string | null): AttemptInfo {
   return {
     attemptId: record.attemptId,
+    conversationId: owner,
     kind: record.kind,
     label: record.label,
     state: record.state,

@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { AttemptLedger, isSettled } from '../src/main/attempt-ledger.ts';
-import type { AttemptKind, AttemptState, StoredAttempt } from '../src/shared/bridge.ts';
+import type { AttemptKind, AttemptRef, AttemptState, StoredAttempt } from '../src/shared/bridge.ts';
 
 let clock = 0;
 
@@ -35,6 +35,9 @@ function ledger(): AttemptLedger {
   clock = 0;
   return new AttemptLedger(tick);
 }
+
+/** The IDs in a list of acknowledgement references, for a single ledger's report. */
+const ids = (refs: readonly AttemptRef[]): string[] => refs.map((ref) => ref.attemptId);
 
 // --- The four states --------------------------------------------------------
 
@@ -198,7 +201,7 @@ test('every unknown outcome of a kind has to be named, not just one', () => {
   );
 
   // And the report offers the whole list, so the window can name all of them.
-  assert.deepEqual(book.report().needsAcknowledgement.agentTurn, [
+  assert.deepEqual(ids(book.report().needsAcknowledgement.agentTurn), [
     first.attemptId,
     second.attemptId,
   ]);
@@ -254,7 +257,7 @@ test('the report names what a repeat of each kind needs', () => {
   const report = book.report();
   assert.equal(report.attempts.length, 2);
   assert.equal(report.unresolved.length, 2);
-  assert.deepEqual(report.needsAcknowledgement.agentTurn, [turn.attemptId]);
+  assert.deepEqual(ids(report.needsAcknowledgement.agentTurn), [turn.attemptId]);
   // Running work cannot be acknowledged away, so there is nothing to name.
   assert.deepEqual(report.needsAcknowledgement.command, []);
 });
@@ -278,7 +281,7 @@ test('an acknowledged attempt is not asked about again, and stays unresolved', (
   const refused = book.mayRepeat('agent-turn');
   assert.equal(refused.allowed, false);
   assert.deepEqual(refused.acknowledgeableAttemptIds, [first.attemptId]);
-  assert.deepEqual(book.report().needsAcknowledgement.agentTurn, [first.attemptId]);
+  assert.deepEqual(ids(book.report().needsAcknowledgement.agentTurn), [first.attemptId]);
 
   book.acknowledge(first.attemptId, 'The user accepted the unknown outcome.');
 
@@ -453,7 +456,7 @@ test('an unacknowledged attempt still blocks after a restart', () => {
   const after = ledger();
   after.restore(before.persistable());
   assert.equal(after.mayRepeat('agent-turn').allowed, false);
-  assert.deepEqual(after.report().needsAcknowledgement.agentTurn, [attempt.attemptId]);
+  assert.deepEqual(ids(after.report().needsAcknowledgement.agentTurn), [attempt.attemptId]);
 });
 
 test('a cancellation with no confirmed end is restored as unknown, never as stopped', () => {
@@ -530,11 +533,20 @@ test('the block holds across the ledgers it is given, per kind, and no others', 
   assert.equal(here.mayRepeat('agent-turn').allowed, true, 'alone, here holds nothing');
 
   // Naming it from here acknowledges it where it is, and only there.
-  const touched = AttemptLedger.acknowledgeAcross(here, [sameFolder], ['dsp-attempt-0003'], 'seen');
+  const touched = AttemptLedger.acknowledgeAcross(
+    here,
+    [sameFolder],
+    'agent-turn',
+    ['dsp-attempt-0003'],
+    'seen',
+  );
   assert.deepEqual(touched, [sameFolder]);
   assert.notEqual(sameFolder.get('dsp-attempt-0003')?.acknowledgedAtUtc, null);
   assert.equal(AttemptLedger.mayRepeatAcross([here, sameFolder], 'agent-turn').allowed, true);
-  assert.equal(AttemptLedger.acknowledgeAcross(here, [], ['dsp-attempt-0004'], 'seen').length, 0);
+  assert.equal(
+    AttemptLedger.acknowledgeAcross(here, [], 'command', ['dsp-attempt-0004'], 'seen').length,
+    0,
+  );
   assert.equal(elsewhere.get('dsp-attempt-0004')?.acknowledgedAtUtc, null);
 });
 
@@ -607,4 +619,77 @@ test('the running-only guard this replaces lets the unknown case through', () =>
   book.markCancelRequested(attempt.attemptId, 'Cancel pressed.');
   book.markOutcomeUnknown(attempt.attemptId, 'No end confirmed.');
   assert.equal(book.mayRepeat('agent-turn').allowed, false);
+});
+
+test('an acknowledgement names one attempt in one conversation (WS-1 follow-up, B2)', () => {
+  // Two conversations saved by older builds both hold dsp-attempt-0004, unresolved,
+  // over one working copy. An ID alone does not say which of them was seen.
+  const sequence = { last: 0 };
+  const x = new AttemptLedger(tick, sequence, 'conv-x');
+  const y = new AttemptLedger(tick, sequence, 'conv-y');
+  x.restore([stored('dsp-attempt-0004', 'running')]);
+  y.restore([stored('dsp-attempt-0004', 'running')]);
+  const refX = { conversationId: 'conv-x', attemptId: 'dsp-attempt-0004' };
+
+  assert.deepEqual(
+    AttemptLedger.reportAcross(x, [y])
+      .needsAcknowledgement.agentTurn.map((ref) => `${String(ref.conversationId)}:${ref.attemptId}`)
+      .sort(),
+    ['conv-x:dsp-attempt-0004', 'conv-y:dsp-attempt-0004'],
+  );
+  assert.equal(x.get('dsp-attempt-0004')?.conversationId, 'conv-x');
+
+  const bare = AttemptLedger.mayRepeatAcross([x, y], 'agent-turn', ['dsp-attempt-0004']);
+  assert.equal(bare.allowed, false, 'an ID naming two attempts names neither');
+  assert.doesNotMatch(bare.reason, /dsp-attempt-0004, dsp-attempt-0004/);
+  assert.match(bare.reason, /conv-x/);
+  assert.match(bare.reason, /conv-y/);
+
+  const half = AttemptLedger.mayRepeatAcross([x, y], 'agent-turn', [refX]);
+  assert.equal(half.allowed, false, 'the other one still blocks');
+  assert.match(half.reason, /conv-y/);
+
+  assert.deepEqual(AttemptLedger.acknowledgeAcross(x, [y], 'agent-turn', [refX], 'seen'), [x]);
+  assert.notEqual(x.get('dsp-attempt-0004')?.acknowledgedAtUtc, null);
+  assert.equal(y.get('dsp-attempt-0004')?.acknowledgedAtUtc, null);
+  assert.equal(AttemptLedger.acknowledgeAcross(x, [y], 'agent-turn', ['dsp-attempt-0004'], 'seen').length, 0);
+  assert.equal(y.get('dsp-attempt-0004')?.acknowledgedAtUtc, null);
+
+  // A reference to a settled attempt in another conversation writes nothing into it:
+  // "sent with this attempt left unresolved" would be false in that record (review 005 S3).
+  const z = new AttemptLedger(tick, sequence, 'conv-z');
+  z.restore([stored('dsp-attempt-0004', 'completed')]);
+  const historyBefore = z.get('dsp-attempt-0004')?.history.length;
+  assert.deepEqual(
+    AttemptLedger.acknowledgeAcross(
+      x,
+      [y, z],
+      'agent-turn',
+      [{ conversationId: 'conv-z', attemptId: 'dsp-attempt-0004' }],
+      'seen',
+    ),
+    [],
+  );
+  assert.equal(z.get('dsp-attempt-0004')?.acknowledgedAtUtc, null);
+  assert.equal(z.get('dsp-attempt-0004')?.history.length, historyBefore);
+});
+
+test('an acknowledgement counts only for the kind of work it gates (WS-1 follow-up, B4)', () => {
+  const sequence = { last: 0 };
+  const messages = new AttemptLedger(tick, sequence, 'conv-m');
+  const commands = new AttemptLedger(tick, sequence, 'conv-c');
+  messages.restore([stored('dsp-attempt-0007', 'running')]);
+  commands.restore([stored('dsp-attempt-0007', 'running', 'command')]);
+
+  // Unique among messages, so the ID alone is enough for the message gate.
+  assert.equal(
+    AttemptLedger.mayRepeatAcross([messages, commands], 'agent-turn', ['dsp-attempt-0007']).allowed,
+    true,
+  );
+  assert.deepEqual(
+    AttemptLedger.acknowledgeAcross(messages, [commands], 'agent-turn', ['dsp-attempt-0007'], 'seen'),
+    [messages],
+  );
+  assert.equal(commands.get('dsp-attempt-0007')?.acknowledgedAtUtc, null);
+  assert.equal(AttemptLedger.mayRepeatAcross([messages, commands], 'command').allowed, false);
 });

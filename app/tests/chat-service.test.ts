@@ -1063,9 +1063,10 @@ test('SIMULATED: a cancel that never confirms an end blocks a second run', async
   // A cancellation that has been asked for is already ambiguous, so a repeat is
   // gated from this moment rather than only once the window expires. The offered
   // action differs: here, waiting for a confirmed end is still worth doing.
-  assert.deepEqual(service.getRunState().needsAcknowledgement.agentTurn, [
-    requested?.attemptId,
-  ]);
+  assert.deepEqual(
+    service.getRunState().needsAcknowledgement.agentTurn.map((ref) => ref.attemptId),
+    [requested?.attemptId],
+  );
   assert.equal(requested?.nextAction.kind, 'keep-waiting');
 
   // The confirmation window expires with nothing confirmed.
@@ -1294,7 +1295,10 @@ test("SIMULATED: with a declared bound, the confirmation waits for the adapter's
   const waiting = service.getRunState().attempts[0];
   assert.equal(waiting?.state, 'cancel-requested', 'not unknown while the adapter is still within its bound');
   // Still gated: a cancellation in progress is ambiguous, so no turn can start early.
-  assert.deepEqual(service.getRunState().needsAcknowledgement.agentTurn, [waiting?.attemptId]);
+  assert.deepEqual(
+    service.getRunState().needsAcknowledgement.agentTurn.map((ref) => ref.attemptId),
+    [waiting?.attemptId],
+  );
 
   await sleep(500);
   const unknown = service.getRunState().attempts[0];
@@ -1683,9 +1687,10 @@ test('SIMULATED: a run left going when the window closed comes back unknown and 
   assert.equal(restored.reconciliation.attempts.length, 1);
   assert.equal(restored.reconciliation.attempts[0]?.stateAtClose, 'running');
   assert.equal(restored.reconciliation.attempts[0]?.stateNow, 'outcome-unknown');
-  assert.deepEqual(restored.reconciliation.needsAcknowledgement.agentTurn, [
-    restored.reconciliation.attempts[0]?.attemptId,
-  ]);
+  assert.deepEqual(
+    restored.reconciliation.needsAcknowledgement.agentTurn.map((ref) => ref.attemptId),
+    [restored.reconciliation.attempts[0]?.attemptId],
+  );
 
   // The gate: continuing the conversation is refused until the attempt is named,
   // and the refusal happens before the provider is touched.

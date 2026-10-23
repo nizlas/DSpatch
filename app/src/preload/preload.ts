@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 import type {
   AbandonOutcome,
+  AttemptAcknowledgement,
   BridgeChannel,
   CancelObservations,
   CancelOutcome,
@@ -177,7 +178,7 @@ const bridge: DspatchBridge = {
     }>,
   startChatSession: (request: StartSessionRequest) =>
     ipcRenderer.invoke(START_SESSION, request) as Promise<ChatSessionInfo>,
-  sendPrompt: (text: string, acknowledgedAttemptIds?: readonly string[]) =>
+  sendPrompt: (text: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) =>
     ipcRenderer.invoke(SEND_PROMPT, text, acknowledgedAttemptIds) as Promise<{
       readonly dspatchRunId: string;
     }>,

@@ -162,6 +162,8 @@ test('a file from a newer DSpatch is not read, and the next save leaves it alone
   const written = store.write(conversation({ conversationId: id }));
   assert.notEqual(written.error, null);
   assert.match(String(written.error), /left exactly as it is/);
+  // Trying again cannot help, so the window must not promise it (review 005 S2).
+  assert.equal(written.readOnly, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(filePath, 'utf8')), future);
 });
 
@@ -555,4 +557,8 @@ test('a save failure is reported rather than thrown', () => {
   const written = store.write(conversation());
   assert.notEqual(written.error, null);
   assert.match(String(written.error), /could not be saved/);
+  // What was saved before is untouched, so the message must not say it is lost (review 005 S2).
+  assert.doesNotMatch(String(written.error), /will not be there after a restart/);
+  assert.match(String(written.error), /saved earlier is still on disk unchanged/);
+  assert.notEqual(written.readOnly, true);
 });

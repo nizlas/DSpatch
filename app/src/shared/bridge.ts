@@ -596,6 +596,26 @@ export interface ConversationSaveStatus {
   readonly conversationId: string | null;
   readonly filePath: string | null;
   readonly error: string | null;
+  /**
+   * Other conversations held in this window whose latest save failed (WS-1 follow-up).
+   *
+   * A conversation that is not on screen still changes: a command it started ends
+   * late, a cancellation timer settles its turn, or its attempt is acknowledged from
+   * an overlapping folder. Verifier 001 measured such a save failing with nothing said
+   * to anyone, and the next conversation's successful save erasing the only record of
+   * it. Each failure is kept for its own conversation until that conversation is saved
+   * successfully. Empty when there is none.
+   */
+  readonly otherConversations: readonly {
+    readonly conversationId: string;
+    readonly filePath: string | null;
+    readonly error: string;
+    /**
+     * The file is one DSpatch must not overwrite (newer or unreadable format), so no
+     * later save will be attempted into it with any chance of success.
+     */
+    readonly readOnly: boolean;
+  }[];
 }
 
 /** A file difference established by hashing bytes, not by an agent's account. */
@@ -681,9 +701,36 @@ export interface TestRunRequest {
    * A **list**, because a restart can produce several unknowns at once and report
    * 006 found that naming one of them let the action through while the rest stayed
    * unnamed. Every unresolved attempt of the kind has to be named.
+   *
+   * Each entry names one attempt in one conversation ({@link AttemptRef}), which is
+   * what the run state lists. See {@link AttemptAcknowledgement} for a bare ID.
    */
-  readonly acknowledgedAttemptIds?: readonly string[];
+  readonly acknowledgedAttemptIds?: readonly AttemptAcknowledgement[];
 }
+
+/**
+ * One attempt, in the conversation that holds it (WS-1 follow-up).
+ *
+ * An attempt ID alone is not an identity across conversations: files saved by
+ * earlier builds can hold the same ID for different work, and verifier 001 measured
+ * one acknowledgement of `dsp-attempt-0004` acknowledging two attempts in two files
+ * and lifting both blocks. `conversationId` is `null` only for an attempt made with
+ * no conversation open, which does not happen in practice.
+ */
+export interface AttemptRef {
+  readonly conversationId: string | null;
+  readonly attemptId: string;
+}
+
+/**
+ * What a caller may pass to acknowledge an attempt.
+ *
+ * An {@link AttemptRef} names exactly one attempt. A bare ID is still accepted, for
+ * callers that have no conversation to name, but it counts only where it names exactly
+ * one unresolved attempt of the kind being gated in the working copy; an ID that names
+ * two names neither, and the refusal says which conversations hold it.
+ */
+export type AttemptAcknowledgement = AttemptRef | string;
 
 /**
  * What kind of work an attempt is.
@@ -816,6 +863,12 @@ export interface AttemptStep {
 /** One attempt at one action, with its own ID. */
 export interface AttemptInfo {
   readonly attemptId: string;
+  /**
+   * The conversation that holds it. With `attemptId`, this is the attempt's identity
+   * in the window: the run state can show attempts of several conversations sharing a
+   * working copy, and two of them can carry the same ID (see {@link AttemptRef}).
+   */
+  readonly conversationId: string | null;
   readonly kind: AttemptKind;
   /** What was attempted, in the user's terms: their message, or the command. */
   readonly label: string;
@@ -847,15 +900,18 @@ export interface RunStateReport {
   /** Attempts that have not reached a settled state. */
   readonly unresolved: readonly AttemptInfo[];
   /**
-   * Every attempt ID a repeat of that kind must name. Empty means none.
+   * Every attempt a repeat of that kind must name. Empty means none.
    *
    * All of them, not the first: after a restart several attempts can be unknown at
    * once, and a gate that is satisfied by naming one of them lets the message
    * through with the others still unnamed — visible and counted, but not seen.
+   *
+   * Each with its conversation, and this is what the window sends back: one ID can
+   * stand for two attempts here (see {@link AttemptRef}).
    */
   readonly needsAcknowledgement: {
-    readonly agentTurn: readonly string[];
-    readonly command: readonly string[];
+    readonly agentTurn: readonly AttemptRef[];
+    readonly command: readonly AttemptRef[];
   };
   readonly observedAtUtc: string;
 }
@@ -1123,8 +1179,8 @@ export interface RestoredReconciliation {
   /** Saved attempts that were unresolved, each with what it is now. */
   readonly attempts: readonly AttemptReconciliation[];
   readonly needsAcknowledgement: {
-    readonly agentTurn: readonly string[];
-    readonly command: readonly string[];
+    readonly agentTurn: readonly AttemptRef[];
+    readonly command: readonly AttemptRef[];
   };
   readonly note: string;
   readonly repeated: RestoreRepeatCount;
@@ -1654,11 +1710,12 @@ export interface DspatchBridge {
    * `acknowledgedAttemptIds` names every earlier attempt of this kind whose
    * outcome is unknown and which the user has been shown. Without all of them,
    * DSpatch refuses to start a second turn, rather than letting a retry become a
-   * duplicate model job.
+   * duplicate model job. Each is named with its conversation ({@link AttemptRef}),
+   * as `RunStateReport.needsAcknowledgement` lists them.
    */
   sendPrompt(
     text: string,
-    acknowledgedAttemptIds?: readonly string[],
+    acknowledgedAttemptIds?: readonly AttemptAcknowledgement[],
   ): Promise<{ readonly dspatchRunId: string }>;
   cancelRun(): Promise<CancelOutcome>;
   /**

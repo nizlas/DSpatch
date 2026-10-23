@@ -11,6 +11,7 @@ import type { Capability, CapabilitySupport } from '../adapter/types';
 import type {
   AttemptInfo,
   AttemptReconciliation,
+  AttemptRef,
   AttemptState,
   CancelObservations,
   ChatLoopCancelOutcome,
@@ -134,6 +135,13 @@ import {
 
 const HEADING = 'DSpatch';
 
+/**
+ * How often the window asks whether every held conversation reached the disk, with
+ * nothing else happening. Slow, because the answer changes rarely; unconditional,
+ * because a conversation that is not on screen can fail to save at any time.
+ */
+const SAVE_STATUS_POLL_MS = 3_000;
+
 /** This is also the display order. The type requires all seven capabilities. */
 const CAPABILITY_LABEL: Record<Capability, string> = {
   start: 'Start run',
@@ -170,6 +178,20 @@ function samePathOn(platform: string, left: string, right: string): boolean {
   return platform === 'win32'
     ? left.toLowerCase() === right.toLowerCase()
     : left === right;
+}
+
+/**
+ * How the window writes attempts that need acknowledging: by ID, and by conversation
+ * as well where two of them carry the same ID (WS-1 follow-up). Files saved by
+ * earlier builds can share an ID, and "dsp-attempt-0004, dsp-attempt-0004" names
+ * nothing. Full owner labels on every row are later work (WS-2).
+ */
+function attemptRefLabels(refs: readonly AttemptRef[]): string[] {
+  return refs.map((ref) =>
+    refs.filter((other) => other.attemptId === ref.attemptId).length > 1
+      ? `${ref.attemptId} (conversation ${ref.conversationId ?? 'none'})`
+      : ref.attemptId,
+  );
 }
 
 type LoadState =
@@ -494,7 +516,7 @@ function Workbench({
       loopRunId: loopRunId.current,
       useLoop,
       outstandingTurn: blockingTurn,
-      unresolvedAttempts: runState?.needsAcknowledgement.agentTurn ?? [],
+      unresolvedAttempts: attemptRefLabels(runState?.needsAcknowledgement.agentTurn ?? []),
       otherWorkInProgress: busy !== null && !(busy === 'sending' && loopBusy),
       sessionOpen: session !== null,
     }),
@@ -674,7 +696,7 @@ function Workbench({
         },
         activityText,
         unresolvedRuns: activity.unresolvedRuns,
-        unresolvedAttempts: runState?.needsAcknowledgement.agentTurn ?? [],
+        unresolvedAttempts: attemptRefLabels(runState?.needsAcknowledgement.agentTurn ?? []),
         refusal: null,
         saveFailure:
           conversations === null || conversations.partialWrites.length === 0
@@ -713,6 +735,7 @@ function Workbench({
    * them and says how many.
    */
   const turnNeedsAcknowledgement = runState?.needsAcknowledgement.agentTurn ?? [];
+  const turnNeedsAcknowledgementLabels = attemptRefLabels(turnNeedsAcknowledgement);
   const commandNeedsAcknowledgement = runState?.needsAcknowledgement.command ?? [];
 
   /**
@@ -1106,6 +1129,31 @@ function Workbench({
     };
   }, [runState, busy, refreshRunState]);
 
+  // Whether every held conversation reached the disk, asked always and slowly. The
+  // polling above runs only while this conversation has something unresolved, but a
+  // conversation off screen can fail to save while this one is idle: a command it
+  // started ends late, or a timer settles its turn (review 005 S1). The main process
+  // answers from memory, so the question reads no file. The reading is replaced only
+  // when it changed, so an unchanged answer does not redraw the window.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      window.dspatch.conversationSaveStatus().then(
+        (next) => {
+          setSaveStatus((previous) =>
+            JSON.stringify(previous) === JSON.stringify(next) ? previous : next,
+          );
+        },
+        () => {
+          // An unanswered question about the disk is not an answer; the last
+          // reading stays, as in `refreshRunState`.
+        },
+      );
+    }, SAVE_STATUS_POLL_MS);
+    return () => {
+      clearInterval(timer);
+    };
+  }, []);
+
   const refreshProjects = useCallback(async (): Promise<void> => {
     try {
       setProjects(await window.dspatch.listProjects());
@@ -1313,7 +1361,7 @@ function Workbench({
       unresolvedAgentTurns: runState.unresolved.filter(
         (attempt) => attempt.kind === 'agent-turn',
       ).length,
-      needsAcknowledgementAgentTurn: runState.needsAcknowledgement.agentTurn,
+      needsAcknowledgementAgentTurn: attemptRefLabels(runState.needsAcknowledgement.agentTurn),
     });
     if (resolved) {
       setActionError(null);
@@ -1682,7 +1730,7 @@ function Workbench({
    * a run is walking, and `loop-run` is unreachable from there.
    */
   const send = useCallback(
-    async (acknowledgedAttemptIds?: readonly string[]): Promise<void> => {
+    async (acknowledgedAttemptIds?: readonly AttemptRef[]): Promise<void> => {
       const text = prompt.trim();
       if (text === '') {
         return;
@@ -1994,7 +2042,7 @@ function Workbench({
    * the freshness line above it always names the code it describes.
    */
   const runTest = useCallback(
-    async (acknowledgedAttemptIds?: readonly string[]): Promise<void> => {
+    async (acknowledgedAttemptIds?: readonly AttemptRef[]): Promise<void> => {
       setBusy('running-test');
       setTestError(null);
       setStopNote(null);
@@ -2287,14 +2335,27 @@ function Workbench({
             {saveStatus?.error !== null && saveStatus !== null && (
               <p className="app__error" data-ev="save-error">
                 {saveStatus.error} Everything in this conversation is still on screen
-                and can still be selected and copied out
+                and can be selected and copied out
                 {saveStatus.filePath === null
                   ? ''
                   : `; the file DSpatch was writing to is ${saveStatus.filePath}`}
-                . A restart is what would lose it, so copy anything you need before
+                . At risk is only what changed since the last save that succeeded
+                (everything, if none did). DSpatch tries to save again when this
+                conversation next changes and when this window closes; if none of those
+                saves succeeds, a restart loses it, so copy anything you need before
                 closing this window.
               </p>
             )}
+            {(saveStatus?.otherConversations ?? []).map((other) => (
+              <p className="app__error" data-ev="save-error-other" key={other.conversationId}>
+                Another conversation held in this window, {other.conversationId}:{' '}
+                {other.error}{' '}
+                {other.readOnly
+                  ? 'DSpatch will not overwrite that file.'
+                  : 'DSpatch tries to save it again when that conversation next changes or ' +
+                    'is opened, and when this window closes.'}
+              </p>
+            ))}
             {/* The scroller and the way back to its foot, in one box, so the
                 button is placed against the conversation rather than against a
                 guess about how tall the composer is today. */}
@@ -2743,7 +2804,7 @@ function Workbench({
                       : `${String(
                           turnNeedsAcknowledgement.length,
                         )} earlier attempts have no known outcome`}{' '}
-                    ({turnNeedsAcknowledgement.join(', ')}), so DSpatch will not send
+                    ({turnNeedsAcknowledgementLabels.join(', ')}), so DSpatch will not send
                     another message by itself. Nothing is lost: your text stays in the
                     box and the conversation above is untouched. What it knows about{' '}
                     {turnNeedsAcknowledgement.length === 1 ? 'that attempt' : 'them'} is
@@ -2759,10 +2820,10 @@ function Workbench({
                     disabled={busy !== null || prompt.trim() === ''}
                   >
                     {turnNeedsAcknowledgement.length === 1
-                      ? `Send anyway, leaving ${turnNeedsAcknowledgement[0] ?? ''} unresolved`
+                      ? `Send anyway, leaving ${turnNeedsAcknowledgementLabels[0] ?? ''} unresolved`
                       : `Send anyway, leaving all ${String(
                           turnNeedsAcknowledgement.length,
-                        )} unresolved (${turnNeedsAcknowledgement.join(', ')})`}
+                        )} unresolved (${turnNeedsAcknowledgementLabels.join(', ')})`}
                   </button>
                 </div>
               )}
@@ -4436,11 +4497,11 @@ function TestPanel({
   readonly command: string;
   readonly cwd: string;
   readonly busy: Busy;
-  readonly needsAcknowledgement: readonly string[];
+  readonly needsAcknowledgement: readonly AttemptRef[];
   readonly onCommandChange: (value: string) => void;
   readonly onCwdChange: (value: string) => void;
   readonly onResetCommand: () => void;
-  readonly onRun: (acknowledgedAttemptIds?: readonly string[]) => void;
+  readonly onRun: (acknowledgedAttemptIds?: readonly AttemptRef[]) => void;
   readonly onStop: () => void;
   readonly onRecheck: () => void;
 }): JSX.Element {
@@ -4548,7 +4609,7 @@ function TestPanel({
               : `${String(
                   needsAcknowledgement.length,
                 )} earlier commands have no known outcome`}{' '}
-            ({needsAcknowledgement.join(', ')}), so DSpatch will not start one again
+            ({attemptRefLabels(needsAcknowledgement).join(', ')}), so DSpatch will not start one again
             by itself — a process that is still running would write into the same
             working copy, and on Windows it also keeps the folder open.{' '}
             {needsAcknowledgement.length === 1 ? 'Its details are' : 'Their details are'}{' '}
@@ -4564,10 +4625,10 @@ function TestPanel({
             disabled={busy !== null || command.trim() === ''}
           >
             {needsAcknowledgement.length === 1
-              ? `Run again, leaving ${needsAcknowledgement[0] ?? ''} unresolved`
+              ? `Run again, leaving ${attemptRefLabels(needsAcknowledgement)[0] ?? ''} unresolved`
               : `Run again, leaving all ${String(
                   needsAcknowledgement.length,
-                )} unresolved (${needsAcknowledgement.join(', ')})`}
+                )} unresolved (${attemptRefLabels(needsAcknowledgement).join(', ')})`}
           </button>
         </div>
       )}
@@ -4845,8 +4906,8 @@ function RunStatePanel({
   readonly busy: Busy;
   readonly onStopWaiting: () => void;
   readonly onStopCommand: () => void;
-  readonly onSendAnyway: (attemptIds: readonly string[]) => void;
-  readonly onRunAgain: (attemptIds: readonly string[]) => void;
+  readonly onSendAnyway: (attemptIds: readonly AttemptRef[]) => void;
+  readonly onRunAgain: (attemptIds: readonly AttemptRef[]) => void;
   readonly onRetry: (kind: AttemptInfo['kind']) => void;
   /** Whether a session is open. Without one, no action here can do anything. */
   readonly canAct: boolean;
@@ -4937,17 +4998,23 @@ function AttemptRow({
    * main process will not accept a subset: one unknown outcome left unnamed is
    * still an unknown outcome, and report 006 measured a restart producing two.
    */
-  readonly needsAcknowledgement: readonly string[];
+  readonly needsAcknowledgement: readonly AttemptRef[];
   readonly onStopWaiting: () => void;
   readonly onStopCommand: () => void;
-  readonly onSendAnyway: (attemptIds: readonly string[]) => void;
-  readonly onRunAgain: (attemptIds: readonly string[]) => void;
+  readonly onSendAnyway: (attemptIds: readonly AttemptRef[]) => void;
+  readonly onRunAgain: (attemptIds: readonly AttemptRef[]) => void;
   readonly onRetry: (kind: AttemptInfo['kind']) => void;
   readonly canAct: boolean;
 }): JSX.Element {
   const isTurn = attempt.kind === 'agent-turn';
   const action = attempt.nextAction;
-  const alsoNamed = needsAcknowledgement.filter((id) => id !== attempt.attemptId);
+  // Every other attempt in the list, by conversation as well as ID: two rows can
+  // carry one ID, and this row is only the one in its own conversation.
+  const alsoNamed = attemptRefLabels(needsAcknowledgement).filter(
+    (_label, position) =>
+      needsAcknowledgement[position]?.attemptId !== attempt.attemptId ||
+      needsAcknowledgement[position]?.conversationId !== attempt.conversationId,
+  );
   const handler =
     action.kind === 'stop-waiting'
       ? isTurn

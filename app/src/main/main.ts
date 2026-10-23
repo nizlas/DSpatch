@@ -7,6 +7,7 @@ import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from 'electron';
 import type {
   AddLoopInstructionOutcome,
   AddLoopInstructionRequest,
+  AttemptAcknowledgement,
   BridgeChannel,
   BuildIdentity,
   ConversationExportResult,
@@ -2742,7 +2743,7 @@ function registerIpc(): void {
   });
   ipcMain.handle(
     SEND_PROMPT,
-    (_event, prompt: string, acknowledgedAttemptIds?: readonly string[]) =>
+    (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) =>
       chatService.sendPrompt(prompt, acknowledgedAttemptIds ?? []),
   );
   ipcMain.handle(CANCEL_RUN, () => chatService.cancelRun());
