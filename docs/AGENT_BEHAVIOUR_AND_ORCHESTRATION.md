@@ -1,6 +1,6 @@
 # Agent behavior and orchestration in DSpatch
 
-Guideline and proposals for further development · 22 September 2026 · Version 1
+Guideline and proposals for further development · 23 October 2026 · Version 1.1
 
 This document defines the boundary between how an agent works, the workflow described by the graph, and Maestro's responsibility for execution. It should help Niclas and the project's agents assess changes without reintroducing hidden instructions or unnecessary routine reading of the project.
 
@@ -110,3 +110,37 @@ A request at the entry step should be made before work with side effects begins.
 Have the agents investigate how this proposal fits the existing mechanisms for human decisions, control events, and sessions. They should propose the smallest reusable implementation and identify where it requires a new contract. Start with a transition at the entry step; apply the same principles to later transitions when they are introduced.
 
 Keep this guideline as version-controlled Markdown in the repository and use the Word version for reading. A development prompt can refer to this document and scope a concrete increment. The prompt does not replace the lasting definition. Once adopted, Word versions should be exported from the Markdown source to avoid two independently edited sources of truth.
+
+## 5 Orchestration and independent review share the agent connection
+
+This clarification applies the decision in [VISION.md section 3.3](VISION.md#33-review-as-a-standalone-capability). The shared integration responsibilities are owned by [RUNTIME_PLATFORM_ROADMAP.md section 2](RUNTIME_PLATFORM_ROADMAP.md#keep-the-product-common). It does not introduce a second runtime contract or require a package split.
+
+### Three responsibilities
+
+Orchestration decides how work advances: which configured step runs next, what material it receives and how its outcome affects the task. The review capability helps a person understand and assess an identified change: code, walks, findings, review progress and decisions. The shared agent connection carries agent requests and observations through the existing AgentAdapter and provider-specific SDK adapters.
+
+Both orchestration and review use that connection. Review does not call a provider SDK through a separate implementation, and it does not need to start Maestro to ask an agent a question. Shared integration includes authentication, tool control, cancellation and session handling, as specified in the roadmap. It does not mean the callers share one live session, one prompt, credentials across environments or unrestricted tools.
+
+For example, a loop can produce a candidate and ask for review. The review capability receives the identified repository and change, optionally with requirements and evidence. Alternatively, a person can open the same change directly and request the same walkthrough. The agent connection should not require a graph-node identity merely to serve the second case. Specific interface adjustments remain implementation decisions for concrete tasks.
+
+### Keep context useful and review independent
+
+The implementer's explanation can identify design choices and areas of uncertainty. Verification results can show what was checked on a particular candidate. These save reconstruction work, but neither an explanation nor a passing test establishes the absence of defects. The review agent should check relevant claims against the code and distinguish observations from inferences.
+
+Independence is defined by the review's instructions, evidence and assessment, not by duplicating the SDK integration. Reusing adapter code need not reuse the implementer's conversation. A review can start from a separate context and receive a bounded evidence package with provenance. The choice of session and supplied context should be explicit; a shared adapter alone proves no degree of review independence.
+
+### Return findings without silently advancing the workflow
+
+Review produces findings and decisions tied to the content assessed. If a DSpatch loop consumes them, its configured completion rules decide whether work advances, needs correction or waits for a person. An agent's acceptance must not silently become human approval. Outside DSpatch, the review remains useful without a task status or graph transition.
+
+Keep the external development loop separate from the proposed product loop. The specialists currently helping build DSpatch are not evidence that the product already implements Maestro or the standalone review experience.
+
+### Current implementation boundary
+
+At the reported published state `982cb84` on 23 October 2026, DSP-109, DSP-115 and DSP-116 are complete. The Claude path has been exercised in the experiment program, including a live cancellation and a successful follow-up in the same adapter session. DSP-116's lifecycle corrections were verified offline. These results do not establish application restart recovery, cross-process session resume or Linux support.
+
+DSP-117 is the planned connection to the application's chat. Its criteria include ledger records that keep provider work unknown after a stopped or forced end, and UI handling that never shows an unconfirmed stop as an ordinary cancel. Neither the review pilot nor a separate review application is implemented by these completed tasks. Task cards and their evidence remain authoritative for current status; this paragraph is a dated snapshot, not a second task ledger.
+
+### Preserve the option to separate the product later
+
+Review starts in the same repository with shared code. Its input should be usable without orchestration history so that it can retain value if another framework later drives development. Separate applications, packages and releases remain options. No server, plugin framework or broad refactoring is mandated by this boundary.

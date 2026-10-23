@@ -2,7 +2,9 @@
 
 Vision and governing document for agentic software development
 
-Niclas Danielsson | 23 October 2026 | Version 1.11
+Niclas Danielsson | 23 October 2026 | Version 1.12
+
+Change in version 1.12: explain the relationship between orchestration, independent review and the shared agent connection. Record walkthrough coverage and learning modes as design proposals, not implemented features. Based on repository revision `982cb84`; prepared 23 October 2026.
 
 Change in version 1.11: record Niclas's decision that review is a standalone capability that works from a repository and a chosen diff or revision (section 3.3). It gives no mandate for a separate app or a large rebuild.
 
@@ -335,6 +337,48 @@ Niclas decided on 23 October 2026 that review has value of its own. A person mus
 - **Same repository for now.** Review starts in this repository with a shared implementation. A separate app, packaging or releases are future possibilities, not decisions. The decision gives no mandate for a large rebuild; existing code is adapted when a concrete task needs it.
 
 The decision constrains review's input and dependencies, not its interaction design. The concept seeds in section 3.2 and the [research brief](REVIEW_RESEARCH.md) remain open.
+
+<a id="34-walkthrough-coverage-and-levels-of-engagement"></a>
+
+### 3.4 Walkthrough coverage and levels of engagement
+
+The following design proposal develops Niclas's review discussion. The independence decision in section 3.3 is agreed; the interaction details here remain candidates for a bounded pilot and the research in section 3.2. This section does not authorise a large implementation or claim that review coverage is already available.
+
+#### Start with an overview of the change
+
+A reviewer should be able to open a repository and choose a change without knowing which agent or workflow produced it. The first view could list changed files and the proportion of changed code covered by a walkthrough. Opening a file would show which ranges have been reviewed and which remain. The full diff and surrounding code remain accessible throughout.
+
+Coverage describes attention and recorded review decisions. It does not measure correctness. Displaying a line, scrolling past it or hearing an explanation must not automatically count as human review. The interface should distinguish human-reviewed code, AI-reviewed code, explicitly skipped code and code still awaiting review. An AI recommendation becomes a human acceptance only through an explicit human decision.
+
+For example, if 60 of 100 changed lines were human-reviewed, 25 were delegated to AI review and 15 were explicitly skipped, the display must not say that human review is 100 percent complete. It can show all 100 lines as accounted for while retaining those three separate categories and any unresolved findings. The exact treatment of removed lines, moved code and overlapping walks needs a defined counting rule before implementation.
+
+#### Follow meaningful paths through the code
+
+The agent can propose walks that follow relevant execution or data paths: a successful request, invalid input, a cancellation, or recovery from a failure. Each walk connects the change to the surrounding code needed to understand its effect. A static explanation of a possible path must be labelled as analysis; only a recorded execution can be described as an observed trace.
+
+The proposed set of walks should account for all changed code. A common-path walkthrough alone is insufficient if it leaves error handling, configuration, tests or deleted behaviour unexplained. The reviewer must be able to see gaps and request additional walks. Shared ranges count once in the overall coverage, even when several walks visit them.
+
+Walks can be prioritised by likely consequence and uncertainty. Priority helps allocate attention but does not hide lower-priority changes. The person can review a walk, defer it, explicitly waive detailed review with a reason, or ask an agent to assess it. For example, a straightforward test change may be delegated while the production path receives close human inspection. The record retains who made that choice and what evidence or finding followed.
+
+#### Change detail and engagement during a walk
+
+The user can move from an overview to line-level reasoning and back without losing their position or progress. Review depth and teaching are separate choices. A short explanation can still cover a demanding correctness question; a long teaching discussion need not imply that the code was accepted.
+
+In a correctness-focused mode, provisionally called "Code accepted", the agent helps assess whether the change satisfies its requirements and identifies defects, risks and missing evidence. The label is an engagement preference, not an automatic verdict or a guarantee that no bugs exist.
+
+In a learning-focused mode, provisionally called "Teach me something new", the same review can explain unfamiliar language features or design concepts when useful. A developer learning GDScript, for example, could ask how a signal connects the changed function to its caller, then return to the review. The person can adjust the assumed level of knowledge. Teaching must not replace the assessment of the actual change.
+
+#### Use integration as additional evidence
+
+DSpatch can supply requirements, implementation rationale, earlier attempts and verification results so the reviewer spends less time reconstructing context. These inputs should be identifiable and linked to their source and revision. A claim such as "this check cannot fail" remains a claim to examine against code and evidence. The reviewer must still be able to discover a problem absent from the implementer's explanation.
+
+The same review should remain useful when those inputs are unavailable, or when another tool produced the code. Missing intent or test evidence is reported as missing. A DSpatch task, graph or coordinator must not be fabricated merely to open the review.
+
+#### Bound the first pilot
+
+A useful first pilot can use one fixed change with a file overview, a small set of meaningful walks, range highlighting and explicit review decisions. Prepared walks can test whether the interaction helps before automatic generation is integrated. Use the existing agent connection when agent assistance is added; do not create another SDK integration.
+
+The pilot should test whether the person can explain the behavioural change, locate a relevant risk and identify what remains unreviewed. Compare with a conventional diff. Time saved is useful, but apparent speed without understanding is not success. Automatic preservation of coverage across new revisions, separate packaging and a complete graph workflow are later decisions.
 
 <a id="4-maestro-och-agentnätverket"></a>
 

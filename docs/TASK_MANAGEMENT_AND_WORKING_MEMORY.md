@@ -1,6 +1,6 @@
 # DSpatch governance document for working memory and agent flows
 
-Version 0.2 · 30 September 2026
+Version 0.3 · 23 October 2026
 
 Status: Intended product vision and governing architectural principles, with clarifications made after comparison with the existing governance documents. The document describes the desired construction and is to be the basis for continued design and implementation. It is not a verification of today's codebase. Open technical choices and recommended acceptance scenarios are set out separately.
 
@@ -189,3 +189,25 @@ The following questions remain to be settled in separate design decisions:
 Gas Town, Gas City and Beads are relevant references when components are evaluated. This vision selects none of them as a dependency and makes no claim that their current implementation lacks corresponding features. Such judgements require review of an identified version and practical trials.
 
 On adoption in the project, the document is to be compared with the current versions of the existing governance documents, and conflicts resolved explicitly. The Markdown version is to be the canonical, version-controlled source in the project. The Word version is to render the same content for reading and discussion, and on future updates is to be derived from the Markdown source. Every future change proposal is to state the part affected, the intended effect, and how the behaviour can be verified.
+
+## 11 Review records without an orchestration dependency
+
+The standalone-review decision in [VISION.md section 3.3](VISION.md#33-review-as-a-standalone-capability) also applies to persistent information. A repository and a selected diff or revision are sufficient to begin a review. A task ID, agent run or Maestro graph is optional context, not a prerequisite. This extends the intended design; it does not claim that persistent review records already exist.
+
+### Preserve the assessment and its provenance
+
+A proposed review record identifies the repository and exact content assessed, the reviewed ranges, findings, decisions and unresolved questions. For uncommitted work it needs a stable identification of actual content, not just a directory path. It distinguishes human review, agent review and an explicit decision to skip review. It records whose decision it was and the reason where relevant.
+
+Walkthrough progress, acceptance and test evidence are separate information. A completed walk is not automatically an approved change. A teaching conversation is not a correctness verdict. The coverage proposal is described in [VISION.md section 3.4](VISION.md#34-walkthrough-coverage-and-levels-of-engagement); its exact schema remains open.
+
+### Connect to task memory when available
+
+When DSpatch supplies the change, the task can reference its review and the review can reference the relevant requirements, implementation rationale and verification results. Preserve sources and revisions so the reviewer can check each claim. Do not copy an entire conversation into every review by default. If another tool produced the change, the same review record can exist without DSpatch's task history.
+
+After a code change, prior findings and coverage remain historical records about the previous content. Reuse requires an explicit validity assessment; uncertainty must remain visible. A first pilot can hold the candidate fixed and leave automatic transfer across revisions for later design.
+
+### Reopen review separately from resuming an agent
+
+Restoring the selected change, walks and recorded decisions does not require a live provider session. A new agent session can use the saved material while being described honestly as new. Conversely, a provider session ID alone is not a durable review record. This follows the [roadmap's distinction](RUNTIME_PLATFORM_ROADMAP.md#four-different-persistence-requirements) between reopening a workspace, continuing a task and resuming a provider session.
+
+An early review pilot can proceed alongside runtime work when it uses an agreed input boundary and an isolated branch and worktree. Its integration must still preserve the shared adapter contract and revision binding. Parallel development grants no automatic acceptance of the combined result.
