@@ -135,10 +135,17 @@ export function WalkTimeline({
   level,
   view,
   highlightWalk,
+  entry,
+  selection,
+  onSelect,
   words,
   lang,
 }: {
   readonly walk: Walk;
+  /** How this walk was entered: from the walk before it, or back from the one after. */
+  readonly entry: 'forward' | 'backward';
+  readonly selection: CodeLocation | null;
+  readonly onSelect: (location: CodeLocation | null) => void;
   readonly stations: readonly Station[];
   readonly active: number;
   readonly onActivate: (index: number) => void;
@@ -155,7 +162,9 @@ export function WalkTimeline({
   const viewport = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const previousActive = useRef(active);
-  const [direction, setDirection] = useState<'forward' | 'backward'>('forward');
+  const [direction, setDirection] = useState<'forward' | 'backward'>(entry);
+  // No sliding until the width is known: the first position is taken without motion.
+  const [ready, setReady] = useState(false);
   const [leftPane, setLeftPane] = useState(Math.max(0, (activePane?.index ?? 0) - 1));
 
   // Which two panes are on screen follows the direction of travel.
@@ -177,7 +186,11 @@ export function WalkTimeline({
     const observer = new ResizeObserver(() => setWidth(element.clientWidth));
     observer.observe(element);
     setWidth(element.clientWidth);
-    return () => observer.disconnect();
+    const frame = requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)));
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
   }, []);
 
   // Moving in time: Shift+wheel, a horizontal wheel or trackpad swipe, a right-button
@@ -198,7 +211,8 @@ export function WalkTimeline({
       return;
     }
     const onWheel = (event: WheelEvent): void => {
-      const sideways = event.shiftKey ? event.deltaY || event.deltaX : Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : 0;
+      // Shift + wheel only: a plain horizontal swipe still scrolls long code lines.
+      const sideways = event.shiftKey ? event.deltaY || event.deltaX : 0;
       if (sideways === 0) {
         return;
       }
@@ -212,7 +226,8 @@ export function WalkTimeline({
     element.addEventListener('wheel', onWheel, { passive: false });
     return () => element.removeEventListener('wheel', onWheel);
   }, [step]);
-  const drag = useRef<{ x: number; id: number } | null>(null);
+  const drag = useRef<{ x: number; id: number; moved: boolean } | null>(null);
+  const suppressMenu = useRef(false);
 
   const leftIndex = Math.min(leftPane, Math.max(0, panes.length - 2));
   const paneWidth = panes.length > 1 ? width / 2 : width;
@@ -275,10 +290,16 @@ export function WalkTimeline({
       <div
         className="rv-timeline-viewport"
         ref={viewport}
-        onContextMenu={(event) => event.preventDefault()}
+        onContextMenu={(event) => {
+          // Only a right-button drag suppresses the menu; a plain right-click keeps it.
+          if (suppressMenu.current) {
+            event.preventDefault();
+            suppressMenu.current = false;
+          }
+        }}
         onPointerDown={(event) => {
           if (event.button === 2) {
-            drag.current = { x: event.clientX, id: event.pointerId };
+            drag.current = { x: event.clientX, id: event.pointerId, moved: false };
             event.currentTarget.setPointerCapture(event.pointerId);
           }
         }}
@@ -287,22 +308,36 @@ export function WalkTimeline({
             return;
           }
           const moved = drag.current.x - event.clientX;
+          if (Math.abs(moved) > 6) {
+            drag.current = { ...drag.current, moved: true };
+          }
           if (Math.abs(moved) >= STEP_DISTANCE) {
             step(moved > 0 ? 1 : -1);
-            drag.current = { x: event.clientX, id: event.pointerId };
+            drag.current = { x: event.clientX, id: event.pointerId, moved: true };
           }
         }}
         onPointerUp={(event) => {
           if (drag.current?.id === event.pointerId) {
+            suppressMenu.current = drag.current.moved;
             drag.current = null;
           }
         }}
+        onPointerCancel={() => {
+          drag.current = null;
+        }}
+        onLostPointerCapture={() => {
+          drag.current = null;
+        }}
         onScroll={measure}
       >
-        <div className="rv-timeline-track" style={{ transform: `translateX(${String(offset)}px)` }}>
+        <div
+          className={`rv-timeline-track${ready ? '' : ' rv-no-motion'} rv-enter-${entry}`}
+          style={{ transform: `translateX(${String(offset)}px)` }}
+        >
           {panes.map((pane) => {
             const isActive = pane.index === activePane?.index;
-            const onScreen = pane.index === leftIndex || pane.index === leftIndex + 1 || panes.length === 1;
+            // One extra pane on each side stays mounted, so a pane sliding out keeps its code.
+            const onScreen = pane.index >= leftIndex - 1 && pane.index <= leftIndex + 2;
             // The station a pane shows: the active one, or the one nearest in time.
             const shown = isActive
               ? (activeStation ?? pane.stations[0])
@@ -331,6 +366,8 @@ export function WalkTimeline({
                     level={level}
                     view={view}
                     overlay={highlightWalk ? walk.steps.flatMap((s) => s.places).filter((p) => p.focus.path === pane.path) : []}
+                    selection={selection}
+                    onSelect={onSelect}
                     words={words}
                     lang={lang}
                     onScrolled={measure}
@@ -366,6 +403,8 @@ export function WalkTimeline({
               type="button"
               className={`rv-strip-dot${station.index === active ? ' rv-strip-on' : ''}${changesFile ? ' rv-strip-file' : ''}`}
               title={`${station.stepId} · ${pick(station.place.label, lang).replace(/`/g, '')} · ${fileName(pane?.path ?? '')}`}
+              aria-label={`${station.stepId} · ${pick(station.place.label, lang).replace(/`/g, '')} · ${fileName(pane?.path ?? '')}`}
+              aria-current={station.index === active ? 'step' : undefined}
               onClick={() => onActivate(station.index)}
             />
           );
@@ -388,10 +427,14 @@ function TimelinePane({
   level,
   view,
   overlay,
+  selection,
+  onSelect,
   words,
   lang,
   onScrolled,
 }: {
+  readonly selection: CodeLocation | null;
+  readonly onSelect: (location: CodeLocation | null) => void;
   readonly pane: Pane;
   readonly shown: Station;
   readonly isActive: boolean;
@@ -444,6 +487,22 @@ function TimelinePane({
   }, [overlay, rows, pane.path]);
   const fromLocation = fromHere ?? (fromRow !== null && fromRow.ref.path === pane.path && fromRow.ref.side === pane.side ? fromRow.ref : null);
   const fromSet = useMemo(() => (fromLocation === null ? new Set<number>() : new Set(referenceRows(rows, fromLocation).indexes)), [fromLocation, rows]);
+  const selectionSet = useMemo(
+    () => (selection === null || selection.path !== pane.path ? new Set<number>() : new Set(referenceRows(rows, selection).indexes)),
+    [selection, rows, pane.path],
+  );
+  const select = (row: DiffRow, extend: boolean): void => {
+    const side: RevisionSide = row.targetLine !== null ? 'target' : 'base';
+    const line = row.targetLine ?? row.baseLine;
+    if (line === null) {
+      return;
+    }
+    if (extend && selection !== null && selection.path === pane.path && selection.side === side) {
+      onSelect({ ...selection, start: Math.min(selection.start, line), end: Math.max(selection.end, line) });
+    } else {
+      onSelect({ path: pane.path, side, start: line, end: line });
+    }
+  };
 
   // Visible rows: every station of this pane at the chosen level, the link source,
   // and anything opened by hand. The rest folds into gaps.
@@ -493,8 +552,8 @@ function TimelinePane({
     const flash = window.setTimeout(() => {
       setLeaving(null);
       setArriving(shown.index);
-    }, 420);
-    const settle = window.setTimeout(() => setArriving(null), 1700);
+    }, 760);
+    const settle = window.setTimeout(() => setArriving(null), 2000);
     return () => {
       window.clearTimeout(flash);
       window.clearTimeout(settle);
@@ -520,7 +579,13 @@ function TimelinePane({
     const first = scrolledFor.current === '';
     scrolledFor.current = scrollKey;
     const top = (target as HTMLElement).offsetTop - element.clientHeight / 2 + 20;
-    element.scrollTo({ top: Math.max(0, top), behavior: first || reducedMotion() ? 'auto' : 'smooth' });
+    if (first || reducedMotion()) {
+      element.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+      return;
+    }
+    // First the old marking fades, then the view moves, then the new lines flash.
+    const timer = window.setTimeout(() => element.scrollTo({ top: Math.max(0, top), behavior: 'smooth' }), 380);
+    return () => window.clearTimeout(timer);
   });
 
   const changed = shownFocus.changed;
@@ -591,6 +656,9 @@ function TimelinePane({
       if (isFrom) {
         classes.push('rv-from');
       }
+      if (selectionSet.has(index)) {
+        classes.push('rv-row-selected');
+      }
       const attrs: Record<string, string> = {};
       if (pane.side === 'target' && row.targetLine !== null) {
         attrs['data-line'] = String(row.targetLine);
@@ -615,10 +683,10 @@ function TimelinePane({
       const marker = row.kind === 'deleted' ? words.view.before : row.kind === 'added' ? words.view.after : isFrom ? words.timeline.call : '';
       body.push(
         <div key={`row-${String(index)}`} className={classes.join(' ')} {...attrs}>
-          <span className="rv-ln" aria-hidden="true">
+          <button type="button" className="rv-ln" title={words.view.selectLine} onClick={(event) => select(row, event.shiftKey)}>
             <span>{row.baseLine ?? ''}</span>
             <span>{row.targetLine ?? ''}</span>
-          </span>
+          </button>
           <span className={inShown || isFrom ? 'rv-marker rv-marker-strong' : 'rv-marker'}>{marker}</span>
           <code className="rv-text">
             <TokensView tokens={lineTokens} />

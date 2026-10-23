@@ -301,7 +301,11 @@ function OpenReview({
   const placeProblem =
     current === null || place === null || away !== null
       ? null
-      : (bundle.referenceProblems.find((problem) => problem.stepId === current.step.id && problem.refId === place.focus.id)?.problem ?? null);
+      : (bundle.referenceProblems.find(
+          (problem) =>
+            problem.stepId === current.step.id &&
+            (problem.refId === place.focus.id || problem.refId === `${place.id}.unit` || problem.refId === `${place.id}.from`),
+        )?.problem ?? null);
   const level: CodeLevel = state.ui.level ?? 'unit';
   const stations = useMemo(() => (current === null ? [] : stationsOf(current.walk)), [current?.walk]);
   const activeStation = current === null ? -1 : stations.findIndex((entry) => entry.stepId === current.step.id && entry.placeIndex === placeIndex);
@@ -379,9 +383,13 @@ function OpenReview({
     [update],
   );
 
+  /** How the current walk was entered, so its timeline slides in from the right side. */
+  const entryDirection = useRef<'forward' | 'backward'>('forward');
+
   /** One station forward or back; past the end of a walk, into the next or previous walk. */
   const moveStation = useCallback(
     (delta: number) => {
+      entryDirection.current = delta >= 0 ? 'forward' : 'backward';
       if (current === null || activeStation < 0) {
         return;
       }
@@ -408,6 +416,10 @@ function OpenReview({
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (!event.altKey || (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft')) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (target !== null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
         return;
       }
       event.preventDefault();
@@ -615,7 +627,11 @@ function OpenReview({
               />
               {placeProblem !== null && <div className="rv-error rv-problem">{words.view.invalidReference(placeProblem)}</div>}
               <WalkTimeline
+                key={current.walk.id}
                 walk={current.walk}
+                entry={entryDirection.current}
+                selection={selection}
+                onSelect={setSelection}
                 stations={stations}
                 active={activeStation}
                 onActivate={(index) => {
@@ -1210,7 +1226,9 @@ function StepPanel({
 }): JSX.Element {
   const [sources, setSources] = useState(false);
   const active = placeIndex;
-  const invalid = new Set(referenceProblems.filter((problem) => problem.stepId === step.id).map((problem) => problem.refId));
+  const invalid = new Set(
+    referenceProblems.filter((problem) => problem.stepId === step.id).map((problem) => problem.refId.replace(/\.(unit|from)$/, '')),
+  );
   const summaryLabels = [...new Set(step.evidence.map((entry) => entry.label))];
   return (
     <section className="rv-step-panel">
