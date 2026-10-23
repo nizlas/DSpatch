@@ -108,7 +108,10 @@ const AREAS = {
   },
   provider: {
     what: 'provider adapters and their experiment scenarios, with a substituted provider',
-    files: ['claude-agent-sdk-adapter.test.ts'],
+    files: [
+      'claude-agent-sdk-adapter.test.ts',
+      { file: 'claude-agent-sdk-adapter-process.test.ts', heavy: true },
+    ],
   },
   project: {
     what: 'what DSpatch does to real folders: git state, sample projects, the test repository',

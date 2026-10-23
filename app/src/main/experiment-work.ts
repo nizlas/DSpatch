@@ -11,6 +11,7 @@ import {
   CANCEL_DENY_REASON,
   CANCEL_STOP_REASON,
   ClaudeAgentSdkAdapter,
+  DISPOSE_BOUND_MS,
   type AccountObservation,
   type AuthenticationAssessment,
   type CancelTimers,
@@ -1642,12 +1643,36 @@ export async function scenarioCodeChange(
   } finally {
     recordClaudeObservations(adapter, record, options);
     exitCode = await applyAuthenticationVerdict(adapter, record, turns, exitCode);
-    await adapter.dispose();
+    await disposeAndRecord(adapter, record);
     record['exitCode'] = exitCode;
     record['finishedAtUtc'] = new Date().toISOString();
     writeRecord(logPath, record);
   }
   return exitCode;
+}
+
+/**
+ * Dispose the adapter; for a Claude run, also record and log what `dispose` did
+ * about each run's local Claude Code process (DSP-116), as `claudeDisposal`. A
+ * Cursor record is unchanged. That the process exited says nothing about work the
+ * provider may still do; whether this program itself exits is observed outside.
+ */
+async function disposeAndRecord(
+  adapter: AgentAdapter,
+  record: Record<string, unknown>,
+): Promise<void> {
+  await adapter.dispose();
+  if (!(adapter instanceof ClaudeAgentSdkAdapter)) {
+    return;
+  }
+  const runs = adapter.disposals();
+  record['claudeDisposal'] = { boundMs: DISPOSE_BOUND_MS, runs };
+  for (const entry of runs) {
+    log(
+      `dispose: ${entry.dspatchRunId} pid ${String(entry.pid)}: ${entry.outcome}` +
+        (entry.killedBy === null ? '' : ` (kill by ${entry.killedBy})`),
+    );
+  }
 }
 
 /**
@@ -2719,7 +2744,7 @@ async function cancelReply(
   } finally {
     recordClaudeObservations(adapter, record, options);
     exitCode = await applyAuthenticationVerdict(adapter, record, turns, exitCode);
-    await adapter.dispose();
+    await disposeAndRecord(adapter, record);
     record['exitCode'] = exitCode;
     record['finishedAtUtc'] = new Date().toISOString();
     // The process exiting is observed from outside: this record is written last.
@@ -2831,7 +2856,7 @@ export async function scenarioTwoTurn(
   } finally {
     recordClaudeObservations(adapter, record, options);
     exitCode = await applyAuthenticationVerdict(adapter, record, turns, exitCode);
-    await adapter.dispose();
+    await disposeAndRecord(adapter, record);
     record['exitCode'] = exitCode;
     record['finishedAtUtc'] = new Date().toISOString();
     writeRecord(logPath, record);

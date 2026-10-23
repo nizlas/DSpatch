@@ -855,7 +855,78 @@ const CAPABILITIES: CapabilityReport = {
 };
 
 /** How long `send` waits for the previous turn's process to finish its stream. */
-const PREVIOUS_TURN_EXIT_MS = 15_000;
+export const PREVIOUS_TURN_EXIT_MS = 15_000;
+
+/**
+ * The longest time from `cancel()` resolving to the run's end, guaranteed by this
+ * adapter's own timers (DSP-116), declared as {@link ClaudeAgentSdkAdapter.cancelEndBoundMs}.
+ * The maximum of the two paths a cancel can take, derived rather than restated:
+ *
+ * - A run that has a query handle: the stop sequence's three bounded waits
+ *   ({@link CANCEL_INTERRUPT_WAIT_MS} + {@link CANCEL_ABORT_WAIT_MS} +
+ *   {@link CANCEL_KILL_WAIT_MS}), then its one terminal `run.finished`.
+ * - A turn still waiting in `send` for the previous one: that wait started before
+ *   the cancel and is bounded by {@link PREVIOUS_TURN_EXIT_MS}; then the turn ends
+ *   as not started (`run.finished`), or, if the previous turn is still open, `send`
+ *   rejects and no event of the turn is emitted.
+ *
+ * Not covered by a timer: the one-time load of the SDK module on an instance's
+ * first turn (a cancel arriving during it ends the turn as not started once the
+ * module has loaded). Later turns and a substituted `query()` do not load it.
+ */
+export const CANCEL_END_BOUND_MS = Math.max(
+  CANCEL_INTERRUPT_WAIT_MS + CANCEL_ABORT_WAIT_MS + CANCEL_KILL_WAIT_MS,
+  PREVIOUS_TURN_EXIT_MS,
+);
+
+/**
+ * How long `dispose` waits, after aborting and closing every open query, for the
+ * stream pumps to end and every observed Claude Code process to exit before it
+ * kills the processes still running. The same 5 s the pump wait always had.
+ */
+export const DISPOSE_EXIT_WAIT_MS = 5_000;
+
+/**
+ * The longest `dispose` takes: {@link DISPOSE_EXIT_WAIT_MS}, then, after the kill,
+ * {@link CANCEL_KILL_WAIT_MS} for the exit (the stop sequence's own after-kill
+ * bound, reused). 7 s, below the 8 s main.ts allows the chat service's dispose.
+ */
+export const DISPOSE_BOUND_MS = DISPOSE_EXIT_WAIT_MS + CANCEL_KILL_WAIT_MS;
+
+/**
+ * What `dispose` did about one run's local Claude Code process (DSP-116). Kept for
+ * every run whose query handle existed and whose process had not been seen to exit
+ * when `dispose` began; readable through {@link ClaudeAgentSdkAdapter.disposals}
+ * once `dispose` has resolved. Nothing of it is emitted to listeners.
+ */
+export interface DisposalRecord {
+  readonly dspatchSessionId: DspatchSessionId;
+  readonly dspatchRunId: DspatchRunId;
+  /** `false` when no process was ever observed for the run: nothing could be waited for or killed. */
+  readonly processObserved: boolean;
+  readonly pid: number | null;
+  /**
+   * Who sent `kill('SIGKILL')`: `dispose` itself, the run's stop sequence before
+   * `dispose` began (then `dispose` sends no second one), or nobody.
+   */
+  readonly killedBy: 'dispose' | 'stop-sequence' | null;
+  /** When `dispose` sent its kill, or `null` if it sent none. */
+  readonly disposeKillRequestedAtUtc: Timestamp | null;
+  /** What `dispose`'s `kill('SIGKILL')` returned, or `null` if it sent none. */
+  readonly disposeKillSignalSent: boolean | null;
+  readonly exitedAtUtc: Timestamp | null;
+  readonly exitCode: number | null;
+  readonly signal: string | null;
+  /**
+   * - `exited`: the process was seen to exit without being killed.
+   * - `killed-and-exited`: it was seen to exit after a kill (see `killedBy`).
+   * - `unconfirmed`: no exit was seen within the bounds, or no process was observed.
+   */
+  readonly outcome: 'exited' | 'killed-and-exited' | 'unconfirmed';
+  readonly bounds: { readonly exitWaitMs: number; readonly afterKillMs: number };
+  /** The local process having exited says nothing about requests already sent. */
+  readonly providerWorkAfterEnd: 'unknown';
+}
 
 interface ClaudeRun {
   readonly dspatchRunId: DspatchRunId;
@@ -1095,6 +1166,9 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
   /** Provider plus transport. Not "Claude Code". */
   readonly id = 'claude-agent-sdk';
 
+  /** See {@link AgentAdapter.cancelEndBoundMs} and {@link CANCEL_END_BOUND_MS}. */
+  readonly cancelEndBoundMs = CANCEL_END_BOUND_MS;
+
   private readonly substitutedQuery: ClaudeQueryFunction | null;
 
   private loadedQuery: ClaudeQueryFunction | null = null;
@@ -1115,7 +1189,21 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
 
   private disposed = false;
 
+  /** The one `dispose` in progress or done, so a repeated call waits for the same one. */
+  private disposing: Promise<void> | null = null;
+
+  /** Resolves when `dispose` begins: ends a turn's wait for the previous one at once. */
+  private readonly disposeBegun: Promise<void>;
+
+  private signalDisposeBegun: () => void = () => undefined;
+
+  /** What `dispose` did about each run's process. See {@link DisposalRecord}. */
+  private disposalRecords: DisposalRecord[] = [];
+
   constructor(options: ClaudeAgentSdkAdapterOptions = {}) {
+    this.disposeBegun = new Promise<void>((resolve) => {
+      this.signalDisposeBegun = resolve;
+    });
     this.substitutedQuery = options.queryFn ?? null;
     this.spawnProcess = options.spawnProcess ?? nodeSpawn;
     this.timers = options.timers ?? REAL_TIMERS;
@@ -1459,48 +1547,136 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
   }
 
   /**
-   * Abort and close every turn still running, then wait briefly for the streams.
-   * A cancellation in progress is abandoned: its timers are cleared and it emits
-   * nothing more (listeners are removed first anyway). Idempotent and never throws.
+   * Abort and close every turn still running, then take care of each local Claude
+   * Code process that has not been seen to exit (DSP-116):
+   *
+   * 1. Wait up to {@link DISPOSE_EXIT_WAIT_MS} for the stream pumps to end and the
+   *    observed processes to exit (the SDK's own abort path stops the process).
+   * 2. Kill (`SIGKILL`) each observed process still running, unless the run's stop
+   *    sequence already sent its kill, which is not repeated.
+   * 3. Wait up to {@link CANCEL_KILL_WAIT_MS} for those exits.
+   *
+   * At most {@link DISPOSE_BOUND_MS} in all. What happened is recorded per run in
+   * {@link disposals}, including a process whose exit could not be confirmed. A
+   * cancellation in progress is abandoned: its timers are cleared and it emits
+   * nothing more (listeners are removed first anyway). Idempotent: a repeated call
+   * waits for the same dispose. Never throws.
    */
-  async dispose(): Promise<void> {
-    if (this.disposed) {
-      return;
-    }
+  dispose(): Promise<void> {
+    this.disposing ??= this.disposeOnce();
+    return this.disposing;
+  }
+
+  private async disposeOnce(): Promise<void> {
     this.disposed = true;
-    const states = [...this.sessions.values()];
-    this.sessions.clear();
-    const pumps: Promise<void>[] = [];
-    for (const state of states) {
-      state.listeners.clear();
-      for (const run of state.runs) {
-        this.abandonStop(run);
+    this.signalDisposeBegun();
+    try {
+      const states = [...this.sessions.values()];
+      this.sessions.clear();
+      const pumps: ClaudeRun[] = [];
+      const watched: Array<{ readonly state: SessionState; readonly run: ClaudeRun }> = [];
+      for (const state of states) {
+        state.listeners.clear();
+        for (const run of state.runs) {
+          this.abandonStop(run);
+          // A missing observation is not proof that nothing runs (see EndEvidence),
+          // so a run with a handle and no observed process is recorded too.
+          if (run.handle !== null && (run.process === null || run.process.exit === null)) {
+            watched.push({ state, run });
+          }
+        }
+        // Every outstanding run, not only the latest: a turn waiting in `send`
+        // replaces `lastRun` while the previous turn's query may still be open.
+        for (const run of [...state.outstanding]) {
+          if (run.streamPumpFinished) {
+            continue;
+          }
+          run.cancelRequested = true;
+          try {
+            run.abortController.abort();
+          } catch {
+            // Shutdown path: a failed abort must not prevent the close or the exit.
+          }
+          try {
+            run.handle?.close?.();
+          } catch {
+            // Shutdown path: a failed close must not prevent the app from exiting.
+          }
+          if (run.pump !== null) {
+            pumps.push(run);
+          }
+        }
       }
-      // Every outstanding run, not only the latest: a turn waiting in `send`
-      // replaces `lastRun` while the previous turn's query may still be open.
-      for (const run of [...state.outstanding]) {
-        if (run.streamPumpFinished) {
+      const running = (): ClaudeRun[] =>
+        watched
+          .map((entry) => entry.run)
+          .filter((run) => run.process !== null && run.process.exit === null);
+      const involved = [...new Set([...pumps, ...watched.map((entry) => entry.run)])];
+
+      await this.waitForAll(
+        involved,
+        () => pumps.every((run) => run.streamPumpFinished) && running().length === 0,
+        DISPOSE_EXIT_WAIT_MS,
+      );
+
+      const killedByDispose = new Map<ClaudeRun, { at: Timestamp; sent: boolean }>();
+      for (const run of running()) {
+        // The stop sequence's kill is not repeated: one kill per process.
+        if (run.process === null || run.cancellation?.killRequestedAt != null) {
           continue;
         }
-        run.cancelRequested = true;
+        let sent = false;
         try {
-          run.abortController.abort();
+          sent = run.process.child.kill('SIGKILL');
         } catch {
-          // Shutdown path: a failed abort must not prevent the close or the exit.
+          sent = false;
         }
-        try {
-          run.handle?.close?.();
-        } catch {
-          // Shutdown path: a failed close must not prevent the app from exiting.
-        }
-        if (run.pump !== null) {
-          pumps.push(run.pump);
-        }
+        killedByDispose.set(run, { at: nowIso(), sent });
       }
+      const stillRunning = running();
+      if (stillRunning.length > 0) {
+        await this.waitForAll(stillRunning, () => running().length === 0, CANCEL_KILL_WAIT_MS);
+      }
+
+      this.disposalRecords = watched.map(({ state, run }): DisposalRecord => {
+        const observed = run.process;
+        const disposeKill = killedByDispose.get(run) ?? null;
+        const killedBy =
+          disposeKill !== null
+            ? ('dispose' as const)
+            : run.cancellation?.killRequestedAt != null
+              ? ('stop-sequence' as const)
+              : null;
+        const exit = observed?.exit ?? null;
+        return {
+          dspatchSessionId: state.dspatchSessionId,
+          dspatchRunId: run.dspatchRunId,
+          processObserved: observed !== null,
+          pid: observed?.pid ?? null,
+          killedBy,
+          disposeKillRequestedAtUtc: disposeKill?.at ?? null,
+          disposeKillSignalSent: disposeKill?.sent ?? null,
+          exitedAtUtc: exit?.at ?? null,
+          exitCode: exit?.code ?? null,
+          signal: exit?.signal ?? null,
+          outcome:
+            exit === null ? 'unconfirmed' : killedBy === null ? 'exited' : 'killed-and-exited',
+          bounds: { exitWaitMs: DISPOSE_EXIT_WAIT_MS, afterKillMs: CANCEL_KILL_WAIT_MS },
+          providerWorkAfterEnd: 'unknown',
+        };
+      });
+    } catch {
+      // Shutdown path: dispose must not throw.
     }
-    if (pumps.length > 0) {
-      await settlesWithin(Promise.allSettled(pumps).then(() => undefined), 5_000);
-    }
+  }
+
+  /**
+   * What `dispose` did about each run's local process (see {@link DisposalRecord}),
+   * in session and run order. Empty before `dispose` has resolved, and for an
+   * instance whose processes had all been seen to exit before it was disposed.
+   */
+  disposals(): readonly DisposalRecord[] {
+    return [...this.disposalRecords];
   }
 
   // --- Observations for run records (beyond AgentAdapter) ----------------------
@@ -1713,6 +1889,8 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
   private markPumpFinished(state: SessionState, run: ClaudeRun): void {
     run.streamPumpFinished = true;
     state.outstanding.delete(run);
+    // `dispose` may be waiting for this pump.
+    this.wake(run);
   }
 
   private handleMessage(state: SessionState, run: ClaudeRun, message: SDKMessage): void {
@@ -2103,6 +2281,50 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     });
   }
 
+  /**
+   * Wait until `condition` holds, at most `ms`, re-checked whenever one of `runs`
+   * wakes. Unlike {@link waitFor} it ignores `stopAbandoned`: `dispose` uses it
+   * after abandoning every stop sequence. The timer is always cleared. Resolves
+   * to whether the condition held.
+   */
+  private waitForAll(
+    runs: readonly ClaudeRun[],
+    condition: () => boolean,
+    ms: number,
+  ): Promise<boolean> {
+    if (condition()) {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      let done = false;
+      let timer: unknown = null;
+      const finish = (met: boolean): void => {
+        if (done) {
+          return;
+        }
+        done = true;
+        for (const run of runs) {
+          run.waiters.delete(check);
+        }
+        if (timer !== null) {
+          this.timers.clearTimeout(timer);
+        }
+        resolve(met);
+      };
+      const check = (): void => {
+        if (condition()) {
+          finish(true);
+        }
+      };
+      for (const run of runs) {
+        run.waiters.add(check);
+      }
+      timer = this.timers.setTimeout(() => {
+        finish(condition());
+      }, ms);
+    });
+  }
+
   private wake(run: ClaudeRun): void {
     for (const check of [...run.waiters]) {
       check();
@@ -2290,15 +2512,22 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     });
   }
 
-  /** True if `promise` settles within `ms`, on this instance's timers. */
+  /**
+   * True if `promise` settles within `ms`, on this instance's timers. Ends at once
+   * when `dispose` begins (answering whether it had settled by then), so no timer
+   * of it outlives the instance.
+   */
   private async settlesWithinBound(promise: Promise<unknown>, ms: number): Promise<boolean> {
     let timer: unknown = null;
+    let settled = false;
+    const markSettled = (): boolean => {
+      settled = true;
+      return true;
+    };
     try {
       return await Promise.race([
-        promise.then(
-          () => true,
-          () => true,
-        ),
+        promise.then(markSettled, markSettled),
+        this.disposeBegun.then(() => settled),
         new Promise<boolean>((resolve) => {
           timer = this.timers.setTimeout(() => {
             resolve(false);
@@ -2397,26 +2626,4 @@ function readAccount(
       clearTimeout(timer);
     }
   });
-}
-
-/** True if `promise` settles within `ms`. The timer never outlives the answer. */
-async function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
-  let timer: NodeJS.Timeout | null = null;
-  try {
-    return await Promise.race([
-      promise.then(
-        () => true,
-        () => true,
-      ),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => {
-          resolve(false);
-        }, ms);
-      }),
-    ]);
-  } finally {
-    if (timer !== null) {
-      clearTimeout(timer);
-    }
-  }
 }

@@ -802,6 +802,13 @@ class FakeAdapter implements ChatAdapter {
   cancelBehaviour: 'confirm' | 'silent' | 'throw' = 'confirm';
 
   /**
+   * The adapter's declared cancellation bound (DSP-116), or absent as for the
+   * Cursor adapter. A test sets it to model an adapter such as Claude's whose own
+   * stop sequence takes longer than the default confirmation window.
+   */
+  cancelEndBoundMs?: number;
+
+  /**
    * What `resume` does. Both branches were measured against Cursor by a probe:
    * an agent the provider still holds is returned in a brand new process, and one
    * it does not hold is refused with `AgentNotFoundError` rather than silently
@@ -991,7 +998,11 @@ interface FakeHarness {
 }
 
 /** A service over a throwaway git-less folder, with the fake provider behind it. */
-async function openFakeSession(name: string, cancelConfirmMs = 40): Promise<FakeHarness> {
+async function openFakeSession(
+  name: string,
+  cancelConfirmMs = 40,
+  cancelConfirmGraceMs?: number,
+): Promise<FakeHarness> {
   const workspace = makeDir(name);
   fs.writeFileSync(path.join(workspace, 'readme.txt'), 'a throwaway project\n', 'utf8');
   const adapter = new FakeAdapter();
@@ -1006,7 +1017,11 @@ async function openFakeSession(name: string, cancelConfirmMs = 40): Promise<Fake
     },
     createAdapter: () => adapter,
     // Short so the confirmation window can be observed rather than waited out.
-    timings: { cancelConfirmMs, cancelWatchMs: 60 },
+    timings: {
+      cancelConfirmMs,
+      cancelWatchMs: 60,
+      ...(cancelConfirmGraceMs === undefined ? {} : { cancelConfirmGraceMs }),
+    },
   });
   await service.startChatSession({ kind: 'folder', path: workspace });
   return { service, adapter, workspace, logs };
@@ -1263,6 +1278,87 @@ test('SIMULATED: a late terminal event cannot rewrite a settled attempt', async 
   const discarded = after?.history.filter((step) => !step.applied) ?? [];
   assert.equal(discarded.length, 1, 'and the discarded claim is on the record');
   await service.dispose();
+});
+
+// --- DSP-116: the adapter's declared cancellation bound and its reported end ---
+
+test("SIMULATED: with a declared bound, the confirmation waits for the adapter's course plus the grace, then says so truthfully", async () => {
+  // Default window 40 ms; the adapter declares 400 ms; grace 50 ms: the window is 450 ms.
+  const { service, adapter } = await openFakeSession('declared-bound', 40, 50);
+  adapter.cancelEndBoundMs = 400;
+  adapter.cancelBehaviour = 'silent';
+  await service.sendPrompt('a job whose stop takes the adapter a while');
+  await service.cancelRun();
+
+  await sleep(200);
+  const waiting = service.getRunState().attempts[0];
+  assert.equal(waiting?.state, 'cancel-requested', 'not unknown while the adapter is still within its bound');
+  // Still gated: a cancellation in progress is ambiguous, so no turn can start early.
+  assert.deepEqual(service.getRunState().needsAcknowledgement.agentTurn, [waiting?.attemptId]);
+
+  await sleep(500);
+  const unknown = service.getRunState().attempts[0];
+  assert.equal(unknown?.state, 'outcome-unknown');
+  assert.match(unknown?.stateReason ?? '', /No terminal event arrived within 0\.5 s/);
+  assert.match(unknown?.stateReason ?? '', /declares that it ends a cancelled run within 0\.4 s/);
+  assert.doesNotMatch(unknown?.stateReason ?? '', /about 50 ms/);
+
+  // A late terminal still settles it, as without a bound: outcome-unknown is not settled.
+  adapter.emit({ type: 'run.finished', status: 'cancelled', end: 'forced' });
+  assert.equal(service.getRunState().attempts[0]?.state, 'stopped-confirmed');
+  await service.dispose();
+});
+
+test('SIMULATED: a declared bound shorter than the default window does not shorten it', async () => {
+  const { service, adapter } = await openFakeSession('declared-short', 300, 0);
+  adapter.cancelEndBoundMs = 10;
+  adapter.cancelBehaviour = 'silent';
+  await service.sendPrompt('a job');
+  await service.cancelRun();
+  await sleep(120);
+  assert.equal(service.getRunState().attempts[0]?.state, 'cancel-requested');
+  await sleep(350);
+  assert.equal(service.getRunState().attempts[0]?.state, 'outcome-unknown');
+  await service.dispose();
+});
+
+test('SIMULATED: a cancelled run.finished with end unconfirmed is outcome-unknown, not a confirmed stop', async () => {
+  const { service, adapter } = await openFakeSession('end-unconfirmed', 5_000);
+  adapter.cancelBehaviour = 'silent';
+  await service.sendPrompt('a job whose process does not exit');
+  await service.cancelRun();
+  adapter.emit({ type: 'run.finished', status: 'cancelled', end: 'unconfirmed' });
+
+  const attempt = service.getRunState().attempts[0];
+  assert.equal(attempt?.state, 'outcome-unknown');
+  assert.match(attempt?.stateReason ?? '', /reported the end as unconfirmed/);
+  assert.match(attempt?.stateReason ?? '', /provider kept working on requests already sent is unknown/);
+  assert.equal(attempt?.stillRunning.provider, null, 'unknown, not stopped');
+  // It blocks a repeat until named, like any unknown outcome.
+  await assert.rejects(() => service.sendPrompt('the follow-up'), /will not repeat this by itself/);
+  await service.dispose();
+});
+
+test('SIMULATED: a cancelled run.finished with end stopped or forced is a confirmed local end, with provider work unknown', async () => {
+  for (const end of ['stopped', 'forced'] as const) {
+    const { service, adapter } = await openFakeSession(`end-${end}`, 5_000);
+    adapter.cancelBehaviour = 'silent';
+    await service.sendPrompt('a job');
+    await service.cancelRun();
+    adapter.emit({ type: 'run.finished', status: 'cancelled', end });
+
+    const attempt = service.getRunState().attempts[0];
+    assert.equal(attempt?.state, 'stopped-confirmed', end);
+    assert.match(attempt?.stateReason ?? '', new RegExp(`confirmed local end \\(${end}\\)`));
+    assert.match(attempt?.stateReason ?? '', /Whether the provider kept working on requests already sent is unknown/);
+    if (end === 'forced') {
+      assert.match(attempt?.stateReason ?? '', /had to escalate/);
+    } else {
+      assert.doesNotMatch(attempt?.stateReason ?? '', /had to escalate/);
+    }
+    assert.deepEqual(service.getRunState().needsAcknowledgement.agentTurn, []);
+    await service.dispose();
+  }
 });
 
 test('SIMULATED: closing a session records what became unknown', async () => {

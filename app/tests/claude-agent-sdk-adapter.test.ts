@@ -22,10 +22,14 @@ import {
   assessAuthentication,
   CANCEL_ABORT_WAIT_MS,
   CANCEL_DENY_REASON,
+  CANCEL_END_BOUND_MS,
   CANCEL_INTERRUPT_WAIT_MS,
   CANCEL_KILL_WAIT_MS,
   CANCEL_STOP_REASON,
   ClaudeAgentSdkAdapter,
+  DISPOSE_BOUND_MS,
+  DISPOSE_EXIT_WAIT_MS,
+  PREVIOUS_TURN_EXIT_MS,
   STDERR_TAIL_BYTES,
   STDERR_TAIL_LABEL,
   FIXTURE_PERMISSIONS,
@@ -46,6 +50,7 @@ import {
   scenarioTwoTurn,
 } from '../src/main/experiment-work.ts';
 import { tempRoot } from './support/fixtures.ts';
+import { advanceUntilSettled, ManualTimers, settle } from './support/manual-timers.ts';
 
 // --- A substitute query() ------------------------------------------------------
 
@@ -232,52 +237,6 @@ function spawnVia(call: Call, extraEnv: Record<string, string> = {}) {
     env: { ...call.options['env'], CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', ...extraEnv },
     signal: new AbortController().signal,
   });
-}
-
-/** Timers that fire only when a test advances them. */
-class ManualTimers {
-  private now = 0;
-  private next = 1;
-  private readonly due = new Map<number, { at: number; callback: () => void }>();
-
-  setTimeout = (callback: () => void, ms: number): unknown => {
-    const id = this.next++;
-    this.due.set(id, { at: this.now + ms, callback });
-    return id;
-  };
-
-  clearTimeout = (handle: unknown): void => {
-    this.due.delete(handle as number);
-  };
-
-  get pending(): number {
-    return this.due.size;
-  }
-
-  async advance(ms: number): Promise<void> {
-    const target = this.now + ms;
-    for (;;) {
-      const next = [...this.due.entries()]
-        .filter(([, timer]) => timer.at <= target)
-        .sort((left, right) => left[1].at - right[1].at)[0];
-      if (next === undefined) {
-        break;
-      }
-      this.due.delete(next[0]);
-      this.now = next[1].at;
-      next[1].callback();
-      await settle();
-    }
-    this.now = target;
-    await settle();
-  }
-}
-
-/** Let promises and stream callbacks run. */
-async function settle(): Promise<void> {
-  for (let turn = 0; turn < 20; turn += 1) {
-    await new Promise((resolve) => setImmediate(resolve));
-  }
 }
 
 async function until(condition: () => boolean, what: string): Promise<void> {
@@ -965,16 +924,17 @@ test('dispose during each wait of the stop sequence clears its timers and emits 
     ['after the abort', CANCEL_INTERRUPT_WAIT_MS],
     ['after the kill', CANCEL_INTERRUPT_WAIT_MS + CANCEL_ABORT_WAIT_MS],
   ] as const) {
-    const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
+    const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
       yield init(call);
       yield delta(call, 'Stuck');
+      // Ends when dispose closes the query; the fake process then exits.
       await call.closed;
     });
     const timers = new ManualTimers();
     const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
     const handle = await adapter.startSession(startConfig(workspace('dispose-stop')));
     const seen = collect(adapter, handle.dspatchSessionId);
-    await adapter.send(handle.dspatchSessionId, 'Write');
+    const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'Write');
     await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
     await adapter.cancel(handle.dspatchSessionId);
     await timers.advance(elapsed);
@@ -985,6 +945,15 @@ test('dispose during each wait of the stop sequence clears its timers and emits 
     await timers.advance(CANCEL_INTERRUPT_WAIT_MS + CANCEL_ABORT_WAIT_MS + CANCEL_KILL_WAIT_MS);
     assert.equal(seen.events.length, before, `nothing emitted ${stage}`);
     assert.equal(terminals(seen.events).length, 0);
+    // DSP-116: the process exit is observed and recorded; a kill the stop sequence
+    // already sent is not sent a second time.
+    const afterKill = stage === 'after the kill';
+    const [disposal] = adapter.disposals();
+    assert.equal(disposal?.dspatchRunId, dspatchRunId);
+    assert.equal(disposal?.outcome, afterKill ? 'killed-and-exited' : 'exited', stage);
+    assert.equal(disposal?.killedBy, afterKill ? 'stop-sequence' : null, stage);
+    assert.equal(disposal?.disposeKillRequestedAtUtc, null, stage);
+    assert.deepEqual(calls[0]?.child.kills, afterKill ? ['SIGKILL'] : [], stage);
   }
 });
 
@@ -1416,6 +1385,223 @@ test('dispose stops a previous turn whose stream is still open while the next tu
   assert.equal(signals[0]?.aborted, true);
   assert.equal(closed[0], true);
   await adapter.dispose();
+});
+
+// --- DSP-116: the declared cancellation bound and dispose's process handling -------
+
+test('the declared cancellation bound is derived from the stop sequence and the previous-turn wait, and the terminal arrives within it', async () => {
+  assert.equal(
+    CANCEL_END_BOUND_MS,
+    Math.max(CANCEL_INTERRUPT_WAIT_MS + CANCEL_ABORT_WAIT_MS + CANCEL_KILL_WAIT_MS, PREVIOUS_TURN_EXIT_MS),
+  );
+  assert.equal(DISPOSE_BOUND_MS, DISPOSE_EXIT_WAIT_MS + CANCEL_KILL_WAIT_MS);
+  assert.ok(DISPOSE_BOUND_MS < 8_000, "below main.ts's 8 s shutdown bound");
+
+  // The longest escalation: the process never exits; the terminal comes at the bound, not after it.
+  let child: any = null;
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
+    child = call.child;
+    call.holdProcess = true;
+    yield init(call);
+    yield delta(call, 'Stuck');
+    await call.closed;
+  });
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  assert.equal(adapter.cancelEndBoundMs, CANCEL_END_BOUND_MS);
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('declared-bound')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    await adapter.send(handle.dspatchSessionId, 'Write');
+    await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+    await adapter.cancel(handle.dspatchSessionId);
+    await timers.advance(CANCEL_END_BOUND_MS - 1);
+    assert.equal(terminals(seen.events).length, 0, 'not before the stop sequence has run its course');
+    await timers.advance(1);
+    const ends = terminals(seen.events);
+    assert.equal(ends.length, 1, 'exactly one terminal, at the declared bound');
+    assert.equal(ends[0]?.type === 'run.finished' ? ends[0].end : null, 'unconfirmed');
+  } finally {
+    child?.exit(null, 'SIGKILL');
+    await adapter.dispose();
+  }
+});
+
+test('dispose: a process that exits on the abort is not killed, and its exit is recorded', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield delta(call, 'Working');
+    // The SDK's abort path ends the stream; the fake process then exits (code 0).
+    await untilAborted(call.options['abortController'].signal);
+  });
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  const handle = await adapter.startSession(startConfig(workspace('dispose-exits')));
+  const seen = collect(adapter, handle.dspatchSessionId);
+  const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'Write');
+  await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+  const before = seen.events.length;
+  await adapter.dispose();
+  assert.deepEqual(calls[0]?.child.kills, [], 'no kill');
+  assert.equal(timers.pending, 0);
+  assert.equal(seen.events.length, before, 'nothing emitted after dispose');
+  const disposals = adapter.disposals();
+  assert.equal(disposals.length, 1);
+  assert.equal(disposals[0]?.dspatchRunId, dspatchRunId);
+  assert.equal(disposals[0]?.dspatchSessionId, handle.dspatchSessionId);
+  assert.equal(disposals[0]?.outcome, 'exited');
+  assert.equal(disposals[0]?.killedBy, null);
+  assert.equal(disposals[0]?.pid, 4242);
+  assert.equal(disposals[0]?.exitCode, 0);
+  assert.notEqual(disposals[0]?.exitedAtUtc, null);
+  assert.equal(disposals[0]?.providerWorkAfterEnd, 'unknown');
+});
+
+test('dispose: a process that ignores the abort is killed after the bound, never before, and its exit is observed', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(
+    async function* (call) {
+      call.holdProcess = true;
+      yield init(call);
+      yield delta(call, 'Working');
+      // The stream ends at the close, but the process keeps running.
+      await call.closed;
+    },
+    undefined,
+    undefined,
+    { exitOnKill: true },
+  );
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  const handle = await adapter.startSession(startConfig(workspace('dispose-kill')));
+  const seen = collect(adapter, handle.dspatchSessionId);
+  await adapter.send(handle.dspatchSessionId, 'Write');
+  await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+  let disposed = false;
+  const disposing = adapter.dispose().then(() => {
+    disposed = true;
+  });
+  await settle();
+  assert.equal(timers.pending, 1, 'dispose waits for the exit');
+  await timers.advance(DISPOSE_EXIT_WAIT_MS - 1);
+  assert.deepEqual(calls[0]?.child.kills, [], 'no kill before the bound');
+  assert.equal(disposed, false);
+  await timers.advance(1);
+  await disposing;
+  assert.deepEqual(calls[0]?.child.kills, ['SIGKILL']);
+  assert.equal(timers.pending, 0);
+  const [disposal] = adapter.disposals();
+  assert.equal(disposal?.outcome, 'killed-and-exited');
+  assert.equal(disposal?.killedBy, 'dispose');
+  assert.equal(disposal?.disposeKillSignalSent, true);
+  assert.notEqual(disposal?.disposeKillRequestedAtUtc, null);
+  assert.equal(disposal?.signal, 'SIGKILL');
+  assert.equal(terminals(seen.events).length, 0, 'no terminal event after dispose');
+});
+
+test('dispose: a process whose exit never comes is recorded as unconfirmed within the dispose bound, and dispose is idempotent', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    call.holdProcess = true;
+    yield init(call);
+    yield delta(call, 'Working');
+    await call.closed;
+  });
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  const handle = await adapter.startSession(startConfig(workspace('dispose-unconfirmed')));
+  const seen = collect(adapter, handle.dspatchSessionId);
+  await adapter.send(handle.dspatchSessionId, 'Write');
+  await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the delta');
+  const before = seen.events.length;
+  const first = adapter.dispose();
+  const second = adapter.dispose();
+  assert.equal(first, second, 'a repeated call waits for the same dispose');
+  await settle();
+  await timers.advance(DISPOSE_EXIT_WAIT_MS);
+  assert.deepEqual(calls[0]?.child.kills, ['SIGKILL']);
+  assert.equal(timers.pending, 1, 'the after-kill wait');
+  await timers.advance(CANCEL_KILL_WAIT_MS);
+  await Promise.all([first, second]);
+  assert.equal(timers.pending, 0);
+  const [disposal] = adapter.disposals();
+  assert.equal(disposal?.outcome, 'unconfirmed');
+  assert.equal(disposal?.exitedAtUtc, null);
+  assert.equal(disposal?.killedBy, 'dispose');
+  assert.deepEqual(disposal?.bounds, { exitWaitMs: DISPOSE_EXIT_WAIT_MS, afterKillMs: CANCEL_KILL_WAIT_MS });
+
+  // A late exit after dispose emits nothing, sends no second kill and changes no record.
+  calls[0]?.child.exit(null, 'SIGKILL');
+  await settle();
+  assert.equal(seen.events.length, before);
+  assert.deepEqual(calls[0]?.child.kills, ['SIGKILL']);
+  await adapter.dispose();
+  assert.equal(adapter.disposals()[0]?.outcome, 'unconfirmed');
+  assert.equal(timers.pending, 0);
+});
+
+test('dispose after a normal end: an exited process is left alone; one still exiting is waited for, not killed', async () => {
+  const children: any[] = [];
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call, index) {
+    children.push(call.child);
+    // The second turn's process outlives its stream, as the SDK documents it may.
+    call.holdProcess = index === 1;
+    yield init(call);
+    yield result(call);
+  });
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  const handle = await adapter.startSession(startConfig(workspace('dispose-normal')));
+  const seen = collect(adapter, handle.dspatchSessionId);
+  let finished = seen.nextFinish();
+  await adapter.send(handle.dspatchSessionId, 'one');
+  await finished;
+  finished = seen.nextFinish();
+  const { dspatchRunId } = await adapter.send(handle.dspatchSessionId, 'two');
+  await finished;
+  await settle();
+  assert.equal(lastFinished(seen.events), 'finished');
+  assert.notEqual(children[0].exitCode, null, 'the first process has exited');
+  assert.equal(children[1].exitCode, null, 'the second has not yet');
+
+  const disposing = adapter.dispose();
+  await settle();
+  children[1].exit(0);
+  await disposing;
+  assert.deepEqual(children[0].kills, []);
+  assert.deepEqual(children[1].kills, []);
+  assert.equal(timers.pending, 0);
+  const disposals = adapter.disposals();
+  assert.equal(disposals.length, 1, 'only the process that had not exited');
+  assert.equal(disposals[0]?.dspatchRunId, dspatchRunId);
+  assert.equal(disposals[0]?.outcome, 'exited');
+  assert.equal(terminals(seen.events).length, 2, 'one terminal per run');
+});
+
+test('dispose during the wait for the previous turn ends that wait at once: no timer is left, and the waiting turn never starts', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield result(call);
+    // The stream stays open after the result until dispose closes it.
+    await call.closed;
+  });
+  const timers = new ManualTimers();
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, timers });
+  const handle = await adapter.startSession(startConfig(workspace('dispose-previous')));
+  const seen = collect(adapter, handle.dspatchSessionId);
+  const finished = seen.nextFinish();
+  await adapter.send(handle.dspatchSessionId, 'first');
+  await finished;
+  const second = adapter.send(handle.dspatchSessionId, 'second');
+  second.catch(() => undefined);
+  await settle();
+  await adapter.cancel(handle.dspatchSessionId);
+  assert.equal(timers.pending, 1, 'the previous-turn wait');
+  const before = seen.events.length;
+  await adapter.dispose();
+  await assert.rejects(second, /disposed while the turn waited/);
+  assert.equal(timers.pending, 0);
+  assert.equal(calls.length, 1, 'the waiting turn never called query()');
+  assert.equal(seen.events.length, before, 'nothing emitted after dispose');
+  assert.equal(adapter.disposals()[0]?.outcome, 'exited');
 });
 
 // --- Authentication ------------------------------------------------------------
@@ -2689,11 +2875,20 @@ test('cancel-then-follow-up: a forced or unconfirmed end starts no follow-up and
   await timers.advance(CANCEL_INTERRUPT_WAIT_MS);
   await timers.advance(CANCEL_ABORT_WAIT_MS);
   await timers.advance(CANCEL_KILL_WAIT_MS);
-  const heldCode = await running;
+  // The process still has not exited, so dispose waits for it too (DSP-116).
+  const heldCode = await advanceUntilSettled(timers, running, DISPOSE_EXIT_WAIT_MS);
   const heldRecord = readRecord(heldLog);
   assert.equal(heldCode, 2);
   assert.equal(held.calls.length, 1, 'no follow-up query()');
+  // One kill, the stop sequence's: dispose does not send a second.
   assert.deepEqual(held.calls[0]?.child.kills, ['SIGKILL']);
+  assert.equal(heldRecord.claudeDisposal.boundMs, DISPOSE_BOUND_MS);
+  assert.equal(heldRecord.claudeDisposal.runs.length, 1);
+  assert.equal(heldRecord.claudeDisposal.runs[0].killedBy, 'stop-sequence');
+  assert.equal(heldRecord.claudeDisposal.runs[0].outcome, 'unconfirmed');
+  assert.equal(heldRecord.claudeDisposal.runs[0].providerWorkAfterEnd, 'unknown');
+  // The forced run's process had exited before dispose: nothing to take care of.
+  assert.deepEqual(forcedRecord.claudeDisposal.runs, []);
   assert.equal(heldRecord.cancellation.end, 'unconfirmed');
   assert.equal(heldRecord.followUp.started, false);
   assert.match(heldRecord.followUp.reason, /'unconfirmed'/);

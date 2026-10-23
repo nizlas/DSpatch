@@ -142,6 +142,18 @@ const CANCEL_WATCH_MS = 90_000;
  */
 const CANCEL_CONFIRM_MS = 10_000;
 
+/**
+ * Extra time after an adapter's declared cancellation bound
+ * (`ChatAdapter.cancelEndBoundMs`) for its terminal event to reach this service.
+ *
+ * The adapter guarantees its end by its own timers; this covers only delivery,
+ * which is in-process and synchronous for the adapters here, so one second is
+ * generous. With a declared bound the confirmation window is the larger of
+ * {@link CANCEL_CONFIRM_MS} (or its test override) and bound plus this grace;
+ * without one it stays {@link CANCEL_CONFIRM_MS}. Either way it is bounded.
+ */
+const CANCEL_CONFIRM_GRACE_MS = 1_000;
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -330,6 +342,12 @@ function resendNote(recap: string | null, savedMessageCount: number): string {
 function promptLabel(prompt: string): string {
   const firstLine = prompt.trim().split('\n')[0] ?? '';
   return firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine;
+}
+
+/** Milliseconds as seconds for a sentence: whole seconds as integers, otherwise one decimal. */
+function formatSeconds(ms: number): string {
+  const seconds = ms / 1000;
+  return Number.isInteger(seconds) ? String(seconds) : String(Math.round(seconds * 10) / 10);
 }
 
 function round(value: number): number {
@@ -531,6 +549,13 @@ export interface ChatAdapter {
    * is the state of an adapter that does not track runs at all.
    */
   hasActiveRun?(sessionId: string): boolean;
+  /**
+   * The longest time from `cancel()` resolving to the run's terminal `run.finished`
+   * that the adapter guarantees by its own timers, as on `AgentAdapter`. Absent
+   * means not declared, which is the Cursor and presentation adapters' state; the
+   * confirmation window then stays at its default. See {@link CANCEL_CONFIRM_GRACE_MS}.
+   */
+  readonly cancelEndBoundMs?: number;
   subscribe(sessionId: string, listener: AgentEventListener): Unsubscribe;
   send(sessionId: string, prompt: string): Promise<RunReference>;
   cancel(sessionId: string): Promise<void>;
@@ -640,8 +665,11 @@ export interface ChatServiceOptions {
    * establishing a rule about them. Production passes nothing.
    */
   readonly timings?: {
+    /** Replaces {@link CANCEL_CONFIRM_MS}: the window without a declared bound, and its floor with one. */
     readonly cancelConfirmMs?: number;
     readonly cancelWatchMs?: number;
+    /** Replaces {@link CANCEL_CONFIRM_GRACE_MS}. */
+    readonly cancelConfirmGraceMs?: number;
   };
 }
 
@@ -721,6 +749,8 @@ export class ChatService {
   private activeCommandAttemptId: string | null = null;
 
   private readonly cancelConfirmMs: number;
+
+  private readonly cancelConfirmGraceMs: number;
 
   private readonly cancelWatchMs: number;
 
@@ -811,6 +841,7 @@ export class ChatService {
     this.options = options;
     this.runner = resolveNodeRunner();
     this.cancelConfirmMs = options.timings?.cancelConfirmMs ?? CANCEL_CONFIRM_MS;
+    this.cancelConfirmGraceMs = options.timings?.cancelConfirmGraceMs ?? CANCEL_CONFIRM_GRACE_MS;
     this.cancelWatchMs = options.timings?.cancelWatchMs ?? CANCEL_WATCH_MS;
     this.readAuthStatus =
       options.readAuthStatus ?? (() => Cursor.auth.status() as Promise<AuthStatusReading>);
@@ -1668,7 +1699,7 @@ export class ChatService {
     );
     try {
       await adapter.cancel(session.dspatchSessionId);
-      this.armCancelConfirmation(attemptId);
+      this.armCancelConfirmation(attemptId, adapter);
     } catch (error) {
       this.ledger.markOutcomeUnknown(
         attemptId,
@@ -1725,7 +1756,7 @@ export class ChatService {
     );
     if (attempt !== undefined) {
       if (error === null) {
-        this.armCancelConfirmation(attempt.attemptId);
+        this.armCancelConfirmation(attempt.attemptId, adapter);
       } else {
         // A cancellation that could not even be requested leaves the run in
         // whatever state it was in. That is unknown, not stopped.
@@ -1756,29 +1787,68 @@ export class ChatService {
    * provider being prompt, because DSpatch stops assuming an ending and refuses to
    * start a second turn until the state has been seen.
    *
+   * How long: {@link cancelConfirmWindow}. Not shorter than the adapter's own
+   * declared course, so DSpatch never gives up on an end the adapter is still
+   * bound to deliver (DSP-116). A late terminal event still settles the attempt:
+   * `outcome-unknown` is not settled.
+   *
    * `unref` so a pending confirmation never holds the process open.
    */
-  private armCancelConfirmation(attemptId: string): void {
+  private armCancelConfirmation(attemptId: string, adapter: ChatAdapter): void {
+    const window = this.cancelConfirmWindow(adapter);
     const timer = setTimeout(() => {
       const current = this.ledger.get(attemptId);
       if (current === null || current.state !== 'cancel-requested') {
         return;
       }
-      const seconds = Math.round(this.cancelConfirmMs / 1000);
+      const seconds = formatSeconds(window.ms);
       this.ledger.markOutcomeUnknown(
         attemptId,
-        `No terminal event arrived within ${String(seconds)} s of the ` +
-          'cancellation, and the two cancellations that have been measured here ' +
-          'reported an end in about 50 ms. So this run\'s ending cannot be ' +
-          'established. It is not being treated as stopped, and DSpatch will not ' +
-          'start another message by itself while it stands.',
+        window.declaredBoundMs === null
+          ? `No terminal event arrived within ${seconds} s of the ` +
+              'cancellation, and the two cancellations that have been measured here ' +
+              'reported an end in about 50 ms. So this run\'s ending cannot be ' +
+              'established. It is not being treated as stopped, and DSpatch will not ' +
+              'start another message by itself while it stands.'
+          : `No terminal event arrived within ${seconds} s of the cancellation, ` +
+              `although the adapter "${adapter.id}" declares that it ends a cancelled ` +
+              `run within ${formatSeconds(window.declaredBoundMs)} s by its own timers ` +
+              `(DSpatch waited ${formatSeconds(this.cancelConfirmGraceMs)} s more for ` +
+              'the event to arrive). So this run\'s ending cannot be established. It ' +
+              'is not being treated as stopped, and DSpatch will not start another ' +
+              'message by itself while it stands.',
       );
       this.options.log(
-        `${attemptId}: no terminal event within ${String(seconds)} s of cancellation; ` +
-          'outcome recorded as unknown',
+        `${attemptId}: no terminal event within ${seconds} s of cancellation` +
+          (window.declaredBoundMs === null
+            ? ''
+            : ` (adapter bound ${String(window.declaredBoundMs)} ms + grace ` +
+              `${String(this.cancelConfirmGraceMs)} ms)`) +
+          '; outcome recorded as unknown',
       );
-    }, this.cancelConfirmMs);
+    }, window.ms);
     timer.unref?.();
+  }
+
+  /**
+   * How long a cancellation is given to be confirmed: the configured window
+   * ({@link CANCEL_CONFIRM_MS} or its test override) when the adapter declares no
+   * bound, otherwise the larger of that and the declared bound plus
+   * {@link CANCEL_CONFIRM_GRACE_MS}. A declared value that is not a finite,
+   * non-negative number counts as not declared.
+   */
+  private cancelConfirmWindow(adapter: ChatAdapter): {
+    readonly ms: number;
+    readonly declaredBoundMs: number | null;
+  } {
+    const declared = adapter.cancelEndBoundMs;
+    if (declared === undefined || !Number.isFinite(declared) || declared < 0) {
+      return { ms: this.cancelConfirmMs, declaredBoundMs: null };
+    }
+    return {
+      ms: Math.max(this.cancelConfirmMs, declared + this.cancelConfirmGraceMs),
+      declaredBoundMs: declared,
+    };
   }
 
   getCancelObservations(): CancelObservations {
@@ -3166,7 +3236,33 @@ export class ChatService {
         const detail =
           `Run ${event.dspatchRunId} reported status "${event.status}" at ${event.at}` +
           `${event.error === undefined ? '' : `: ${event.error.message}`}.`;
-        if (event.status === 'cancelled') {
+        if (event.status === 'cancelled' && event.end === 'unconfirmed') {
+          // DSP-116: the adapter ended the run without evidence that its local
+          // work stopped. Reported as ended so nothing waits forever, but not a stop.
+          this.ledger.markOutcomeUnknown(
+            attemptId,
+            `${detail} The adapter reported the end as unconfirmed: it stopped ` +
+              'waiting without evidence that its local work ended (such as its ' +
+              'process having been seen to exit), so that work may still be going. ' +
+              'It is not being treated as stopped; the adapter refuses a new turn in ' +
+              'this session until the end is confirmed, and whether the provider kept ' +
+              'working on requests already sent is unknown.',
+          );
+        } else if (
+          event.status === 'cancelled' &&
+          (event.end === 'stopped' || event.end === 'forced')
+        ) {
+          this.ledger.markStopped(
+            attemptId,
+            `${detail} This is a confirmed local end (${event.end}): the adapter ` +
+              (event.end === 'forced'
+                ? 'had to escalate (abort, and possibly kill its local process) and '
+                : '') +
+              'has evidence that its local work ended, such as its process having ' +
+              'been seen to exit. Whether the provider kept working on requests ' +
+              'already sent is unknown.',
+          );
+        } else if (event.status === 'cancelled') {
           this.ledger.markStopped(
             attemptId,
             `${detail} This is a confirmed end: the provider reported it, rather ` +

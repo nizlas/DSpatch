@@ -32,6 +32,15 @@ import type {
  */
 export interface AgentAdapter {
   /**
+   * The longest time, in milliseconds, from `cancel()` resolving to the run's
+   * terminal `run.finished`, guaranteed by the adapter's own timers (DSP-116).
+   * Absent means not declared: the adapter promises no bound. Optional and
+   * additive; a caller that waits for a cancellation's end uses it so as not to
+   * give up before the adapter does. `CursorSdkAdapter` declares none.
+   */
+  readonly cancelEndBoundMs?: number;
+
+  /**
    * Start a new session. Subscribe with `subscribe` **before** the first `send`
    * to avoid losing events.
    */
