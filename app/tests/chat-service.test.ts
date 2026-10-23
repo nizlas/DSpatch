@@ -1366,15 +1366,21 @@ test('SIMULATED: closing a session records what became unknown', async () => {
   adapter.cancelBehaviour = 'silent';
   await service.sendPrompt('a job that will not end');
 
-  // Opening another project is how a person escapes a stuck session, and it must
-  // not quietly turn an unfinished run into a finished one.
-  const other = makeDir('session-close-second');
-  fs.writeFileSync(path.join(other, 'x.txt'), 'x\n', 'utf8');
-  await service.startChatSession({ kind: 'folder', path: other });
+  // A new provider session is how a person escapes a stuck session, and closing the
+  // old one must not quietly turn an unfinished run into a finished one.
+  await service.startChatSession({ kind: 'new-provider-session' });
 
   const attempt = service.getRunState().attempts[0];
   assert.equal(attempt?.state, 'outcome-unknown');
   assert.match(attempt?.stateReason ?? '', /no longer receiving its events/);
+
+  // Opening another project closes the session as well. Since DSP-4's WS-1 rework the
+  // attempt stays in its own conversation and blocks only its own working copy, so a
+  // project elsewhere starts clear; conversation-switch.test.ts covers coming back.
+  const other = makeDir('session-close-second');
+  fs.writeFileSync(path.join(other, 'x.txt'), 'x\n', 'utf8');
+  await service.startChatSession({ kind: 'folder', path: other });
+  assert.deepEqual(service.getRunState().unresolved, []);
   await service.dispose();
 });
 

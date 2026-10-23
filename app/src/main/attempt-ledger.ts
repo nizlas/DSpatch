@@ -68,8 +68,6 @@ interface AttemptRecord {
   cancelRequestedAtUtc: string | null;
   acknowledgedAtUtc: string | null;
   readonly history: AttemptStep[];
-  /** Read back from a saved conversation rather than observed in this window. */
-  readonly restoredFromFile?: boolean;
 }
 
 /** What adopting a saved conversation's attempts did, including what it could not. */
@@ -113,6 +111,31 @@ const KIND_LABEL: Record<AttemptKind, string> = {
   command: 'build or test command',
 };
 
+/**
+ * The last attempt number handed out or read back, shared by every ledger in one
+ * window.
+ *
+ * Each conversation has a ledger of its own (DSP-4 rework WS-1), because two
+ * conversations saved by two runs of DSpatch both contain `dsp-attempt-0001` and a
+ * single window-wide list cannot hold both. What sharing the counter guarantees: a
+ * new attempt never takes a number that a ledger in this window already holds, and —
+ * because the chat service raises `last` to the highest number in any readable
+ * conversation file at the first listing of the store that succeeds in this app run
+ * — never a number a readable conversation file held at that listing either.
+ *
+ * What it cannot guarantee: IDs in a file that cannot be read, or that a newer
+ * DSpatch wrote, are not counted; a file another process writes after that listing is
+ * not seen; and if the store cannot be listed when the first session opens, attempts
+ * made before a later listing succeeds are numbered without the files. Two files
+ * written by earlier runs can also already share a number for different work, and IDs
+ * on disk are never renumbered. Each stays correct in its own file; where both are
+ * shown together, as unresolved attempts of one working copy, the same ID can appear
+ * twice.
+ */
+export interface AttemptSequence {
+  last: number;
+}
+
 export class AttemptLedger {
   private readonly now: () => string;
 
@@ -120,8 +143,14 @@ export class AttemptLedger {
 
   private counter = 0;
 
-  constructor(now: () => string = () => new Date().toISOString()) {
+  private readonly sequence: AttemptSequence;
+
+  constructor(
+    now: () => string = () => new Date().toISOString(),
+    sequence: AttemptSequence = { last: 0 },
+  ) {
     this.now = now;
+    this.sequence = sequence;
   }
 
   /**
@@ -131,7 +160,8 @@ export class AttemptLedger {
    * happened, and an attempt whose request never returns is the whole point.
    */
   open(kind: AttemptKind, label: string): AttemptInfo {
-    this.counter += 1;
+    this.counter = Math.max(this.counter, this.sequence.last) + 1;
+    this.sequence.last = this.counter;
     const attemptId = `dsp-attempt-${String(this.counter).padStart(4, '0')}`;
     const record: AttemptRecord = {
       attemptId,
@@ -180,10 +210,10 @@ export class AttemptLedger {
    * hand-edited belongs to the store that reads it, not here.
    *
    * An ID that is already in this ledger is **not** adopted, and is reported instead.
-   * Attempt IDs are numbered per window, so two conversations written by two runs of
-   * DSpatch both contain `dsp-attempt-0001`. Merging them would put one piece of
-   * work's history under another's identity, which is worse than saying that this
-   * window cannot show both.
+   * Merging two records under one ID would put one piece of work's history under
+   * another's identity, which is worse than saying so. Since each conversation has a
+   * ledger of its own (WS-1), a conversation read back is restored into a ledger that
+   * holds nothing else, so this is reached only by a file that lists one ID twice.
    */
   restore(records: readonly StoredAttempt[]): RestoreOutcome {
     const reconciliations: AttemptReconciliation[] = [];
@@ -206,10 +236,10 @@ export class AttemptLedger {
         cancelRequestedAtUtc: stored.cancelRequestedAtUtc,
         acknowledgedAtUtc: stored.acknowledgedAtUtc,
         history: [...stored.history],
-        restoredFromFile: true,
       };
       this.attempts.push(record);
-      this.counter = Math.max(this.counter, ordinalOf(stored.attemptId));
+      this.counter = Math.max(this.counter, attemptOrdinal(stored.attemptId));
+      this.sequence.last = Math.max(this.sequence.last, this.counter);
 
       const stateAtClose = stored.state;
       if (stateAtClose === 'waiting' || stateAtClose === 'running') {
@@ -259,23 +289,6 @@ export class AttemptLedger {
       }
     }
     return { reconciliations, skippedAttemptIds };
-  }
-
-  /**
-   * Forget the attempts that came from a file, keeping this window's own.
-   *
-   * Reading a second conversation back replaces the first, and its attempts have to
-   * go with it: they are a view of a file rather than work observed here, the file
-   * still holds every one of them, and two conversations' attempt lists in one panel
-   * would collide on the per-window numbering. Nothing this process actually did is
-   * touched, and `counter` is left where it is so no ID is ever reused.
-   */
-  dropRestored(): number {
-    const before = this.attempts.length;
-    const kept = this.attempts.filter((record) => record.restoredFromFile !== true);
-    this.attempts.length = 0;
-    this.attempts.push(...kept);
-    return before - kept.length;
   }
 
   /** Confirmed started: an event carrying a run ID, or a process with a pid. */
@@ -431,7 +444,103 @@ export class AttemptLedger {
     kind: AttemptKind,
     acknowledgedAttemptIds: readonly string[] = [],
   ): RepeatDecision {
-    const blocking = this.attempts.filter(
+    return AttemptLedger.decide(this.attempts, kind, acknowledgedAttemptIds);
+  }
+
+  /**
+   * {@link mayRepeat} over several conversations' ledgers at once.
+   *
+   * The repeat block belongs to a working copy, not to a window (DSP-4 rework WS-1,
+   * #11): one writing run per working copy, so an unresolved attempt blocks the same
+   * kind of work in every conversation over the same folder or one nested in it, and
+   * in no other. Which ledgers share a working copy is the chat service's to decide;
+   * the rule applied over them is exactly the per-kind rule above, unchanged.
+   */
+  static mayRepeatAcross(
+    ledgers: readonly AttemptLedger[],
+    kind: AttemptKind,
+    acknowledgedAttemptIds: readonly string[] = [],
+  ): RepeatDecision {
+    return AttemptLedger.decide(
+      ledgers.flatMap((ledger) => ledger.attempts),
+      kind,
+      acknowledgedAttemptIds,
+    );
+  }
+
+  /**
+   * Record acknowledgements where they belong, and say which ledgers changed.
+   *
+   * An ID is acknowledged in every given ledger that holds it unresolved, and only
+   * there, so naming an ID from one working copy cannot acknowledge an attempt that
+   * belongs to another: the caller passes only the ledgers of the working copy being
+   * acted in. An ID no ledger holds unresolved is acknowledged in `current` if it is
+   * there at all, which is what a single ledger always did.
+   */
+  static acknowledgeAcross(
+    current: AttemptLedger,
+    others: readonly AttemptLedger[],
+    attemptIds: readonly string[],
+    note: string,
+  ): readonly AttemptLedger[] {
+    const touched = new Set<AttemptLedger>();
+    for (const attemptId of attemptIds) {
+      const holders = [current, ...others].filter((ledger) =>
+        ledger.attempts.some(
+          (record) => record.attemptId === attemptId && !isSettled(record.state),
+        ),
+      );
+      const targets =
+        holders.length > 0
+          ? holders
+          : current.attempts.some((record) => record.attemptId === attemptId)
+            ? [current]
+            : [];
+      for (const ledger of targets) {
+        ledger.acknowledge(attemptId, note);
+        touched.add(ledger);
+      }
+    }
+    return [...touched];
+  }
+
+  /**
+   * The run state for one conversation, with what blocks it from elsewhere.
+   *
+   * `current`'s attempts in full, then the unresolved attempts of the other ledgers
+   * sharing its working copy: those are what can block the next action here, and an
+   * attempt that blocks has to be visible where it blocks, or the window would refuse
+   * with nothing to show for it.
+   */
+  static reportAcross(
+    current: AttemptLedger,
+    others: readonly AttemptLedger[],
+  ): RunStateReport {
+    const ledgers = [current, ...others];
+    const attempts = [
+      ...others.flatMap((ledger) => ledger.unresolved()),
+      ...current.all(),
+    ];
+    const needing = (kind: AttemptKind): readonly string[] => [
+      ...new Set(AttemptLedger.mayRepeatAcross(ledgers, kind).acknowledgeableAttemptIds),
+    ];
+    return {
+      attempts,
+      unresolved: attempts.filter((attempt) => !isSettled(attempt.state)),
+      needsAcknowledgement: {
+        agentTurn: needing('agent-turn'),
+        command: needing('command'),
+      },
+      observedAtUtc: current.now(),
+    };
+  }
+
+  private static decide(
+    records: readonly AttemptRecord[],
+    kind: AttemptKind,
+    acknowledgedAttemptIds: readonly string[],
+  ): RepeatDecision {
+    const blocking = records.filter(
       (record) => record.kind === kind && !isSettled(record.state),
     );
     const running = blocking.find((record) => record.state === 'running');
@@ -522,18 +631,7 @@ export class AttemptLedger {
   }
 
   report(): RunStateReport {
-    const attempts = this.all();
-    const needing = (kind: AttemptKind): readonly string[] =>
-      this.mayRepeat(kind).acknowledgeableAttemptIds;
-    return {
-      attempts,
-      unresolved: attempts.filter((attempt) => !isSettled(attempt.state)),
-      needsAcknowledgement: {
-        agentTurn: needing('agent-turn'),
-        command: needing('command'),
-      },
-      observedAtUtc: this.now(),
-    };
+    return AttemptLedger.reportAcross(this, []);
   }
 
   private settle(attemptId: string, state: AttemptState, note: string): void {
@@ -759,7 +857,7 @@ function nextAction(record: AttemptRecord): NextAction {
  * a real attempt that happened, and refusing to restore the conversation because
  * one ID looks unfamiliar would lose more than it protects.
  */
-function ordinalOf(attemptId: string): number {
+export function attemptOrdinal(attemptId: string): number {
   const digits = /^dsp-attempt-(\d+)$/.exec(attemptId)?.[1];
   const parsed = digits === undefined ? Number.NaN : Number.parseInt(digits, 10);
   return Number.isFinite(parsed) ? parsed : 0;

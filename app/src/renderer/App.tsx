@@ -4852,13 +4852,24 @@ function RunStatePanel({
   readonly canAct: boolean;
 }): JSX.Element {
   const newestFirst = [...runState.attempts].reverse();
+  // A row key that is unique even when two conversations' files hold the same attempt
+  // ID (both shown as unresolved in one working copy). The first row with an ID keeps
+  // the ID itself, so ordinary lists keep the keys they always had.
+  const seenIds = new Map<string, number>();
+  const rowKeys = newestFirst.map((attempt) => {
+    const seen = seenIds.get(attempt.attemptId) ?? 0;
+    seenIds.set(attempt.attemptId, seen + 1);
+    return seen === 0 ? attempt.attemptId : `${attempt.attemptId}#${String(seen + 1)}`;
+  });
   return (
     <Section title="Execution state" defaultOpen>
       <p className="app__note">
-        Every attempt DSpatch has made in this window, with its own ID and the state
-        it is actually in. An attempt that started nothing, or that was asked to stop
-        without confirming an end, is shown as exactly that. Nothing here is inferred
-        from silence.
+        Every attempt DSpatch has made in this conversation, with its own ID and the
+        state it is actually in, and any unresolved attempt from another conversation
+        in this project folder, a folder inside it or a folder that contains it,
+        because that blocks the same kind of work here too. An attempt that started
+        nothing, or that was asked to stop without confirming an end, is shown as
+        exactly that. Nothing here is inferred from silence.
       </p>
       <p className="app__note" data-ev="unresolved-attempts">
         {runState.unresolved.length === 0
@@ -4881,7 +4892,7 @@ function RunStatePanel({
         <div className="attempts">
           {newestFirst.map((attempt, index) => (
             <AttemptRow
-              key={attempt.attemptId}
+              key={rowKeys[index] ?? attempt.attemptId}
               attempt={attempt}
               index={index}
               busy={busy}

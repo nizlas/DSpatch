@@ -428,6 +428,29 @@ export class ConversationStore {
    * a problem they can act on; one that is silently missing is not.
    */
   list(): ConversationListing {
+    return this.listWithAttemptIds().listing;
+  }
+
+  /**
+   * {@link list}, and every attempt ID the readable files hold, from the same reading.
+   *
+   * For the chat service's attempt counter (DSP-4 rework WS-1, review 004 S1): a window
+   * that knows every number used in the readable conversation files can hand out new
+   * ones that none of them holds. IDs in a file that cannot be read, or that a newer
+   * DSpatch wrote, are not included, and a file written after this reading is not seen.
+   * Listing already reads every file; this keeps that to one reading. The listing itself
+   * is exactly what {@link list} returns.
+   */
+  listWithAttemptIds(): {
+    readonly listing: ConversationListing;
+    readonly attemptIds: readonly string[];
+  } {
+    const attemptIds: string[] = [];
+    const listing = this.listCollecting(attemptIds);
+    return { listing, attemptIds };
+  }
+
+  private listCollecting(attemptIds: string[]): ConversationListing {
     let all: string[];
     try {
       all = fs.readdirSync(this.directory).sort();
@@ -487,6 +510,7 @@ export class ConversationStore {
         });
         continue;
       }
+      attemptIds.push(...conversation.attempts.map((attempt) => attempt.attemptId));
       entries.push({
         conversationId: conversation.conversationId,
         filePath: result.filePath,

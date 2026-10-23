@@ -103,7 +103,9 @@ const AREAS = {
       'command-start.test.ts',
       'test-command.test.ts',
       'own-repository.test.ts',
+      'working-copy-overlap.test.ts',
       { file: 'chat-service.test.ts', heavy: true },
+      { file: 'conversation-switch.test.ts', heavy: true },
     ],
   },
   provider: {

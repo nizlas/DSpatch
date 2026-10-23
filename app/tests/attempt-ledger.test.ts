@@ -501,23 +501,41 @@ test('an ID the ledger already holds is not adopted, and is reported', () => {
   assert.equal(book.all().length, 1);
 });
 
-test('dropping restored attempts keeps this window own work', () => {
-  const book = ledger();
-  const live = book.open('command', 'npm test');
-  book.markCompleted(live.attemptId, 'exit 0');
-  book.restore([stored('dsp-attempt-0007', 'running')]);
-  assert.equal(book.all().length, 2);
-  assert.equal(book.mayRepeat('agent-turn').allowed, false);
+test('ledgers sharing a sequence never hand out a number either holds', () => {
+  // One ledger per conversation (DSP-4 rework WS-1), one counter per window: a
+  // conversation read back advances it, so the next attempt anywhere is new.
+  const sequence = { last: 0 };
+  const a = new AttemptLedger(tick, sequence);
+  const b = new AttemptLedger(tick, sequence);
+  assert.equal(b.open('agent-turn', 'first in B').attemptId, 'dsp-attempt-0001');
+  // A's file holds the same number for other work; A's own ledger keeps it apart.
+  const outcome = a.restore([stored('dsp-attempt-0001', 'completed'), stored('dsp-attempt-0007', 'completed')]);
+  assert.deepEqual(outcome.skippedAttemptIds, []);
+  assert.equal(b.open('command', 'npm test').attemptId, 'dsp-attempt-0008');
+  assert.equal(a.open('agent-turn', 'next in A').attemptId, 'dsp-attempt-0009');
+});
 
-  const dropped = book.dropRestored();
-  assert.equal(dropped, 1);
-  assert.deepEqual(
-    book.all().map((attempt) => attempt.attemptId),
-    [live.attemptId],
-  );
-  assert.equal(book.mayRepeat('agent-turn').allowed, true);
-  // The counter does not go back, so a later attempt cannot take a released ID.
-  assert.equal(book.open('agent-turn', 'later').attemptId, 'dsp-attempt-0008');
+test('the block holds across the ledgers it is given, per kind, and no others', () => {
+  const sequence = { last: 0 };
+  const here = new AttemptLedger(tick, sequence);
+  const sameFolder = new AttemptLedger(tick, sequence);
+  const elsewhere = new AttemptLedger(tick, sequence);
+  sameFolder.restore([stored('dsp-attempt-0003', 'running')]);
+  elsewhere.restore([stored('dsp-attempt-0004', 'running', 'command')]);
+
+  const turn = AttemptLedger.mayRepeatAcross([here, sameFolder], 'agent-turn');
+  assert.equal(turn.allowed, false);
+  assert.deepEqual(turn.acknowledgeableAttemptIds, ['dsp-attempt-0003']);
+  assert.equal(AttemptLedger.mayRepeatAcross([here, sameFolder], 'command').allowed, true);
+  assert.equal(here.mayRepeat('agent-turn').allowed, true, 'alone, here holds nothing');
+
+  // Naming it from here acknowledges it where it is, and only there.
+  const touched = AttemptLedger.acknowledgeAcross(here, [sameFolder], ['dsp-attempt-0003'], 'seen');
+  assert.deepEqual(touched, [sameFolder]);
+  assert.notEqual(sameFolder.get('dsp-attempt-0003')?.acknowledgedAtUtc, null);
+  assert.equal(AttemptLedger.mayRepeatAcross([here, sameFolder], 'agent-turn').allowed, true);
+  assert.equal(AttemptLedger.acknowledgeAcross(here, [], ['dsp-attempt-0004'], 'seen').length, 0);
+  assert.equal(elsewhere.get('dsp-attempt-0004')?.acknowledgedAtUtc, null);
 });
 
 test('the restore rule this replaces lets a killed run pass as an ending', () => {

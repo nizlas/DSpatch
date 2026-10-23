@@ -56,7 +56,7 @@ import type {
   WorkspaceReport,
 } from '../shared/bridge';
 import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
-import { AttemptLedger } from './attempt-ledger';
+import { AttemptLedger, attemptOrdinal, type AttemptSequence } from './attempt-ledger';
 import {
   CONVERSATION_FORMAT_VERSION,
   newConversationId,
@@ -673,6 +673,94 @@ export interface ChatServiceOptions {
   };
 }
 
+/**
+ * Everything this window holds for one conversation, for the whole app run.
+ *
+ * DSP-4 rework WS-1. Until then the records read back from a file lived in single
+ * fields on the service — one set of carried messages, one carried test, one reviewed
+ * diff, one window-wide attempt ledger — and opening a second conversation released
+ * the first one's records while keeping its diff and test in place. Reopening the
+ * first then saved it from what was left: offline probe V1 watched A's file go from
+ * three messages to one, from four attempts to one and from one test run to none,
+ * with B's reviewed diff and failing test written into A.
+ *
+ * So each conversation keeps its own record here from the moment it is opened or read
+ * back until the window closes, and nothing about one conversation is a field the
+ * next one can inherit. Holding is not reading again: a conversation already held is
+ * never re-read from its file in the same run, which is what keeps a switch from
+ * raising its unknown outcomes a second time or saying "carried across a restart"
+ * when no restart happened.
+ */
+interface HeldConversation {
+  readonly conversationId: string;
+  /** The working copy the conversation is about. */
+  projectPath: string;
+  readonly createdAtUtc: string;
+  /** This conversation's attempts, and no other's. */
+  readonly ledger: AttemptLedger;
+  /** The messages its file held when it was first read in this run. */
+  readonly carriedMessages: readonly StoredMessage[];
+  /** Every command result, the file's and this run's, in the order they ran. */
+  readonly testRuns: TestOutcome[];
+  /** The result shown for this conversation last, by its own commands only. */
+  lastTest: TestOutcome | null;
+  reviewedDiff: WorkspaceReport | null;
+  /**
+   * The baseline its file held, until a session over it builds its own; then released,
+   * because the save writes the new one and nothing reads this again (review 004 S4).
+   */
+  carriedBaseline: StoredBaseline | null;
+  /** The baseline of the latest session over it, built from that session's snapshot. */
+  storedBaseline: StoredBaseline | null;
+  /** The project and session last written, so it can be saved when not on screen. */
+  project: StoredConversation['project'] | null;
+  session: StoredSession | null;
+  /**
+   * A SHA-256 of the last body written, so an unchanged conversation is not rewritten.
+   * A digest rather than the body: the body carries the baseline's content, and keeping
+   * it would hold a third copy of every project's files for as long as the window runs.
+   */
+  lastSavedDigest: string | null;
+}
+
+/** A command while it runs, and who it belongs to. */
+interface ActiveCommand {
+  readonly child: ChildProcess;
+  readonly attemptId: string;
+  /** The ledger of the conversation that started it, whatever is open later. */
+  readonly ledger: AttemptLedger;
+  /** Set when DSpatch itself killed it, so its exit is never read as a result. */
+  killedByDspatch: boolean;
+}
+
+/**
+ * Whether two working copies are the same folder or one is inside the other.
+ *
+ * The repeat block's unit (WS-1 #11, plan section 7): one writing run per working
+ * copy, so an unresolved run in a folder blocks the same kind of work over that
+ * folder, over any folder inside it and over any folder it is inside. Case-insensitive
+ * on Windows, where a different spelling is the same folder. This assumes a run
+ * writes only inside its own working copy, which nothing enforces; it is a safety
+ * rule, not containment.
+ */
+export function workingCopiesOverlap(
+  left: string,
+  right: string,
+  /** The platform whose path rules apply. Production passes nothing. */
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const paths = platform === 'win32' ? path.win32 : path.posix;
+  const normalise = (candidate: string): string => {
+    const resolved = paths.resolve(candidate);
+    return platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  const a = normalise(left);
+  const b = normalise(right);
+  const inside = (inner: string, outer: string): boolean =>
+    inner.startsWith(outer.endsWith(paths.sep) ? outer : `${outer}${paths.sep}`);
+  return a === b || inside(a, b) || inside(b, a);
+}
+
 export class ChatService {
   private readonly options: ChatServiceOptions;
 
@@ -713,10 +801,7 @@ export class ChatService {
    * so an orphan here does not merely waste cycles: it blocks the next session
    * from starting at all.
    */
-  private activeTest: ChildProcess | null = null;
-
-  /** Set when DSpatch itself killed the command, so it is never read as a result. */
-  private testKillRequested = false;
+  private activeCommand: ActiveCommand | null = null;
 
   /** The result the window is showing, and the snapshots it is bound to. */
   private lastTest: TestOutcome | null = null;
@@ -728,25 +813,30 @@ export class ChatService {
   private runner: NodeRunner | null;
 
   /**
-   * Every attempt this process has made, in an explicit state.
+   * The attempt numbers this window has handed out or read back.
    *
-   * Deliberately **not** cleared when a session closes. A run whose end was never
-   * confirmed does not stop being unresolved because DSpatch opened a different
-   * project, and the next send has to reckon with it rather than start beside it.
-   * What closing does is record that DSpatch stopped listening, which is a change
-   * in knowledge and not an ending.
+   * Every attempt lives in its conversation's ledger ({@link HeldConversation}), and
+   * a ledger is deliberately **not** cleared when a session closes: a run whose end
+   * was never confirmed does not stop being unresolved because DSpatch opened a
+   * different project. Sharing this counter between the ledgers means a new attempt
+   * never takes a number another held conversation already uses.
    */
-  private readonly ledger = new AttemptLedger();
+  private readonly attemptSequence: AttemptSequence = { last: 0 };
+
+  /** What the run state reads before any conversation is open: empty. */
+  private readonly noConversationLedger = new AttemptLedger(undefined, this.attemptSequence);
 
   /** The attempt a `send` in flight belongs to. `run.started` needs it. */
   private pendingAttemptId: string | null = null;
 
-  private readonly attemptByRunId = new Map<string, string>();
+  /** By run ID, with the ledger of the conversation the run belongs to. */
+  private readonly attemptByRunId = new Map<
+    string,
+    { readonly ledger: AttemptLedger; readonly attemptId: string }
+  >();
 
   /** Sends the window stopped waiting for. Their runs are stopped if they start. */
   private readonly abandonedAttempts = new Set<string>();
-
-  private activeCommandAttemptId: string | null = null;
 
   private readonly cancelConfirmMs: number;
 
@@ -761,20 +851,17 @@ export class ChatService {
   /** The conversation the current work belongs to. `null` before a project opens. */
   private conversationId: string | null = null;
 
-  private conversationCreatedAtUtc: string | null = null;
-
   /**
-   * Which conversation each attempt belongs to.
-   *
-   * The ledger is deliberately not cleared when a session closes, so within one
-   * process it holds attempts from every project that has been opened. Saving all of
-   * them into whichever conversation happens to be current would put one project's
-   * prompts into another project's file.
+   * Every conversation this window has opened or read back, by ID, kept until the
+   * window closes. See {@link HeldConversation}.
    */
-  private readonly attemptConversation = new Map<string, string>();
+  private readonly held = new Map<string, HeldConversation>();
 
-  /** Messages read back from disk, per conversation, ahead of this session's turns. */
-  private readonly carriedMessages = new Map<string, readonly StoredMessage[]>();
+  /** Saved conversations with unresolved attempts, as listed at the first open. */
+  private unresolvedOnDisk: readonly {
+    readonly conversationId: string;
+    readonly projectPath: string;
+  }[] | null = null;
 
   /**
    * The history the opening session adopted, as the window is told about it.
@@ -788,34 +875,8 @@ export class ChatService {
    */
   private openedHistory: RestoredHistory | null = null;
 
-  /** Command results per conversation, this session's and any carried in. */
-  private readonly conversationTestRuns = new Map<string, TestOutcome[]>();
-
-  /** The baseline as it will be written. Built once per session: it cannot change. */
-  private storedBaseline: StoredBaseline | null = null;
-
-  private carriedBaseline: StoredBaseline | null = null;
-
-  /** The last diff the window produced, kept verbatim as the reviewed record. */
-  private reviewedDiff: WorkspaceReport | null = null;
-
-  /** The project the current conversation is about, so reopening it can continue. */
-  private conversationProjectPath: string | null = null;
-
-  /** A result read back from disk, adopted when its own project is opened again. */
-  private carriedTest: TestOutcome | null = null;
-
-  /** The conversation currently held from disk. One at a time, by design. */
-  private restoredConversationId: string | null = null;
-
-  /** Conversations this window has actually worked in, as opposed to read. */
-  private readonly liveConversations = new Set<string>();
-
   /** The most recent save failure, so the window can say the work is not safe. */
   private lastSaveError: string | null = null;
-
-  /** The last body written, so an unchanged conversation is not rewritten. */
-  private lastSavedBody: string | null = null;
 
   /**
    * The recap DSpatch still owes the provider, or `null`.
@@ -1230,7 +1291,10 @@ export class ChatService {
     readonly continuity: SessionContinuity;
   }> {
     const saved = this.savedSessionFor(conversationId);
-    const savedMessageCount = (this.carriedMessages.get(conversationId) ?? []).length;
+    // The same merged conversation the window is given (WS-1 #10): the file's
+    // messages and this run's turns, so a conversation worked in earlier in this run
+    // is not recapped as if those turns had never happened.
+    const savedMessageCount = this.mergedMessages(conversationId).length;
     const previousId = saved?.dspatchSessionId ?? null;
 
     if (newProviderSessionRequested) {
@@ -1239,13 +1303,7 @@ export class ChatService {
         previousId === null
           ? 'you asked for a new provider session'
           : `you asked for a new provider session rather than continuing ${previousId}`;
-      const recap = buildResendContext({
-        workspacePath,
-        messages: this.carriedMessages.get(conversationId) ?? [],
-        reviewedDiff: this.reviewedDiff,
-        test: this.carriedTest,
-        reason,
-      });
+      const recap = this.recapFor(conversationId, workspacePath, reason);
       this.options.log(
         `new provider session requested; not resuming ${previousId ?? 'anything'}`,
       );
@@ -1303,13 +1361,7 @@ export class ChatService {
         const reason = describeError(error);
         this.options.log(`resume of ${previousId} refused: ${reason}`);
         const handle = await adapter.startSession(config);
-        const recap = buildResendContext({
-          workspacePath,
-          messages: this.carriedMessages.get(conversationId) ?? [],
-          reviewedDiff: this.reviewedDiff,
-          test: this.carriedTest,
-          reason,
-        });
+        const recap = this.recapFor(conversationId, workspacePath, reason);
         return {
           handle,
           continuity: {
@@ -1346,13 +1398,7 @@ export class ChatService {
       previousId === null
         ? 'this conversation has no earlier provider session recorded'
         : `this build cannot resume a session on the ${adapter.id} adapter`;
-    const recap = buildResendContext({
-      workspacePath,
-      messages: this.carriedMessages.get(conversationId) ?? [],
-      reviewedDiff: this.reviewedDiff,
-      test: this.carriedTest,
-      reason: noSession,
-    });
+    const recap = this.recapFor(conversationId, workspacePath, noSession);
     return {
       handle,
       continuity: {
@@ -1369,6 +1415,18 @@ export class ChatService {
           'for word, in front of your next message.',
       },
     };
+  }
+
+  /** DSpatch's record of a conversation for a model that was told nothing. */
+  private recapFor(conversationId: string, workspacePath: string, reason: string): string | null {
+    const held = this.held.get(conversationId) ?? null;
+    return buildResendContext({
+      workspacePath,
+      messages: this.mergedMessages(conversationId),
+      reviewedDiff: held?.reviewedDiff ?? null,
+      test: held?.lastTest ?? null,
+      reason,
+    });
   }
 
   /** How this session relates to the conversation's earlier one. */
@@ -1476,16 +1534,24 @@ export class ChatService {
     if (prompt.trim() === '') {
       throw new Error('An empty prompt is not sent.');
     }
-    const decision = this.ledger.mayRepeat('agent-turn', acknowledgedAttemptIds);
+    // The block belongs to the working copy (WS-1 #11): this conversation's attempts
+    // and those of every held conversation over the same or a nested folder.
+    const ledger = this.currentLedger();
+    const sharing = this.conversationsSharingWorkingCopy();
+    const decision = AttemptLedger.mayRepeatAcross(
+      [ledger, ...sharing.map((held) => held.ledger)],
+      'agent-turn',
+      acknowledgedAttemptIds,
+    );
     if (!decision.allowed) {
       throw new Error(decision.reason);
     }
-    for (const attemptId of acknowledgedAttemptIds) {
-      this.ledger.acknowledge(
-        attemptId,
-        `A new message was sent with this attempt left unresolved. ${decision.reason}`,
-      );
-    }
+    this.acknowledgeInWorkingCopy(
+      ledger,
+      sharing,
+      acknowledgedAttemptIds,
+      `A new message was sent with this attempt left unresolved. ${decision.reason}`,
+    );
     // A cancellation watch that is still running belongs to the run that was
     // cancelled, and its verdict is the only thing that can distinguish "the
     // provider stopped" from "DSpatch stopped listening". Clearing it because a
@@ -1505,9 +1571,8 @@ export class ChatService {
     const resent = this.pendingResendContext;
     this.pendingResentContext = resent;
     const sentText = resent === null ? prompt : `${resent}\n\n${prompt}`;
-    const attempt = this.ledger.open('agent-turn', promptLabel(prompt));
+    const attempt = ledger.open('agent-turn', promptLabel(prompt));
     this.pendingAttemptId = attempt.attemptId;
-    this.claimAttempt(attempt.attemptId);
     // Before the send, not after it. An attempt that never reached the disk cannot be
     // reconciled as an unknown outcome after a restart, and a send that is interrupted
     // between here and the provider's answer is exactly the case AC#3 is about.
@@ -1523,17 +1588,20 @@ export class ChatService {
       // Only once the provider has taken it. A send that was refused resent
       // nothing, so the next attempt must carry the recap again.
       this.pendingResendContext = null;
-      this.attemptByRunId.set(reference.dspatchRunId, attempt.attemptId);
+      this.attemptByRunId.set(reference.dspatchRunId, {
+        ledger,
+        attemptId: attempt.attemptId,
+      });
       if (this.abandonedAttempts.has(attempt.attemptId)) {
         // The window stopped waiting while this was pending, and then a run turned
         // out to exist after all. It is asked to stop immediately: an abandoned
         // send must not leave a turn nobody is watching.
-        await this.stopAbandonedRun(attempt.attemptId, reference.dspatchRunId);
+        await this.stopAbandonedRun(attempt.attemptId, reference.dspatchRunId, ledger);
       }
       return reference;
     } catch (error) {
       const message = describeError(error);
-      this.ledger.markFailed(
+      ledger.markFailed(
         attempt.attemptId,
         `The provider refused the message: ${message}`,
       );
@@ -1636,14 +1704,15 @@ export class ChatService {
     // not attempt a cancellation that would certainly fail: it records the
     // abandonment and cancels the run the moment one is actually available.
     const pendingAttemptId = this.pendingAttemptId;
+    const ledger = this.currentLedger();
     const waiting =
       pendingAttemptId === null
-        ? [...this.ledger.unresolved('agent-turn')]
+        ? [...ledger.unresolved('agent-turn')]
             .reverse()
             .find(
               (attempt) => attempt.state === 'waiting' || attempt.state === 'running',
             )
-        : (this.ledger.get(pendingAttemptId) ?? undefined);
+        : (ledger.get(pendingAttemptId) ?? undefined);
     if (waiting === undefined) {
       return {
         cancelledRun: false,
@@ -1659,7 +1728,7 @@ export class ChatService {
       return {
         cancelledRun: true,
         attemptId: waiting.attemptId,
-        state: this.ledger.get(waiting.attemptId)?.state ?? null,
+        state: ledger.get(waiting.attemptId)?.state ?? null,
         note:
           `A run did exist for ${waiting.attemptId}, so it was asked to cancel ` +
           `instead (the request resolved in ${String(outcome.elapsedMs)} ms). ` +
@@ -1667,7 +1736,7 @@ export class ChatService {
       };
     }
     this.abandonedAttempts.add(waiting.attemptId);
-    this.ledger.markOutcomeUnknown(
+    ledger.markOutcomeUnknown(
       waiting.attemptId,
       'You stopped waiting for this message before the provider had replied to it. ' +
         'DSpatch cannot tell how far it got, so this outcome is unknown rather ' +
@@ -1685,23 +1754,27 @@ export class ChatService {
     };
   }
 
-  private async stopAbandonedRun(attemptId: string, runId: string): Promise<void> {
+  private async stopAbandonedRun(
+    attemptId: string,
+    runId: string,
+    ledger: AttemptLedger,
+  ): Promise<void> {
     const session = this.session;
     const adapter = this.adapter;
     this.abandonedAttempts.delete(attemptId);
     if (session === null || adapter === null) {
       return;
     }
-    this.ledger.markCancelRequested(
+    ledger.markCancelRequested(
       attemptId,
       `A run (${runId}) started after you stopped waiting, so DSpatch asked the ` +
         'provider to cancel it. That request has not been confirmed yet.',
     );
     try {
       await adapter.cancel(session.dspatchSessionId);
-      this.armCancelConfirmation(attemptId, adapter);
+      this.armCancelConfirmation(attemptId, adapter, ledger);
     } catch (error) {
-      this.ledger.markOutcomeUnknown(
+      ledger.markOutcomeUnknown(
         attemptId,
         `A run (${runId}) started after you stopped waiting, and the request to ` +
           `cancel it failed: ${describeError(error)}`,
@@ -1713,13 +1786,14 @@ export class ChatService {
     const { adapter, session } = this.requireSession();
     const requestedAtUtc = nowIso();
     const startedAt = performance.now();
-    const attempt = [...this.ledger.unresolved('agent-turn')]
+    const ledger = this.currentLedger();
+    const attempt = [...ledger.unresolved('agent-turn')]
       .reverse()
       .find(
         (entry) => entry.state === 'running' || entry.state === 'waiting',
       );
     if (attempt !== undefined) {
-      this.ledger.markCancelRequested(
+      ledger.markCancelRequested(
         attempt.attemptId,
         `Cancellation requested at ${requestedAtUtc}. The request returning is not ` +
           'an ending: substep 6 measured cancel() resolving in single-digit ' +
@@ -1738,7 +1812,7 @@ export class ChatService {
     // Local work stops here regardless of what the provider does with the
     // request. The runner's own output is not part of the cancel measurement:
     // it writes under `artifacts/`, which snapshots exclude.
-    this.stopWorkspaceTest();
+    this.stopWorkspaceTest(false);
     let error: string | null = null;
     try {
       await adapter.cancel(session.dspatchSessionId);
@@ -1756,11 +1830,11 @@ export class ChatService {
     );
     if (attempt !== undefined) {
       if (error === null) {
-        this.armCancelConfirmation(attempt.attemptId, adapter);
+        this.armCancelConfirmation(attempt.attemptId, adapter, ledger);
       } else {
         // A cancellation that could not even be requested leaves the run in
         // whatever state it was in. That is unknown, not stopped.
-        this.ledger.markOutcomeUnknown(
+        ledger.markOutcomeUnknown(
           attempt.attemptId,
           `The cancellation request itself failed: ${error} Whether the run is ` +
             'still going is unknown.',
@@ -1794,15 +1868,19 @@ export class ChatService {
    *
    * `unref` so a pending confirmation never holds the process open.
    */
-  private armCancelConfirmation(attemptId: string, adapter: ChatAdapter): void {
+  private armCancelConfirmation(
+    attemptId: string,
+    adapter: ChatAdapter,
+    ledger: AttemptLedger,
+  ): void {
     const window = this.cancelConfirmWindow(adapter);
     const timer = setTimeout(() => {
-      const current = this.ledger.get(attemptId);
+      const current = ledger.get(attemptId);
       if (current === null || current.state !== 'cancel-requested') {
         return;
       }
       const seconds = formatSeconds(window.ms);
-      this.ledger.markOutcomeUnknown(
+      ledger.markOutcomeUnknown(
         attemptId,
         window.declaredBoundMs === null
           ? `No terminal event arrived within ${seconds} s of the ` +
@@ -1909,7 +1987,7 @@ export class ChatService {
     if (session === null) {
       throw new Error('No session is open, so there is no working copy to run in.');
     }
-    if (this.activeTest !== null) {
+    if (this.activeCommand !== null) {
       throw new Error(
         'A command is already running in this working copy. Stop it first: two at ' +
           'once would interleave their output and their file writes.',
@@ -1920,16 +1998,22 @@ export class ChatService {
     // prevents the folder from being replaced — so running it again is not a
     // neutral act and is not done on DSpatch's own initiative.
     const acknowledged = request.acknowledgedAttemptIds ?? [];
-    const decision = this.ledger.mayRepeat('command', acknowledged);
+    const ledger = this.currentLedger();
+    const sharing = this.conversationsSharingWorkingCopy();
+    const decision = AttemptLedger.mayRepeatAcross(
+      [ledger, ...sharing.map((held) => held.ledger)],
+      'command',
+      acknowledged,
+    );
     if (!decision.allowed) {
       throw new Error(decision.reason);
     }
-    for (const attemptId of acknowledged) {
-      this.ledger.acknowledge(
-        attemptId,
-        `The command was run again with this attempt left unresolved. ${decision.reason}`,
-      );
-    }
+    this.acknowledgeInWorkingCopy(
+      ledger,
+      sharing,
+      acknowledged,
+      `The command was run again with this attempt left unresolved. ${decision.reason}`,
+    );
     const command = request.command.trim();
     const cwd = path.resolve(
       request.cwd.trim() === '' ? session.workspacePath : request.cwd.trim(),
@@ -1943,14 +2027,21 @@ export class ChatService {
     const beforeSnapshotId = this.safeSnapshotId();
     const startedAtUtc = nowIso();
     const startedAt = performance.now();
-    this.testKillRequested = false;
+    // The conversation that started it owns its result (WS-1 #8), even when the
+    // session has changed by the time it ends: closing a session stops a command,
+    // and its end arrives after the next conversation is already open.
+    const ownerId = this.conversationId;
 
-    const attempt = this.ledger.open('command', command);
-    this.activeCommandAttemptId = attempt.attemptId;
-    this.claimAttempt(attempt.attemptId);
+    const attempt = ledger.open('command', command);
     const child = spawn(command, { cwd, shell: true, windowsHide: true });
-    this.activeTest = child;
-    this.ledger.markRunning(
+    const run: ActiveCommand = {
+      child,
+      attemptId: attempt.attemptId,
+      ledger,
+      killedByDspatch: false,
+    };
+    this.activeCommand = run;
+    ledger.markRunning(
       attempt.attemptId,
       { localPid: child.pid ?? null },
       `Started as pid ${String(child.pid ?? -1)} in ${cwd}, against ` +
@@ -2006,11 +2097,11 @@ export class ChatService {
     });
 
     const durationMs = round(performance.now() - startedAt);
-    this.activeTest = null;
-    this.activeCommandAttemptId = null;
+    if (this.activeCommand === run) {
+      this.activeCommand = null;
+    }
     if (ended.error !== null) {
-      this.testKillRequested = false;
-      this.ledger.markFailed(
+      ledger.markFailed(
         attempt.attemptId,
         `The command could not be started: ${ended.error}`,
       );
@@ -2020,7 +2111,7 @@ export class ChatService {
       );
     }
 
-    const killedByDspatch = this.testKillRequested;
+    const killedByDspatch = run.killedByDspatch;
     const verdict = evaluateTestVerdict({
       killedByDspatch,
       exitCode: ended.code,
@@ -2041,17 +2132,24 @@ export class ChatService {
       startedAtUtc,
       finishedAtUtc: nowIso(),
       snapshotId: beforeSnapshotId,
-      afterRunSnapshotId: this.safeSnapshotId(),
+      // The working copy it ran in, which is not the open one if the session changed.
+      afterRunSnapshotId: safeSnapshotIdOf(session.workspacePath),
       baselineSnapshotId: session.baseline.snapshotId,
       gitHeadRevision: session.git.headRevision,
       verdict: verdict.verdict,
       verdictHeadline: verdict.headline,
       attemptId: attempt.attemptId,
     };
-    this.testKillRequested = false;
-    this.lastTest = outcome;
+    const owner = ownerId === null ? null : (this.held.get(ownerId) ?? null);
+    if (owner !== null) {
+      owner.testRuns.push(outcome);
+      owner.lastTest = outcome;
+    }
+    // Shown only if its own conversation is still the one open.
+    if (this.session !== null && this.conversationId === ownerId) {
+      this.lastTest = outcome;
+    }
     this.testRuns.push(outcome);
-    this.recordConversationTest(outcome);
     // The attempt's state follows the verdict, not the exit code. A run DSpatch
     // killed is recorded as stopped rather than completed, and one that ended
     // without an exit code is recorded as unknown, so the attempt list cannot
@@ -2060,11 +2158,11 @@ export class ChatService {
       `Exit code ${ended.code === null ? 'none' : String(ended.code)}, signal ` +
       `${ended.signal ?? 'none'}, after ${String(durationMs)} ms. ${verdict.headline}`;
     if (verdict.verdict === 'interrupted') {
-      this.ledger.markStopped(attempt.attemptId, ending);
+      ledger.markStopped(attempt.attemptId, ending);
     } else if (verdict.verdict === 'unknown') {
-      this.ledger.markOutcomeUnknown(attempt.attemptId, ending);
+      ledger.markOutcomeUnknown(attempt.attemptId, ending);
     } else {
-      this.ledger.markCompleted(attempt.attemptId, ending);
+      ledger.markCompleted(attempt.attemptId, ending);
     }
     this.options.log(
       `${attempt.attemptId}: command exit=${String(outcome.exitCode)} ` +
@@ -2074,46 +2172,19 @@ export class ChatService {
           outcome.afterRunSnapshotId ?? 'unknown'
         }`,
     );
-    this.saveConversation();
+    this.saveConversation(ownerId);
     return outcome;
-  }
-
-  /**
-   * Note which conversation an attempt belongs to.
-   *
-   * The ledger outlives a session on purpose — an unresolved attempt has to stay
-   * visible after the session that made it is gone — so within one process it holds
-   * attempts from every project opened. This is what keeps one project's prompts out
-   * of another project's file.
-   */
-  private claimAttempt(attemptId: string): void {
-    if (this.conversationId !== null) {
-      this.attemptConversation.set(attemptId, this.conversationId);
-      this.liveConversations.add(this.conversationId);
-    }
-  }
-
-  /** Keep a finished command with the conversation it was run in, then save it. */
-  private recordConversationTest(outcome: TestOutcome): void {
-    const conversationId = this.conversationId;
-    if (conversationId === null) {
-      return;
-    }
-    const runs = this.conversationTestRuns.get(conversationId) ?? [];
-    runs.push(outcome);
-    this.conversationTestRuns.set(conversationId, runs);
   }
 
   /** Stop a running command from the window, with its whole process tree. */
   stopRunningCommand(): { readonly stopped: boolean; readonly note: string } {
-    if (this.activeTest === null) {
+    if (this.activeCommand === null) {
       return {
         stopped: false,
         note: 'No command was running, so nothing was stopped.',
       };
     }
-    this.testKillRequested = true;
-    this.stopWorkspaceTest();
+    this.stopWorkspaceTest(true);
     return {
       stopped: true,
       note:
@@ -2234,50 +2305,66 @@ export class ChatService {
       );
     }
 
-    const adopted = this.adoptSaved(conversation);
-    const reconciliations = adopted.reconciliations;
-    const projectExists = directoryExists(conversation.project.path);
+    // A conversation this window already holds is taken from memory, which the file
+    // is a copy of: reading it again would raise its unknown outcomes a second time
+    // and, before WS-1, collided with its own attempt IDs and said they "could not be
+    // read back".
+    const inMemory = this.held.get(conversationId) ?? null;
+    let held: HeldConversation;
+    let reconciliations: readonly AttemptReconciliation[];
+    let reconciliationNote: string;
+    let adoptNote: string | null = null;
+    if (inMemory !== null) {
+      held = inMemory;
+      reconciliations = heldReconciliations(held.ledger);
+      reconciliationNote = describeHeldReconciliation(reconciliations);
+    } else {
+      const adopted = this.adoptSaved(conversation);
+      held = adopted.held;
+      reconciliations = adopted.reconciliations;
+      reconciliationNote = describeReconciliation(reconciliations);
+      adoptNote = adopted.note;
+    }
+    this.conversationId = conversationId;
+    const projectPath = held.projectPath;
+    const projectExists = directoryExists(projectPath);
     // One hash of the project, shared by the result and the diff below, so both
     // statements are about the same observed content rather than two readings.
-    const currentSnapshotId = projectExists
-      ? safeSnapshotIdOf(conversation.project.path)
-      : null;
+    const currentSnapshotId = projectExists ? safeSnapshotIdOf(projectPath) : null;
 
-    this.carriedTest = pickLastTest(conversation);
-    const testResult = this.describeRestoredTest(this.carriedTest, currentSnapshotId);
-    const restoredDiff = describeRestoredDiff(conversation.reviewedDiff, currentSnapshotId);
-    const runState = this.ledger.report();
+    const testResult = this.describeRestoredTest(held.lastTest, currentSnapshotId);
+    const restoredDiff = describeRestoredDiff(held.reviewedDiff, currentSnapshotId);
+    const runState = this.getRunState();
+    const messages = this.mergedMessages(conversationId);
+    const record = this.buildConversation(conversationId) ?? conversation;
 
     this.options.log(
-      `resumed conversation ${conversationId}: messages=${String(
-        conversation.messages.length,
-      )} attempts=${String(conversation.attempts.length)} reconciled=${String(
-        reconciliations.length,
-      )} project=${conversation.project.path} snapshot=${currentSnapshotId ?? 'unreadable'}`,
+      `resumed conversation ${conversationId}${inMemory === null ? '' : ' (held in this window)'}: ` +
+        `messages=${String(messages.length)} attempts=${String(
+          held.ledger.all().length,
+        )} reconciled=${String(reconciliations.length)} project=${projectPath} snapshot=${
+          currentSnapshotId ?? 'unreadable'
+        }`,
     );
 
     return {
       conversationId,
       filePath: result.filePath,
       formatVersion: conversation.formatVersion,
-      createdAtUtc: conversation.createdAtUtc,
+      createdAtUtc: held.createdAtUtc,
       savedAtUtc: conversation.savedAtUtc,
       project: {
-        path: conversation.project.path,
+        path: projectPath,
         exists: projectExists,
-        gitAtSave: conversation.project.git,
+        gitAtSave: record.project.git,
       },
-      session: conversation.session,
-      messages: conversation.messages,
-      attempts: this.ledger
-        .all()
-        .filter(
-          (attempt) => this.attemptConversation.get(attempt.attemptId) === conversationId,
-        ),
+      session: record.session,
+      messages,
+      attempts: held.ledger.all(),
       reconciliation: {
         attempts: reconciliations,
         needsAcknowledgement: runState.needsAcknowledgement,
-        note: describeReconciliation(reconciliations),
+        note: reconciliationNote,
         repeated: {
           providerRuns: 0,
           commands: 0,
@@ -2291,73 +2378,152 @@ export class ChatService {
       },
       testResult,
       reviewedDiff: restoredDiff,
-      statement: restoreStatement(conversation, projectExists, restoredDiff, testResult),
+      statement: restoreStatement(
+        record,
+        projectExists,
+        restoredDiff,
+        testResult,
+        inMemory === null ? 'file' : 'window',
+      ),
       readOnly: result.readOnly,
-      error: joinErrors(result.error, adopted.note),
+      error: joinErrors(result.error, adoptNote),
     };
   }
 
   /**
-   * Take a saved conversation as the current one, reconciling its open attempts.
+   * Hold a saved conversation in this window, reconciling its open attempts.
    *
-   * Only one conversation is held from disk at a time. Reading a second one back
-   * releases the first's attempts from the ledger — they are a view of a file that
-   * still holds them, and per-window attempt numbering means two conversations would
-   * otherwise collide on `dsp-attempt-0001`. This process's own attempts are never
-   * touched by that.
+   * Into a ledger of its own (WS-1). Until then every conversation shared one
+   * window-wide ledger, so a conversation read back after another had been worked in
+   * could not adopt attempts whose numbers were already taken, and saving it then
+   * filed the other conversation's attempts under those numbers. A ledger per
+   * conversation holds exactly what the file holds; the shared counter keeps new
+   * numbers new. It does not make the conversation current; the caller does that.
    */
   private adoptSaved(conversation: StoredConversation): {
+    readonly held: HeldConversation;
     readonly reconciliations: readonly AttemptReconciliation[];
     /** What could not be adopted, in words, or `null` when everything was. */
     readonly note: string | null;
   } {
-    const conversationId = conversation.conversationId;
-    const previous = this.restoredConversationId;
-    if (previous !== null && previous !== conversationId) {
-      const dropped = this.ledger.dropRestored();
-      this.carriedMessages.delete(previous);
-      this.conversationTestRuns.delete(previous);
-      this.restoredConversationId = null;
-      this.options.log(
-        `released ${String(dropped)} attempts read back from ${previous}; they remain ` +
-          'in that conversation\'s file',
-      );
-    }
-
-    const outcome = this.ledger.restore(conversation.attempts);
-    for (const attempt of conversation.attempts) {
-      this.attemptConversation.set(attempt.attemptId, conversationId);
-    }
-    this.restoredConversationId = conversationId;
-
-    this.conversationId = conversationId;
-    this.conversationProjectPath = conversation.project.path;
-    this.conversationCreatedAtUtc = conversation.createdAtUtc;
-    this.carriedMessages.set(conversationId, conversation.messages);
-    this.conversationTestRuns.set(conversationId, [...conversation.testRuns]);
-    this.carriedBaseline = conversation.baseline;
-    this.storedBaseline = null;
-    this.reviewedDiff = conversation.reviewedDiff;
-    this.carriedTest = pickLastTest(conversation);
-    // The body on disk was written by an earlier process, so this one has nothing to
-    // compare against and must not assume its first save is redundant.
-    this.lastSavedBody = null;
-
+    const ledger = new AttemptLedger(undefined, this.attemptSequence);
+    const outcome = ledger.restore(conversation.attempts);
+    const held: HeldConversation = {
+      conversationId: conversation.conversationId,
+      projectPath: conversation.project.path,
+      createdAtUtc: conversation.createdAtUtc,
+      ledger,
+      carriedMessages: conversation.messages,
+      testRuns: [...conversation.testRuns],
+      lastTest: pickLastTest(conversation),
+      reviewedDiff: conversation.reviewedDiff,
+      carriedBaseline: conversation.baseline,
+      storedBaseline: null,
+      project: conversation.project,
+      session: conversation.session,
+      // The body on disk was written by an earlier process, so this one has nothing
+      // to compare against and must not assume its first save is redundant.
+      lastSavedDigest: null,
+    };
+    this.held.set(held.conversationId, held);
     return {
+      held,
       reconciliations: outcome.reconciliations,
       note:
         outcome.skippedAttemptIds.length === 0
           ? null
-          : `${String(outcome.skippedAttemptIds.length)} attempt${
+          : `${String(outcome.skippedAttemptIds.length)} attempt ID${
               outcome.skippedAttemptIds.length === 1 ? '' : 's'
-            } in this file (${outcome.skippedAttemptIds.join(', ')}) could not be read ` +
-            'back, because this window already has attempts with those IDs from work ' +
-            'in another project — attempts are numbered per window, so two ' +
-            'conversations can use the same numbers. Their saved states are in the ' +
-            'file and are unchanged. DSpatch will not merge two different pieces of ' +
-            'work under one ID: to reconcile these, read this conversation back in a ' +
-            'freshly started DSpatch.',
+            } (${outcome.skippedAttemptIds.join(', ')}) appear more than once in this ` +
+            'file. DSpatch writes each ID once, so the file has been edited or damaged ' +
+            'outside it. The first record of each was read back; DSpatch will not merge ' +
+            'two records under one ID, and the next save writes only the record it read. ' +
+            'Export the file first if the other records matter.',
     };
+  }
+
+  /** A conversation new to this window, with nothing carried in. */
+  private holdNew(conversationId: string, projectPath: string): HeldConversation {
+    const held: HeldConversation = {
+      conversationId,
+      projectPath,
+      createdAtUtc: nowIso(),
+      ledger: new AttemptLedger(undefined, this.attemptSequence),
+      carriedMessages: [],
+      testRuns: [],
+      lastTest: null,
+      reviewedDiff: null,
+      carriedBaseline: null,
+      storedBaseline: null,
+      project: null,
+      session: null,
+      lastSavedDigest: null,
+    };
+    this.held.set(conversationId, held);
+    return held;
+  }
+
+  /**
+   * Hold the saved conversations that can block work in this working copy.
+   *
+   * The repeat block belongs to the working copy and survives a restart (WS-1 #11),
+   * so a new app run that opens a folder inside another conversation's project must
+   * know about that conversation's unresolved attempts without that conversation
+   * being opened first. Only conversations whose file reports something unresolved
+   * and whose project overlaps this one are read; they are held, not made current,
+   * and nothing is written to their files unless an acknowledgement changes them.
+   *
+   * The store is listed once per app run, at the first open whose listing succeeds:
+   * listing reads every file, and after that every new unresolved attempt is made in a
+   * conversation this window already holds. A listing that fails — the directory
+   * itself cannot be read — is not taken as "nothing saved": it is tried again at the
+   * next open (review 007 N3), and nothing here throws.
+   *
+   * The same listing raises the window's attempt counter past the highest attempt
+   * number in any readable conversation file (review 004 S1). When it succeeds at the
+   * first open, as it does unless the directory cannot be read, it happens before the
+   * session exists, and an attempt can only be made in an open session, so no attempt
+   * of this run is numbered before it.
+   */
+  private holdBlockersFromDisk(workspacePath: string, store: ConversationStore | null): void {
+    if (store === null) {
+      return;
+    }
+    if (this.unresolvedOnDisk === null) {
+      const { listing, attemptIds } = store.listWithAttemptIds();
+      if (listing.error !== null) {
+        this.options.log(
+          `[conversation] the saved conversations could not be listed, so attempts ` +
+            `saved in them are not counted yet; listing again at the next open: ` +
+            listing.error,
+        );
+        return;
+      }
+      this.attemptSequence.last = attemptIds.reduce(
+        (highest, attemptId) => Math.max(highest, attemptOrdinal(attemptId)),
+        this.attemptSequence.last,
+      );
+      this.unresolvedOnDisk = listing.entries
+        .filter((entry) => entry.unresolvedAttemptCount > 0 && entry.error === null)
+        .map((entry) => ({ conversationId: entry.conversationId, projectPath: entry.projectPath }));
+    }
+    for (const entry of this.unresolvedOnDisk) {
+      if (
+        this.held.has(entry.conversationId) ||
+        !workingCopiesOverlap(entry.projectPath, workspacePath)
+      ) {
+        continue;
+      }
+      const conversation = store.read(entry.conversationId).conversation;
+      if (conversation === null) {
+        continue;
+      }
+      const adopted = this.adoptSaved(conversation);
+      this.options.log(
+        `holding ${String(adopted.reconciliations.length)} unresolved attempt(s) of ` +
+          `${entry.conversationId} (${entry.projectPath}), which shares this working copy`,
+      );
+    }
   }
 
   /**
@@ -2367,58 +2533,117 @@ export class ChatService {
    * opening the project directly cannot lose the history or quietly skip an
    * unresolved attempt that pressing *Continue* would have shown. A conversation
    * this window already holds — because work was done in it, or because it was read
-   * back a moment ago — is taken as it is in memory: the file is a copy of that, and
-   * reading it again would raise the same unknown outcomes a second time.
+   * back — is taken as it is in memory: the file is a copy of that, and reading it
+   * again would raise the same unknown outcomes a second time. Its own record comes
+   * with it, and nothing of the conversation that was open before (WS-1 #7).
    */
   private adoptConversationFor(workspacePath: string, baseline: WorkspaceSnapshot): string {
     const store = this.options.conversations?.() ?? null;
+    const current = this.current();
     const known =
-      this.conversationId !== null &&
-      this.conversationProjectPath !== null &&
-      samePath(this.conversationProjectPath, workspacePath)
-        ? this.conversationId
+      current !== null && samePath(current.projectPath, workspacePath)
+        ? current.conversationId
         : (this.options.conversationForProject?.(workspacePath) ?? null);
-    const inMemory =
-      known !== null &&
-      (this.liveConversations.has(known) || this.restoredConversationId === known);
+    const inMemory = known === null ? null : (this.held.get(known) ?? null);
     // The whole read is kept, not just the conversation in it: a file that exists and
     // could not be parsed is the one case where the window must say so rather than
     // draw the empty thread that a genuinely new conversation gets.
     const read =
-      known === null || inMemory || store === null ? null : store.read(known);
+      known === null || inMemory !== null || store === null ? null : store.read(known);
     const saved = read?.conversation ?? null;
 
-    if (saved !== null && samePath(saved.project.path, workspacePath)) {
+    let held: HeldConversation;
+    if (inMemory !== null) {
+      held = inMemory;
+      held.projectPath = workspacePath;
+    } else if (saved !== null && samePath(saved.project.path, workspacePath)) {
       const adopted = this.adoptSaved(saved);
+      held = adopted.held;
       if (adopted.note !== null) {
         this.options.log(`[conversation] ${adopted.note}`);
       }
-    } else if (inMemory && known !== null) {
-      this.conversationId = known;
-      this.conversationProjectPath = workspacePath;
     } else {
-      this.conversationId = known ?? newConversationId();
-      this.conversationProjectPath = workspacePath;
-      this.conversationCreatedAtUtc = nowIso();
-      this.carriedBaseline = null;
-      this.carriedTest = null;
-      this.reviewedDiff = null;
-      this.lastSavedBody = null;
+      held = this.holdNew(known ?? newConversationId(), workspacePath);
     }
-    // A result read back from disk becomes this session's last result, so the
-    // freshness rule applies it to the code that is on disk now. That is the point:
-    // the restart must not be a way for an old pass to look like a current one.
-    if (this.carriedTest !== null) {
-      this.lastTest = this.carriedTest;
-    }
+    this.conversationId = held.conversationId;
+    // The conversation's own last result becomes this session's, so the freshness rule
+    // applies it to the code that is on disk now. That is the point: a restart must
+    // not be a way for an old pass to look like a current one, and a switch must not
+    // be a way for another conversation's result to stand beside this code.
+    this.lastTest = held.lastTest;
     // Once per session, from the snapshot the session was actually started against.
     // Rebuilding it later would silently redefine what "since the session started"
     // means, which is the one thing a baseline may not do.
-    this.storedBaseline =
-      store === null ? null : this.buildStoredBaseline(baseline, store);
-    const conversationId = this.conversationId ?? newConversationId();
-    this.openedHistory = this.historyFor(conversationId, store, read);
-    return conversationId;
+    held.storedBaseline = store === null ? null : this.buildStoredBaseline(baseline, store);
+    if (held.storedBaseline !== null) {
+      // The save prefers the new baseline, so the file's copy is no longer read.
+      held.carriedBaseline = null;
+    }
+    this.holdBlockersFromDisk(workspacePath, store);
+    this.openedHistory = this.historyFor(held.conversationId, store, read);
+    return held.conversationId;
+  }
+
+  /** The conversation on screen, as held. */
+  private current(): HeldConversation | null {
+    return this.conversationId === null ? null : (this.held.get(this.conversationId) ?? null);
+  }
+
+  private currentLedger(): AttemptLedger {
+    return this.current()?.ledger ?? this.noConversationLedger;
+  }
+
+  /**
+   * The other held conversations whose project is this working copy or overlaps it.
+   *
+   * Their unresolved attempts block the same kind of work here (WS-1 #11), and only
+   * here: a conversation in an unrelated folder is never in this list.
+   */
+  private conversationsSharingWorkingCopy(): HeldConversation[] {
+    const here = this.session?.workspacePath ?? this.current()?.projectPath ?? null;
+    if (here === null) {
+      return [];
+    }
+    return [...this.held.values()].filter(
+      (held) =>
+        held.conversationId !== this.conversationId &&
+        workingCopiesOverlap(held.projectPath, here),
+    );
+  }
+
+  /** Record acknowledgements in this working copy, and save any other file they changed. */
+  private acknowledgeInWorkingCopy(
+    ledger: AttemptLedger,
+    sharing: readonly HeldConversation[],
+    attemptIds: readonly string[],
+    note: string,
+  ): void {
+    const touched = AttemptLedger.acknowledgeAcross(
+      ledger,
+      sharing.map((held) => held.ledger),
+      attemptIds,
+      note,
+    );
+    for (const held of sharing) {
+      if (touched.includes(held.ledger)) {
+        this.saveConversation(held.conversationId);
+      }
+    }
+  }
+
+  /**
+   * A conversation's messages: what its file held, then what this window did in it.
+   *
+   * The one rule for every reader — what the window is given, what is saved and what
+   * a recap is built from — so the three cannot disagree (WS-1 #10).
+   */
+  private mergedMessages(conversationId: string): StoredMessage[] {
+    return mergeConversationMessages(
+      this.held.get(conversationId)?.carriedMessages ?? [],
+      this.turns
+        .filter((turn) => turn.conversationId === conversationId)
+        .map((turn) => toStoredMessage(turn)),
+    );
   }
 
   /**
@@ -2439,15 +2664,9 @@ export class ChatService {
     store: ConversationStore | null,
     read: ConversationReadResult | null,
   ): RestoredHistory {
-    const messages = mergeConversationMessages(
-      this.carriedMessages.get(conversationId) ?? [],
-      this.turns
-        .filter((turn) => turn.conversationId === conversationId)
-        .map((turn) => toStoredMessage(turn)),
-    );
     return {
       conversationId,
-      messages,
+      messages: this.mergedMessages(conversationId),
       filePath: store?.filePathFor(conversationId) ?? null,
       savedAtUtc: read?.conversation?.savedAtUtc ?? null,
       // A file that could not be read is the one case where an empty thread is not
@@ -2457,39 +2676,48 @@ export class ChatService {
   }
 
   /**
-   * Save the current conversation.
+   * Save a conversation: the current one unless another is named.
    *
    * Called after everything that changes what happened: a project opening, a run
    * starting or ending, a command starting or ending, a diff being produced, and a
    * session closing. A run *starting* matters as much as one ending — an attempt that
    * was never written down as `running` cannot be reconciled as unknown after a
-   * restart, and that reconciliation is the point of AC#3.
+   * restart, and that reconciliation is the point of AC#3. Another conversation is
+   * named when something of its own changes while it is not on screen: a command it
+   * started ending late, or an acknowledgement of its attempt.
+   *
+   * Every save is built from that conversation's own held record, so no save can write
+   * one conversation's records into another's file (WS-1 #12).
    *
    * Failures are recorded and swallowed. The work on screen is real whether or not it
    * reached the disk, and the window says so through {@link saveError}.
    */
-  private saveConversation(): void {
+  private saveConversation(conversationId: string | null = this.conversationId): void {
     const store = this.options.conversations?.() ?? null;
-    const conversationId = this.conversationId;
     if (store === null || conversationId === null) {
       return;
     }
-    const record = this.buildConversation(conversationId);
-    if (record === null) {
+    const held = this.held.get(conversationId) ?? null;
+    const record = held === null ? null : this.buildConversation(conversationId);
+    if (held === null || record === null) {
       return;
     }
     // A save is attempted on many events and most of them change nothing that is
     // written down. Comparing bodies keeps the disk quiet without maintaining a
     // second idea of what has changed. `savedAtUtc` is excluded from the comparison
     // for exactly that reason: it changes on every call by construction.
-    const body = JSON.stringify({ ...record, savedAtUtc: '' });
-    if (body === this.lastSavedBody) {
+    const digest = createHash('sha256')
+      .update(JSON.stringify({ ...record, savedAtUtc: '' }))
+      .digest('hex');
+    if (digest === held.lastSavedDigest) {
       return;
     }
     const written = store.write(record);
-    this.lastSaveError = written.error;
+    if (conversationId === this.conversationId) {
+      this.lastSaveError = written.error;
+    }
     if (written.error === null) {
-      this.lastSavedBody = body;
+      held.lastSavedDigest = digest;
       this.options.log(
         `saved conversation ${conversationId}: ${String(record.messages.length)} ` +
           `messages, ${String(record.attempts.length)} attempts, ${String(
@@ -2502,17 +2730,16 @@ export class ChatService {
   }
 
   private buildConversation(conversationId: string): StoredConversation | null {
-    const session = this.session;
-    const messages: StoredMessage[] = mergeConversationMessages(
-      this.carriedMessages.get(conversationId) ?? [],
-      this.turns
-        .filter((turn) => turn.conversationId === conversationId)
-        .map((turn) => toStoredMessage(turn)),
-    );
+    const held = this.held.get(conversationId) ?? null;
+    if (held === null) {
+      return null;
+    }
+    const session =
+      this.session !== null && this.conversationId === conversationId ? this.session : null;
 
     const storedSession: StoredSession | null =
       session === null
-        ? this.savedSessionFor(conversationId)
+        ? (held.session ?? this.savedSessionFor(conversationId))
         : {
             dspatchSessionId: session.dspatchSessionId,
             providerSessionId: session.providerSessionId,
@@ -2525,42 +2752,41 @@ export class ChatService {
             suggestedTestCwd: session.suggestedTestCwd,
             testCommandNote: session.testCommandNote,
           };
-    const project = this.savedProjectFor(conversationId);
+    const project =
+      session === null
+        ? (held.project ?? this.savedProjectFor(conversationId))
+        : { path: session.workspacePath, git: session.git };
     if (storedSession === null || project === null) {
       // Nothing worth saving yet. A conversation with no project is not a
       // conversation, and writing a blank one would put a row in the chooser that
       // opens to nothing.
       return null;
     }
+    held.session = storedSession;
+    held.project = project;
 
     return {
       formatVersion: CONVERSATION_FORMAT_VERSION,
       conversationId,
-      createdAtUtc: this.conversationCreatedAtUtc ?? nowIso(),
+      createdAtUtc: held.createdAtUtc,
       savedAtUtc: nowIso(),
       // Filled in by the store, which is the only place that knows the build.
       appVersion: 'unknown',
       project,
       session: storedSession,
-      messages,
-      attempts: this.ledger
-        .persistable()
-        .filter(
-          (attempt) => this.attemptConversation.get(attempt.attemptId) === conversationId,
-        ),
-      testRuns: this.conversationTestRuns.get(conversationId) ?? [],
-      lastTestAttemptId: (this.lastTest ?? this.carriedTest)?.attemptId ?? null,
-      baseline: this.storedBaseline ?? this.carriedBaseline,
-      reviewedDiff: this.reviewedDiff,
+      messages: this.mergedMessages(conversationId),
+      attempts: held.ledger.persistable(),
+      testRuns: held.testRuns,
+      lastTestAttemptId: held.lastTest?.attemptId ?? null,
+      // Rebuilt by each session from its own snapshot, and the file's otherwise:
+      // never another conversation's.
+      baseline: held.storedBaseline ?? held.carriedBaseline,
+      reviewedDiff: held.reviewedDiff,
     };
   }
 
-  /** The project record for a conversation: the live session's, or the saved one. */
+  /** The project record a conversation's file holds. */
   private savedProjectFor(conversationId: string): StoredConversation['project'] | null {
-    const session = this.session;
-    if (session !== null) {
-      return { path: session.workspacePath, git: session.git };
-    }
     return this.options.conversations?.()?.read(conversationId).conversation?.project ?? null;
   }
 
@@ -2707,12 +2933,15 @@ export class ChatService {
 
   /** Every attempt and its explicit state. In memory only: nothing is hashed. */
   getRunState(): RunStateReport {
-    return this.ledger.report();
+    return AttemptLedger.reportAcross(
+      this.currentLedger(),
+      this.conversationsSharingWorkingCopy().map((held) => held.ledger),
+    );
   }
 
   /** The attempts, for the run record. */
   attempts(): readonly AttemptInfo[] {
-    return this.ledger.all();
+    return this.currentLedger().all();
   }
 
   /** The snapshot identity of the working copy now, or `null` if unreadable. */
@@ -2816,7 +3045,10 @@ export class ChatService {
     // Kept verbatim, as the diff that was put in front of a reviewer. Saving the
     // inputs and recomputing later would produce a diff of whatever the files became,
     // presented as the one that was read.
-    this.reviewedDiff = report;
+    const held = this.current();
+    if (held !== null) {
+      held.reviewedDiff = report;
+    }
     this.saveConversation();
     return report;
   }
@@ -2983,7 +3215,7 @@ export class ChatService {
       testRuns: this.testRuns,
       lastTestFreshness: this.session === null ? null : this.getTestFreshness(),
       cancelObservations: this.getCancelObservations(),
-      attempts: this.ledger.all(),
+      attempts: this.currentLedger().all(),
       nodeRunner: this.runner,
       workspaceChangesAtEnd: this.session === null ? null : this.getWorkspaceChanges(),
       providerMessageTypes:
@@ -3014,33 +3246,36 @@ export class ChatService {
    * test runner could not be collected — the next `startSession` reports the
    * directory it cannot delete, which is the point at which it matters.
    */
-  private stopWorkspaceTest(): void {
-    const child = this.activeTest;
-    this.activeTest = null;
-    if (child === null || child.exitCode !== null || child.pid === undefined) return;
-
-    const attemptId = this.activeCommandAttemptId;
-    if (attemptId !== null) {
-      this.ledger.markCancelRequested(
-        attemptId,
-        `DSpatch asked the process tree under pid ${String(child.pid)} to die. Until ` +
-          'the process closes, whether it is gone is not established — and a ' +
-          'surviving child keeps holding the working directory.',
-      );
-      // A kill that is never confirmed must not sit as "cancellation requested"
-      // forever: an unkillable process is exactly the case worth showing.
-      const timer = setTimeout(() => {
-        if (this.ledger.get(attemptId)?.state === 'cancel-requested') {
-          this.ledger.markOutcomeUnknown(
-            attemptId,
-            'The process was asked to die and never reported closing, so whether ' +
-              'it is gone is unknown. It may still be holding the working ' +
-              'directory open.',
-          );
-        }
-      }, this.cancelConfirmMs);
-      timer.unref?.();
+  private stopWorkspaceTest(killedByDspatch: boolean): void {
+    const run = this.activeCommand;
+    this.activeCommand = null;
+    if (run === null) return;
+    const child = run.child;
+    if (child.exitCode !== null || child.pid === undefined) return;
+    if (killedByDspatch) {
+      run.killedByDspatch = true;
     }
+
+    const { attemptId, ledger } = run;
+    ledger.markCancelRequested(
+      attemptId,
+      `DSpatch asked the process tree under pid ${String(child.pid)} to die. Until ` +
+        'the process closes, whether it is gone is not established — and a ' +
+        'surviving child keeps holding the working directory.',
+    );
+    // A kill that is never confirmed must not sit as "cancellation requested"
+    // forever: an unkillable process is exactly the case worth showing.
+    const timer = setTimeout(() => {
+      if (ledger.get(attemptId)?.state === 'cancel-requested') {
+        ledger.markOutcomeUnknown(
+          attemptId,
+          'The process was asked to die and never reported closing, so whether ' +
+            'it is gone is unknown. It may still be holding the working ' +
+            'directory open.',
+        );
+      }
+    }, this.cancelConfirmMs);
+    timer.unref?.();
 
     this.options.log(`stopping test runner pid=${String(child.pid)}`);
     try {
@@ -3070,14 +3305,17 @@ export class ChatService {
   }
 
   private async closeSession(): Promise<void> {
-    this.stopWorkspaceTest();
+    // DSpatch stops the command because it is closing the session, so its exit is
+    // not a verdict about the code (WS-1 #8); the result stays with its conversation.
+    this.stopWorkspaceTest(true);
     // Closing a session is DSpatch stopping listening, which is a change in what
     // it knows rather than an ending. An unresolved turn is carried over as
     // unknown so the next session's first message has to reckon with it instead of
     // starting beside work that may still be going in a different agent.
-    for (const attempt of this.ledger.unresolved('agent-turn')) {
+    const ledger = this.currentLedger();
+    for (const attempt of ledger.unresolved('agent-turn')) {
       if (attempt.state === 'waiting' || attempt.state === 'running') {
-        this.ledger.markOutcomeUnknown(
+        ledger.markOutcomeUnknown(
           attempt.attemptId,
           'The session this belonged to was closed before the run reported an end, ' +
             'so DSpatch is no longer receiving its events. Whether it is still ' +
@@ -3099,7 +3337,6 @@ export class ChatService {
     // The result belonged to the previous working copy and its snapshots. Kept
     // across a session change it would be a green tick beside unrelated code.
     this.lastTest = null;
-    this.testKillRequested = false;
     // A recap is owed to one session. Carrying it into the next one would put the
     // record in front of a model that may well already have it.
     this.pendingResendContext = null;
@@ -3198,8 +3435,9 @@ export class ChatService {
       // the attempt actually started something.
       const attemptId = this.pendingAttemptId;
       if (attemptId !== null) {
-        this.attemptByRunId.set(event.dspatchRunId, attemptId);
-        this.ledger.markRunning(
+        const ledger = this.currentLedger();
+        this.attemptByRunId.set(event.dspatchRunId, { ledger, attemptId });
+        ledger.markRunning(
           attemptId,
           { providerRunId: event.dspatchRunId },
           `The provider started run ${event.dspatchRunId} at ${event.at}.`,
@@ -3231,15 +3469,16 @@ export class ChatService {
     // ending, and recording it against the current attempt would be a lie about
     // both.
     if (event.type === 'run.finished') {
-      const attemptId = this.attemptByRunId.get(event.dspatchRunId);
-      if (attemptId !== undefined) {
+      const owner = this.attemptByRunId.get(event.dspatchRunId);
+      if (owner !== undefined) {
+        const { ledger, attemptId } = owner;
         const detail =
           `Run ${event.dspatchRunId} reported status "${event.status}" at ${event.at}` +
           `${event.error === undefined ? '' : `: ${event.error.message}`}.`;
         if (event.status === 'cancelled' && event.end === 'unconfirmed') {
           // DSP-116: the adapter ended the run without evidence that its local
           // work stopped. Reported as ended so nothing waits forever, but not a stop.
-          this.ledger.markOutcomeUnknown(
+          ledger.markOutcomeUnknown(
             attemptId,
             `${detail} The adapter reported the end as unconfirmed: it stopped ` +
               'waiting without evidence that its local work ended (such as its ' +
@@ -3252,7 +3491,7 @@ export class ChatService {
           event.status === 'cancelled' &&
           (event.end === 'stopped' || event.end === 'forced')
         ) {
-          this.ledger.markStopped(
+          ledger.markStopped(
             attemptId,
             `${detail} This is a confirmed local end (${event.end}): the adapter ` +
               (event.end === 'forced'
@@ -3263,15 +3502,15 @@ export class ChatService {
               'already sent is unknown.',
           );
         } else if (event.status === 'cancelled') {
-          this.ledger.markStopped(
+          ledger.markStopped(
             attemptId,
             `${detail} This is a confirmed end: the provider reported it, rather ` +
               'than DSpatch inferring it from silence.',
           );
         } else if (event.status === 'finished') {
-          this.ledger.markCompleted(attemptId, detail);
+          ledger.markCompleted(attemptId, detail);
         } else {
-          this.ledger.markFailed(attemptId, detail);
+          ledger.markFailed(attemptId, detail);
         }
       }
     }
@@ -3594,6 +3833,49 @@ function describeReconciliation(
   );
 }
 
+/**
+ * The unresolved attempts of a conversation this window already holds, in the shape a
+ * read-back reports them. Nothing here was closed by a restart, so `stateAtClose` is
+ * the state they are in now.
+ */
+function heldReconciliations(ledger: AttemptLedger): readonly AttemptReconciliation[] {
+  return ledger.unresolved().map((attempt) => ({
+    attemptId: attempt.attemptId,
+    kind: attempt.kind,
+    label: attempt.label,
+    stateAtClose: attempt.state,
+    stateNow: attempt.state,
+    blocksRepeat: attempt.acknowledgedAtUtc === null,
+    note: attempt.stateReason,
+  }));
+}
+
+/** What reading back a held conversation means for its open attempts, without restart wording. */
+function describeHeldReconciliation(reconciliations: readonly AttemptReconciliation[]): string {
+  if (reconciliations.length === 0) {
+    return (
+      'Every attempt in this conversation has reached a state DSpatch could ' +
+      'establish, so there is nothing to reconcile and the conversation can be ' +
+      'continued as it stands.'
+    );
+  }
+  const total = reconciliations.length;
+  const awaiting = reconciliations.filter((item) => item.blocksRepeat).length;
+  return (
+    `${String(total)} attempt${total === 1 ? '' : 's'} in this conversation ${
+      total === 1 ? 'has' : 'have'
+    } no established ending. This window already holds ${
+      total === 1 ? 'it' : 'them'
+    }, so nothing was read back again and nothing has been repeated. ` +
+    (awaiting === 0
+      ? 'You confirmed them before, so nothing has to be confirmed again.'
+      : `${String(awaiting)} still ${awaiting === 1 ? 'has' : 'have'} to be confirmed ` +
+        'before DSpatch sends another message or runs the command again in this working ' +
+        'copy. Confirming leaves an attempt on the record as unresolved rather than ' +
+        'marking it done.')
+  );
+}
+
 /** Two problems are two sentences, not one that hides the other. */
 function joinErrors(first: string | null, second: string | null): string | null {
   const parts = [first, second].filter(
@@ -3608,9 +3890,15 @@ function restoreStatement(
   projectExists: boolean,
   diff: RestoredDiff | null,
   test: RestoredTestResult | null,
+  /** `window` when the conversation was already held here and taken from memory. */
+  source: 'file' | 'window',
 ): string {
   const parts: string[] = [
-    `Read back from a saved file: ${String(conversation.messages.length)} message${
+    `${
+      source === 'file'
+        ? 'Read back from a saved file'
+        : 'Taken from what this window already holds'
+    }: ${String(conversation.messages.length)} message${
       conversation.messages.length === 1 ? '' : 's'
     } in the order they were sent, ${String(conversation.attempts.length)} attempt${
       conversation.attempts.length === 1 ? '' : 's'
