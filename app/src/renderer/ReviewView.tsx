@@ -231,10 +231,17 @@ function OpenReview({
       return;
     }
     dirty.current = false;
-    void bridge.saveState(latest.current).then((result) => {
-      setSaving(dirty.current);
-      setSave(result.saved ? { at: result.at } : { at: result.at, error: result.error ?? 'not saved' });
-    });
+    void bridge.saveState(latest.current).then(
+      (result) => {
+        setSaving(dirty.current);
+        setSave(result.saved ? { at: result.at } : { at: result.at, error: result.error ?? 'not saved' });
+      },
+      (error: unknown) => {
+        dirty.current = true;
+        setSaving(false);
+        setSave({ at: new Date().toISOString(), error: String(error) });
+      },
+    );
   }, [bridge]);
 
   const firstRender = useRef(true);
