@@ -3,10 +3,10 @@ id: DSP-116
 title: >-
   Respect the adapter's cancellation bound in the chat service and end the
   observed Claude child on dispose
-status: Review
+status: Done
 assignee: []
 created_date: '2026-10-23 10:53'
-updated_date: '2026-10-23 11:31'
+updated_date: '2026-10-23 12:34'
 labels:
   - integration
   - reliability
@@ -54,4 +54,18 @@ Result of run 20261023-110000-dsp116 (23 Oct 2026, base 5e445c3, candidate sha25
 Carried, not done (separate notes): S1 after end stopped/forced the ledger's stillRunning.provider is false while the reason says provider work is unknown, and dspatchProcess false is wrong for Claude - fix with the wiring of the Claude adapter into the chat service (ledger contract); N4 toUiEvent drops end, so an unconfirmed end would show as an ordinary cancel - wiring task; S2 main.ts DISPOSE_TIMEOUT_MS does not name DISPOSE_BOUND_MS (headroom under 1 s once wired); S3 DisposalRecord docs: killedBy stop-sequence also when that kill threw or returned false, exited means without a kill from this adapter; N1 a process surviving the stop sequence's kill stays alive after dispose, recorded unconfirmed; N2 first-turn SDK load outside the bound (documented); N3 previous-turn path can end without a terminal (existing); N5 a spawn after dispose has finished is unobserved (optional guard in spawnObserved). DSP-115's R1, S1-S5 and the followUp.runId error remain separate.
 Live-only, not established: whether the real CLI exits within 5 s of abort and close (DSP-109 measured ~7 s, so a live dispose may kill it); whether TerminateProcess ends claude.exe's grandchildren; that the experiment process exits after dispose; provider work after the local end.
 Status: Review.
+
+Accepted by Niclas (23 Oct 2026) on the offline verification and the Reviewer's ACCEPT; no further live test needed now. Follow-ups: the ledger contradiction (S1) and the UI's handling of unconfirmed (N4) are now explicit acceptance criteria #3 and #4 of DSP-117; the 7 s / 8 s coupling (S2) and the process-disposal limits (S3, N1, N5, live-only items) stay visible here and on DSP-117. Raw records in run 20261023-110000-dsp116 are unchanged.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+DSP-116 is done (accepted by Niclas, 23 Oct 2026) on the offline verification and the Reviewer's ACCEPT; no further live test is needed now. Commit 73aaddc.
+
+Fixed: the chat service now waits for the adapter's declared cancellation bound (Claude: CANCEL_END_BOUND_MS 15 s, derived from the existing escalation and previous-turn bounds; window 16 s with the 1 s grace; 10 s unchanged when nothing is declared) and reads run.finished.end (unconfirmed -> outcome-unknown; stopped/forced -> stopped-confirmed with provider work stated unknown; no end as before). ClaudeAgentSdkAdapter.dispose() now waits for the observed Claude Code child, kills it if still running (not repeating a stop-sequence kill), records each outcome (exited, killed-and-exited, unconfirmed) and stays within 7 s. Cursor and presentation paths unchanged. Call-path finding: N5 was latent in the app (the chat service does not use the Claude adapter); N6 affected the experiment command.
+
+Verified offline only: provider 63/63 (incl. two real local substitute processes), chat 300/300, fast 1131/1131, typecheck; Verifier instruments (chat window 4/4, real-process dispose 8/8) and a negative control against 5e445c3. No live model call. Raw evidence: run 20261023-110000-dsp116.
+
+Follow-ups: the ledger contradiction after stopped/forced and the UI's handling of unconfirmed are acceptance criteria #3 and #4 of DSP-117 (Run a chat session through the Claude adapter). Visible follow-up notes, also carried on DSP-117: the 7 s DISPOSE_BOUND_MS / 8 s main.ts DISPOSE_TIMEOUT_MS coupling (stated only in the adapter, headroom under 1 s once wired); process-disposal limits (a process surviving the stop sequence's kill stays alive, recorded unconfirmed; DisposalRecord wording; spawn after dispose has finished; grandchildren and the real CLI's exit time not established live). DSP-115's R1, S1-S5 and the followUp.runId error remain separate notes on DSP-115.
+<!-- SECTION:FINAL_SUMMARY:END -->
