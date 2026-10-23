@@ -1,10 +1,10 @@
 ---
 id: DSP-115
 title: Cancel a Claude run reliably and record when it has really stopped
-status: Review
+status: Done
 assignee: []
 created_date: '2026-10-22 20:41'
-updated_date: '2026-10-23 07:06'
+updated_date: '2026-10-23 08:21'
 labels:
   - integration
   - reliability
@@ -78,4 +78,27 @@ Live test ready (needs Niclas's authorization; one execution): from app/, npm ru
 
 Remaining live checks against DSP-115's acceptance criteria: AC #1-#8 are met offline and none of them requires live evidence by its wording. Live evidence already obtained (23 Oct): the interrupt path ends stopped with an observed exit in 694 ms, with no tool execution and no model request after the request. Necessary for the approved test plan (not an AC): the follow-up turn in the same session after a stopped cancel (session reuse), which the command above provides. Possible future tests, not required: the PreToolUse hook denying a real tool attempt (needs a run where the model starts a tool after the request); the forced and unconfirmed paths (would need deliberately provoking a non-responding CLI); cross-process resume.
 Status: Review.
+
+Current focus (23 Oct 2026): Niclas authorized exactly one live cancel-then-follow-up run on 1351dde. Run journal .dspatch-loop/runs/20261023-110000-dsp115followlive.
+
+Live cancel-then-follow-up on 1351dde (23 Oct 2026 08:15 UTC, run 20261023-110000-dsp115followlive, report 001; record local and Git-ignored): one execution, fresh fixture, claude-haiku-4-5, clean child environment, registered personal Max authorization. Exit 0.
+- Cancel: end stopped via interrupt (no abort, no kill, no hook firing); observed process exit 703 ms after cancelRequestedAtUtc; terminal 704 ms. Between the request and the follow-up: 0 tool_use blocks, 0 executed tools, 0 model requests. Cancelled turn's usage unknown; provider work after the end unknown. No content change; no events after the terminal.
+- Follow-up (intended, one api-request at 08:15:29.227): finished; same provider session id in its own init; answer equals the marker, which the follow-up prompt did not contain; 0 tool calls; usage recorded.
+- Both turns: authentication verified/rule-met; tools exactly Edit, Glob, Grep, Read; no MCP servers; claude-haiku-4-5; no ai-title, no unrequested model usage.
+- Minor record finding, not acted on: followUp.runId is null although turns[1] carries the follow-up's run id.
+The approved live test plan for DSP-115 is now complete: cancel stops via interrupt with an observed exit in about 0.7 s (baseline 7.0 s), no work after the request, and the session is reusable for the next turn. AC #1-#8 were met offline; acceptance is Niclas's. Possible future tests, not required: the hook denying a real tool attempt, the forced and unconfirmed paths, cross-process resume.
+Status: Review.
+
+Accepted by Niclas (23 Oct 2026) on the offline verification, the Reviewer's ACCEPT and the completed live test plan.
+Reporting error (minor, recorded; raw record unchanged): in the live record .dspatch-loop/runs/20261023-110000-dsp115followlive/logs/cancel-then-follow-up.json, followUp.runId is null although the follow-up's run id is present in turns[1].runId (ending a484b8) and bound in the init observations; the record's other follow-up fields are correct. To be fixed when experiment-work.ts is next touched.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+DSP-115 is done (accepted by Niclas, 23 Oct 2026) on the offline verification, the Reviewer's ACCEPT and the completed live test plan. Cancelling a Claude run now emits run.cancel_requested, stops new tool use through a per-run PreToolUse hook, sends interrupt() through a one-message streaming-input prompt, and escalates within bounds (3 s, then abort; 10 s, then SIGKILL of the observed child; 2 s, then unconfirmed and refusal of new turns). run.finished carries end stopped, forced or unconfirmed; stopped and forced require an observed local process exit, not just the end of the SDK stream, and provider work after the end is recorded as unknown. Commits c1df6c9 (contract) and 1351dde (cancel-then-follow-up scenario).
+
+Live-verified (Windows, Claude Code 2.1.306, claude-haiku-4-5, personal Max authorization): the interrupt path - stopped with an observed exit 694 ms (run 20261023-090000-dsp115live) and 703 ms (run 20261023-110000-dsp115followlive) after the request, against 7032 ms in DSP-109's baseline; no tool execution and no model request after the request (baseline 7 and 2); no file change; the session reused for a follow-up turn that finished on the same provider session and recalled a marker it was not given; authentication rule, exact tool set, no MCP servers and the title held under streaming input.
+
+Verified offline only: the PreToolUse hook's denial of a real tool attempt (no tool was attempted in the live runs), the forced and unconfirmed paths, the kill escalation, interrupt rejection, dispose during the waits. Not tested: cross-process resume, Linux. Usage of a cancelled turn remains unknown when no result carries it.
+<!-- SECTION:FINAL_SUMMARY:END -->
