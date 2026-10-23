@@ -232,6 +232,8 @@ function OpenReview({
   // shown, never swallowed.
   const latest = useRef(state);
   latest.current = state;
+  /** How the current walk was entered, so its timeline slides in from that side. */
+  const entryDirection = useRef<'forward' | 'backward'>('forward');
   const dirty = useRef(false);
   const urgent = useRef(false);
   const [saving, setSaving] = useState(false);
@@ -336,6 +338,12 @@ function OpenReview({
       if (found === null) {
         return;
       }
+      // Entering another walk: it slides in from the side it lies on.
+      const here = findStep(bundle, latest.current.position.stepId);
+      if (here !== null && here.walk !== found.walk) {
+        const walks = bundle.definition.walks;
+        entryDirection.current = walks.indexOf(found.walk) > walks.indexOf(here.walk) ? 'forward' : 'backward';
+      }
       setSelection(null);
       setScope('focus');
       update((value) => ({
@@ -383,13 +391,9 @@ function OpenReview({
     [update],
   );
 
-  /** How the current walk was entered, so its timeline slides in from the right side. */
-  const entryDirection = useRef<'forward' | 'backward'>('forward');
-
   /** One station forward or back; past the end of a walk, into the next or previous walk. */
   const moveStation = useCallback(
     (delta: number) => {
-      entryDirection.current = delta >= 0 ? 'forward' : 'backward';
       if (current === null || activeStation < 0) {
         return;
       }

@@ -557,6 +557,8 @@ function TimelinePane({
     return () => {
       window.clearTimeout(flash);
       window.clearTimeout(settle);
+      setLeaving(null);
+      setArriving(null);
     };
   }, [isActive, shown.index]);
 
@@ -564,29 +566,53 @@ function TimelinePane({
   // leads from, to the call.
   const scrollKey = `${String(shown.index)}:${level}:${view}:${fromHere === null ? '' : String(fromHere.start)}:${String(rows.length)}`;
   const scrolledFor = useRef('');
+  // The pending move lives in a ref: re-renders while the old marking fades must not
+  // cancel it. Only a new target or unmounting does.
+  const scrollTimer = useRef<number | null>(null);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (element === null || content === null || scrolledFor.current === scrollKey) {
       return;
     }
-    const target =
-      (fromHere !== null ? element.querySelector('[data-from="1"]') : null) ??
-      element.querySelector('[data-shown-change="1"]') ??
-      element.querySelector('[data-shown="1"]');
-    if (target === null) {
+    const findTarget = (): HTMLElement | null =>
+      ((fromHere !== null ? element.querySelector('[data-from="1"]') : null) ??
+        element.querySelector('[data-shown-change="1"]') ??
+        element.querySelector('[data-shown="1"]')) as HTMLElement | null;
+    if (findTarget() === null) {
       return;
     }
     const first = scrolledFor.current === '';
     scrolledFor.current = scrollKey;
-    const top = (target as HTMLElement).offsetTop - element.clientHeight / 2 + 20;
+    if (scrollTimer.current !== null) {
+      window.clearTimeout(scrollTimer.current);
+      scrollTimer.current = null;
+    }
+    const scrollNow = (behavior: ScrollBehavior): void => {
+      const target = findTarget();
+      if (target !== null) {
+        // Measured against the pane itself: the rows' offsetParent is the timeline track.
+        const offset = target.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop;
+        element.scrollTo({ top: Math.max(0, offset - element.clientHeight / 2 + 20), behavior });
+      }
+    };
     if (first || reducedMotion()) {
-      element.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+      scrollNow('auto');
       return;
     }
     // First the old marking fades, then the view moves, then the new lines flash.
-    const timer = window.setTimeout(() => element.scrollTo({ top: Math.max(0, top), behavior: 'smooth' }), 380);
-    return () => window.clearTimeout(timer);
+    scrollTimer.current = window.setTimeout(() => {
+      scrollTimer.current = null;
+      scrollNow('smooth');
+    }, 380);
   });
+  useEffect(
+    () => () => {
+      if (scrollTimer.current !== null) {
+        window.clearTimeout(scrollTimer.current);
+      }
+    },
+    [],
+  );
 
   const changed = shownFocus.changed;
   const effectiveView: CodeView = changed ? view : 'both';
