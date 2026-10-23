@@ -54,4 +54,6 @@ export function registerReviewIpc(options: ReviewIpcOptions): void {
   ipcMain.handle(REVIEW_CHANNELS.listFiles, (_event, side: RevisionSide) => service.listFiles(side));
   ipcMain.handle(REVIEW_CHANNELS.search, (_event, side: RevisionSide, query: string) => service.search(side, query));
   ipcMain.handle(REVIEW_CHANNELS.saveState, (_event, state: unknown) => service.saveState(state));
+  ipcMain.handle(REVIEW_CHANNELS.getPreferences, () => service.getPreferences());
+  ipcMain.handle(REVIEW_CHANNELS.setPreferences, (_event, preferences: unknown) => service.setPreferences(preferences));
 }

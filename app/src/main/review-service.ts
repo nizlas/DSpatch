@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+  adoptPreferences,
   adoptStoredState,
   checkFileRequest,
   checkReference,
@@ -13,6 +14,9 @@ import {
   parseNameStatus,
   parseReviewDefinition,
   splitLines,
+  staleOpenedMarks,
+  type ReviewPreferences,
+  type ReviewStateNotice,
   type DiffFile,
   type ReviewBundle,
   type ReviewCommit,
@@ -145,10 +149,10 @@ export class ReviewService {
       );
       this.open = { repository, base: base.sha, target: target.sha, recordPath, cache: new Map() };
 
-      const referenceProblems: { stepId: string; refIndex: number; problem: string }[] = [];
+      const referenceProblems: { stepId: string; refId: string; problem: string }[] = [];
       for (const walk of definition.walks) {
         for (const step of walk.steps) {
-          for (const [refIndex, ref] of step.refs.entries()) {
+          for (const ref of step.refs) {
             const content = await this.readFile(ref.side, ref.path);
             const problem =
               content.kind === 'text'
@@ -157,7 +161,7 @@ export class ReviewService {
                   ? checkReference(ref, null)
                   : `${ref.path} cannot be read at ${ref.side} (${content.kind === 'binary' ? 'binary' : content.error}).`;
             if (problem !== null) {
-              referenceProblems.push({ stepId: step.id, refIndex, problem });
+              referenceProblems.push({ stepId: step.id, refId: ref.id, problem });
             }
           }
         }
@@ -165,7 +169,7 @@ export class ReviewService {
 
       const revisions = { base: base.sha, target: target.sha };
       let state: ReviewState = emptyReviewState(revisions, absolute, definitionHash);
-      let stateNote = '';
+      let stateNotice: ReviewStateNotice | null = null;
       if (fs.existsSync(recordPath)) {
         let parsed: unknown = null;
         try {
@@ -178,15 +182,14 @@ export class ReviewService {
           // Kept aside, never overwritten: it may be the only copy of someone's work.
           const aside = `${recordPath}.unusable-${new Date().toISOString().replace(/[:.]/g, '-')}`;
           fs.renameSync(recordPath, aside);
-          stateNote =
-            'A stored record for this review could not be used (unreadable, damaged or for another revision ' +
-            `pair). It was kept unchanged as ${aside}, and this review starts with an empty record.`;
+          stateNotice = { kind: 'unusable', keptAs: aside };
         } else {
           state = stored;
           if (stored.definitionHash !== definitionHash) {
-            stateNote =
-              'The walk definition has changed since this record was saved. Progress and decisions are kept; ' +
-              'check steps whose text or references changed.';
+            // Said, not hidden: decisions are about hunks of this revision pair and
+            // stay valid; "opened" marks from the earlier walks are kept but no
+            // longer counted when they name no place of this definition.
+            stateNotice = { kind: 'definition-changed', staleOpenedMarks: staleOpenedMarks(definition, stored) };
             state = { ...stored, definitionHash };
           }
         }
@@ -209,7 +212,7 @@ export class ReviewService {
           referenceProblems,
           files,
           state,
-          stateNote,
+          stateNotice,
         } satisfies ReviewBundle,
       };
     } catch (error) {
@@ -330,5 +333,35 @@ export class ReviewService {
     } catch (error) {
       return { saved: false, at, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  /** The reviewer's preferences, kept beside the review records. */
+  getPreferences(): ReviewPreferences {
+    try {
+      return adoptPreferences(JSON.parse(fs.readFileSync(this.preferencesPath(), 'utf8')));
+    } catch {
+      return adoptPreferences(null);
+    }
+  }
+
+  setPreferences(raw: unknown): { saved: boolean; error?: string } {
+    const preferences = adoptPreferences(raw);
+    if (JSON.stringify(preferences) !== JSON.stringify(raw)) {
+      return { saved: false, error: 'Unknown preference value.' };
+    }
+    try {
+      const file = this.preferencesPath();
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(`${file}.tmp`, `${JSON.stringify(preferences, null, 2)}
+`, 'utf8');
+      fs.renameSync(`${file}.tmp`, file);
+      return { saved: true };
+    } catch (error) {
+      return { saved: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  private preferencesPath(): string {
+    return path.join(this.options.recordsDir, 'preferences.json');
   }
 }

@@ -13,6 +13,7 @@ import { test } from 'node:test';
 
 import {
   REVIEW_CHANNELS,
+  adoptPreferences,
   adoptStoredState,
   buildDiffRows,
   checkFileRequest,
@@ -26,6 +27,9 @@ import {
   parseDiff,
   parseNameStatus,
   parseReviewDefinition,
+  placeKey,
+  referenceRows,
+  staleOpenedMarks,
   splitLines,
   type CodeReference,
   type DiffHunk,
@@ -160,7 +164,10 @@ test('a definition reports every structural problem, and only well-formed refere
   assert.ok(definition !== null);
   const step = definition.walks[0]?.steps[0];
   assert.equal(step?.refs.length, 2, 'the backslash path is reported but the shape survives; bad ranges and sides do not');
-  assert.deepEqual(step?.claims.map((claim) => claim.label), ['analysis']);
+  // A version 1 file: walk references become places, evidence references stay evidence.
+  assert.equal(step?.places.length, 1);
+  assert.equal(step?.evidenceRefs.length, 1);
+  assert.deepEqual(step?.evidence.map((claim) => claim.label), ['analysis']);
   const text = problems.map((problem) => problem.problem).join('\n');
   assert.match(text, /start ≤ end/);
   assert.match(text, /forward slashes/);
@@ -260,7 +267,7 @@ test('coverage keeps planned, shown, walked and decided apart — none implies a
   const progressed: ReviewState = {
     ...fresh,
     shownSteps: { 'W1.1': 't', 'W1.2': 't' },
-    shownRefs: { 'W1.1#0': 't', 'W1.2#0': 't' },
+    shownRefs: { 'W1.1@r1': 't', 'W1.2@r1': 't' },
     walkedSteps: { 'W1.1': 't' },
   };
   coverage = computeCoverage(definition, files, progressed);
@@ -441,4 +448,118 @@ test('highlighting keeps every character and carries block comments and template
   assert.equal(tokens[2]?.[0]?.kind, 'comment');
   assert.equal(tokens[3]?.[0]?.kind, 'string');
   assert.deepEqual(highlightLines(['# title'], 'README.md'), [[{ kind: 'plain', text: '# title' }]]);
+});
+
+// --- Version 2: places, two languages, precise focus (second iteration) ---------
+
+test('a version 2 definition needs both languages, gives each place a focus and context, and lists every reference', () => {
+  const { definition, problems } = parseReviewDefinition({
+    format: 'dspatch-review/2',
+    title: { sv: 'Titel', en: 'Title' },
+    repository: '.',
+    base: 'a'.repeat(40),
+    target: 'b'.repeat(40),
+    walks: [
+      {
+        id: 'W1',
+        title: { sv: 'Walk', en: 'Walk' },
+        question: { sv: 'Fråga', en: '' },
+        steps: [
+          {
+            id: 'W1.1',
+            title: { sv: 'Steg', en: 'Step' },
+            summary: { sv: 'Kort', en: 'Short' },
+            body: 'only one language',
+            places: [
+              {
+                id: 'p1',
+                label: { sv: 'Här', en: 'Here' },
+                focus: { path: 'a.ts', start: 4, end: 4, anchor: 'x' },
+                context: [{ path: 'a.ts', start: 1, end: 9 }],
+              },
+            ],
+            evidence: [{ label: 'test-simulated', text: { sv: 'Test', en: 'Test' } }],
+            evidenceRefs: [{ path: 'a.test.ts', start: 1, end: 3 }],
+          },
+        ],
+      },
+    ],
+  });
+  assert.ok(definition !== null);
+  assert.deepEqual(definition.languages, ['sv', 'en']);
+  const step = definition.walks[0]?.steps[0];
+  assert.equal(step?.places[0]?.focus.id, 'p1');
+  assert.equal(step?.places[0]?.focus.side, 'target', 'side defaults to target');
+  assert.equal(step?.places[0]?.context[0]?.id, 'p1.context1');
+  assert.deepEqual(step?.refs.map((ref) => [ref.id, ref.role]), [
+    ['p1', 'walk'],
+    ['p1.context1', 'walk'],
+    ['e1', 'evidence'],
+  ]);
+  // A missing language is reported and filled from the other, never left blank.
+  assert.equal(definition.walks[0]?.question.en, 'Fråga');
+  const text = problems.map((problem) => problem.problem).join('\n');
+  assert.match(text, /"question" has no "en" text/);
+  assert.match(text, /"body" must give both "sv" and "en"/);
+});
+
+function rowsFor(base: string[], target: string[], unified: string) {
+  const [file] = parseDiff(parseNameStatus('M\0x.ts\0'), `diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n${unified}`);
+  assert.ok(file !== undefined);
+  return buildDiffRows(base, target, file.hunks);
+}
+
+test('a precise focus shows the replaced line with its old line, and nothing else of a large change', () => {
+  // Line 2 replaced; lines 4–9 a new block replacing old line 4.
+  const base = ['a', 'old b', 'c', 'old d', 'e'];
+  const target = ['a', 'new b', 'c', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'e'];
+  const rows = rowsFor(base, target, '@@ -2 +2 @@\n-old b\n+new b\n@@ -4 +4,6 @@\n');
+  const describe = (indexes: readonly number[]) => indexes.map((index) => `${rows[index]?.kind[0] ?? ''}:${rows[index]?.text ?? ''}`);
+
+  const replaced = referenceRows(rows, { side: 'target', start: 2, end: 2 });
+  assert.deepEqual(describe(replaced.indexes), ['d:old b', 'a:new b']);
+  assert.equal(replaced.changed, true);
+
+  // Deep inside the new block: only those lines, not the old line it replaced.
+  assert.deepEqual(describe(referenceRows(rows, { side: 'target', start: 7, end: 8 }).indexes), ['a:n4', 'a:n5']);
+  // At the start of the block: the old line comes with it.
+  assert.deepEqual(describe(referenceRows(rows, { side: 'target', start: 4, end: 4 }).indexes), ['d:old d', 'a:n1']);
+  // Unchanged code: neutral, and no invented before/after.
+  const unchanged = referenceRows(rows, { side: 'target', start: 3, end: 3 });
+  assert.deepEqual(describe(unchanged.indexes), ['c:c']);
+  assert.equal(unchanged.changed, false);
+  // The old side: the mirror image.
+  assert.deepEqual(describe(referenceRows(rows, { side: 'base', start: 2, end: 2 }).indexes), ['d:old b', 'a:new b']);
+});
+
+test('removed lines belong to a focus only when it spans the place they were removed from', () => {
+  const base = ['a', 'gone 1', 'gone 2', 'b', 'c'];
+  const target = ['a', 'b', 'c'];
+  const rows = rowsFor(base, target, '@@ -2,2 +1,0 @@\n');
+  const kinds = (start: number, end: number) =>
+    referenceRows(rows, { side: 'target', start, end }).indexes.map((index) => rows[index]?.text);
+  assert.deepEqual(kinds(1, 2), ['a', 'gone 1', 'gone 2', 'b']);
+  assert.deepEqual(kinds(2, 3), ['b', 'c'], 'starting after the removal leaves it out');
+  assert.deepEqual(referenceRows(rows, { side: 'base', start: 2, end: 3 }).indexes.map((index) => rows[index]?.text), ['gone 1', 'gone 2']);
+});
+
+test('the view arrangement is kept in the record and opened marks of an older definition are counted, not used', () => {
+  const state = emptyReviewState(REVISIONS, 'def.json', 'hash');
+  assert.deepEqual(state.ui, { openWalks: [], highlightWalk: false });
+  const stored = { ...state, ui: { openWalks: ['W2'], highlightWalk: true } };
+  assert.deepEqual(adoptStoredState(JSON.parse(JSON.stringify(stored)), REVISIONS)?.ui, { openWalks: ['W2'], highlightWalk: true });
+  assert.equal(adoptStoredState({ ...state, ui: { openWalks: 'W2' } }, REVISIONS), null);
+  const { ui: _ui, ...withoutUi } = state;
+  assert.deepEqual(adoptStoredState(withoutUi, REVISIONS)?.ui, { openWalks: [], highlightWalk: false });
+
+  const { definition } = fixture();
+  const marked = { ...state, shownRefs: { 'W1.1#0': 't', 'W1.1@r1': 't' } };
+  assert.equal(staleOpenedMarks(definition, marked), 1);
+  assert.equal(placeKey('W1.1', 'r1'), 'W1.1@r1');
+});
+
+test('preferences accept only the two display languages', () => {
+  assert.deepEqual(adoptPreferences({ language: 'en' }), { language: 'en' });
+  assert.deepEqual(adoptPreferences({ language: 'de' }), { language: 'sv' });
+  assert.deepEqual(adoptPreferences(null), { language: 'sv' });
 });

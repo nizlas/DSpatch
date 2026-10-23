@@ -2,19 +2,24 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { JSX, ReactNode } from 'react';
 
 import { Markdown } from './Markdown';
+import { WORDS, pick, type ReviewWords } from './review-i18n';
 import {
+  DEFAULT_PREFERENCES,
   buildDiffRows,
   computeCoverage,
   currentHunkDecisions,
   highlightLines,
+  placeKey,
+  referenceRows,
   type CodeLocation,
   type CodeReference,
   type CoverageSummary,
   type DiffFile,
   type DiffHunk,
   type DiffRow,
-  type EvidenceLabel,
   type HunkCoverage,
+  type Lang,
+  type Place,
   type PlanState,
   type ReviewBridge,
   type ReviewBundle,
@@ -38,74 +43,74 @@ declare global {
 
 /**
  * DSpatch's own review surface: a fixed revision pair, its complete diff, prepared
- * walks through it, and the reviewer's record — on one screen, without Monaco, a loop,
- * the graph editor or an agent.
+ * walks through it, and the reviewer's record — without Monaco, a loop, the graph
+ * editor or an agent.
+ *
+ * Design rule since the first user observation (23 October 2026): help the reviewer
+ * understand the current step, and let them open more when they need it. So the code
+ * pane shows the precise lines a step explains — old and new, labelled, in soft
+ * colours — with neutral context around them; the step panel leads with what the
+ * step is about; detail, notes and decisions open on request.
  *
  * What the screen must never blur (REVIEW_COVERAGE_AND_CODE_WALKS.md §3): a walk's
- * plan, what has been shown, what the reviewer marked walked through, and what they
- * decided. Moving to the next step records only that the step was shown; a decision
- * exists only after an explicit, confirmed action that names its scope and revision.
- *
- * The walks are prepared material read from the definition file. Nothing here
- * generates, adapts or "reviews" with an agent; there is no control that would
- * pretend to.
+ * plan, what has been opened, what the reviewer marked walked through, and what they
+ * decided. Before/after colours mean old and new code, never accepted or rejected.
  */
 
-const LABEL_TEXT: Record<EvidenceLabel, string> = {
-  analysis: 'Analysis',
-  'test-simulated': 'Test: simulated',
-  'test-real-substitute': 'Test: real substitute process',
-  'not-observed': 'Not observed',
-};
+const FOCUS_MARGIN = 4;
+const MORE_LINES = 15;
+const GAP_CONTEXT = 3;
 
-/** What each label means in general. What exactly was substituted is the claim's to say. */
-const LABEL_HELP: Record<EvidenceLabel, string> = {
-  analysis: 'A possible path read from the code. Not observed in any run.',
-  'test-simulated': 'Observed in a test in which parts of the system are substituted; the claim names the test.',
-  'test-real-substitute':
-    'Observed with a real local process standing in for another; the claim says what it stands in for and what stayed simulated.',
-  'not-observed': 'Nothing recorded has observed this.',
-};
-
-const CONTEXT_LINES = 3;
-const FOCUS_MARGIN = 8;
-
-function short(sha: string): string {
-  return sha.slice(0, 7);
-}
+type CodeView = 'before' | 'both' | 'after';
+type CodeScope = 'focus' | 'file';
+type LeftTab = 'walks' | 'files' | 'coverage' | 'notes' | 'search';
 
 function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function timeOf(iso: string): string {
+function timeOf(iso: string, lang: Lang): string {
   if (iso === '') {
     return '';
   }
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(lang === 'sv' ? 'sv-SE' : 'en-GB');
 }
 
 function rangeText(location: { start: number; end: number }): string {
   return location.start === location.end ? String(location.start) : `${String(location.start)}–${String(location.end)}`;
 }
 
-function locationText(location: CodeLocation): string {
-  return `${location.path}:${rangeText(location)} (${location.side === 'base' ? 'base' : 'target'})`;
+function fileName(path: string): string {
+  return path.split('/').pop() ?? path;
 }
 
-function hunkRangeText(hunk: DiffHunk): string {
-  const target =
-    hunk.targetCount > 0
-      ? `target ${rangeText({ start: hunk.targetStart, end: hunk.targetStart + hunk.targetCount - 1 })}`
-      : `removed after target ${String(hunk.targetStart)}`;
-  const base =
-    hunk.baseCount > 0 ? `base ${rangeText({ start: hunk.baseStart, end: hunk.baseStart + hunk.baseCount - 1 })}` : '';
-  return [target, base].filter((part) => part !== '').join(' · ');
+function short(sha: string): string {
+  return sha.slice(0, 7);
 }
 
-function planText(state: PlanState): string {
-  return state === 'full' ? 'yes' : state === 'partial' ? 'partly' : 'no';
+/** Where a hunk is, in the reader's words rather than its internal id. */
+function hunkWhere(hunk: DiffHunk, words: ReviewWords): string {
+  const parts: string[] = [];
+  if (hunk.targetCount > 0) {
+    parts.push(words.newLines(rangeText({ start: hunk.targetStart, end: hunk.targetStart + hunk.targetCount - 1 })));
+  } else {
+    parts.push(words.removedAfter(hunk.targetStart));
+  }
+  if (hunk.baseCount > 0) {
+    parts.push(words.oldLines(rangeText({ start: hunk.baseStart, end: hunk.baseStart + hunk.baseCount - 1 })));
+  }
+  return words.changeAt(fileName(hunk.path), parts.join(', '));
+}
+
+function hunkLocation(hunk: DiffHunk): CodeLocation {
+  return hunk.targetCount > 0
+    ? { path: hunk.path, side: 'target', start: hunk.targetStart, end: hunk.targetStart + hunk.targetCount - 1 }
+    : { path: hunk.path, side: 'base', start: hunk.baseStart, end: hunk.baseStart + hunk.baseCount - 1 };
+}
+
+function asLocation(ref: CodeReference): CodeLocation {
+  return { path: ref.path, side: ref.side, start: ref.start, end: ref.end };
 }
 
 function findStep(bundle: ReviewBundle, stepId: string | null): { walk: Walk; step: WalkStep; index: number } | null {
@@ -114,22 +119,36 @@ function findStep(bundle: ReviewBundle, stepId: string | null): { walk: Walk; st
   }
   for (const walk of bundle.definition.walks) {
     const index = walk.steps.findIndex((step) => step.id === stepId);
-    if (index !== -1) {
-      const step = walk.steps[index];
-      if (step !== undefined) {
-        return { walk, step, index };
-      }
+    const step = walk.steps[index];
+    if (step !== undefined) {
+      return { walk, step, index };
     }
   }
   return null;
 }
 
+/** A one-line prepared text: `code names` in backticks are shown as code, nothing else is parsed. */
+function Inline({ text }: { readonly text: string }): JSX.Element {
+  const parts = text.split(/`([^`]+)`/);
+  return (
+    <>
+      {parts.map((part, index) => (index % 2 === 1 ? <code key={index}>{part}</code> : part))}
+    </>
+  );
+}
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 // --- File contents --------------------------------------------------------------
 
-function useFiles(bridge: ReviewBridge | undefined): {
+type Files = {
   get: (side: RevisionSide, path: string) => ReviewFileOutcome | null;
   load: (side: RevisionSide, path: string) => void;
-} {
+};
+
+function useFiles(bridge: ReviewBridge | undefined): Files {
   const cache = useRef(new Map<string, ReviewFileOutcome>());
   const pending = useRef(new Set<string>());
   const [, setTick] = useState(0);
@@ -155,21 +174,95 @@ function useFiles(bridge: ReviewBridge | undefined): {
 /** The side of a diff that does not exist (an added or a deleted file). */
 const NO_LINES: ReviewFileOutcome = { kind: 'text', lines: [] };
 
-// --- The view ----------------------------------------------------------------------
+/** A file's rows: the real diff when it changed, otherwise the file at one side. */
+function useRows(
+  files: Files,
+  path: string,
+  diffFile: DiffFile | null,
+  plainSide: RevisionSide,
+): { rows: DiffRow[]; error: string | null; tokens: { base: Token[][]; target: Token[][] } } | null {
+  const inDiff = diffFile !== null && !diffFile.binary;
+  const needBase = inDiff ? diffFile.status !== 'added' : plainSide === 'base';
+  const needTarget = inDiff ? diffFile.status !== 'deleted' : plainSide === 'target';
+  useEffect(() => {
+    if (needBase) {
+      files.load('base', path);
+    }
+    if (needTarget) {
+      files.load('target', path);
+    }
+  }, [files, path, needBase, needTarget]);
+  const base = needBase ? files.get('base', path) : NO_LINES;
+  const target = needTarget ? files.get('target', path) : NO_LINES;
+  return useMemo(() => {
+    if (base === null || target === null) {
+      return null;
+    }
+    const empty = { base: [], target: [] };
+    if (base.kind === 'failed' || target.kind === 'failed') {
+      return { rows: [], error: base.kind === 'failed' ? base.error : target.kind === 'failed' ? target.error : '', tokens: empty };
+    }
+    if (base.kind === 'binary' || target.kind === 'binary' || diffFile?.binary === true) {
+      return { rows: [], error: 'binary', tokens: empty };
+    }
+    const baseLines = base.kind === 'text' ? base.lines : [];
+    const targetLines = target.kind === 'text' ? target.lines : [];
+    const tokens = { base: highlightLines(baseLines, path), target: highlightLines(targetLines, path) };
+    if (inDiff) {
+      try {
+        return { rows: buildDiffRows(baseLines, targetLines, diffFile.hunks), error: null, tokens };
+      } catch (error) {
+        return { rows: [], error: error instanceof Error ? error.message : String(error), tokens: empty };
+      }
+    }
+    if ((plainSide === 'base' ? base : target).kind === 'missing') {
+      return { rows: [], error: 'missing', tokens: empty };
+    }
+    const lines = plainSide === 'base' ? baseLines : targetLines;
+    return {
+      rows: lines.map((text, index) => ({
+        kind: 'context' as const,
+        baseLine: plainSide === 'base' ? index + 1 : null,
+        targetLine: plainSide === 'target' ? index + 1 : null,
+        text,
+        hunkId: null,
+      })),
+      error: null,
+      tokens,
+    };
+  }, [base, target, inDiff, diffFile, plainSide, path]);
+}
 
-type LeftTab = 'walks' | 'files' | 'coverage' | 'notes' | 'browse';
+// --- The view ----------------------------------------------------------------------
 
 export function ReviewView(): JSX.Element {
   const bridge = window.dspatchReview;
   const [outcome, setOutcome] = useState<ReviewOpenOutcome | null>(null);
+  const [lang, setLangState] = useState<Lang>(DEFAULT_PREFERENCES.language);
+  const [langError, setLangError] = useState<string | null>(null);
 
   useEffect(() => {
     if (bridge === undefined) {
       setOutcome({ kind: 'failed', error: 'The review bridge is missing from this window (preload).' });
       return;
     }
+    void bridge.getPreferences().then((preferences) => {
+      setLangState(preferences.language);
+    });
     void bridge.initial().then(setOutcome);
   }, [bridge]);
+
+  const setLang = useCallback(
+    (next: Lang) => {
+      setLangState(next);
+      if (bridge !== undefined) {
+        void bridge.setPreferences({ language: next }).then((result) => {
+          setLangError(result.saved ? null : (result.error ?? 'not saved'));
+        });
+      }
+    },
+    [bridge],
+  );
 
   const choose = useCallback(() => {
     if (bridge !== undefined) {
@@ -181,46 +274,66 @@ export function ReviewView(): JSX.Element {
     }
   }, [bridge]);
 
+  const words = WORDS[lang];
   if (outcome === null) {
-    return <div className="rv-empty">Opening the review…</div>;
+    return <div className="rv-empty">{words.opening}</div>;
   }
   if (outcome.kind !== 'opened') {
     return (
       <div className="rv-empty">
-        <h1>Review</h1>
         <p className={outcome.kind === 'failed' ? 'rv-error' : ''}>
-          {outcome.kind === 'failed' ? outcome.error : outcome.note}
+          {outcome.kind === 'failed' ? outcome.error : words.noDefinition}
         </p>
         <button type="button" onClick={choose}>
-          Open a review definition…
+          {words.openDefinition}
         </button>
       </div>
     );
   }
-  return <OpenReview key={outcome.bundle.definitionPath + outcome.bundle.target.sha} bundle={outcome.bundle} bridge={bridge} onChoose={choose} />;
+  return (
+    <OpenReview
+      key={outcome.bundle.definitionPath + outcome.bundle.target.sha}
+      bundle={outcome.bundle}
+      bridge={bridge}
+      onChoose={choose}
+      lang={lang}
+      onLang={setLang}
+      langError={langError}
+    />
+  );
 }
 
 function OpenReview({
   bundle,
   bridge,
   onChoose,
+  lang,
+  onLang,
+  langError,
 }: {
   readonly bundle: ReviewBundle;
   readonly bridge: ReviewBridge | undefined;
   readonly onChoose: () => void;
+  readonly lang: Lang;
+  readonly onLang: (lang: Lang) => void;
+  readonly langError: string | null;
 }): JSX.Element {
+  const words = WORDS[lang];
   const [state, setState] = useState<ReviewState>(bundle.state);
   const [save, setSave] = useState<{ at: string; error?: string } | null>(
     bundle.state.savedAt === '' ? null : { at: bundle.state.savedAt },
   );
   const [tab, setTab] = useState<LeftTab>('walks');
   const [selection, setSelection] = useState<CodeLocation | null>(null);
+  const [view, setView] = useState<CodeView>('both');
+  const [scope, setScope] = useState<CodeScope>('focus');
+  const [noticeOpen, setNoticeOpen] = useState(bundle.stateNotice !== null);
   const files = useFiles(bridge);
 
-  // Persist every change. The record is the reviewer's: decisions, notes and walked
-  // marks are written at once; moving around is written shortly after. Whatever is
-  // still unsaved is written when the view goes away or the window unloads, and a
-  // failed save is shown, never swallowed.
+  // Persist every change. Decisions, notes and walked marks are written at once;
+  // moving around and arranging the view shortly after. Whatever is still unsaved
+  // is written when the view goes away or the window unloads, and a failed save is
+  // shown, never swallowed.
   const latest = useRef(state);
   latest.current = state;
   const dirty = useRef(false);
@@ -284,23 +397,15 @@ function OpenReview({
   const coverage = useMemo(() => computeCoverage(bundle.definition, bundle.files, state), [bundle, state]);
   const coverageByHunk = useMemo(() => new Map(coverage.hunks.map((entry) => [entry.hunk.id, entry])), [coverage]);
 
-  const refProblems = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const problem of bundle.referenceProblems) {
-      map.set(`${problem.stepId}#${String(problem.refIndex)}`, problem.problem);
-    }
-    return map;
-  }, [bundle]);
-
   const current = findStep(bundle, state.position.stepId);
-  const currentRef: CodeReference | null =
-    current === null ? null : (current.step.refs[state.position.refIndex] ?? current.step.refs[0] ?? null);
+  const place: Place | null =
+    current === null ? null : (current.step.places[state.position.refIndex] ?? current.step.places[0] ?? null);
   const away = state.position.away;
-  const shownLocation: CodeLocation | null =
-    away ?? (currentRef === null ? null : { path: currentRef.path, side: currentRef.side, start: currentRef.start, end: currentRef.end });
+  const focus: CodeLocation | null = away ?? (place === null ? null : asLocation(place.focus));
+  const contexts: readonly CodeLocation[] = away === null && place !== null ? place.context.map(asLocation) : [];
 
-  // Showing a step's code is recorded as shown — per reference, and only that.
-  const shownKey = current === null ? null : `${current.step.id}#${String(state.position.refIndex)}`;
+  // Opening a place records that it was opened — and only that.
+  const shownKey = current === null || place === null ? null : placeKey(current.step.id, place.id);
   useEffect(() => {
     if (current === null || away !== null || shownKey === null) {
       return;
@@ -318,15 +423,16 @@ function OpenReview({
   }, [current, away, shownKey, state.shownSteps, state.shownRefs, update]);
 
   const goToStep = useCallback(
-    (stepId: string, refIndex = 0) => {
+    (stepId: string, placeIndex = 0) => {
       const found = findStep(bundle, stepId);
       if (found === null) {
         return;
       }
       setSelection(null);
+      setScope('focus');
       update((value) => ({
         ...value,
-        position: { ...value.position, walkId: found.walk.id, stepId, refIndex, away: null },
+        position: { ...value.position, walkId: found.walk.id, stepId, refIndex: placeIndex, away: null },
       }));
     },
     [bundle, update],
@@ -335,6 +441,7 @@ function OpenReview({
   const goAway = useCallback(
     (location: CodeLocation) => {
       setSelection(null);
+      setScope('focus');
       update((value) => ({ ...value, position: { ...value.position, away: location } }));
     },
     [update],
@@ -342,12 +449,28 @@ function OpenReview({
 
   const returnToWalk = useCallback(() => {
     setSelection(null);
+    setScope('focus');
     update((value) => ({ ...value, position: { ...value.position, away: null } }));
   }, [update]);
 
-  const setCodeMode = useCallback(
-    (codeMode: 'diff' | 'file') => {
-      update((value) => ({ ...value, position: { ...value.position, codeMode } }));
+  const toggleWalk = useCallback(
+    (walkId: string) => {
+      update((value) => {
+        const open = new Set(value.ui.openWalks);
+        if (open.has(walkId)) {
+          open.delete(walkId);
+        } else {
+          open.add(walkId);
+        }
+        return { ...value, ui: { ...value.ui, openWalks: [...open] } };
+      });
+    },
+    [update],
+  );
+
+  const setHighlightWalk = useCallback(
+    (on: boolean) => {
+      update((value) => ({ ...value, ui: { ...value.ui, highlightWalk: on } }));
     },
     [update],
   );
@@ -373,13 +496,7 @@ function OpenReview({
         ...value,
         decisions: [
           ...value.decisions,
-          {
-            ...decision,
-            id: newId(),
-            at: new Date().toISOString(),
-            by: { kind: 'human' },
-            revisions: value.revisions,
-          },
+          { ...decision, id: newId(), at: new Date().toISOString(), by: { kind: 'human' }, revisions: value.revisions },
         ],
       }));
     },
@@ -422,46 +539,69 @@ function OpenReview({
     }
   }, [bundle, state.position.stepId, state.position.away, goToStep]);
 
-  const diffFile = shownLocation === null ? null : (bundle.files.find((file) => file.path === shownLocation.path) ?? null);
+  const diffFile = focus === null ? null : (bundle.files.find((file) => file.path === focus.path) ?? null);
+
+  // The light purple overview: every place of the current walk, focus and context.
+  const walkOverlay: readonly CodeLocation[] = useMemo(() => {
+    if (!state.ui.highlightWalk || current === null) {
+      return [];
+    }
+    return current.walk.steps.flatMap((step) => step.places.flatMap((entry) => [entry.focus, ...entry.context].map(asLocation)));
+  }, [state.ui.highlightWalk, current]);
+
+  const revisionText = `${short(bundle.base.sha)}→${short(bundle.target.sha)}`;
 
   return (
     <div className="rv">
-      <Header bundle={bundle} save={save} saving={saving} coverage={coverage} onChoose={onChoose} />
+      <Header
+        bundle={bundle}
+        words={words}
+        lang={lang}
+        onLang={onLang}
+        langError={langError}
+        save={save}
+        saving={saving}
+        coverage={coverage}
+        onChoose={onChoose}
+      />
+      {noticeOpen && bundle.stateNotice !== null && (
+        <div className="rv-notice" role="status">
+          <span>
+            {bundle.stateNotice.kind === 'unusable'
+              ? words.notices.unusable(bundle.stateNotice.keptAs)
+              : words.notices.definitionChanged(bundle.stateNotice.staleOpenedMarks)}
+          </span>
+          <button type="button" onClick={() => setNoticeOpen(false)}>
+            {words.notices.dismiss}
+          </button>
+        </div>
+      )}
       <div className={tab === 'coverage' || tab === 'notes' ? 'rv-body rv-body-wide' : 'rv-body'}>
         <nav className="rv-left">
           <div className="rv-tabs" role="tablist">
-            {(
-              [
-                ['walks', 'Walks'],
-                ['files', `Changed files (${String(bundle.files.length)})`],
-                ['coverage', 'Coverage'],
-                ['notes', `Notes & decisions (${String(state.notes.length + state.decisions.length)})`],
-                ['browse', 'Search & all files'],
-              ] as const
-            ).map(([key, label]) => (
+            {(['walks', 'files', 'coverage', 'notes', 'search'] as const).map((key) => (
               <button
                 key={key}
                 type="button"
                 role="tab"
                 aria-selected={tab === key}
                 className={tab === key ? 'rv-tab rv-tab-on' : 'rv-tab'}
-                onClick={() => {
-                  setTab(key);
-                }}
+                onClick={() => setTab(key)}
               >
-                {label}
+                {words.tabs[key]}
               </button>
             ))}
           </div>
           <div className="rv-left-body">
             {tab === 'walks' && (
-              <WalkList bundle={bundle} state={state} refProblems={refProblems} onStep={goToStep} />
+              <WalkList bundle={bundle} state={state} words={words} lang={lang} onStep={goToStep} onToggle={toggleWalk} />
             )}
             {tab === 'files' && (
               <FileList
                 files={bundle.files}
                 coverage={coverageByHunk}
-                current={shownLocation?.path ?? null}
+                current={focus?.path ?? null}
+                words={words}
                 onOpen={(file) => {
                   const hunk = file.hunks[0];
                   goAway(
@@ -472,214 +612,230 @@ function OpenReview({
                 }}
               />
             )}
-            {tab === 'coverage' && (
-              <CoverageTable
-                coverage={coverage}
-                bundle={bundle}
-                onOpen={(hunk) => {
-                  goAway(hunkLocation(hunk));
-                }}
-              />
-            )}
+            {tab === 'coverage' && <CoverageTable coverage={coverage} words={words} onOpen={(hunk) => goAway(hunkLocation(hunk))} />}
             {tab === 'notes' && (
-              <NotesList
-                state={state}
-                bundle={bundle}
-                onOpen={(location) => {
-                  goAway(location);
-                }}
-                onStatus={setNoteStatus}
-              />
+              <NotesList state={state} bundle={bundle} words={words} lang={lang} onOpen={goAway} onStatus={setNoteStatus} />
             )}
-            {tab === 'browse' && bridge !== undefined && (
-              <Browse
-                bridge={bridge}
-                onOpen={(location) => {
-                  goAway(location);
-                }}
-              />
-            )}
+            {tab === 'search' && bridge !== undefined && <Browse bridge={bridge} words={words} onOpen={goAway} />}
           </div>
         </nav>
 
         <main className="rv-code">
           {away !== null && current !== null && (
             <div className="rv-away">
-              Outside the walk: {locationText(away)}.{' '}
+              <span>
+                {words.outsideWalk}: {fileName(away.path)}:{rangeText(away)}
+              </span>
               <button type="button" onClick={returnToWalk}>
-                Back to {current.step.id}
+                {words.backTo(current.step.id)}
               </button>
             </div>
           )}
-          {shownLocation === null ? (
-            <div className="rv-empty">Choose a walk step, a changed file or a search result.</div>
+          {focus === null ? (
+            <div className="rv-empty" />
           ) : (
             <CodePane
-              location={shownLocation}
+              key={`${focus.path}:${focus.side}:${String(focus.start)}:${String(focus.end)}`}
+              focus={focus}
+              contexts={contexts}
+              overlay={walkOverlay}
               diffFile={diffFile}
-              mode={state.position.codeMode}
-              onMode={setCodeMode}
               files={files}
-              coverage={coverageByHunk}
-              decisions={state.decisions}
+              view={view}
+              onView={setView}
+              scope={scope}
+              onScope={setScope}
+              highlightWalk={state.ui.highlightWalk}
+              onHighlightWalk={current === null ? null : setHighlightWalk}
               selection={selection}
               onSelect={setSelection}
-              onDecide={decide}
-              revisions={`${short(bundle.base.sha)}→${short(bundle.target.sha)}`}
+              words={words}
             />
           )}
         </main>
 
         <aside className="rv-right">
-          {current !== null && (
+          {current !== null && away === null && place !== null && (
             <StepPanel
               bundle={bundle}
               walk={current.walk}
               step={current.step}
               index={current.index}
+              placeIndex={state.position.refIndex}
               state={state}
-              refIndex={state.position.refIndex}
-              refProblems={refProblems}
-              isAway={away !== null}
-              onRef={(refIndex) => {
-                goToStep(current.step.id, refIndex);
-              }}
+              words={words}
+              lang={lang}
+              onPlace={(index) => goToStep(current.step.id, index)}
               onStep={goToStep}
-              onToggleWalked={toggleWalked}
+              onOpenEvidence={goAway}
             />
           )}
-          <NoteForm
-            selection={selection}
-            shown={shownLocation}
-            stepId={away === null ? (current?.step.id ?? null) : null}
-            onAdd={addNote}
-          />
-          <NotesHere
-            notes={state.notes}
-            location={shownLocation}
-            stepId={current?.step.id ?? null}
-            onOpen={goAway}
-          />
+          {away !== null && current !== null && (
+            <section className="rv-step-panel">
+              <div className="rv-walk-title">{words.outsideWalk}</div>
+              <button type="button" onClick={returnToWalk}>
+                {words.backTo(current.step.id)}
+              </button>
+            </section>
+          )}
+          <Collapsible title={words.reviewSection} defaultOpen={false}>
+            {current !== null && away === null && (
+              <div className="rv-walked">
+                <button type="button" onClick={() => toggleWalked(current.step.id)}>
+                  {state.walkedSteps[current.step.id] === undefined ? words.markWalked : words.walkedUndo}
+                </button>
+                <span className="rv-sub">{words.walkedNote}</span>
+              </div>
+            )}
+            <HunkDecisions
+              focus={focus}
+              diffFile={diffFile}
+              files={files}
+              coverage={coverageByHunk}
+              decisions={state.decisions}
+              onDecide={decide}
+              revisionText={revisionText}
+              words={words}
+            />
+          </Collapsible>
+          <Collapsible title={words.notesSection} defaultOpen={false}>
+            <NoteForm
+              selection={selection}
+              shown={focus}
+              stepId={away === null ? (current?.step.id ?? null) : null}
+              words={words}
+              onAdd={addNote}
+            />
+          </Collapsible>
+          <NotesHere notes={state.notes} location={focus} stepId={current?.step.id ?? null} words={words} onOpen={goAway} />
         </aside>
       </div>
     </div>
   );
 }
 
-function hunkLocation(hunk: DiffHunk): CodeLocation {
-  return hunk.targetCount > 0
-    ? { path: hunk.path, side: 'target', start: hunk.targetStart, end: hunk.targetStart + hunk.targetCount - 1 }
-    : { path: hunk.path, side: 'base', start: hunk.baseStart, end: hunk.baseStart + hunk.baseCount - 1 };
+function Collapsible({
+  title,
+  defaultOpen,
+  children,
+}: {
+  readonly title: string;
+  readonly defaultOpen: boolean;
+  readonly children: ReactNode;
+}): JSX.Element {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="rv-collapsible">
+      <button type="button" className="rv-collapsible-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="rv-chevron">{open ? '▾' : '▸'}</span> {title}
+      </button>
+      {open && <div className="rv-collapsible-body">{children}</div>}
+    </section>
+  );
 }
 
 // --- Header -----------------------------------------------------------------------
 
 function Header({
   bundle,
+  words,
+  lang,
+  onLang,
+  langError,
   save,
   saving,
   coverage,
   onChoose,
 }: {
   readonly bundle: ReviewBundle;
+  readonly words: ReviewWords;
+  readonly lang: Lang;
+  readonly onLang: (lang: Lang) => void;
+  readonly langError: string | null;
   readonly save: { at: string; error?: string } | null;
   readonly saving: boolean;
   readonly coverage: CoverageSummary;
   readonly onChoose: () => void;
 }): JSX.Element {
   const [details, setDetails] = useState(false);
-  const problems = bundle.definitionProblems.length + bundle.referenceProblems.length;
   const references = bundle.definition.walks.flatMap((walk) => walk.steps.flatMap((step) => step.refs));
-  const referenceCount = references.length;
-  const anchoredCount = references.filter((ref) => ref.anchor !== undefined).length;
+  const anchored = references.filter((ref) => ref.anchor !== undefined).length;
+  const problems = bundle.definitionProblems.length + bundle.referenceProblems.length;
   return (
     <header className="rv-header">
-      <div className="rv-identity">
-        <h1>{bundle.definition.title}</h1>
-        <div className="rv-revs">
-          <span title={`${bundle.base.sha}\n${bundle.base.subject}`}>
-            base <code>{short(bundle.base.sha)}</code> {bundle.base.subject}
-          </span>
-          <span className="rv-arrow">→</span>
-          <span title={`${bundle.target.sha}\n${bundle.target.subject}`}>
-            target <code>{short(bundle.target.sha)}</code> {bundle.target.subject}
-          </span>
-          <span className="rv-chip">
-            {bundle.singleCommit ? 'one commit (base is the parent)' : 'several commits between base and target'}
-          </span>
-        </div>
-        <div className="rv-sub">
-          Repository <code>{bundle.repository}</code> · {bundle.files.length} files · +
-          {bundle.files.reduce((total, file) => total + file.added, 0)} −
-          {bundle.files.reduce((total, file) => total + file.deleted, 0)} lines · read from git at these two
-          commits, not from a working tree
-        </div>
-      </div>
+      <h1>
+        <Inline text={pick(bundle.definition.title, lang)} />
+      </h1>
       <div className="rv-header-side">
-        <div className={save?.error !== undefined ? 'rv-error' : saving ? 'rv-sub' : 'rv-saved'} role="status">
-          {save?.error !== undefined
-            ? `Record NOT saved — your latest changes exist only in this window and are retried with the next change. Reason: ${save.error}`
-            : saving
-              ? 'Saving…'
-              : save === null
-                ? 'Nothing recorded yet'
-                : `Record saved ${timeOf(save.at)}`}
-        </div>
-        <div className="rv-sub">
-          Open findings {coverage.openFindings} · open questions {coverage.openQuestions}
-        </div>
-        <button type="button" onClick={onChoose}>
-          Open another review…
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setDetails(!details);
-          }}
-        >
-          {details ? 'Hide' : 'About this review'}
-          {problems > 0 ? ` (${String(problems)} problems)` : ''}
+        {coverage.openFindings > 0 && <span className="rv-findings">{words.openFindings(coverage.openFindings)}</span>}
+        <span className={save?.error !== undefined ? 'rv-error rv-save' : 'rv-sub rv-save'} role="status">
+          {save?.error !== undefined ? words.notSaved(save.error) : saving ? words.saving : save === null ? '' : words.saved}
+        </span>
+        <label className="rv-lang">
+          {words.language}{' '}
+          <select value={lang} onChange={(event) => onLang(event.target.value as Lang)}>
+            <option value="sv">Svenska</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <button type="button" onClick={() => setDetails(!details)} aria-expanded={details}>
+          {details ? words.hideDetails : words.details}
+          {problems > 0 ? ` (${String(problems)} !)` : ''}
         </button>
       </div>
-      {(details || bundle.stateNote !== '') && (
+      {langError !== null && <div className="rv-error rv-full">{words.notSaved(langError)}</div>}
+      {details && (
         <div className="rv-details">
-          {bundle.stateNote !== '' && <p className="rv-warn">{bundle.stateNote}</p>}
-          {details && (
-            <>
-              <p>
-                <strong>Definition:</strong> <code>{bundle.definitionPath}</code>
-              </p>
-              <p>{bundle.definition.provenance}</p>
-              <p>
-                <strong>Explanations</strong> are prepared text, written in the teaching mode “
-                {bundle.definition.teachingMode || 'unstated'}”. This view does not adapt them, and no agent is
-                connected to it. Review depth is your choice; nothing on screen changes with it.
-              </p>
-              <p>
-                <strong>Decisions</strong> are yours only (provenance “you”). Delegated agent review is not available
-                here and is never simulated.
-              </p>
-              {problems === 0 ? (
-                <p>
-                  All {referenceCount} walk references were checked against their revision for path and line
-                  range; {anchoredCount} of them also for their anchor text.
-                </p>
-              ) : (
-                <ul className="rv-error">
-                  {bundle.definitionProblems.map((problem) => (
-                    <li key={`${problem.where}${problem.problem}`}>
-                      {problem.where}: {problem.problem}
-                    </li>
-                  ))}
-                  {bundle.referenceProblems.map((problem) => (
-                    <li key={`${problem.stepId}#${String(problem.refIndex)}`}>
-                      {problem.stepId} reference {problem.refIndex + 1}: {problem.problem}
-                    </li>
-                  ))}
-                </ul>
+          <dl>
+            <dt>{words.detailsPanel.revisions}</dt>
+            <dd>
+              {words.detailsPanel.base}: <code>{bundle.base.sha}</code> {bundle.base.subject}
+              <br />
+              {words.detailsPanel.target}: <code>{bundle.target.sha}</code> {bundle.target.subject}
+              <br />
+              {bundle.singleCommit ? words.detailsPanel.oneCommit : words.detailsPanel.severalCommits}{' '}
+              {words.detailsPanel.readFromGit}
+            </dd>
+            <dt>{words.detailsPanel.repository}</dt>
+            <dd>
+              <code>{bundle.repository}</code>
+            </dd>
+            <dt>{words.detailsPanel.definition}</dt>
+            <dd>
+              <code>{bundle.definitionPath}</code>
+              <br />
+              {pick(bundle.definition.provenance, lang)}
+              {bundle.definition.languages.length < 2 && (
+                <>
+                  <br />
+                  {words.detailsPanel.languagesMissing}
+                </>
               )}
+            </dd>
+          </dl>
+          <p>{words.detailsPanel.explanations(bundle.definition.teachingMode || '–')}</p>
+          <p>{words.detailsPanel.decisionsInfo}</p>
+          <p>{words.detailsPanel.validated(references.length, anchored)}</p>
+          {problems > 0 && (
+            <>
+              <p className="rv-error">{words.detailsPanel.problems}</p>
+              <ul className="rv-error">
+                {bundle.definitionProblems.map((problem) => (
+                  <li key={`${problem.where}${problem.problem}`}>
+                    {problem.where}: {problem.problem}
+                  </li>
+                ))}
+                {bundle.referenceProblems.map((problem) => (
+                  <li key={`${problem.stepId}#${problem.refId}`}>
+                    {problem.stepId} {problem.refId}: {problem.problem}
+                  </li>
+                ))}
+              </ul>
             </>
           )}
+          <button type="button" onClick={onChoose}>
+            {words.openAnother}
+          </button>
         </div>
       )}
     </header>
@@ -691,221 +847,180 @@ function Header({
 function WalkList({
   bundle,
   state,
-  refProblems,
+  words,
+  lang,
   onStep,
+  onToggle,
 }: {
   readonly bundle: ReviewBundle;
   readonly state: ReviewState;
-  readonly refProblems: ReadonlyMap<string, string>;
+  readonly words: ReviewWords;
+  readonly lang: Lang;
   readonly onStep: (stepId: string) => void;
+  readonly onToggle: (walkId: string) => void;
 }): JSX.Element {
+  const open = new Set(state.ui.openWalks);
   return (
     <div className="rv-walks">
-      <p className="rv-legend">
-        <span className="rv-mark-shown">●</span> opened <span className="rv-mark-walked">✓</span> marked walked
-        through by you. Neither is a review decision.
-      </p>
-      {bundle.definition.walks.map((walk) => (
-        <section key={walk.id} className="rv-walk">
-          <h2>
-            {walk.id} — {walk.title}
-          </h2>
-          <p className="rv-question">{walk.question}</p>
-          <ol>
-            {walk.steps.map((step) => {
-              const active = state.position.stepId === step.id;
-              const problem = step.refs.some((_, index) => refProblems.has(`${step.id}#${String(index)}`));
-              return (
-                <li key={step.id}>
-                  <button
-                    type="button"
-                    className={active ? 'rv-step rv-step-on' : 'rv-step'}
-                    onClick={() => {
-                      onStep(step.id);
-                    }}
-                  >
-                    <span className="rv-step-marks">
-                      <span className={state.shownSteps[step.id] === undefined ? 'rv-mark-off' : 'rv-mark-shown'}>●</span>
-                      <span className={state.walkedSteps[step.id] === undefined ? 'rv-mark-off' : 'rv-mark-walked'}>✓</span>
-                    </span>
-                    <span className="rv-step-id">{step.id}</span> {step.title}
-                    {problem && <span className="rv-error"> (reference problem)</span>}
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-        </section>
-      ))}
+      {bundle.definition.walks.map((walk) => {
+        const isOpen = open.has(walk.id);
+        const opened = walk.steps.filter((step) => state.shownSteps[step.id] !== undefined).length;
+        const containsCurrent = walk.steps.some((step) => step.id === state.position.stepId);
+        return (
+          <section key={walk.id} className={containsCurrent ? 'rv-walk rv-walk-current' : 'rv-walk'}>
+            <button type="button" className="rv-walk-head" aria-expanded={isOpen} onClick={() => onToggle(walk.id)}>
+              <span className="rv-chevron">{isOpen ? '▾' : '▸'}</span>
+              <span className="rv-walk-name">
+                <span className="rv-step-id">{walk.id}</span> <Inline text={pick(walk.title, lang)} />
+              </span>
+              <span className="rv-sub rv-walk-count">{words.walkProgress(opened, walk.steps.length)}</span>
+            </button>
+            {isOpen && (
+              <ol className="rv-steps">
+                {walk.steps.map((step) => {
+                  const active = state.position.stepId === step.id;
+                  return (
+                    <li key={step.id}>
+                      <button
+                        type="button"
+                        className={active ? 'rv-step rv-step-on' : 'rv-step'}
+                        aria-current={active ? 'step' : undefined}
+                        onClick={() => onStep(step.id)}
+                      >
+                        <span className="rv-step-id">{step.id}</span>
+                        <span className="rv-step-title">
+                          <Inline text={pick(step.title, lang)} />
+                        </span>
+                        {state.walkedSteps[step.id] !== undefined && <span className="rv-mark-walked">✓</span>}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
-}
-
-function fileDecisionSummary(file: DiffFile, coverage: ReadonlyMap<string, HunkCoverage>): string {
-  let accepted = 0;
-  let exempted = 0;
-  let planned = 0;
-  for (const hunk of file.hunks) {
-    const entry = coverage.get(hunk.id);
-    if (entry?.decision?.outcome === 'accepted') {
-      accepted += 1;
-    } else if (entry?.decision?.outcome === 'exempted') {
-      exempted += 1;
-    }
-    if (entry !== undefined && entry.planned !== 'none') {
-      planned += 1;
-    }
-  }
-  const remaining = file.hunks.length - accepted - exempted;
-  return `${String(planned)}/${String(file.hunks.length)} hunks in a walk · accepted ${String(accepted)} · exempted ${String(exempted)} · remaining ${String(remaining)}`;
 }
 
 function FileList({
   files,
   coverage,
   current,
+  words,
   onOpen,
 }: {
   readonly files: readonly DiffFile[];
   readonly coverage: ReadonlyMap<string, HunkCoverage>;
   readonly current: string | null;
+  readonly words: ReviewWords;
   readonly onOpen: (file: DiffFile) => void;
 }): JSX.Element {
   return (
     <ul className="rv-files">
-      {files.map((file) => (
-        <li key={file.path}>
-          <button
-            type="button"
-            className={current === file.path ? 'rv-file rv-file-on' : 'rv-file'}
-            onClick={() => {
-              onOpen(file);
-            }}
-          >
-            <span className={`rv-status rv-status-${file.status}`}>{file.status.charAt(0).toUpperCase()}</span>{' '}
-            <span className="rv-path">{file.path}</span>
-            <span className="rv-sub">
-              +{file.added} −{file.deleted} · {file.binary ? 'binary' : `${String(file.hunks.length)} hunks`} ·{' '}
-              {fileDecisionSummary(file, coverage)}
-            </span>
-          </button>
-        </li>
-      ))}
+      {files.map((file) => {
+        const decided = file.hunks.map((hunk) => coverage.get(hunk.id)?.decision?.outcome ?? null);
+        const accepted = decided.filter((outcome) => outcome === 'accepted').length;
+        const exempted = decided.filter((outcome) => outcome === 'exempted').length;
+        return (
+          <li key={file.path}>
+            <button type="button" className={current === file.path ? 'rv-file rv-file-on' : 'rv-file'} onClick={() => onOpen(file)}>
+              <span className="rv-path" title={file.path}>
+                {fileName(file.path)}
+              </span>
+              <span className="rv-sub">
+                {words.status[file.status]} · +{file.added} −{file.deleted} ·{' '}
+                {file.binary ? words.filesTab.binary : words.filesTab.hunks(file.hunks.length)}
+                {accepted + exempted > 0 && ` · ${words.filesTab.decided(accepted, exempted, file.hunks.length - accepted - exempted)}`}
+              </span>
+              <span className="rv-sub rv-dir">{file.path.split('/').slice(0, -1).join('/')}</span>
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }
 
+function planWord(state: PlanState, words: ReviewWords): string {
+  return state === 'full' ? words.coverage.yes : state === 'partial' ? words.coverage.part : words.coverage.no;
+}
+
+function decisionWord(decision: ReviewDecision | null, words: ReviewWords): string {
+  if (decision === null || decision.outcome === 'withdrawn') {
+    return words.decisions.remaining;
+  }
+  return decision.outcome === 'accepted' ? words.decisions.accepted : words.decisions.exempted;
+}
+
 function CoverageTable({
   coverage,
-  bundle,
+  words,
   onOpen,
 }: {
   readonly coverage: CoverageSummary;
-  readonly bundle: ReviewBundle;
+  readonly words: ReviewWords;
   readonly onOpen: (hunk: DiffHunk) => void;
 }): JSX.Element {
   const [onlyOutside, setOnlyOutside] = useState(false);
-  const rows = onlyOutside ? coverage.hunks.filter((entry) => entry.planned === 'none') : coverage.hunks;
   const outside = coverage.hunks.filter((entry) => entry.planned === 'none');
+  const rows = onlyOutside ? outside : coverage.hunks;
+  const c = words.coverage;
+  const linesWithPartial = (value: { full: number; partialHunks: number }): string =>
+    `${c.lines(value.full)}${value.partialHunks > 0 ? c.partly(value.partialHunks) : ''}`;
   return (
     <div className="rv-coverage">
-      <p className="rv-legend">
-        Counted in changed lines of the diff (additions + deletions): <strong>{coverage.totalLines}</strong>. Each
-        column is a separate fact; none of them implies another.
-      </p>
+      <p className="rv-legend">{c.intro(coverage.totalLines)}</p>
       <table className="rv-totals">
         <tbody>
-          <tr>
-            <th>Planned in a walk</th>
-            <td>
-              {coverage.plannedLines.full} lines
-              {coverage.plannedLines.partialHunks > 0 ? ` + ${String(coverage.plannedLines.partialHunks)} hunks partly` : ''}
-            </td>
-          </tr>
-          <tr>
-            <th>In walk references you opened</th>
-            <td>
-              {coverage.shownLines.full} lines
-              {coverage.shownLines.partialHunks > 0 ? ` + ${String(coverage.shownLines.partialHunks)} hunks partly` : ''}
-            </td>
-          </tr>
-          <tr>
-            <th>In steps you marked walked through</th>
-            <td>
-              {coverage.walkedLines.full} lines
-              {coverage.walkedLines.partialHunks > 0 ? ` + ${String(coverage.walkedLines.partialHunks)} hunks partly` : ''}
-            </td>
-          </tr>
-          <tr>
-            <th>Accepted by you @ {short(bundle.target.sha)}</th>
-            <td>{coverage.acceptedLines} lines</td>
-          </tr>
-          <tr>
-            <th>Exempted by you</th>
-            <td>{coverage.exemptedLines} lines</td>
-          </tr>
-          <tr>
-            <th>No decision (remaining)</th>
-            <td>{coverage.remainingLines} lines</td>
-          </tr>
-          <tr>
-            <th>Accepted by an agent</th>
-            <td>none — no delegated review in this view</td>
-          </tr>
-          <tr>
-            <th>Open findings / questions</th>
-            <td>
-              {coverage.openFindings} / {coverage.openQuestions}
-            </td>
-          </tr>
+          <tr><th>{c.planned}</th><td>{linesWithPartial(coverage.plannedLines)}</td></tr>
+          <tr><th>{c.opened}</th><td>{linesWithPartial(coverage.shownLines)}</td></tr>
+          <tr><th>{c.walked}</th><td>{linesWithPartial(coverage.walkedLines)}</td></tr>
+          <tr><th>{c.accepted}</th><td>{c.lines(coverage.acceptedLines)}</td></tr>
+          <tr><th>{c.exempted}</th><td>{c.lines(coverage.exemptedLines)}</td></tr>
+          <tr><th>{c.remaining}</th><td>{c.lines(coverage.remainingLines)}</td></tr>
+          <tr><th>{c.agent}</th><td>{c.agentNone}</td></tr>
+          <tr><th>{c.open}</th><td>{coverage.openFindings} / {coverage.openQuestions}</td></tr>
         </tbody>
       </table>
       <label className="rv-check">
-        <input
-          type="checkbox"
-          checked={onlyOutside}
-          onChange={(event) => {
-            setOnlyOutside(event.target.checked);
-          }}
-        />{' '}
-        Only hunks outside every walk ({outside.length})
+        <input type="checkbox" checked={onlyOutside} onChange={(event) => setOnlyOutside(event.target.checked)} />{' '}
+        {c.onlyOutside(outside.length)}
       </label>
       <table className="rv-hunks">
         <thead>
           <tr>
-            <th>Hunk</th>
-            <th>Lines</th>
-            <th>Planned</th>
-            <th>Opened</th>
-            <th>Walked</th>
-            <th>Decision</th>
-            <th>Open</th>
+            <th>{c.change}</th>
+            <th>±</th>
+            <th>{c.planned}</th>
+            <th>{c.opened}</th>
+            <th>{c.walked}</th>
+            <th>{c.remaining}</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((entry) => (
-            <tr
-              key={entry.hunk.id}
-              className="rv-hunk-row"
-              onClick={() => {
-                onOpen(entry.hunk);
-              }}
-            >
+            <tr key={entry.hunk.id} className="rv-hunk-row" onClick={() => onOpen(entry.hunk)}>
               <td>
-                <span className="rv-step-id">{entry.hunk.id}</span> {entry.hunk.path.split('/').pop()}{' '}
-                <span className="rv-sub">{hunkRangeText(entry.hunk)}</span>
+                <span className="rv-path">{fileName(entry.hunk.path)}</span>{' '}
+                <span className="rv-sub">
+                  {entry.hunk.targetCount > 0
+                    ? rangeText({ start: entry.hunk.targetStart, end: entry.hunk.targetStart + entry.hunk.targetCount - 1 })
+                    : `−${String(entry.hunk.baseStart)}`}
+                </span>
               </td>
               <td>{entry.lines}</td>
               <td title={entry.plannedBy.join(', ')}>
-                {planText(entry.planned)}
+                {planWord(entry.planned, words)}
                 {entry.plannedBy.length > 0 ? ` (${entry.plannedBy.join(', ')})` : ''}
               </td>
-              <td>{planText(entry.shown)}</td>
-              <td>{planText(entry.walked)}</td>
-              <td>{decisionText(entry.decision)}</td>
+              <td>{planWord(entry.shown, words)}</td>
+              <td>{planWord(entry.walked, words)}</td>
               <td>
-                {entry.openFindings > 0 ? `${String(entry.openFindings)} finding(s) ` : ''}
-                {entry.openQuestions > 0 ? `${String(entry.openQuestions)} question(s)` : ''}
+                {decisionWord(entry.decision, words)}
+                {entry.openFindings > 0 ? ` · ${words.openFindings(entry.openFindings)}` : ''}
               </td>
             </tr>
           ))}
@@ -915,49 +1030,54 @@ function CoverageTable({
   );
 }
 
-function decisionText(decision: ReviewDecision | null): string {
-  if (decision === null) {
-    return 'remaining';
-  }
-  return decision.outcome === 'accepted' ? 'accepted by you' : decision.outcome === 'exempted' ? 'exempted by you' : 'remaining';
-}
-
 function NotesList({
   state,
   bundle,
+  words,
+  lang,
   onOpen,
   onStatus,
 }: {
   readonly state: ReviewState;
   readonly bundle: ReviewBundle;
+  readonly words: ReviewWords;
+  readonly lang: Lang;
   readonly onOpen: (location: CodeLocation) => void;
   readonly onStatus: (id: string, status: 'open' | 'resolved', resolution: string) => void;
 }): JSX.Element {
   const hunkById = new Map(bundle.files.flatMap((file) => file.hunks.map((hunk) => [hunk.id, hunk] as const)));
   return (
     <div className="rv-notes">
-      <h2>Questions and findings</h2>
-      {state.notes.length === 0 && <p className="rv-sub">None yet.</p>}
+      <h2>{words.notesTab.notesTitle}</h2>
+      {state.notes.length === 0 && <p className="rv-sub">{words.notesTab.none}</p>}
       {state.notes.map((note) => (
-        <NoteItem key={note.id} note={note} onOpen={onOpen} onStatus={onStatus} />
+        <NoteItem key={note.id} note={note} words={words} lang={lang} onOpen={onOpen} onStatus={onStatus} />
       ))}
-      <h2>Decision history</h2>
-      {state.decisions.length === 0 && <p className="rv-sub">No decisions. Every hunk is remaining.</p>}
+      <h2>{words.notesTab.historyTitle}</h2>
+      {state.decisions.length === 0 && <p className="rv-sub">{words.notesTab.noDecisions}</p>}
       <ol className="rv-history">
-        {state.decisions.map((decision) => (
-          <li key={decision.id}>
-            <strong>{decision.outcome === 'withdrawn' ? 'Withdrawn' : decision.outcome === 'accepted' ? 'Accepted' : 'Exempted'}</strong>{' '}
-            by {decision.by.kind === 'human' ? 'you' : `agent ${decision.by.adapterId}`} at {timeOf(decision.at)} ·{' '}
-            {decision.scope.kind === 'hunk'
-              ? `${decision.scope.hunkId} ${decision.scope.path} ${(() => {
+        {state.decisions.map((decision) => {
+          const scope =
+            decision.scope.kind === 'hunk'
+              ? (() => {
                   const hunk = hunkById.get(decision.scope.hunkId);
-                  return hunk === undefined ? '' : hunkRangeText(hunk);
-                })()}`
-              : `file ${decision.scope.path} (${decision.scope.hunkIds.join(', ')})`}{' '}
-            @ {short(decision.revisions.base)}→{short(decision.revisions.target)}
-            {decision.reason !== '' && <div className="rv-sub">Reason: {decision.reason}</div>}
-          </li>
-        ))}
+                  return hunk === undefined ? decision.scope.path : hunkWhere(hunk, words);
+                })()
+              : decision.scope.path;
+          return (
+            <li key={decision.id}>
+              <strong>
+                {decision.outcome === 'withdrawn'
+                  ? words.decisions.withdraw
+                  : decision.outcome === 'accepted'
+                    ? words.decisions.accepted
+                    : words.decisions.exempted}
+              </strong>{' '}
+              · {scope} · {timeOf(decision.at, lang)}
+              {decision.reason !== '' && <div className="rv-sub">{decision.reason}</div>}
+            </li>
+          );
+        })}
       </ol>
     </div>
   );
@@ -965,10 +1085,14 @@ function NotesList({
 
 function NoteItem({
   note,
+  words,
+  lang,
   onOpen,
   onStatus,
 }: {
   readonly note: ReviewNote;
+  readonly words: ReviewWords;
+  readonly lang: Lang;
   readonly onOpen: (location: CodeLocation) => void;
   readonly onStatus: (id: string, status: 'open' | 'resolved', resolution: string) => void;
 }): JSX.Element {
@@ -976,9 +1100,13 @@ function NoteItem({
   return (
     <div className={`rv-note rv-note-${note.kind} rv-note-${note.status}`}>
       <div>
-        <strong>{note.kind === 'finding' ? 'Finding' : 'Question'}</strong> · {note.status} ·{' '}
-        <span className="rv-sub">{timeOf(note.createdAt)}</span>
-        {note.stepId !== null && <span className="rv-sub"> · during {note.stepId}</span>}
+        <strong>{note.kind === 'finding' ? words.note.finding : words.note.question}</strong> ·{' '}
+        {note.status === 'open' ? words.note.open : words.note.resolved}
+        <span className="rv-sub">
+          {' '}
+          · {timeOf(note.createdAt, lang)}
+          {note.stepId !== null ? ` · ${words.note.duringStep(note.stepId)}` : ''}
+        </span>
       </div>
       <div className="rv-note-text">{note.text}</div>
       {note.location !== null && (
@@ -991,36 +1119,14 @@ function NoteItem({
             }
           }}
         >
-          {locationText(note.location)}
+          {fileName(note.location.path)}:{rangeText(note.location)}
         </button>
       )}
       <div className="rv-note-actions">
-        <input
-          value={resolution}
-          placeholder={note.status === 'open' ? 'Answer or resolution (optional)' : 'Resolution'}
-          onChange={(event) => {
-            setResolution(event.target.value);
-          }}
-        />
-        {note.status === 'open' ? (
-          <button
-            type="button"
-            onClick={() => {
-              onStatus(note.id, 'resolved', resolution);
-            }}
-          >
-            Mark resolved
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              onStatus(note.id, 'open', resolution);
-            }}
-          >
-            Reopen
-          </button>
-        )}
+        <input value={resolution} placeholder={words.note.resolution} onChange={(event) => setResolution(event.target.value)} />
+        <button type="button" onClick={() => onStatus(note.id, note.status === 'open' ? 'resolved' : 'open', resolution)}>
+          {note.status === 'open' ? words.note.markResolved : words.note.reopen}
+        </button>
       </div>
     </div>
   );
@@ -1028,9 +1134,11 @@ function NoteItem({
 
 function Browse({
   bridge,
+  words,
   onOpen,
 }: {
   readonly bridge: ReviewBridge;
+  readonly words: ReviewWords;
   readonly onOpen: (location: CodeLocation) => void;
 }): JSX.Element {
   const [side, setSide] = useState<RevisionSide>('target');
@@ -1045,7 +1153,7 @@ function Browse({
   return (
     <div className="rv-browse">
       <div className="rv-side-choice">
-        Revision:{' '}
+        {words.search.revision}:{' '}
         {(['target', 'base'] as const).map((value) => (
           <label key={value}>
             <input
@@ -1056,7 +1164,7 @@ function Browse({
                 setResult(null);
               }}
             />{' '}
-            {value}
+            {words.side[value]}
           </label>
         ))}
       </div>
@@ -1066,31 +1174,17 @@ function Browse({
           void bridge.search(side, query).then(setResult);
         }}
       >
-        <input
-          value={query}
-          placeholder="Search text in the repository (git grep)"
-          onChange={(event) => {
-            setQuery(event.target.value);
-          }}
-        />
-        <button type="submit">Search</button>
+        <input value={query} placeholder={words.search.placeholder} onChange={(event) => setQuery(event.target.value)} />
+        <button type="submit">{words.search.button}</button>
       </form>
       {result !== null && (
         <div className="rv-hits">
           {result.error !== undefined && <p className="rv-error">{result.error}</p>}
-          <p className="rv-sub">
-            {result.hits.length} hits{result.truncated ? ' (first 500 only)' : ''}
-          </p>
+          <p className="rv-sub">{words.search.hits(result.hits.length, result.truncated)}</p>
           <ul>
             {result.hits.map((hit) => (
               <li key={`${hit.path}:${String(hit.line)}`}>
-                <button
-                  type="button"
-                  className="rv-link"
-                  onClick={() => {
-                    onOpen({ path: hit.path, side, start: hit.line, end: hit.line });
-                  }}
-                >
+                <button type="button" className="rv-link" onClick={() => onOpen({ path: hit.path, side, start: hit.line, end: hit.line })}>
                   {hit.path}:{hit.line}
                 </button>
                 <code className="rv-hit-text">{hit.text.trim()}</code>
@@ -1099,23 +1193,11 @@ function Browse({
           </ul>
         </div>
       )}
-      <input
-        value={filter}
-        placeholder={`Filter all ${String(all.length)} files at ${side}`}
-        onChange={(event) => {
-          setFilter(event.target.value);
-        }}
-      />
+      <input value={filter} placeholder={words.search.filter(all.length, words.side[side])} onChange={(event) => setFilter(event.target.value)} />
       <ul className="rv-all-files">
         {filtered.map((entry) => (
           <li key={entry}>
-            <button
-              type="button"
-              className="rv-link"
-              onClick={() => {
-                onOpen({ path: entry, side, start: 1, end: 1 });
-              }}
-            >
+            <button type="button" className="rv-link" onClick={() => onOpen({ path: entry, side, start: 1, end: 1 })}>
               {entry}
             </button>
           </li>
@@ -1132,90 +1214,129 @@ function StepPanel({
   walk,
   step,
   index,
+  placeIndex,
   state,
-  refIndex,
-  refProblems,
-  isAway,
-  onRef,
+  words,
+  lang,
+  onPlace,
   onStep,
-  onToggleWalked,
+  onOpenEvidence,
 }: {
   readonly bundle: ReviewBundle;
   readonly walk: Walk;
   readonly step: WalkStep;
   readonly index: number;
+  readonly placeIndex: number;
   readonly state: ReviewState;
-  readonly refIndex: number;
-  readonly refProblems: ReadonlyMap<string, string>;
-  readonly isAway: boolean;
-  readonly onRef: (refIndex: number) => void;
+  readonly words: ReviewWords;
+  readonly lang: Lang;
+  readonly onPlace: (index: number) => void;
   readonly onStep: (stepId: string) => void;
-  readonly onToggleWalked: (stepId: string) => void;
+  readonly onOpenEvidence: (location: CodeLocation) => void;
 }): JSX.Element {
+  const [sources, setSources] = useState(false);
   const previous = walk.steps[index - 1];
   const next = walk.steps[index + 1];
-  const walkIndex = bundle.definition.walks.indexOf(walk);
-  const nextWalk = bundle.definition.walks[walkIndex + 1];
-  const walked = state.walkedSteps[step.id];
+  const nextWalk = bundle.definition.walks[bundle.definition.walks.indexOf(walk) + 1];
+  const active = Math.min(placeIndex, step.places.length - 1);
+  const summaryLabels = [...new Set(step.evidence.map((entry) => entry.label))];
   return (
-    <section className={isAway ? 'rv-step-panel rv-step-panel-away' : 'rv-step-panel'}>
+    <section className="rv-step-panel">
       <div className="rv-walk-title">
-        {walk.id} — {walk.title}
+        {walk.id} · <Inline text={pick(walk.title, lang)} />
       </div>
       <h2>
-        <span className="rv-step-id">{step.id}</span> {step.title}{' '}
-        <span className="rv-sub">
-          ({index + 1}/{walk.steps.length})
-        </span>
+        <span className="rv-step-id">{step.id}</span> <Inline text={pick(step.title, lang)} />
       </h2>
-      <Markdown text={step.text} />
-      {step.claims.length > 0 && (
-        <ul className="rv-claims">
-          {step.claims.map((claim) => (
-            <li key={claim.text}>
-              <span className={`rv-label rv-label-${claim.label}`} title={LABEL_HELP[claim.label]}>
-                {LABEL_TEXT[claim.label]}
-              </span>{' '}
-              <Markdown text={claim.text} />
-            </li>
-          ))}
-        </ul>
+      <div className="rv-sub">
+        {words.stepOf(index + 1, walk.steps.length)}
+        {state.walkedSteps[step.id] !== undefined && <span className="rv-mark-walked"> ✓</span>}
+      </div>
+      {pick(step.summary, lang) !== '' && (
+        <p className="rv-summary">
+          <Inline text={pick(step.summary, lang)} />
+        </p>
       )}
-      <div className="rv-refs">
-        <div className="rv-sub">Code for this step (click to show):</div>
-        <ul>
-          {step.refs.map((ref, position) => {
-            const problem = refProblems.get(`${step.id}#${String(position)}`);
-            return (
-              <li key={`${ref.path}:${String(ref.start)}:${String(position)}`}>
+
+      {step.places.length > 1 && (
+        <div className="rv-places">
+          <div className="rv-section-title">{words.places}</div>
+          <ol>
+            {step.places.map((entry, position) => (
+              <li key={entry.id}>
                 <button
                   type="button"
-                  className={!isAway && position === refIndex ? 'rv-ref rv-ref-on' : 'rv-ref'}
-                  onClick={() => {
-                    onRef(position);
-                  }}
+                  className={position === active ? 'rv-place rv-place-on' : 'rv-place'}
+                  aria-current={position === active ? 'location' : undefined}
+                  onClick={() => onPlace(position)}
                 >
-                  <span className={`rv-role rv-role-${ref.role}`}>{ref.role}</span> {ref.path}:{rangeText(ref)}{' '}
-                  <span className="rv-sub">{ref.side}</span>
-                  {ref.note !== undefined && <span className="rv-ref-note"> — {ref.note}</span>}
+                  <span className="rv-place-number">{position + 1}</span>
+                  <Markdown text={pick(entry.label, lang)} />
                 </button>
-                {problem !== undefined && <div className="rv-error">Invalid reference: {problem}</div>}
               </li>
-            );
-          })}
-        </ul>
+            ))}
+          </ol>
+          <div className="rv-place-nav">
+            <button type="button" disabled={active === 0} onClick={() => onPlace(active - 1)}>
+              ↑ {words.previousPlace}
+            </button>
+            <span className="rv-sub">{words.placeOf(active + 1, step.places.length)}</span>
+            <button type="button" disabled={active === step.places.length - 1} onClick={() => onPlace(active + 1)}>
+              ↓ {words.nextPlace}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="rv-section-title">{words.whatHappens}</div>
+      <div className="rv-explanation">
+        <Markdown text={pick(step.body, lang)} />
       </div>
+      {pick(step.why, lang) !== '' && (
+        <>
+          <div className="rv-section-title">{words.whyItMatters}</div>
+          <div className="rv-explanation">
+            <Markdown text={pick(step.why, lang)} />
+          </div>
+        </>
+      )}
+
+      {step.evidence.length > 0 && (
+        <div className="rv-evidence">
+          <div className="rv-section-title">{words.howDoWeKnow}</div>
+          <ul className="rv-evidence-summary">
+            {summaryLabels.map((label) => (
+              <li key={label} className={`rv-evidence-${label}`}>
+                <strong>{words.evidenceLabel[label]}.</strong> {words.evidenceMeaning[label]}
+              </li>
+            ))}
+          </ul>
+          <button type="button" className="rv-quiet" aria-expanded={sources} onClick={() => setSources(!sources)}>
+            {sources ? words.hideSources : words.showSources}
+          </button>
+          {sources && (
+            <ul className="rv-evidence-detail">
+              {step.evidence.map((entry) => (
+                <li key={entry.text.en}>
+                  <span className="rv-sub">{words.evidenceLabel[entry.label]}:</span> <Markdown text={pick(entry.text, lang)} />
+                </li>
+              ))}
+              {step.evidenceRefs.map((ref) => (
+                <li key={ref.id}>
+                  <button type="button" className="rv-link" onClick={() => onOpenEvidence(asLocation(ref))}>
+                    {ref.path}:{rangeText(ref)}
+                  </button>
+                  {ref.note !== undefined && <span className="rv-sub"> – {pick(ref.note, lang)}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       <div className="rv-step-nav">
-        <button
-          type="button"
-          disabled={previous === undefined}
-          onClick={() => {
-            if (previous !== undefined) {
-              onStep(previous.id);
-            }
-          }}
-        >
-          ← Previous
+        <button type="button" disabled={previous === undefined} onClick={() => previous !== undefined && onStep(previous.id)}>
+          {words.previousStep}
         </button>
         <button
           type="button"
@@ -1227,25 +1348,144 @@ function StepPanel({
             }
           }}
         >
-          {next === undefined && nextWalk !== undefined ? `Next walk (${nextWalk.id}) →` : 'Next →'}
+          {next === undefined && nextWalk !== undefined ? words.nextWalk(nextWalk.id) : words.nextStep}
         </button>
       </div>
-      <p className="rv-sub">Moving between steps records only which step and code you opened. It approves nothing.</p>
-      <div className="rv-walked">
-        <button
-          type="button"
-          onClick={() => {
-            onToggleWalked(step.id);
+      <p className="rv-sub rv-center">{words.navigationNote}</p>
+    </section>
+  );
+}
+
+/** Decisions for the changes the shown code touches, each with its exact scope. */
+function HunkDecisions({
+  focus,
+  diffFile,
+  files,
+  coverage,
+  decisions,
+  onDecide,
+  revisionText,
+  words,
+}: {
+  readonly focus: CodeLocation | null;
+  readonly diffFile: DiffFile | null;
+  readonly files: Files;
+  readonly coverage: ReadonlyMap<string, HunkCoverage>;
+  readonly decisions: readonly ReviewDecision[];
+  readonly onDecide: (decision: Omit<ReviewDecision, 'id' | 'at' | 'by' | 'revisions'>) => void;
+  readonly revisionText: string;
+  readonly words: ReviewWords;
+}): JSX.Element {
+  const rows = useRows(files, focus?.path ?? '', diffFile, focus?.side ?? 'target');
+  const current = useMemo(() => currentHunkDecisions(decisions), [decisions]);
+  const hunks = useMemo(() => {
+    if (focus === null || diffFile === null || rows === null) {
+      return [];
+    }
+    const ids = new Set(
+      referenceRows(rows.rows, focus)
+        .indexes.map((index) => rows.rows[index]?.hunkId)
+        .filter((id): id is string => id !== null && id !== undefined),
+    );
+    return diffFile.hunks.filter((hunk) => ids.has(hunk.id));
+  }, [focus, diffFile, rows]);
+  if (hunks.length === 0) {
+    return <p className="rv-sub">{words.decisions.noChangesHere}</p>;
+  }
+  return (
+    <div className="rv-decisions">
+      <div className="rv-section-title">{words.decisions.changesHere}</div>
+      {hunks.map((hunk) => (
+        <HunkDecision
+          key={hunk.id}
+          hunk={hunk}
+          entry={coverage.get(hunk.id) ?? null}
+          decision={current.get(hunk.id) ?? null}
+          onDecide={onDecide}
+          revisionText={revisionText}
+          words={words}
+        />
+      ))}
+    </div>
+  );
+}
+
+function HunkDecision({
+  hunk,
+  entry,
+  decision,
+  onDecide,
+  revisionText,
+  words,
+}: {
+  readonly hunk: DiffHunk;
+  readonly entry: HunkCoverage | null;
+  readonly decision: ReviewDecision | null;
+  readonly onDecide: (decision: Omit<ReviewDecision, 'id' | 'at' | 'by' | 'revisions'>) => void;
+  readonly revisionText: string;
+  readonly words: ReviewWords;
+}): JSX.Element {
+  const [asking, setAsking] = useState<'accepted' | 'exempted' | null>(null);
+  const [reason, setReason] = useState('');
+  const where = hunkWhere(hunk, words);
+  return (
+    <div className="rv-decision">
+      <div>
+        {capitalise(where)} — <strong className={decision === null ? '' : `rv-decision-${decision.outcome}`}>{decisionWord(decision, words)}</strong>
+        {entry !== null && entry.openFindings > 0 && <span className="rv-error"> · {words.openFindings(entry.openFindings)}</span>}
+      </div>
+      {asking === null ? (
+        <div className="rv-decision-actions">
+          {decision === null ? (
+            <>
+              <button type="button" onClick={() => setAsking('accepted')}>
+                {words.decisions.accept}
+              </button>
+              <button type="button" onClick={() => setAsking('exempted')}>
+                {words.decisions.exempt}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onDecide({ scope: { kind: 'hunk', path: hunk.path, hunkId: hunk.id }, outcome: 'withdrawn', reason: '' })}
+            >
+              {words.decisions.withdraw}
+            </button>
+          )}
+        </div>
+      ) : (
+        <form
+          className="rv-confirm"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (asking === 'exempted' && reason.trim() === '') {
+              return;
+            }
+            onDecide({ scope: { kind: 'hunk', path: hunk.path, hunkId: hunk.id }, outcome: asking, reason: reason.trim() });
+            setAsking(null);
+            setReason('');
           }}
         >
-          {walked === undefined ? 'Mark this step walked through' : 'Walked through ✓ — undo'}
-        </button>
-        <span className="rv-sub">
-          {state.shownSteps[step.id] === undefined ? '' : `First opened ${timeOf(state.shownSteps[step.id] ?? '')}. `}
-          Walked through is your note of progress, not acceptance.
-        </span>
-      </div>
-    </section>
+          <div>
+            <strong>{asking === 'accepted' ? words.decisions.accept.replace('…', '') : words.decisions.exempt.replace('…', '')}</strong>:{' '}
+            {words.decisions.scope(`${where} (${hunk.path})`, revisionText)}
+            {asking === 'accepted' && ` ${words.decisions.notGuarantee}`}
+          </div>
+          <input
+            value={reason}
+            placeholder={asking === 'exempted' ? words.decisions.reasonRequired : words.decisions.commentOptional}
+            onChange={(event) => setReason(event.target.value)}
+          />
+          <button type="submit" disabled={asking === 'exempted' && reason.trim() === ''}>
+            {words.decisions.confirm}
+          </button>
+          <button type="button" onClick={() => setAsking(null)}>
+            {words.decisions.cancel}
+          </button>
+        </form>
+      )}
+    </div>
   );
 }
 
@@ -1253,11 +1493,13 @@ function NoteForm({
   selection,
   shown,
   stepId,
+  words,
   onAdd,
 }: {
   readonly selection: CodeLocation | null;
   readonly shown: CodeLocation | null;
   readonly stepId: string | null;
+  readonly words: ReviewWords;
   readonly onAdd: (note: Pick<ReviewNote, 'kind' | 'text' | 'location' | 'stepId'>) => void;
 }): JSX.Element {
   const [kind, setKind] = useState<'question' | 'finding'>('question');
@@ -1278,31 +1520,23 @@ function NoteForm({
       <div className="rv-note-kind">
         {(['question', 'finding'] as const).map((value) => (
           <label key={value}>
-            <input
-              type="radio"
-              checked={kind === value}
-              onChange={() => {
-                setKind(value);
-              }}
-            />{' '}
-            {value === 'question' ? 'Question' : 'Finding'}
+            <input type="radio" checked={kind === value} onChange={() => setKind(value)} />{' '}
+            {value === 'question' ? words.note.question : words.note.finding}
           </label>
         ))}
       </div>
       <textarea
         value={text}
         rows={3}
-        placeholder={kind === 'question' ? 'Your question…' : 'What is wrong, and why…'}
-        onChange={(event) => {
-          setText(event.target.value);
-        }}
+        placeholder={kind === 'question' ? words.note.yourQuestion : words.note.yourFinding}
+        onChange={(event) => setText(event.target.value)}
       />
       <div className="rv-sub">
-        At: {location === null ? 'no code location' : locationText(location)}
-        {selection === null ? ' (click line numbers to choose lines; shift-click extends)' : ' (your selection)'}
+        {words.note.at(location === null ? words.note.noLocation : `${fileName(location.path)}:${rangeText(location)}`)}
+        {selection === null ? ` — ${words.note.selectHint}` : ` (${words.note.yourSelection})`}
       </div>
       <button type="submit" disabled={text.trim() === ''}>
-        Add {kind}
+        {words.note.add(kind)}
       </button>
     </form>
   );
@@ -1312,25 +1546,29 @@ function NotesHere({
   notes,
   location,
   stepId,
+  words,
   onOpen,
 }: {
   readonly notes: readonly ReviewNote[];
   readonly location: CodeLocation | null;
   readonly stepId: string | null;
+  readonly words: ReviewWords;
   readonly onOpen: (location: CodeLocation) => void;
 }): JSX.Element | null {
   const here = notes.filter(
-    (note) => (stepId !== null && note.stepId === stepId) || (location !== null && note.location?.path === location.path),
+    (note) =>
+      note.status === 'open' &&
+      ((stepId !== null && note.stepId === stepId) || (location !== null && note.location?.path === location.path)),
   );
   if (here.length === 0) {
     return null;
   }
   return (
     <div className="rv-notes-here">
-      <div className="rv-sub">Notes on this step or file:</div>
+      <div className="rv-section-title">{words.note.hereTitle}</div>
       {here.map((note) => (
-        <div key={note.id} className={`rv-note rv-note-${note.kind} rv-note-${note.status}`}>
-          <strong>{note.kind === 'finding' ? 'Finding' : 'Question'}</strong> ({note.status}): {note.text}{' '}
+        <div key={note.id} className={`rv-note rv-note-${note.kind}`}>
+          <strong>{note.kind === 'finding' ? words.note.finding : words.note.question}:</strong> {note.text}{' '}
           {note.location !== null && (
             <button
               type="button"
@@ -1341,7 +1579,7 @@ function NotesHere({
                 }
               }}
             >
-              {note.location.path.split('/').pop()}:{rangeText(note.location)}
+              {fileName(note.location.path)}:{rangeText(note.location)}
             </button>
           )}
         </div>
@@ -1371,176 +1609,127 @@ function TokensView({ tokens }: { readonly tokens: readonly Token[] | undefined 
   );
 }
 
-function inRange(location: CodeLocation | null, side: RevisionSide, line: number | null, path: string): boolean {
-  return (
-    location !== null &&
-    line !== null &&
-    location.path === path &&
-    location.side === side &&
-    location.start <= line &&
-    line <= location.end
-  );
-}
-
 function CodePane({
-  location,
+  focus,
+  contexts,
+  overlay,
   diffFile,
-  mode,
-  onMode,
   files,
-  coverage,
-  decisions,
+  view,
+  onView,
+  scope,
+  onScope,
+  highlightWalk,
+  onHighlightWalk,
   selection,
   onSelect,
-  onDecide,
-  revisions,
+  words,
 }: {
-  readonly location: CodeLocation;
+  readonly focus: CodeLocation;
+  readonly contexts: readonly CodeLocation[];
+  readonly overlay: readonly CodeLocation[];
   readonly diffFile: DiffFile | null;
-  readonly mode: 'diff' | 'file';
-  readonly onMode: (mode: 'diff' | 'file') => void;
-  readonly files: ReturnType<typeof useFiles>;
-  readonly coverage: ReadonlyMap<string, HunkCoverage>;
-  readonly decisions: readonly ReviewDecision[];
+  readonly files: Files;
+  readonly view: CodeView;
+  readonly onView: (view: CodeView) => void;
+  readonly scope: CodeScope;
+  readonly onScope: (scope: CodeScope) => void;
+  readonly highlightWalk: boolean;
+  readonly onHighlightWalk: ((on: boolean) => void) | null;
   readonly selection: CodeLocation | null;
   readonly onSelect: (location: CodeLocation | null) => void;
-  readonly onDecide: (decision: Omit<ReviewDecision, 'id' | 'at' | 'by' | 'revisions'>) => void;
-  readonly revisions: string;
+  readonly words: ReviewWords;
 }): JSX.Element {
-  const [whole, setWhole] = useState(false);
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [fileSide, setFileSide] = useState<RevisionSide>(location.side);
-  const showDiff = diffFile !== null && !diffFile.binary && mode === 'diff';
+  const content = useRows(files, focus.path, diffFile, focus.side);
+  const [extra, setExtra] = useState({ above: 0, below: 0, context: false });
+  const [openGaps, setOpenGaps] = useState<ReadonlySet<number>>(new Set());
   const container = useRef<HTMLDivElement>(null);
+  const rows = content?.rows ?? [];
 
-  useEffect(() => {
-    setFileSide(location.side);
-  }, [location.path, location.side, location.start]);
-
-  const needBase = showDiff ? diffFile.status !== 'added' : fileSide === 'base';
-  const needTarget = showDiff ? diffFile.status !== 'deleted' : fileSide === 'target';
-  useEffect(() => {
-    if (needBase) {
-      files.load('base', location.path);
-    }
-    if (needTarget) {
-      files.load('target', location.path);
-    }
-  }, [files, location.path, needBase, needTarget]);
-
-  const base = needBase ? files.get('base', location.path) : NO_LINES;
-  const target = needTarget ? files.get('target', location.path) : NO_LINES;
-
-  const content = useMemo((): { rows: DiffRow[]; error: string | null } | null => {
-    if (base === null || target === null) {
-      return null;
-    }
-    if (base.kind === 'failed' || target.kind === 'failed') {
-      return { rows: [], error: base.kind === 'failed' ? base.error : target.kind === 'failed' ? target.error : '' };
-    }
-    if (base.kind === 'binary' || target.kind === 'binary') {
-      return { rows: [], error: 'Binary content is not shown.' };
-    }
-    const baseLines = base.kind === 'text' ? base.lines : [];
-    const targetLines = target.kind === 'text' ? target.lines : [];
-    if (showDiff) {
-      try {
-        return { rows: buildDiffRows(baseLines, targetLines, diffFile.hunks), error: null };
-      } catch (error) {
-        return { rows: [], error: error instanceof Error ? error.message : String(error) };
+  const focused = useMemo(() => referenceRows(rows, focus), [rows, focus]);
+  const focusSet = useMemo(() => new Set(focused.indexes), [focused]);
+  const overlaySet = useMemo(() => {
+    const set = new Set<number>();
+    for (const location of overlay) {
+      if (location.path === focus.path) {
+        referenceRows(rows, location).indexes.forEach((index) => set.add(index));
       }
     }
-    const lines = fileSide === 'base' ? baseLines : targetLines;
-    const missing = (fileSide === 'base' ? base : target).kind === 'missing';
-    if (missing) {
-      return { rows: [], error: `${location.path} does not exist at ${fileSide}.` };
-    }
-    return {
-      rows: lines.map((text, index) => ({
-        kind: 'context' as const,
-        baseLine: fileSide === 'base' ? index + 1 : null,
-        targetLine: fileSide === 'target' ? index + 1 : null,
-        text,
-        hunkId: null,
-      })),
-      error: null,
-    };
-  }, [base, target, showDiff, diffFile, fileSide, location.path]);
+    return set;
+  }, [overlay, rows, focus.path]);
+  const contextRange = useMemo(() => {
+    const indexes = contexts
+      .filter((location) => location.path === focus.path)
+      .flatMap((location) => referenceRows(rows, location).indexes);
+    return indexes.length === 0 ? null : { first: Math.min(...indexes), last: Math.max(...indexes) };
+  }, [contexts, rows, focus.path]);
+  const selectionSet = useMemo(() => (selection === null ? new Set<number>() : new Set(referenceRows(rows, selection).indexes)), [selection, rows]);
 
-  const tokens = useMemo(() => {
-    const baseLines = base?.kind === 'text' ? base.lines : [];
-    const targetLines = target?.kind === 'text' ? target.lines : [];
-    return {
-      base: highlightLines(baseLines, location.path),
-      target: highlightLines(targetLines, location.path),
-    };
-  }, [base, target, location.path]);
+  const changed = focused.changed;
+  const effectiveView: CodeView = changed ? view : 'both';
+  const hidden = (row: DiffRow): boolean =>
+    (effectiveView === 'before' && row.kind === 'added') || (effectiveView === 'after' && row.kind === 'deleted');
 
-  // Which rows are visible: everything in whole-file mode; otherwise changed rows and
-  // their context, the focus range, the selection and anything expanded by hand.
+  // Which rows are on screen.
   const visible = useMemo(() => {
-    const rows = content?.rows ?? [];
-    if (!showDiff || whole) {
-      return rows.map(() => true);
-    }
     const keep = rows.map(() => false);
-    rows.forEach((row, index) => {
-      const focused =
-        inRange(
-          { ...location, start: location.start - FOCUS_MARGIN, end: location.end + FOCUS_MARGIN },
-          'target',
-          row.targetLine,
-          location.path,
-        ) ||
-        inRange(
-          { ...location, start: location.start - FOCUS_MARGIN, end: location.end + FOCUS_MARGIN },
-          'base',
-          row.baseLine,
-          location.path,
-        );
-      if (row.kind !== 'context' || focused) {
-        for (
-          let near = Math.max(0, index - (focused ? 0 : CONTEXT_LINES));
-          near <= Math.min(rows.length - 1, index + (focused ? 0 : CONTEXT_LINES));
-          near += 1
-        ) {
-          keep[near] = true;
+    if (rows.length === 0) {
+      return keep;
+    }
+    if (scope === 'file') {
+      // The whole file: changes with a little context; long unchanged runs fold away.
+      rows.forEach((row, index) => {
+        if (row.kind !== 'context' || focusSet.has(index)) {
+          for (let near = Math.max(0, index - GAP_CONTEXT); near <= Math.min(rows.length - 1, index + GAP_CONTEXT); near += 1) {
+            keep[near] = true;
+          }
+        }
+      });
+      if (diffFile === null) {
+        keep.fill(true);
+      }
+      let index = 0;
+      while (index < keep.length) {
+        if (keep[index] === true) {
+          index += 1;
+          continue;
+        }
+        const start = index;
+        while (index < keep.length && keep[index] !== true) {
+          index += 1;
+        }
+        if (openGaps.has(start)) {
+          keep.fill(true, start, index);
         }
       }
-    });
-    // Gaps the reviewer opened stay open; a gap is named by its first row.
-    let index = 0;
-    while (index < keep.length) {
-      if (keep[index] === true) {
-        index += 1;
-        continue;
-      }
-      const start = index;
-      while (index < keep.length && keep[index] !== true) {
-        index += 1;
-      }
-      if (expanded.has(`${location.path}:${String(start)}`)) {
-        keep.fill(true, start, index);
-      }
+      return keep;
     }
+    const first = focused.indexes[0] ?? 0;
+    const last = focused.indexes[focused.indexes.length - 1] ?? first;
+    let from = first - FOCUS_MARGIN - extra.above;
+    let to = last + FOCUS_MARGIN + extra.below;
+    if (extra.context && contextRange !== null) {
+      from = Math.min(from, contextRange.first);
+      to = Math.max(to, contextRange.last);
+    }
+    keep.fill(true, Math.max(0, from), Math.min(rows.length, to + 1));
     return keep;
-  }, [content, showDiff, whole, location, expanded]);
+  }, [rows, scope, focusSet, focused, extra, contextRange, openGaps, diffFile]);
 
-  // Scroll the focused lines into the middle of the pane once they exist.
-  const focusKey = `${location.path}:${location.side}:${String(location.start)}:${mode}:${fileSide}`;
+  // Bring the focused change into view: its first changed row, not the top of a range.
+  const scrollKey = `${focus.path}:${focus.side}:${String(focus.start)}:${String(focus.end)}:${scope}:${effectiveView}`;
   const scrolledFor = useRef('');
   useLayoutEffect(() => {
-    if (content === null || scrolledFor.current === focusKey) {
+    if (content === null || scrolledFor.current === scrollKey) {
       return;
     }
-    const element = container.current?.querySelector('[data-focus="1"]');
-    if (element !== null && element !== undefined) {
-      element.scrollIntoView({ block: 'center' });
-      scrolledFor.current = focusKey;
+    const target =
+      container.current?.querySelector('[data-focus-change="1"]') ?? container.current?.querySelector('[data-focus="1"]');
+    if (target !== null && target !== undefined) {
+      target.scrollIntoView({ block: 'center' });
+      scrolledFor.current = scrollKey;
     }
   });
-
-  const currentDecisions = useMemo(() => currentHunkDecisions(decisions), [decisions]);
 
   const select = (row: DiffRow, extend: boolean): void => {
     const side: RevisionSide = row.targetLine !== null ? 'target' : 'base';
@@ -1548,240 +1737,173 @@ function CodePane({
     if (line === null) {
       return;
     }
-    if (extend && selection !== null && selection.path === location.path && selection.side === side) {
+    if (extend && selection !== null && selection.path === focus.path && selection.side === side) {
       onSelect({ ...selection, start: Math.min(selection.start, line), end: Math.max(selection.end, line) });
     } else {
-      onSelect({ path: location.path, side, start: line, end: line });
+      onSelect({ path: focus.path, side, start: line, end: line });
     }
   };
 
-  const body: ReactNode[] = [];
-  if (content !== null) {
+  const body: JSX.Element[] = [];
+  if (content !== null && content.error === null) {
+    const firstVisible = visible.indexOf(true);
+    const lastVisible = visible.lastIndexOf(true);
+    if (scope === 'focus' && firstVisible > 0) {
+      body.push(
+        <div key="more-above" className="rv-more">
+          <button type="button" onClick={() => setExtra({ ...extra, above: extra.above + MORE_LINES })}>
+            ↑ {words.view.moreAbove}
+          </button>
+          {contextRange !== null && !extra.context && contextRange.first < firstVisible && (
+            <button type="button" onClick={() => setExtra({ ...extra, context: true })}>
+              {words.view.wholeContext}
+            </button>
+          )}
+        </div>,
+      );
+    }
     let firstFocus = true;
-    let index = 0;
-    let lastHunk: string | null = null;
-    while (index < content.rows.length) {
+    let firstChange = true;
+    let index = scope === 'focus' ? Math.max(0, firstVisible) : 0;
+    const end = scope === 'focus' ? lastVisible : rows.length - 1;
+    while (index <= end && index >= 0) {
       if (visible[index] !== true) {
         const start = index;
-        while (index < content.rows.length && visible[index] !== true) {
+        while (index <= end && visible[index] !== true) {
           index += 1;
         }
-        const key = `${location.path}:${String(start)}`;
-        {
-          body.push(
-            <div key={`gap-${String(start)}`} className="rv-gap">
-              <button
-                type="button"
-                onClick={() => {
-                  setExpanded(new Set([...expanded, key]));
-                }}
-              >
-                ⋯ show {index - start} unchanged lines
-              </button>
-            </div>,
-          );
-        }
+        body.push(
+          <div key={`gap-${String(start)}`} className="rv-gap">
+            <button type="button" onClick={() => setOpenGaps(new Set([...openGaps, start]))}>
+              {words.view.hiddenLines(index - start)}
+            </button>
+          </div>,
+        );
         continue;
       }
-      const row = content.rows[index];
+      const row = rows[index];
       if (row === undefined) {
         break;
       }
-      if (row.hunkId !== null && row.hunkId !== lastHunk) {
-        const hunk = diffFile?.hunks.find((entry) => entry.id === row.hunkId);
-        const entry = coverage.get(row.hunkId);
-        if (hunk !== undefined && entry !== undefined) {
-          body.push(
-            <HunkBar
-              key={`hunk-${hunk.id}`}
-              hunk={hunk}
-              entry={entry}
-              decision={currentDecisions.get(hunk.id) ?? null}
-              onDecide={onDecide}
-              revisions={revisions}
-            />,
-          );
-        }
+      if (hidden(row)) {
+        index += 1;
+        continue;
       }
-      lastHunk = row.hunkId;
+      const inFocus = focusSet.has(index);
       const side: RevisionSide = row.targetLine !== null ? 'target' : 'base';
-      const focused =
-        inRange(location, 'target', row.targetLine, location.path) || inRange(location, 'base', row.baseLine, location.path);
-      const selected =
-        inRange(selection, 'target', row.targetLine, location.path) || inRange(selection, 'base', row.baseLine, location.path);
-      const lineTokens = side === 'target' ? tokens.target[(row.targetLine ?? 1) - 1] : tokens.base[(row.baseLine ?? 1) - 1];
+      const lineTokens = side === 'target' ? content.tokens.target[(row.targetLine ?? 1) - 1] : content.tokens.base[(row.baseLine ?? 1) - 1];
+      const classes = ['rv-row'];
+      if (row.kind === 'deleted') {
+        classes.push(inFocus ? 'rv-old' : 'rv-old-faint');
+      } else if (row.kind === 'added') {
+        classes.push(inFocus ? 'rv-new' : 'rv-new-faint');
+      } else if (inFocus) {
+        classes.push('rv-neutral-focus');
+      } else if (highlightWalk && overlaySet.has(index)) {
+        classes.push('rv-walk-mark');
+      }
+      if (row.kind !== 'context' && !inFocus && highlightWalk && overlaySet.has(index)) {
+        classes.push('rv-walk-edge');
+      }
+      if (selectionSet.has(index)) {
+        classes.push('rv-row-selected');
+      }
+      const marker =
+        row.kind === 'deleted' ? words.view.before : row.kind === 'added' ? words.view.after : '';
+      const focusAttrs: Record<string, string> = {};
+      if (inFocus && firstFocus) {
+        focusAttrs['data-focus'] = '1';
+        firstFocus = false;
+      }
+      if (inFocus && row.kind !== 'context' && firstChange) {
+        focusAttrs['data-focus-change'] = '1';
+        firstChange = false;
+      }
       body.push(
-        <div
-          key={`row-${String(index)}`}
-          className={`rv-row rv-row-${row.kind}${focused ? ' rv-row-focus' : ''}${selected ? ' rv-row-selected' : ''}`}
-          {...(focused && firstFocus ? { 'data-focus': '1' } : {})}
-        >
-          <button
-            type="button"
-            className="rv-ln"
-            title="Select this line for a note (shift-click to extend)"
-            onClick={(event) => {
-              select(row, event.shiftKey);
-            }}
-          >
+        <div key={`row-${String(index)}`} className={classes.join(' ')} {...focusAttrs}>
+          <button type="button" className="rv-ln" title={words.view.selectLine} onClick={(event) => select(row, event.shiftKey)}>
             <span>{row.baseLine ?? ''}</span>
             <span>{row.targetLine ?? ''}</span>
           </button>
-          <span className="rv-sign">{row.kind === 'added' ? '+' : row.kind === 'deleted' ? '−' : ' '}</span>
+          <span className={inFocus && marker !== '' ? 'rv-marker rv-marker-strong' : 'rv-marker'}>{marker}</span>
           <code className="rv-text">
             <TokensView tokens={lineTokens} />
           </code>
         </div>,
       );
-      if (focused) {
-        firstFocus = false;
-      }
       index += 1;
+    }
+    if (scope === 'focus' && lastVisible < rows.length - 1 && lastVisible >= 0) {
+      body.push(
+        <div key="more-below" className="rv-more">
+          <button type="button" onClick={() => setExtra({ ...extra, below: extra.below + MORE_LINES })}>
+            ↓ {words.view.moreBelow}
+          </button>
+          {contextRange !== null && !extra.context && contextRange.last > lastVisible && (
+            <button type="button" onClick={() => setExtra({ ...extra, context: true })}>
+              {words.view.wholeContext}
+            </button>
+          )}
+        </div>,
+      );
     }
   }
 
   return (
     <div className="rv-code-pane">
       <div className="rv-code-bar">
-        <span className="rv-path">{location.path}</span>
-        {diffFile === null ? (
-          <span className="rv-chip">not changed between base and target</span>
-        ) : (
-          <span className={`rv-chip rv-status-${diffFile.status}`}>{diffFile.status}</span>
-        )}
-        {diffFile !== null && !diffFile.binary && (
-          <span className="rv-seg">
-            <button type="button" className={mode === 'diff' ? 'rv-on' : ''} onClick={() => onMode('diff')}>
-              Diff
-            </button>
-            <button type="button" className={mode === 'file' ? 'rv-on' : ''} onClick={() => onMode('file')}>
-              File
-            </button>
-          </span>
-        )}
-        {(!showDiff) && (
-          <span className="rv-seg">
-            {(['target', 'base'] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                className={fileSide === value ? 'rv-on' : ''}
-                onClick={() => {
-                  setFileSide(value);
-                }}
-              >
-                {value}
+        <span className="rv-path" title={focus.path}>
+          {fileName(focus.path)}
+        </span>
+        {diffFile === null && <span className="rv-sub">{words.view.unchangedFile}</span>}
+        {changed ? (
+          <span className="rv-seg" role="group">
+            {(['before', 'both', 'after'] as const).map((value) => (
+              <button key={value} type="button" className={view === value ? 'rv-on' : ''} aria-pressed={view === value} onClick={() => onView(value)}>
+                {words.view[value]}
               </button>
             ))}
           </span>
+        ) : (
+          <span className="rv-sub">{words.view.noChangeHere}</span>
         )}
-        {showDiff && (
-          <label className="rv-check">
-            <input
-              type="checkbox"
-              checked={whole}
-              onChange={(event) => {
-                setWhole(event.target.checked);
-              }}
-            />{' '}
-            Whole file
+        <span className="rv-seg" role="group">
+          {(['focus', 'file'] as const).map((value) => (
+            <button key={value} type="button" className={scope === value ? 'rv-on' : ''} aria-pressed={scope === value} onClick={() => onScope(value)}>
+              {value === 'focus' ? words.view.focus : words.view.wholeFile}
+            </button>
+          ))}
+        </span>
+        {onHighlightWalk !== null && (
+          <label className="rv-check rv-walk-toggle">
+            <input type="checkbox" checked={highlightWalk} onChange={(event) => onHighlightWalk(event.target.checked)} />{' '}
+            {words.view.highlightWalk}
           </label>
         )}
-        <span className="rv-sub">
-          {showDiff ? 'line numbers: base | target' : `whole file at ${fileSide}`} · highlighted:{' '}
-          {location.side} {rangeText(location)}
-        </span>
+      </div>
+      <div className="rv-legend-bar" aria-hidden="true">
+        {changed && (
+          <>
+            <span className="rv-key rv-old">{words.view.legendOld}</span>
+            <span className="rv-key rv-new">{words.view.legendNew}</span>
+          </>
+        )}
+        {!changed && <span className="rv-key rv-neutral-focus">{words.view.legendFocus}</span>}
+        {highlightWalk && <span className="rv-key rv-walk-mark">{words.view.legendWalk}</span>}
       </div>
       <div className="rv-lines" ref={container}>
-        {content === null && <div className="rv-empty">Reading the file from git…</div>}
-        {content?.error !== null && content?.error !== undefined && <div className="rv-error">{content.error}</div>}
+        {content === null && <div className="rv-empty">{words.view.reading}</div>}
+        {content !== null && content.error !== null && (
+          <div className="rv-error">
+            {content.error === 'binary'
+              ? words.view.binary
+              : content.error === 'missing'
+                ? words.view.fileMissing(focus.path, words.side[focus.side])
+                : content.error}
+          </div>
+        )}
         {body}
       </div>
-    </div>
-  );
-}
-
-function HunkBar({
-  hunk,
-  entry,
-  decision,
-  onDecide,
-  revisions,
-}: {
-  readonly hunk: DiffHunk;
-  readonly entry: HunkCoverage;
-  readonly decision: ReviewDecision | null;
-  readonly onDecide: (decision: Omit<ReviewDecision, 'id' | 'at' | 'by' | 'revisions'>) => void;
-  readonly revisions: string;
-}): JSX.Element {
-  const [asking, setAsking] = useState<'accepted' | 'exempted' | null>(null);
-  const [reason, setReason] = useState('');
-  return (
-    <div className="rv-hunk-bar">
-      <div>
-        <span className="rv-step-id">{hunk.id}</span> {hunkRangeText(hunk)} · {entry.lines} changed lines · in a
-        walk: {planText(entry.planned)}
-        {entry.plannedBy.length > 0 ? ` (${entry.plannedBy.join(', ')})` : ''} · opened in walk: {planText(entry.shown)} ·
-        walked: {planText(entry.walked)} ·{' '}
-        <strong className={decision === null ? '' : `rv-decision-${decision.outcome}`}>{decisionText(decision)}</strong>
-        {entry.openFindings > 0 && <span className="rv-error"> · {entry.openFindings} open finding(s)</span>}
-        {asking === null && (
-          <span className="rv-hunk-actions">
-            {decision === null ? (
-              <>
-                <button type="button" onClick={() => setAsking('accepted')}>
-                  Accept…
-                </button>
-                <button type="button" onClick={() => setAsking('exempted')}>
-                  Exempt…
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  onDecide({ scope: { kind: 'hunk', path: hunk.path, hunkId: hunk.id }, outcome: 'withdrawn', reason: '' });
-                }}
-              >
-                Withdraw decision
-              </button>
-            )}
-          </span>
-        )}
-      </div>
-      {asking !== null && (
-        <form
-          className="rv-confirm"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (asking === 'exempted' && reason.trim() === '') {
-              return;
-            }
-            onDecide({ scope: { kind: 'hunk', path: hunk.path, hunkId: hunk.id }, outcome: asking, reason: reason.trim() });
-            setAsking(null);
-            setReason('');
-          }}
-        >
-          <div>
-            {asking === 'accepted' ? 'Accept' : 'Exempt from review'} <strong>{hunk.id}</strong> — {hunk.path},{' '}
-            {hunkRangeText(hunk)} — at <code>{revisions}</code>, as your own decision.
-            {asking === 'accepted' && ' Acceptance covers this hunk at this revision pair only and is no guarantee of correctness.'}
-          </div>
-          <input
-            value={reason}
-            placeholder={asking === 'exempted' ? 'Reason (required)' : 'Comment (optional)'}
-            onChange={(event) => {
-              setReason(event.target.value);
-            }}
-          />
-          <button type="submit" disabled={asking === 'exempted' && reason.trim() === ''}>
-            Confirm
-          </button>
-          <button type="button" onClick={() => setAsking(null)}>
-            Cancel
-          </button>
-        </form>
-      )}
     </div>
   );
 }

@@ -58,6 +58,7 @@ import type {
   ReviewBridge,
   ReviewFileOutcome,
   ReviewOpenOutcome,
+  ReviewPreferences,
   ReviewState,
   RevisionSide,
 } from '../shared/review-model';
@@ -396,6 +397,10 @@ const reviewBridge: ReviewBridge = {
     ipcRenderer.invoke('dspatch:review-search', side, query) as ReturnType<ReviewBridge['search']>,
   saveState: (state: ReviewState) =>
     ipcRenderer.invoke('dspatch:review-save-state', state) as ReturnType<ReviewBridge['saveState']>,
+  getPreferences: () =>
+    ipcRenderer.invoke('dspatch:review-get-preferences') as ReturnType<ReviewBridge['getPreferences']>,
+  setPreferences: (preferences: ReviewPreferences) =>
+    ipcRenderer.invoke('dspatch:review-set-preferences', preferences) as ReturnType<ReviewBridge['setPreferences']>,
 };
 contextBridge.exposeInMainWorld('dspatchReview', reviewBridge);
 

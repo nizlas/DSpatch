@@ -1,0 +1,528 @@
+import type { EvidenceLabel, Lang, LocalText } from '../shared/review-model';
+
+/**
+ * The review surface's own words, in its two display languages.
+ *
+ * Swedish and English are a product decision for this view (23 October 2026): the
+ * reviewer chooses one, and both the interface and the prepared explanations follow
+ * it. Code names, source code and repository documents stay English. Nothing here is
+ * translated at run time, and the reviewer's own notes are never translated.
+ */
+export interface ReviewWords {
+  readonly opening: string;
+  readonly openDefinition: string;
+  readonly openAnother: string;
+  readonly noDefinition: string;
+  readonly language: string;
+  readonly details: string;
+  readonly hideDetails: string;
+  readonly saving: string;
+  readonly saved: string;
+  readonly notSaved: (reason: string) => string;
+  readonly openFindings: (count: number) => string;
+  readonly tabs: {
+    readonly walks: string;
+    readonly files: string;
+    readonly coverage: string;
+    readonly notes: string;
+    readonly search: string;
+  };
+  readonly walkProgress: (opened: number, total: number) => string;
+  readonly stepOf: (index: number, total: number) => string;
+  readonly whatHappens: string;
+  readonly whyItMatters: string;
+  readonly places: string;
+  readonly placeOf: (index: number, total: number) => string;
+  readonly previousPlace: string;
+  readonly nextPlace: string;
+  readonly previousStep: string;
+  readonly nextStep: string;
+  readonly nextWalk: (id: string) => string;
+  readonly navigationNote: string;
+  readonly howDoWeKnow: string;
+  readonly showSources: string;
+  readonly hideSources: string;
+  readonly evidenceLabel: Record<EvidenceLabel, string>;
+  readonly evidenceMeaning: Record<EvidenceLabel, string>;
+  readonly notesSection: string;
+  readonly reviewSection: string;
+  readonly markWalked: string;
+  readonly walkedUndo: string;
+  readonly walkedNote: string;
+  readonly outsideWalk: string;
+  readonly backTo: (stepId: string) => string;
+  readonly view: {
+    readonly before: string;
+    readonly after: string;
+    readonly both: string;
+    readonly focus: string;
+    readonly wholeFile: string;
+    readonly highlightWalk: string;
+    readonly noChangeHere: string;
+    readonly unchangedFile: string;
+    readonly moreAbove: string;
+    readonly moreBelow: string;
+    readonly wholeContext: string;
+    readonly hiddenLines: (count: number) => string;
+    readonly reading: string;
+    readonly fileMissing: (path: string, side: string) => string;
+    readonly binary: string;
+    readonly selectLine: string;
+    readonly legendOld: string;
+    readonly legendNew: string;
+    readonly legendFocus: string;
+    readonly legendWalk: string;
+  };
+  readonly side: { readonly base: string; readonly target: string };
+  readonly status: Record<'added' | 'modified' | 'deleted' | 'type-changed', string>;
+  readonly decisions: {
+    readonly changesHere: string;
+    readonly noChangesHere: string;
+    readonly remaining: string;
+    readonly accepted: string;
+    readonly exempted: string;
+    readonly accept: string;
+    readonly exempt: string;
+    readonly withdraw: string;
+    readonly confirm: string;
+    readonly cancel: string;
+    readonly reasonRequired: string;
+    readonly commentOptional: string;
+    readonly scope: (where: string, revision: string) => string;
+    readonly notGuarantee: string;
+    readonly yours: string;
+  };
+  readonly changeAt: (path: string, lines: string) => string;
+  readonly newLines: (range: string) => string;
+  readonly oldLines: (range: string) => string;
+  readonly removedAfter: (line: number) => string;
+  readonly note: {
+    readonly question: string;
+    readonly finding: string;
+    readonly yourQuestion: string;
+    readonly yourFinding: string;
+    readonly at: (where: string) => string;
+    readonly noLocation: string;
+    readonly selectHint: string;
+    readonly yourSelection: string;
+    readonly add: (kind: 'question' | 'finding') => string;
+    readonly open: string;
+    readonly resolved: string;
+    readonly resolution: string;
+    readonly markResolved: string;
+    readonly reopen: string;
+    readonly duringStep: (stepId: string) => string;
+    readonly hereTitle: string;
+  };
+  readonly coverage: {
+    readonly intro: (total: number) => string;
+    readonly planned: string;
+    readonly opened: string;
+    readonly walked: string;
+    readonly accepted: string;
+    readonly exempted: string;
+    readonly remaining: string;
+    readonly agent: string;
+    readonly agentNone: string;
+    readonly open: string;
+    readonly lines: (count: number) => string;
+    readonly partly: (count: number) => string;
+    readonly onlyOutside: (count: number) => string;
+    readonly change: string;
+    readonly yes: string;
+    readonly no: string;
+    readonly part: string;
+  };
+  readonly notesTab: { readonly notesTitle: string; readonly none: string; readonly historyTitle: string; readonly noDecisions: string };
+  readonly search: {
+    readonly revision: string;
+    readonly placeholder: string;
+    readonly button: string;
+    readonly hits: (count: number, truncated: boolean) => string;
+    readonly filter: (count: number, side: string) => string;
+  };
+  readonly filesTab: { readonly hunks: (count: number) => string; readonly binary: string; readonly decided: (accepted: number, exempted: number, remaining: number) => string };
+  readonly detailsPanel: {
+    readonly revisions: string;
+    readonly base: string;
+    readonly target: string;
+    readonly oneCommit: string;
+    readonly severalCommits: string;
+    readonly repository: string;
+    readonly definition: string;
+    readonly readFromGit: string;
+    readonly explanations: (mode: string) => string;
+    readonly decisionsInfo: string;
+    readonly validated: (all: number, anchored: number) => string;
+    readonly problems: string;
+    readonly languagesMissing: string;
+  };
+  readonly notices: {
+    readonly unusable: (keptAs: string) => string;
+    readonly definitionChanged: (stale: number) => string;
+    readonly dismiss: string;
+  };
+}
+
+const sv: ReviewWords = {
+  opening: 'Öppnar granskningen …',
+  openDefinition: 'Öppna en granskningsdefinition …',
+  openAnother: 'Öppna en annan granskning …',
+  noDefinition: 'Ingen granskning angavs vid start. Välj en granskningsdefinition (*.review.json).',
+  language: 'Språk',
+  details: 'Detaljer',
+  hideDetails: 'Dölj detaljer',
+  saving: 'Sparar …',
+  saved: 'Sparat',
+  notSaved: (reason) =>
+    `Inte sparat. Dina senaste ändringar finns bara i det här fönstret och sparas igen vid nästa ändring. Orsak: ${reason}`,
+  openFindings: (count) => (count === 1 ? '1 öppet fynd' : `${String(count)} öppna fynd`),
+  tabs: { walks: 'Walks', files: 'Ändrade filer', coverage: 'Täckning', notes: 'Anteckningar och beslut', search: 'Sök' },
+  walkProgress: (opened, total) => `${String(opened)} av ${String(total)} steg öppnade`,
+  stepOf: (index, total) => `Steg ${String(index)} av ${String(total)}`,
+  whatHappens: 'Vad händer',
+  whyItMatters: 'Varför det spelar roll',
+  places: 'Kodställen i steget',
+  placeOf: (index, total) => `${String(index)} av ${String(total)}`,
+  previousPlace: 'Föregående kodställe',
+  nextPlace: 'Nästa kodställe',
+  previousStep: '← Föregående steg',
+  nextStep: 'Nästa steg →',
+  nextWalk: (id) => `Nästa walk (${id}) →`,
+  navigationNote: 'Att gå vidare godkänner ingenting.',
+  howDoWeKnow: 'Hur vet vi det?',
+  showSources: 'Visa underlaget',
+  hideSources: 'Dölj underlaget',
+  evidenceLabel: {
+    analysis: 'Läst ur koden',
+    'test-simulated': 'Visat i ett automatiskt test med ersatta delar',
+    'test-real-substitute': 'Visat i ett test med en riktig ersättningsprocess',
+    'not-observed': 'Inte observerat',
+  },
+  evidenceMeaning: {
+    analysis: 'Det här är vad vi kan läsa ut ur koden. Det visar inte i sig att det fungerar när programmet körs.',
+    'test-simulated': 'Ett automatiskt test har visat beteendet, men delar av systemet var ersatta i testet. Underlaget nedan säger vilket test och vad som var ersatt.',
+    'test-real-substitute': 'Ett test med en riktig lokal process som står i för en annan. Underlaget nedan säger vad den ersätter och vad som fortfarande var simulerat.',
+    'not-observed': 'Ingenting i underlaget har observerat det här.',
+  },
+  notesSection: 'Anteckna fråga eller fynd',
+  reviewSection: 'Granskning',
+  markWalked: 'Markera steget som genomgånget',
+  walkedUndo: 'Genomgånget ✓ – ångra',
+  walkedNote: 'Genomgånget är din egen markering av framsteg. Det godkänner ingen kod.',
+  outsideWalk: 'Utanför walken',
+  backTo: (stepId) => `Tillbaka till ${stepId}`,
+  view: {
+    before: 'Före',
+    after: 'Efter',
+    both: 'Före → Efter',
+    focus: 'Fokus',
+    wholeFile: 'Hela filen',
+    highlightWalk: 'Markera hela walken',
+    noChangeHere: 'Ingen ändring på det här stället',
+    unchangedFile: 'Filen är oförändrad mellan versionerna',
+    moreAbove: 'Visa mer ovanför',
+    moreBelow: 'Visa mer nedanför',
+    wholeContext: 'Visa hela sammanhanget',
+    hiddenLines: (count) => `⋯ visa ${String(count)} oförändrade rader`,
+    reading: 'Läser filen …',
+    fileMissing: (path, side) => `${path} finns inte i ${side}.`,
+    binary: 'Binärt innehåll visas inte.',
+    selectLine: 'Välj raden för en anteckning (skift-klick utökar)',
+    legendOld: 'Före (gammal kod)',
+    legendNew: 'Efter (ny kod)',
+    legendFocus: 'Det som steget förklarar',
+    legendWalk: 'Övriga ställen i walken',
+  },
+  side: { base: 'gamla versionen', target: 'nya versionen' },
+  status: { added: 'ny fil', modified: 'ändrad', deleted: 'borttagen', 'type-changed': 'typ ändrad' },
+  decisions: {
+    changesHere: 'Ändringar på det här stället',
+    noChangesHere: 'Det här stället innehåller ingen ändring att fatta beslut om.',
+    remaining: 'Inget beslut',
+    accepted: 'Accepterad av dig',
+    exempted: 'Undantagen av dig',
+    accept: 'Acceptera …',
+    exempt: 'Undanta …',
+    withdraw: 'Återkalla beslutet',
+    confirm: 'Bekräfta',
+    cancel: 'Avbryt',
+    reasonRequired: 'Skäl (krävs)',
+    commentOptional: 'Kommentar (valfri)',
+    scope: (where, revision) => `Gäller ${where}, i den granskade versionen (${revision}), som ditt eget beslut.`,
+    notGuarantee: 'Acceptansen gäller bara den här ändringen i den här versionen och är ingen garanti för att koden är korrekt.',
+    yours: 'du',
+  },
+  changeAt: (path, lines) => `ändringen i ${path}, ${lines}`,
+  newLines: (range) => `nya rader ${range}`,
+  oldLines: (range) => `gamla rader ${range}`,
+  removedAfter: (line) => `borttaget efter ny rad ${String(line)}`,
+  note: {
+    question: 'Fråga',
+    finding: 'Fynd',
+    yourQuestion: 'Din fråga …',
+    yourFinding: 'Vad är fel, och varför …',
+    at: (where) => `Gäller: ${where}`,
+    noLocation: 'inget kodställe',
+    selectHint: 'Klicka på radnummer för att välja rader; skift-klick utökar.',
+    yourSelection: 'dina valda rader',
+    add: (kind) => (kind === 'question' ? 'Lägg till fråga' : 'Lägg till fynd'),
+    open: 'öppen',
+    resolved: 'löst',
+    resolution: 'Svar eller lösning (valfritt)',
+    markResolved: 'Markera som löst',
+    reopen: 'Öppna igen',
+    duringStep: (stepId) => `under ${stepId}`,
+    hereTitle: 'Anteckningar här',
+  },
+  coverage: {
+    intro: (total) =>
+      `Räknat i ändrade rader i diffen (tillägg + borttagningar): ${String(total)}. Varje rad är ett eget faktum; inget av dem följer av något annat.`,
+    planned: 'Ingår i en walk',
+    opened: 'I kodställen du har öppnat',
+    walked: 'I steg du markerat som genomgångna',
+    accepted: 'Accepterat av dig',
+    exempted: 'Undantaget av dig',
+    remaining: 'Inget beslut',
+    agent: 'Accepterat av en agent',
+    agentNone: 'inget – delegerad granskning finns inte i den här vyn',
+    open: 'Öppna fynd / frågor',
+    lines: (count) => `${String(count)} rader`,
+    partly: (count) => ` + ${String(count)} ändringar delvis`,
+    onlyOutside: (count) => `Visa bara ändringar utanför alla walks (${String(count)})`,
+    change: 'Ändring',
+    yes: 'ja',
+    no: 'nej',
+    part: 'delvis',
+  },
+  notesTab: {
+    notesTitle: 'Frågor och fynd',
+    none: 'Inga ännu.',
+    historyTitle: 'Beslutshistorik',
+    noDecisions: 'Inga beslut. Ingen ändring är accepterad.',
+  },
+  search: {
+    revision: 'Version',
+    placeholder: 'Sök text i hela repot',
+    button: 'Sök',
+    hits: (count, truncated) => `${String(count)} träffar${truncated ? ' (bara de första 500)' : ''}`,
+    filter: (count, side) => `Filtrera alla ${String(count)} filer i ${side}`,
+  },
+  filesTab: {
+    hunks: (count) => (count === 1 ? '1 ändring' : `${String(count)} ändringar`),
+    binary: 'binär',
+    decided: (accepted, exempted, remaining) =>
+      `accepterade ${String(accepted)} · undantagna ${String(exempted)} · utan beslut ${String(remaining)}`,
+  },
+  detailsPanel: {
+    revisions: 'Versioner',
+    base: 'Gammal version (bas)',
+    target: 'Ny version (mål)',
+    oneCommit: 'En commit: basen är målets förälder.',
+    severalCommits: 'Flera commits mellan bas och mål.',
+    repository: 'Repo',
+    definition: 'Walk-definition',
+    readFromGit: 'All kod läses ur git vid de två versionerna, inte från en arbetskatalog.',
+    explanations: (mode) =>
+      `Förklaringarna är förberedd text, skriven i läget ”${mode}”. Vyn anpassar dem inte, och ingen agent är ansluten. Granskningsdjupet väljer du själv; inget på skärmen ändras av det.`,
+    decisionsInfo: 'Beslut fattas bara av dig. Delegerad agentgranskning finns inte här och simuleras aldrig.',
+    validated: (all, anchored) =>
+      `Alla ${String(all)} kodreferenser i walkarna har kontrollerats mot sin version (sökväg och rader); ${String(anchored)} av dem även mot sin ankartext.`,
+    problems: 'Problem i definitionen',
+    languagesMissing: 'Den här definitionen har bara text på ett språk; den visas som den är skriven.',
+  },
+  notices: {
+    unusable: (keptAs) =>
+      `En sparad post för den här granskningen kunde inte användas och sparades oförändrad som ${keptAs}. Granskningen börjar med en tom post.`,
+    definitionChanged: (stale) =>
+      `Walk-definitionen har ändrats sedan posten sparades. Dina anteckningar och beslut gäller samma ändring och finns kvar.${
+        stale > 0 ? ` ${String(stale)} markeringar av öppnade kodställen gäller den tidigare definitionen; de finns kvar i posten men räknas inte.` : ''
+      }`,
+    dismiss: 'Stäng',
+  },
+};
+
+const en: ReviewWords = {
+  opening: 'Opening the review…',
+  openDefinition: 'Open a review definition…',
+  openAnother: 'Open another review…',
+  noDefinition: 'No review was named at start. Choose a review definition (*.review.json).',
+  language: 'Language',
+  details: 'Details',
+  hideDetails: 'Hide details',
+  saving: 'Saving…',
+  saved: 'Saved',
+  notSaved: (reason) =>
+    `Not saved. Your latest changes exist only in this window and are saved again with the next change. Reason: ${reason}`,
+  openFindings: (count) => (count === 1 ? '1 open finding' : `${String(count)} open findings`),
+  tabs: { walks: 'Walks', files: 'Changed files', coverage: 'Coverage', notes: 'Notes and decisions', search: 'Search' },
+  walkProgress: (opened, total) => `${String(opened)} of ${String(total)} steps opened`,
+  stepOf: (index, total) => `Step ${String(index)} of ${String(total)}`,
+  whatHappens: 'What happens',
+  whyItMatters: 'Why it matters',
+  places: 'Code places in this step',
+  placeOf: (index, total) => `${String(index)} of ${String(total)}`,
+  previousPlace: 'Previous place',
+  nextPlace: 'Next place',
+  previousStep: '← Previous step',
+  nextStep: 'Next step →',
+  nextWalk: (id) => `Next walk (${id}) →`,
+  navigationNote: 'Moving on approves nothing.',
+  howDoWeKnow: 'How do we know?',
+  showSources: 'Show the evidence',
+  hideSources: 'Hide the evidence',
+  evidenceLabel: {
+    analysis: 'Read from the code',
+    'test-simulated': 'Shown by an automated test with substituted parts',
+    'test-real-substitute': 'Shown by a test with a real stand-in process',
+    'not-observed': 'Not observed',
+  },
+  evidenceMeaning: {
+    analysis: 'This is what we can read from the code. That alone does not show that it works when the program runs.',
+    'test-simulated': 'An automated test has shown the behaviour, but parts of the system were substituted in the test. The evidence below says which test and what was substituted.',
+    'test-real-substitute': 'A test with a real local process standing in for another. The evidence below says what it stands in for and what was still simulated.',
+    'not-observed': 'Nothing in the evidence has observed this.',
+  },
+  notesSection: 'Note a question or finding',
+  reviewSection: 'Review',
+  markWalked: 'Mark this step walked through',
+  walkedUndo: 'Walked through ✓ – undo',
+  walkedNote: 'Walked through is your own mark of progress. It approves no code.',
+  outsideWalk: 'Outside the walk',
+  backTo: (stepId) => `Back to ${stepId}`,
+  view: {
+    before: 'Before',
+    after: 'After',
+    both: 'Before → After',
+    focus: 'Focus',
+    wholeFile: 'Whole file',
+    highlightWalk: 'Highlight entire walk',
+    noChangeHere: 'No change at this place',
+    unchangedFile: 'The file is the same in both versions',
+    moreAbove: 'Show more above',
+    moreBelow: 'Show more below',
+    wholeContext: 'Show the whole context',
+    hiddenLines: (count) => `⋯ show ${String(count)} unchanged lines`,
+    reading: 'Reading the file…',
+    fileMissing: (path, side) => `${path} does not exist in the ${side}.`,
+    binary: 'Binary content is not shown.',
+    selectLine: 'Select this line for a note (shift-click extends)',
+    legendOld: 'Before (old code)',
+    legendNew: 'After (new code)',
+    legendFocus: 'What this step explains',
+    legendWalk: 'Other places in the walk',
+  },
+  side: { base: 'old version', target: 'new version' },
+  status: { added: 'new file', modified: 'changed', deleted: 'deleted', 'type-changed': 'type changed' },
+  decisions: {
+    changesHere: 'Changes at this place',
+    noChangesHere: 'This place contains no change to decide on.',
+    remaining: 'No decision',
+    accepted: 'Accepted by you',
+    exempted: 'Exempted by you',
+    accept: 'Accept…',
+    exempt: 'Exempt…',
+    withdraw: 'Withdraw the decision',
+    confirm: 'Confirm',
+    cancel: 'Cancel',
+    reasonRequired: 'Reason (required)',
+    commentOptional: 'Comment (optional)',
+    scope: (where, revision) => `Applies to ${where}, in the reviewed version (${revision}), as your own decision.`,
+    notGuarantee: 'Acceptance covers only this change in this version and is no guarantee that the code is correct.',
+    yours: 'you',
+  },
+  changeAt: (path, lines) => `the change in ${path}, ${lines}`,
+  newLines: (range) => `new lines ${range}`,
+  oldLines: (range) => `old lines ${range}`,
+  removedAfter: (line) => `removed after new line ${String(line)}`,
+  note: {
+    question: 'Question',
+    finding: 'Finding',
+    yourQuestion: 'Your question…',
+    yourFinding: 'What is wrong, and why…',
+    at: (where) => `About: ${where}`,
+    noLocation: 'no code place',
+    selectHint: 'Click line numbers to choose lines; shift-click extends.',
+    yourSelection: 'your selected lines',
+    add: (kind) => (kind === 'question' ? 'Add question' : 'Add finding'),
+    open: 'open',
+    resolved: 'resolved',
+    resolution: 'Answer or resolution (optional)',
+    markResolved: 'Mark resolved',
+    reopen: 'Reopen',
+    duringStep: (stepId) => `during ${stepId}`,
+    hereTitle: 'Notes here',
+  },
+  coverage: {
+    intro: (total) =>
+      `Counted in changed lines of the diff (additions + deletions): ${String(total)}. Each row is a separate fact; none follows from another.`,
+    planned: 'In a walk',
+    opened: 'In code places you opened',
+    walked: 'In steps you marked walked through',
+    accepted: 'Accepted by you',
+    exempted: 'Exempted by you',
+    remaining: 'No decision',
+    agent: 'Accepted by an agent',
+    agentNone: 'none – delegated review is not available in this view',
+    open: 'Open findings / questions',
+    lines: (count) => `${String(count)} lines`,
+    partly: (count) => ` + ${String(count)} changes partly`,
+    onlyOutside: (count) => `Show only changes outside every walk (${String(count)})`,
+    change: 'Change',
+    yes: 'yes',
+    no: 'no',
+    part: 'partly',
+  },
+  notesTab: {
+    notesTitle: 'Questions and findings',
+    none: 'None yet.',
+    historyTitle: 'Decision history',
+    noDecisions: 'No decisions. No change is accepted.',
+  },
+  search: {
+    revision: 'Version',
+    placeholder: 'Search text in the whole repository',
+    button: 'Search',
+    hits: (count, truncated) => `${String(count)} hits${truncated ? ' (first 500 only)' : ''}`,
+    filter: (count, side) => `Filter all ${String(count)} files in the ${side}`,
+  },
+  filesTab: {
+    hunks: (count) => (count === 1 ? '1 change' : `${String(count)} changes`),
+    binary: 'binary',
+    decided: (accepted, exempted, remaining) =>
+      `accepted ${String(accepted)} · exempted ${String(exempted)} · no decision ${String(remaining)}`,
+  },
+  detailsPanel: {
+    revisions: 'Versions',
+    base: 'Old version (base)',
+    target: 'New version (target)',
+    oneCommit: 'One commit: the base is the target’s parent.',
+    severalCommits: 'Several commits between base and target.',
+    repository: 'Repository',
+    definition: 'Walk definition',
+    readFromGit: 'All code is read from git at the two versions, not from a working tree.',
+    explanations: (mode) =>
+      `The explanations are prepared text, written in the “${mode}” mode. The view does not adapt them, and no agent is connected. Review depth is your choice; nothing on screen changes with it.`,
+    decisionsInfo: 'Decisions are made only by you. Delegated agent review is not available here and is never simulated.',
+    validated: (all, anchored) =>
+      `All ${String(all)} code references in the walks were checked against their version (path and lines); ${String(anchored)} of them also against their anchor text.`,
+    problems: 'Problems in the definition',
+    languagesMissing: 'This definition has text in only one language; it is shown as written.',
+  },
+  notices: {
+    unusable: (keptAs) =>
+      `A stored record for this review could not be used and was kept unchanged as ${keptAs}. The review starts with an empty record.`,
+    definitionChanged: (stale) =>
+      `The walk definition has changed since the record was saved. Your notes and decisions are about the same change and are kept.${
+        stale > 0 ? ` ${String(stale)} marks of opened code places belong to the earlier definition; they stay in the record but are not counted.` : ''
+      }`,
+    dismiss: 'Close',
+  },
+};
+
+export const WORDS: Record<Lang, ReviewWords> = { sv, en };
+
+/** A prepared text in the chosen language. */
+export function pick(text: LocalText, lang: Lang): string {
+  return text[lang];
+}

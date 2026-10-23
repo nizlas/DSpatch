@@ -1,13 +1,25 @@
-/* The review surface (`#review`). Uses the approved palette from styles.css only;
-   every class is prefixed `rv-` so nothing here reaches the chat or the editor. */
+/* The review surface (`#review`). Uses the approved palette from styles.css; every
+   class is prefixed `rv-` so nothing here reaches the chat or the editor.
+
+   Colour roles, kept apart on purpose:
+   - before / after: soft red and soft green backgrounds, always with a text label;
+     they mean old and new code, never rejected or accepted;
+   - neutral focus: what a step explains when that code did not change;
+   - walk overview: a faint purple, optional, below the step's own marking. */
 
 .rv {
+  --rv-old: color-mix(in srgb, var(--no) 22%, var(--bg));
+  --rv-old-faint: color-mix(in srgb, var(--no) 9%, var(--bg));
+  --rv-new: color-mix(in srgb, var(--ok) 20%, var(--bg));
+  --rv-new-faint: color-mix(in srgb, var(--ok) 8%, var(--bg));
+  --rv-neutral: color-mix(in srgb, var(--text) 10%, var(--bg));
+  --rv-walk: color-mix(in srgb, var(--unknown) 14%, var(--bg));
   display: flex;
   flex-direction: column;
   height: 100%;
   color: var(--text);
   background: var(--bg);
-  font-size: 0.875rem;
+  font-size: 0.9rem;
 }
 
 .rv button {
@@ -30,7 +42,8 @@
 }
 
 .rv input,
-.rv textarea {
+.rv textarea,
+.rv select {
   font: inherit;
   color: var(--text);
   background: var(--bg);
@@ -45,12 +58,13 @@
 
 .rv h1 {
   font-size: 1.05rem;
-  margin: 0 0 0.25rem;
+  font-weight: 600;
+  margin: 0;
 }
 
 .rv h2 {
-  font-size: 0.95rem;
-  margin: 0.6rem 0 0.3rem;
+  font-size: 1.05rem;
+  margin: 0.2rem 0;
 }
 
 .rv-empty {
@@ -58,16 +72,8 @@
   color: var(--muted);
 }
 
-.rv-empty h1 {
-  color: var(--text);
-}
-
 .rv-error {
   color: var(--no);
-}
-
-.rv-warn {
-  color: var(--unknown);
 }
 
 .rv-sub {
@@ -75,18 +81,14 @@
   font-size: 0.8rem;
 }
 
-.rv-chip {
-  display: inline-block;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0 0.5rem;
-  font-size: 0.75rem;
-  color: var(--muted);
+.rv-center {
+  text-align: center;
 }
 
 .rv-step-id {
   font-family: Consolas, "Cascadia Mono", monospace;
   color: var(--muted);
+  font-size: 0.85em;
 }
 
 /* --- Header ---------------------------------------------------------------- */
@@ -94,48 +96,77 @@
 .rv-header {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-  padding: 0.6rem 0.9rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+  padding: 0.5rem 0.9rem;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
 
-.rv-identity {
-  flex: 1 1 40rem;
-  min-width: 0;
-}
-
-.rv-revs {
+.rv-header-side {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  align-items: baseline;
+  align-items: center;
+  gap: 0.6rem;
 }
 
-.rv-arrow {
+.rv-save.rv-error {
+  font-size: 0.85rem;
+  font-weight: 600;
+  max-width: 40rem;
+}
+
+.rv-findings {
+  color: var(--no);
+  font-size: 0.85rem;
+}
+
+.rv-lang {
+  font-size: 0.85rem;
   color: var(--muted);
 }
 
-.rv-header-side {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.3rem;
-}
-
-.rv-saved {
-  color: var(--ok);
-  font-size: 0.8rem;
+.rv-full {
+  flex-basis: 100%;
 }
 
 .rv-details {
   flex-basis: 100%;
   border-top: 1px solid var(--line);
   padding-top: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.rv-details dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.8rem;
+  margin: 0 0 0.4rem;
+}
+
+.rv-details dt {
+  color: var(--muted);
+}
+
+.rv-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .rv-details p {
   margin: 0.3rem 0;
+}
+
+.rv-notice {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.4rem 0.9rem;
+  background: color-mix(in srgb, var(--unknown) 16%, var(--bg));
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
 }
 
 /* --- Three columns ----------------------------------------------------------- */
@@ -144,25 +175,37 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr) minmax(18rem, 26rem);
+  grid-template-columns: minmax(14rem, 20rem) minmax(0, 1fr) minmax(17rem, 25rem);
 }
 
-/* Coverage and the record are tables: give them room while they are open. */
 .rv-body-wide {
-  grid-template-columns: minmax(30rem, 46rem) minmax(0, 1fr) minmax(18rem, 26rem);
+  grid-template-columns: minmax(26rem, 42rem) minmax(0, 1fr) minmax(17rem, 25rem);
+}
+
+@media (max-width: 1150px) {
+  .rv-body,
+  .rv-body-wide {
+    grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr) minmax(15rem, 19rem);
+  }
+
+  .rv-body-wide {
+    grid-template-columns: minmax(20rem, 26rem) minmax(0, 1fr) minmax(15rem, 19rem);
+  }
 }
 
 .rv-left,
 .rv-right {
   min-height: 0;
   overflow: auto;
+}
+
+.rv-left {
   border-right: 1px solid var(--line);
 }
 
 .rv-right {
-  border-right: none;
   border-left: 1px solid var(--line);
-  padding: 0.6rem 0.8rem;
+  padding: 0.6rem 0.9rem 2rem;
 }
 
 .rv-tabs {
@@ -178,12 +221,16 @@
 }
 
 .rv .rv-tab {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
 }
 
 .rv .rv-tab-on {
-  border-color: var(--muted);
+  border-color: var(--line);
   background: var(--raised);
+  color: var(--text);
 }
 
 .rv-left-body {
@@ -192,26 +239,51 @@
 
 .rv-legend {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   margin: 0 0 0.5rem;
 }
 
-.rv-walk ol {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+/* --- Walk list --------------------------------------------------------------- */
+
+.rv-walk {
+  margin-bottom: 0.3rem;
 }
 
-.rv-question {
+.rv .rv-walk-head {
+  display: grid;
+  grid-template-columns: 1rem 1fr;
+  gap: 0 0.3rem;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0.35rem 0.3rem;
+}
+
+.rv-walk-current > .rv-walk-head .rv-walk-name {
+  font-weight: 600;
+}
+
+.rv-walk-count {
+  grid-column: 2;
+}
+
+.rv-chevron {
   color: var(--muted);
-  font-style: italic;
-  margin: 0 0 0.3rem;
+}
+
+.rv-steps {
+  list-style: none;
+  padding: 0 0 0.3rem 1.2rem;
+  margin: 0;
 }
 
 .rv .rv-step,
 .rv .rv-file,
-.rv .rv-ref {
-  display: block;
+.rv .rv-place {
+  display: flex;
+  gap: 0.45rem;
+  align-items: baseline;
   width: 100%;
   text-align: left;
   border-color: transparent;
@@ -221,23 +293,13 @@
 
 .rv .rv-step-on,
 .rv .rv-file-on,
-.rv .rv-ref-on {
-  border-color: var(--muted);
+.rv .rv-place-on {
+  border-color: var(--line);
   background: var(--raised);
 }
 
-.rv-step-marks {
-  display: inline-flex;
-  gap: 0.15rem;
-  margin-right: 0.3rem;
-}
-
-.rv-mark-off {
-  color: var(--line);
-}
-
-.rv-mark-shown {
-  color: var(--unknown);
+.rv-step-title {
+  flex: 1;
 }
 
 .rv-mark-walked {
@@ -250,38 +312,28 @@
   margin: 0;
 }
 
+.rv .rv-file {
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.rv-dir {
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
 .rv-path {
   font-family: Consolas, "Cascadia Mono", monospace;
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
-.rv-file .rv-sub {
-  display: block;
-}
-
-.rv-status {
-  font-family: Consolas, "Cascadia Mono", monospace;
-  font-weight: 600;
-}
-
-.rv-status-added {
-  color: var(--ok);
-}
-
-.rv-status-deleted {
-  color: var(--no);
-}
-
-.rv-status-modified,
-.rv-status-type-changed {
-  color: var(--unknown);
-}
+/* --- Coverage and notes ---------------------------------------------------------- */
 
 .rv-totals,
 .rv-hunks {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   margin-bottom: 0.6rem;
 }
 
@@ -297,7 +349,7 @@
 .rv-hunks th,
 .rv-hunks td {
   border-bottom: 1px solid var(--line);
-  padding: 0.2rem 0.3rem;
+  padding: 0.25rem 0.35rem;
   vertical-align: top;
 }
 
@@ -312,8 +364,8 @@
 .rv-check {
   display: inline-flex;
   align-items: center;
-  gap: 0.2rem;
-  font-size: 0.8rem;
+  gap: 0.25rem;
+  font-size: 0.82rem;
 }
 
 .rv-browse form,
@@ -356,12 +408,10 @@
   text-decoration: underline;
   text-decoration-color: var(--muted);
   font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   text-align: left;
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
-
-/* --- Notes ------------------------------------------------------------------------ */
 
 .rv-note {
   border: 1px solid var(--line);
@@ -400,25 +450,18 @@
 
 .rv-history {
   padding-left: 1.2rem;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
 }
 
 .rv-note-form {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  border-top: 1px solid var(--line);
-  padding-top: 0.6rem;
-  margin-top: 0.6rem;
+  gap: 0.35rem;
 }
 
 .rv-note-kind {
   display: flex;
   gap: 0.8rem;
-}
-
-.rv-notes-here {
-  margin-top: 0.6rem;
 }
 
 /* --- Step panel ------------------------------------------------------------------- */
@@ -428,96 +471,194 @@
   font-size: 0.8rem;
 }
 
-.rv-step-panel-away {
-  opacity: 0.7;
-}
-
-.rv-claims {
-  list-style: none;
-  padding: 0;
-  margin: 0.5rem 0;
-}
-
-.rv-claims li {
-  margin-bottom: 0.35rem;
-}
-
-.rv-claims .markdown {
-  display: inline;
-}
-
-.rv-claims .markdown p {
-  display: inline;
-}
-
-.rv-label {
-  display: inline-block;
-  font-size: 0.7rem;
+.rv h1 code,
+.rv-walk-name code,
+.rv-step-title code,
+.rv-summary code,
+.rv-walk-title code,
+.rv-step-panel h2 code {
+  background: var(--panel);
   border-radius: 3px;
-  padding: 0 0.35rem;
-  border: 1px solid currentColor;
-  cursor: help;
+  padding: 0 0.2rem;
+  font-size: 0.92em;
 }
 
-.rv-label-analysis {
+.rv-summary {
+  font-size: 0.95rem;
+  line-height: 1.45;
+  margin: 0.5rem 0 0.7rem;
+}
+
+.rv-section-title {
   color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0.8rem 0 0.25rem;
 }
 
-.rv-label-test-simulated {
-  color: var(--ok);
+/* Prepared explanations keep their line breaks: a code name on its own line, its
+   meaning on the next. */
+.rv-explanation .markdown p,
+.rv-place .markdown p {
+  white-space: pre-line;
+  margin: 0 0 0.6rem;
+  line-height: 1.45;
 }
 
-.rv-label-test-real-substitute {
-  color: var(--ok);
-  font-weight: 600;
+.rv-explanation .markdown code {
+  background: var(--panel);
+  border-radius: 3px;
+  padding: 0 0.2rem;
 }
 
-.rv-label-not-observed {
-  color: var(--no);
+.rv-explanation .markdown ol,
+.rv-explanation .markdown ul {
+  margin: 0 0 0.6rem;
+  padding-left: 1.3rem;
 }
 
-.rv-refs ul {
+.rv-places ol {
   list-style: none;
   padding: 0;
-  margin: 0.2rem 0 0.5rem;
+  margin: 0;
 }
 
-.rv-ref {
-  font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 0.78rem;
-  word-break: break-all;
+.rv-place .markdown p {
+  margin: 0;
 }
 
-.rv-ref-note {
-  font-family: "Segoe UI", system-ui, sans-serif;
-  color: var(--muted);
-}
-
-.rv-role {
-  font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 0.68rem;
+.rv-place-number {
+  flex: none;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 50%;
+  background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 0 0.25rem;
-  color: var(--muted);
+  text-align: center;
+  font-size: 0.75rem;
+  line-height: 1.2rem;
 }
 
-.rv-role-walk {
-  color: var(--text);
+.rv-place-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.rv-place-nav button {
+  font-size: 0.78rem;
+}
+
+.rv-evidence {
+  margin-top: 0.6rem;
+}
+
+.rv-evidence-summary {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.3rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.rv-evidence-summary li {
+  margin-bottom: 0.3rem;
+}
+
+.rv-evidence-detail {
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+}
+
+.rv-evidence-detail .markdown,
+.rv-evidence-detail .markdown p {
+  display: inline;
+}
+
+.rv .rv-quiet {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+  text-decoration: underline;
+  font-size: 0.8rem;
 }
 
 .rv-step-nav {
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-top: 0.5rem;
+  margin-top: 1rem;
+}
+
+.rv-collapsible {
+  border-top: 1px solid var(--line);
+  margin-top: 0.8rem;
+  padding-top: 0.4rem;
+}
+
+.rv .rv-collapsible-head {
+  border: none;
+  background: none;
+  padding: 0.2rem 0;
+  font-weight: 600;
+}
+
+.rv-collapsible-body {
+  padding: 0.3rem 0;
 }
 
 .rv-walked {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  margin-top: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.rv-decision {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  margin: 0.35rem 0;
+  font-size: 0.85rem;
+}
+
+.rv-decision-actions {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.3rem;
+}
+
+.rv-decision-accepted {
+  color: var(--ok);
+}
+
+.rv-decision-exempted {
+  color: var(--unknown);
+}
+
+.rv-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.rv-confirm > div {
+  flex-basis: 100%;
+}
+
+.rv-confirm input {
+  flex: 1;
+  min-width: 10rem;
+}
+
+.rv-notes-here {
+  margin-top: 0.6rem;
 }
 
 /* --- Code ----------------------------------------------------------------------- */
@@ -530,8 +671,11 @@
 }
 
 .rv-away {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
   padding: 0.35rem 0.7rem;
-  background: color-mix(in srgb, var(--unknown) 22%, var(--bg));
+  background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
 
@@ -546,7 +690,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.5rem 0.8rem;
   padding: 0.35rem 0.7rem;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
@@ -558,6 +702,7 @@
 
 .rv-seg button {
   border-radius: 0;
+  font-size: 0.82rem;
 }
 
 .rv-seg button:first-child {
@@ -573,33 +718,63 @@
   border-color: var(--muted);
 }
 
+.rv-legend-bar {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  min-height: 1.6rem;
+}
+
+.rv-key {
+  padding: 0 0.4rem;
+  border-radius: 3px;
+}
+
 .rv-lines {
   flex: 1;
   min-height: 0;
   overflow: auto;
   font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 0.8rem;
-  line-height: 1.35;
-  padding-bottom: 2rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  padding: 0.3rem 0 2rem;
 }
 
 .rv-row {
   display: flex;
   min-width: max-content;
-  border-left: 3px solid transparent;
 }
 
-.rv-row-added {
-  background: color-mix(in srgb, var(--ok) 16%, var(--bg));
+.rv-old {
+  background: var(--rv-old);
 }
 
-.rv-row-deleted {
-  background: color-mix(in srgb, var(--no) 18%, var(--bg));
+.rv-old-faint {
+  background: var(--rv-old-faint);
 }
 
-.rv-row-focus {
-  border-left-color: var(--unknown);
-  box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--unknown) 12%, transparent);
+.rv-new {
+  background: var(--rv-new);
+}
+
+.rv-new-faint {
+  background: var(--rv-new-faint);
+}
+
+.rv-neutral-focus {
+  background: var(--rv-neutral);
+}
+
+.rv-walk-mark {
+  background: var(--rv-walk);
+}
+
+/* Changed lines of the walk that the step does not explain: their faint before/after
+   colour stays, with a thin purple edge to show they belong to the walk. */
+.rv-walk-edge {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--unknown) 55%, transparent);
 }
 
 .rv-row-selected {
@@ -617,21 +792,28 @@
   color: var(--muted);
   padding: 0 0.4rem;
   font-family: inherit;
-  font-size: inherit;
+  font-size: 0.75rem;
   line-height: inherit;
 }
 
 .rv-ln span {
   display: inline-block;
-  min-width: 2.6rem;
+  min-width: 2.4rem;
   text-align: right;
 }
 
-.rv-sign {
+.rv-marker {
   flex: none;
-  width: 1.1rem;
-  text-align: center;
+  width: 3.4rem;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.68rem;
   color: var(--muted);
+  text-align: center;
+  align-self: center;
+}
+
+.rv-marker-strong {
+  color: var(--text);
 }
 
 .rv-text {
@@ -656,65 +838,19 @@
   color: #f78c6c;
 }
 
-.rv-gap {
-  padding: 0.1rem 0.5rem;
-  background: var(--panel);
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+.rv-gap,
+.rv-more {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.15rem 0.6rem;
 }
 
-.rv .rv-gap button {
+.rv .rv-gap button,
+.rv .rv-more button {
+  font-family: "Segoe UI", system-ui, sans-serif;
   font-size: 0.75rem;
   border: none;
   background: transparent;
   color: var(--muted);
-}
-
-.rv-hunk-bar {
-  position: sticky;
-  left: 0;
-  font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 0.75rem;
-  padding: 0.25rem 0.6rem;
-  margin-top: 0.4rem;
-  background: var(--panel);
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-}
-
-.rv-hunk-actions {
-  display: inline-flex;
-  gap: 0.3rem;
-  margin-left: 0.6rem;
-}
-
-.rv-hunk-actions button {
-  font-size: 0.72rem;
-}
-
-.rv-decision-accepted {
-  color: var(--ok);
-}
-
-.rv-decision-exempted {
-  color: var(--unknown);
-}
-
-.rv-confirm {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem;
-  margin-top: 0.3rem;
-  color: var(--text);
-}
-
-.rv-confirm > div {
-  flex-basis: 100%;
-}
-
-.rv-confirm input {
-  flex: 1;
-  min-width: 12rem;
+  text-decoration: underline;
 }

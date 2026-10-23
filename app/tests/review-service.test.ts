@@ -149,10 +149,10 @@ test('every reference is validated: a wrong anchor and a missing file are report
   try {
     const { bundle } = await open(fixture);
     assert.deepEqual(
-      bundle.referenceProblems.map((problem) => [problem.stepId, problem.refIndex]),
+      bundle.referenceProblems.map((problem) => [problem.stepId, problem.refId]),
       [
-        ['W1.1', 2],
-        ['W1.1', 3],
+        ['W1.1', 'r3'],
+        ['W1.1', 'r4'],
       ],
     );
     assert.match(bundle.referenceProblems[0]?.problem ?? '', /"not there" does not occur/);
@@ -208,14 +208,14 @@ test('the record is saved, reopened as left, and refused for another revision pa
     assert.deepEqual(second.bundle.state.walkedSteps, {});
     assert.deepEqual(second.bundle.state.decisions, []);
     assert.equal(second.bundle.state.notes[0]?.text, 'Why 20?');
-    assert.equal(second.bundle.stateNote, '');
+    assert.equal(second.bundle.stateNotice, null);
 
     // Editing the definition keeps the record and says so.
     const text = fs.readFileSync(fixture.definitionPath, 'utf8').replace('"title":"fixture"', '"title":"fixture 2"');
     fs.writeFileSync(fixture.definitionPath, text);
     const third = await open(fixture);
     assert.equal(third.bundle.state.notes.length, 1);
-    assert.match(third.bundle.stateNote, /definition has changed/);
+    assert.deepEqual(third.bundle.stateNotice, { kind: 'definition-changed', staleOpenedMarks: 0 });
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -246,7 +246,7 @@ test('a damaged record is kept aside unchanged and the review still opens, sayin
     const recordPath = path.join(fixture.records, recordName);
     fs.writeFileSync(recordPath, '{ "version": 1, "revisions": ');
     const second = await open(fixture);
-    assert.match(second.bundle.stateNote, /could not be used/);
+    assert.equal(second.bundle.stateNotice?.kind, 'unusable');
     assert.deepEqual(second.bundle.state.decisions, []);
     const aside = fs.readdirSync(fixture.records).filter((name) => name.includes('.unusable-'));
     assert.equal(aside.length, 1);
@@ -281,6 +281,20 @@ test('the service refuses agent provenance, other revisions and malformed file r
     assert.equal((await service.readFile('middle' as 'target', 'src/keep.ts')).kind, 'failed');
     assert.deepEqual(await service.listFiles('middle' as 'target'), []);
     assert.ok((await service.search('middle' as 'target', 'needle')).error !== undefined);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('the display language is saved beside the records and read back by a new service', async () => {
+  const fixture = makeFixture();
+  try {
+    const first = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
+    assert.deepEqual(first.getPreferences(), { language: 'sv' }, 'Swedish until chosen otherwise');
+    assert.deepEqual(first.setPreferences({ language: 'en' }), { saved: true });
+    assert.equal(first.setPreferences({ language: 'de' }).saved, false);
+    const second = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
+    assert.deepEqual(second.getPreferences(), { language: 'en' });
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }

@@ -23,7 +23,20 @@
 
 // --- The prepared definition ---------------------------------------------------
 
-export const REVIEW_DEFINITION_FORMAT = 'dspatch-review/1';
+/**
+ * Version 2 gives every step its places — one precise focus each, with the wider
+ * context needed to understand it — and every human-readable text in both display
+ * languages. Version 1 files are still read, as one place per walk reference.
+ */
+export const REVIEW_DEFINITION_FORMAT = 'dspatch-review/2';
+export const REVIEW_DEFINITION_FORMAT_V1 = 'dspatch-review/1';
+
+/** The two display languages. Code names, source code and repository documents stay English. */
+export type Lang = 'sv' | 'en';
+export const LANGS: readonly Lang[] = ['sv', 'en'];
+
+/** A prepared text in each display language. */
+export type LocalText = Readonly<Record<Lang, string>>;
 
 /** Which revision a reference reads. Removed code exists only on `base`. */
 export type RevisionSide = 'base' | 'target';
@@ -36,8 +49,8 @@ export type RevisionSide = 'base' | 'target';
 export type ReferenceRole = 'walk' | 'evidence' | 'context';
 
 /**
- * How a statement in a step is supported. The prepared material's own labels; the
- * view shows them verbatim and never upgrades one.
+ * How a statement in a step is supported. The view words each in plain language and
+ * never upgrades one.
  */
 export type EvidenceLabel = 'analysis' | 'test-simulated' | 'test-real-substitute' | 'not-observed';
 
@@ -49,6 +62,8 @@ export const EVIDENCE_LABELS: readonly EvidenceLabel[] = [
 ];
 
 export interface CodeReference {
+  /** Unique within its step; names the reference in validation and in "opened" marks. */
+  readonly id: string;
   readonly path: string;
   readonly side: RevisionSide;
   /** 1-based, inclusive. */
@@ -61,42 +76,62 @@ export interface CodeReference {
    * than highlighted with confidence.
    */
   readonly anchor?: string;
-  readonly note?: string;
+  readonly note?: LocalText;
 }
 
-export interface StepClaim {
+/**
+ * One code location a step explains. `focus` is exactly the lines the explanation is
+ * about; `context` is the wider code needed to understand them, shown neutrally.
+ * Whether the focus is a change is read from the real diff, never declared.
+ */
+export interface Place {
+  readonly id: string;
+  readonly label: LocalText;
+  readonly focus: CodeReference;
+  readonly context: readonly CodeReference[];
+}
+
+export interface StepEvidence {
   readonly label: EvidenceLabel;
-  readonly text: string;
+  readonly text: LocalText;
 }
 
 export interface WalkStep {
   readonly id: string;
-  readonly title: string;
-  /** Markdown, rendered by the existing safe Markdown component. */
-  readonly text: string;
-  /** The first reference is the one the step opens on. */
+  readonly title: LocalText;
+  /** What the step is about, in one or two sentences. */
+  readonly summary: LocalText;
+  /** What happens or changes. Markdown, rendered by the existing safe component. */
+  readonly body: LocalText;
+  /** Why it matters. */
+  readonly why: LocalText;
+  readonly places: readonly Place[];
+  readonly evidence: readonly StepEvidence[];
+  readonly evidenceRefs: readonly CodeReference[];
+  /** Every reference of the step — focus, context and evidence — for validation and coverage. */
   readonly refs: readonly CodeReference[];
-  readonly claims: readonly StepClaim[];
 }
 
 export interface Walk {
   readonly id: string;
-  readonly title: string;
-  readonly question: string;
+  readonly title: LocalText;
+  readonly question: LocalText;
   readonly steps: readonly WalkStep[];
 }
 
 export interface ReviewDefinition {
-  readonly format: typeof REVIEW_DEFINITION_FORMAT;
-  readonly title: string;
+  readonly format: string;
+  readonly title: LocalText;
   /** Repository path, absolute or relative to the definition file. */
   readonly repository: string;
   readonly base: string;
   readonly target: string;
   /** How the prepared text was written. Information, not a control. */
   readonly teachingMode: string;
-  /** Free text shown with the walks: where the material came from and its limits. */
-  readonly provenance: string;
+  /** Where the material came from and its limits. */
+  readonly provenance: LocalText;
+  /** Languages every text is written in. A version 1 file has none: its text is shown as written. */
+  readonly languages: readonly Lang[];
   readonly walks: readonly Walk[];
 }
 
@@ -123,6 +158,124 @@ function positiveInt(value: unknown): value is number {
 }
 
 /**
+ * A text field: `{ "sv": …, "en": … }` in version 2, a plain string in version 1.
+ * A missing language is reported and filled from the other, so the view never shows
+ * a blank where a text belongs.
+ */
+function localText(
+  record: Record<string, unknown>,
+  key: string,
+  where: string,
+  problems: DefinitionProblem[],
+  options: { readonly required: boolean; readonly bilingual: boolean },
+): LocalText {
+  const value = record[key];
+  if (value === undefined && !options.required) {
+    return { sv: '', en: '' };
+  }
+  if (typeof value === 'string') {
+    if (options.bilingual && value.trim() !== '') {
+      problems.push({ where, problem: `"${key}" must give both "sv" and "en".` });
+    }
+    if (value.trim() === '' && options.required) {
+      problems.push({ where, problem: `"${key}" must not be empty.` });
+    }
+    return { sv: value, en: value };
+  }
+  if (!isRecord(value)) {
+    if (options.required) {
+      problems.push({ where, problem: `"${key}" must be ${options.bilingual ? 'an object with "sv" and "en"' : 'a string'}.` });
+    }
+    return { sv: '', en: '' };
+  }
+  const sv = typeof value['sv'] === 'string' ? value['sv'] : '';
+  const en = typeof value['en'] === 'string' ? value['en'] : '';
+  for (const [lang, text] of [
+    ['sv', sv],
+    ['en', en],
+  ] as const) {
+    if (text.trim() === '' && (options.required || sv !== '' || en !== '')) {
+      problems.push({ where, problem: `"${key}" has no "${lang}" text.` });
+    }
+  }
+  return { sv: sv === '' ? en : sv, en: en === '' ? sv : en };
+}
+
+function parseReference(
+  raw: unknown,
+  id: string,
+  where: string,
+  problems: DefinitionProblem[],
+  roleDefault: ReferenceRole,
+  bilingual: boolean,
+): CodeReference | null {
+  if (!isRecord(raw)) {
+    problems.push({ where, problem: 'A reference must be an object.' });
+    return null;
+  }
+  const path = str(raw, 'path', where, problems);
+  const side = raw['side'] ?? 'target';
+  const role = raw['role'] ?? roleDefault;
+  const start = raw['start'];
+  const end = raw['end'] ?? raw['start'];
+  let ok = true;
+  if (side !== 'base' && side !== 'target') {
+    problems.push({ where, problem: '"side" must be "base" or "target".' });
+    ok = false;
+  }
+  if (role !== 'walk' && role !== 'evidence' && role !== 'context') {
+    problems.push({ where, problem: '"role" must be "walk", "evidence" or "context".' });
+    ok = false;
+  }
+  if (!positiveInt(start) || !positiveInt(end) || end < start) {
+    problems.push({ where, problem: '"start" and "end" must be 1-based lines with start ≤ end.' });
+    ok = false;
+  }
+  if (path.includes('\\') || path.startsWith('/')) {
+    problems.push({ where, problem: 'Paths are repository-relative with forward slashes.' });
+  }
+  if (!ok || path === '') {
+    return null;
+  }
+  const note = raw['note'] === undefined ? undefined : localText(raw, 'note', where, problems, { required: false, bilingual });
+  return {
+    id,
+    path,
+    side: side as RevisionSide,
+    start: start as number,
+    end: end as number,
+    role: role as ReferenceRole,
+    ...(typeof raw['anchor'] === 'string' ? { anchor: raw['anchor'] } : {}),
+    ...(note === undefined ? {} : { note }),
+  };
+}
+
+function parseEvidence(raw: unknown, where: string, problems: DefinitionProblem[], bilingual: boolean): StepEvidence[] {
+  if (raw === undefined) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    problems.push({ where, problem: '"evidence" must be an array when present.' });
+    return [];
+  }
+  const out: StepEvidence[] = [];
+  raw.forEach((entry: unknown, index) => {
+    const entryWhere = `${where}[${String(index)}]`;
+    if (!isRecord(entry)) {
+      problems.push({ where: entryWhere, problem: 'Evidence must be an object.' });
+      return;
+    }
+    const label = entry['label'];
+    if (!EVIDENCE_LABELS.includes(label as EvidenceLabel)) {
+      problems.push({ where: entryWhere, problem: `"label" must be one of ${EVIDENCE_LABELS.join(', ')}.` });
+      return;
+    }
+    out.push({ label: label as EvidenceLabel, text: localText(entry, 'text', entryWhere, problems, { required: true, bilingual }) });
+  });
+  return out;
+}
+
+/**
  * Read a definition, reporting every structural problem rather than the first.
  * Returns `null` only when the shape is too broken to show anything.
  */
@@ -134,13 +287,17 @@ export function parseReviewDefinition(raw: unknown): {
   if (!isRecord(raw)) {
     return { definition: null, problems: [{ where: 'file', problem: 'The file is not a JSON object.' }] };
   }
-  if (raw['format'] !== REVIEW_DEFINITION_FORMAT) {
+  const format = raw['format'];
+  const v2 = format === REVIEW_DEFINITION_FORMAT;
+  if (!v2 && format !== REVIEW_DEFINITION_FORMAT_V1) {
     problems.push({
       where: 'file',
-      problem: `"format" must be "${REVIEW_DEFINITION_FORMAT}", found ${JSON.stringify(raw['format'])}.`,
+      problem: `"format" must be "${REVIEW_DEFINITION_FORMAT}" or "${REVIEW_DEFINITION_FORMAT_V1}", found ${JSON.stringify(format)}.`,
     });
   }
-  const title = str(raw, 'title', 'file', problems);
+  const text = (record: Record<string, unknown>, key: string, where: string, required = true): LocalText =>
+    localText(record, key, where, problems, { required, bilingual: v2 });
+  const title = text(raw, 'title', 'file');
   const repository = str(raw, 'repository', 'file', problems);
   const base = str(raw, 'base', 'file', problems);
   const target = str(raw, 'target', 'file', problems);
@@ -156,10 +313,16 @@ export function parseReviewDefinition(raw: unknown): {
     }
   }
   const teachingMode = typeof raw['teachingMode'] === 'string' ? raw['teachingMode'] : '';
-  const provenance = typeof raw['provenance'] === 'string' ? raw['provenance'] : '';
+  const provenance = text(raw, 'provenance', 'file', false);
   const walksRaw = raw['walks'];
   const walks: Walk[] = [];
   const seenIds = new Set<string>();
+  const unique = (id: string, where: string): void => {
+    if (seenIds.has(id)) {
+      problems.push({ where, problem: `Duplicate id "${id}".` });
+    }
+    seenIds.add(id);
+  };
   if (!Array.isArray(walksRaw)) {
     problems.push({ where: 'file', problem: '"walks" must be an array.' });
   } else {
@@ -170,10 +333,7 @@ export function parseReviewDefinition(raw: unknown): {
         return;
       }
       const id = str(walkRaw, 'id', where, problems);
-      if (seenIds.has(id)) {
-        problems.push({ where, problem: `Duplicate id "${id}".` });
-      }
-      seenIds.add(id);
+      unique(id, where);
       const steps: WalkStep[] = [];
       const stepsRaw = walkRaw['steps'];
       if (!Array.isArray(stepsRaw) || stepsRaw.length === 0) {
@@ -186,108 +346,149 @@ export function parseReviewDefinition(raw: unknown): {
             return;
           }
           const stepId = str(stepRaw, 'id', stepWhere, problems);
-          if (seenIds.has(stepId)) {
-            problems.push({ where: stepWhere, problem: `Duplicate id "${stepId}".` });
+          unique(stepId, stepWhere);
+          const step = v2 ? parseStepV2(stepRaw, stepId, stepWhere, problems) : parseStepV1(stepRaw, stepId, stepWhere, problems);
+          if (step !== null) {
+            steps.push(step);
           }
-          seenIds.add(stepId);
-          const refs: CodeReference[] = [];
-          const refsRaw = stepRaw['refs'];
-          if (!Array.isArray(refsRaw) || refsRaw.length === 0) {
-            problems.push({ where: stepWhere, problem: '"refs" must be a non-empty array.' });
-          } else {
-            refsRaw.forEach((refRaw: unknown, refIndex) => {
-              const refWhere = `${stepId || stepWhere}.refs[${String(refIndex)}]`;
-              if (!isRecord(refRaw)) {
-                problems.push({ where: refWhere, problem: 'A reference must be an object.' });
-                return;
-              }
-              const path = str(refRaw, 'path', refWhere, problems);
-              const side = refRaw['side'];
-              const role = refRaw['role'];
-              const start = refRaw['start'];
-              const end = refRaw['end'];
-              if (side !== 'base' && side !== 'target') {
-                problems.push({ where: refWhere, problem: '"side" must be "base" or "target".' });
-              }
-              if (role !== 'walk' && role !== 'evidence' && role !== 'context') {
-                problems.push({ where: refWhere, problem: '"role" must be "walk", "evidence" or "context".' });
-              }
-              if (!positiveInt(start) || !positiveInt(end) || end < start) {
-                problems.push({ where: refWhere, problem: '"start" and "end" must be 1-based lines with start ≤ end.' });
-              }
-              if (path.includes('\\') || path.startsWith('/')) {
-                problems.push({ where: refWhere, problem: 'Paths are repository-relative with forward slashes.' });
-              }
-              if (
-                (side === 'base' || side === 'target') &&
-                (role === 'walk' || role === 'evidence' || role === 'context') &&
-                positiveInt(start) &&
-                positiveInt(end) &&
-                end >= start
-              ) {
-                refs.push({
-                  path,
-                  side,
-                  start,
-                  end,
-                  role,
-                  ...(typeof refRaw['anchor'] === 'string' ? { anchor: refRaw['anchor'] } : {}),
-                  ...(typeof refRaw['note'] === 'string' ? { note: refRaw['note'] } : {}),
-                });
-              }
-            });
-          }
-          const claims: StepClaim[] = [];
-          const claimsRaw = stepRaw['claims'];
-          if (claimsRaw !== undefined && !Array.isArray(claimsRaw)) {
-            problems.push({ where: stepWhere, problem: '"claims" must be an array when present.' });
-          } else if (Array.isArray(claimsRaw)) {
-            claimsRaw.forEach((claimRaw: unknown, claimIndex) => {
-              const claimWhere = `${stepId || stepWhere}.claims[${String(claimIndex)}]`;
-              if (!isRecord(claimRaw)) {
-                problems.push({ where: claimWhere, problem: 'A claim must be an object.' });
-                return;
-              }
-              const label = claimRaw['label'];
-              if (!EVIDENCE_LABELS.includes(label as EvidenceLabel)) {
-                problems.push({
-                  where: claimWhere,
-                  problem: `"label" must be one of ${EVIDENCE_LABELS.join(', ')}.`,
-                });
-                return;
-              }
-              claims.push({ label: label as EvidenceLabel, text: str(claimRaw, 'text', claimWhere, problems) });
-            });
-          }
-          steps.push({
-            id: stepId,
-            title: str(stepRaw, 'title', stepWhere, problems),
-            text: str(stepRaw, 'text', stepWhere, problems),
-            refs,
-            claims,
-          });
         });
       }
-      walks.push({
-        id,
-        title: str(walkRaw, 'title', where, problems),
-        question: str(walkRaw, 'question', where, problems),
-        steps,
-      });
+      walks.push({ id, title: text(walkRaw, 'title', where), question: text(walkRaw, 'question', where), steps });
     });
   }
   return {
     definition: {
-      format: REVIEW_DEFINITION_FORMAT,
+      format: typeof format === 'string' ? format : '',
       title,
       repository,
       base,
       target,
       teachingMode,
       provenance,
+      languages: v2 ? LANGS : [],
       walks,
     },
     problems,
+  };
+}
+
+function parseStepV2(raw: Record<string, unknown>, stepId: string, where: string, problems: DefinitionProblem[]): WalkStep | null {
+  const text = (key: string, required = true): LocalText =>
+    localText(raw, key, where, problems, { required, bilingual: true });
+  const places: Place[] = [];
+  const placesRaw = raw['places'];
+  const refIds = new Set<string>();
+  const refId = (id: string, refWhere: string): string => {
+    if (refIds.has(id)) {
+      problems.push({ where: refWhere, problem: `Duplicate reference id "${id}".` });
+    }
+    refIds.add(id);
+    return id;
+  };
+  if (!Array.isArray(placesRaw) || placesRaw.length === 0) {
+    problems.push({ where, problem: '"places" must be a non-empty array.' });
+  } else {
+    placesRaw.forEach((placeRaw: unknown, index) => {
+      const placeWhere = `${stepId}.places[${String(index)}]`;
+      if (!isRecord(placeRaw)) {
+        problems.push({ where: placeWhere, problem: 'A place must be an object.' });
+        return;
+      }
+      const placeId = str(placeRaw, 'id', placeWhere, problems);
+      const focus = parseReference(placeRaw['focus'], refId(placeId, placeWhere), `${placeWhere}.focus`, problems, 'walk', true);
+      const contextRaw = placeRaw['context'];
+      const context: CodeReference[] = [];
+      if (contextRaw !== undefined && !Array.isArray(contextRaw)) {
+        problems.push({ where: placeWhere, problem: '"context" must be an array when present.' });
+      } else if (Array.isArray(contextRaw)) {
+        contextRaw.forEach((entry: unknown, contextIndex) => {
+          const contextId = refId(`${placeId}.context${String(contextIndex + 1)}`, placeWhere);
+          const ref = parseReference(entry, contextId, `${placeWhere}.context[${String(contextIndex)}]`, problems, 'walk', true);
+          if (ref !== null) {
+            context.push(ref);
+          }
+        });
+      }
+      if (focus !== null && placeId !== '') {
+        places.push({ id: placeId, label: localText(placeRaw, 'label', placeWhere, problems, { required: true, bilingual: true }), focus, context });
+      }
+    });
+  }
+  const evidenceRefs: CodeReference[] = [];
+  const evidenceRefsRaw = raw['evidenceRefs'];
+  if (Array.isArray(evidenceRefsRaw)) {
+    evidenceRefsRaw.forEach((entry: unknown, index) => {
+      const ref = parseReference(entry, refId(`e${String(index + 1)}`, where), `${stepId}.evidenceRefs[${String(index)}]`, problems, 'evidence', true);
+      if (ref !== null) {
+        evidenceRefs.push(ref);
+      }
+    });
+  }
+  return {
+    id: stepId,
+    title: text('title'),
+    summary: text('summary'),
+    body: text('body'),
+    why: text('why', false),
+    places,
+    evidence: parseEvidence(raw['evidence'], `${stepId}.evidence`, problems, true),
+    evidenceRefs,
+    refs: [...places.flatMap((place) => [place.focus, ...place.context]), ...evidenceRefs],
+  };
+}
+
+/** A version 1 step: each walk or context reference becomes a place; text is shown as written. */
+function parseStepV1(raw: Record<string, unknown>, stepId: string, where: string, problems: DefinitionProblem[]): WalkStep | null {
+  const plain = (key: string, required = true): LocalText =>
+    localText(raw, key, where, problems, { required, bilingual: false });
+  const places: Place[] = [];
+  const evidenceRefs: CodeReference[] = [];
+  const refsRaw = raw['refs'];
+  if (!Array.isArray(refsRaw) || refsRaw.length === 0) {
+    problems.push({ where, problem: '"refs" must be a non-empty array.' });
+  } else {
+    refsRaw.forEach((entry: unknown, index) => {
+      const id = `r${String(index + 1)}`;
+      const ref = parseReference(entry, id, `${stepId}.refs[${String(index)}]`, problems, 'walk', false);
+      if (ref === null) {
+        return;
+      }
+      if (ref.role === 'evidence') {
+        evidenceRefs.push(ref);
+      } else {
+        const label = ref.note ?? { sv: `${ref.path}:${String(ref.start)}`, en: `${ref.path}:${String(ref.start)}` };
+        places.push({ id, label, focus: ref, context: [] });
+      }
+    });
+  }
+  const evidence: StepEvidence[] = [];
+  const claimsRaw = raw['claims'];
+  if (Array.isArray(claimsRaw)) {
+    claimsRaw.forEach((claim: unknown, index) => {
+      const claimWhere = `${stepId}.claims[${String(index)}]`;
+      if (!isRecord(claim)) {
+        problems.push({ where: claimWhere, problem: 'A claim must be an object.' });
+        return;
+      }
+      if (!EVIDENCE_LABELS.includes(claim['label'] as EvidenceLabel)) {
+        problems.push({ where: claimWhere, problem: `"label" must be one of ${EVIDENCE_LABELS.join(', ')}.` });
+        return;
+      }
+      evidence.push({ label: claim['label'] as EvidenceLabel, text: localText(claim, 'text', claimWhere, problems, { required: true, bilingual: false }) });
+    });
+  } else if (claimsRaw !== undefined) {
+    problems.push({ where, problem: '"claims" must be an array when present.' });
+  }
+  return {
+    id: stepId,
+    title: plain('title'),
+    summary: { sv: '', en: '' },
+    body: plain('text'),
+    why: { sv: '', en: '' },
+    places,
+    evidence,
+    evidenceRefs,
+    refs: [...places.map((place) => place.focus), ...evidenceRefs],
   };
 }
 
@@ -491,6 +692,78 @@ export function buildDiffRows(
   return rows;
 }
 
+/**
+ * The rows a reference covers, and whether any of them is a change.
+ *
+ * A `target` reference covers the rows with those new line numbers. Old lines come
+ * with it only where the reference lies on the new lines that replaced them — the
+ * first lines of a hunk, as many as it removed — or where they were removed
+ * strictly inside it. A `base` reference is the mirror image. So a one-line focus
+ * on a replaced line shows its before and its after; a focus deep inside a large
+ * added block shows only that part of it; and a focus on unchanged code covers only
+ * that code — no before/after pair is made up where none exists.
+ */
+export function referenceRows(
+  rows: readonly DiffRow[],
+  ref: { readonly side: RevisionSide; readonly start: number; readonly end: number },
+): { readonly indexes: readonly number[]; readonly changed: boolean } {
+  const own = (row: DiffRow): number | null => (ref.side === 'target' ? row.targetLine : row.baseLine);
+  const inside = (line: number | null): boolean => line !== null && ref.start <= line && line <= ref.end;
+
+  // Each hunk's rows on this side and on the other.
+  const hunks = new Map<string, { ownRows: number[]; otherRows: number[]; firstOwn: number | null }>();
+  rows.forEach((row, index) => {
+    if (row.hunkId === null) {
+      return;
+    }
+    const entry = hunks.get(row.hunkId) ?? { ownRows: [], otherRows: [], firstOwn: null };
+    if (own(row) !== null) {
+      entry.ownRows.push(index);
+      entry.firstOwn ??= own(row);
+    } else {
+      entry.otherRows.push(index);
+    }
+    hunks.set(row.hunkId, entry);
+  });
+
+  const included = new Set<number>();
+  rows.forEach((row, index) => {
+    if (inside(own(row))) {
+      included.add(index);
+    }
+  });
+  for (const entry of hunks.values()) {
+    if (entry.otherRows.length === 0) {
+      continue;
+    }
+    if (entry.firstOwn !== null) {
+      // A replacement: the old lines sit opposite the first new lines.
+      const span = Math.min(entry.otherRows.length, entry.ownRows.length);
+      if (ref.start <= entry.firstOwn + span - 1 && entry.firstOwn <= ref.end) {
+        entry.otherRows.forEach((index) => included.add(index));
+      }
+      continue;
+    }
+    // Lines removed (or added) with nothing in their place on this side: inside the
+    // reference only if the neighbouring lines that do exist here are both inside.
+    const first = entry.otherRows[0] ?? 0;
+    const last = entry.otherRows[entry.otherRows.length - 1] ?? 0;
+    let before: number | null = null;
+    for (let back = first - 1; back >= 0 && before === null; back -= 1) {
+      before = own(rows[back] as DiffRow);
+    }
+    let after: number | null = null;
+    for (let next = last + 1; next < rows.length && after === null; next += 1) {
+      after = own(rows[next] as DiffRow);
+    }
+    if (before !== null && after !== null && ref.start <= before && after <= ref.end) {
+      entry.otherRows.forEach((index) => included.add(index));
+    }
+  }
+  const indexes = [...included].sort((a, b) => a - b);
+  return { indexes, changed: indexes.some((index) => rows[index]?.kind !== 'context') };
+}
+
 // --- The reviewer's record ------------------------------------------------------
 
 export interface RevisionPair {
@@ -557,15 +830,32 @@ export interface ReviewState {
   /** Step id → when it was first opened. Being shown is not being reviewed. */
   readonly shownSteps: Readonly<Record<string, string>>;
   /**
-   * `stepId#refIndex` → when that reference was first on screen. Coverage counts
-   * these, so a step's second reference is not "shown" until it has been opened.
+   * `stepId@placeId` → when that place was first on screen. Coverage counts these,
+   * so a step's second place is not "opened" until it has been. Keys from an older
+   * definition (`stepId#index`) are kept in the record but match nothing.
    */
   readonly shownRefs: Readonly<Record<string, string>>;
+  /** How the reviewer has arranged the view. Never affects progress or decisions. */
+  readonly ui: ReviewUi;
   /** Step id → when the reviewer marked it walked through. Not an acceptance. */
   readonly walkedSteps: Readonly<Record<string, string>>;
   readonly decisions: readonly ReviewDecision[];
   readonly notes: readonly ReviewNote[];
   readonly savedAt: string;
+}
+
+export interface ReviewUi {
+  /** Walks expanded in the walk list. */
+  readonly openWalks: readonly string[];
+  /** The light purple overview of every place in the current walk. */
+  readonly highlightWalk: boolean;
+}
+
+export const DEFAULT_UI: ReviewUi = { openWalks: [], highlightWalk: false };
+
+/** The key of an "opened" mark for a place. */
+export function placeKey(stepId: string, placeId: string): string {
+  return `${stepId}@${placeId}`;
 }
 
 export function emptyReviewState(revisions: RevisionPair, definitionPath: string, definitionHash: string): ReviewState {
@@ -577,6 +867,7 @@ export function emptyReviewState(revisions: RevisionPair, definitionPath: string
     position: { walkId: null, stepId: null, refIndex: 0, away: null, codeMode: 'diff' },
     shownSteps: {},
     shownRefs: {},
+    ui: DEFAULT_UI,
     walkedSteps: {},
     decisions: [],
     notes: [],
@@ -608,6 +899,7 @@ export function adoptStoredState(raw: unknown, revisions: RevisionPair): ReviewS
     !stringMap(raw['shownSteps']) ||
     !stringMap(raw['walkedSteps']) ||
     (raw['shownRefs'] !== undefined && !stringMap(raw['shownRefs'])) ||
+    (raw['ui'] !== undefined && !isUi(raw['ui'])) ||
     !Array.isArray(raw['decisions']) ||
     !Array.isArray(raw['notes']) ||
     typeof raw['definitionHash'] !== 'string'
@@ -617,7 +909,25 @@ export function adoptStoredState(raw: unknown, revisions: RevisionPair): ReviewS
   return {
     ...(raw as unknown as ReviewState),
     shownRefs: (raw['shownRefs'] as Record<string, string> | undefined) ?? {},
+    ui: (raw['ui'] as ReviewUi | undefined) ?? DEFAULT_UI,
   };
+}
+
+function isUi(value: unknown): value is ReviewUi {
+  return (
+    isRecord(value) &&
+    Array.isArray(value['openWalks']) &&
+    value['openWalks'].every((entry) => typeof entry === 'string') &&
+    typeof value['highlightWalk'] === 'boolean'
+  );
+}
+
+/** "Opened" marks that name no place of this definition: kept, but not counted. */
+export function staleOpenedMarks(definition: ReviewDefinition, state: ReviewState): number {
+  const known = new Set(
+    definition.walks.flatMap((walk) => walk.steps.flatMap((step) => step.places.map((place) => placeKey(step.id, place.id)))),
+  );
+  return Object.keys(state.shownRefs).filter((key) => !known.has(key)).length;
 }
 
 /** The current decision for each hunk: the latest entry whose scope includes it. */
@@ -731,16 +1041,16 @@ function stepRefs(definition: ReviewDefinition, stepIds: ReadonlySet<string> | n
   return refs;
 }
 
-/** The references that have actually been on screen, by `stepId#refIndex`. */
+/** The focus and context of every place that has been on screen. */
 function shownReferences(definition: ReviewDefinition, shown: Readonly<Record<string, string>>): CodeReference[] {
   const refs: CodeReference[] = [];
   for (const walk of definition.walks) {
     for (const step of walk.steps) {
-      step.refs.forEach((ref, index) => {
-        if (shown[`${step.id}#${String(index)}`] !== undefined) {
-          refs.push(ref);
+      for (const place of step.places) {
+        if (shown[placeKey(step.id, place.id)] !== undefined) {
+          refs.push(place.focus, ...place.context);
         }
-      });
+      }
     }
   }
   return refs;
@@ -964,7 +1274,22 @@ export const REVIEW_CHANNELS = {
   listFiles: 'dspatch:review-list-files',
   search: 'dspatch:review-search',
   saveState: 'dspatch:review-save-state',
+  getPreferences: 'dspatch:review-get-preferences',
+  setPreferences: 'dspatch:review-set-preferences',
 } as const;
+
+/** The reviewer's own preferences, across reviews. */
+export interface ReviewPreferences {
+  readonly language: Lang;
+}
+
+export const DEFAULT_PREFERENCES: ReviewPreferences = { language: 'sv' };
+
+export function adoptPreferences(raw: unknown): ReviewPreferences {
+  return isRecord(raw) && (raw['language'] === 'sv' || raw['language'] === 'en')
+    ? { language: raw['language'] }
+    : DEFAULT_PREFERENCES;
+}
 
 /** Validate a renderer-supplied revision side and repository path before git sees them. */
 export function checkFileRequest(side: unknown, filePath: unknown): string | null {
@@ -1026,12 +1351,17 @@ export interface ReviewBundle {
   readonly definition: ReviewDefinition;
   readonly definitionProblems: readonly DefinitionProblem[];
   /** One entry per reference that failed validation; such references are shown as invalid. */
-  readonly referenceProblems: readonly { readonly stepId: string; readonly refIndex: number; readonly problem: string }[];
+  readonly referenceProblems: readonly { readonly stepId: string; readonly refId: string; readonly problem: string }[];
   readonly files: readonly DiffFile[];
   readonly state: ReviewState;
-  /** Why a stored record was not adopted, when there was one. */
-  readonly stateNote: string;
+  /** Something the reviewer must know about their stored record, if anything. */
+  readonly stateNotice: ReviewStateNotice | null;
 }
+
+/** What happened to a stored record when the review opened. The view words it. */
+export type ReviewStateNotice =
+  | { readonly kind: 'unusable'; readonly keptAs: string }
+  | { readonly kind: 'definition-changed'; readonly staleOpenedMarks: number };
 
 export type ReviewOpenOutcome =
   | { readonly kind: 'opened'; readonly bundle: ReviewBundle }
@@ -1057,4 +1387,6 @@ export interface ReviewBridge {
   listFiles(side: RevisionSide): Promise<readonly string[]>;
   search(side: RevisionSide, query: string): Promise<{ readonly hits: readonly ReviewSearchHit[]; readonly truncated: boolean; readonly error?: string }>;
   saveState(state: ReviewState): Promise<{ readonly saved: boolean; readonly at: string; readonly error?: string }>;
+  getPreferences(): Promise<ReviewPreferences>;
+  setPreferences(preferences: ReviewPreferences): Promise<{ readonly saved: boolean; readonly error?: string }>;
 }
