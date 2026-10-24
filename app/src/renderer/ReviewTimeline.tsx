@@ -1103,7 +1103,7 @@ function TimelinePane({
         {content !== null && content.error !== null && (
           <div className="rv-error">{content.error === 'binary' ? words.view.binary : content.error}</div>
         )}
-        {body}
+        <div className="rv-rows">{body}</div>
       </div>
     </section>
   );

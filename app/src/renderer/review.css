@@ -742,6 +742,14 @@
   padding: 0.3rem 0 2rem;
 }
 
+/* Every row spans the widest line, so the sticky line numbers have room to stay. */
+.rv-rows {
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: 100%;
+}
+
 .rv-row {
   display: flex;
   min-width: max-content;
