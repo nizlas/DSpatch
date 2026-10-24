@@ -820,6 +820,18 @@
   box-shadow: inherit;
 }
 
+/* So does the before/after label beside them (the numbers are 6rem wide). */
+.rv .rv-pane-lines .rv-marker {
+  position: sticky;
+  left: 6rem;
+  z-index: 1;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: inherit;
+}
+
 /* The links that open folded lines stay at the left edge too. */
 .rv-pane-lines .rv-gap,
 .rv-pane-lines .rv-nothing {

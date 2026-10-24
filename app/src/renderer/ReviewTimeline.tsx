@@ -176,7 +176,12 @@ function changeLeft(element: HTMLElement, rows: readonly DiffRow[], focus: reado
   if (inContent + 80 <= element.clientWidth) {
     return 0;
   }
-  return Math.max(0, Math.round(inContent - element.clientWidth * 0.45));
+  // The line numbers and the before/after label stay at the left edge: the change
+  // goes clearly to their right, at about 45 % of the pane.
+  const numbers = element.querySelector<HTMLElement>('.rv-row .rv-ln');
+  const marker = element.querySelector<HTMLElement>('.rv-row .rv-marker');
+  const reserve = (numbers?.offsetWidth ?? 0) + (marker?.offsetWidth ?? 0) + 24;
+  return Math.max(0, Math.round(inContent - Math.max(element.clientWidth * 0.45, reserve)));
 }
 
 /** Where each pane stands on the map, from the widths chosen so far. */
@@ -210,6 +215,22 @@ function fromPaneOf(stations: readonly Station[], station: Station | undefined):
   }
   return null;
 }
+
+/** Where a station's call is shown: the pane it leads from, or its own pane when that has the file. */
+function callPaneOf(stations: readonly Station[], station: Station | undefined): number | null {
+  const from = station?.place.from;
+  if (station === undefined || from === null || from === undefined) {
+    return null;
+  }
+  const pane = fromPaneOf(stations, station);
+  if (pane !== null) {
+    return pane;
+  }
+  const focus = station.place.focus;
+  return from.ref.path === focus.path && from.ref.side === focus.side ? station.index : null;
+}
+
+const NO_CALLS: readonly CodeLocation[] = [];
 
 export function WalkTimeline({
   walk,
@@ -321,7 +342,9 @@ export function WalkTimeline({
   // Each arrival by navigation is numbered; the pane it reaches makes room for its
   // change and places it in view once per number. The station the map opens on is
   // arrival 0. Panning activates panes without arriving anywhere.
-  const [arrival, setArrival] = useState({ index: active, seq: 0 });
+  const [arrival, setArrival] = useState(() => ({ index: active, seq: 0, from: fromPaneOf(stations, stations[active]) }));
+  const arrivalRef = useRef(arrival);
+  arrivalRef.current = arrival;
   const handledArrivals = useRef(new Map<number, number>());
   useLayoutEffect(() => {
     const forward = active >= previousActive.current;
@@ -332,7 +355,11 @@ export function WalkTimeline({
       lastDirection.current = forward ? 'forward' : 'backward';
       activatedByPan.current = panActivated.current === active;
       if (!activatedByPan.current) {
-        setArrival((current) => ({ index: active, seq: current.seq + 1 }));
+        setArrival((current) => ({ index: active, seq: current.seq + 1, from: fromPaneOf(stations, stations[active]) }));
+      } else {
+        // Panning takes over: an arrival not yet placed is dropped, never placed later.
+        const pending = arrivalRef.current;
+        handledArrivals.current.set(pending.index, pending.seq);
       }
     }
     if (panActivated.current === active) {
@@ -460,6 +487,16 @@ export function WalkTimeline({
   // Links: a dashed arrow from the call in the pane it leads from to the active focus.
   const activeStation = stations[active];
   const fromPane = useMemo(() => fromPaneOf(stations, activeStation), [stations, activeStation]);
+  // The active place's call is marked where it is shown. The rows around a call are
+  // unfolded for the latest navigation and stay so until the next one: panning neither
+  // folds nor unfolds rows in any pane.
+  const callPane = useMemo(() => callPaneOf(stations, activeStation), [stations, activeStation]);
+  const arrivalStation = stations[arrival.index];
+  const arrivalCallPane = useMemo(() => callPaneOf(stations, arrivalStation), [stations, arrivalStation]);
+  const arrivalCalls = useMemo(
+    (): readonly CodeLocation[] => (arrivalStation === undefined || arrivalStation.place.from === null ? NO_CALLS : [arrivalStation.place.from.ref]),
+    [arrivalStation],
+  );
   const [arrow, setArrow] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const measure = useCallback(() => {
     const element = viewport.current;
@@ -637,7 +674,8 @@ export function WalkTimeline({
                     isActive={isActive}
                     direction={direction}
                     fromRow={isActive ? (activeStation?.place.from ?? null) : null}
-                    fromHere={fromPane === station.index && activeStation !== undefined && activeStation.place.from !== null ? activeStation.place.from.ref : null}
+                    fromHere={callPane === station.index && activeStation !== undefined && activeStation.place.from !== null ? activeStation.place.from.ref : null}
+                    calls={arrivalCallPane === station.index ? arrivalCalls : NO_CALLS}
                     diffFile={changedFiles.get(path) ?? null}
                     files={files}
                     level={level}
@@ -657,6 +695,7 @@ export function WalkTimeline({
                     arrival={arrival.index === station.index ? arrival.seq : -1}
                     arrivalHandled={handledArrivals.current.get(station.index) ?? -1}
                     onArrivalHandled={(seq) => handledArrivals.current.set(station.index, seq)}
+                    callArrival={arrival.from === station.index ? arrival.seq : -1}
                   />
                 ) : (
                   <div className="rv-pane-placeholder">
@@ -735,6 +774,8 @@ function TimelinePane({
   arrival,
   arrivalHandled,
   onArrivalHandled,
+  calls,
+  callArrival,
 }: {
   readonly selection: CodeLocation | null;
   readonly onSelect: (location: CodeLocation | null) => void;
@@ -764,6 +805,10 @@ function TimelinePane({
   /** The last arrival this pane has placed its change for, kept while it is not rendered. */
   readonly arrivalHandled: number;
   readonly onArrivalHandled: (seq: number) => void;
+  /** The call of the latest navigation, when it is shown in this pane: kept unfolded. */
+  readonly calls: readonly CodeLocation[];
+  /** The number of the navigation that reached a place called from this pane, or -1. */
+  readonly callArrival: number;
 }): JSX.Element {
   const path = station.place.focus.path;
   const side = station.place.focus.side;
@@ -806,8 +851,15 @@ function TimelinePane({
     }
     return set;
   }, [overlay, rows, path]);
-  const fromLocation = fromHere ?? (fromRow !== null && fromRow.ref.path === path && fromRow.ref.side === side ? fromRow.ref : null);
-  const fromSet = useMemo(() => (fromLocation === null ? new Set<number>() : new Set(referenceRows(rows, fromLocation).indexes)), [fromLocation, rows]);
+  // The active place's call is marked; the latest navigation's call stays unfolded.
+  const fromSet = useMemo(() => (fromHere === null ? new Set<number>() : new Set(referenceRows(rows, fromHere).indexes)), [fromHere, rows]);
+  const callRows = useMemo(() => {
+    const set = new Set<number>();
+    for (const ref of calls) {
+      referenceRows(rows, ref).indexes.forEach((row) => set.add(row));
+    }
+    return set;
+  }, [calls, rows]);
   const selectionSet = useMemo(
     () => (selection === null || selection.path !== path ? new Set<number>() : new Set(referenceRows(rows, selection).indexes)),
     [selection, rows, path],
@@ -825,15 +877,15 @@ function TimelinePane({
     }
   };
 
-  // Visible rows: this station at the chosen level, the link source, and anything
-  // opened by hand. The rest folds into gaps.
+  // Visible rows: this station at the chosen level, the latest navigation's call when
+  // it is shown here, and anything opened by hand. The rest folds into gaps.
   const visible = useMemo(() => {
     const keep = rows.map(() => false);
     const range = stationRange(rows, station.place, level, shownFocus.indexes);
     if (range !== null) {
       keep.fill(true, range[0], range[1] + 1);
     }
-    for (const index of fromSet) {
+    for (const index of callRows) {
       keep.fill(true, Math.max(0, index - GAP_CONTEXT), Math.min(rows.length, index + GAP_CONTEXT + 1));
     }
     let index = 0;
@@ -858,7 +910,7 @@ function TimelinePane({
       }
     }
     return keep;
-  }, [rows, station.place, level, shownFocus, fromSet, openGaps, inContext]);
+  }, [rows, station.place, level, shownFocus, callRows, openGaps, inContext]);
 
   // Arriving: the focus flashes briefly when the walk reaches this pane.
   const [arriving, setArriving] = useState(false);
@@ -877,11 +929,12 @@ function TimelinePane({
     return undefined;
   }, [isActive]);
 
-  // Scroll to the change itself — its first changed row — or, on the side a call
-  // leads from, to the call. A pane that was scrolled and then left the rendered
-  // range comes back where it was. Becoming active or inactive is not part of the
-  // key: panning past a pane leaves its scroll alone.
-  const scrollKey = `${level}:${view}:${fromHere === null ? '' : String(fromHere.start)}:${String(rows.length)}`;
+  // Scroll to the change itself — its first changed row — or, in the pane the active
+  // place's call is in, to the call: on first view and when the level or Before/After
+  // changes. A pane that was scrolled and then left the rendered range comes back
+  // where it was. Neither the active place nor its link is part of the key, so panning
+  // past a pane — or past a place called from it — leaves its scroll alone.
+  const scrollKey = `${level}:${view}:${String(rows.length)}`;
   const scrolledFor = useRef('');
   const scrollTimer = useRef<number | null>(null);
   // Set when this pane has just been placed for the first time; read by the arrival below.
@@ -892,7 +945,7 @@ function TimelinePane({
       return;
     }
     const findTarget = (): HTMLElement | null =>
-      ((fromHere !== null ? element.querySelector('[data-from="1"]') : null) ??
+      ((fromHere !== null && !isActive ? element.querySelector('[data-from="1"]') : null) ??
         element.querySelector('[data-shown-change="1"]') ??
         element.querySelector('[data-shown="1"]')) as HTMLElement | null;
     if (findTarget() === null) {
@@ -987,11 +1040,49 @@ function TimelinePane({
       place('smooth');
     }, 120);
   });
-  // The room asked for arrives as a new width a render later: the change is placed
-  // sideways again for that width, once.
+  // The walk arrived, by navigation, at a place called from this pane: the call comes
+  // into view, once and only vertically. Panning never does this. An arrival issued
+  // before this pane was rendered is not its to act on: its first view already goes
+  // to the call, and a remembered scroll position is restored, not overridden.
+  const callHandledHere = useRef(callArrival);
   useLayoutEffect(() => {
     const element = scroller.current;
-    if (element === null || !placeAfterRoom.current) {
+    if (element === null || content === null || callArrival < 0 || callArrival === callHandledHere.current) {
+      return;
+    }
+    const findCall = (): HTMLElement | null => element.querySelector<HTMLElement>('[data-from="1"]');
+    if (findCall() === null) {
+      return;
+    }
+    callHandledHere.current = callArrival;
+    if (scrollTimer.current !== null) {
+      window.clearTimeout(scrollTimer.current);
+      scrollTimer.current = null;
+    }
+    const placeCall = (behavior: ScrollBehavior): void => {
+      const target = findCall();
+      if (target !== null) {
+        const offset = target.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop;
+        element.scrollTo({ top: Math.max(0, offset - element.clientHeight / 2 + 20), behavior });
+      }
+    };
+    if (reducedMotion()) {
+      placeCall('auto');
+      return;
+    }
+    scrollTimer.current = window.setTimeout(() => {
+      scrollTimer.current = null;
+      placeCall('smooth');
+    }, 120);
+  });
+  // The room asked for arrives as a new width a render later: the change is placed
+  // sideways again for that width, once. A pane just mounted has had no width change.
+  const lastWidth = useRef(width);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const widthChanged = lastWidth.current !== width;
+    lastWidth.current = width;
+    if (element === null || !widthChanged || !placeAfterRoom.current) {
       return;
     }
     placeAfterRoom.current = false;

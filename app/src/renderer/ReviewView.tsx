@@ -571,7 +571,7 @@ function OpenReview({
           <div className="rv-left-body">
             {tab === 'walks' && (
               <div className="rv-walks-tab">
-                {pick(bundle.definition.overview, lang) !== '' && (
+                {(pick(bundle.definition.overview, lang) !== '' || pick(bundle.definition.overviewSummary, lang) !== '') && (
                   <Collapsible title={words.overviewTitle} defaultOpen={state.shownSteps[bundle.definition.walks[0]?.steps[0]?.id ?? ''] === undefined}>
                     <Overview summary={pick(bundle.definition.overviewSummary, lang)} full={pick(bundle.definition.overview, lang)} words={words} />
                   </Collapsible>
@@ -745,18 +745,22 @@ function OpenReview({
   );
 }
 
-/** A few sentences first; the whole account, with what lies outside the walks, on request. */
+/** A few sentences first; the whole account, with what lies outside the walks, in their place on request. */
 function Overview({ summary, full, words }: { readonly summary: string; readonly full: string; readonly words: ReviewWords }): JSX.Element {
-  const [more, setMore] = useState(summary === '');
+  const [more, setMore] = useState(false);
+  if (summary === '' || full === '') {
+    return (
+      <div className="rv-explanation rv-overview">
+        <Markdown text={summary === '' ? full : summary} />
+      </div>
+    );
+  }
   return (
     <div className="rv-explanation rv-overview">
-      {summary !== '' && <Markdown text={summary} />}
-      {more && <Markdown text={full} />}
-      {summary !== '' && (
-        <button type="button" className="rv-link rv-more-link" aria-expanded={more} onClick={() => setMore(!more)}>
-          {more ? words.showLess : words.showMore}
-        </button>
-      )}
+      <Markdown text={more ? full : summary} />
+      <button type="button" className="rv-link rv-more-link" aria-expanded={more} onClick={() => setMore(!more)}>
+        {more ? words.showLess : words.showMore}
+      </button>
     </div>
   );
 }
