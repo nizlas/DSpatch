@@ -44,6 +44,7 @@ function composer(overrides: Partial<ComposerState> = {}): ComposerState {
     unresolvedAttempts: [],
     otherWorkInProgress: false,
     sessionOpen: true,
+    noProviderSession: null,
     ...overrides,
   };
 }
@@ -124,6 +125,43 @@ describe('where a press of Send goes', () => {
     assert.equal(composerSendRoute(composer({ outstandingTurn: true })).kind, 'blocked');
     assert.equal(composerSendRoute(composer({ sessionOpen: false })).kind, 'blocked');
     assert.equal(composerSendRoute(composer({ text: '   ' })).kind, 'blocked');
+  });
+
+  /**
+   * DSP-121 flow (Niclas, 24 October 2026): with no agent session behind the
+   * conversation, Enter holds an ordinary message in the box and the note says what
+   * to do; it is not sent to be refused. A loop run, which opens sessions of its own,
+   * is routed exactly as before (DSP-121 review B2).
+   */
+  it('holds an ordinary message back while no agent session is open, and says what to do', () => {
+    const note = 'Try again or start a new session to send.';
+    const route = composerSendRoute(composer({ noProviderSession: note }));
+    assert.deepEqual(route, { kind: 'blocked', reason: note });
+    assert.equal(composerCanSend(composer({ noProviderSession: note })), false);
+    assert.equal(composerRouteNote(route), note, 'the reason is shown, not kept quiet');
+    // The loop routes do not depend on the conversation's agent session.
+    assert.equal(composerSendRoute(composer({ noProviderSession: note, useLoop: true })).kind, 'loop-run');
+    const inFlight = composerSendRoute(
+      composer({ noProviderSession: note, loopRunning: true, loopRunId: 'chat-loop-1' }),
+    );
+    assert.equal(inFlight.kind, 'instruction');
+    // An empty box stays quiet, as it does everywhere else.
+    assert.equal(composerRouteNote(composerSendRoute(composer({ noProviderSession: note, text: '' }))), null);
+  });
+
+  // DSP-121 review B2: an earlier attempt with no known outcome must not take the
+  // note's place while no agent session is open - acknowledging it could not get the
+  // message sent, and the panel's choices are the way forward.
+  it('names the way forward, not an earlier unresolved attempt, while no agent session is open', () => {
+    const note = 'Try again or start a new session to send.';
+    const route = composerSendRoute(
+      composer({ noProviderSession: note, unresolvedAttempts: ['dsp-attempt-0003'] }),
+    );
+    assert.deepEqual(route, { kind: 'blocked', reason: note });
+    // With an agent session open the unresolved attempt still gates, as before.
+    const gated = composerSendRoute(composer({ unresolvedAttempts: ['dsp-attempt-0003'] }));
+    assert.equal(gated.kind, 'blocked');
+    assert.match(gated.kind === 'blocked' ? gated.reason : '', /dsp-attempt-0003/);
   });
 
   it('names every unresolved attempt rather than counting them', () => {

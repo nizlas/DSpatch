@@ -72,10 +72,10 @@ export const SHORT_NEXT_STEP: Record<FailureKind, string> = {
   connection:
     'The provider could not be reached. Nothing was sent twice — check the connection again.',
   'session-holds-a-run':
-    'This provider session is holding a run. Continuing in a new one is the way out.',
+    'This agent session is holding a run. Start a new session to continue.',
   'nothing-open': 'Open a project first.',
   'no-provider-session':
-    'No provider session is open. Choose: try again, a new provider session, or keep reading.',
+    'Nothing was sent and your text is kept. Choose how to continue below the message box.',
   other: 'Your text is kept. Trying again starts a new attempt.',
 };
 

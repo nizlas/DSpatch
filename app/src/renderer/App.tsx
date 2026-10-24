@@ -64,14 +64,21 @@ import {
 } from './recovery';
 import { describePlainly } from './plain-error';
 import {
-  DRAWER_POINTER,
+  COPIED_NOTE,
+  COPY_DIAGNOSTICS_LABEL,
+  DETAILS_ENTRY_LABEL,
+  REMOVE_SUMMARY_LABEL,
   composerStatus,
-  continuityView,
+  continuityPanel,
+  conversationDiagnostics,
+  diagnosticsText,
+  newSessionView,
+  noSessionRouteNote,
   providerSessionFact,
-  runningCommandNote,
+  sentWithSummaryLine,
   simulationLabel,
   simulationNotice,
-  type ContinuityView,
+  type DiagnosticLine,
 } from './continuity-view';
 import {
   attachUsage,
@@ -320,11 +327,12 @@ function Workbench({
   const [busy, setBusy] = useState<Busy>(null);
   const [actionError, setActionError] = useState<BridgeFailure | null>(null);
   /**
-   * What the window has done with the continuity choices of DSP-121. "Keep reading"
-   * is a choice made here and nowhere else - nothing is sent and nothing is written
-   * - so the window has to remember it; both reset when a session is opened.
+   * Whether the user removed the summary of a new provider session (DSP-121). The
+   * main process confirms the removal; the window remembers that it asked, so the
+   * new-session block can say so until the next message goes. Reset when a session
+   * is opened. There is no reading mode to remember any more: the history is always
+   * on screen and the choices stay beside it.
    */
-  const [continuityDismissed, setContinuityDismissed] = useState(false);
   const [recapDiscarded, setRecapDiscarded] = useState(false);
   const [test, setTest] = useState<TestOutcome | null>(null);
   const [testError, setTestError] = useState<BridgeFailure | null>(null);
@@ -438,6 +446,21 @@ function Workbench({
 
   /** Whether the session details the top menu opens are on screen. */
   const [detailsOpen, setDetailsOpen] = useState(false);
+  /**
+   * The diagnostics section inside the details (DSP-121 flow): whether it is
+   * expanded, and how many times the panel's *Details* entry has asked to be taken
+   * there. Both change only on a person's click - nothing at start, after a failed
+   * retry, after a new session or at a scripted hand-over opens the details.
+   */
+  const [diagnosticsExpanded, setDiagnosticsExpanded] = useState(false);
+  const [diagnosticsRequest, setDiagnosticsRequest] = useState(0);
+  const handledDiagnosticsRequest = useRef(0);
+  const detailsViewRef = useRef<HTMLDivElement | null>(null);
+  const detailsBarRef = useRef<HTMLDivElement | null>(null);
+  const diagnosticsRef = useRef<HTMLDetailsElement | null>(null);
+  /** What had focus when the details opened, so closing them gives it back. */
+  const detailsReturnFocus = useRef<HTMLElement | null>(null);
+  const detailsWereOpen = useRef(false);
   /** The model this conversation's next ordinary message will be sent to. */
   const [modelChoice, setModelChoice] = useState<string | null>(null);
 
@@ -543,6 +566,9 @@ function Workbench({
       unresolvedAttempts: attemptRefLabels(runState?.needsAcknowledgement.agentTurn ?? []),
       otherWorkInProgress: busy !== null && !(busy === 'sending' && loopBusy),
       sessionOpen: session !== null,
+      // DSP-121 flow: with no agent session behind the conversation, Enter keeps an
+      // ordinary message in the box and the note names the choices on offer.
+      noProviderSession: noSessionRouteNote(session?.continuity ?? null),
     }),
     [prompt, loopBusy, useLoop, blockingTurn, runState, busy, session],
   );
@@ -644,6 +670,7 @@ function Workbench({
     session?.continuity ?? null,
     running === null ? activity.text : (running.stepText ?? running.text),
     running !== null,
+    useLoop,
   );
 
   /**
@@ -1430,26 +1457,94 @@ function Workbench({
    * (DSP-60 #2). It asks; the window decides what the request means, so the menu
    * item and the button in the bar cannot drift into meaning different things.
    */
+  /**
+   * Open the details, remembering what had focus so closing them can give it back.
+   * One function for the menu and the panel's *Details* entry, so the two cannot
+   * open the same view in two different ways.
+   */
+  const openDetails = useCallback((): void => {
+    if (!detailsWereOpen.current) {
+      const active = document.activeElement;
+      detailsReturnFocus.current =
+        active instanceof HTMLElement &&
+        active !== document.body &&
+        !(detailsViewRef.current?.contains(active) ?? false)
+          ? active
+          : null;
+    }
+    setDetailsOpen(true);
+  }, []);
+
   useEffect(
     () =>
       window.dspatch.onMenuCommand((command) => {
         if (command === 'show-session-details') {
-          setDetailsOpen(true);
+          openDetails();
         } else if (command === 'hide-session-details') {
           setDetailsOpen(false);
         } else if (command === 'show-sample-projects') {
           // Shows, and nothing more. The removing is the button in that panel,
           // because DSP-61's decision was that clearing out old sample projects is
           // an act a person performs rather than a side effect of looking.
-          setDetailsOpen(true);
+          openDetails();
           void refreshSampleProjects();
         } else {
           setDetailsOpen(false);
           setChoosing(true);
         }
       }),
-    [refreshSampleProjects],
+    [openDetails, refreshSampleProjects],
   );
+
+  /**
+   * The panel's *Details* entry (DSP-121 flow): the details, at the diagnostics,
+   * expanded. Only ever called from that click.
+   */
+  const showDiagnostics = useCallback((): void => {
+    setDiagnosticsExpanded(true);
+    setDiagnosticsRequest((count) => count + 1);
+    openDetails();
+  }, [openDetails]);
+
+  /**
+   * Take the details to the diagnostics, once per click on the *Details* entry: the
+   * view's own scroller is moved - nothing else - so the section starts just under the
+   * view's sticky way back, and the section's summary takes focus, so a keyboard user
+   * lands where they asked to go. A layout effect, so the first frame of the details
+   * is already the right one.
+   */
+  useLayoutEffect(() => {
+    if (!detailsOpen || diagnosticsRequest === handledDiagnosticsRequest.current) {
+      return;
+    }
+    handledDiagnosticsRequest.current = diagnosticsRequest;
+    const view = detailsViewRef.current;
+    const section = diagnosticsRef.current;
+    if (view === null || section === null) {
+      return;
+    }
+    const barHeight = detailsBarRef.current?.getBoundingClientRect().height ?? 0;
+    view.scrollTop +=
+      section.getBoundingClientRect().top - view.getBoundingClientRect().top - barHeight;
+    section.querySelector('summary')?.focus({ preventScroll: true });
+  }, [detailsOpen, diagnosticsRequest]);
+
+  /**
+   * Give focus back when the details close, to whatever had it when they opened -
+   * the panel's *Details* entry, the composer - if it is still in the window. The
+   * conversation is not displayed while the details are, so this waits for the
+   * render that shows it again.
+   */
+  useEffect(() => {
+    if (detailsWereOpen.current && !detailsOpen) {
+      const target = detailsReturnFocus.current;
+      detailsReturnFocus.current = null;
+      if (target !== null && target.isConnected) {
+        target.focus({ preventScroll: true });
+      }
+    }
+    detailsWereOpen.current = detailsOpen;
+  }, [detailsOpen]);
 
   /**
    * The open folders, read once and then pushed.
@@ -1621,7 +1716,6 @@ function Workbench({
       setRecheckNote(null);
       setComposerNote(null);
       setResolvedNote(null);
-      setContinuityDismissed(false);
       setRecapDiscarded(false);
       try {
         const opened = await window.dspatch.startChatSession(request);
@@ -2363,12 +2457,12 @@ function Workbench({
             )}
 
             {/*
-              Whether Cursor still had the earlier session, what the recap will
-              contain and how the resumption was established are all in the
-              session details now. They are true and they are long, and §9 puts
-              long explanations of session restoration out of the conversation —
-              see `SessionContinuity`, which draws exactly the text that used to
-              be here.
+              Whether Cursor still had the earlier session and how the resumption was
+              established are in the session details now, in the diagnostics. They are
+              true and they are long, and §9 puts long explanations of session
+              restoration out of the conversation — see `ConversationDiagnostics`.
+              What a person has to act on stays by the composer: the panel while no
+              agent session is open, and the new-session block with its summary.
             */}
 
             {/*
@@ -2435,35 +2529,24 @@ function Workbench({
 
                 **History, not memory.** These are messages read from a file. What
                 the provider's session retains is a different question, decided by a
-                resume that either worked or did not, and `SessionContinuity` above
-                is where that is said — including the recap DSpatch had to send in
-                its place. Nothing here implies the agent remembers any of it.
+                resume that either worked or did not; the panel by the composer says
+                so when it did not, and the diagnostics say how it went in full.
+                Nothing here implies the agent remembers any of it.
+
+                No introduction above them (Niclas, 24 October 2026): a file path, a
+                technical timestamp and "this is what was written down" read as noise
+                in the conversation. The conversation is shown as itself; where it was
+                read from, when it was saved and how many messages came back are in
+                the diagnostics.
               */}
-              {session.restoredHistory.messages.length > 0 && (
-                <>
-                  <p className="app__note" data-ev="history-mark">
-                    {session.restoredHistory.messages.length} earlier message
-                    {session.restoredHistory.messages.length === 1 ? '' : 's'} in this
-                    conversation, read back from{' '}
-                    <code data-ev="history-file">
-                      {session.restoredHistory.filePath ?? 'memory'}
-                    </code>
-                    {session.restoredHistory.savedAtUtc === null
-                      ? ''
-                      : `, saved ${session.restoredHistory.savedAtUtc}`}
-                    . This is what was written down. Whether the agent still has it is
-                    said above, where the session says what it could continue.
-                  </p>
-                  {session.restoredHistory.messages.map((message) => (
-                    <RestoredMessage
-                      key={`history-${String(message.ordinal)}-${message.dspatchRunId}`}
-                      message={message}
-                      prefix="history-turn"
-                      quiet
-                    />
-                  ))}
-                </>
-              )}
+              {session.restoredHistory.messages.map((message) => (
+                <RestoredMessage
+                  key={`history-${String(message.ordinal)}-${message.dspatchRunId}`}
+                  message={message}
+                  prefix="history-turn"
+                  quiet
+                />
+              ))}
               {session.restoredHistory.error !== null && (
                 <p className="app__error" data-ev="history-error">
                   {session.restoredHistory.error}
@@ -2851,7 +2934,14 @@ function Workbench({
                   {resolvedNote}
                 </p>
               )}
-              {turnNeedsAcknowledgement.length > 0 && (
+              {/*
+                Not while no agent session is open (DSP-121 review B2): "Send anyway"
+                could not send then - the composer holds every ordinary message back and
+                the service refuses it - and the panel below is the way forward. The
+                attempts stay listed in "Execution state".
+              */}
+              {turnNeedsAcknowledgement.length > 0 &&
+                session?.continuity.providerSessionOpen !== false && (
                 <div className="app__error" data-ev="send-needs-acknowledgement">
                   <p>
                     {turnNeedsAcknowledgement.length === 1
@@ -2889,31 +2979,40 @@ function Workbench({
                 the same run and refuses the next message in the same words. Report
                 008 hit that twice across a restart. This opens a new provider
                 session over the same project and the same conversation, and the
-                recap it will send is shown before anything is sent.
+                summary it will send is shown before anything is sent. Its button
+                reads *Start new session*, the panel's name for the same act.
               */}
               {/*
                 DSP-121: no provider session is open behind the session on screen.
                 The main process opened nothing and sent nothing when the resume was
-                refused or failed, and it refuses every send until one of these is
-                chosen. "Keep reading" is decided here: it hides the choices and
-                changes nothing, and the next refused send offers them again.
+                refused or failed, and the composer holds a message back until one of
+                these is chosen. Outside the conversation's one scroller, so reading
+                the history - which needs no choice - never takes the way forward out
+                of view. After *Start new session* the new-session block stands in the
+                same place until the next message goes.
               */}
               {session !== null && (
                 <ContinuityChoices
                   session={session}
-                  dismissed={continuityDismissed}
                   busy={busy !== null}
                   commandRunning={busy === 'running-test'}
-                  adapterId={environment.adapter.id}
                   scriptedPlan={scriptedPlan}
                   onChoose={(choice) => {
-                    if (choice === 'try-again') {
-                      void startSession({ kind: 'retry-resume' });
-                    } else if (choice === 'new-session') {
-                      void startSession({ kind: 'new-provider-session' });
-                    } else {
-                      setContinuityDismissed(true);
-                    }
+                    void startSession(
+                      choice === 'try-again' ? { kind: 'retry-resume' } : { kind: 'new-provider-session' },
+                    );
+                  }}
+                  onShowDetails={showDiagnostics}
+                />
+              )}
+              {session !== null && (
+                <NewSessionBlock
+                  session={session}
+                  sentAnything={chat.turns.length > 0}
+                  recapDiscarded={recapDiscarded}
+                  busy={busy !== null}
+                  onRemoveSummary={() => {
+                    void discardRecap();
                   }}
                 />
               )}
@@ -2933,9 +3032,6 @@ function Workbench({
                   }}
                   onContinueInNewSession={() => {
                     void startSession({ kind: 'new-provider-session' });
-                  }}
-                  onChooseContinuity={() => {
-                    setContinuityDismissed(false);
                   }}
                 />
               )}
@@ -2969,22 +3065,44 @@ function Workbench({
         data-ev="session-details-view"
         data-open={String(detailsOpen)}
         aria-hidden={!detailsOpen}
+        ref={detailsViewRef}
+        onKeyDown={(event) => {
+          // Escape closes the details from inside them, as the Session menu's
+          // accelerator does from anywhere, so the way back needs no menu bar.
+          if (event.key === 'Escape' && detailsOpen) {
+            event.preventDefault();
+            setDetailsOpen(false);
+          }
+        }}
       >
+        {/*
+          The way back, inside the view as well as in the Session menu (DSP-121 flow):
+          a view reached from the panel's *Details* entry has to be closable where it
+          is being read, by a click or from the keyboard.
+        */}
+        <div className="details-view__bar" ref={detailsBarRef}>
+          <button
+            type="button"
+            className="button button--quiet"
+            data-ev="details-back"
+            onClick={() => {
+              setDetailsOpen(false);
+            }}
+          >
+            Back to the conversation
+          </button>
+        </div>
         <SessionFacts header={header} connection={connection} />
 
         {session !== null && (
           <>
-            <SessionContinuity
+            <ConversationDiagnostics
               session={session}
-              sentAnything={chat.turns.length > 0}
-              recapDiscarded={recapDiscarded}
-              choicesDismissed={continuityDismissed}
-              busy={busy !== null}
               adapterId={environment.adapter.id}
               scriptedPlan={scriptedPlan}
-              onDiscardRecap={() => {
-                void discardRecap();
-              }}
+              expanded={diagnosticsExpanded}
+              onToggle={setDiagnosticsExpanded}
+              sectionRef={diagnosticsRef}
             />
 
             <ProjectDetails session={session} />
@@ -3959,8 +4077,8 @@ function RestoredPanel({
                 // that has been scrolled makes "below" true but not helpful.
                 'A session is open for this conversation. Its composer is in the ' +
                 '"Conversation" panel further down this page.'
-              : 'This starts a new provider session over the same folder. Nothing ' +
-                'from this conversation is sent to the model by opening it.'}
+              : 'This opens the project again and tries to resume its agent session. ' +
+                'Nothing from this conversation is sent to the model by opening it.'}
         </span>
       </div>
 
@@ -4193,17 +4311,15 @@ function RestoredMessage({
         )}
       </div>
       {/*
-        A saved turn that carried a recap says so when it is read back, for the
-        same reason the live turn does: what the model was told is part of what
-        happened, and a reader looking at this history a week later cannot work
-        it out from the prompt alone.
+        A saved turn that carried a summary says so when it is read back, in the
+        same sentence as the live turn and for the same reason: what the model was
+        told is part of what happened, and a reader looking at this history a week
+        later cannot work it out from the prompt alone. The sentence is the
+        new-session block's vocabulary (`sentWithSummaryLine`, DSP-121).
       */}
       {message.resentContext !== null && (
         <details className="turn__resent" data-ev={`${at}-resent`}>
-          <summary>
-            This message was sent to a new provider session with{' '}
-            {String(message.resentContext.length)} characters of recap in front of it.
-          </summary>
+          <summary>{sentWithSummaryLine(message.resentContext.length)}</summary>
           <pre className="turn__answer">{message.resentContext}</pre>
         </details>
       )}
@@ -4217,283 +4333,185 @@ function RestoredMessage({
 }
 
 /**
- * Whether the model still has this conversation, and what it will be told if not.
+ * The diagnostics for the conversation on screen (DSP-121 flow), in the details.
  *
- * Both statements are the same kind of thing and both used to sit above the
- * thread: a paragraph about a resumed provider session, and the whole recap
- * DSpatch would put in front of the next message. §9 keeps long explanations of
- * session restoration and provider mechanics out of the conversation and
- * available as details, so they are here.
+ * Out of the conversation, behind a discreet entry, as Niclas asked on 24 October
+ * 2026 - and complete: everything `conversationDiagnostics` lists, as plain labelled
+ * lines. The service's statement for whatever state the session is in, the failure's
+ * own words, the provider's code, the session DSpatch tried to continue, the adapter,
+ * what was sent or what the resume call carried, what is resent, earlier messages
+ * with no confirmed end, and where the conversation was read back from - the storage
+ * metadata that used to introduce the history in the thread.
  *
- * DSP-121 UX (Niclas, 24 October 2026): the drawer does not repeat the panel.
- * While no provider session is open it shows the heading and either a pointer to
- * the panel above or, once the panel was dismissed with *Read history*, the same
- * Technical details block the panel had - the simpler of the two, since the
- * block is one component drawn in one place at a time. For a new provider session
- * it shows one short sentence, the recap and its removal, and the service's long
- * statement under Technical details. A resumed session keeps its statement.
- *
- * The recap is still shown **before** it is sent, which is the point of it: a
- * summary of what the model was told is not what the model was told.
+ * *Copy diagnostic info* copies exactly these lines (`diagnosticsText`), on the click
+ * and only then, to the system clipboard; nothing is sent anywhere, and focus stays
+ * on the button while the line beside it says it was copied. Closed until asked for,
+ * like every section here; the panel's *Details* entry expands it and takes focus to
+ * it. Nothing else opens it.
  */
-function SessionContinuity({
+function ConversationDiagnostics({
   session,
-  sentAnything,
-  recapDiscarded,
-  choicesDismissed,
-  busy,
   adapterId,
   scriptedPlan,
-  onDiscardRecap,
+  expanded,
+  onToggle,
+  sectionRef,
 }: {
   readonly session: ChatSessionInfo;
-  readonly sentAnything: boolean;
-  readonly recapDiscarded: boolean;
-  /** The user chose *Read history*, so the panel above the composer is gone. */
-  readonly choicesDismissed: boolean;
-  readonly busy: boolean;
   readonly adapterId: string;
-  /** The scripted plan of a presentation run, for the simulation label; `null` otherwise. */
+  /** The scripted plan of a presentation run, for the simulation line; `null` otherwise. */
   readonly scriptedPlan: ScriptedRunPlan | null;
-  readonly onDiscardRecap: () => void;
-}): JSX.Element | null {
-  const view = continuityView(session.continuity, {
-    sentAnything,
-    recapDiscarded,
-    // The drawer is the record, not the action surface: no buttons here.
-    choicesDismissed: true,
-  });
-  if (view.drawerLine === null && view.recap === null && view.recapRemovedNote === null) {
-    return null;
-  }
-  // The panel above the composer shows the state while it is on screen; the drawer
-  // then points at it rather than repeating it.
-  const panelShown = !view.providerSessionOpen && !choicesDismissed;
-  const simulated = simulationLabel(scriptedPlan);
-  return (
-    <Section title="This session and the earlier conversation">
-      {simulated !== null && !view.providerSessionOpen && !panelShown && (
-        <p className="app__note" data-ev="continuity-simulated">
-          {simulated}
-        </p>
-      )}
-      {view.drawerLine !== null && (
-        <p className="app__note" data-ev="session-continuity">
-          {view.drawerLine}
-        </p>
-      )}
-      {panelShown && (
-        <p className="app__note" data-ev="session-continuity-pointer">
-          {DRAWER_POINTER}
-        </p>
-      )}
-      {view.recap !== null && (
-        <details className="turn__resent" data-ev="pending-resend">
-          <summary data-ev="pending-resend-summary">
-            {view.recap.text.length} characters of recap will go in front of your next
-            message. Read it first.
-          </summary>
-          <p className="app__note" data-ev="pending-resend-note">
-            {view.recap.note}
-          </p>
-          <pre className="turn__answer" data-ev="pending-resend-text">
-            {view.recap.text}
-          </pre>
-          <p className="app__note" data-ev="pending-resend-envelope">
-            This is DSpatch&apos;s text, complete and exact. The provider adds an
-            envelope of its own around every message it delivers — a timestamp and
-            its own tags — so the model receives a little more than this, and none of
-            the extra comes from DSpatch or from you.
-          </p>
-          {/*
-            DSP-121 AC#2: the recap is DSpatch talking, and the user may decide the
-            model should hear only them. Removing it sends nothing and is final for
-            this session; the main process answers with the continuity shown next.
-          */}
-          <button
-            type="button"
-            className="button"
-            data-ev="pending-resend-discard"
-            onClick={onDiscardRecap}
-            disabled={busy}
-          >
-            Remove the recap
-          </button>
-        </details>
-      )}
-      {view.recapRemovedNote !== null && (
-        <p className="app__note" data-ev="pending-resend-removed">
-          {view.recapRemovedNote}
-        </p>
-      )}
-      {/*
-        Everything the service said, verbatim, where it is wanted: after *Read
-        history* this is the only place left, and for a new provider session the long
-        statement lives here rather than above the recap. A resumed session has its
-        statement as the line itself and nothing to add.
-      */}
-      {(!view.providerSessionOpen && !panelShown) ||
-      session.continuity.kind === 'new-provider-session' ? (
-        <ContinuityTechnicalDetails
-          view={view}
-          session={session}
-          adapterId={adapterId}
-          simulatedSentence={simulationNotice(scriptedPlan)}
-          testId="session-continuity-detail"
-          prefix="session-continuity"
-        />
-      ) : null}
-    </Section>
-  );
-}
-
-/**
- * The full account behind the short one, closed until asked for (DSP-121 UX).
- *
- * Diagnostics and traceability stay complete: every text the service produced is
- * here word for word - its statement, the failure's own words, the provider's
- * code, the session ID, the adapter, what the resume call carried, and each
- * earlier message with no confirmed end. Drawn in the panel while it is on screen
- * and in the drawer otherwise, so one `data-ev` name is never on screen twice.
- */
-function ContinuityTechnicalDetails({
-  view,
-  session,
-  adapterId,
-  simulatedSentence,
-  testId,
-  prefix,
-}: {
-  readonly view: ContinuityView;
-  readonly session: ChatSessionInfo;
-  readonly adapterId: string;
-  /** The full simulation sentence of a presentation run, or `null`. */
-  readonly simulatedSentence: string | null;
-  /** `data-ev` of the disclosure itself. */
-  readonly testId: string;
-  /** Prefix of the `data-ev` names inside it. */
-  readonly prefix: string;
+  readonly expanded: boolean;
+  readonly onToggle: (open: boolean) => void;
+  readonly sectionRef: { current: HTMLDetailsElement | null };
 }): JSX.Element {
+  const lines: readonly DiagnosticLine[] = useMemo(
+    () =>
+      conversationDiagnostics({
+        continuity: session.continuity,
+        context: session.context,
+        adapterId,
+        history: session.restoredHistory,
+        simulation: simulationNotice(scriptedPlan),
+      }),
+    [session, adapterId, scriptedPlan],
+  );
+  const text = diagnosticsText(lines);
+  /** What the last copy did, and of which text, so a changed text never reads as copied. */
+  const [copyOutcome, setCopyOutcome] = useState<{ readonly note: string; readonly of: string } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (copyOutcome === null) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setCopyOutcome(null);
+    }, 4_000);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [copyOutcome]);
+  const copyNote = copyOutcome !== null && copyOutcome.of === text ? copyOutcome.note : '';
   return (
-    <details className="error-detail continuity__technical" data-ev={testId}>
-      <summary className="error-detail__summary">Technical details</summary>
-      {simulatedSentence !== null && !view.providerSessionOpen && (
-        <p className="card__detail" data-ev={`${prefix}-simulated-detail`}>
-          {simulatedSentence}
-        </p>
-      )}
-      {view.statement !== null && (
-        <p className="card__detail" data-ev={`${prefix}-statement`}>
-          {view.statement}
-        </p>
-      )}
-      {view.technicalDetail !== null && (
-        <p className="card__detail" data-ev={`${prefix}-detail-text`}>
-          {view.technicalDetail}
-        </p>
-      )}
-      <dl className="facts continuity__facts">
-        {view.providerCode !== null && (
-          <Fact label="Provider code" value={view.providerCode} testId={`${prefix}-provider-code`} />
-        )}
-        {view.attemptedSessionId !== null && (
-          <Fact label="Session" value={view.attemptedSessionId} testId={`${prefix}-session`} />
-        )}
-        <Fact label="Adapter" value={adapterId} testId={`${prefix}-adapter`} />
-      </dl>
-      <p className="card__detail" data-ev={`${prefix}-context-statement`}>
-        {session.context.statement}
-      </p>
-      {view.earlierSends.length > 0 && (
-        <ul className="card__detail" data-ev={`${prefix}-earlier-sends`}>
-          {view.earlierSends.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      )}
+    <details
+      className="panel panel--section"
+      data-ev="diagnostics"
+      ref={sectionRef}
+      open={expanded}
+      onToggle={(event) => {
+        onToggle(event.currentTarget.open);
+      }}
+    >
+      <summary className="panel__title panel__summary" data-ev="diagnostics-summary">
+        Diagnostics
+      </summary>
+      <div data-ev="diagnostics-lines">
+        {lines.map((line) => (
+          <p className="card__detail diagnostics__line" key={line.key}>
+            <strong>{line.label}:</strong> <span data-ev={`diagnostics-${line.key}`}>{line.value}</span>
+          </p>
+        ))}
+      </div>
+      <div className="row">
+        <button
+          type="button"
+          className="button button--quiet"
+          data-ev="diagnostics-copy"
+          onClick={() => {
+            void window.dspatch.copyText(text).then(
+              () => {
+                setCopyOutcome({ note: COPIED_NOTE, of: text });
+              },
+              (error: unknown) => {
+                setCopyOutcome({
+                  note: `Could not copy: ${describeBridgeFailure(error).message}`,
+                  of: text,
+                });
+              },
+            );
+          }}
+        >
+          {COPY_DIAGNOSTICS_LABEL}
+        </button>
+        <span className="pending" role="status" data-ev="diagnostics-copied">
+          {copyNote}
+        </span>
+      </div>
     </details>
   );
 }
 
 /**
- * The choices DSP-121 offers while no provider session is open, above the message
- * box where the refused send would be. Draws exactly what `continuityView` returns:
- * the main process decides which choices exist; this only labels them.
+ * The panel DSP-121 shows while no provider session is open: by the composer and
+ * outside the conversation's one scroller, so reading the history never takes it out
+ * of view. Draws exactly what `continuityPanel` returns - the main process decides
+ * which choices exist; this only labels them.
  *
- * In the open: the heading, one short body keyed on the evidence, the earlier-sends
- * sentence when it applies, the short test-mode label in a presentation run, and
- * the three buttons. Everything longer is under Technical details, closed.
+ * What happened, that the saved conversation is still there, and what to do, in a
+ * heading and one line; the short test-mode label in a presentation run; the
+ * consequence for a running command, before the click and only while there is one;
+ * the buttons; what a new session means, under them, where it is chosen; and a
+ * discreet *Details* entry into the diagnostics. Nothing in the panel is a
+ * disclosure, so nothing in it can be found open (Niclas, 24 October 2026).
  */
 function ContinuityChoices({
   session,
-  dismissed,
   busy,
   commandRunning,
-  adapterId,
   scriptedPlan,
   onChoose,
+  onShowDetails,
 }: {
   readonly session: ChatSessionInfo;
-  readonly dismissed: boolean;
   readonly busy: boolean;
   /**
    * A workspace command (build or test) is running right now - the same reading
-   * the Build and test panel uses for its own "waiting" line. *Try again* closes
-   * the session on screen first, which stops that command, and the note beside the
-   * button says so only while there is one to stop.
+   * the Build and test panel uses for its own "waiting" line. Both choices close the
+   * session on screen first, which stops that command, and a line above the buttons
+   * says so only while there is one to stop; the buttons stay usable meanwhile.
    */
   readonly commandRunning: boolean;
-  readonly adapterId: string;
-  /** The scripted plan of a presentation run, for the simulation label; `null` otherwise. */
+  /** The scripted plan of a presentation run, for the test-mode label; `null` otherwise. */
   readonly scriptedPlan: ScriptedRunPlan | null;
-  readonly onChoose: (choice: 'try-again' | 'new-session' | 'keep-reading') => void;
+  readonly onChoose: (choice: 'try-again' | 'new-session') => void;
+  /** The *Details* entry: the session details, at the diagnostics. */
+  readonly onShowDetails: () => void;
 }): JSX.Element | null {
-  const view = continuityView(session.continuity, {
-    sentAnything: false,
-    recapDiscarded: false,
-    choicesDismissed: dismissed,
-  });
-  if (view.choices.length === 0) {
+  const panel = continuityPanel(session.continuity, commandRunning);
+  if (panel === null) {
     return null;
   }
   const simulated = simulationLabel(scriptedPlan);
-  const runningNote = runningCommandNote(commandRunning);
   return (
     <div className="app__error continuity" data-ev="continuity-choices">
       <p className="continuity__heading" data-ev="continuity-heading">
-        {view.heading}
+        {panel.heading}
       </p>
       <p className="continuity__body" data-ev="continuity-body">
-        {view.body}
+        {panel.body}
       </p>
-      {view.earlierSendsNote !== null && (
+      {panel.earlierSendsNote !== null && (
         <p className="continuity__body" data-ev="continuity-earlier-sends-note">
-          {view.earlierSendsNote}
+          {panel.earlierSendsNote}
         </p>
       )}
       {/*
         In a presentation run the window has to say that no provider was asked: the
-        statement under Technical details is the service's honest reading of the
-        adapter's answer and reads like a provider's.
+        service's statement in the diagnostics reads like a provider's answer.
       */}
       {simulated !== null && (
         <p className="app__note" data-ev="continuity-simulated">
           {simulated}
         </p>
       )}
-      {/*
-        The consequence before the click (Niclas, 24 October 2026): while a command
-        runs, the buttons stay usable and this line above them says what Try again
-        and Start new session will do to it. Both reach `closeSession`, which stops
-        the command; Read history touches nothing.
-      */}
-      {runningNote !== null && (
+      {panel.runningCommandNote !== null && (
         <p className="continuity__note" data-ev="continuity-running-command-note">
-          {runningNote}
+          {panel.runningCommandNote}
         </p>
       )}
       <div className="row continuity__actions">
-        {view.choices.map((choice) => (
+        {panel.choices.map((choice) => (
           <button
             key={choice.choice}
             type="button"
@@ -4508,15 +4526,99 @@ function ContinuityChoices({
             {choice.label}
           </button>
         ))}
+        <button
+          type="button"
+          className="continuity__details"
+          data-ev="continuity-details"
+          title="Diagnostics for this conversation, in the session details"
+          onClick={onShowDetails}
+        >
+          {DETAILS_ENTRY_LABEL}
+        </button>
       </div>
-      <ContinuityTechnicalDetails
-        view={view}
-        session={session}
-        adapterId={adapterId}
-        simulatedSentence={simulationNotice(scriptedPlan)}
-        testId="continuity-technical"
-        prefix="continuity-choices"
-      />
+      {panel.newSessionNote !== null && (
+        <p className="continuity__note" data-ev="continuity-new-session-note">
+          {panel.newSessionNote}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What a new session means, where it was chosen (DSP-121 flow): in the panel's
+ * place by the composer, until the next message goes.
+ *
+ * The agent does not have the earlier conversation, and the window says so before
+ * anything is sent. The summary DSpatch will put in front of the next message is one
+ * click away - closed, because it is long - word for word, and can be removed; then
+ * only the message goes. Nothing is sent by choosing the session or by removing the
+ * summary. Draws exactly what `newSessionView` returns, which is what the main
+ * process holds. After the send the turn itself shows what went with it.
+ */
+function NewSessionBlock({
+  session,
+  sentAnything,
+  recapDiscarded,
+  busy,
+  onRemoveSummary,
+}: {
+  readonly session: ChatSessionInfo;
+  readonly sentAnything: boolean;
+  readonly recapDiscarded: boolean;
+  readonly busy: boolean;
+  readonly onRemoveSummary: () => void;
+}): JSX.Element | null {
+  const view = newSessionView(session.continuity, { sentAnything, recapDiscarded });
+  if (view === null) {
+    return null;
+  }
+  return (
+    <div className="continuity continuity--new" data-ev="new-session-block">
+      <p className="continuity__heading" data-ev="new-session-heading">
+        {view.heading}
+      </p>
+      {view.summary !== null ? (
+        <>
+          <p className="continuity__body" data-ev="new-session-summary-line">
+            {view.summary.line}
+          </p>
+          <details className="error-detail" data-ev="new-session-summary">
+            <summary className="error-detail__summary" data-ev="new-session-summary-toggle">
+              {view.summary.toggle}
+            </summary>
+            <pre className="continuity__summary-text" data-ev="new-session-summary-text">
+              {view.summary.text}
+            </pre>
+            {/*
+              Report 008 measured the gap this closes: the provider wraps whatever it
+              delivers in an envelope of its own, so the count is exact for DSpatch's
+              text, which is the part DSpatch can answer for.
+            */}
+            <p className="card__detail" data-ev="new-session-summary-envelope">
+              This is DSpatch&apos;s text, complete and exact. The provider adds an
+              envelope of its own around every message it delivers — a timestamp and
+              its own tags — so the model receives a little more than this, and none of
+              the extra comes from DSpatch or from you.
+            </p>
+          </details>
+          <div className="row continuity__actions">
+            <button
+              type="button"
+              className="button"
+              data-ev="new-session-remove-summary"
+              onClick={onRemoveSummary}
+              disabled={busy}
+            >
+              {REMOVE_SUMMARY_LABEL}
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="continuity__body" data-ev="new-session-summary-removed">
+          {view.removedLine}
+        </p>
+      )}
     </div>
   );
 }
@@ -5162,7 +5264,6 @@ function Failure({
   onAcknowledge,
   onChooseFolder,
   onContinueInNewSession,
-  onChooseContinuity,
 }: {
   readonly failure: BridgeFailure;
   readonly testId: string;
@@ -5172,8 +5273,6 @@ function Failure({
   readonly onAcknowledge?: () => void;
   readonly onChooseFolder?: () => void;
   readonly onContinueInNewSession?: () => void;
-  /** DSP-121: show the continuity choices again after "keep reading" hid them. */
-  readonly onChooseContinuity?: () => void;
 }): JSX.Element {
   const handler =
     failure.action === 'retry'
@@ -5188,9 +5287,7 @@ function Failure({
               ? onChooseFolder
               : failure.action === 'continue-in-new-session'
                 ? onContinueInNewSession
-                : failure.action === 'choose-continuity'
-                  ? onChooseContinuity
-                  : undefined;
+                : undefined;
   const label =
     failure.action === 'retry'
       ? 'Try again'
@@ -5201,10 +5298,9 @@ function Failure({
           : failure.action === 'acknowledge-then-repeat'
             ? 'Continue, leaving the earlier attempt unresolved'
             : failure.action === 'continue-in-new-session'
-              ? 'Continue in a new provider session'
-              : failure.action === 'choose-continuity'
-                ? 'Show the choices'
-                : 'Choose another folder';
+              ? // The same action, under the same name, as the panel's choice (DSP-121).
+                'Start new session'
+              : 'Choose another folder';
 
   const plain = describePlainly(failure);
 
@@ -6509,16 +6605,14 @@ function Turn({
       {/*
         AC#2's honesty requirement, attached to the message it is about. The old
         chat being visible on screen is not evidence the model received it, so
-        when DSpatch had to send a recap instead of resuming, the recap is shown
-        here verbatim — the whole text, not a claim about it.
+        when DSpatch had to send a summary instead of resuming, the summary is shown
+        here verbatim — the whole text, not a claim about it. The sentence over it is
+        the new-session block's vocabulary, and the same on a read-back turn
+        (`sentWithSummaryLine`, DSP-121).
       */}
       {turn.resentContext !== null && (
         <details className="turn__resent" data-ev={`turn-${String(index)}-resent`}>
-          <summary>
-            This is a new provider session, so DSpatch put{' '}
-            {String(turn.resentContext.length)} characters of recap in front of your
-            message. Everything the model has of the earlier conversation is in here.
-          </summary>
+          <summary>{sentWithSummaryLine(turn.resentContext.length)}</summary>
           <pre
             className="turn__answer"
             data-ev={`turn-${String(index)}-resent-text`}

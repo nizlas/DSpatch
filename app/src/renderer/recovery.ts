@@ -61,6 +61,8 @@ export type FailureKind =
    * A session is open on screen but no provider session is behind it (DSP-121): the
    * recorded one could not be resumed and DSpatch did not open another by itself.
    * The main process refuses a send or a cancel with this until the user chooses.
+   * Only a back-stop now: the composer holds a message back in this state, and the
+   * choices are always on screen beside it.
    */
   | 'no-provider-session'
   | 'other';
@@ -73,8 +75,7 @@ export type RecoveryAction =
   | 'acknowledge-then-repeat'
   | 'choose-another-folder'
   | 'open-project-again'
-  | 'continue-in-new-session'
-  | 'choose-continuity';
+  | 'continue-in-new-session';
 
 export interface BridgeFailure {
   /** The message to show, with the transport's own wrapping removed. */
@@ -201,12 +202,12 @@ function classify(message: string): {
       action: 'continue-in-new-session',
       actionNote:
         'A provider session holds one run at a time, so this one will refuse every ' +
-        'message until the run it is holding ends. Continuing in a new provider ' +
-        'session is the way out that does not depend on that run ending. It opens a ' +
-        'new session over the same project and the same conversation: nothing on ' +
-        'disk is touched, nothing is sent to the run that is in the way, and ' +
-        'DSpatch shows you the record it will put in front of your next message ' +
-        'before it sends anything. When the run is one DSpatch never subscribed to ' +
+        'message until the run it is holding ends. Starting a new session is the ' +
+        'way out that does not depend on that run ending. It opens a new session ' +
+        'over the same project and the same conversation: nothing on disk is ' +
+        'touched, nothing is sent to the run that is in the way, and DSpatch shows ' +
+        'you the summary it will put in front of your next message before it sends ' +
+        'anything. When the run is one DSpatch never subscribed to ' +
         '— the usual case after a restart, and the message above says which of the ' +
         'two this is — waiting is not known to help, and this used to claim ' +
         'otherwise. Measured on 15 September 2026: a turn killed in this window was ' +
@@ -221,15 +222,18 @@ function classify(message: string): {
   // Before the `No session is open` rule, and on a different prefix, so neither can
   // take the other's case: this one is a session on screen with no provider session
   // behind it, and "open a project again" would only attempt the same resume.
+  //
+  // No button of its own (DSP-121 flow): the choices that can work are always on
+  // screen below the message box, and a second copy of them here would be a second
+  // place to look. The note points there and says what was not done.
   if (message.startsWith('No provider session is open')) {
     return {
       kind: 'no-provider-session',
-      action: 'choose-continuity',
+      action: 'none',
       actionNote:
-        'The earlier provider session could not be resumed and DSpatch did not open ' +
-        'another by itself, so nothing was sent. Choose what to do next: try the ' +
-        'resume again, start a new provider session with a recap you can remove ' +
-        'before sending, or keep reading. Your text stays in the box.',
+        'The earlier agent session could not be resumed and DSpatch did not open ' +
+        'another by itself, so nothing was sent and your text stays in the box. ' +
+        'How to continue is offered below the message box.',
     };
   }
   if (message.startsWith('No session is open')) {

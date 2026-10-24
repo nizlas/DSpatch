@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from 'electron';
+import { BrowserWindow, Menu, app, clipboard, dialog, ipcMain, shell } from 'electron';
 
 import type {
   AddLoopInstructionOutcome,
@@ -150,6 +150,7 @@ const EXPORT_CONVERSATION: BridgeChannel = 'dspatch:export-conversation';
 const REVEAL_CONVERSATION: BridgeChannel = 'dspatch:reveal-conversation';
 const START_SESSION: BridgeChannel = 'dspatch:start-session';
 const DISCARD_PENDING_RECAP: BridgeChannel = 'dspatch:discard-pending-recap';
+const COPY_TEXT: BridgeChannel = 'dspatch:copy-text';
 const SEND_PROMPT: BridgeChannel = 'dspatch:send-prompt';
 const CANCEL_RUN: BridgeChannel = 'dspatch:cancel-run';
 const ABANDON_SEND: BridgeChannel = 'dspatch:abandon-send';
@@ -355,10 +356,38 @@ const presentationMode =
 /**
  * Hold mode (`DSPATCH_CHAT_HOLD=1`, `resume-choice` only): the scenario performs the
  * open, the record is written, and the window is left open for a person to look at
- * instead of being exited. The window is an ordinary window then - the real panel,
- * every button working - it is simply not driven further.
+ * instead of being exited. The conversation view then behaves as in an ordinary launch
+ * - the real panel and its buttons - and is simply not driven further. Not the whole
+ * window: `chatRunMode` stays on, so the graph editor's file dialogs and the
+ * unsaved-drawing question still answer from the scripted queues.
  */
 const chatRunHold = chatRunScenario === 'resume-choice' && process.env['DSPATCH_CHAT_HOLD'] === '1';
+
+/**
+ * The hold-mode verification aid (`DSPATCH_CHAT_HOLD_CLOSE_MS`, DSP-121 flow).
+ *
+ * An agent verifying the hand-over cannot close an Electron window, and a hold-mode
+ * window nothing closes stays up for ever. With this set to a positive number of
+ * milliseconds, and only in hold mode, the main process closes the window that long
+ * after writing the record - an ordinary close, the one a person makes, so the
+ * after-close record is written as it is then. The start file never sets it: a
+ * window for a person stays until the person closes it.
+ */
+const chatRunHoldCloseMs = ((): number | null => {
+  if (!chatRunHold) {
+    return null;
+  }
+  const parsed = Number.parseInt(process.env['DSPATCH_CHAT_HOLD_CLOSE_MS'] ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+})();
+
+/**
+ * What *Copy diagnostic info* was asked to copy during an unattended scripted run,
+ * kept for the run record instead of being written to the system clipboard (DSP-121
+ * flow): an automated test must never overwrite the clipboard of the person at the
+ * computer. Hold mode and ordinary launches write the real clipboard.
+ */
+const scriptedClipboard: string[] = [];
 
 /**
  * How fast the canned reply arrives, when a scripted run needs to say
@@ -398,6 +427,21 @@ function presentationAdapterOptions(): {
  */
 const presentationResumeRequested = presentationResumeMode(process.env['DSPATCH_CHAT_RESUME']);
 const presentationResume = new PresentationResumeBehaviour(presentationResumeRequested ?? 'ok');
+
+/**
+ * The one seam that keeps presentation mode provider-free for loop runs.
+ *
+ * Spread into the options of every `runLiveGraph` this window can start - the chat's
+ * *Use loop* run and the graph editor's Run - so in presentation mode each step's
+ * adapter is the presentation adapter, and in every other launch the option is absent
+ * and the run builds its default adapter. One constant for both handlers, so a loop
+ * run cannot reach a provider from a presentation window by being started from the
+ * other window (DSP-121 review B3: the editor's Run used to miss it).
+ */
+const presentationLoopAdapter: { readonly createAdapter?: () => PresentationAdapter } =
+  presentationMode
+    ? { createAdapter: () => new PresentationAdapter(presentationAdapterOptions()) }
+    : {};
 
 /**
  * What a file chooser answers during a scripted window run (`DSPATCH_PICK_FILE`).
@@ -2503,8 +2547,8 @@ function resumeChoiceChecks(
   const same = (left: unknown, right: unknown): boolean =>
     JSON.stringify(left) === JSON.stringify(right);
   const mode = presentationResume.mode;
+  const observations = report?.observations ?? {};
   const starts = resumeChoiceTimeline.filter((entry) => entry.event === 'start-session');
-  const sends = resumeChoiceTimeline.filter((entry) => entry.event === 'send');
   const opened = starts[0];
   const seeded = opened?.fileSessionBefore ?? null;
   claim(
@@ -2548,23 +2592,31 @@ function resumeChoiceChecks(
       JSON.stringify(failure ?? null),
     );
   }
-  const refusedSends = sends.filter((entry) => entry.outcome === 'refused');
+  // DSP-121 flow: while no agent session is open the composer holds a message back,
+  // so not even a send to be refused may reach the main process - the service's guard
+  // is a back-stop now, not the route. A send is judged by the session start before it.
+  const sendsWhileClosed = resumeChoiceTimeline.filter((entry, index) => {
+    if (entry.event !== 'send') {
+      return false;
+    }
+    const startBefore = resumeChoiceTimeline
+      .slice(0, index)
+      .filter((earlier) => earlier.event === 'start-session')
+      .pop();
+    return startBefore?.continuityAfter?.providerSessionOpen !== true;
+  });
+  const closedStarts = starts.filter((entry) => entry.continuityAfter?.providerSessionOpen === false);
   claim(
-    'every send before a choice was refused by the no-provider-session guard, and sent nothing',
-    refusedSends.every(
-      (entry) => (entry.detail ?? '').startsWith('No provider session is open') && entry.sentCount === 0,
-    ),
-    `${String(refusedSends.length)} refused send(s): ${refusedSends.map((entry) => entry.detail ?? '').join(' | ')}`,
+    'while no provider session was open, no send reached the main process and the adapter received nothing',
+    sendsWhileClosed.length === 0 && closedStarts.every((entry) => entry.sentCount === 0),
+    `${String(sendsWhileClosed.length)} send(s) while closed` +
+      (sendsWhileClosed.length === 0
+        ? ''
+        : `: ${sendsWhileClosed.map((entry) => `${entry.outcome} ${entry.detail ?? entry.request}`).join(' | ')}`) +
+      `; adapter sent count at each start that left no session open: ${
+        closedStarts.map((entry) => String(entry.sentCount)).join(', ') || 'none'
+      }`,
   );
-  if (mode === 'refused' && !chatRunHold) {
-    // Two refused sends are driven - one before Keep reading and one after - so the
-    // `every` above cannot pass on an empty list (Reviewer S2).
-    claim(
-      'exactly two sends were refused before a choice was made',
-      refusedSends.length === 2,
-      `${String(refusedSends.length)} refused send(s), 2 expected`,
-    );
-  }
   const retry = starts.find((entry) => entry.request === 'retry-resume');
   if (!chatRunHold && mode !== 'ok') {
     claim(
@@ -2595,10 +2647,25 @@ function resumeChoiceChecks(
       );
     }
   }
-  const fresh = starts.find((entry) => entry.request === 'new-provider-session');
-  if (mode === 'refused' && !chatRunHold) {
+  // The refused and failed phases both choose a new session: refused removes the
+  // summary before its one message, failed keeps it.
+  if ((mode === 'refused' || mode === 'failed') && !chatRunHold) {
+    const shownAtCopy = observations['diagnosticsShownAtCopy'];
     claim(
-      'a new provider session was asked for and opened one',
+      'Copy diagnostic info recorded exactly the diagnostics the window showed, in the run record and not on the system clipboard',
+      typeof shownAtCopy === 'string' &&
+        shownAtCopy !== '' &&
+        scriptedClipboard.length === 1 &&
+        scriptedClipboard[0] === shownAtCopy,
+      `${String(scriptedClipboard.length)} copy recorded; ${
+        scriptedClipboard[0] === undefined ? 'none' : `${String(scriptedClipboard[0].length)} chars`
+      }; shown ${typeof shownAtCopy === 'string' ? `${String(shownAtCopy.length)} chars` : 'nothing'}; equal ${String(
+        scriptedClipboard[0] === shownAtCopy,
+      )}`,
+    );
+    const fresh = starts.find((entry) => entry.request === 'new-provider-session');
+    claim(
+      'a new provider session was asked for and opened one, sending nothing',
       fresh !== undefined &&
         fresh.continuityAfter?.kind === 'new-provider-session' &&
         fresh.startSessionCalls === 1 &&
@@ -2607,13 +2674,68 @@ function resumeChoiceChecks(
         ? 'no new-provider-session request'
         : `kind ${fresh.continuityAfter?.kind ?? 'none'}, starts ${String(fresh.startSessionCalls)}, sent ${String(fresh.sentCount)}`,
     );
-    const sent = presentationResume.record().sent;
-    const message = report?.observations['messageSentInNewSession'];
     claim(
-      'exactly the one message the window sent reached the adapter, with no recap in front of it',
-      typeof message === 'string' && message !== '' && sent.length === 1 && sent[0] === message,
-      `window sent ${JSON.stringify(message ?? null)}; adapter received ${JSON.stringify(sent)}`,
+      'the stored session was replaced only when the new session was chosen',
+      fresh !== undefined &&
+        seeded !== null &&
+        same(fresh.fileSessionBefore, seeded) &&
+        fresh.fileSessionAfter !== null &&
+        fresh.fileSessionAfter.dspatchSessionId !== seeded.dspatchSessionId,
+      `before the choice ${fresh?.fileSessionBefore?.dspatchSessionId ?? 'none'}, after it ${
+        fresh?.fileSessionAfter?.dspatchSessionId ?? 'none'
+      }, seeded ${seeded?.dspatchSessionId ?? 'none'}`,
     );
+    // What reached the adapter, what the sent turn says went with it, and what the
+    // conversation file saved with that message: three readings of one fact, which
+    // must agree. The turn and the file can say it because the adapter emits
+    // `run.started` inside `send`, while the service still holds the summary.
+    const sent = presentationResume.record().sent;
+    const message = observations['messageSentInNewSession'];
+    const turnResent = observations['resentShownWithTurn'];
+    const last = resumeChoiceLastMessage();
+    const savedSummary = `the file's last message: prompt ${
+      last === null ? 'none' : last.prompt === message ? 'equal to the message' : 'different'
+    }, resentContext ${
+      last === null || last.resentContext === null ? 'null' : `${String(last.resentContext.length)} chars`
+    }; the sent turn shows ${
+      typeof turnResent === 'string' ? `${String(turnResent.length)} chars of summary` : 'no summary'
+    }`;
+    if (mode === 'refused') {
+      claim(
+        'the summary was removed: exactly the one message reached the adapter with nothing in front of it, and neither the sent turn nor the saved message records a summary',
+        typeof message === 'string' &&
+          message !== '' &&
+          sent.length === 1 &&
+          sent[0] === message &&
+          last !== null &&
+          last.prompt === message &&
+          last.resentContext === null &&
+          turnResent === null,
+        `window sent ${JSON.stringify(message ?? null)}; adapter received ${JSON.stringify(sent)}; ${savedSummary}`,
+      );
+    } else {
+      const shown = observations['summaryShownBeforeSend'];
+      const expected = typeof shown === 'string' && typeof message === 'string' ? `${shown}\n\n${message}` : null;
+      claim(
+        'the summary was kept: exactly one message reached the adapter, the summary as the disclosure showed it, a blank line, then the message',
+        expected !== null && shown !== '' && sent.length === 1 && sent[0] === expected,
+        `summary shown ${typeof shown === 'string' ? `${String(shown.length)} chars` : 'nothing'}; adapter received ${
+          sent.map((text) => `${String(text.length)} chars`).join(', ') || 'nothing'
+        }; equal to the summary, a blank line and the message: ${String(sent[0] === expected)}`,
+      );
+      claim(
+        "the sent turn's resentContext is the summary the disclosure showed, and the saved message in the conversation file records it",
+        typeof shown === 'string' &&
+          shown !== '' &&
+          turnResent === shown &&
+          last !== null &&
+          last.prompt === message &&
+          last.resentContext === shown,
+        `${savedSummary}; the turn's text equals the summary shown: ${String(turnResent === shown)}; the file's equals it: ${String(
+          last?.resentContext === shown,
+        )}`,
+      );
+    }
     const current = chatService.openSession();
     const fileNow = resumeChoiceFileSession();
     claim(
@@ -2626,6 +2748,23 @@ function resumeChoiceChecks(
     );
   }
   return checks;
+}
+
+/** The last message of project A's conversation file, read from disk now (DSP-121 flow). */
+function resumeChoiceLastMessage(): { readonly prompt: string; readonly resentContext: string | null } | null {
+  const projectA = (process.env['DSPATCH_CHAT_SWITCH_PROJECTS'] ?? '').split(';')[0]?.trim() ?? '';
+  if (projectA === '') {
+    return null;
+  }
+  const store = requireConversationStore();
+  for (const entry of store.list().entries) {
+    const conversation = store.read(entry.conversationId).conversation;
+    if (conversation !== null && samePathSpelling(conversation.project.path, projectA)) {
+      const last = conversation.messages[conversation.messages.length - 1];
+      return last === undefined ? null : { prompt: last.prompt, resentContext: last.resentContext };
+    }
+  }
+  return null;
 }
 
 /** The files as they were when the renderer reported, kept for the after-close record. */
@@ -2714,6 +2853,9 @@ function writeChatRunRecord(
     },
     renderer: report,
     main: mainEvidenceAtReport,
+    // DSP-121 flow: what *Copy diagnostic info* was asked to copy, recorded here instead
+    // of the system clipboard in an unattended run. Empty when nothing was copied.
+    copiedInsteadOfClipboard: [...scriptedClipboard],
     ...(switching
       ? {
           // Read by the main process from disk, apart from what the DOM showed.
@@ -3238,6 +3380,23 @@ function registerIpc(): void {
   // DSP-121: the user removing the recap. Sends nothing; the service answers with
   // the continuity the window shows from then on.
   ipcMain.handle(DISCARD_PENDING_RECAP, () => chatService.discardPendingRecap());
+  // DSP-121 flow: *Copy diagnostic info*, on the user's click. The clipboard is this
+  // machine's; nothing is sent anywhere. An unattended scripted run records the text
+  // instead (`scriptedClipboard`), so a test cannot overwrite the user's clipboard.
+  ipcMain.handle(COPY_TEXT, (_event, text: unknown): void => {
+    if (typeof text !== 'string') {
+      throw new Error('Only text can be copied.');
+    }
+    if (chatRunMode && !chatRunHold) {
+      scriptedClipboard.push(text);
+      log(
+        `scripted run: ${String(text.length)} characters to copy recorded in the run ` +
+          'record; the system clipboard was not written',
+      );
+      return;
+    }
+    clipboard.writeText(text);
+  });
   ipcMain.handle(
     SEND_PROMPT,
     async (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) => {
@@ -3484,6 +3643,21 @@ function registerIpc(): void {
             `shown (SIMULATED by the presentation adapter). Close it when done; would have ` +
             `exited with ${String(exitCode)}.`,
         );
+        // The verification aid, for an agent that cannot close a window: an ordinary
+        // close after the delay, so the after-close record is written as for a person.
+        if (chatRunHoldCloseMs !== null) {
+          const delay = chatRunHoldCloseMs;
+          log(`hold mode: DSPATCH_CHAT_HOLD_CLOSE_MS is set; closing the window in ${String(delay)} ms`);
+          setTimeout(() => {
+            const window = liveMainWindow();
+            if (window === null) {
+              log('hold mode: the window was already closed');
+              return;
+            }
+            log('hold mode: closing the window (DSPATCH_CHAT_HOLD_CLOSE_MS)');
+            window.close();
+          }, delay);
+        }
         return;
       }
       exitWith(exitCode);
@@ -4032,6 +4206,9 @@ function registerLoopGraphIpc(): void {
           keepWorkspace: true,
           abortSignal: abort.signal,
           control: loopControl,
+          // Presentation mode stays provider-free here too: the same seam as the
+          // chat's loop run, so the editor's Run builds no real adapter in it.
+          ...presentationLoopAdapter,
           onJournalEntry: (entry) => {
             // To the run's audience, not to `event.sender`. The sender was whichever
             // window pressed Run, which is not necessarily — and with two windows,
@@ -4369,9 +4546,7 @@ function registerLoopGraphIpc(): void {
           // reason: a scripted run can then walk a real loop in the real window with
           // no provider call. `presentationMode` is set by one environment value and
           // nothing else constructs this, so an ordinary launch cannot reach it.
-          ...(presentationMode
-            ? { createAdapter: () => new PresentationAdapter(presentationAdapterOptions()) }
-            : {}),
+          ...presentationLoopAdapter,
           promptFor: (node, step) => {
             const prompt = chatPromptFor(node, {
               entryId: loaded.graph.entry,
@@ -4988,7 +5163,12 @@ function registerLifecycle(): void {
       return;
     }
     event.preventDefault();
-    disposeThenEnd(() => {
+    disposeThenEnd((shutdown) => {
+      // Hold mode (DSP-121): the window's close is the run's close - a person's or the
+      // verification aid's - so the record gets the after-close reading an exit gives.
+      if (chatRunHold && lastScriptedReport !== undefined) {
+        writeChatRunRecord(lastScriptedReport, 'after-close', shutdown);
+      }
       app.quit();
     }, 'quit');
   });

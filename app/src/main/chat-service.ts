@@ -203,15 +203,33 @@ const FIRST_SESSION_CONTINUITY: SessionContinuity = {
 };
 
 /**
- * What the user can do while no provider session is open (DSP-121). All three in
- * every such state: the card offers them without exception, and the statement says
- * when trying again would only ask the same question with the same inputs.
+ * What the user can do while no provider session is open (DSP-121), per state.
+ *
+ * Starting a new session in every such state. Trying again only where a retry can
+ * work in this build (Niclas, 24 October 2026: do not offer Try again where that
+ * path is blocked or unsupported). It is not offered when:
+ *
+ * - the adapter cannot resume at all (`resume-unavailable`): a retry gives the same
+ *   answer;
+ * - the refusal is `unconfirmed-end`: it is lifted only by trying again with the
+ *   attempt acknowledged, and this window cannot send that acknowledgement yet
+ *   (DSP-117);
+ * - the adapter refused on `config_mismatch`: the same inputs give the same answer.
+ *
+ * `retry-resume` itself stays accepted by `startChatSession` - DSP-117 needs it with
+ * `acknowledgedAttemptIds` - it is only not offered. Reading the history is not a
+ * choice: the saved conversation is on screen whatever the user picks.
  */
-const NO_SESSION_CHOICES: readonly ContinuityChoice[] = [
-  'try-again',
-  'new-session',
-  'keep-reading',
-];
+function noSessionChoices(
+  kind: Extract<SessionContinuityKind, 'resume-refused' | 'resume-failed' | 'resume-unavailable'>,
+  failure: ResumeFailure | null,
+): readonly ContinuityChoice[] {
+  const retryCannotWork =
+    kind === 'resume-unavailable' ||
+    failure?.kind === 'unconfirmed-end' ||
+    failure?.providerCode === 'config_mismatch';
+  return retryCannotWork ? ['new-session'] : ['try-again', 'new-session'];
+}
 
 /**
  * What `openProviderSession` hands back. `handle` is `null` exactly when no provider
@@ -335,15 +353,50 @@ function earlierSendsSentence(sends: readonly EarlierSendMayHaveReached[]): stri
   );
 }
 
-/** What each choice does, said once, the same way in every no-session state. */
-const CHOICES_SENTENCE =
-  ' You can try again, which closes this view\'s session first (a build or test ' +
-  'command still running is stopped) and asks to resume the same ID once more; ' +
-  'start a new provider session, with a recap you can remove before sending; or ' +
-  'keep reading the history without starting an agent.';
+/**
+ * What each offered choice does, said once, naming only the choices offered: a
+ * statement that described a retry the window does not offer would send the reader
+ * looking for a button that is not there.
+ */
+function choicesSentence(
+  choices: readonly ContinuityChoice[],
+  savedMessageCount: number,
+): string {
+  // With no saved messages there is nothing to recap and nothing to read back, so
+  // neither is promised (DSP-121 review B1): the new session begins from the next
+  // message alone.
+  const newSession =
+    savedMessageCount > 0
+      ? 'start a new provider session, with a recap you can remove before sending'
+      : 'start a new provider session, which begins from your next message alone ' +
+        '(this conversation has no saved messages, so there is no recap)';
+  const readable =
+    savedMessageCount > 0 ? ' The saved conversation stays readable either way.' : '';
+  return choices.includes('try-again')
+    ? ' You can try again, which closes this view\'s session first (a build or test ' +
+        'command still running is stopped) and asks to resume the same ID once more; ' +
+        `or ${newSession}.${readable}`
+    : ` You can ${newSession}; it closes this view's session first (a build or test ` +
+        `command still running is stopped).${readable}`;
+}
+
+/** The guard's closing sentence, naming only the choices offered. */
+function choicesInstruction(choices: readonly ContinuityChoice[]): string {
+  return choices.includes('try-again')
+    ? 'Choose: try again, or start a new provider session.'
+    : 'Start a new provider session to continue.';
+}
 
 /** The `contextNote` while no provider session is open: nothing is or will be resent. */
 function noSessionOpenNote(savedMessageCount: number): string {
+  if (savedMessageCount === 0) {
+    // Nothing to show as history and nothing to recap (DSP-121 review B1).
+    return (
+      'Nothing was resent and nothing will be: no provider session is open. This ' +
+      'conversation has no saved messages, so a new provider session, if you choose ' +
+      'one, has no recap to show and begins from your next message alone.'
+    );
+  }
   return (
     'Nothing was resent and nothing will be: no provider session is open. The ' +
     `conversation's ${String(savedMessageCount)} saved message${
@@ -1716,6 +1769,8 @@ export class ChatService {
         // Unreachable in the product today, where the Cursor adapter has `resume`.
         const detail = `this build cannot resume a session on the ${adapter.id} adapter`;
         this.options.log(`resume of ${previousId} not attempted: ${detail}`);
+        const failure: ResumeFailure = { kind: 'error', detail, providerCode: null };
+        const choices = noSessionChoices('resume-unavailable', failure);
         return {
           handle: null,
           recorded: saved,
@@ -1725,9 +1780,9 @@ export class ChatService {
             attemptedDspatchSessionId: previousId,
             resumedProviderSessionId: null,
             resumeError: detail,
-            resumeFailure: { kind: 'error', detail, providerCode: null },
+            resumeFailure: failure,
             earlierSendsMayHaveReached: earlierSends,
-            choices: NO_SESSION_CHOICES,
+            choices,
             contextToResend: null,
             contextNote: noSessionOpenNote(savedMessageCount),
             savedMessageCount,
@@ -1737,7 +1792,7 @@ export class ChatService {
               `sent. The session ID ${previousId} stays on record. Trying again in ` +
               'this build gives the same answer.' +
               earlierSendsSentence(earlierSends) +
-              CHOICES_SENTENCE,
+              choicesSentence(choices, savedMessageCount),
           },
         };
       }
@@ -1760,6 +1815,8 @@ export class ChatService {
           `resume of ${previousId} not attempted (unconfirmed-end): ${detail}; the ` +
             'provider was not asked, no new session opened, nothing sent',
         );
+        const failure: ResumeFailure = { kind: 'unconfirmed-end', detail, providerCode: null };
+        const choices = noSessionChoices('resume-refused', failure);
         return {
           handle: null,
           recorded: saved,
@@ -1769,9 +1826,9 @@ export class ChatService {
             attemptedDspatchSessionId: previousId,
             resumedProviderSessionId: null,
             resumeError: detail,
-            resumeFailure: { kind: 'unconfirmed-end', detail, providerCode: null },
+            resumeFailure: failure,
             earlierSendsMayHaveReached: earlierSends,
-            choices: NO_SESSION_CHOICES,
+            choices,
             contextToResend: null,
             contextNote: noSessionOpenNote(savedMessageCount),
             savedMessageCount,
@@ -1785,7 +1842,7 @@ export class ChatService {
               'cannot send that acknowledgement yet); the attempt itself stays recorded ' +
               'as unresolved.' +
               earlierSendsSentence(earlierSends) +
-              CHOICES_SENTENCE,
+              choicesSentence(choices, savedMessageCount),
           },
         };
       }
@@ -1828,6 +1885,7 @@ export class ChatService {
               ? `DSpatch tried to resume ${previousId} and the resume was refused: ` +
                 `${detail}`
               : `DSpatch tried to resume ${previousId} and the attempt failed: ${detail}`;
+        const choices = noSessionChoices(classified.kind, classified.failure);
         return {
           handle: null,
           recorded: saved,
@@ -1839,7 +1897,7 @@ export class ChatService {
             resumeError: detail,
             resumeFailure: classified.failure,
             earlierSendsMayHaveReached: earlierSends,
-            choices: NO_SESSION_CHOICES,
+            choices,
             contextToResend: null,
             contextNote: noSessionOpenNote(savedMessageCount),
             savedMessageCount,
@@ -1847,7 +1905,7 @@ export class ChatService {
               `${opening}${classified.note === '' ? '' : ` ${classified.note}`} No new ` +
               'session was opened and nothing was sent. The session ID stays on record.' +
               earlierSendsSentence(earlierSends) +
-              CHOICES_SENTENCE,
+              choicesSentence(choices, savedMessageCount),
           },
         };
       }
@@ -4037,12 +4095,14 @@ export class ChatService {
     }
     // The guard of DSP-121: a session info over a recorded-but-not-open provider
     // session refuses everything that would reach the adapter, so that opening the
-    // history or seeing the failure can never start a model turn. "Keep reading"
-    // is exactly this refusal staying in force.
+    // history or seeing the failure can never start a model turn. Reading the history
+    // is this refusal staying in force. The window's composer already holds a message
+    // back in this state, so this is the back-stop; it names only the choices offered,
+    // and its prefix is what `recovery.ts` recognises.
     if (!this.continuity.providerSessionOpen) {
       throw new Error(
         `No provider session is open for this conversation: ${this.noProviderSessionHeadline()}. ` +
-          'Choose: try again, a new provider session, or keep reading.',
+          choicesInstruction(this.continuity.choices),
       );
     }
     return { adapter, session };

@@ -81,6 +81,7 @@ const EXPORT_CONVERSATION: BridgeChannel = 'dspatch:export-conversation';
 const REVEAL_CONVERSATION: BridgeChannel = 'dspatch:reveal-conversation';
 const START_SESSION: BridgeChannel = 'dspatch:start-session';
 const DISCARD_PENDING_RECAP: BridgeChannel = 'dspatch:discard-pending-recap';
+const COPY_TEXT: BridgeChannel = 'dspatch:copy-text';
 const SEND_PROMPT: BridgeChannel = 'dspatch:send-prompt';
 const CANCEL_RUN: BridgeChannel = 'dspatch:cancel-run';
 const ABANDON_SEND: BridgeChannel = 'dspatch:abandon-send';
@@ -182,6 +183,7 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(START_SESSION, request) as Promise<ChatSessionInfo>,
   discardPendingRecap: () =>
     ipcRenderer.invoke(DISCARD_PENDING_RECAP) as Promise<SessionContinuity>,
+  copyText: (text: string) => ipcRenderer.invoke(COPY_TEXT, text) as Promise<void>,
   sendPrompt: (text: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) =>
     ipcRenderer.invoke(SEND_PROMPT, text, acknowledgedAttemptIds) as Promise<{
       readonly dspatchRunId: string;

@@ -5047,9 +5047,18 @@ async function runConversationComesBackScenario(
     steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
   };
 
-  /** How many earlier messages the window says it read back, and from where. */
+  /**
+   * How many earlier messages the window says it read back, and from where. The
+   * "read back from" line above the thread is gone (DSP-121 flow); where the
+   * conversation was read from and how many messages came back are in the
+   * diagnostics, which `textContent` reaches whether or not the details are open.
+   */
   const historyInWindow = (): {
-    readonly mark: string;
+    readonly storage: {
+      readonly file: string;
+      readonly savedAt: string;
+      readonly messagesRead: string;
+    };
     readonly turns: number;
     readonly prompts: readonly string[];
     readonly error: string;
@@ -5063,7 +5072,11 @@ async function runConversationComesBackScenario(
       prompts.push((found.textContent ?? '').replace(/\s+/g, ' ').trim());
     }
     return {
-      mark: textOf('history-mark'),
+      storage: {
+        file: textOf('diagnostics-conversation-file'),
+        savedAt: textOf('diagnostics-saved-at'),
+        messagesRead: textOf('diagnostics-messages-read'),
+      },
       turns: prompts.length,
       prompts,
       error: textOf('history-error'),
@@ -5103,7 +5116,7 @@ async function runConversationComesBackScenario(
       conversationShownInWindow: firstConversation,
       projectShownInWindow: textOf('project-path'),
       historyTurnsShownInWindow: atOpen.turns,
-      historyMarkShownInWindow: atOpen.mark,
+      historyStorageShownInDiagnostics: atOpen.storage,
       historyErrorShownInWindow: atOpen.error,
       // Non-zero on the second process, which is the restart case and the point.
       startedWithHistory: atOpen.turns > 0,
@@ -5139,10 +5152,14 @@ async function runConversationComesBackScenario(
             atOpen.prompts.join(' | '),
         );
       }
-      if (atOpen.mark === '') {
+      // Where they came from is no longer a line above the thread (Niclas, 24 October
+      // 2026: the conversation is shown as itself); it is in the diagnostics, and it
+      // must still be said somewhere a person can find it.
+      if (atOpen.storage.file === '' || atOpen.storage.messagesRead !== String(atOpen.turns)) {
         failures.push(
-          'earlier messages were drawn with nothing saying where they came from, so the ' +
-            'window shows restored text without saying it is history read from a file.',
+          'earlier messages were drawn and the diagnostics do not say where they were read ' +
+            `from or how many came back (file "${atOpen.storage.file}", ${atOpen.storage.messagesRead} ` +
+            `read back, ${String(atOpen.turns)} drawn).`,
         );
       }
     }
@@ -5161,7 +5178,8 @@ async function runConversationComesBackScenario(
       // Whatever the window says about the provider session, recorded beside the
       // history so the two can be compared rather than conflated: restored text is not
       // a resumed session, and this is where a window claiming otherwise would show it.
-      continuityShownInWindow: textOf('session-continuity'),
+      // The service's statement, from the diagnostics in the details (DSP-121 flow).
+      continuityShownInWindow: textOf('diagnostics-statement'),
       saveErrorShownInWindow: textOf('save-error'),
     });
     if (textOf('save-error') !== '') {
@@ -7749,7 +7767,8 @@ async function runWorkspaceSwitchScenario(plan: ScriptedRunPlan): Promise<Script
       historyTurnsShownInWindow: prompts.length,
       historyPromptsShownInWindow: prompts,
       historyErrorShownInWindow: textOf('history-error'),
-      continuityShownInWindow: textOf('session-continuity'),
+      // The service's statement, from the diagnostics in the details (DSP-121 flow).
+      continuityShownInWindow: textOf('diagnostics-statement'),
       liveTestStatusShownInWindow: textOf('test-status'),
       liveTestResultShownInWindow: textOf('test-result'),
       saveErrorShownInWindow: textOf('save-error'),
@@ -7883,7 +7902,7 @@ async function runWorkspaceSwitchScenario(plan: ScriptedRunPlan): Promise<Script
       const afterSend = {
         sentPrompt: sentInA,
         turnStatusShownInWindow: statusOfTurn(0),
-        continuityShownInWindow: textOf('session-continuity'),
+        continuityShownInWindow: textOf('diagnostics-statement'),
         saveErrorShownInWindow: textOf('save-error'),
         otherSaveErrorsShownInWindow: otherSaveErrors(),
       };
@@ -8131,28 +8150,34 @@ async function runWorkspaceSwitchScenario(plan: ScriptedRunPlan): Promise<Script
 }
 
 /* ------------------------------------------------------------------------- */
-/* The refused or failed resume, and the three choices: DSP-121               */
+/* The refused or failed resume, and the way forward: DSP-121                 */
 /* ------------------------------------------------------------------------- */
 
 /**
- * The refused or failed resume state, through the real choice panel.
+ * The refused or failed resume state, through the real panel (DSP-121).
  *
  * Over the same kit as `workspace-switch`, opening project A, whose stored session the
  * presentation adapter has been told to refuse or fail (`DSPATCH_CHAT_RESUME`). What
- * is read is what the window drew: the panel above the message box with its
- * statement, its "Technical detail" and exactly the three buttons; the drawer with
- * the same statement and no recap; the "Provider session" fact reading "on record,
- * not open"; a send refused with "Show the choices" and the text kept; Keep reading;
- * Try again; a new provider session whose recap is shown and removed; and one
- * message answered locally. The main process records, beside this, what the file
- * held and what reached the adapter at each of those moments.
+ * is read is what the window drew: the compact panel by the composer with its heading,
+ * its one line and exactly the offered buttons; the conversation itself, with no
+ * introduction above it; the history scrolled with a draft kept and the way forward
+ * still in view, and Enter holding the draft back with a note that names that way;
+ * the diagnostics in the session details, reached only through the panel's *Details*
+ * entry, copied and closed again; *Try again*; and a new session with its summary
+ * kept (`failed`) or removed (`refused`), and one message. The main process records,
+ * beside this, what the conversation file held, what reached the adapter and what was
+ * copied at each of those moments, and judges it (`resumeChoiceChecks`).
  *
  * **Everything refused or failed here is simulated by the presentation adapter.**
- * No provider is asked anything. The run shows what the window does with a
- * refusal or a failure, and nothing about whether any provider would give one.
+ * No provider is asked anything. The run shows what the window does with a refusal
+ * or a failure, and nothing about whether any provider would give one.
  *
- * Hold mode (`resumeHold`): only the open, then the report; the main process leaves
- * the window open with the real panel for a person to look at.
+ * Hold mode (`resumeHold`): the open and the reading at rest, then the hand-over check
+ * and the report - before any click, focus change, width change or disclosure, so the
+ * window a person is handed is the window a person would meet. Niclas found the
+ * details open in a handed-over window on 24 October 2026; the cause was this
+ * scenario, which used to open them, focus a help summary and narrow the window
+ * before it returned.
  */
 async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
   const steps: unknown[] = [];
@@ -8160,17 +8185,21 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
   const mode = plan.resumeMode ?? 'ok';
   const hold = plan.resumeHold === true;
   const projectA = plan.switchProjects?.[0];
+  // Read before anything else, so "the window at its normal width" means the width it
+  // opened at rather than whatever a step left behind.
+  const widthAtStart = window.outerWidth;
   const observations: Record<string, unknown> = {
     plan,
     mode,
     hold,
+    widthAtStart,
     limits:
       'SIMULATED. The refusal or failure shown was the presentation adapter\'s own answer, ' +
       'chosen by DSPATCH_CHAT_RESUME; no provider was asked anything, and nothing here says ' +
       'what any provider would do with this session. The one message sent after choosing a ' +
-      'new provider session was answered by the same local adapter. What is evidenced is the ' +
-      'window\'s behaviour in these states and, in the main process\'s half of the record, ' +
-      'what the conversation file held and what reached the adapter at each step.',
+      'new session was answered by the same local adapter. What is evidenced is the window\'s ' +
+      'behaviour in these states and, in the main process\'s half of the record, what the ' +
+      'conversation file held, what reached the adapter and what was copied at each step.',
   };
   const startedAt = performance.now();
   const record = (name: string, detail: Record<string, unknown>): void => {
@@ -8209,16 +8238,19 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     }
     return prompts;
   };
-  /** The buttons inside the panel, by their `data-ev`, in document order. */
-  const panelButtons = (): string[] =>
-    [...(element('continuity-choices')?.querySelectorAll<HTMLButtonElement>('button[data-ev]') ?? [])]
-      .map((button) => button.getAttribute('data-ev') ?? '')
-      .filter((name) => name.startsWith('continuity-choice-'));
+  /** The choice buttons inside the panel, by label, in document order. */
   const panelButtonLabels = (): string[] =>
-    [...(element('continuity-choices')?.querySelectorAll<HTMLButtonElement>('button[data-ev]') ?? [])]
-      .filter((button) => (button.getAttribute('data-ev') ?? '').startsWith('continuity-choice-'))
-      .map((button) => clean(button.textContent));
+    [
+      ...(element('continuity-choices')?.querySelectorAll<HTMLButtonElement>(
+        'button[data-ev^="continuity-choice-"]',
+      ) ?? []),
+    ].map((button) => clean(button.textContent));
   const composerText = (): string => (element('prompt') as HTMLTextAreaElement | null)?.value ?? '';
+  const detailsViewOpen = (): boolean => attributeOf('session-details-view', 'data-open') === 'true';
+  const focusName = (): string | null => {
+    const active = document.activeElement;
+    return active === null ? null : (active.getAttribute('data-ev') ?? active.tagName.toLowerCase());
+  };
   /** Whether an element has a box inside the viewport, horizontally and vertically. */
   const visibleInViewport = (name: string): boolean => {
     const found = element(name);
@@ -8235,170 +8267,213 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
       box.bottom <= window.innerHeight
     );
   };
+  /** The diagnostics as the view draws them: one `Label: value` per drawn line. */
+  const diagnosticsShown = (): string =>
+    [...(element('diagnostics-lines')?.querySelectorAll('p') ?? [])]
+      .map((line) => line.textContent ?? '')
+      .join('\n');
+  const capture = async (label: string): Promise<void> => {
+    await window.dspatch.captureWindow(`${mode}-${label}`);
+  };
 
-  /** The window's reading of the state, from the panel, the drawer and the facts. */
+  /** The window's reading of the state: the panel, the composer, the thread, the details. */
   const readState = (label: string): Record<string, unknown> => {
+    const panel = element('continuity-choices');
     const reading = {
       label,
-      panelShown: element('continuity-choices') !== null,
-      // The simulation line inside the panel (the drawer has one of its own, read
-      // through the same name only when the panel is absent).
-      simulationLine: clean(
-        element('continuity-choices')?.querySelector('[data-ev="continuity-simulated"]')?.textContent ??
-          null,
-      ),
+      panelShown: panel !== null,
       panelHeading: textOf('continuity-heading'),
       panelBody: textOf('continuity-body'),
-      // Under Technical details, read from the document whether the disclosure is
-      // open or not; `technicalOpen` says which it was.
-      panelStatement: textOf('continuity-choices-statement'),
-      panelDetailText: textOf('continuity-choices-detail-text'),
-      technicalOpen: detailsOpen('continuity-technical'),
-      panelButtons: panelButtons(),
       panelButtonLabels: panelButtonLabels(),
+      detailsEntry: textOf('continuity-details'),
+      newSessionNote: textOf('continuity-new-session-note'),
+      simulationLine: textOf('continuity-simulated'),
       runningCommandNote: textOf('continuity-running-command-note'),
+      openDisclosuresInPanel: panel?.querySelectorAll('details[open]').length ?? 0,
+      newSessionBlockShown: element('new-session-block') !== null,
       composerStatus: textOf('active-status'),
-      drawerStatement: textOf('session-continuity'),
-      drawerPointer: textOf('session-continuity-pointer'),
-      drawerTechnicalShown: element('session-continuity-detail') !== null,
-      drawerDetailText: textOf('session-continuity-detail-text'),
-      drawerRecapShown: element('pending-resend') !== null,
-      drawerRecapRemovedShown: element('pending-resend-removed') !== null,
+      routeNote: textOf('composer-route-note'),
+      composerText: composerText(),
+      detailsViewOpen: detailsViewOpen(),
+      diagnosticsExpanded: detailsOpen('diagnostics'),
+      // The history introduction and the reading mode, which are gone: neither may be
+      // anywhere in the document, drawn or hidden.
+      historyIntroShown:
+        element('history-mark') !== null ||
+        /This is what was written down/.test(document.body.textContent ?? ''),
+      readHistoryAnywhere: /Read history/.test(document.body.textContent ?? ''),
+      historyTurns: historyPrompts().length,
       providerSessionFact: textOf('provider-session-id'),
       sessionShown: textOf('session-id'),
       conversationShown: textOf('conversation-id'),
-      contextStatement: textOf('context-statement'),
-      historyTurns: historyPrompts().length,
+      diagnosticsStatement: textOf('diagnostics-statement'),
       actionErrorShown: element('action-error') !== null,
-      actionErrorAction: textOf('action-error-action'),
-      composerText: composerText(),
     };
     record(label, reading);
     return reading;
   };
 
-  /** The refused or failed state as the handoff specifies it, judged from one reading. */
-  const expectNotOpenState = (reading: Record<string, unknown>, where: string): void => {
-    const statement = String(reading['panelStatement']);
-    const body = String(reading['panelBody']);
-    // The main process's statement, under Technical details, keeps its wording.
-    const expectedWording =
-      mode === 'failed'
-        ? [/the attempt failed/, /This may be temporary/]
-        : [/provider answered that it does not have that session/, /No new session was opened and nothing was sent/];
-    // The body in the open is keyed on the evidence: a simulated `agent_not_found`
-    // is the provider saying it no longer has the session; a simulated transport
-    // failure may be temporary, and must not be called missing.
-    const expectedBody =
-      mode === 'failed'
-        ? [/Resuming did not work this time; it may be temporary/, /^(?!.*no longer has this session)/]
-        : [/The agent no longer has this session/];
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      reading['panelShown'] === true,
-      `${where}: the choice panel was not shown`,
-    );
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      reading['panelHeading'] === 'Could not resume the agent session',
-      `${where}: the heading reads "${String(reading['panelHeading'])}"`,
-    );
-    for (const wording of expectedBody) {
-      expect(
-        CHAT_EXIT.resumeStateNotShown,
-        wording.test(body),
-        `${where}: the panel body does not match ${String(wording)}: "${body}"`,
-      );
-    }
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      /Your saved conversation is still available\. Try again or start a new agent session\./.test(body),
-      `${where}: the panel body does not offer the next step: "${body}"`,
-    );
-    // The window must say that this refusal or failure is the presentation adapter's
-    // simulation: the statement under Technical details reads like a provider's. The
-    // short label stands in the open; the full sentence is under Technical details.
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      reading['simulationLine'] === 'Test mode — no provider calls',
-      `${where}: the panel does not carry the test-mode label: "${String(reading['simulationLine'])}"`,
-    );
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      textOf('continuity-choices-simulated-detail') ===
-        'Presentation mode: this refusal or failure is simulated by the presentation adapter ' +
-          'on this machine; no provider was asked anything.',
-      `${where}: Technical details does not carry the full simulation sentence: "${textOf('continuity-choices-simulated-detail')}"`,
-    );
-    for (const wording of expectedWording) {
-      expect(
-        CHAT_EXIT.resumeStateNotShown,
-        wording.test(statement),
-        `${where}: the statement under Technical details does not say ${String(wording)}: "${statement}"`,
-      );
-    }
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      /simulated/i.test(String(reading['panelDetailText'])),
-      `${where}: the technical detail does not say "simulated": "${String(reading['panelDetailText'])}"`,
-    );
-    const buttons = reading['panelButtons'] as string[];
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      buttons.length === 3 &&
-        buttons.includes('continuity-choice-try-again') &&
-        buttons.includes('continuity-choice-new-session') &&
-        buttons.includes('continuity-choice-keep-reading'),
-      `${where}: the panel offers ${buttons.join(', ') || 'no buttons'}, not exactly the three choices`,
-    );
+  const expectedBody =
+    mode === 'failed'
+      ? 'This may be temporary. Your saved conversation is still available. Try again, or start a new session.'
+      : 'The session was not found. Your saved conversation is still available. Try again, or start a new session.';
+
+  /** The compact state at rest, as Niclas's decisions of 24 October 2026 describe it. */
+  const expectAtRest = (reading: Record<string, unknown>, where: string): void => {
+    const is = (ok: boolean, message: string): void => {
+      expect(CHAT_EXIT.resumeStateNotShown, ok, `${where}: ${message}`);
+    };
     const labels = reading['panelButtonLabels'] as string[];
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      labels.join('|') === 'Try again|Start new session|Read history',
-      `${where}: the buttons read "${labels.join('|')}", not "Try again|Start new session|Read history"`,
+    is(reading['panelShown'] === true, 'the panel was not shown');
+    is(reading['panelHeading'] === 'Could not resume the agent session.', `the heading reads "${String(reading['panelHeading'])}"`);
+    is(reading['panelBody'] === expectedBody, `the body reads "${String(reading['panelBody'])}", not "${expectedBody}"`);
+    is(
+      !/no longer|missing|disappeared|existed/i.test(String(reading['panelBody'])),
+      `the body claims the session existed or disappeared: "${String(reading['panelBody'])}"`,
     );
-    // No workspace command runs in this scenario, so the consequence note is absent.
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      reading['runningCommandNote'] === '',
-      `${where}: a running-command note was shown with no command running: "${String(reading['runningCommandNote'])}"`,
+    is(labels.join('|') === 'Try again|Start new session', `the buttons read "${labels.join('|')}"`);
+    is(reading['readHistoryAnywhere'] === false, '"Read history" is still somewhere in the window');
+    is(
+      reading['newSessionNote'] ===
+        'A new session starts without the earlier conversation. You can send a summary with your next message.',
+      `the line under the buttons reads "${String(reading['newSessionNote'])}"`,
     );
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      reading['composerStatus'] === 'No agent session — history only',
-      `${where}: the composer status reads "${String(reading['composerStatus'])}"`,
-    );
-    // The drawer does not repeat the panel: one short line and a pointer, no statement.
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      reading['drawerStatement'] === 'Could not resume the agent session' &&
-        reading['drawerPointer'] === 'Details are in the panel above.' &&
-        reading['drawerTechnicalShown'] === false &&
-        !(element('session-details-view')?.textContent ?? '').includes('No new session was opened'),
-      `${where}: the drawer repeats or lacks the state: "${String(reading['drawerStatement'])}" / "${String(reading['drawerPointer'])}" / technical ${String(reading['drawerTechnicalShown'])}`,
-    );
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      reading['drawerRecapShown'] === false,
-      `${where}: a recap was shown while no provider session is open`,
-    );
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
+    is(reading['detailsEntry'] === 'Details', `the Details entry reads "${String(reading['detailsEntry'])}"`);
+    is(reading['simulationLine'] === 'Test mode — no provider calls', `the test-mode label reads "${String(reading['simulationLine'])}"`);
+    is(reading['runningCommandNote'] === '', `a running-command line with nothing running: "${String(reading['runningCommandNote'])}"`);
+    is(reading['openDisclosuresInPanel'] === 0, 'a disclosure in the panel was open');
+    is(reading['newSessionBlockShown'] === false, 'a new-session block was shown with no session open');
+    is(reading['detailsViewOpen'] === false, 'the session details were open');
+    is(reading['historyIntroShown'] === false, 'the history introduction is still in the window');
+    is(reading['historyTurns'] === 3, `${String(reading['historyTurns'])} seeded messages on screen, not 3`);
+    is(reading['composerStatus'] === 'No agent session — history only', `the composer status reads "${String(reading['composerStatus'])}"`);
+    is(
       String(reading['providerSessionFact']).endsWith('(on record, not open)'),
-      `${where}: the Provider session fact reads "${String(reading['providerSessionFact'])}"`,
-    );
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      String(reading['contextStatement']) !== '',
-      `${where}: no session context statement was shown`,
+      `the Provider session fact reads "${String(reading['providerSessionFact'])}"`,
     );
   };
 
   /**
-   * Wait for a session start the window asked for to end. The panel's buttons are
-   * disabled only while the start is in flight, and a start over the presentation
-   * adapter can be shorter than one poll, so a busy state that was never seen is
-   * recorded rather than failed: the main process's record counts the attempts.
+   * The window as it is handed to a person in hold mode, judged before anything is
+   * driven: the panel with its actions; the details closed and the diagnostics not
+   * visible; no disclosure open in the panel, the new-session block or the help;
+   * focus in none of them; the window at the width it opened at.
+   */
+  const checkHandOver = (): void => {
+    const active = document.activeElement;
+    const holds = (name: string): boolean => {
+      const host = element(name);
+      return host !== null && active !== null && host.contains(active);
+    };
+    const help = ['workspace-roots-summary', 'model-affects-summary'].map(
+      (name) => element(name)?.closest('details') ?? null,
+    );
+    const reading = {
+      panelShown: element('continuity-choices') !== null,
+      actions: panelButtonLabels(),
+      detailsEntry: textOf('continuity-details'),
+      detailsViewOpen: attributeOf('session-details-view', 'data-open'),
+      diagnosticsVisible: element('diagnostics')?.checkVisibility() ?? false,
+      openDisclosuresInPanel: element('continuity-choices')?.querySelectorAll('details[open]').length ?? 0,
+      openDisclosuresInNewSessionBlock:
+        element('new-session-block')?.querySelectorAll('details[open]').length ?? 0,
+      helpDisclosuresOpen: help.map((details) => details?.open ?? null),
+      activeElement: focusName(),
+      focusInPanel: holds('continuity-choices'),
+      focusInHelp: help.some((details) => details !== null && active !== null && details.contains(active)),
+      focusInDetailsView: holds('session-details-view'),
+      outerWidth: window.outerWidth,
+      widthAtStart,
+      innerWidth: window.innerWidth,
+    };
+    const atRest =
+      reading.panelShown &&
+      reading.actions.join('|') === 'Try again|Start new session' &&
+      reading.detailsEntry === 'Details' &&
+      reading.detailsViewOpen === 'false' &&
+      !reading.diagnosticsVisible &&
+      reading.openDisclosuresInPanel === 0 &&
+      reading.openDisclosuresInNewSessionBlock === 0 &&
+      reading.helpDisclosuresOpen.every((open) => open !== true) &&
+      !reading.focusInPanel &&
+      !reading.focusInHelp &&
+      !reading.focusInDetailsView &&
+      reading.outerWidth === widthAtStart;
+    record('handOver', { ...reading, atRest });
+    observations['handOver'] = { ...reading, atRest };
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      atRest,
+      `the window handed over is not at rest: ${JSON.stringify(reading)}`,
+    );
+  };
+
+  /**
+   * Narrow the window to 700 px and judge it: no horizontal overflow of the document,
+   * and every named control inside the viewport. The thread's own overflow is
+   * recorded and not judged - it is the transcript's layout, not this panel's. The
+   * width is put back afterwards.
+   */
+  const narrowCheck = async (label: string, names: readonly string[]): Promise<void> => {
+    const widthBefore = window.outerWidth;
+    const contentWidthPx = await window.dspatch.setWindowWidth(700);
+    await sleep(600);
+    const thread = element('transcript');
+    const visible: Record<string, boolean> = {};
+    // Where each control ends, against the window's height: `body` does not scroll, so
+    // a control below `innerHeight` is cut off rather than reachable.
+    const bottomsPx: Record<string, number | null> = {};
+    for (const name of names) {
+      visible[name] = visibleInViewport(name);
+      const found = element(name);
+      bottomsPx[name] = found === null ? null : Math.round(found.getBoundingClientRect().bottom);
+    }
+    // Vertical overflow inside the conversation panel: when the controls under the
+    // thread need more height than the window has, the thread is squeezed past its own
+    // minimum and is drawn over the composer. Its bottom must stay above the box's top.
+    const composerBox = element('prompt');
+    const threadOverlapsComposerPx =
+      thread === null || composerBox === null
+        ? null
+        : Math.round(thread.getBoundingClientRect().bottom - composerBox.getBoundingClientRect().top);
+    const reading = {
+      contentWidthPx,
+      innerWidthPx: window.innerWidth,
+      innerHeightPx: window.innerHeight,
+      scrollWidthPx: document.documentElement.scrollWidth,
+      conversationOverflowPx:
+        thread === null ? null : Math.round(thread.scrollWidth - thread.clientWidth),
+      threadHeightPx: thread === null ? null : Math.round(thread.clientHeight),
+      threadOverlapsComposerPx,
+      visible,
+      bottomsPx,
+    };
+    record(`narrow window: ${label}`, reading);
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      threadOverlapsComposerPx !== null && threadOverlapsComposerPx <= 0,
+      `${label} at ${String(reading.innerWidthPx)} px: the thread is drawn over the composer by ${String(threadOverlapsComposerPx)} px`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      reading.scrollWidthPx <= reading.innerWidthPx,
+      `${label} at ${String(reading.innerWidthPx)} px: the document overflows to ${String(reading.scrollWidthPx)} px`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      names.every((name) => visible[name] === true),
+      `${label} at ${String(reading.innerWidthPx)} px: not everything is inside the viewport: ${JSON.stringify(visible)}`,
+    );
+    await capture(`${label}-narrow`);
+    await window.dspatch.setWindowWidth(widthBefore);
+    await sleep(400);
+  };
+
+  /**
+   * Wait for a session start the window asked for to end. The buttons are disabled
+   * only while the start is in flight, and a start over the presentation adapter can
+   * be shorter than one poll, so a busy state that was never seen is recorded rather
+   * than failed: the main process's record counts the attempts.
    */
   const waitForStartToSettle = async (why: string): Promise<boolean> => {
     let sawBusy = false;
@@ -8425,9 +8500,392 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
       },
       60_000,
     );
-    // The save status and the drawer are polled; give them one round.
+    // The save status and the run state are polled; give them one round.
     await sleep(1_200);
     return sawBusy;
+  };
+
+  /**
+   * The two help disclosures beside the conversation, closed at rest, then opened and
+   * closed again with their text intact (they went behind <details> in DSP-121's UX
+   * pass, and no other runnable scenario opens them). A dispatched KeyboardEvent has no
+   * default action in the page, so Enter on the summary is dispatched and recorded but
+   * the open itself is `summary.click()`; focus is recorded as the keyboard evidence the
+   * page can give. Never in hold mode: it moves focus and opens disclosures.
+   */
+  const checkHelpDisclosures = async (): Promise<void> => {
+    const helpDisclosures: Record<string, unknown> = {};
+    const pairs = [
+      ['folders', 'workspace-roots-summary', 'workspace-roots-detail'],
+      ['model', 'model-affects-summary', 'model-affects'],
+    ] as const;
+    for (const [label, summaryName, textName] of pairs) {
+      const summary = element(summaryName);
+      const details = summary?.closest('details') ?? null;
+      const text = element(textName);
+      // `checkVisibility()`, not `offsetParent`: Chromium skips a closed <details>'
+      // content through content-visibility, so the text keeps an offsetParent while
+      // nobody can see it. The box size is the second reading.
+      const visible = (): boolean =>
+        text !== null && text.checkVisibility() && text.getBoundingClientRect().height > 0;
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        details !== null && !details.open && !visible(),
+        `help disclosure "${label}" was not closed at rest (open=${String(details?.open)})`,
+      );
+      if (!(summary instanceof HTMLElement) || details === null) {
+        helpDisclosures[label] = { present: false };
+        continue;
+      }
+      summary.focus();
+      const tookFocus = document.activeElement === summary;
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      summary.dispatchEvent(enter);
+      await sleep(100);
+      const openedByKey = details.open;
+      if (!openedByKey) {
+        summary.click();
+      }
+      await sleep(200);
+      const openText = clean(text?.textContent ?? null);
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        details.open && visible() && openText !== '',
+        `help disclosure "${label}" did not open with its text visible (open=${String(details.open)})`,
+      );
+      summary.click();
+      await sleep(200);
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        !details.open && (text === null || !text.checkVisibility()),
+        `help disclosure "${label}" did not close again (open=${String(details.open)})`,
+      );
+      helpDisclosures[label] = {
+        summaryText: clean(summary.textContent),
+        tookFocus,
+        enterIntercepted: enter.defaultPrevented,
+        openedBy: openedByKey ? 'keyboard' : 'click',
+        detailText: openText,
+        closedAgain: !details.open,
+      };
+    }
+    // Leave focus where a person's click elsewhere would leave it.
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    record('help disclosures', helpDisclosures);
+  };
+
+  /**
+   * Read the history with a draft in the box (refused phase): the thread really
+   * scrolls, the way forward stays in the viewport at its top, the draft is untouched,
+   * and Enter holds it back with a note naming that way - nothing reaches the main
+   * process, which the main process checks on its own record. If three seeded
+   * messages do not overflow the thread at the normal width, the window is narrowed
+   * to 700 px for this step, which is said in the record; the seed is not changed.
+   */
+  const readScrollAndDraft = async (): Promise<string> => {
+    const draft = `Draft kept while reading ${newNonce()}`;
+    await typeInto('prompt', draft);
+    const thread = element('transcript');
+    if (thread === null) {
+      throw new Error('there is no conversation thread to scroll');
+    }
+    const widthBefore = window.outerWidth;
+    const atNormalWidth = { scrollHeightPx: thread.scrollHeight, clientHeightPx: thread.clientHeight };
+    const narrowed = thread.scrollHeight <= thread.clientHeight;
+    if (narrowed) {
+      await window.dspatch.setWindowWidth(700);
+      await sleep(600);
+    }
+    const overflow = { scrollHeightPx: thread.scrollHeight, clientHeightPx: thread.clientHeight };
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      overflow.scrollHeightPx > overflow.clientHeightPx,
+      `the conversation does not scroll even at 700 px (${JSON.stringify(overflow)}), so reading back could not be tried`,
+    );
+    // From the latest message, where the window put the reader, to the very top.
+    thread.scrollTop = thread.scrollHeight;
+    thread.dispatchEvent(new Event('scroll'));
+    await sleep(300);
+    const scrollTopBefore = thread.scrollTop;
+    thread.scrollTop = 0;
+    thread.dispatchEvent(new Event('scroll'));
+    await sleep(400);
+    const atTop = {
+      scrollTopBefore,
+      scrollTopAfter: thread.scrollTop,
+      firstMessageInView: visibleInViewport('history-turn-0-prompt'),
+      tryAgainInView: visibleInViewport('continuity-choice-try-again'),
+      newSessionInView: visibleInViewport('continuity-choice-new-session'),
+      detailsEntryInView: visibleInViewport('continuity-details'),
+      draftKept: composerText() === draft,
+    };
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      scrollTopBefore > 0 && atTop.scrollTopAfter === 0 && atTop.firstMessageInView,
+      `the conversation did not actually scroll to its first message: ${JSON.stringify(atTop)}`,
+    );
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      atTop.tryAgainInView && atTop.newSessionInView && atTop.detailsEntryInView,
+      `scrolled to the top, the way forward left the viewport: ${JSON.stringify(atTop)}`,
+    );
+    expect(CHAT_EXIT.resumeChoiceWrong, atTop.draftKept, 'the draft changed while the history was read');
+    await capture('scrolled-top');
+    // Enter with no agent session: the text stays, the note says what to do instead.
+    const enterTaken = await pressKeyInComposer('prompt', 'Enter', { shiftKey: false });
+    await sleep(1_000);
+    const afterEnter = {
+      enterTakenFromTextarea: enterTaken,
+      draftKept: composerText() === draft,
+      routeNote: textOf('composer-route-note'),
+      turnAppeared: element('turn-0') !== null || element('active-answer') !== null,
+      actionError: textOf('action-error-message'),
+      wayForwardInView:
+        visibleInViewport('continuity-choice-try-again') && visibleInViewport('continuity-choice-new-session'),
+    };
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      afterEnter.draftKept && !afterEnter.turnAppeared && afterEnter.actionError === '',
+      `Enter with no agent session did not just hold the draft: ${JSON.stringify(afterEnter)}`,
+    );
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      afterEnter.routeNote === 'Try again or start a new session to send.' && afterEnter.wayForwardInView,
+      `the note under the box does not name the way forward: "${afterEnter.routeNote}"`,
+    );
+    await capture('enter-held');
+    thread.scrollTop = thread.scrollHeight;
+    thread.dispatchEvent(new Event('scroll'));
+    await sleep(300);
+    if (narrowed) {
+      await window.dspatch.setWindowWidth(widthBefore);
+      await sleep(400);
+    }
+    record('read, scroll and draft', { draft, atNormalWidth, narrowedForTheScroll: narrowed, overflow, atTop, afterEnter });
+    return draft;
+  };
+
+  /**
+   * The diagnostics (refused and failed phases): closed until *Details* is clicked;
+   * then the session details open at the diagnostics, expanded, with focus there and
+   * every service text in them; *Copy diagnostic info* copies exactly what is shown
+   * (the main process compares) and focus stays on the button; the view's own *Back
+   * to the conversation* closes it and gives focus back to the entry.
+   */
+  const checkDiagnostics = async (atRest: Record<string, unknown>): Promise<void> => {
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      !detailsViewOpen() && !(element('diagnostics')?.checkVisibility() ?? false),
+      'the diagnostics were open before Details was clicked',
+    );
+    // Focused first, as a person's click focuses it, so giving focus back is checkable.
+    element('continuity-details')?.focus();
+    await click('continuity-details');
+    await waitFor('the session details to open', () => detailsViewOpen(), 10_000);
+    await sleep(400);
+    const section = element('diagnostics');
+    const opened = {
+      detailsViewOpen: detailsViewOpen(),
+      diagnosticsExpanded: detailsOpen('diagnostics'),
+      diagnosticsVisible: section?.checkVisibility() ?? false,
+      summaryInView: visibleInViewport('diagnostics-summary'),
+      wayBackInView: visibleInViewport('details-back'),
+      focus: focusName(),
+      focusInDiagnostics: section !== null && section.contains(document.activeElement),
+      conversationHidden: !(element('continuity-choices')?.checkVisibility() ?? false),
+      statement: textOf('diagnostics-statement'),
+      failureDetail: textOf('diagnostics-failure-detail'),
+      providerCode: textOf('diagnostics-provider-code'),
+      attemptedSession: textOf('diagnostics-attempted-session'),
+      adapter: textOf('diagnostics-adapter'),
+      conversationFile: textOf('diagnostics-conversation-file'),
+      savedAt: textOf('diagnostics-saved-at'),
+      messagesRead: textOf('diagnostics-messages-read'),
+      simulated: textOf('diagnostics-simulated'),
+    };
+    record('diagnostics opened', opened);
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      opened.detailsViewOpen && opened.diagnosticsExpanded && opened.diagnosticsVisible && opened.summaryInView,
+      `Details did not open the session details at the diagnostics: ${JSON.stringify(opened)}`,
+    );
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      opened.wayBackInView,
+      'opened at the diagnostics, the details do not show their way back to the conversation',
+    );
+    expect(CHAT_EXIT.resumeChoiceWrong, opened.focusInDiagnostics, `focus did not move to the diagnostics: ${String(opened.focus)}`);
+    const wording =
+      mode === 'failed'
+        ? [/the attempt failed/, /This may be temporary/]
+        : [/provider answered that it does not have that session/, /No new session was opened and nothing was sent/];
+    for (const pattern of wording) {
+      expect(CHAT_EXIT.resumeStateNotShown, pattern.test(opened.statement), `the diagnostics' statement does not say ${String(pattern)}: "${opened.statement}"`);
+    }
+    expect(CHAT_EXIT.resumeStateNotShown, /simulated/i.test(opened.failureDetail), `the failure detail does not say simulated: "${opened.failureDetail}"`);
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      mode === 'failed' ? opened.providerCode === '' : opened.providerCode === 'agent_not_found',
+      `the provider code reads "${opened.providerCode}"`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      opened.attemptedSession.startsWith('dsp-session-') && opened.attemptedSession === atRest['sessionShown'],
+      `the attempted session reads "${opened.attemptedSession}", the session shown "${String(atRest['sessionShown'])}"`,
+    );
+    expect(CHAT_EXIT.resumeStateNotShown, opened.adapter === 'presentation-local', `the adapter reads "${opened.adapter}"`);
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      opened.conversationFile.endsWith(`${String(atRest['conversationShown'])}.json`) && opened.savedAt !== '' && opened.messagesRead === '3',
+      `the storage metadata reads "${opened.conversationFile}", saved "${opened.savedAt}", ${opened.messagesRead} messages`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      opened.simulated ===
+        'Presentation mode: this refusal or failure is simulated by the presentation adapter on this machine; no provider was asked anything.',
+      `the simulation sentence reads "${opened.simulated}"`,
+    );
+    await capture('details');
+    // Copy, as a person does it: focus on the button, then the click.
+    const shownAtCopy = diagnosticsShown();
+    observations['diagnosticsShownAtCopy'] = shownAtCopy;
+    element('diagnostics-copy')?.focus();
+    await click('diagnostics-copy');
+    await waitFor('the copy to be confirmed', () => textOf('diagnostics-copied') !== '', 10_000);
+    const copied = {
+      note: textOf('diagnostics-copied'),
+      focusStayed: focusName() === 'diagnostics-copy',
+      linesShown: shownAtCopy.split('\n').length,
+      charactersShown: shownAtCopy.length,
+    };
+    record('diagnostics copied', copied);
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      copied.note === 'Copied' && copied.focusStayed,
+      `Copy diagnostic info did not confirm in place: ${JSON.stringify(copied)}`,
+    );
+    // Closed with the view's own control.
+    await click('details-back');
+    await waitFor('the session details to close', () => !detailsViewOpen(), 10_000);
+    await sleep(400);
+    const closed = {
+      detailsViewOpen: detailsViewOpen(),
+      panelShown: element('continuity-choices') !== null,
+      tryAgainInView: visibleInViewport('continuity-choice-try-again'),
+      newSessionInView: visibleInViewport('continuity-choice-new-session'),
+      focus: focusName(),
+    };
+    record('diagnostics closed', closed);
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      !closed.detailsViewOpen && closed.panelShown && closed.tryAgainInView && closed.newSessionInView,
+      `closing the details did not bring back the conversation with the panel and its actions: ${JSON.stringify(closed)}`,
+    );
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      closed.focus === 'continuity-details',
+      `focus did not come back to the Details entry: ${String(closed.focus)}`,
+    );
+    await capture('details-closed');
+    if (mode === 'refused') {
+      // And with Escape from inside the details, the keyboard's way back.
+      element('continuity-details')?.focus();
+      await click('continuity-details');
+      await waitFor('the session details to open again', () => detailsViewOpen(), 10_000);
+      await sleep(300);
+      const target = document.activeElement ?? document.body;
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      target.dispatchEvent(escape);
+      let closedByEscape = true;
+      try {
+        await waitFor('Escape to close the session details', () => !detailsViewOpen(), 5_000);
+      } catch {
+        closedByEscape = false;
+      }
+      await sleep(300);
+      record('diagnostics closed with Escape', {
+        pressedOn: target instanceof HTMLElement ? (target.getAttribute('data-ev') ?? target.tagName) : null,
+        closedByEscape,
+        focus: focusName(),
+      });
+      expect(CHAT_EXIT.resumeChoiceWrong, closedByEscape, 'Escape inside the session details did not close them');
+    }
+  };
+
+  /**
+   * *Start new session* (refused and failed phases): the explanation and the summary
+   * stand where the panel was, outside the thread; the summary is closed until clicked
+   * and is read in full from the disclosure; nothing is sent, which the main process
+   * checks along with the stored session being replaced only now. Returns the summary
+   * exactly as the disclosure showed it.
+   */
+  const startNewSession = async (): Promise<string> => {
+    await click('continuity-choice-new-session');
+    await waitFor('the new-session block', () => element('new-session-block') !== null, 60_000);
+    await sleep(1_200);
+    const block = element('new-session-block');
+    const fresh = {
+      panelShown: element('continuity-choices') !== null,
+      heading: textOf('new-session-heading'),
+      line: textOf('new-session-summary-line'),
+      toggle: textOf('new-session-summary-toggle'),
+      summaryOpenAtFirst: detailsOpen('new-session-summary'),
+      removeButton: textOf('new-session-remove-summary'),
+      outsideTheThread: block !== null && !(element('transcript')?.contains(block) ?? true),
+      providerSessionFact: textOf('provider-session-id'),
+      composerStatus: textOf('active-status'),
+      routeNote: textOf('composer-route-note'),
+      detailsViewOpen: detailsViewOpen(),
+      turnAppeared: element('turn-0') !== null,
+    };
+    record('new session', fresh);
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      !fresh.panelShown &&
+        fresh.heading === 'New session. The agent does not have the earlier conversation.' &&
+        fresh.line === 'This summary will be sent with your next message.' &&
+        /^Summary \(\d+ characters\)$/.test(fresh.toggle) &&
+        !fresh.summaryOpenAtFirst &&
+        fresh.removeButton === 'Remove summary' &&
+        fresh.outsideTheThread,
+      `the new session was not explained where it was chosen: ${JSON.stringify(fresh)}`,
+    );
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      !fresh.providerSessionFact.endsWith('(on record, not open)') &&
+        fresh.composerStatus !== 'No agent session — history only' &&
+        fresh.routeNote === '' &&
+        !fresh.detailsViewOpen &&
+        !fresh.turnAppeared,
+      `after Start new session the window does not read as a session open with nothing sent: ${JSON.stringify(fresh)}`,
+    );
+    await capture('new-session');
+    await narrowCheck('new-session', ['new-session-summary-toggle', 'new-session-remove-summary']);
+    await clickAny('new-session-summary-toggle');
+    await sleep(300);
+    const summaryShown = element('new-session-summary-text')?.textContent ?? '';
+    const declared = Number(/\((\d+) characters\)/.exec(fresh.toggle)?.[1] ?? '-1');
+    record('summary opened', {
+      open: detailsOpen('new-session-summary'),
+      characters: summaryShown.length,
+      declaredCharacters: declared,
+      head: summaryShown.slice(0, 160),
+    });
+    expect(
+      CHAT_EXIT.resumeChoiceWrong,
+      detailsOpen('new-session-summary') &&
+        summaryShown.startsWith('=== DSpatch: a record of the earlier conversation ===') &&
+        summaryShown.length === declared,
+      `the summary did not open in full: ${String(summaryShown.length)} characters shown, ${String(declared)} declared`,
+    );
+    await capture('summary-open');
+    // The block at its tallest, in a narrow window (DSP-121 review S4): with the
+    // summary open, Remove summary must still be inside the viewport and nothing may
+    // overflow sideways.
+    await narrowCheck('summary-open', ['new-session-remove-summary', 'new-session-summary-toggle']);
+    return summaryShown;
   };
 
   try {
@@ -8462,315 +8920,29 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
       60_000,
     );
     await sleep(1_500);
-    // Read first as a person meets it: Technical details closed. The narrow-window
-    // milestone follows in that state; the disclosure is opened after it.
-    const closedAtFirst = readState('opened A, Technical details closed');
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      closedAtFirst['technicalOpen'] === false && element('continuity-technical') !== null,
-      'Technical details was not present and closed when the panel first appeared',
-    );
-    await window.dspatch.captureWindow(`${mode}-opened-closed`);
 
-    // --- The two help disclosures: closed at rest, open and close, text intact -------
-    // The Folders note and the model note went behind <details> in DSP-121's UX pass,
-    // and no other runnable scenario opens them (the roots scenario is stale, DSP-123).
-    // A dispatched KeyboardEvent carries no default action in the page, so Enter on the
-    // summary is dispatched and recorded (whether the window intercepts it) but the
-    // open itself is `summary.click()`: the native toggle the key would run is the
-    // browser's, outside what a script in the page can drive. Focus is recorded as the
-    // keyboard evidence the page can give: a summary that takes focus is reachable.
-    const helpDisclosures: Record<string, unknown> = {};
-    for (const [label, detailsName, summaryName, textName] of [
-      ['folders', 'workspace-roots', 'workspace-roots-summary', 'workspace-roots-detail'],
-      ['model', 'model-affects-summary', 'model-affects-summary', 'model-affects'],
-    ] as const) {
-      const summary = element(summaryName);
-      const details = summary?.closest('details') ?? null;
-      const text = element(textName);
-      // Not `offsetParent`: Chromium skips a closed <details>' content through
-      // content-visibility, so the text keeps an offsetParent while nobody can see
-      // it. `checkVisibility()` answers for that case; the box size is the second
-      // reading, so an open disclosure whose text has no height does not pass.
-      const visible = (): boolean =>
-        text !== null && text.checkVisibility() && text.getBoundingClientRect().height > 0;
-      const closedAtRest = details !== null && !details.open && !visible();
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        closedAtRest,
-        `help disclosure "${label}" was not closed at rest (open=${String(details?.open)}, detail visible=${String(visible())})`,
-      );
-      if (!(summary instanceof HTMLElement) || details === null) {
-        helpDisclosures[label] = { present: false };
-        continue;
-      }
-      summary.focus();
-      const tookFocus = document.activeElement === summary;
-      const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
-      summary.dispatchEvent(enter);
-      await sleep(100);
-      const openedByKey = details.open;
-      if (!openedByKey) {
-        summary.click();
-      }
-      await sleep(200);
-      const openText = clean(text?.textContent ?? null);
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        details.open && visible() && openText !== '',
-        `help disclosure "${label}" did not open with its text visible (open=${String(details.open)}, visible=${String(visible())}, text="${openText}")`,
-      );
-      helpDisclosures[label] = {
-        detailsName,
-        summaryText: clean(summary.textContent),
-        tookFocus,
-        enterIntercepted: enter.defaultPrevented,
-        openedBy: openedByKey ? 'keyboard' : 'click',
-        detailText: openText,
-      };
-    }
-    await window.dspatch.captureWindow(`${mode}-help-open`);
-    for (const [label, summaryName, textName] of [
-      ['folders', 'workspace-roots-summary', 'workspace-roots-detail'],
-      ['model', 'model-affects-summary', 'model-affects'],
-    ] as const) {
-      const summary = element(summaryName);
-      const details = summary?.closest('details') ?? null;
-      if (!(summary instanceof HTMLElement) || details === null) {
-        continue;
-      }
-      summary.click();
-      await sleep(200);
-      const text = element(textName);
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        !details.open && (text === null || !text.checkVisibility()),
-        `help disclosure "${label}" did not close again (open=${String(details.open)}, text visible=${String(text?.checkVisibility())})`,
-      );
-      (helpDisclosures[label] as Record<string, unknown>)['closedAgain'] = !details.open;
-    }
-    record('help disclosures', helpDisclosures);
-
-    // --- Narrow window: the buttons wrap, nothing overflows -------------------------
-    // Taken as a person meets the panel, Technical details closed. Only the main
-    // process can resize the window; the width is put back afterwards so the rest of
-    // the scenario, and a held window, read as they did before. The thread's own
-    // horizontal overflow is recorded and not judged: it is the transcript's layout,
-    // measured by the width trial of the presentation scenario, not this panel's.
-    const widthBefore = window.outerWidth;
-    const narrowContentWidthPx = await window.dspatch.setWindowWidth(700);
-    await sleep(600);
-    const thread = element('transcript');
-    const narrow = {
-      contentWidthPx: narrowContentWidthPx,
-      innerWidthPx: window.innerWidth,
-      scrollWidthPx: document.documentElement.scrollWidth,
-      conversationOverflowPx:
-        thread === null ? null : Math.round(thread.scrollWidth - thread.clientWidth),
-      panelBottomPx: Math.round(element('continuity-choices')?.getBoundingClientRect().bottom ?? 0),
-      innerHeightPx: window.innerHeight,
-      buttonsVisible: {
-        tryAgain: visibleInViewport('continuity-choice-try-again'),
-        newSession: visibleInViewport('continuity-choice-new-session'),
-        keepReading: visibleInViewport('continuity-choice-keep-reading'),
-      },
-    };
-    record('narrow window', narrow);
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      narrow.scrollWidthPx <= narrow.innerWidthPx,
-      `at ${String(narrow.innerWidthPx)} px the document overflows horizontally to ${String(narrow.scrollWidthPx)} px`,
-    );
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      narrow.buttonsVisible.tryAgain && narrow.buttonsVisible.newSession && narrow.buttonsVisible.keepReading,
-      `at ${String(narrow.innerWidthPx)} px not all three buttons are inside the viewport: ${JSON.stringify(narrow.buttonsVisible)}`,
-    );
-    await window.dspatch.captureWindow(`${mode}-narrow`);
-    await window.dspatch.setWindowWidth(widthBefore);
-    await sleep(400);
-
-    // Then opened as a person opens it, so the statement and the detail are read
-    // from an open disclosure and not only from the document's text.
-    const summary = element('continuity-technical')?.querySelector('summary');
-    if (summary instanceof HTMLElement) {
-      summary.click();
-      await sleep(200);
-    }
-    const opened = readState('opened A');
-    expectNotOpenState(opened, 'after opening A');
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      opened['historyTurns'] === 3,
-      `A opened with ${String(opened['historyTurns'])} earlier messages on screen, not 3`,
-    );
-    expect(
-      CHAT_EXIT.resumeStateNotShown,
-      opened['technicalOpen'] === true,
-      'the Technical details disclosure did not open when its summary was clicked',
-    );
-    await window.dspatch.captureWindow(`${mode}-opened`);
+    // --- At rest, as a person meets it: read, judged and photographed, nothing touched
+    const atRest = readState('at rest');
+    expectAtRest(atRest, 'at rest');
+    await capture('at-rest');
 
     if (hold) {
+      // The hand-over: judged and recorded right after the reading at rest, before any
+      // click, focus change, width change or disclosure. Nothing further is driven.
+      checkHandOver();
       record('hold', {
-        note: 'Hold mode: nothing further is driven. The window stays open with the real panel.',
+        note: 'Hold mode: nothing further is driven. The window stays open at rest with the real panel.',
       });
-      const code = failures.length === 0 ? CHAT_EXIT.ok : failed.size === 0 ? CHAT_EXIT.scriptFailed : Math.min(...failed);
-      return finish(code, steps, failures, observations);
+      const holdCode =
+        failures.length === 0 ? CHAT_EXIT.ok : failed.size === 0 ? CHAT_EXIT.scriptFailed : Math.min(...failed);
+      return finish(holdCode, steps, failures, observations);
     }
 
-    if (mode === 'refused') {
-      // --- (a) A send is refused; the text stays -----------------------------------
-      const refusedText = `Refused send check ${newNonce()}`;
-      await typeInto('prompt', refusedText);
-      await sendFromComposer();
-      await waitFor('the refused send to be shown', () => element('action-error') !== null, 30_000);
-      const afterRefusedSend = readState('sent while no provider session is open');
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        afterRefusedSend['actionErrorAction'] === 'Show the choices',
-        `the refused send offers "${String(afterRefusedSend['actionErrorAction'])}", not "Show the choices"`,
-      );
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        afterRefusedSend['composerText'] === refusedText,
-        `the composer holds "${String(afterRefusedSend['composerText'])}" after the refusal, not the typed text`,
-      );
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        element('turn-0') === null && element('active-answer') === null,
-        'a turn appeared after the refused send',
-      );
+    await checkHelpDisclosures();
+    await narrowCheck('at-rest', ['continuity-choice-try-again', 'continuity-choice-new-session', 'continuity-details']);
 
-      // --- (b) Keep reading: the panel goes, nothing else changes -------------------
-      await click('continuity-choice-keep-reading');
-      await waitFor('the panel to be hidden', () => element('continuity-choices') === null, 10_000);
-      await sleep(300);
-      const keptReading = readState('keep reading');
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        keptReading['panelShown'] === false &&
-          element('prompt') instanceof HTMLTextAreaElement &&
-          keptReading['composerText'] === refusedText &&
-          keptReading['historyTurns'] === 3,
-        'Keep reading did not leave the composer, its text and the history as they were',
-      );
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        String(keptReading['providerSessionFact']).endsWith('(on record, not open)'),
-        'Keep reading changed the Provider session fact',
-      );
-      // With the panel gone, the drawer is where Technical details lives, so the
-      // full statement stays reachable; the pointer to the panel goes.
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        keptReading['drawerStatement'] === 'Could not resume the agent session' &&
-          keptReading['drawerPointer'] === '' &&
-          keptReading['drawerTechnicalShown'] === true &&
-          /No new session was opened and nothing was sent/.test(textOf('session-continuity-statement')) &&
-          /simulated/i.test(String(keptReading['drawerDetailText'])),
-        `after Read history the drawer does not carry Technical details: "${String(keptReading['drawerStatement'])}" / technical ${String(keptReading['drawerTechnicalShown'])}`,
-      );
-      // Send again from the box: refused again, and "Show the choices" brings the panel back.
-      await sendFromComposer();
-      // The main process counts this refusal; the window's reading is the error block.
-      await sleep(1_500);
-      await waitFor('the second refusal to be shown', () => element('action-error') !== null, 30_000);
-      const refusedAgain = readState('sent again after keep reading');
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        refusedAgain['panelShown'] === false && refusedAgain['actionErrorAction'] === 'Show the choices',
-        'after Keep reading the second send was not refused with "Show the choices" and the panel hidden',
-      );
-      await click('action-error-action');
-      await waitFor('the panel to come back', () => element('continuity-choices') !== null, 10_000);
-      const shownAgain = readState('show the choices');
-      expectNotOpenState(shownAgain, 'after Show the choices');
-
-      // --- (c) Try again: refused again, same state ---------------------------------
-      await click('continuity-choice-try-again');
-      const retrySawBusy = await waitForStartToSettle('try again');
-      const retried = readState('try again');
-      record('try again settled', { busyStateObserved: retrySawBusy });
-      expectNotOpenState(retried, 'after Try again');
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        retried['sessionShown'] === opened['sessionShown'] &&
-          retried['conversationShown'] === opened['conversationShown'] &&
-          retried['historyTurns'] === 3,
-        'Try again changed the session on screen, the conversation or the history',
-      );
-      await window.dspatch.captureWindow(`${mode}-tried-again`);
-
-      // --- (d) A new provider session: the recap, removed, then one message ----------
-      await click('continuity-choice-new-session');
-      await waitFor('the recap to be shown in the drawer', () => element('pending-resend') !== null, 60_000);
-      await sleep(1_200);
-      const fresh = readState('new provider session');
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        fresh['panelShown'] === false &&
-          fresh['drawerRecapShown'] === true &&
-          element('pending-resend-discard') instanceof HTMLButtonElement &&
-          !String(fresh['providerSessionFact']).endsWith('(on record, not open)'),
-        'the new provider session did not show a removable recap with the panel gone and a session open',
-      );
-      // The drawer's line is the short note; the service's statement is under its
-      // Technical details, verbatim.
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        fresh['drawerStatement'] ===
-          "The agent's earlier context does not follow automatically. DSpatch will send this " +
-            'summary first; you can remove it.' &&
-          fresh['drawerTechnicalShown'] === true &&
-          /This is a new provider session, opened because you asked for one/.test(
-            textOf('session-continuity-statement'),
-          ),
-        `the new provider session's drawer reads "${String(fresh['drawerStatement'])}" / technical ${String(fresh['drawerTechnicalShown'])}`,
-      );
-      const recapText = textOf('pending-resend-text');
-      record('recap', { recapChars: recapText.length, recapHead: recapText.slice(0, 160) });
-      await click('pending-resend-discard');
-      await waitFor('the recap to read as removed', () => element('pending-resend-removed') !== null, 30_000);
-      const removed = readState('recap removed');
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        removed['drawerRecapShown'] === false && removed['drawerRecapRemovedShown'] === true,
-        'removing the recap did not replace it with the removed note',
-      );
-      await window.dspatch.captureWindow(`${mode}-recap-removed`);
-
-      const message = `Sent alone ${newNonce()}: reply with anything.`;
-      observations['messageSentInNewSession'] = message;
-      await sendAndSettle(0, message, plan.turnTimeoutMs);
-      await sleep(1_500);
-      const answered = readState('one message sent in the new session');
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        statusOfTurn(0) === 'finished' && textOf('turn-0-answer') !== '',
-        `the message was not answered: turn status "${statusOfTurn(0)}"`,
-      );
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        answered['historyTurns'] === 3 && answered['panelShown'] === false,
-        'the history or the panel changed after the message',
-      );
-      await window.dspatch.captureWindow(`${mode}-answered`);
-    } else if (mode === 'failed') {
-      // --- Try again: fails again -----------------------------------------------------
-      await click('continuity-choice-try-again');
-      const retrySawBusy = await waitForStartToSettle('try again');
-      const retried = readState('try again');
-      record('try again settled', { busyStateObserved: retrySawBusy });
-      expectNotOpenState(retried, 'after Try again');
-      expect(
-        CHAT_EXIT.resumeChoiceWrong,
-        retried['sessionShown'] === opened['sessionShown'] && retried['historyTurns'] === 3,
-        'Try again changed the session on screen or the history',
-      );
-      await window.dspatch.captureWindow(`${mode}-tried-again`);
-    } else {
-      // --- refused-once: Try again succeeds ------------------------------------------
+    if (mode === 'refused-once') {
+      // --- Try again succeeds: resumed, no panel, nothing sent ------------------------
       await click('continuity-choice-try-again');
       await waitFor('the panel to go after the resume', () => element('continuity-choices') === null, 60_000);
       await sleep(1_500);
@@ -8778,19 +8950,130 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
       expect(
         CHAT_EXIT.resumeChoiceWrong,
         resumed['panelShown'] === false &&
-          /was resumed by the presentation-local adapter/.test(String(resumed['drawerStatement'])) &&
+          resumed['newSessionBlockShown'] === false &&
+          /was resumed by the presentation-local adapter/.test(String(resumed['diagnosticsStatement'])) &&
           !String(resumed['providerSessionFact']).endsWith('(on record, not open)') &&
-          resumed['drawerRecapShown'] === false,
-        `after Try again the window did not read as resumed: "${String(resumed['drawerStatement'])}", fact "${String(resumed['providerSessionFact'])}"`,
+          resumed['composerStatus'] !== 'No agent session — history only' &&
+          resumed['detailsViewOpen'] === false,
+        `after Try again the window did not read as resumed: ${JSON.stringify(resumed)}`,
       );
       expect(
         CHAT_EXIT.resumeChoiceWrong,
-        resumed['sessionShown'] === opened['sessionShown'] &&
-          resumed['conversationShown'] === opened['conversationShown'] &&
+        resumed['sessionShown'] === atRest['sessionShown'] &&
+          resumed['conversationShown'] === atRest['conversationShown'] &&
           resumed['historyTurns'] === 3,
         'the resumed session is not the same conversation with its three messages',
       );
-      await window.dspatch.captureWindow(`${mode}-resumed`);
+      await capture('resumed');
+    } else {
+      // --- refused: read the history with a draft, Enter held back -------------------
+      const draft = mode === 'refused' ? await readScrollAndDraft() : null;
+
+      // --- refused and failed: the diagnostics, opened only by Details ---------------
+      await checkDiagnostics(atRest);
+
+      // --- Try again: refused or failed again, the same compact state -----------------
+      await click('continuity-choice-try-again');
+      const retrySawBusy = await waitForStartToSettle('try again');
+      const retried = readState('try again');
+      record('try again settled', { busyStateObserved: retrySawBusy });
+      expectAtRest(retried, 'after Try again');
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        retried['sessionShown'] === atRest['sessionShown'] &&
+          retried['conversationShown'] === atRest['conversationShown'] &&
+          retried['historyTurns'] === 3 &&
+          (draft === null || retried['composerText'] === draft),
+        'Try again changed the session on screen, the conversation, the history or the draft',
+      );
+      await capture('tried-again');
+
+      // --- A new session: explained where it is chosen, with its summary -----------
+      const summaryShown = await startNewSession();
+      let message: string;
+      if (mode === 'refused') {
+        // Removed: only the message goes.
+        await click('new-session-remove-summary');
+        await waitFor(
+          'the summary to read as removed',
+          () => element('new-session-summary-removed') !== null,
+          30_000,
+        );
+        const removedLine = textOf('new-session-summary-removed');
+        expect(
+          CHAT_EXIT.resumeChoiceWrong,
+          removedLine === 'Summary removed. Only your message will be sent.' &&
+            element('new-session-summary-text') === null,
+          `removing the summary did not say so: "${removedLine}"`,
+        );
+        await capture('summary-removed');
+        // The draft, kept through the reading, the details and Try again, is the message.
+        message = draft ?? '';
+        observations['messageSentInNewSession'] = message;
+        await sendFromComposer();
+        await waitFor(
+          'the message to be answered',
+          () => element('active-answer') === null && element('turn-0-answer') !== null,
+          plan.turnTimeoutMs,
+        );
+      } else {
+        // Kept: it goes in front of the message, as shown.
+        observations['summaryShownBeforeSend'] = summaryShown;
+        message = `Sent with the summary ${newNonce()}: reply with anything.`;
+        observations['messageSentInNewSession'] = message;
+        await sendAndSettle(0, message, plan.turnTimeoutMs);
+      }
+      await sleep(1_500);
+      const answered = {
+        status: statusOfTurn(0),
+        answered: textOf('turn-0-answer') !== '',
+        prompt: element('turn-0-prompt')?.textContent ?? '',
+        blockShown: element('new-session-block') !== null,
+        // What the sent turn says went with it: its marker's sentence (the summary
+        // line of the disclosure the turn draws for `resentContext`) and the exact
+        // text inside it.
+        resentMarker: clean(element('turn-0-resent')?.querySelector('summary')?.textContent ?? null),
+        resentWithTurn: element('turn-0-resent-text')?.textContent ?? null,
+        historyTurns: historyPrompts().length,
+        composerText: composerText(),
+        panelShown: element('continuity-choices') !== null,
+      };
+      // For the main process, which compares it with the summary the disclosure
+      // showed and with the message saved in the conversation file.
+      observations['resentShownWithTurn'] = answered.resentWithTurn;
+      record('one message sent in the new session', {
+        ...answered,
+        resentMarker: answered.resentMarker.slice(0, 160),
+        resentWithTurn:
+          answered.resentWithTurn === null ? null : `${String(answered.resentWithTurn.length)} characters`,
+      });
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        answered.status === 'finished' && answered.answered && answered.composerText === '',
+        `the message was not answered: turn status "${answered.status}"`,
+      );
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        !answered.blockShown && !answered.panelShown && answered.historyTurns === 3,
+        'the new-session block, the panel or the history did not read as expected after the send',
+      );
+      // The turn says what went with it: the summary kept, word for word, behind its
+      // marker; nothing after the summary was removed.
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        mode === 'refused'
+          ? element('turn-0-resent') === null && answered.resentWithTurn === null
+          : element('turn-0-resent') !== null &&
+              answered.resentMarker ===
+                `Sent in a new session with a summary of the earlier conversation (${String(summaryShown.length)} characters).` &&
+              answered.resentWithTurn === summaryShown,
+        mode === 'refused'
+          ? 'the sent turn shows a summary marker after the summary was removed'
+          : `the sent turn does not show the summary the disclosure showed behind its marker: marker "${answered.resentMarker.slice(0, 120)}", ${
+              answered.resentWithTurn === null ? 'no text' : `${String(answered.resentWithTurn.length)} characters`
+            } against ${String(summaryShown.length)}`,
+      );
+      await capture('answered');
     }
 
     const code =

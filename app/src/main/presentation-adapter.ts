@@ -371,8 +371,19 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       rawProviderEvent: { source: 'presentation-local' },
     };
 
+    // `run.started` inside `send`, before it returns, because that is the adapter
+    // contract the service is written against: `ChatService.sendPrompt` holds the
+    // prompt, the attempt and the recap it put in front of the message only while
+    // `send` is running, and picks them up from this event ("which the adapter does
+    // inside `send` before it awaits the provider"). Both real adapters keep it:
+    // `CursorSdkAdapter.send` and `ClaudeAgentSdkAdapter.send` emit `run.started`
+    // inside `send`, before they await the provider. Emitted on a timer, as it used to
+    // be here, the event arrived after `send` had returned and the service had let go,
+    // so in presentation runs no turn recorded the recap that went with it (DSP-121,
+    // run 20261024-070000-dsp121-flow). The reply below keeps its timers as before.
+    emit({ ...base, type: 'run.started', at: new Date().toISOString() });
+
     setTimeout(() => {
-      emit({ ...base, type: 'run.started', at: new Date().toISOString() });
       chunks.forEach((chunk, index) => {
         const timer = setTimeout(
           () => {

@@ -4,6 +4,7 @@ title: The composer takes 171 px from the conversation the moment you send
 status: To Do
 assignee: []
 created_date: '2026-09-19 22:06'
+updated_date: '2026-10-24 17:55'
 labels: []
 dependencies:
   - DSP-60
@@ -23,3 +24,9 @@ Found while fixing DSP-66, and deliberately not touched there. At the moment a s
 - [ ] #1 The acknowledgement block does not take a third of the conversation's height for the whole of every turn.
 - [ ] #2 What a person actually has to act on remains visible.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+24 Oct 2026 (DSP-121 flow, run 20261024-070000-dsp121-flow, Reviewer 008 F1): the resume panel and the new-session block live under the thread, and .conversation has min-height: 0 while the transcript has min-height: 4rem (styles.css ~:738-760), so whenever the controls under the thread need more height than the window has, the transcript's minimum overflows onto the composer. Measured at 706 x 837: thread 194 px at rest, 296 px with the new-session block, 71 px with its summary open (bounded to min(12rem, 15vh)). Estimated thresholds at 700 px wide: the thread reaches its minimum at roughly 828 px inner height with the summary open and ~707 px at rest. Cheapest relief: the summary's envelope note inside the bounded region. The structural question - what belongs under the thread - is this card's.
+<!-- SECTION:NOTES:END -->

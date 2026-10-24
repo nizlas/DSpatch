@@ -823,8 +823,10 @@ class FakeAdapter implements ChatAdapter {
    * because that is what the service actually tests for. `'unaligned'` is the
    * Claude adapter's `local_record_missing_unaligned` (DSP-122): no record found,
    * but the check read a different profile than the provider process is given.
+   * `'config-mismatch'` is that adapter's `config_mismatch`: a refusal where trying
+   * again with the same inputs gives the same answer.
    */
-  resumeBehaviour: 'ok' | 'not-found' | 'error' | 'unaligned' = 'not-found';
+  resumeBehaviour: 'ok' | 'not-found' | 'error' | 'unaligned' | 'config-mismatch' = 'not-found';
 
   /**
    * What a successful `resume` reports it checked. `'provider-answered'` by default,
@@ -869,6 +871,17 @@ class FakeAdapter implements ChatAdapter {
               'it says nothing about whether a record exists there.',
           ),
           { name: 'ClaudeAdapterError', providerCode: 'local_record_missing_unaligned' },
+        );
+      }
+      if (this.resumeBehaviour === 'config-mismatch') {
+        throw Object.assign(
+          new Error(
+            `DSpatch's record of session "${dspatchSessionId}" expects tool policy ` +
+              'sha256:synthetic, and this adapter\'s policy is sha256:other (toolPolicy). A ' +
+              'session is not resumed under a different tool policy. No local record was ' +
+              'read and the provider was not asked.',
+          ),
+          { name: 'ClaudeAdapterError', providerCode: 'config_mismatch' },
         );
       }
       this.sessionId = dspatchSessionId;
@@ -1962,10 +1975,14 @@ test('SIMULATED: the resumed wording comes from what the adapter checked, not fr
 // Until DSP-121 a refused resume opened a new provider session at once, queued the
 // recap and let the next save overwrite the recorded session ID, so a temporary
 // cause lost the pointer for good. Now DSpatch opens nothing, sends nothing, keeps
-// the record exactly as it was and offers three choices. These tests use the fake
-// adapter only; no provider is called.
+// the record exactly as it was and offers the choices that can work: trying again
+// and a new session, or only a new session where a retry would give the same answer
+// (DSP-121 flow, Niclas 24 October 2026). Reading the history is not a choice any
+// more; it is always on screen. These tests use the fake adapter only; no provider
+// is called.
 
-const ALL_CHOICES = ['try-again', 'new-session', 'keep-reading'] as const;
+const RETRY_AND_NEW = ['try-again', 'new-session'] as const;
+const NEW_ONLY = ['new-session'] as const;
 
 test('SIMULATED: a refused resume opens nothing, sends nothing and keeps the session on record', async () => {
   const { workspace, conversationId, second } = await restartInto('continuity-refused');
@@ -1990,7 +2007,16 @@ test('SIMULATED: a refused resume opens nothing, sends nothing and keeps the ses
       'AgentNotFoundError: Agent dsp-session-fake not found',
     providerCode: 'agent_not_found',
   });
-  assert.deepEqual(session.continuity.choices, ALL_CHOICES);
+  assert.deepEqual(session.continuity.choices, RETRY_AND_NEW);
+  assert.match(session.continuity.statement, /You can try again, .*; or start a new provider session/);
+  assert.doesNotMatch(session.continuity.statement, /keep reading/i);
+  // With saved messages, the recap and the readable history are both real.
+  assert.match(
+    session.continuity.statement,
+    /with a recap you can remove before sending\. The saved conversation stays readable either way\./,
+  );
+  assert.match(session.continuity.contextNote, /1 saved message is on screen as history only/);
+  assert.match(session.continuity.contextNote, /shows its recap before anything is sent/);
   assert.match(
     session.continuity.statement,
     /DSpatch asked the provider to resume dsp-session-fake and the provider answered that it does not have that session \(agent_not_found\)\./,
@@ -2013,7 +2039,7 @@ test('SIMULATED: a refused resume opens nothing, sends nothing and keeps the ses
   // is opened, so nothing new reaches the file either.
   await assert.rejects(
     () => second.service.sendPrompt('carry on'),
-    /No provider session is open for this conversation: the provider answered that it does not have session dsp-session-fake\. Choose: try again, a new provider session, or keep reading\./,
+    /No provider session is open for this conversation: the provider answered that it does not have session dsp-session-fake\. Choose: try again, or start a new provider session\.$/,
   );
   await assert.rejects(
     () => second.service.cancelRun(),
@@ -2036,6 +2062,39 @@ test('SIMULATED: a refused resume opens nothing, sends nothing and keeps the ses
   );
 });
 
+test('SIMULATED: a refused resume of a conversation with no saved messages promises no recap and no history (DSP-121 review B1)', async () => {
+  // A project opened and closed before anything was sent: the session block is saved
+  // with no messages, so the reopen attempts a resume, and here it is refused.
+  const workspace = makeDir('continuity-empty');
+  fs.writeFileSync(path.join(workspace, 'readme.txt'), 'x\n', 'utf8');
+  const store = storeFor('continuity-empty');
+  const first = serviceOver('continuity-empty-1', workspace, store);
+  const opened = await first.service.startChatSession({ kind: 'folder', path: workspace });
+  await first.service.dispose();
+  assert.notEqual(store.read(opened.conversationId).conversation?.session ?? null, null);
+
+  const second = serviceOver('continuity-empty-2', workspace, store);
+  await second.service.resumeConversation(opened.conversationId);
+  second.adapter.resumeBehaviour = 'not-found';
+  const session = await second.service.startChatSession({ kind: 'folder', path: workspace });
+  assert.equal(session.continuity.kind, 'resume-refused');
+  assert.equal(session.continuity.savedMessageCount, 0);
+  assert.deepEqual(session.continuity.choices, RETRY_AND_NEW);
+  assert.doesNotMatch(session.continuity.statement, /recap you can remove|stays readable/);
+  assert.match(
+    session.continuity.statement,
+    /or start a new provider session, which begins from your next message alone \(this conversation has no saved messages, so there is no recap\)\.$/,
+  );
+  assert.doesNotMatch(session.continuity.contextNote, /shows its recap|0 saved messages/);
+  assert.match(session.continuity.contextNote, /has no saved messages, so a new provider session, if you choose one, has no recap to show/);
+  // And indeed: the new session it would open carries no recap.
+  const fresh = await second.service.startChatSession({ kind: 'new-provider-session' });
+  assert.equal(fresh.continuity.kind, 'new-provider-session');
+  assert.equal(fresh.continuity.contextToResend, null);
+  assert.deepEqual(second.adapter.sent, []);
+  await second.service.dispose();
+});
+
 test('SIMULATED: a resume that fails with an error is a failure that may be temporary, not the provider\'s answer', async () => {
   const { workspace, conversationId, second } = await restartInto('continuity-failed');
   second.adapter.resumeBehaviour = 'error';
@@ -2050,7 +2109,7 @@ test('SIMULATED: a resume that fails with an error is a failure that may be temp
   assert.equal(session.continuity.resumeFailure?.kind, 'error');
   assert.equal(session.continuity.resumeFailure?.providerCode, null);
   assert.match(String(session.continuity.resumeFailure?.detail), /fetch failed/);
-  assert.deepEqual(session.continuity.choices, ALL_CHOICES);
+  assert.deepEqual(session.continuity.choices, RETRY_AND_NEW);
   assert.match(
     session.continuity.statement,
     /DSpatch tried to resume dsp-session-fake and the attempt failed: .*fetch failed/,
@@ -2306,7 +2365,10 @@ test('SIMULATED: a session recorded as Claude whose last turn has no confirmed e
   assert.equal(second.adapter.startSessionCalls, 0);
   assert.equal(refused.continuity.resumeFailure?.kind, 'unconfirmed-end');
   assert.equal(refused.continuity.resumeFailure?.providerCode, null);
-  assert.deepEqual(refused.continuity.choices, ALL_CHOICES);
+  // Blocked in this build: the refusal is lifted only by a retry that names the
+  // attempt, which the window cannot send until DSP-117, so Try again is not offered.
+  assert.ok(!refused.continuity.choices.includes('try-again'));
+  assert.deepEqual(refused.continuity.choices, NEW_ONLY);
   assert.equal(refused.continuity.contextToResend, null);
   const listed = refused.continuity.earlierSendsMayHaveReached;
   assert.equal(listed.length, 1);
@@ -2317,13 +2379,14 @@ test('SIMULATED: a session recorded as Claude whose last turn has no confirmed e
     /^DSpatch did not try to resume dsp-session-fake\. The session is recorded as a Claude provider session, and the last message of this conversation, "what does this project do" \(dsp-attempt-\d+, outcome-unknown\), has no confirmed end in DSpatch's record\. Resuming it would continue a transcript that may still be being written by a provider process DSpatch could not confirm had exited\. The provider was not asked, no new session was opened and nothing was sent\. The session ID stays on record\. Trying again with that attempt acknowledged attempts the resume \(this window cannot send that acknowledgement yet\); the attempt itself stays recorded as unresolved\./,
   );
   assert.match(refused.continuity.statement, /Nothing is resent/);
-  assert.match(refused.continuity.statement, /You can try again/);
+  assert.match(refused.continuity.statement, /You can start a new provider session/);
+  assert.doesNotMatch(refused.continuity.statement, /You can try again/);
   // The context statement must agree: no adapter call was made (Verifier 003 F1).
   assert.match(refused.context.statement, /made no call to the adapter or the provider/);
   assert.doesNotMatch(refused.context.statement, /gave the provider's SDK/);
   await assert.rejects(
     () => second.service.sendPrompt('carry on'),
-    /No provider session is open for this conversation: resuming dsp-session-fake was not attempted, because the last message of this conversation/,
+    /No provider session is open for this conversation: resuming dsp-session-fake was not attempted, because the last message of this conversation.*\. Start a new provider session to continue\.$/,
   );
   assert.deepEqual(second.adapter.sent, []);
   assert.deepEqual(
@@ -2379,7 +2442,7 @@ test("SIMULATED: a local record missing under an unaligned profile is reported a
     /The provider was not asked, and the adapter's local check looked in a different profile than the one the provider process uses, so finding no record there says nothing about whether the provider still has the session\./,
   );
   assert.doesNotMatch(session.continuity.statement, /provider answered/);
-  assert.deepEqual(session.continuity.choices, ALL_CHOICES);
+  assert.deepEqual(session.continuity.choices, RETRY_AND_NEW);
   // The context statement for a Cursor-recorded session says the SDK got the model
   // name (true of `Agent.resume`); a file recorded as Claude gets the Claude wording.
   assert.match(session.context.statement, /gave the provider's SDK/);
@@ -2478,12 +2541,43 @@ test('SIMULATED: an adapter that cannot resume at all says that, not that it fai
   // No call was made at all here, so "nothing was sent" is the true statement.
   assert.match(session.context.statement, /has sent the agent nothing/);
   assert.match(session.context.statement, /The provider was not asked\./);
-  assert.deepEqual(session.continuity.choices, ALL_CHOICES);
+  // Unsupported: a retry in this build gives the same answer, so it is not offered.
+  assert.ok(!session.continuity.choices.includes('try-again'));
+  assert.deepEqual(session.continuity.choices, NEW_ONLY);
+  assert.doesNotMatch(session.continuity.statement, /You can try again/);
   assert.equal(session.continuity.contextToResend, null);
   await assert.rejects(
     () => second.service.sendPrompt('carry on'),
-    /No provider session is open for this conversation: this build cannot resume a session/,
+    /No provider session is open for this conversation: this build cannot resume a session.*\. Start a new provider session to continue\.$/,
   );
+  await second.service.dispose();
+});
+
+test('SIMULATED: a config_mismatch refusal does not offer Try again, because the same inputs give the same answer', async () => {
+  const { workspace, conversationId, second } = await restartInto('continuity-config-mismatch');
+  second.adapter.resumeBehaviour = 'config-mismatch';
+  const before = second.store.read(conversationId).conversation?.session ?? null;
+  const session = await second.service.startChatSession({ kind: 'folder', path: workspace });
+  assert.equal(session.continuity.kind, 'resume-refused');
+  assert.equal(session.continuity.providerSessionOpen, false);
+  assert.equal(session.continuity.resumeFailure?.kind, 'error');
+  assert.equal(session.continuity.resumeFailure?.providerCode, 'config_mismatch');
+  assert.ok(!session.continuity.choices.includes('try-again'));
+  assert.deepEqual(session.continuity.choices, NEW_ONLY);
+  assert.match(session.continuity.statement, /Trying again with the same inputs gives the same answer\./);
+  assert.match(session.continuity.statement, /You can start a new provider session/);
+  assert.doesNotMatch(session.continuity.statement, /You can try again/);
+  assert.equal(second.adapter.startSessionCalls, 0);
+  assert.deepEqual(second.adapter.sent, []);
+  assert.deepEqual(second.store.read(conversationId).conversation?.session, before);
+  await assert.rejects(
+    () => second.service.sendPrompt('carry on'),
+    /No provider session is open for this conversation: resuming dsp-session-fake was refused \(.*\)\. Start a new provider session to continue\.$/,
+  );
+  // `retry-resume` is still accepted - DSP-117 needs it - it is only not offered.
+  const again = await second.service.startChatSession({ kind: 'retry-resume' });
+  assert.equal(again.continuity.resumeFailure?.providerCode, 'config_mismatch');
+  assert.deepEqual(again.continuity.choices, NEW_ONLY);
   await second.service.dispose();
 });
 

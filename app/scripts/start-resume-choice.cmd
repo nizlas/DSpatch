@@ -63,6 +63,8 @@ set "DSPATCH_CHAT_EXPECT_USERDATA=%KIT%\userData"
 set "DSPATCH_CHAT_LOG=%KIT%\hold.json"
 set "DSPATCH_SMOKE="
 set "DSPATCH_PROBE="
+rem The hold-mode close aid is for agents verifying the hand-over; never for this window.
+set "DSPATCH_CHAT_HOLD_CLOSE_MS="
 
 echo.
 echo Starting DSpatch in the "%MODE%" resume state, SIMULATED by the presentation adapter.

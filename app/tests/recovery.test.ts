@@ -125,14 +125,21 @@ test('each kind of failure is offered the action that applies to it', () => {
       'continue-in-new-session',
     ],
     ['No session is open. Start one first.', 'nothing-open', 'open-project-again'],
-    // DSP-121's guard, verbatim from `ChatService.requireSession`. Its own kind and
-    // action: "open a project again" would only attempt the same resume.
+    // DSP-121's guard, verbatim from `ChatService.requireSession`. Its own kind, and
+    // no action of its own: "open a project again" would only attempt the same
+    // resume, and the choices that can work are always on screen below the box.
     [
       'No provider session is open for this conversation: the provider answered that ' +
-        'it does not have session dsp-session-fake. Choose: try again, a new provider ' +
-        'session, or keep reading.',
+        'it does not have session dsp-session-fake. Choose: try again, or start a new ' +
+        'provider session.',
       'no-provider-session',
-      'choose-continuity',
+      'none',
+    ],
+    [
+      'No provider session is open for this conversation: this build cannot resume a ' +
+        'session on the fake-adapter adapter. Start a new provider session to continue.',
+      'no-provider-session',
+      'none',
     ],
     [
       'Cursor adapter operation "send" failed: TypeError: fetch failed',
@@ -166,7 +173,7 @@ test("Cursor's own wording for a session that holds a run is recognised too", ()
   // Not `retry`, which is what it fell through to, and not `open-project-again`,
   // which resumes the same session and is refused in the same words.
   assert.equal(failure.action, 'continue-in-new-session');
-  assert.match(failure.actionNote, /new provider session/);
+  assert.match(failure.actionNote, /Starting a new session is the way out/);
   assert.match(failure.actionNote, /nothing on disk is touched/i);
   // The provider's own words are what the reader sees first, unwrapped.
   assert.match(failure.message, /^Cursor adapter operation "send" failed/);
@@ -198,7 +205,7 @@ test('the held-run note claims no recovery nobody has seen (DSP-6 item 4)', () =
 
     // What it says instead: the new session is the way out, waiting is not known
     // to work, the measurement is named, and clearing is left unknown.
-    assert.match(actionNote, /new provider session is the way out/i, message);
+    assert.match(actionNote, /new session is the way out/i, message);
     assert.match(actionNote, /not known\s+to help/i, message);
     assert.match(actionNote, /11 minutes/, message);
     assert.match(actionNote, /15 minutes/, message);

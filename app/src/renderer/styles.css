@@ -367,9 +367,14 @@ body {
   margin-bottom: 0.25rem;
 }
 
-/* DSP-121 UX: the choice panel while no agent session is open. A heading, one
-   short body and the buttons in the open; the rest behind `.continuity__technical`.
-   Same palette, same `.app__error` frame; the buttons wrap in a narrow window. */
+/* DSP-121: the panel while no agent session is open - a heading, one body line, the
+   buttons, the line under them and a discreet entry into the diagnostics - and the
+   new-session block that takes its place. Same palette, the panel in the
+   `.app__error` frame; the buttons wrap in a narrow window. */
+.continuity {
+  margin-top: 0.5rem;
+}
+
 .continuity__heading {
   margin: 0;
   font-weight: 600;
@@ -390,13 +395,55 @@ body {
   font-size: 0.8125rem;
 }
 
-.continuity__technical {
-  margin-top: 0.75rem;
+/* The way into the diagnostics: text at the end of the action row rather than a
+   third button, and still a real button, so the keyboard reaches and operates it. */
+.continuity__details {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 0.25rem;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
 
-.continuity__facts {
-  margin: 0.5rem 0;
-  font-size: 0.8125rem;
+.continuity__details:hover {
+  color: var(--text);
+}
+
+/* The new-session block: the panel's frame without the error colour, because it is
+   about a choice just made, not a failure. */
+.continuity--new {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--muted);
+  border-radius: 0.5rem;
+}
+
+/* The summary, word for word: wrapped rather than scrolled sideways, and bounded so
+   opening it cannot squeeze the conversation away. Bounded by the window's height as
+   well (DSP-121 review S4): at 700 px wide and the default height a 12rem summary
+   squeezed the thread past its minimum, and the thread was drawn over the composer. */
+.continuity__summary-text {
+  margin: 0.5rem 0 0;
+  max-height: min(12rem, 15vh);
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+/* The way back from the session details, at their top and kept in view while they
+   scroll (DSP-121 flow): the panel's Details entry opens them at the diagnostics,
+   below the first section, and the way back must not be above the fold. */
+.details-view__bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 0.75rem;
+  background: var(--bg);
 }
 
 .panel {

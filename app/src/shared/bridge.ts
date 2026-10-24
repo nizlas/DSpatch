@@ -555,10 +555,14 @@ export interface ResumeFailure {
 }
 
 /**
- * What the user can do when no provider session is open. Every non-open state
- * offers all three; "keep reading" needs no call to the main process at all.
+ * What the user can do when no provider session is open (DSP-121).
+ *
+ * `new-session` in every such state; `try-again` only where trying again can work
+ * in this build, so a retry that would only give the same answer is not offered
+ * (see `ChatService`'s `noSessionChoices`). Reading the history is not a choice: it
+ * is on screen in every state and needs no call to the main process.
  */
-export type ContinuityChoice = 'try-again' | 'new-session' | 'keep-reading';
+export type ContinuityChoice = 'try-again' | 'new-session';
 
 /**
  * An earlier message of this conversation that may have reached the provider and
@@ -592,7 +596,7 @@ export interface SessionContinuity {
   readonly resumeFailure: ResumeFailure | null;
   /** Earlier messages with no confirmed end; nothing in it is resent. */
   readonly earlierSendsMayHaveReached: readonly EarlierSendMayHaveReached[];
-  /** Empty while a provider session is open. */
+  /** Empty while a provider session is open; never offers a retry that cannot work. */
   readonly choices: readonly ContinuityChoice[];
   /**
    * The exact text DSpatch will put before the next message, or `null`.
@@ -1886,6 +1890,14 @@ export interface DspatchBridge {
    */
   discardPendingRecap(): Promise<SessionContinuity>;
   /**
+   * Put text on the system clipboard (DSP-121: *Copy diagnostic info*).
+   *
+   * Only on a click, and nothing leaves the machine. In an unattended scripted run
+   * the main process records the text in the run record instead, so an automated
+   * test never overwrites the clipboard of the person at the computer.
+   */
+  copyText(text: string): Promise<void>;
+  /**
    * Send a prompt.
    *
    * `acknowledgedAttemptIds` names every earlier attempt of this kind whose
@@ -2677,6 +2689,7 @@ export type BridgeChannel =
   | 'dspatch:reveal-conversation'
   | 'dspatch:start-session'
   | 'dspatch:discard-pending-recap'
+  | 'dspatch:copy-text'
   | 'dspatch:send-prompt'
   | 'dspatch:cancel-run'
   | 'dspatch:abandon-send'

@@ -356,6 +356,14 @@ export interface ComposerState {
   readonly otherWorkInProgress: boolean;
   /** No project is open, so there is nothing to send to. */
   readonly sessionOpen: boolean;
+  /**
+   * A project is open but no agent session is behind it (DSP-121): the sentence that
+   * says what to do instead, naming only the choices on offer, or `null` while an
+   * agent session is open. An ordinary message is held back in the box rather than
+   * sent to be refused; a loop run is unaffected, because it opens sessions of its
+   * own.
+   */
+  readonly noProviderSession: string | null;
 }
 
 export function composerSendRoute(state: ComposerState): ComposerRoute {
@@ -375,6 +383,16 @@ export function composerSendRoute(state: ComposerState): ComposerRoute {
         'DSpatch is in the middle of something else — opening a project, cancelling, or ' +
         'running a command. Your text is kept; send it when that has finished.',
     };
+  }
+  // DSP-121: with no agent session behind the conversation an ordinary message has
+  // nowhere to go, whatever else is pending - so this comes before the unresolved
+  // attempts, whose acknowledgement could not get it sent either, and the note names
+  // the way forward the panel offers. Only for an ordinary message: a loop run walks in
+  // sessions of its own (review B2), so Use loop and a run in flight are routed below
+  // exactly as before. Enter holds the text in the box rather than sending it to be
+  // refused.
+  if (state.noProviderSession !== null && !state.useLoop && !state.loopRunning) {
+    return { kind: 'blocked', reason: state.noProviderSession };
   }
   if (state.unresolvedAttempts.length > 0) {
     return {

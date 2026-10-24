@@ -147,3 +147,22 @@ test('DSP-121 SIMULATED: the record counts session starts and keeps the exact te
   assert.deepEqual(record.sent, ['Recap of the conversation\n\nthe message']);
   assert.deepEqual(record.resumeAttempts, []);
 });
+
+test('the run starts inside send, before it returns, as the real adapters start theirs', async () => {
+  // The contract `ChatService.sendPrompt` is written against: it holds the prompt and
+  // the recap it put in front of the message only while `send` runs, and picks them
+  // up from `run.started`. This fixture used to emit it on a timer, after `send` had
+  // returned, so no turn in a presentation run recorded its recap (DSP-121).
+  const adapter = new PresentationAdapter({ deltaMs: 1 });
+  const handle = await adapter.startSession(CONFIG);
+  const seen: string[] = [];
+  adapter.subscribe(handle.dspatchSessionId, (event) => {
+    seen.push(event.type);
+  });
+  const sending = adapter.send(handle.dspatchSessionId, 'a message');
+  assert.deepEqual(seen, ['run.started'], 'run.started is emitted before send returns');
+  await sending;
+  // The reply itself still arrives on its timers, after the send has returned.
+  assert.deepEqual(seen, ['run.started']);
+  await adapter.dispose();
+});

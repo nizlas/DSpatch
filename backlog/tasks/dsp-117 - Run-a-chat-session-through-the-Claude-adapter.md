@@ -4,6 +4,7 @@ title: Run a chat session through the Claude adapter
 status: To Do
 assignee: []
 created_date: '2026-10-23 12:34'
+updated_date: '2026-10-24 17:29'
 labels:
   - integration
   - reliability
@@ -43,4 +44,6 @@ Related follow-up notes carried from DSP-116 (visible here because they matter o
 - 7 s / 8 s coupling: ClaudeAgentSdkAdapter's DISPOSE_BOUND_MS (7 s) is documented only in the adapter and pinned by a literal 8_000 in a test; main.ts's DISPOSE_TIMEOUT_MS (8 s) does not name it, and ChatService.dispose runs closeSession before adapter.dispose, so the real headroom is under 1 s. Lowering main.ts's value fails no test.
 - Process-disposal limits: a process that survives the stop sequence's kill stays alive after dispose (recorded unconfirmed, no second kill); DisposalRecord docs overstate slightly (killedBy stop-sequence also when that kill threw or returned false; exited means without a kill from this adapter); a spawn after dispose has finished is unobserved; whether TerminateProcess ends claude.exe's grandchildren and whether the real CLI exits within 5 s of abort are not established live (DSP-109 measured ~7 s for the SDK's abort path).
 - Other latent items: first-turn SDK module load is outside CANCEL_END_BOUND_MS; a turn whose previous turn is still open after 15 s is rejected without a terminal event and the chat service would record it as failed.
+
+From DSP-121's flow review (24 Oct 2026, run 20261024-070000-dsp121-flow, Reviewer 005 S6): authentication_refused is DSpatch's own credential rule, assessed from the process environment when the Claude adapter is built (claude-agent-sdk-adapter.ts ~:381-432, ~:2089-2091). Within the same process both Try again and Start new session hit the same refusal. When the Claude adapter reaches the chat, do not offer Try again for it and say it is DSpatch's rule rather than 'Authentication was refused.' Also: the window's Try again does not pass acknowledgedAttemptIds yet (needed to lift the unconfirmed-end block), and the chat still builds the Cursor adapter regardless of the recorded provider.
 <!-- SECTION:NOTES:END -->
