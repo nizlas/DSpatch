@@ -3,7 +3,7 @@ import type { JSX, ReactNode } from 'react';
 
 import { Markdown } from './Markdown';
 import { Inline, TokensView, asLocation, capitalise, fileName, rangeText, useFiles, useRows, type Files } from './review-code';
-import { FileTree, WalkTimeline, stationsOf, unitLabel } from './ReviewTimeline';
+import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
 import {
   DEFAULT_PREFERENCES,
@@ -61,6 +61,9 @@ const GAP_CONTEXT = 3;
 
 type CodeView = 'before' | 'both' | 'after';
 type CodeScope = 'focus' | 'file';
+
+/** How long a place must be on screen before it counts as opened. Longer than the arrival animation. */
+const OPENED_AFTER_MS = 900;
 type LeftTab = 'walks' | 'coverage' | 'notes' | 'search';
 
 function newId(): string {
@@ -324,12 +327,17 @@ function OpenReview({
       return;
     }
     const stepId = current.step.id;
-    const at = new Date().toISOString();
-    update((value) => ({
-      ...value,
-      shownSteps: value.shownSteps[stepId] === undefined ? { ...value.shownSteps, [stepId]: at } : value.shownSteps,
-      shownRefs: value.shownRefs[shownKey] === undefined ? { ...value.shownRefs, [shownKey]: at } : value.shownRefs,
-    }));
+    // Only a place the view has settled on counts: code passed on the way while the
+    // reader wheels or drags through the timeline is not opened.
+    const timer = window.setTimeout(() => {
+      const at = new Date().toISOString();
+      update((value) => ({
+        ...value,
+        shownSteps: value.shownSteps[stepId] === undefined ? { ...value.shownSteps, [stepId]: at } : value.shownSteps,
+        shownRefs: value.shownRefs[shownKey] === undefined ? { ...value.shownRefs, [shownKey]: at } : value.shownRefs,
+      }));
+    }, OPENED_AFTER_MS);
+    return () => window.clearTimeout(timer);
   }, [current, away, shownKey, state.shownSteps, state.shownRefs, update]);
 
   const goToStep = useCallback(
@@ -535,7 +543,7 @@ function OpenReview({
           <span>
             {bundle.stateNotice.kind === 'unusable'
               ? words.notices.unusable(bundle.stateNotice.keptAs)
-              : words.notices.definitionChanged(bundle.stateNotice.staleOpenedMarks, bundle.stateNotice.carriedStepMarks)}
+              : words.notices.definitionChanged(bundle.stateNotice.carriedStepMarks, bundle.stateNotice.movedStepMarks)}
           </span>
           <button type="button" onClick={() => setNoticeOpen(false)}>
             {words.notices.dismiss}
@@ -1643,7 +1651,14 @@ function WalkNavBar({
       <div className="rv-navbar-row rv-navbar-controls">
         <span className="rv-seg" role="group" aria-label={words.levels.label}>
           {(['change', 'unit', 'file'] as const).map((value) => (
-            <button key={value} type="button" className={level === value ? 'rv-on' : ''} aria-pressed={level === value} onClick={() => onLevel(value)}>
+            <button
+              key={value}
+              type="button"
+              className={level === value ? 'rv-on' : ''}
+              aria-pressed={level === value}
+              title={value === 'unit' ? unitTitle(place) : undefined}
+              onClick={() => onLevel(value)}
+            >
               {value === 'change' ? words.levels.change : value === 'file' ? words.levels.file : unitLabel(place, words)}
             </button>
           ))}

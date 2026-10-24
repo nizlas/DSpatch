@@ -179,7 +179,7 @@ export interface ReviewWords {
   };
   readonly notices: {
     readonly unusable: (keptAs: string) => string;
-    readonly definitionChanged: (stale: number, carried: number) => string;
+    readonly definitionChanged: (carried: number, moved: number) => string;
     readonly dismiss: string;
   };
 }
@@ -388,12 +388,12 @@ const sv: ReviewWords = {
   notices: {
     unusable: (keptAs) =>
       `En sparad post för den här granskningen kunde inte användas och sparades oförändrad som ${keptAs}. Granskningen börjar med en tom post.`,
-    definitionChanged: (stale, carried) =>
-      `Walk-definitionen har ändrats sedan posten sparades. Dina anteckningar och beslut gäller samma ändring och finns kvar.${
-        carried > 0 ? ` ${String(carried)} steg som du öppnat eller markerat som genomgångna har samma id som förut och visas fortfarande så, men deras text kan ha skrivits om.` : ''
-      }${
-        stale > 0 ? ` ${String(stale)} markeringar av öppnade kodställen gäller den tidigare definitionen; de finns kvar i posten men räknas inte.` : ''
-      }`,
+    definitionChanged: (carried, moved) =>
+      `Walk-definitionen har ändrats sedan posten sparades. Dina anteckningar och beslut gäller samma kod och finns kvar.${
+        moved > 0
+          ? ` ${String(moved)} steg som du öppnat eller markerat som genomgångna har ändrat innehåll; de markeringarna sparas som historik och räknas inte. Öppnat registreras när du öppnar steget igen, och genomgånget kräver din markering på nytt.`
+          : ''
+      }${carried > 0 ? ` ${String(carried)} steg är oförändrade och behåller sina markeringar.` : ''}`,
     dismiss: 'Stäng',
   },
 };
@@ -602,12 +602,12 @@ const en: ReviewWords = {
   notices: {
     unusable: (keptAs) =>
       `A stored record for this review could not be used and was kept unchanged as ${keptAs}. The review starts with an empty record.`,
-    definitionChanged: (stale, carried) =>
-      `The walk definition has changed since the record was saved. Your notes and decisions are about the same change and are kept.${
-        carried > 0 ? ` ${String(carried)} steps you opened or marked walked through have the same id as before and are still shown that way, but their text may have been rewritten.` : ''
-      }${
-        stale > 0 ? ` ${String(stale)} marks of opened code places belong to the earlier definition; they stay in the record but are not counted.` : ''
-      }`,
+    definitionChanged: (carried, moved) =>
+      `The walk definition has changed since the record was saved. Your notes and decisions are about the same code and are kept.${
+        moved > 0
+          ? ` ${String(moved)} steps you opened or marked walked through have changed content; those marks are kept as history and no longer count. Opened is registered when you open the step again, and walked through needs your mark again.`
+          : ''
+      }${carried > 0 ? ` ${String(carried)} steps are unchanged and keep their marks.` : ''}`,
     dismiss: 'Close',
   },
 };

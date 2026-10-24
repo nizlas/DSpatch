@@ -14,7 +14,8 @@ import {
   parseNameStatus,
   parseReviewDefinition,
   splitLines,
-  staleOpenedMarks,
+  carryStepMarks,
+  stepHashesOf,
   type ReviewPreferences,
   type ReviewStateNotice,
   type DiffFile,
@@ -186,26 +187,17 @@ export class ReviewService {
         } else {
           state = stored;
           if (stored.definitionHash !== definitionHash) {
-            // Said, not hidden: decisions are about hunks of this revision pair and
-            // stay valid; "opened" marks from the earlier walks are kept but no
-            // longer counted when they name no place of this definition.
-            const stepIds = new Set(definition.walks.flatMap((walk) => walk.steps.map((step) => step.id)));
-            const carried = new Set(
-              [...Object.keys(stored.shownSteps), ...Object.keys(stored.walkedSteps)].filter((id) => stepIds.has(id)),
-            );
-            stateNotice = {
-              kind: 'definition-changed',
-              staleOpenedMarks: staleOpenedMarks(definition, stored),
-              carriedStepMarks: carried.size,
-            };
-            state = {
-              ...stored,
-              definitionHash,
-              previousDefinitionHashes: [...stored.previousDefinitionHashes, stored.definitionHash],
-            };
+            // Said, not hidden: decisions and notes are about this revision pair and
+            // stay as they are; opened and walked marks follow the step's content,
+            // not its id, and the rest becomes history in the record.
+            const carried = carryStepMarks(definition, stored, definitionHash, new Date().toISOString());
+            stateNotice = { kind: 'definition-changed', carriedStepMarks: carried.carried, movedStepMarks: carried.moved };
+            state = carried.state;
           }
         }
       }
+      // The hashes always describe the definition in use, also for a record from before they existed.
+      state = { ...state, stepHashes: stepHashesOf(definition) };
       this.options.log(
         `review opened: ${absolute} ${base.sha.slice(0, 7)}..${target.sha.slice(0, 7)} ` +
           `files=${String(files.length)} referenceProblems=${String(referenceProblems.length)}`,

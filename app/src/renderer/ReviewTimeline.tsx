@@ -97,6 +97,18 @@ export function unitLabel(place: Place | null, words: ReviewWords): string {
   return kind === undefined ? words.levels.context : words.levels.unit[kind];
 }
 
+/** What the unit level shows for this place, by name and lines: the tooltip of its button. */
+export function unitTitle(place: Place | null): string | undefined {
+  if (place === null) {
+    return undefined;
+  }
+  if (place.unit !== null) {
+    return `${place.unit.name} (${String(place.unit.ref.start)}–${String(place.unit.ref.end)})`;
+  }
+  const context = place.context.find((ref) => ref.path === place.focus.path);
+  return context === undefined ? undefined : `${String(context.start)}–${String(context.end)}`;
+}
+
 /** The rows a station shows at a level: its focus, its unit (or prepared context), or everything. */
 function stationRange(rows: readonly DiffRow[], place: Place, level: CodeLevel, focusIndexes: readonly number[]): [number, number] | null {
   if (rows.length === 0 || focusIndexes.length === 0) {
@@ -453,7 +465,22 @@ function TimelinePane({
   const content = useRows(files, pane.path, diffFile, pane.side);
   const rows = content?.rows ?? [];
   const scroller = useRef<HTMLDivElement>(null);
-  const [openGaps, setOpenGaps] = useState<ReadonlySet<number>>(new Set());
+  // A gap is opened in two stages when a declared context ends inside it: first the
+  // rest of that context (the enclosing function of a block), then everything.
+  const [openGaps, setOpenGaps] = useState<ReadonlyMap<number, 'context' | 'all'>>(new Map());
+  const inContext = useMemo(() => {
+    const set = new Set<number>();
+    for (const station of pane.stations) {
+      for (const ref of station.place.context) {
+        if (ref.path === pane.path && (ref.side ?? 'target') === pane.side) {
+          for (const index of referenceRows(rows, ref).indexes) {
+            set.add(index);
+          }
+        }
+      }
+    }
+    return set;
+  }, [rows, pane.stations, pane.path, pane.side]);
 
   const focusOf = useMemo(() => {
     const map = new Map<number, { indexes: readonly number[]; changed: boolean }>();
@@ -527,16 +554,25 @@ function TimelinePane({
       while (index < keep.length && keep[index] !== true) {
         index += 1;
       }
-      if (openGaps.has(start)) {
+      const stage = openGaps.get(start);
+      if (stage === 'all') {
         keep.fill(true, start, index);
+      } else if (stage === 'context') {
+        for (let row = start; row < index; row += 1) {
+          if (inContext.has(row)) {
+            keep[row] = true;
+          }
+        }
       }
     }
     return keep;
-  }, [rows, pane.stations, level, focusOf, fromSet, openGaps]);
+  }, [rows, pane.stations, level, focusOf, fromSet, openGaps, inContext]);
 
   // Arriving and leaving: the old marking fades, the new one flashes, then settles.
   const [arriving, setArriving] = useState<number | null>(null);
   const [leaving, setLeaving] = useState<number | null>(null);
+  // The place shown before this one keeps a weaker mark, so the step back stays visible.
+  const [was, setWas] = useState<number | null>(null);
   const lastShown = useRef<number | null>(null);
   useEffect(() => {
     if (!isActive || lastShown.current === shown.index) {
@@ -545,6 +581,7 @@ function TimelinePane({
     }
     const previous = lastShown.current;
     lastShown.current = shown.index;
+    setWas(previous);
     if (reducedMotion()) {
       return;
     }
@@ -634,10 +671,18 @@ function TimelinePane({
         while (index < rows.length && visible[index] !== true) {
           index += 1;
         }
+        let contextRows = 0;
+        for (let row = start; row < index; row += 1) {
+          if (inContext.has(row)) {
+            contextRows += 1;
+          }
+        }
+        const partial = openGaps.get(start) !== 'context' && contextRows > 0 && contextRows < index - start;
+        const gapStart = start;
         body.push(
           <div key={`gap-${String(start)}`} className="rv-gap">
-            <button type="button" onClick={() => setOpenGaps(new Set([...openGaps, start]))}>
-              {words.view.hiddenLines(index - start)}
+            <button type="button" onClick={() => setOpenGaps(new Map([...openGaps, [gapStart, partial ? 'context' : 'all']]))}>
+              {words.view.hiddenLines(partial ? contextRows : index - start)}
             </button>
           </div>,
         );
@@ -667,6 +712,9 @@ function TimelinePane({
         }
       } else if (otherFocus.has(index)) {
         classes.push(row.kind === 'deleted' ? 'rv-old-faint' : row.kind === 'added' ? 'rv-new-faint' : 'rv-neutral-faint');
+        if (was !== null && (focusOf.get(was)?.indexes ?? []).includes(index)) {
+          classes.push('rv-was');
+        }
         if (leaving !== null && (focusOf.get(leaving)?.indexes ?? []).includes(index)) {
           classes.push('rv-leave');
         }

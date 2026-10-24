@@ -29,7 +29,10 @@ import {
   parseReviewDefinition,
   placeKey,
   referenceRows,
+  carryStepMarks,
   staleOpenedMarks,
+  stepContentHash,
+  stepHashesOf,
   splitLines,
   type CodeReference,
   type DiffHunk,
@@ -557,6 +560,54 @@ test('the view arrangement is kept in the record and opened marks of an older de
   const marked = { ...state, shownRefs: { 'W1.1#0': 't', 'W1.1@r1': 't' } };
   assert.equal(staleOpenedMarks(definition, marked), 1);
   assert.equal(placeKey('W1.1', 'r1'), 'W1.1@r1');
+});
+
+test('marks follow a step\'s content when the walks change: unchanged steps keep them, changed steps give them to history', () => {
+  const { definition } = fixture();
+  const step = definition.walks[0]?.steps[0];
+  assert.ok(step !== undefined);
+  const hashes = stepHashesOf(definition);
+  assert.equal(hashes[step.id], stepContentHash(step));
+  const base = emptyReviewState(REVISIONS, 'def.json', 'old');
+  const marks = {
+    shownSteps: { [step.id]: 't1', 'W9.9': 't2' },
+    shownRefs: { [placeKey(step.id, step.places[0]?.id ?? 'p')]: 't1', 'W9.9@p1': 't2' },
+    walkedSteps: { [step.id]: 't3' },
+    decisions: base.decisions,
+    notes: base.notes,
+  };
+
+  // A record from before step hashes existed: the same id carries nothing.
+  const strict = carryStepMarks(definition, { ...base, ...marks }, 'new', 'moved');
+  assert.deepEqual(strict.state.shownSteps, {});
+  assert.deepEqual(strict.state.walkedSteps, {});
+  assert.deepEqual(strict.state.shownRefs, {});
+  assert.equal(strict.carried, 0);
+  assert.equal(strict.moved, 2);
+  assert.equal(strict.state.markHistory.length, 1);
+  assert.deepEqual(strict.state.markHistory[0]?.shownSteps, marks.shownSteps);
+  assert.equal(strict.state.markHistory[0]?.definitionHash, 'old');
+  assert.deepEqual(strict.state.previousDefinitionHashes, ['old']);
+  assert.equal(strict.state.definitionHash, 'new');
+  assert.deepEqual(strict.state.stepHashes, hashes);
+
+  // The same step under the same content keeps its marks; the vanished step does not.
+  const same = carryStepMarks(definition, { ...base, ...marks, stepHashes: { ...hashes, 'W9.9': 'x' } }, 'new', 'moved');
+  assert.deepEqual(same.state.shownSteps, { [step.id]: 't1' });
+  assert.deepEqual(same.state.walkedSteps, { [step.id]: 't3' });
+  assert.deepEqual(Object.keys(same.state.shownRefs), [placeKey(step.id, step.places[0]?.id ?? 'p')]);
+  assert.equal(same.carried, 1);
+  assert.equal(same.moved, 1);
+
+  // A rewritten step moves its marks even though the id is the same.
+  const rewritten = carryStepMarks(definition, { ...base, ...marks, stepHashes: { ...hashes, [step.id]: 'before-the-rewrite' } }, 'new', 'moved');
+  assert.deepEqual(rewritten.state.shownSteps, {});
+  assert.equal(rewritten.moved, 2);
+
+  // Round trip through the stored shape.
+  const adopted = adoptStoredState(JSON.parse(JSON.stringify(strict.state)), REVISIONS);
+  assert.deepEqual(adopted?.markHistory, strict.state.markHistory);
+  assert.equal(adoptStoredState({ ...base, markHistory: [{ definitionHash: 1 }] }, REVISIONS), null);
 });
 
 test('preferences accept only the two display languages', () => {

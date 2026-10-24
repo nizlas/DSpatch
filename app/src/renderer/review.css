@@ -1024,6 +1024,19 @@
   background: color-mix(in srgb, var(--text) 5%, var(--bg));
 }
 
+/* The place shown before the current one: weaker than the focus, stronger than the diff. */
+.rv-was.rv-old-faint {
+  background: color-mix(in srgb, var(--no) 22%, var(--bg));
+}
+
+.rv-was.rv-new-faint {
+  background: color-mix(in srgb, var(--ok) 20%, var(--bg));
+}
+
+.rv-was.rv-neutral-faint {
+  background: color-mix(in srgb, var(--text) 12%, var(--bg));
+}
+
 /* Arriving: a short flash, then the row settles into its own colour. */
 @keyframes rv-flash {
   0% {

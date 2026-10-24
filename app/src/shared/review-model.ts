@@ -917,9 +917,26 @@ export interface ReviewState {
   readonly previousDefinitionHashes: readonly string[];
   /** Step id → when the reviewer marked it walked through. Not an acceptance. */
   readonly walkedSteps: Readonly<Record<string, string>>;
+  /**
+   * Step id → a hash of the step's texts and places under the definition this record
+   * was last used with. When the walks change, a mark is carried only for a step whose
+   * hash is the same: the same id is not enough.
+   */
+  readonly stepHashes: Readonly<Record<string, string>>;
+  /** Marks set aside when the walks changed, oldest first. History, not current progress. */
+  readonly markHistory: readonly MarkHistoryEntry[];
   readonly decisions: readonly ReviewDecision[];
   readonly notes: readonly ReviewNote[];
   readonly savedAt: string;
+}
+
+export interface MarkHistoryEntry {
+  /** The definition the marks were made under. */
+  readonly definitionHash: string;
+  readonly movedAt: string;
+  readonly shownSteps: Readonly<Record<string, string>>;
+  readonly shownRefs: Readonly<Record<string, string>>;
+  readonly walkedSteps: Readonly<Record<string, string>>;
 }
 
 export interface ReviewUi {
@@ -952,6 +969,8 @@ export function emptyReviewState(revisions: RevisionPair, definitionPath: string
     ui: DEFAULT_UI,
     previousDefinitionHashes: [],
     walkedSteps: {},
+    stepHashes: {},
+    markHistory: [],
     decisions: [],
     notes: [],
     savedAt: '',
@@ -985,6 +1004,8 @@ export function adoptStoredState(raw: unknown, revisions: RevisionPair): ReviewS
     (raw['ui'] !== undefined && !isUi(raw['ui'])) ||
     (raw['previousDefinitionHashes'] !== undefined &&
       !(Array.isArray(raw['previousDefinitionHashes']) && raw['previousDefinitionHashes'].every((entry) => typeof entry === 'string'))) ||
+    (raw['stepHashes'] !== undefined && !stringMap(raw['stepHashes'])) ||
+    (raw['markHistory'] !== undefined && !(Array.isArray(raw['markHistory']) && raw['markHistory'].every(isMarkHistoryEntry))) ||
     !Array.isArray(raw['decisions']) ||
     !Array.isArray(raw['notes']) ||
     typeof raw['definitionHash'] !== 'string'
@@ -996,6 +1017,8 @@ export function adoptStoredState(raw: unknown, revisions: RevisionPair): ReviewS
     shownRefs: (raw['shownRefs'] as Record<string, string> | undefined) ?? {},
     ui: (raw['ui'] as ReviewUi | undefined) ?? DEFAULT_UI,
     previousDefinitionHashes: (raw['previousDefinitionHashes'] as string[] | undefined) ?? [],
+    stepHashes: (raw['stepHashes'] as Record<string, string> | undefined) ?? {},
+    markHistory: (raw['markHistory'] as MarkHistoryEntry[] | undefined) ?? [],
   };
 }
 
@@ -1007,6 +1030,118 @@ function isUi(value: unknown): value is ReviewUi {
     typeof value['highlightWalk'] === 'boolean' &&
     (value['level'] === undefined || value['level'] === 'change' || value['level'] === 'unit' || value['level'] === 'file')
   );
+}
+
+function isStringMap(value: unknown): value is Record<string, string> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.values(value).every((entry) => typeof entry === 'string');
+}
+
+function isMarkHistoryEntry(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry['definitionHash'] === 'string' &&
+    typeof entry['movedAt'] === 'string' &&
+    isStringMap(entry['shownSteps']) &&
+    isStringMap(entry['shownRefs']) &&
+    isStringMap(entry['walkedSteps'])
+  );
+}
+
+/** A short, stable hash of a string (FNV-1a, two seeds). A change detector, not a secret. */
+function contentHash(text: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x050c5d1f;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    a = Math.imul(a ^ code, 0x01000193) >>> 0;
+    b = Math.imul(b ^ code, 0x01000193) >>> 0;
+  }
+  return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
+}
+
+/** What a step says and shows: its texts and its places' focus, unit and link. */
+export function stepContentHash(step: WalkStep): string {
+  return contentHash(
+    JSON.stringify({
+      title: step.title,
+      summary: step.summary,
+      body: step.body,
+      places: step.places.map((place) => ({
+        id: place.id,
+        label: place.label,
+        focus: place.focus,
+        unit: place.unit === null ? null : { ref: place.unit.ref, kind: place.unit.kind, name: place.unit.name },
+        from: place.from === null ? null : place.from.ref,
+      })),
+    }),
+  );
+}
+
+export function stepHashesOf(definition: ReviewDefinition): Record<string, string> {
+  const hashes: Record<string, string> = {};
+  for (const walk of definition.walks) {
+    for (const step of walk.steps) {
+      hashes[step.id] = stepContentHash(step);
+    }
+  }
+  return hashes;
+}
+
+/**
+ * The record under a changed definition. A step's opened and walked marks are carried
+ * only when its content hash is unchanged; every other mark is set aside as history.
+ * Opened is registered again when the step is opened under the new walks; walked
+ * needs the reviewer's own mark again. Notes and decisions are not touched.
+ */
+export function carryStepMarks(
+  definition: ReviewDefinition,
+  stored: ReviewState,
+  definitionHash: string,
+  movedAt: string,
+): { readonly state: ReviewState; readonly carried: number; readonly moved: number } {
+  const hashes = stepHashesOf(definition);
+  const places = new Set(
+    definition.walks.flatMap((walk) => walk.steps.flatMap((step) => step.places.map((place) => placeKey(step.id, place.id)))),
+  );
+  const unchanged = (stepId: string): boolean => stored.stepHashes[stepId] !== undefined && stored.stepHashes[stepId] === hashes[stepId];
+  const split = <T>(entries: Readonly<Record<string, T>>, keep: (key: string) => boolean): [Record<string, T>, Record<string, T>] => {
+    const kept: Record<string, T> = {};
+    const moved: Record<string, T> = {};
+    for (const [key, value] of Object.entries(entries)) {
+      (keep(key) ? kept : moved)[key] = value;
+    }
+    return [kept, moved];
+  };
+  const [shownSteps, movedShownSteps] = split(stored.shownSteps, unchanged);
+  const [walkedSteps, movedWalkedSteps] = split(stored.walkedSteps, unchanged);
+  const [shownRefs, movedShownRefs] = split(stored.shownRefs, (key) => places.has(key) && unchanged(key.slice(0, key.indexOf('@'))));
+  const movedIds = new Set([...Object.keys(movedShownSteps), ...Object.keys(movedWalkedSteps)]);
+  const carriedIds = new Set([...Object.keys(shownSteps), ...Object.keys(walkedSteps)]);
+  const entry: MarkHistoryEntry = {
+    definitionHash: stored.definitionHash,
+    movedAt,
+    shownSteps: movedShownSteps,
+    shownRefs: movedShownRefs,
+    walkedSteps: movedWalkedSteps,
+  };
+  const anythingMoved = movedIds.size > 0 || Object.keys(movedShownRefs).length > 0;
+  return {
+    state: {
+      ...stored,
+      definitionHash,
+      previousDefinitionHashes: [...stored.previousDefinitionHashes, stored.definitionHash],
+      shownSteps,
+      shownRefs,
+      walkedSteps,
+      stepHashes: hashes,
+      markHistory: anythingMoved ? [...stored.markHistory, entry] : stored.markHistory,
+    },
+    carried: carriedIds.size,
+    moved: movedIds.size,
+  };
 }
 
 /** "Opened" marks that name no place of this definition: kept, but not counted. */
@@ -1453,10 +1588,10 @@ export type ReviewStateNotice =
   | { readonly kind: 'unusable'; readonly keptAs: string }
   | {
       readonly kind: 'definition-changed';
-      /** "Opened" marks naming no place of this definition: kept, not counted. */
-      readonly staleOpenedMarks: number;
-      /** Steps marked opened or walked through under the earlier definition. Kept and still shown. */
+      /** Steps whose marks were carried because their content is unchanged. */
       readonly carriedStepMarks: number;
+      /** Steps whose marks were set aside as history because the step changed. */
+      readonly movedStepMarks: number;
     };
 
 export type ReviewOpenOutcome =
