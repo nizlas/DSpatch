@@ -482,6 +482,8 @@ export function WalkTimeline({
           settleActive(x);
         }}
         onPointerUp={(event) => {
+          // The pointer event is also the truth about Shift being released.
+          setShiftHeld(event.shiftKey);
           if (resize.current?.id === event.pointerId) {
             resize.current = null;
             return;
