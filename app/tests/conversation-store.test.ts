@@ -29,6 +29,7 @@ import {
   ConversationStore,
   isUsableConversationId,
   newConversationId,
+  storedSessionProvider,
 } from '../src/main/conversation-store.ts';
 import type { StoredAttempt, StoredConversation } from '../src/shared/bridge.ts';
 
@@ -119,6 +120,37 @@ test('a conversation written is read back with its own fields', () => {
   assert.equal(read.project.path, original.project.path);
   // The build that wrote the file, stamped by the store rather than by the caller.
   assert.equal(read.appVersion, '9.9.9-test');
+});
+
+test('format 2 records which provider holds the session; a format 1 file still reads, as a Cursor session (DSP-122)', () => {
+  const { store, directory } = storeIn('provider');
+  assert.equal(CONVERSATION_FORMAT_VERSION, 2);
+  const claude = conversation({
+    conversationId: 'dsp-conv-20260915000000-claude',
+    session: { ...conversation().session, provider: 'claude', toolPolicy: 'claude-agent-sdk:digest' },
+  });
+  assert.equal(store.write(claude).error, null);
+  const read = store.read(claude.conversationId);
+  assert.equal(read.readOnly, false);
+  assert.equal(read.conversation?.formatVersion, 2);
+  assert.equal(read.conversation?.session.provider, 'claude');
+  assert.equal(storedSessionProvider(read.conversation?.session), 'claude');
+  assert.equal(read.conversation?.session.toolPolicy, 'claude-agent-sdk:digest');
+
+  // A version 1 file: no provider on the session. Read, not read-only, Cursor by default.
+  const id = 'dsp-conv-20260915000000-v1';
+  const v1 = { ...conversation({ conversationId: id }), formatVersion: 1 };
+  assert.equal('provider' in v1.session, false);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, `${id}.json`), JSON.stringify(v1, null, 2), 'utf8');
+  const older = store.read(id);
+  assert.equal(older.readOnly, false);
+  assert.equal(older.newerFormatVersion, null);
+  assert.equal(older.conversation?.formatVersion, 1);
+  assert.equal('provider' in (older.conversation?.session ?? {}), false);
+  assert.equal(storedSessionProvider(older.conversation?.session), 'cursor');
+  assert.equal(storedSessionProvider(null), 'cursor');
+  // A version 3 file would be a newer format: the test above this build's version covers it.
 });
 
 test('messages come back in their recorded order, not the array order', () => {

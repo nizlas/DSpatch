@@ -6,6 +6,7 @@ import type {
   HookJSONOutput,
   Options as ClaudeQueryOptions,
   SDKMessage,
+  SDKSessionInfo,
   SDKUserMessage,
   SpawnedProcess,
   SpawnOptions as ClaudeSpawnOptions,
@@ -808,12 +809,40 @@ async function loadSdkQuery(): Promise<ClaudeQueryFunction> {
   return sdk.query as unknown as ClaudeQueryFunction;
 }
 
+/**
+ * A local lookup of a provider session record (DSP-122): the SDK's documented
+ * `getSessionInfo(uuid, { dir })`, or a substitute with the same shape. It reads
+ * the session's transcript file in this process, under this process's Claude
+ * profile; it never asks the provider anything. `undefined` is the SDK's answer
+ * for a file not found, a sidechain session, or a session with no extractable
+ * summary (sdk.d.ts 0.3.306 :880-889), so `undefined` means "no readable
+ * record", never "the provider does not have it".
+ *
+ * `dir` is the project path the SDK encodes into its per-project directory
+ * (`listSessions({ dir })` semantics). That encoding, and whether a title-only
+ * session gets a summary, are documentation until the offline check of plan 4.5.
+ */
+export type ClaudeLocalLookup = (
+  uuid: string,
+  dir: string,
+) => Promise<SDKSessionInfo | undefined>;
+
+async function loadSdkLocalLookup(): Promise<ClaudeLocalLookup> {
+  const sdk = await import('@anthropic-ai/claude-agent-sdk');
+  return (uuid, dir) => sdk.getSessionInfo(uuid, { dir });
+}
+
 export interface ClaudeAgentSdkAdapterOptions {
   /**
    * Substitute for the SDK's `query()`. When given, the SDK is never loaded.
    * Tests use this; nothing in the product should.
    */
   readonly queryFn?: ClaudeQueryFunction;
+  /**
+   * Substitute for the SDK's `getSessionInfo` in `resume()`. Tests and the R-A0
+   * probe use this; the product loads the SDK's own through the lazy loader.
+   */
+  readonly localLookup?: ClaudeLocalLookup;
   /** Recorded authorization for a live run. See {@link LiveAuthorization}. */
   readonly authorization?: LiveAuthorization | null;
   /** The environment to assess and pass on. Defaults to a copy of `process.env`. */
@@ -835,8 +864,10 @@ export interface ClaudeAgentSdkAdapterOptions {
 /**
  * What this instance offers: Claude **plus the Agent SDK transport**.
  *
- * - `resume` is `unsupported`: a second turn in the same instance continues the
- *   provider session, but `AgentAdapter.resume` across processes is deferred.
+ * - `resume` is `unknown`: implemented; no live evidence (DSP-122). `resume()`
+ *   registers a session from a local record and the first send passes `resume`;
+ *   whether the provider then continues the session has not been observed
+ *   through this path, and only the prepared live probes can show it.
  * - `approvals` is `unsupported`: `canUseTool` is not wired to anything that can
  *   answer, and `dontAsk` means it is never called.
  * - `usageReporting` is `unknown` until observed. Token counts arrive on the
@@ -848,7 +879,7 @@ const CAPABILITIES: CapabilityReport = {
   start: 'supported',
   streaming: 'supported',
   cancel: 'supported',
-  resume: 'unsupported',
+  resume: 'unknown', // implemented; no live evidence (DSP-122)
   modelSelection: 'supported',
   approvals: 'unsupported',
   usageReporting: 'unknown',
@@ -928,6 +959,93 @@ export interface DisposalRecord {
   readonly providerWorkAfterEnd: 'unknown';
 }
 
+// --- Resume in a new adapter instance (DSP-122) ---------------------------------
+
+/**
+ * Where the local lookup looked, against where the provider process looks.
+ *
+ * The lookup runs in this process, so it reads the profile this process's
+ * `CLAUDE_CONFIG_DIR` names (unset: the default profile). The provider process
+ * gets the adapter's subprocess environment instead. When the two differ, a
+ * missing record says nothing about the profile the provider would read.
+ */
+export interface LookupEnvironment {
+  /** `process.env.CLAUDE_CONFIG_DIR`, or `null` when unset. */
+  readonly hostConfigDir: string | null;
+  /** The same variable as the subprocess environment carries it, or `null`. */
+  readonly childConfigDir: string | null;
+  /** Equal, both `null` included. */
+  readonly aligned: boolean;
+}
+
+/** What the local lookup found for a resumed session. Local evidence only. */
+export interface ResumeLocalLookup {
+  readonly found: true;
+  /** The record's own working directory, or `null` when the record carries none. */
+  readonly cwd: string | null;
+  readonly lastModified: number;
+  readonly summary: string;
+  /** The `dir` the lookup was asked for: the session's `workspacePath`. */
+  readonly dir: string;
+  /** Same as {@link LookupEnvironment.hostConfigDir}: the profile the lookup read. */
+  readonly configDir: string | null;
+  readonly aligned: boolean;
+}
+
+/**
+ * How the first turn after a resume failed, as far as this adapter can tell.
+ *
+ * - `provider-missing`: the error matched a recognised "session not found" form
+ *   ({@link PROVIDER_MISSING_FORMS}).
+ * - `unknown`: an SDK or stream error without a recognised form; it does not say
+ *   whether the session was missing or the resume failed for another reason.
+ * - `error`: `query()` itself threw, so no stream was ever read.
+ */
+export type FirstTurnFailure = 'provider-missing' | 'unknown' | 'error';
+
+/**
+ * What the first turn after a resume reported. Recorded from the provider's
+ * `init` and the run's terminal, and from nothing else.
+ *
+ * A matching ID is a consistency check; recall is the evidence. DSpatch chose
+ * the UUID it passes as `resume`, so the provider reporting the same one in
+ * `init` shows only that the two agree on the name of the session, not that
+ * the earlier turns are in it. Until the R-A0 probe shows how the CLI answers a
+ * UUID it does not hold, nothing here may present `idMatches` as confirmed.
+ */
+export interface ResumeFirstTurn {
+  readonly dspatchRunId: DspatchRunId;
+  /** The `session_id` of the first `init`, or `null` when none arrived. */
+  readonly initSessionId: string | null;
+  /** `initSessionId === providerSessionId`; `null` when no init arrived. */
+  readonly idMatches: boolean | null;
+  readonly terminalStatus: TerminalRunStatus | null;
+  readonly failure: FirstTurnFailure | null;
+}
+
+/** The record `resume()` leaves and the first turn completes. */
+export interface ResumptionRecord {
+  readonly localLookup: ResumeLocalLookup;
+  readonly lookupEnvironment: LookupEnvironment;
+  readonly firstTurn: ResumeFirstTurn | null;
+}
+
+/**
+ * Error-message forms that identify the provider's "session not found" answer
+ * to a `resume` it cannot honour. **Empty on purpose:** filled from the R-A0
+ * probe's observed refusal form, not guessed. Until then nothing matches and a
+ * failed first turn is classified `unknown`.
+ */
+export const PROVIDER_MISSING_FORMS: readonly RegExp[] = [];
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+interface ResumptionState {
+  readonly localLookup: ResumeLocalLookup;
+  readonly lookupEnvironment: LookupEnvironment;
+  firstTurn: Mutable<ResumeFirstTurn> | null;
+}
+
 interface ClaudeRun {
   readonly dspatchRunId: DspatchRunId;
   readonly abortController: AbortController;
@@ -968,6 +1086,8 @@ interface ClaudeRun {
   readonly waiters: Set<() => void>;
   /** True once `dispose` has taken over: the stop sequence emits nothing more. */
   stopAbandoned: boolean;
+  /** True when `query()` itself threw: no stream was ever read for this run. */
+  startFailed: boolean;
 }
 
 /** The mutable side of a {@link CancellationRecord}. */
@@ -1038,6 +1158,8 @@ interface SessionState {
   unconfirmedRun: ClaudeRun | null;
   /** True once the provider has reported this session, so later turns resume it. */
   established: boolean;
+  /** Set by `resume()` only; `null` for a session this instance started. */
+  resumption: ResumptionState | null;
   activeRun: ClaudeRun | null;
   lastRun: ClaudeRun | null;
   modelReportedValue: string | null;
@@ -1142,11 +1264,9 @@ export function providerSessionIdFor(dspatchSessionId: DspatchSessionId): string
  * DSP-109 covers a single working directory only.
  */
 export function singleRoot(config: SessionConfig): string {
-  const fold = (folder: string): string =>
-    process.platform === 'win32' ? folder.toLowerCase() : folder;
   const roots: string[] = [];
   for (const folder of [config.workspacePath, ...(config.workspacePaths ?? [])]) {
-    if (folder !== '' && !roots.some((kept) => fold(kept) === fold(folder))) {
+    if (folder !== '' && !roots.some((kept) => foldFolder(kept) === foldFolder(folder))) {
       roots.push(folder);
     }
   }
@@ -1162,6 +1282,30 @@ export function singleRoot(config: SessionConfig): string {
   return config.workspacePath;
 }
 
+/** Windows paths differ in case without differing; elsewhere they do not. */
+function foldFolder(folder: string): string {
+  return process.platform === 'win32' ? folder.toLowerCase() : folder;
+}
+
+/**
+ * JSON with object keys sorted at every level, so two equal policies written in
+ * a different key order digest the same. Array order is kept: a policy whose
+ * tool list is reordered is a different policy.
+ */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const entries = Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
 export class ClaudeAgentSdkAdapter implements AgentAdapter {
   /** Provider plus transport. Not "Claude Code". */
   readonly id = 'claude-agent-sdk';
@@ -1172,6 +1316,10 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
   private readonly substitutedQuery: ClaudeQueryFunction | null;
 
   private loadedQuery: ClaudeQueryFunction | null = null;
+
+  private readonly substitutedLookup: ClaudeLocalLookup | null;
+
+  private loadedLookup: ClaudeLocalLookup | null = null;
 
   private readonly permissions: ClaudePermissionPolicy;
 
@@ -1205,6 +1353,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       this.signalDisposeBegun = resolve;
     });
     this.substitutedQuery = options.queryFn ?? null;
+    this.substitutedLookup = options.localLookup ?? null;
     this.spawnProcess = options.spawnProcess ?? nodeSpawn;
     this.timers = options.timers ?? REAL_TIMERS;
     this.permissions = options.permissions ?? FIXTURE_PERMISSIONS;
@@ -1250,57 +1399,125 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     return this.permissions;
   }
 
+  /**
+   * A digest of this instance's permission policy, for `SessionConfig.expectedToolPolicy`
+   * on a later `resume()`: `claude-agent-sdk:` plus the SHA-256 of the policy's
+   * canonical JSON. Equal for equal policies; different for a changed `allowedTools`.
+   */
+  policyDigest(): string {
+    const digest = createHash('sha256').update(canonicalJson(this.permissions)).digest('hex');
+    return `claude-agent-sdk:${digest}`;
+  }
+
   async startSession(config: SessionConfig): Promise<SessionHandle> {
-    this.assertUsable();
-    if (config.provider !== 'claude') {
-      throw new ClaudeAdapterError(
-        `This adapter serves the "claude" provider, not "${config.provider}".`,
-      );
-    }
-    if (this.assessment.refusal !== null) {
-      throw new ClaudeAdapterError(this.assessment.refusal, 'authentication_refused');
-    }
-    singleRoot(config);
-    const dspatchSessionId = config.dspatchSessionId ?? newSessionId();
-    if (this.sessions.has(dspatchSessionId)) {
-      throw new ClaudeAdapterError(
-        `Session "${dspatchSessionId}" is already open. Close it before reusing the ID.`,
-      );
-    }
+    const dspatchSessionId = this.checkedSessionId(config, config.dspatchSessionId ?? newSessionId());
     const createdAt = nowIso();
     const providerSessionId = providerSessionIdFor(dspatchSessionId);
     this.sessions.set(dspatchSessionId, {
-      dspatchSessionId,
-      config,
-      providerSessionId,
-      createdAt,
-      listeners: new Set(),
-      runReadings: new Map(),
-      messageTypes: new Map(),
-      toolNames: new Map(),
-      initObservations: [],
-      accountReads: [],
-      resultMessages: [],
-      observedSessionIds: [],
-      outstanding: new Set(),
-      runs: [],
-      unconfirmedRun: null,
+      ...newSessionState(dspatchSessionId, config, providerSessionId, createdAt),
       established: false,
-      activeRun: null,
-      lastRun: null,
-      modelReportedValue: null,
+      resumption: null,
     });
     return { dspatchSessionId, provider: 'claude', providerSessionId, createdAt };
   }
 
-  /** Not implemented: resuming across processes is outside DSP-109. */
-  resume(sessionId: DspatchSessionId, _config: SessionConfig): Promise<SessionHandle> {
-    return Promise.reject(
-      new ClaudeAdapterError(
-        `Resuming session "${sessionId}" in a new adapter instance is not supported by ` +
-          'the Claude adapter yet. Later turns in the same instance continue the session.',
-      ),
-    );
+  /**
+   * Register a session this instance did not start, from a local record (DSP-122).
+   *
+   * The same preconditions as {@link startSession}, then, in this order: the
+   * expected tool policy against {@link policyDigest} (before any lookup), the
+   * local lookup of the derived provider UUID under `config.workspacePath`, and
+   * the record's own `cwd` against `config.workspacePath`. Each refusal carries a
+   * `providerCode` DSpatch's classifier reads: `config_mismatch`,
+   * `local_lookup_failed`, `local_record_missing`, or
+   * `local_record_missing_unaligned` when the lookup read a different profile
+   * than the provider process would (see {@link LookupEnvironment}).
+   *
+   * Nothing here asks the provider: no process is started and no model turn
+   * runs. The handle's `resumeEvidence` is therefore `'local-record'`, and the
+   * session is registered as established so that its first `send` passes
+   * `resume` with the same derived UUID and no `sessionId` (the SDK forbids both
+   * together). What the provider makes of that is recorded by the first turn in
+   * {@link resumption}, and that record never treats an equal ID as recall.
+   */
+  async resume(sessionId: DspatchSessionId, config: SessionConfig): Promise<SessionHandle> {
+    this.checkedSessionId(config, sessionId);
+    const providerSessionId = providerSessionIdFor(sessionId);
+    const dir = config.workspacePath;
+
+    if (config.expectedToolPolicy !== undefined && config.expectedToolPolicy !== this.policyDigest()) {
+      throw new ClaudeAdapterError(
+        `DSpatch's record of session "${sessionId}" expects tool policy ` +
+          `${config.expectedToolPolicy}, and this adapter's policy is ${this.policyDigest()} ` +
+          '(toolPolicy). A session is not resumed under a different tool policy. No local ' +
+          'record was read and the provider was not asked.',
+        'config_mismatch',
+      );
+    }
+
+    const lookupEnvironment = this.lookupEnvironment();
+    const profile = lookupEnvironment.hostConfigDir ?? 'the default Claude profile';
+    let info: SDKSessionInfo | undefined;
+    try {
+      info = await (await this.lookupFunction())(providerSessionId, dir);
+    } catch (error) {
+      throw new ClaudeAdapterError(
+        `DSpatch's local check of session record ${providerSessionId} under ${dir} ` +
+          `(${profile}) failed: ${errorText(error)}. The provider was not asked.`,
+        'local_lookup_failed',
+        error,
+      );
+    }
+    if (info === undefined) {
+      const missing =
+        `DSpatch's local check found no readable session record for ${providerSessionId} ` +
+        `under ${dir} (${profile}). The provider was not asked.`;
+      if (!lookupEnvironment.aligned) {
+        throw new ClaudeAdapterError(
+          `${missing} The check looked in a different profile than the one the provider ` +
+            `process uses (this process: CLAUDE_CONFIG_DIR ${describeConfigDir(lookupEnvironment.hostConfigDir)}; ` +
+            `the provider process: ${describeConfigDir(lookupEnvironment.childConfigDir)}), ` +
+            'so it says nothing about whether a record exists there.',
+          'local_record_missing_unaligned',
+        );
+      }
+      throw new ClaudeAdapterError(missing, 'local_record_missing');
+    }
+    const recordCwd = typeof info.cwd === 'string' && info.cwd !== '' ? info.cwd : null;
+    if (recordCwd !== null && foldFolder(recordCwd) !== foldFolder(dir)) {
+      throw new ClaudeAdapterError(
+        `DSpatch's local record of session ${providerSessionId} names working directory ` +
+          `${recordCwd}, and this resume names ${dir} (workspacePath). A session is not ` +
+          'resumed into a different folder. The provider was not asked.',
+        'config_mismatch',
+      );
+    }
+
+    const createdAt = nowIso();
+    this.sessions.set(sessionId, {
+      ...newSessionState(sessionId, config, providerSessionId, createdAt),
+      established: true,
+      resumption: {
+        localLookup: {
+          found: true,
+          cwd: recordCwd,
+          lastModified: info.lastModified,
+          summary: info.summary,
+          dir,
+          configDir: lookupEnvironment.hostConfigDir,
+          aligned: lookupEnvironment.aligned,
+        },
+        lookupEnvironment,
+        firstTurn: null,
+      },
+    });
+    return {
+      dspatchSessionId: sessionId,
+      provider: 'claude',
+      providerSessionId,
+      createdAt,
+      resumeEvidence: 'local-record',
+    };
   }
 
   /**
@@ -1347,6 +1564,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       cancellation: null,
       waiters: new Set(),
       stopAbandoned: false,
+      startFailed: false,
     };
     const previous = state.lastRun;
     state.activeRun = run;
@@ -1416,6 +1634,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           ? {}
           : { providerCode: adapterError.providerCode }),
       };
+      run.startFailed = true;
       run.streamEndedAt = nowIso();
       if (run.cancelRequested && run.process === null) {
         this.finishNotStarted(state, run, failure);
@@ -1729,6 +1948,37 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     return this.requireSession(sessionId).modelReportedValue;
   }
 
+  /**
+   * What `resume()` found locally and what the first turn after it reported, or
+   * `null` for a session this instance started. A copy; see {@link ResumptionRecord}.
+   */
+  resumption(sessionId: DspatchSessionId): ResumptionRecord | null {
+    const record = this.requireSession(sessionId).resumption;
+    if (record === null) {
+      return null;
+    }
+    return {
+      localLookup: { ...record.localLookup },
+      lookupEnvironment: { ...record.lookupEnvironment },
+      firstTurn: record.firstTurn === null ? null : { ...record.firstTurn },
+    };
+  }
+
+  /**
+   * Each run's local process as observed through the spawn wrapper, in run order
+   * (DSP-122 P4'): pid, exit and stderr tail, or `null` for a run whose `query()`
+   * never spawned one. An observation is what was seen; a missing exit is not
+   * proof the process is still there, nor the other way round (see {@link EndEvidence}).
+   */
+  processObservations(
+    sessionId: DspatchSessionId,
+  ): readonly { readonly dspatchRunId: DspatchRunId; readonly process: ProcessObservation | null }[] {
+    return this.requireSession(sessionId).runs.map((run) => ({
+      dspatchRunId: run.dspatchRunId,
+      process: processObservation(run.process),
+    }));
+  }
+
   /** The title passed as `Options.title` on every `query()` of this session. For run records. */
   sessionTitle(sessionId: DspatchSessionId): string {
     return sessionTitleFor(this.requireSession(sessionId));
@@ -1796,6 +2046,56 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     }
     this.loadedQuery ??= await loadSdkQuery();
     return this.loadedQuery;
+  }
+
+  private async lookupFunction(): Promise<ClaudeLocalLookup> {
+    if (this.substitutedLookup !== null) {
+      return this.substitutedLookup;
+    }
+    this.loadedLookup ??= await loadSdkLocalLookup();
+    return this.loadedLookup;
+  }
+
+  /**
+   * The profile the local lookup reads (this process's environment) against the
+   * one the provider process is given (`subprocessEnv`, as `optionsFor` passes
+   * it). The child's variable is matched by the adapter's own case rule.
+   */
+  private lookupEnvironment(): LookupEnvironment {
+    const hostConfigDir = process.env['CLAUDE_CONFIG_DIR'] ?? null;
+    let childConfigDir: string | null = null;
+    for (const [name, value] of Object.entries(this.subprocessEnv)) {
+      const key = this.caseInsensitive ? name.toUpperCase() : name;
+      if (key === 'CLAUDE_CONFIG_DIR' && value !== undefined) {
+        childConfigDir = value;
+        break;
+      }
+    }
+    return { hostConfigDir, childConfigDir, aligned: hostConfigDir === childConfigDir };
+  }
+
+  /**
+   * The preconditions `startSession` and `resume` share, in this order: usable
+   * instance, the `claude` provider, the authentication rule (unchanged), one
+   * working root, and an ID this instance does not already hold.
+   */
+  private checkedSessionId(config: SessionConfig, dspatchSessionId: DspatchSessionId): DspatchSessionId {
+    this.assertUsable();
+    if (config.provider !== 'claude') {
+      throw new ClaudeAdapterError(
+        `This adapter serves the "claude" provider, not "${config.provider}".`,
+      );
+    }
+    if (this.assessment.refusal !== null) {
+      throw new ClaudeAdapterError(this.assessment.refusal, 'authentication_refused');
+    }
+    singleRoot(config);
+    if (this.sessions.has(dspatchSessionId)) {
+      throw new ClaudeAdapterError(
+        `Session "${dspatchSessionId}" is already open. Close it before reusing the ID.`,
+      );
+    }
+    return dspatchSessionId;
   }
 
   private optionsFor(state: SessionState, run: ClaudeRun): ClaudeQueryOptions {
@@ -1924,6 +2224,18 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           state.initObservations.push({ dspatchRunId: run.dspatchRunId, message });
           if (typeof raw['model'] === 'string') {
             state.modelReportedValue = raw['model'];
+          }
+          if (state.resumption !== null && state.resumption.firstTurn === null) {
+            // The first init after a resume. Equal IDs are a consistency check only.
+            const initSessionId =
+              typeof reportedSession === 'string' && reportedSession !== '' ? reportedSession : null;
+            state.resumption.firstTurn = {
+              dspatchRunId: run.dspatchRunId,
+              initSessionId,
+              idMatches: initSessionId === null ? null : initSessionId === state.providerSessionId,
+              terminalStatus: null,
+              failure: null,
+            };
           }
         }
         return;
@@ -2080,6 +2392,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       state.activeRun = null;
     }
     run.status = status;
+    this.recordFirstTurnEnd(state, run, status, error);
     // A finished run's message is the completed blocks, as the provider gave them.
     // A run that ended early (cancelled or error) also keeps the received deltas of
     // the block that was interrupted, so the text received is not lost; the
@@ -2107,6 +2420,37 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       ...(error === undefined ? {} : { error }),
       ...(end === undefined ? {} : { end }),
     });
+  }
+
+  /**
+   * The first turn after a resume ends: its terminal status and, on an error, the
+   * classification. The session stays established and keeps its record whatever
+   * the outcome: a failed first turn is reported, not acted on, here.
+   */
+  private recordFirstTurnEnd(
+    state: SessionState,
+    run: ClaudeRun,
+    status: TerminalRunStatus,
+    error: AdapterError | undefined,
+  ): void {
+    const resumption = state.resumption;
+    if (resumption === null) {
+      return;
+    }
+    const isFirst =
+      resumption.firstTurn === null
+        ? state.runs[0] === run
+        : resumption.firstTurn.dspatchRunId === run.dspatchRunId;
+    if (!isFirst) {
+      return;
+    }
+    resumption.firstTurn = {
+      dspatchRunId: run.dspatchRunId,
+      initSessionId: resumption.firstTurn?.initSessionId ?? null,
+      idMatches: resumption.firstTurn?.idMatches ?? null,
+      terminalStatus: status,
+      failure: status === 'error' ? classifyFirstTurnFailure(run, error) : null,
+    };
   }
 
   // --- Cancellation internals (DSP-115) ------------------------------------------
@@ -2577,6 +2921,48 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
 /** The session title passed to the provider: the DSpatch session id, so the transcript names it. */
 function sessionTitleFor(state: SessionState): string {
   return state.dspatchSessionId;
+}
+
+/** The fields every session starts with, whichever way it was registered. */
+function newSessionState(
+  dspatchSessionId: DspatchSessionId,
+  config: SessionConfig,
+  providerSessionId: string,
+  createdAt: Timestamp,
+): Omit<SessionState, 'established' | 'resumption'> {
+  return {
+    dspatchSessionId,
+    config,
+    providerSessionId,
+    createdAt,
+    listeners: new Set(),
+    runReadings: new Map(),
+    messageTypes: new Map(),
+    toolNames: new Map(),
+    initObservations: [],
+    accountReads: [],
+    resultMessages: [],
+    observedSessionIds: [],
+    outstanding: new Set(),
+    runs: [],
+    unconfirmedRun: null,
+    activeRun: null,
+    lastRun: null,
+    modelReportedValue: null,
+  };
+}
+
+function describeConfigDir(configDir: string | null): string {
+  return configDir === null ? 'unset' : `"${configDir}"`;
+}
+
+/** See {@link FirstTurnFailure}. A thrown `query()` is `error` whatever its text. */
+function classifyFirstTurnFailure(run: ClaudeRun, error: AdapterError | undefined): FirstTurnFailure {
+  if (run.startFailed) {
+    return 'error';
+  }
+  const message = error?.message ?? '';
+  return PROVIDER_MISSING_FORMS.some((form) => form.test(message)) ? 'provider-missing' : 'unknown';
 }
 
 /**

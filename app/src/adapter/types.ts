@@ -117,6 +117,15 @@ export interface SessionConfig {
    * connected transports offers one.
    */
   readonly workspacePaths?: readonly string[];
+  /**
+   * The tool policy the session was recorded under, as the adapter's own digest
+   * (DSP-122). Read by `resume()` only: an adapter whose current policy digests
+   * differently refuses to resume, naming the field, so a session is not
+   * continued under rules other than the ones it was started with. Ignored by
+   * adapters without a policy digest (Cursor). Nothing in the product sets it
+   * before DSP-117; tests and probes do.
+   */
+  readonly expectedToolPolicy?: string;
 }
 
 /**

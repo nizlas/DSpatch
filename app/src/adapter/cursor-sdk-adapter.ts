@@ -142,6 +142,19 @@ interface ActiveRun {
   assistantText: string;
 }
 
+/**
+ * What `dispose` did with one agent (DSP-122). `dispose` keeps swallowing a failed
+ * close, because it runs while the application exits; this is where the failure
+ * is kept so a probe can read it.
+ */
+export interface CursorDisposalRecord {
+  readonly dspatchSessionId: DspatchSessionId;
+  /** How long the SDK's close took, including a failed one. */
+  readonly elapsedMs: number;
+  /** The message of what the close threw, or `null` when it did not. */
+  readonly error: string | null;
+}
+
 interface SessionState {
   readonly dspatchSessionId: DspatchSessionId;
   readonly config: SessionConfig;
@@ -295,6 +308,9 @@ export class CursorSdkAdapter implements AgentAdapter {
   private readonly sessions = new Map<DspatchSessionId, SessionState>();
 
   private disposed = false;
+
+  /** One per agent `dispose` closed. See {@link disposals}. */
+  private readonly disposalRecords: CursorDisposalRecord[] = [];
 
   constructor(options: CursorSdkAdapterOptions = {}) {
     this.toolPolicy = options.toolPolicy ?? 'provider-default';
@@ -586,12 +602,30 @@ export class CursorSdkAdapter implements AgentAdapter {
     this.sessions.clear();
     for (const state of states) {
       state.listeners.clear();
+      const startedAt = Date.now();
+      let error: string | null = null;
       try {
         await state.agent[Symbol.asyncDispose]();
-      } catch {
+      } catch (failure) {
         // Shutdown path: a failed close must not prevent the app from exiting.
+        // It is recorded, not acted on (DSP-122).
+        error = failure instanceof Error ? failure.message : String(failure);
       }
+      this.disposalRecords.push({
+        dspatchSessionId: state.dspatchSessionId,
+        elapsedMs: Date.now() - startedAt,
+        error,
+      });
     }
+  }
+
+  /**
+   * What `dispose` did with each agent, in session order: how long the SDK's
+   * close took and what it threw, if anything. Empty before `dispose` has run
+   * and for an instance that held no session. In memory only.
+   */
+  disposals(): readonly CursorDisposalRecord[] {
+    return [...this.disposalRecords];
   }
 
   /** Where the SDK keeps local agent state for a workspace. Outside the repo. */

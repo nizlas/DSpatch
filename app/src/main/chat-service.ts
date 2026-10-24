@@ -54,6 +54,7 @@ import type {
   StoredConversation,
   StoredMessage,
   StoredSession,
+  StoredSessionProvider,
   TestFreshness,
   TestOutcome,
   TestRunRequest,
@@ -67,6 +68,7 @@ import { AttemptLedger, attemptOrdinal, type AttemptSequence } from './attempt-l
 import {
   CONVERSATION_FORMAT_VERSION,
   newConversationId,
+  storedSessionProvider,
   type ConversationReadResult,
   type ConversationStore,
 } from './conversation-store';
@@ -269,6 +271,17 @@ function classifyResumeFailure(error: unknown): {
         note:
           'The provider was not asked: the adapter\'s own local check found no ' +
           'readable record of the session.',
+      };
+    case 'local_record_missing_unaligned':
+      // DSP-122: the adapter's local check read a different profile than the one
+      // the provider process is given, so "no record there" is not "no record".
+      return {
+        kind: 'resume-refused',
+        failure: { kind: 'unknown', detail, providerCode },
+        note:
+          'The provider was not asked, and the adapter\'s local check looked in a ' +
+          'different profile than the one the provider process uses, so finding no ' +
+          'record there says nothing about whether the provider still has the session.',
       };
     case 'config_mismatch':
       return {
@@ -737,6 +750,12 @@ export interface ChatAdapter {
    */
   resume?(sessionId: string, config: SessionConfig): Promise<SessionHandle>;
   /**
+   * The adapter's own digest of the tool policy it applies (DSP-122). Recorded as
+   * the session's `toolPolicy` so a later resume can be checked against it. Absent
+   * on an adapter without one (Cursor), whose sessions record `provider-default`.
+   */
+  policyDigest?(): string;
+  /**
    * Whether the adapter itself is holding a run for this session.
    *
    * The one thing that tells the two "already has active run" refusals apart
@@ -991,6 +1010,12 @@ export class ChatService {
   private readonly options: ChatServiceOptions;
 
   private adapter: ChatAdapter | null = null;
+
+  /**
+   * Which provider the open session's handle belongs to, written to the
+   * conversation file as `session.provider` (DSP-122). Set with `this.session`.
+   */
+  private sessionProvider: StoredSessionProvider = 'cursor';
 
   private session: ChatSessionInfo | null = null;
 
@@ -1421,15 +1446,34 @@ export class ChatService {
     };
     if (request.kind === 'retry-resume') {
       // The same path as opening the folder: the resume is simply attempted again.
-      // The acknowledgements are reserved for DSP-122's unconfirmed-end rule; this
-      // build has no such rule, so they are logged and nothing acts on them.
-      const acknowledged = request.acknowledgedAttemptIds ?? [];
+      // For a session recorded as a Claude provider session, the acknowledgements
+      // are recorded in the working copy first (DSP-122): the unconfirmed-end rule
+      // in `openProviderSession` reads the ledger, and an attempt the user has
+      // named no longer blocks the resume. The attempt itself stays unresolved. For
+      // a Cursor session nothing reads them, so DSP-4's gate is left as it was.
+      const acknowledged = wellFormedAcknowledgements(request.acknowledgedAttemptIds ?? []);
+      const recordedProvider = storedSessionProvider(this.savedSessionFor(conversationId));
+      if (acknowledged.length > 0 && recordedProvider === 'claude') {
+        this.acknowledgeInWorkingCopy(
+          this.currentLedger(),
+          this.conversationsSharingWorkingCopy(),
+          'agent-turn',
+          acknowledged,
+          'Named when trying again to resume the recorded Claude provider session. ' +
+            'The attempt stays unresolved; the resume is attempted with it acknowledged.',
+        );
+      }
       this.options.log(
         `trying again to resume the recorded provider session of ${conversationId}` +
           (acknowledged.length === 0
             ? ''
-            : ` (acknowledged attempts given: ${acknowledged.join(', ')}; no rule in ` +
-              'this build reads them)'),
+            : ` (acknowledged attempts given: ${acknowledged
+                .map((entry) => (typeof entry === 'string' ? entry : entry.attemptId))
+                .join(', ')}; ${
+                recordedProvider === 'claude'
+                  ? 'recorded in the working copy before the resume'
+                  : 'not read for a Cursor session'
+              })`),
       );
     }
     const continued = await this.openProviderSession(
@@ -1452,6 +1496,7 @@ export class ChatService {
       readonly providerSessionId: string;
       readonly createdAt: string;
       readonly toolPolicy: string;
+      readonly provider: StoredSessionProvider;
     };
     if (continued.handle === null) {
       identity = {
@@ -1459,6 +1504,7 @@ export class ChatService {
         providerSessionId: continued.recorded.providerSessionId,
         createdAt: continued.recorded.createdAt,
         toolPolicy: continued.recorded.toolPolicy,
+        provider: storedSessionProvider(continued.recorded),
       };
     } else {
       const handle = continued.handle;
@@ -1466,7 +1512,11 @@ export class ChatService {
         dspatchSessionId: handle.dspatchSessionId,
         providerSessionId: handle.providerSessionId,
         createdAt: handle.createdAt,
-        toolPolicy: 'provider-default',
+        // What the file records as the session's tool policy (DSP-122): the
+        // adapter's own digest where it has one (Claude), `provider-default` where
+        // it has none (Cursor). Today every chat session is a Cursor session.
+        toolPolicy: adapter.policyDigest?.() ?? 'provider-default',
+        provider: handle.provider === 'claude' ? 'claude' : 'cursor',
       };
       this.unsubscribe = adapter.subscribe(handle.dspatchSessionId, (event) => {
         this.onAgentEvent(event);
@@ -1493,17 +1543,41 @@ export class ChatService {
             'the history started no agent and no model turn. The values here are what ' +
             'DSpatch would send if you chose to try again or to start a new provider ' +
             'session.'
-          : // The resume attempt is one call, and it carries the session config: the
-            // Cursor adapter passes `config.modelRequested` and `config.workspacePath`
-            // to `Agent.resume` with the ID (review 004 B1). Saying nothing was sent
-            // would be false for that call.
-            'No provider session is open for this conversation. The one call DSpatch ' +
-            'made was the resume attempt, which gave the provider\'s SDK the recorded ' +
-            'session ID, the model name and this working directory path; it started ' +
-            'no agent and ran no model turn, and no prompt text and no file content ' +
-            'went anywhere. Opening the history started nothing. The values here are ' +
-            'what DSpatch would send if you chose to try again or to start a new ' +
-            'provider session.',
+          : continued.continuity.resumeFailure?.kind === 'unconfirmed-end'
+            ? // DSP-122 AC#4: the rule refused before any adapter call was made.
+              'No provider session is open for this conversation. DSpatch made no call ' +
+              'to the adapter or the provider: the resume was not attempted because the ' +
+              'last message has no confirmed end. Nothing was sent anywhere. The values ' +
+              'here are what DSpatch would send if you chose to try again or to start a ' +
+              'new provider session.'
+            : adapter.id === 'claude-agent-sdk' &&
+                storedSessionProvider(continued.recorded) === 'claude'
+              ? // Keyed on the adapter that was called (its `id`, `ClaudeAgentSdkAdapter`
+                // :1311) and on the recorded provider, not on the file alone (review 006
+                // B1): this build's chat adapter is Cursor's, and a Claude-recorded file
+                // met by it is resumed through `Agent.resume`, which does get the model
+                // name. The Claude adapter's `resume()` starts no process: its lookup
+                // passes the derived UUID and the folder to the SDK's `getSessionInfo`,
+                // and its policy refusal passes nothing. `config.modelRequested` is read
+                // only at a send (`optionsFor`), so no model name reached the SDK.
+                'No provider session is open for this conversation. The one call DSpatch ' +
+                'made was the adapter\'s resume attempt, which started no provider process ' +
+                'and ran no model turn; the adapter\'s refusal states exactly what it ' +
+                'checked (see the technical detail). The provider\'s SDK received no model ' +
+                'name and no prompt text, and no file content went anywhere. The values ' +
+                'here are what DSpatch would send if you chose to try again or to start a ' +
+                'new provider session.'
+              : // The resume attempt is one call, and it carries the session config: the
+                // Cursor adapter passes `config.modelRequested` and `config.workspacePath`
+                // to `Agent.resume` with the ID (review 004 B1). Saying nothing was sent
+                // would be false for that call.
+                'No provider session is open for this conversation. The one call DSpatch ' +
+                'made was the resume attempt, which gave the provider\'s SDK the recorded ' +
+                'session ID, the model name and this working directory path; it started ' +
+                'no agent and ran no model turn, and no prompt text and no file content ' +
+                'went anywhere. Opening the history started nothing. The values here are ' +
+                'what DSpatch would send if you chose to try again or to start a new ' +
+                'provider session.',
     };
 
     const session: ChatSessionInfo = {
@@ -1536,6 +1610,7 @@ export class ChatService {
       },
     };
     this.session = session;
+    this.sessionProvider = identity.provider;
     // Before the first prompt, so a window that is closed straight after opening a
     // project still leaves a conversation to come back to.
     this.saveConversation();
@@ -1661,6 +1736,54 @@ export class ChatService {
               'provider was not asked. No new session was opened and nothing was ' +
               `sent. The session ID ${previousId} stays on record. Trying again in ` +
               'this build gives the same answer.' +
+              earlierSendsSentence(earlierSends) +
+              CHOICES_SENTENCE,
+          },
+        };
+      }
+      // DSP-122 AC#4: a session recorded as a Claude provider session is not resumed
+      // while this conversation's last agent turn has no confirmed end in DSpatch's
+      // record and nobody has acknowledged it. The record is the conversation's
+      // ledger — what `closeSession` and an unconfirmed cancel leave there — and
+      // nothing else: the adapter's in-memory disposal records are not consulted.
+      // The refusal comes before any adapter call; "try again" with the attempt
+      // acknowledged lifts it. Cursor sessions keep DSP-4's order (resume first,
+      // then the send gate), so the two paths meet the same block in different places.
+      const unconfirmed = earlierSends.filter((send) => !send.acknowledged);
+      if (storedSessionProvider(saved) === 'claude' && unconfirmed.length > 0) {
+        const last = unconfirmed[unconfirmed.length - 1];
+        const detail =
+          `the last message of this conversation, "${last?.label ?? ''}" ` +
+          `(${last?.attemptId ?? ''}, ${last?.state ?? ''}), has no confirmed end in ` +
+          "DSpatch's record";
+        this.options.log(
+          `resume of ${previousId} not attempted (unconfirmed-end): ${detail}; the ` +
+            'provider was not asked, no new session opened, nothing sent',
+        );
+        return {
+          handle: null,
+          recorded: saved,
+          continuity: {
+            kind: 'resume-refused',
+            providerSessionOpen: false,
+            attemptedDspatchSessionId: previousId,
+            resumedProviderSessionId: null,
+            resumeError: detail,
+            resumeFailure: { kind: 'unconfirmed-end', detail, providerCode: null },
+            earlierSendsMayHaveReached: earlierSends,
+            choices: NO_SESSION_CHOICES,
+            contextToResend: null,
+            contextNote: noSessionOpenNote(savedMessageCount),
+            savedMessageCount,
+            statement:
+              `DSpatch did not try to resume ${previousId}. The session is recorded as ` +
+              `a Claude provider session, and ${detail}. Resuming it would continue a ` +
+              'transcript that may still be being written by a provider process DSpatch ' +
+              'could not confirm had exited. The provider was not asked, no new session ' +
+              'was opened and nothing was sent. The session ID stays on record. Trying ' +
+              'again with that attempt acknowledged attempts the resume (this window ' +
+              'cannot send that acknowledgement yet); the attempt itself stays recorded ' +
+              'as unresolved.' +
               earlierSendsSentence(earlierSends) +
               CHOICES_SENTENCE,
           },
@@ -1850,7 +1973,9 @@ export class ChatService {
       case 'resume-refused':
         return continuity.resumeFailure?.kind === 'provider-missing'
           ? `the provider answered that it does not have session ${id}`
-          : `resuming ${id} was refused (${detail})`;
+          : continuity.resumeFailure?.kind === 'unconfirmed-end'
+            ? `resuming ${id} was not attempted, because ${detail}`
+            : `resuming ${id} was refused (${detail})`;
       case 'resume-failed':
         return `resuming ${id} failed (${detail})`;
       case 'resume-unavailable':
@@ -3237,6 +3362,8 @@ export class ChatService {
             modelRequested: session.modelRequested,
             createdAt: session.createdAt,
             toolPolicy: session.toolPolicy,
+            // Written explicitly for every open session, Cursor's included (DSP-122).
+            provider: this.sessionProvider,
             origin: session.origin,
             workspaceOrigin: session.workspaceOrigin,
             suggestedTestCommand: session.suggestedTestCommand,
@@ -3257,7 +3384,11 @@ export class ChatService {
     held.project = project;
 
     return {
-      formatVersion: CONVERSATION_FORMAT_VERSION,
+      // The version is the content's. A session carried through unchanged from a
+      // version 1 file has no `provider`, and a file whose session lacks it is a
+      // version 1 file by definition, so it is not stamped 2 until a session with
+      // the field is written into it (an open provider session, above).
+      formatVersion: storedSession.provider === undefined ? 1 : CONVERSATION_FORMAT_VERSION,
       conversationId,
       createdAtUtc: held.createdAtUtc,
       savedAtUtc: nowIso(),

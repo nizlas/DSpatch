@@ -12,6 +12,7 @@
 import type {
   AgentEventType,
   CapabilityReport,
+  ProviderId,
   TerminalRunStatus,
   UsageReading,
 } from '../adapter/types';
@@ -393,8 +394,11 @@ export type ConversationExportResult =
  * reopened and the resume of its recorded provider session is attempted again, the
  * same way opening the folder would. Like every reopen it closes the current session
  * first, which stops a build or test command that is still running. Carries no path
- * for the same reason as the third kind. `acknowledgedAttemptIds` is reserved for the
- * unconfirmed-end refusal of DSP-122; this build reads it but acts on nothing in it.
+ * for the same reason as the third kind. `acknowledgedAttemptIds` names the attempts
+ * the user has seen for the unconfirmed-end refusal of DSP-122: for a session recorded
+ * as a Claude provider session they are acknowledged in the working copy before the
+ * resume is attempted, which is what lifts that refusal; for a Cursor session nothing
+ * reads them (DSP-4's order, resume then the send gate, is unchanged).
  */
 export type StartSessionRequest =
   | { readonly kind: 'folder'; readonly path: string }
@@ -530,8 +534,10 @@ export type SessionContinuityKind =
  *   the provider was not asked (DSP-122's Claude resume).
  * - `error` — the attempt failed with an error, quoted in `detail`.
  * - `unknown` — the evidence does not say which of the above it was.
- * - `unconfirmed-end` — not resumed because the session's last turn has no
- *   confirmed end in DSpatch's record (DSP-122; not produced by this build).
+ * - `unconfirmed-end` — not resumed because the conversation's last agent turn has
+ *   no confirmed end in DSpatch's record (DSP-122). Produced only for a session
+ *   recorded as a Claude provider session, before the adapter is asked anything;
+ *   lifted by trying again with the attempt acknowledged.
  */
 export type ResumeFailureKind =
   | 'provider-missing'
@@ -1218,13 +1224,28 @@ export interface StoredProject {
   readonly git: GitBaselineInfo;
 }
 
+/** The providers a stored session can belong to. `copilot` has no session store yet. */
+export type StoredSessionProvider = Extract<ProviderId, 'cursor' | 'claude'>;
+
 /** The provider session a conversation was last worked in. Identity, not a handle. */
 export interface StoredSession {
   readonly dspatchSessionId: string;
   readonly providerSessionId: string;
   readonly modelRequested: string;
   readonly createdAt: string;
+  /**
+   * The provider's own tool policy identifier for the session: `provider-default`
+   * for Cursor; for a Claude session the adapter's policy digest, which a later
+   * resume is checked against (DSP-122).
+   */
   readonly toolPolicy: string;
+  /**
+   * Which provider holds the session (DSP-122, conversation format version 2).
+   * Absent only in a version 1 file, which recorded Cursor sessions only; readers
+   * take an absent value as `'cursor'`. From version 2 on it is written for every
+   * session, Cursor's included, so "absent" means nothing but "version 1 file".
+   */
+  readonly provider?: StoredSessionProvider;
   readonly origin: SessionOrigin;
   readonly workspaceOrigin: string;
   readonly suggestedTestCommand: string;

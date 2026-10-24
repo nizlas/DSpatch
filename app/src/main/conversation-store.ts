@@ -9,6 +9,8 @@ import type {
   PartialWriteInfo,
   StoredAttempt,
   StoredConversation,
+  StoredSession,
+  StoredSessionProvider,
 } from '../shared/bridge';
 
 /**
@@ -41,7 +43,30 @@ import type {
  *   is the only version of that rule that survives someone adding a field later.
  */
 
-export const CONVERSATION_FORMAT_VERSION = 1;
+/**
+ * The format this build writes.
+ *
+ * - 1: the original DSP-4 format; `session` has no `provider`.
+ * - 2 (DSP-122): `session.provider` says which provider holds the session. Written
+ *   for Cursor sessions too, so an absent value identifies a version 1 file.
+ *
+ * This build reads 1 and 2. A build that understands only 1 shows a version 2
+ * file as a newer format, read-only and never rewritten — the existing rule, and
+ * the deliberate consequence of the bump: a version 1 build would otherwise
+ * rewrite the session without `provider` on its next save, after which the file
+ * would read as a Cursor session.
+ */
+export const CONVERSATION_FORMAT_VERSION = 2;
+
+/**
+ * The provider a stored session belongs to, with a version 1 file's absent value
+ * read as Cursor — the only provider such a file could record.
+ */
+export function storedSessionProvider(
+  session: Pick<StoredSession, 'provider'> | null | undefined,
+): StoredSessionProvider {
+  return session?.provider ?? 'cursor';
+}
 
 /**
  * How much baseline content one conversation may keep on disk.

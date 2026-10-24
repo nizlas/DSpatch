@@ -33,9 +33,11 @@ import {
   STDERR_TAIL_BYTES,
   STDERR_TAIL_LABEL,
   FIXTURE_PERMISSIONS,
+  PROVIDER_MISSING_FORMS,
   providerEnvironment,
   providerSessionIdFor,
 } from '../src/adapter/claude-agent-sdk-adapter.ts';
+import { CursorSdkAdapter } from '../src/adapter/cursor-sdk-adapter.ts';
 import type { AgentEvent } from '../src/adapter/types.ts';
 import {
   CANCEL_REPLY_PROMPT,
@@ -476,7 +478,7 @@ test('maps the SDK stream to DSpatch events and passes the fixture configuration
       start: 'supported',
       streaming: 'supported',
       cancel: 'supported',
-      resume: 'unsupported',
+      resume: 'unknown', // implemented; no live evidence (DSP-122)
       modelSelection: 'supported',
       approvals: 'unsupported',
       usageReporting: 'unknown',
@@ -1214,6 +1216,18 @@ test('an error result after a cancel is recorded but does not end the run; witho
   }
 });
 
+test('startSession refuses an ID this instance already holds', async () => {
+  const { queryFn, spawnProcess } = fakeSdk(async function* () {});
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
+  try {
+    const dir = workspace('duplicate-id');
+    await adapter.startSession(startConfig(dir, { dspatchSessionId: 'dsp-session-twice' }));
+    await assert.rejects(adapter.startSession(startConfig(dir, { dspatchSessionId: 'dsp-session-twice' })), /already open/);
+  } finally {
+    await adapter.dispose();
+  }
+});
+
 test('more than one working folder is refused with a clear error', async () => {
   const { queryFn, calls, spawnProcess } = fakeSdk(async function* () {});
   const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
@@ -1679,6 +1693,392 @@ test('the adapter refuses to start a session the guard refuses, and never calls 
       mode,
     );
   }
+});
+
+// --- DSP-122: resume in a new adapter instance (offline) --------------------------
+//
+// The local lookup is substituted, so nothing here reads a Claude profile, and
+// query() is the fake, so no process starts. What is checked is what resume()
+// asks, refuses and records, and what the first send after it carries — not
+// whether the provider continues the session, which only the prepared live
+// probes (plan 4.2-4.4) can show.
+
+const RESUMED_ID = 'dsp-session-dsp122-resume';
+
+/** The host's CLAUDE_CONFIG_DIR, if any, copied into the child's environment so the lookup counts as aligned. */
+function alignedEnv(): Record<string, string | undefined> {
+  const host = process.env['CLAUDE_CONFIG_DIR'];
+  return { ...CLEAN_ENV, ...(host === undefined ? {} : { CLAUDE_CONFIG_DIR: host }) };
+}
+
+const hostConfigDir = (): string | null => process.env['CLAUDE_CONFIG_DIR'] ?? null;
+
+/** A substitute lookup that records what it was asked and answers as told (a value, a function, or an Error to throw). */
+function substituteLookup(answer: unknown) {
+  const asked: Array<{ uuid: string; dir: string }> = [];
+  const localLookup = async (uuid: string, dir: string) => {
+    asked.push({ uuid, dir });
+    const value = typeof answer === 'function' ? answer(uuid, dir) : answer;
+    if (value instanceof Error) {
+      throw value;
+    }
+    return value;
+  };
+  return { asked, localLookup: localLookup as any };
+}
+
+const LAST_MODIFIED = 1_761_264_000_000;
+const localRecord = (uuid: string, cwd: string) => ({ sessionId: uuid, summary: RESUMED_ID, lastModified: LAST_MODIFIED, cwd });
+const recordUnderAskedDir = (uuid: string, dir: string) => localRecord(uuid, dir);
+
+const okScript: Script = async function* (call) {
+  yield init(call);
+  yield result(call);
+};
+
+function resumingAdapter(sdk: ReturnType<typeof fakeSdk>, localLookup: unknown, env = alignedEnv()) {
+  return new ClaudeAgentSdkAdapter({ queryFn: sdk.queryFn, spawnProcess: sdk.spawnProcess, env, localLookup: localLookup as any });
+}
+
+/** A session started and used once in instance X, which is then disposed. */
+async function startedAndDisposed(dir: string) {
+  const sdk = fakeSdk(okScript);
+  const x = new ClaudeAgentSdkAdapter({ queryFn: sdk.queryFn, spawnProcess: sdk.spawnProcess, env: alignedEnv() });
+  const handle = await x.startSession(startConfig(dir, { dspatchSessionId: RESUMED_ID }));
+  const seen = collect(x, RESUMED_ID);
+  const finished = seen.nextFinish();
+  await x.send(RESUMED_ID, 'Remember this code exactly: M-7731. Reply NOTED.');
+  await finished;
+  assert.equal(sdk.calls[0]?.options['sessionId'], handle.providerSessionId);
+  await x.dispose();
+  return handle;
+}
+
+test('resume registers a session from a local record; its first send passes resume with the same UUID and no sessionId', async () => {
+  const dir = workspace('resume-same-process');
+  const started = await startedAndDisposed(dir);
+  const sdk = fakeSdk(okScript);
+  const lookup = substituteLookup(recordUnderAskedDir);
+  const y = resumingAdapter(sdk, lookup.localLookup);
+  try {
+    assert.equal(y.capabilities().resume, 'unknown');
+    const handle = await y.resume(RESUMED_ID, startConfig(dir, { expectedToolPolicy: y.policyDigest() }));
+    assert.equal(handle.resumeEvidence, 'local-record');
+    assert.equal(handle.provider, 'claude');
+    assert.equal(handle.providerSessionId, started.providerSessionId);
+    assert.equal(handle.providerSessionId, providerSessionIdFor(RESUMED_ID));
+    assert.deepEqual(lookup.asked, [{ uuid: providerSessionIdFor(RESUMED_ID), dir }]);
+    assert.equal(sdk.calls.length, 0, 'resume() calls no query()');
+    assert.deepEqual(y.resumption(RESUMED_ID), {
+      localLookup: {
+        found: true,
+        cwd: dir,
+        lastModified: LAST_MODIFIED,
+        summary: RESUMED_ID,
+        dir,
+        configDir: hostConfigDir(),
+        aligned: true,
+      },
+      lookupEnvironment: { hostConfigDir: hostConfigDir(), childConfigDir: hostConfigDir(), aligned: true },
+      firstTurn: null,
+    });
+
+    const seen = collect(y, RESUMED_ID);
+    const finished = seen.nextFinish();
+    const run = await y.send(RESUMED_ID, 'What was the code? Reply with the code only.');
+    await finished;
+    const options = sdk.calls[0]?.options ?? {};
+    assert.equal(options['resume'], providerSessionIdFor(RESUMED_ID));
+    assert.equal('sessionId' in options, false, 'the SDK forbids sessionId together with resume');
+    assert.equal(options['cwd'], dir);
+    assert.equal(options['title'], RESUMED_ID);
+    assert.equal(lastFinished(seen.events), 'finished');
+    // The init reported the UUID DSpatch passed: a consistency check, recorded as such.
+    assert.deepEqual(y.resumption(RESUMED_ID)?.firstTurn, {
+      dspatchRunId: run.dspatchRunId,
+      initSessionId: providerSessionIdFor(RESUMED_ID),
+      idMatches: true,
+      terminalStatus: 'finished',
+      failure: null,
+    });
+
+    // A later turn resumes again and does not rewrite the first turn's record.
+    const again = seen.nextFinish();
+    await y.send(RESUMED_ID, 'again');
+    await again;
+    assert.equal(sdk.calls[1]?.options['resume'], providerSessionIdFor(RESUMED_ID));
+    assert.equal(y.resumption(RESUMED_ID)?.firstTurn?.dspatchRunId, run.dspatchRunId);
+    assert.equal(y.resumption(RESUMED_ID)?.firstTurn?.terminalStatus, 'finished');
+  } finally {
+    await y.dispose();
+  }
+});
+
+test('a missing local record refuses with local_record_missing, says the provider was not asked, and registers nothing', async () => {
+  const dir = workspace('resume-missing');
+  const sdk = fakeSdk(okScript);
+  const lookup = substituteLookup(undefined);
+  const y = resumingAdapter(sdk, lookup.localLookup);
+  try {
+    await assert.rejects(y.resume(RESUMED_ID, startConfig(dir)), (error: any) => {
+      assert.equal(error.providerCode, 'local_record_missing');
+      assert.ok(
+        error.message.startsWith(
+          `DSpatch's local check found no readable session record for ${providerSessionIdFor(RESUMED_ID)} under ${dir} (`,
+        ),
+        error.message,
+      );
+      assert.match(error.message, /\)\. The provider was not asked\.$/);
+      assert.doesNotMatch(error.message, /provider does not have/);
+      return true;
+    });
+    assert.equal(lookup.asked.length, 1);
+    assert.equal(sdk.calls.length, 0);
+    assert.throws(() => y.resumption(RESUMED_ID), /Unknown session/);
+    assert.equal(y.hasActiveRun(RESUMED_ID), false);
+  } finally {
+    await y.dispose();
+  }
+});
+
+test('a missing record while the lookup read a different profile than the provider process gets is local_record_missing_unaligned', async () => {
+  const dir = workspace('resume-unaligned');
+  const otherProfile = tempRoot('other-claude-profile');
+  const sdk = fakeSdk(okScript);
+  const lookup = substituteLookup(undefined);
+  const y = resumingAdapter(sdk, lookup.localLookup, { ...CLEAN_ENV, CLAUDE_CONFIG_DIR: otherProfile });
+  try {
+    await assert.rejects(y.resume(RESUMED_ID, startConfig(dir)), (error: any) => {
+      assert.equal(error.providerCode, 'local_record_missing_unaligned');
+      assert.match(error.message, /found no readable session record/);
+      assert.match(error.message, /The provider was not asked\./);
+      assert.match(error.message, /looked in a different profile than the one the provider process uses/);
+      assert.ok(error.message.includes(otherProfile), error.message);
+      assert.doesNotMatch(error.message, /provider does not have/);
+      return true;
+    });
+    assert.equal(sdk.calls.length, 0);
+    assert.throws(() => y.resumption(RESUMED_ID), /Unknown session/);
+  } finally {
+    await y.dispose();
+  }
+});
+
+test('a lookup that throws is local_lookup_failed and registers nothing', async () => {
+  const dir = workspace('resume-lookup-failed');
+  const sdk = fakeSdk(okScript);
+  const lookup = substituteLookup(new Error('synthetic read failure'));
+  const y = resumingAdapter(sdk, lookup.localLookup);
+  try {
+    await assert.rejects(y.resume(RESUMED_ID, startConfig(dir)), (error: any) => {
+      assert.equal(error.providerCode, 'local_lookup_failed');
+      assert.match(error.message, /local check of session record .* failed: .*synthetic read failure\. The provider was not asked\.$/);
+      return true;
+    });
+    assert.equal(sdk.calls.length, 0);
+    assert.throws(() => y.resumption(RESUMED_ID), /Unknown session/);
+  } finally {
+    await y.dispose();
+  }
+});
+
+test('a config mismatch refuses with config_mismatch naming the field; the tool policy is checked before any lookup', async () => {
+  const dir = workspace('resume-config');
+  const other = workspace('resume-config-other');
+  const sdk = fakeSdk(okScript);
+  const lookup = substituteLookup((uuid: string) => localRecord(uuid, other));
+  const y = resumingAdapter(sdk, lookup.localLookup);
+  try {
+    await assert.rejects(
+      y.resume(RESUMED_ID, startConfig(dir, { expectedToolPolicy: 'claude-agent-sdk:not-this-policy' })),
+      (error: any) => {
+        assert.equal(error.providerCode, 'config_mismatch');
+        assert.match(error.message, /\(toolPolicy\)/);
+        assert.ok(error.message.includes(y.policyDigest()), error.message);
+        assert.match(error.message, /No local record was read and the provider was not asked\./);
+        return true;
+      },
+    );
+    assert.equal(lookup.asked.length, 0, 'no lookup when the policy digest already mismatches');
+
+    await assert.rejects(y.resume(RESUMED_ID, startConfig(dir)), (error: any) => {
+      assert.equal(error.providerCode, 'config_mismatch');
+      assert.match(error.message, /\(workspacePath\)/);
+      assert.ok(error.message.includes(other) && error.message.includes(dir), error.message);
+      assert.match(error.message, /The provider was not asked\./);
+      return true;
+    });
+    assert.equal(lookup.asked.length, 1);
+    assert.equal(sdk.calls.length, 0);
+    assert.throws(() => y.resumption(RESUMED_ID), /Unknown session/);
+  } finally {
+    await y.dispose();
+  }
+
+  // A record without a cwd cannot contradict the folder: accepted, recorded as null.
+  const noCwd = substituteLookup((uuid: string) => ({ sessionId: uuid, summary: 's', lastModified: 2 }));
+  const z = resumingAdapter(fakeSdk(okScript), noCwd.localLookup);
+  try {
+    const handle = await z.resume(RESUMED_ID, startConfig(dir));
+    assert.equal(handle.resumeEvidence, 'local-record');
+    assert.equal(z.resumption(RESUMED_ID)?.localLookup.cwd, null);
+  } finally {
+    await z.dispose();
+  }
+});
+
+test("resume keeps startSession's preconditions, each answered before any lookup", async () => {
+  const dir = workspace('resume-preconditions');
+  const sdk = fakeSdk(okScript);
+  const lookup = substituteLookup(recordUnderAskedDir);
+  const y = resumingAdapter(sdk, lookup.localLookup);
+  try {
+    await assert.rejects(
+      y.resume(RESUMED_ID, { ...startConfig(dir), provider: 'cursor' as const }),
+      /serves the "claude" provider/,
+    );
+    await assert.rejects(
+      y.resume(RESUMED_ID, startConfig(dir, { workspacePaths: [dir, workspace('resume-second-root')] })),
+      /names 2 working folders/,
+    );
+    await y.startSession(startConfig(dir, { dspatchSessionId: RESUMED_ID }));
+    await assert.rejects(y.resume(RESUMED_ID, startConfig(dir)), /already open/);
+    assert.equal(lookup.asked.length, 0);
+    assert.equal(sdk.calls.length, 0);
+  } finally {
+    await y.dispose();
+  }
+  await assert.rejects(y.resume(RESUMED_ID, startConfig(dir)), /disposed/);
+
+  // The authentication rule, unchanged: the guard answers before the lookup.
+  const withKey = new ClaudeAgentSdkAdapter({
+    queryFn: sdk.queryFn,
+    spawnProcess: sdk.spawnProcess,
+    env: { ...CLEAN_ENV, ANTHROPIC_API_KEY: 'k' },
+    localLookup: lookup.localLookup,
+  });
+  try {
+    await assert.rejects(withKey.resume(RESUMED_ID, startConfig(dir)), (error: any) => {
+      assert.equal(error.providerCode, 'authentication_refused');
+      assert.match(error.message, /No API-key approval is recorded/);
+      return true;
+    });
+  } finally {
+    await withKey.dispose();
+  }
+  assert.equal(lookup.asked.length, 0);
+});
+
+test('a first turn the provider ends with an error is classified unknown (no recognised form yet); the session stays established', async () => {
+  assert.deepEqual(PROVIDER_MISSING_FORMS, [], 'filled from the R-A0 probe, not guessed');
+  const dir = workspace('resume-first-error');
+  const sdk = fakeSdk(async function* (call, index) {
+    yield init(call);
+    if (index === 0) {
+      yield result(call, { subtype: 'error_during_execution', is_error: true, result: '', errors: ['synthetic failure'] });
+    } else {
+      yield result(call);
+    }
+  });
+  const lookup = substituteLookup(recordUnderAskedDir);
+  const y = resumingAdapter(sdk, lookup.localLookup);
+  try {
+    await y.resume(RESUMED_ID, startConfig(dir));
+    const seen = collect(y, RESUMED_ID);
+    const finished = seen.nextFinish();
+    const run = await y.send(RESUMED_ID, 'first');
+    await finished;
+    const terminal = terminals(seen.events).at(-1);
+    assert.equal(terminal?.type === 'run.finished' ? terminal.status : null, 'error');
+    assert.equal(terminal?.type === 'run.finished' ? terminal.error?.providerCode : null, 'error_during_execution');
+    assert.deepEqual(y.resumption(RESUMED_ID)?.firstTurn, {
+      dspatchRunId: run.dspatchRunId,
+      initSessionId: providerSessionIdFor(RESUMED_ID),
+      idMatches: true,
+      terminalStatus: 'error',
+      failure: 'unknown',
+    });
+
+    // Not flipped and not thrown away: the next turn resumes the same UUID again.
+    const again = seen.nextFinish();
+    await y.send(RESUMED_ID, 'second');
+    await again;
+    assert.equal(lastFinished(seen.events), 'finished');
+    assert.equal(sdk.calls[1]?.options['resume'], providerSessionIdFor(RESUMED_ID));
+    assert.equal('sessionId' in (sdk.calls[1]?.options ?? {}), false);
+    assert.equal(y.resumption(RESUMED_ID)?.localLookup.found, true);
+    assert.equal(y.resumption(RESUMED_ID)?.firstTurn?.failure, 'unknown', 'the second turn does not rewrite the first');
+  } finally {
+    await y.dispose();
+  }
+});
+
+test('a first turn whose query() throws is classified error; the record stays and no init is claimed', async () => {
+  const dir = workspace('resume-first-throws');
+  let calls = 0;
+  const queryFn = (() => {
+    calls += 1;
+    throw new Error('synthetic start failure');
+  }) as any;
+  const lookup = substituteLookup(recordUnderAskedDir);
+  const y = new ClaudeAgentSdkAdapter({ queryFn, env: alignedEnv(), localLookup: lookup.localLookup });
+  try {
+    await y.resume(RESUMED_ID, startConfig(dir));
+    const seen = collect(y, RESUMED_ID);
+    const finished = seen.nextFinish();
+    await assert.rejects(y.send(RESUMED_ID, 'first'), /synthetic start failure/);
+    await finished;
+    assert.equal(lastFinished(seen.events), 'error');
+    const firstTurn = y.resumption(RESUMED_ID)?.firstTurn;
+    assert.equal(firstTurn?.failure, 'error');
+    assert.equal(firstTurn?.terminalStatus, 'error');
+    assert.equal(firstTurn?.initSessionId, null);
+    assert.equal(firstTurn?.idMatches, null);
+    assert.equal(calls, 1);
+    assert.equal(y.hasActiveRun(RESUMED_ID), false);
+  } finally {
+    await y.dispose();
+  }
+});
+
+test('policyDigest is stable for equal policies, independent of key order, and differs for a changed allowedTools', async () => {
+  const { queryFn } = fakeSdk(okScript);
+  const a = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  const b = new ClaudeAgentSdkAdapter({
+    queryFn,
+    env: CLEAN_ENV,
+    permissions: {
+      strictMcpConfig: true,
+      settingSources: [],
+      permissionMode: 'dontAsk',
+      allowedTools: [...FIXTURE_PERMISSIONS.allowedTools],
+      tools: [...FIXTURE_PERMISSIONS.tools],
+    },
+  });
+  const c = new ClaudeAgentSdkAdapter({
+    queryFn,
+    env: CLEAN_ENV,
+    permissions: { ...FIXTURE_PERMISSIONS, allowedTools: [...FIXTURE_PERMISSIONS.allowedTools, 'Grep(/**)'] },
+  });
+  try {
+    assert.match(a.policyDigest(), /^claude-agent-sdk:[0-9a-f]{64}$/);
+    assert.equal(a.policyDigest(), a.policyDigest());
+    assert.equal(a.policyDigest(), b.policyDigest());
+    assert.notEqual(a.policyDigest(), c.policyDigest());
+  } finally {
+    await Promise.all([a.dispose(), b.dispose(), c.dispose()]);
+  }
+});
+
+test('CursorSdkAdapter.disposals() is empty for an instance that held no session, and dispose stays idempotent', async () => {
+  // The only Cursor check possible offline: a session would need the real SDK's
+  // Agent. What dispose records per agent is covered by the typecheck and by
+  // reading, until the P1 probe runs it.
+  const adapter = new CursorSdkAdapter({ toolPolicy: 'provider-default' });
+  assert.deepEqual(adapter.disposals(), []);
+  await adapter.dispose();
+  await adapter.dispose();
+  assert.deepEqual(adapter.disposals(), []);
 });
 
 // --- The configuration DSpatch sends and records (DSP-109, 22 Oct 2026) ----------
@@ -2283,6 +2683,120 @@ test('scenario flags: provider and recorded authorization', () => {
     () => parseScenarioArgs(['--provider=cursor', '--subscription-authorization=r']),
     /apply only to --provider=claude/,
   );
+});
+
+// --- DSP-122: the prepared resume probes parse, refuse, and reach no adapter --------
+//
+// No probe is invoked with a repository path here. The Claude probes are run only
+// up to the authorization guard, with an empty temp folder standing in for the
+// repository and every provider entry point substituted; the Cursor probe has no
+// guard in the code, so it is checked at the argument stage only.
+
+const probeLog = (name: string) => path.join(tempRoot(`dsp122-${name}-log`), 'record.json');
+
+test('DSP-122 probe flags: --dir, --log and --same-process parse; an unknown flag still throws', () => {
+  assert.deepEqual(parseScenarioArgs(['local-lookup', 'u-1', '--dir=C:/some/project', '--log=out.json']), {
+    positional: ['local-lookup', 'u-1'],
+    options: { provider: 'cursor', authorization: null, lookupDir: 'C:/some/project', lookupLog: 'out.json' },
+  });
+  assert.deepEqual(
+    parseScenarioArgs(['resume-chain', 'start', 'repo', 'log', '--provider=claude', '--same-process', '--subscription-authorization=r']),
+    {
+      positional: ['resume-chain', 'start', 'repo', 'log'],
+      options: { provider: 'claude', authorization: { kind: 'subscription', authorization: 'r' }, sameProcess: true },
+    },
+  );
+  assert.throws(() => parseScenarioArgs(['--lookup=x']), /Unknown flag --lookup=x/);
+});
+
+test('DSP-122 Cursor probe: resume-after-dispose stops at the argument stage, before any adapter exists', async () => {
+  await assert.rejects(runScenarioCommand(['resume-after-dispose']), /Missing argument 1/);
+  await assert.rejects(runScenarioCommand(['resume-after-dispose', 'only-one-argument']), /Missing argument 2/);
+  // Not a provider-aware subcommand: a Claude flag is rejected before the dispatch.
+  // One positional argument only (Verifier 003 F2): the providerAware check fires
+  // first, and even without it `arg(1)` would throw "Missing argument 2" before the
+  // scenario — so no invocation here could ever reach a Cursor adapter.
+  await assert.rejects(
+    runScenarioCommand(['resume-after-dispose', 'a', '--provider=claude']),
+    /applies only to code-change, cancel-reply, two-turn, cancel-then-follow-up, resume-chain, resume-unknown-id, resume-controls, local-lookup/,
+  );
+  // The usage text, which every argument error carries, says what it costs and that nothing guards it.
+  await assert.rejects(runScenarioCommand(['resume-after-dispose']), /BILLS TWO\s+CURSOR TURNS/);
+  await assert.rejects(runScenarioCommand(['resume-after-dispose']), /NO CODE GUARD/);
+  await assert.rejects(runScenarioCommand(['resume-after-dispose']), /never run it to\s+check it/);
+});
+
+test('DSP-122 Claude probes: each is refused before any adapter or lookup exists when no authorization is recorded', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* () {});
+  const lookups: string[] = [];
+  const substitutes = {
+    env: scenarioEnv(),
+    claudeQueryFn: queryFn,
+    claudeSpawnProcess: spawnProcess,
+    claudeLocalLookup: async (uuid: string) => {
+      lookups.push(uuid);
+      return undefined;
+    },
+  };
+  // An empty temp folder, not a repository; nothing below reads it.
+  const folder = tempRoot('dsp122-probe-folder');
+  const chainLog = probeLog('chain');
+  const unknownIdLog = probeLog('unknown-id');
+  const controlsLog = probeLog('controls');
+  const commands: Array<{ argv: string[]; recordPath: string }> = [
+    { argv: ['resume-chain', 'start', folder, chainLog], recordPath: chainLog },
+    { argv: ['resume-chain', 'continue', folder, chainLog], recordPath: `${chainLog}.continue.json` },
+    { argv: ['resume-unknown-id', folder, unknownIdLog], recordPath: unknownIdLog },
+    { argv: ['resume-controls', folder, controlsLog], recordPath: controlsLog },
+  ];
+  for (const { argv, recordPath } of commands) {
+    const code = await runScenarioCommand([...argv, '--provider=claude'], substitutes);
+    assert.equal(code, EXIT_REFUSED, argv.join(' '));
+    const record = readRecord(recordPath);
+    assert.equal(record.refused, true);
+    assert.equal(record.provider, 'claude');
+    assert.match(record.authentication.refusal, /No authorized authentication path/);
+    assert.equal(record.session, undefined);
+    // Without --provider=claude they are not Claude runs, and say so before anything else.
+    await assert.rejects(runScenarioCommand(argv, substitutes), /is a Claude probe/);
+  }
+  assert.equal(calls.length, 0, 'no query()');
+  assert.equal(lookups.length, 0, 'no lookup');
+  assert.equal(fs.existsSync(`${chainLog}.state.json`), false, 'no state file from a refused start');
+  await assert.rejects(
+    runScenarioCommand(['resume-chain', 'later', folder, chainLog, '--provider=claude'], substitutes),
+    /takes start or continue/,
+  );
+  // resume-chain continue without a state file: refused first, so the file is never looked for.
+  assert.equal(calls.length, 0);
+});
+
+test('DSP-122 local-lookup prints what it would look for, through the substitute only', async () => {
+  const asked: Array<{ uuid: string; dir: string | undefined }> = [];
+  const dir = tempRoot('dsp122-lookup-dir');
+  const logFile = path.join(tempRoot('dsp122-lookup-log'), 'lookup.json');
+  const code = await runScenarioCommand(['local-lookup', 'abcd-1234', `--dir=${dir}`, `--log=${logFile}`], {
+    env: { ...CLEAN_ENV, CLAUDE_CONFIG_DIR: 'C:/synthetic/claude-profile' },
+    claudeLocalLookup: async (uuid, d) => {
+      asked.push({ uuid, dir: d });
+      return { sessionId: uuid, summary: 's', lastModified: 5, cwd: d };
+    },
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(asked, [{ uuid: 'abcd-1234', dir: path.resolve(dir) }]);
+  const record = readRecord(logFile);
+  assert.equal(record.found, true);
+  assert.equal(record.lookup, 'substituted');
+  assert.equal(record.configDirSource, 'CLAUDE_CONFIG_DIR');
+  assert.equal(
+    record.expectedTranscriptPath,
+    path.join('C:/synthetic/claude-profile', 'projects', path.resolve(dir).replace(/[^A-Za-z0-9]/g, '-'), 'abcd-1234.jsonl'),
+  );
+  assert.equal(record.expectedPathExists, false);
+  assert.match(record.encodingNote, /a guess the record does not cover/);
+  // The flags belong to local-lookup (and --same-process to resume-chain) alone.
+  await assert.rejects(runScenarioCommand(['two-turn', 'a', 'b', '--dir=x']), /--dir and --log apply only to local-lookup/);
+  await assert.rejects(runScenarioCommand(['two-turn', 'a', 'b', '--same-process']), /--same-process applies only to resume-chain start/);
 });
 
 // --- S1: authentication observations decide a direct API-key run's verdict ---------

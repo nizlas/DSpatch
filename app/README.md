@@ -781,6 +781,61 @@ against Cursor's own transcript of a received message: 2 443 characters where
 DSpatch's count said 2 260. None of the difference comes from DSpatch or from you,
 and the window says so beside the count rather than leaving it to be discovered.
 
+#### Resuming a Claude provider session (DSP-122, offline-verified only)
+
+The Claude adapter (`claude-agent-sdk-adapter.ts`) can register a session it did
+not start, so that its first send passes `resume` with the same provider session
+UUID DSpatch derived for it. Nothing in the window uses this yet: every chat
+session is still a Cursor session until Claude is wired into the chat (DSP-117).
+What exists, and what it is not:
+
+- **A local check, not the provider's answer.** `resume()` looks the session up
+  through the SDK's documented `getSessionInfo`, under the session's working
+  directory, in this process's Claude profile. A record found means a readable
+  transcript file exists there; it does not mean the provider will continue the
+  session, and an equal session ID in the first turn's `init` is a consistency
+  check, not recall. The resumed statement says so, and `capabilities().resume`
+  stays `'unknown'` until a live run shows otherwise.
+- **Refusals name what was checked.** No readable record
+  (`local_record_missing`); no record while the check read a different profile
+  than the provider process is given (`local_record_missing_unaligned`, reported
+  as *unknown*); a working directory or tool policy that differs from the record
+  (`config_mismatch`); a lookup that failed (`local_lookup_failed`). None of them
+  says the provider does not have the session, because the provider was not asked.
+- **No resume after an unconfirmed end.** A session recorded as a Claude session
+  is not resumed while the conversation's last message has no confirmed end in
+  DSpatch's record. The window says why and lists the attempt. The service lifts
+  the block when a *try again* request names the attempt (`acknowledgedAttemptIds`
+  on `retry-resume`); the window's *try again* button does not pass one yet, which
+  is DSP-117's renderer work, so in this build the block stays until then. The
+  attempt stays recorded as unresolved either way. Cursor sessions keep the
+  earlier order: resume first, then the gate at the next send.
+- **Conversation files are format version 2** from this build on: `session.provider`
+  names the provider, written for Cursor sessions too. A build that understands
+  only version 1 shows such a file as a newer format, read-only, and never
+  rewrites it. A version 1 file is still read, as a Cursor session, and is
+  rewritten as version 2 only once a provider session is open over it again.
+
+What has **not** been observed: whether a Claude session resumes in a new process
+through this path, how the provider's CLI answers a `resume` of a UUID it does not
+hold, whether a turn's local process lingers after a normal turn, and what
+`getSessionInfo` finds on a real machine. The probes for those are prepared as
+subcommands of `node dist/main/experiment-work.js` (run it without arguments for
+the usage text) and **none has been run**:
+
+| Subcommand | Measures | Costs if run | Needs |
+| --- | --- | --- | --- |
+| `resume-after-dispose <repoDir> <logPath>` | P1: a Cursor session resumed in a new adapter instance after a dispose, plus two unbilled refusal controls | 2 Cursor turns | the stored Cursor login. **No code guard exists for it**: it bills the moment it runs with a repository path, so it is never run to check it. |
+| `resume-chain start` / `continue <repoDir> <logPath>` | P3 + P4': a Claude session resumed in a second OS process from a state file; whether turn 1's process exits on its own | 2 Claude turns (+1 with `--same-process`) | `--provider=claude --subscription-authorization=<reference>` |
+| `resume-unknown-id <repoDir> <logPath>` | R-A0: what the CLI does with a `resume` of a UUID it never saw, recorded verbatim | up to 1 Claude turn | the same |
+| `resume-controls <repoDir> <logPath> [chainLogPath]` | R-A1 / R-A2: the real lookup for a never-created ID; the chain's ID under a copied fixture | none | the same; the guard applies all the same |
+| `local-lookup <uuid> [--dir=<cwd>] [--log=<path>]` | 4.5: `getSessionInfo` against existing transcripts, and the expected transcript path | none | nothing but your Claude profile, which it reads; not run until that is agreed |
+
+Every Claude probe refuses without a recorded authorization before any adapter is
+built — except `local-lookup`, which asks no provider and has no guard; it reads
+this user's Claude profile. Each writes one JSON record beside its log path; a
+refusal is a finding and is never retried.
+
 ### Environment variables
 
 | Variable | Purpose |

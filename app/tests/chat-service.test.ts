@@ -38,7 +38,7 @@ import type {
   UsageReading,
 } from '../src/adapter/types.ts';
 import { ChatService, type ChatAdapter } from '../src/main/chat-service.ts';
-import { ConversationStore } from '../src/main/conversation-store.ts';
+import { ConversationStore, storedSessionProvider } from '../src/main/conversation-store.ts';
 import {
   holdDirectory,
   restoreEnvironment,
@@ -763,7 +763,8 @@ test('DSP-61: the refusal is unchanged for a folder DSpatch did not generate', a
  * and no terminal event ever follows, which is the shape of the unknown case.
  */
 class FakeAdapter implements ChatAdapter {
-  readonly id = 'fake-adapter';
+  /** Settable: a test models the Claude adapter by giving it that adapter's `id` (DSP-122). */
+  id = 'fake-adapter';
 
   readonly sent: string[] = [];
 
@@ -819,9 +820,11 @@ class FakeAdapter implements ChatAdapter {
    * must report as a failure that may be temporary, not as the provider's answer.
    *
    * An adapter without the capability at all is modelled by deleting `resume`,
-   * because that is what the service actually tests for.
+   * because that is what the service actually tests for. `'unaligned'` is the
+   * Claude adapter's `local_record_missing_unaligned` (DSP-122): no record found,
+   * but the check read a different profile than the provider process is given.
    */
-  resumeBehaviour: 'ok' | 'not-found' | 'error' = 'not-found';
+  resumeBehaviour: 'ok' | 'not-found' | 'error' | 'unaligned' = 'not-found';
 
   /**
    * What a successful `resume` reports it checked. `'provider-answered'` by default,
@@ -853,6 +856,19 @@ class FakeAdapter implements ChatAdapter {
         throw Object.assign(
           new Error('Cursor adapter operation "resume" failed: TypeError: fetch failed'),
           { name: 'CursorAdapterError' },
+        );
+      }
+      if (this.resumeBehaviour === 'unaligned') {
+        throw Object.assign(
+          new Error(
+            "DSpatch's local check found no readable session record for " +
+              `00000000-0000-4000-8000-000000000001 under ${config.workspacePath} (the ` +
+              'default Claude profile). The provider was not asked. The check looked in a ' +
+              'different profile than the one the provider process uses (this process: ' +
+              'CLAUDE_CONFIG_DIR unset; the provider process: "C:\\synthetic\\profile"), so ' +
+              'it says nothing about whether a record exists there.',
+          ),
+          { name: 'ClaudeAdapterError', providerCode: 'local_record_missing_unaligned' },
         );
       }
       this.sessionId = dspatchSessionId;
@@ -2159,6 +2175,10 @@ test('SIMULATED: an earlier message with no confirmed end is listed, and nothing
     path: workspace,
   });
   assert.equal(reopened.continuity.kind, 'resume-refused');
+  // A Cursor session is resumed first and gated at the send (DSP-4's order); the
+  // unconfirmed-end rule of DSP-122 applies to sessions recorded as Claude only.
+  assert.deepEqual(second.adapter.resumeAttempts, ['dsp-session-fake']);
+  assert.equal(storedSessionProvider(second.store.read(session.conversationId).conversation?.session), 'cursor');
   const listed = reopened.continuity.earlierSendsMayHaveReached;
   assert.equal(listed.length, 1);
   assert.equal(listed[0]?.label, 'a job left going');
@@ -2182,22 +2202,220 @@ test('SIMULATED: an earlier message with no confirmed end is listed, and nothing
   await second.service.dispose();
 });
 
-test('SIMULATED: a saved conversation without a provider field resumes as before', async () => {
-  // Every file this build writes is format 1 and records no provider; DSP-122's
-  // reader will default that to Cursor. Nothing here reads such a field.
-  const { workspace, conversationId, second } = await restartInto('continuity-v1');
-  const saved = second.store.read(conversationId).conversation;
-  assert.equal(saved?.formatVersion, 1);
-  assert.equal(saved !== null && saved !== undefined && 'provider' in saved.session, false);
+/** Change a saved conversation's file on disk, as an earlier build or another machine might have left it. */
+function rewriteSavedFile(
+  store: ConversationStore,
+  conversationId: string,
+  mutate: (raw: Record<string, any>) => void,
+): void {
+  const { filePath } = store.read(conversationId);
+  const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  mutate(raw);
+  fs.writeFileSync(filePath, JSON.stringify(raw, null, 2), 'utf8');
+}
 
-  second.adapter.resumeBehaviour = 'ok';
-  const session = await second.service.startChatSession({
-    kind: 'folder',
-    path: workspace,
+/**
+ * Like {@link restartInto}, with the file rewritten between the two runs — before
+ * the second service reads it — and, with `leaveRunning`, the first run's turn
+ * left without an end, so the close records it as `outcome-unknown`.
+ */
+async function restartIntoRewritten(
+  name: string,
+  mutate: (raw: Record<string, any>) => void,
+  leaveRunning = false,
+): Promise<{
+  readonly workspace: string;
+  readonly conversationId: string;
+  readonly second: ReturnType<typeof serviceOver>;
+}> {
+  const workspace = makeDir(name);
+  fs.writeFileSync(path.join(workspace, 'readme.txt'), 'x\n', 'utf8');
+  const store = storeFor(name);
+
+  const first = serviceOver(`${name}-1`, workspace, store);
+  const session = await first.service.startChatSession({ kind: 'folder', path: workspace });
+  await first.service.sendPrompt('what does this project do');
+  if (!leaveRunning) {
+    first.adapter.emit({ type: 'assistant.message', text: 'It dispatches things.' });
+    first.adapter.emit({ type: 'run.finished', status: 'finished' });
+  }
+  await first.service.dispose();
+  rewriteSavedFile(store, session.conversationId, mutate);
+
+  const second = serviceOver(`${name}-2`, workspace, store);
+  await second.service.resumeConversation(session.conversationId);
+  return { workspace, conversationId: session.conversationId, second };
+}
+
+test('SIMULATED: a version 1 file without a provider field resumes as before, and becomes version 2 only once a provider session is open over it', async () => {
+  // This build writes format 2 with the provider named, for Cursor too (DSP-122).
+  // A file DSP-121 left behind is format 1 with no provider: made here by hand.
+  const { workspace, conversationId, second } = await restartIntoRewritten('continuity-v1', (raw) => {
+    assert.equal(raw.formatVersion, 2);
+    assert.equal(raw.session.provider, 'cursor');
+    raw.formatVersion = 1;
+    delete raw.session.provider;
   });
+  const before = second.store.read(conversationId).conversation;
+  assert.equal(before?.formatVersion, 1);
+  assert.equal('provider' in (before?.session ?? {}), false);
+  assert.equal(storedSessionProvider(before?.session), 'cursor');
+
+  // Refused: no provider session is open, and the file is not rewritten as
+  // version 2 — the session is carried through as it was, provider-less, and the
+  // version stays the content's.
+  second.adapter.resumeBehaviour = 'not-found';
+  const refused = await second.service.startChatSession({ kind: 'folder', path: workspace });
+  assert.equal(refused.continuity.kind, 'resume-refused');
+  const afterRefusal = second.store.read(conversationId).conversation;
+  assert.equal(afterRefusal?.formatVersion, 1);
+  assert.deepEqual(afterRefusal?.session, before?.session);
+
+  // Resumed: the open's save writes version 2 with the provider named explicitly.
+  second.adapter.resumeBehaviour = 'ok';
+  const session = await second.service.startChatSession({ kind: 'retry-resume' });
   assert.equal(session.continuity.kind, 'provider-session-resumed');
-  assert.deepEqual(second.adapter.resumeAttempts, ['dsp-session-fake']);
+  assert.deepEqual(second.adapter.resumeAttempts, ['dsp-session-fake', 'dsp-session-fake']);
   assert.equal(second.adapter.startSessionCalls, 0);
+  const afterResume = second.store.read(conversationId).conversation;
+  assert.equal(afterResume?.formatVersion, 2);
+  assert.equal(afterResume?.session.provider, 'cursor');
+  assert.equal(afterResume?.session.toolPolicy, 'provider-default');
+  assert.equal(afterResume?.session.dspatchSessionId, before?.session.dspatchSessionId);
+  // `createdAt` is the resumed handle's, as before DSP-122: a resumed session is
+  // written from the open handle, and only an unopened one is carried untouched.
+  await second.service.dispose();
+});
+
+test('SIMULATED: a session recorded as Claude whose last turn has no confirmed end is not resumed until the attempt is acknowledged (DSP-122 AC#4)', async () => {
+  const { workspace, conversationId, second } = await restartIntoRewritten(
+    'continuity-unconfirmed-claude',
+    (raw) => {
+      raw.session.provider = 'claude';
+    },
+    true,
+  );
+  second.adapter.resumeBehaviour = 'ok';
+  const before = second.store.read(conversationId).conversation?.session;
+  assert.equal(before?.provider, 'claude');
+
+  const refused = await second.service.startChatSession({ kind: 'folder', path: workspace });
+  assert.equal(refused.continuity.kind, 'resume-refused');
+  assert.equal(refused.continuity.providerSessionOpen, false);
+  assert.deepEqual(second.adapter.resumeAttempts, [], 'the adapter was not asked');
+  assert.equal(second.adapter.startSessionCalls, 0);
+  assert.equal(refused.continuity.resumeFailure?.kind, 'unconfirmed-end');
+  assert.equal(refused.continuity.resumeFailure?.providerCode, null);
+  assert.deepEqual(refused.continuity.choices, ALL_CHOICES);
+  assert.equal(refused.continuity.contextToResend, null);
+  const listed = refused.continuity.earlierSendsMayHaveReached;
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]?.state, 'outcome-unknown');
+  assert.equal(listed[0]?.acknowledged, false);
+  assert.match(
+    refused.continuity.statement,
+    /^DSpatch did not try to resume dsp-session-fake\. The session is recorded as a Claude provider session, and the last message of this conversation, "what does this project do" \(dsp-attempt-\d+, outcome-unknown\), has no confirmed end in DSpatch's record\. Resuming it would continue a transcript that may still be being written by a provider process DSpatch could not confirm had exited\. The provider was not asked, no new session was opened and nothing was sent\. The session ID stays on record\. Trying again with that attempt acknowledged attempts the resume \(this window cannot send that acknowledgement yet\); the attempt itself stays recorded as unresolved\./,
+  );
+  assert.match(refused.continuity.statement, /Nothing is resent/);
+  assert.match(refused.continuity.statement, /You can try again/);
+  // The context statement must agree: no adapter call was made (Verifier 003 F1).
+  assert.match(refused.context.statement, /made no call to the adapter or the provider/);
+  assert.doesNotMatch(refused.context.statement, /gave the provider's SDK/);
+  await assert.rejects(
+    () => second.service.sendPrompt('carry on'),
+    /No provider session is open for this conversation: resuming dsp-session-fake was not attempted, because the last message of this conversation/,
+  );
+  assert.deepEqual(second.adapter.sent, []);
+  assert.deepEqual(
+    second.store.read(conversationId).conversation?.session,
+    before,
+    'the recorded session is kept as it was',
+  );
+
+  // Try again naming the attempt: it is acknowledged in the working copy first,
+  // then the resume is attempted. The attempt stays listed, now flagged.
+  const attemptId = listed[0]?.attemptId ?? '';
+  const resumed = await second.service.startChatSession({
+    kind: 'retry-resume',
+    acknowledgedAttemptIds: [attemptId],
+  });
+  assert.equal(resumed.continuity.kind, 'provider-session-resumed');
+  assert.deepEqual(second.adapter.resumeAttempts, ['dsp-session-fake']);
+  assert.equal(resumed.continuity.earlierSendsMayHaveReached.length, 1);
+  assert.equal(resumed.continuity.earlierSendsMayHaveReached[0]?.acknowledged, true);
+  assert.equal(resumed.continuity.earlierSendsMayHaveReached[0]?.state, 'outcome-unknown');
+  assert.match(second.logs.join('\n'), /recorded in the working copy before the resume/);
+  await second.service.dispose();
+});
+
+test('SIMULATED: trying again without naming the attempt keeps a Claude-recorded session unresumed', async () => {
+  const { workspace, second } = await restartIntoRewritten(
+    'continuity-unconfirmed-claude-again',
+    (raw) => {
+      raw.session.provider = 'claude';
+    },
+    true,
+  );
+  second.adapter.resumeBehaviour = 'ok';
+  const refused = await second.service.startChatSession({ kind: 'folder', path: workspace });
+  assert.equal(refused.continuity.resumeFailure?.kind, 'unconfirmed-end');
+  const again = await second.service.startChatSession({ kind: 'retry-resume' });
+  assert.equal(again.continuity.resumeFailure?.kind, 'unconfirmed-end');
+  assert.deepEqual(second.adapter.resumeAttempts, []);
+  await second.service.dispose();
+});
+
+test("SIMULATED: a local record missing under an unaligned profile is reported as unknown, not as the provider's answer", async () => {
+  const { workspace, second } = await restartInto('continuity-unaligned');
+  second.adapter.resumeBehaviour = 'unaligned';
+  const session = await second.service.startChatSession({ kind: 'folder', path: workspace });
+  assert.equal(session.continuity.kind, 'resume-refused');
+  assert.equal(session.continuity.resumeFailure?.kind, 'unknown');
+  assert.equal(session.continuity.resumeFailure?.providerCode, 'local_record_missing_unaligned');
+  assert.equal(second.adapter.startSessionCalls, 0);
+  assert.match(session.continuity.statement, /^DSpatch tried to resume dsp-session-fake and the resume was refused: /);
+  assert.match(
+    session.continuity.statement,
+    /The provider was not asked, and the adapter's local check looked in a different profile than the one the provider process uses, so finding no record there says nothing about whether the provider still has the session\./,
+  );
+  assert.doesNotMatch(session.continuity.statement, /provider answered/);
+  assert.deepEqual(session.continuity.choices, ALL_CHOICES);
+  // The context statement for a Cursor-recorded session says the SDK got the model
+  // name (true of `Agent.resume`); a file recorded as Claude gets the Claude wording.
+  assert.match(session.context.statement, /gave the provider's SDK/);
+  await second.service.dispose();
+
+  // The same refusal over a session recorded as Claude: the adapter's lookup passes the
+  // UUID and the folder only, so the statement must not claim a model name was sent.
+  const claude = await restartIntoRewritten('continuity-unaligned-claude', (raw) => {
+    raw.session.provider = 'claude';
+  });
+  claude.second.adapter.resumeBehaviour = 'unaligned';
+  // The Claude wording is chosen from the adapter that was called, not the file alone.
+  claude.second.adapter.id = 'claude-agent-sdk';
+  const claudeSession = await claude.second.service.startChatSession({ kind: 'folder', path: claude.workspace });
+  assert.equal(claudeSession.continuity.resumeFailure?.kind, 'unknown');
+  assert.match(claudeSession.context.statement, /received no model name/);
+  assert.match(claudeSession.context.statement, /started no provider process and ran no model turn/);
+  assert.doesNotMatch(claudeSession.context.statement, /gave the provider's SDK/);
+  await claude.second.service.dispose();
+});
+
+test('SIMULATED: a file recorded as Claude met by the Cursor adapter gets the Cursor wording, because that is the call that was made', async () => {
+  // This build's chat adapter is Cursor's whatever the file says (DSP-117 selects by
+  // the record). `Agent.resume` does get the model name, so the statement must say so.
+  const { workspace, second } = await restartIntoRewritten('continuity-claude-file-cursor-adapter', (raw) => {
+    raw.session.provider = 'claude';
+  });
+  assert.equal(second.adapter.id, 'fake-adapter');
+  second.adapter.resumeBehaviour = 'not-found';
+  const session = await second.service.startChatSession({ kind: 'folder', path: workspace });
+  assert.equal(session.continuity.kind, 'resume-refused');
+  assert.equal(session.continuity.resumeFailure?.kind, 'provider-missing');
+  assert.deepEqual(second.adapter.resumeAttempts, ['dsp-session-fake']);
+  assert.match(session.continuity.statement, /the provider answered that it does not have that session/);
+  assert.match(session.context.statement, /gave the provider's SDK/);
+  assert.doesNotMatch(session.context.statement, /received no model name/);
   await second.service.dispose();
 });
 

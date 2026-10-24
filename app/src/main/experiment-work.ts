@@ -1,9 +1,12 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import tls from 'node:tls';
+
+import type { SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk' with { 'resolution-mode': 'import' };
 
 import type { AgentAdapter } from '../adapter/agent-adapter';
 import {
@@ -12,9 +15,11 @@ import {
   CANCEL_STOP_REASON,
   ClaudeAgentSdkAdapter,
   DISPOSE_BOUND_MS,
+  providerSessionIdFor,
   type AccountObservation,
   type AuthenticationAssessment,
   type CancelTimers,
+  type ClaudeLocalLookup,
   type ClaudeProcessSpawner,
   type ClaudeQueryFunction,
   type EndEvidence,
@@ -22,7 +27,7 @@ import {
   type LiveAuthorization,
 } from '../adapter/claude-agent-sdk-adapter';
 import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
-import type { AgentEvent, UsageReading } from '../adapter/types';
+import type { AgentEvent, SessionConfig, UsageReading } from '../adapter/types';
 import {
   diffSnapshots,
   generateExperimentRepo,
@@ -559,6 +564,17 @@ export interface ScenarioOptions {
   readonly afterTerminalWatchMs?: number;
   /** Substitute for {@link readSourceRevision}. Tests only. */
   readonly sourceRevision?: () => SourceRevision;
+  /**
+   * A substitute for the SDK's `getSessionInfo` in the DSP-122 resume probes and
+   * in `local-lookup`. Tests only: with it, nothing reads a Claude profile.
+   */
+  readonly claudeLocalLookup?: (uuid: string, dir?: string) => Promise<SDKSessionInfo | undefined>;
+  /** `local-lookup` (`--dir=`): the project path to look under; omitted searches every project directory. */
+  readonly lookupDir?: string;
+  /** `local-lookup` (`--log=`): where the record is written; omitted prints it. */
+  readonly lookupLog?: string;
+  /** `resume-chain start` (`--same-process`): after the dispose, also continue in this process (optional P2). */
+  readonly sameProcess?: boolean;
 }
 
 // --- The DSpatch source revision a run tested (DSP-109 AC #4) ------------------
@@ -676,17 +692,31 @@ function providerOf(options: ScenarioOptions): ExperimentProvider {
 
 function createAdapter(options: ScenarioOptions): CursorSdkAdapter | ClaudeAgentSdkAdapter {
   if (providerOf(options) === 'claude') {
-    return new ClaudeAgentSdkAdapter({
-      authorization: options.authorization ?? null,
-      env: options.env ?? process.env,
-      ...(options.claudeQueryFn === undefined ? {} : { queryFn: options.claudeQueryFn }),
-      ...(options.claudeSpawnProcess === undefined
-        ? {}
-        : { spawnProcess: options.claudeSpawnProcess }),
-      ...(options.claudeTimers === undefined ? {} : { timers: options.claudeTimers }),
-    });
+    return createClaudeAdapter(options);
   }
   return new CursorSdkAdapter({ toolPolicy: 'provider-default' });
+}
+
+/**
+ * The Claude adapter as every Claude scenario builds it. `localLookup` overrides
+ * the test substitute for the one probe that fabricates a record (R-A0); the
+ * product's own lookup is used when neither is given.
+ */
+function createClaudeAdapter(
+  options: ScenarioOptions,
+  localLookup?: ClaudeLocalLookup,
+): ClaudeAgentSdkAdapter {
+  const lookup = localLookup ?? options.claudeLocalLookup;
+  return new ClaudeAgentSdkAdapter({
+    authorization: options.authorization ?? null,
+    env: options.env ?? process.env,
+    ...(options.claudeQueryFn === undefined ? {} : { queryFn: options.claudeQueryFn }),
+    ...(options.claudeSpawnProcess === undefined
+      ? {}
+      : { spawnProcess: options.claudeSpawnProcess }),
+    ...(options.claudeTimers === undefined ? {} : { timers: options.claudeTimers }),
+    ...(lookup === undefined ? {} : { localLookup: lookup }),
+  });
 }
 
 /**
@@ -2864,6 +2894,887 @@ export async function scenarioTwoTurn(
   return exitCode;
 }
 
+// --- DSP-122: prepared resume probes (never run during verification) ------------
+//
+// Plan 20261024-010000-resume-plan sections 4.1-4.5, amended by addendum 003
+// section 3. Each writes one JSON record; a refusal is a finding, never retried.
+// None has been run: every live behaviour these would measure — whether a Claude
+// session resumes in a new process, how the CLI answers a UUID it does not hold,
+// whether a turn's process lingers, what `getSessionInfo` finds — is unknown until
+// Niclas authorizes a run on an identified candidate. The Cursor probe has no
+// refusal path in this program at all: `refuseUnauthorized` assesses Claude runs
+// only, so `resume-after-dispose` bills two Cursor turns the moment it runs with
+// a repository path. During verification no probe is ever invoked with one.
+
+/** What `resume-chain start` leaves for `continue`, beside the log as `<logPath>.state.json`. */
+interface ResumeChainState {
+  readonly dspatchSessionId: string;
+  readonly providerSessionId: string;
+  readonly marker: string;
+  readonly cwd: string;
+  readonly expectedToolPolicy: string;
+  readonly startedAtUtc: string;
+  readonly logPath: string;
+}
+
+/** P4': how long after turn 1's terminal event the process is given to exit on its own. */
+const CHAIN_PROCESS_WAIT_MS = 10_000;
+
+function chainStateFile(logPath: string): string {
+  return `${path.resolve(logPath)}.state.json`;
+}
+
+function markerPrompts(marker: string): { readonly first: string; readonly second: string } {
+  return {
+    first:
+      `Remember this code exactly: ${marker}. Do not use any tool. ` +
+      'Reply with the single word NOTED.',
+    second:
+      'What was the code I asked you to remember? Do not use any tool. ' +
+      'Reply with the code only.',
+  };
+}
+
+function requireClaudeProbe(options: ScenarioOptions, subcommand: string): void {
+  if (providerOf(options) !== 'claude') {
+    throw new Error(
+      `${subcommand} is a Claude probe: run it with --provider=claude and ` +
+        `--subscription-authorization=<reference>.\n${usage()}`,
+    );
+  }
+}
+
+function probeConfig(
+  provider: ExperimentProvider,
+  workspacePath: string,
+  extra: Partial<SessionConfig> = {},
+): SessionConfig {
+  return { provider, modelRequested: modelRequested(provider), workspacePath, ...extra };
+}
+
+/** A fresh copy of a fixture folder, for a resume under another path (R-C2, R-A2). */
+function copyFixture(source: string): string {
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-resume-copy-'));
+  fs.cpSync(source, copy, { recursive: true });
+  return copy;
+}
+
+/**
+ * `resume()` into a new adapter instance, timed and recorded under `key`; with
+ * `asSession` the record's `session` is this one, so the Claude observations and
+ * the authentication verdict read it.
+ */
+async function resumeInto(
+  adapter: AgentAdapter,
+  sessionId: string,
+  config: SessionConfig,
+  record: Record<string, unknown>,
+  key: string,
+  asSession: boolean,
+): Promise<Recorder> {
+  const startedAt = performance.now();
+  const handle = await adapter.resume(sessionId, config);
+  const elapsedMs = round(performance.now() - startedAt);
+  const described: Record<string, unknown> = {
+    dspatchSessionId: handle.dspatchSessionId,
+    providerSessionId: handle.providerSessionId,
+    createdAt: handle.createdAt,
+    resumeEvidence: handle.resumeEvidence ?? null,
+    elapsedMs,
+    workspacePath: config.workspacePath,
+    modelRequested: config.modelRequested,
+    expectedToolPolicy: config.expectedToolPolicy ?? null,
+    ...(adapter instanceof ClaudeAgentSdkAdapter
+      ? {
+          adapter: adapter.id,
+          permissions: adapter.permissionPolicy(),
+          policyDigest: adapter.policyDigest(),
+          resumption: adapter.resumption(sessionId),
+        }
+      : { toolPolicy: 'provider-default' }),
+  };
+  record[key] = described;
+  if (asSession) {
+    record['session'] = described;
+  }
+  log(
+    `${key}: ${sessionId} -> ${handle.providerSessionId} in ${String(elapsedMs)} ms ` +
+      `(evidence ${handle.resumeEvidence ?? 'none'})`,
+  );
+  return makeRecorder(adapter, sessionId);
+}
+
+/** A resume that may be refused, recorded either way and never retried (R-C1, R-C2, R-A1, R-A2). */
+async function recordResumeAttempt(
+  adapter: AgentAdapter,
+  sessionId: string,
+  config: SessionConfig,
+  expected: string,
+): Promise<Record<string, unknown>> {
+  const startedAt = performance.now();
+  const base = { dspatchSessionId: sessionId, workspacePath: config.workspacePath, expected };
+  try {
+    const handle = await adapter.resume(sessionId, config);
+    return {
+      ...base,
+      refused: false,
+      elapsedMs: round(performance.now() - startedAt),
+      handle: {
+        providerSessionId: handle.providerSessionId,
+        resumeEvidence: handle.resumeEvidence ?? null,
+      },
+      ...(adapter instanceof ClaudeAgentSdkAdapter
+        ? { resumption: adapter.resumption(sessionId) }
+        : {}),
+    };
+  } catch (error) {
+    return {
+      ...base,
+      refused: true,
+      elapsedMs: round(performance.now() - startedAt),
+      error: describeError(error),
+    };
+  }
+}
+
+/** `process.kill(pid, 0)` as a liveness reading, recorded with what it can and cannot say. */
+function liveness(pid: number | null): Record<string, unknown> {
+  if (pid === null) {
+    return { pid: null, checked: false, note: 'no pid was observed for the run' };
+  }
+  try {
+    process.kill(pid, 0);
+    return {
+      pid,
+      checked: true,
+      signalZeroDelivered: true,
+      note:
+        'process.kill(pid, 0) succeeded: a process with this pid exists. On Windows ' +
+        'this says a handle could be opened, not which program the pid now belongs to.',
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? null;
+    return {
+      pid,
+      checked: true,
+      signalZeroDelivered: false,
+      code,
+      note:
+        code === 'ESRCH'
+          ? 'no process with this pid'
+          : 'process.kill(pid, 0) failed for another reason; liveness unknown',
+    };
+  }
+}
+
+type LocalLookupProbe = (uuid: string, dir?: string) => Promise<SDKSessionInfo | undefined>;
+
+/** The SDK's own `getSessionInfo`, or the test substitute. Loaded only when a probe needs it. */
+async function localLookupProbe(options: ScenarioOptions): Promise<LocalLookupProbe> {
+  if (options.claudeLocalLookup !== undefined) {
+    return options.claudeLocalLookup;
+  }
+  const sdk = await import('@anthropic-ai/claude-agent-sdk');
+  return (uuid, dir) => sdk.getSessionInfo(uuid, dir === undefined ? {} : { dir });
+}
+
+/**
+ * The lookup in this process's profile and, when the provider process is given
+ * another `CLAUDE_CONFIG_DIR`, once more with that value set for the call. Both
+ * are recorded; whether `getSessionInfo` reads the variable at call time is not
+ * established, so the second reading is a record and not a conclusion.
+ */
+async function lookupInBothProfiles(
+  uuid: string,
+  dir: string,
+  options: ScenarioOptions,
+): Promise<Record<string, unknown>> {
+  const lookup = await localLookupProbe(options);
+  const hostConfigDir = process.env['CLAUDE_CONFIG_DIR'] ?? null;
+  const childConfigDir = (options.env ?? process.env)['CLAUDE_CONFIG_DIR'] ?? null;
+  const run = async (label: string): Promise<Record<string, unknown>> => {
+    try {
+      const info = await lookup(uuid, dir);
+      return { label, found: info !== undefined, info: info ?? null };
+    } catch (error) {
+      return { label, found: null, error: describeError(error) };
+    }
+  };
+  const host = await run('this process (host) environment');
+  let child: Record<string, unknown> | null = null;
+  if (hostConfigDir !== childConfigDir) {
+    const previous = process.env['CLAUDE_CONFIG_DIR'];
+    try {
+      if (childConfigDir === null) {
+        delete process.env['CLAUDE_CONFIG_DIR'];
+      } else {
+        process.env['CLAUDE_CONFIG_DIR'] = childConfigDir;
+      }
+      child = await run("the provider process's CLAUDE_CONFIG_DIR");
+    } finally {
+      if (previous === undefined) {
+        delete process.env['CLAUDE_CONFIG_DIR'];
+      } else {
+        process.env['CLAUDE_CONFIG_DIR'] = previous;
+      }
+    }
+  }
+  return {
+    uuid,
+    dir,
+    hostConfigDir,
+    childConfigDir,
+    aligned: hostConfigDir === childConfigDir,
+    host,
+    child,
+    note:
+      'whether getSessionInfo reads CLAUDE_CONFIG_DIR at call time is not established; ' +
+      'the second lookup is recorded, not relied on',
+  };
+}
+
+/**
+ * The per-project directory name Claude Code derives from a working directory, as
+ * far as the DSP-115 record shows it: `C:\Users\...\fixture` became
+ * `C--Users-...-fixture`, so `:` and the separators became `-`. Every other
+ * non-alphanumeric character is mapped to `-` here too, which is a guess the
+ * record does not cover; `local-lookup` prints the path so a run can check it.
+ */
+function encodeProjectDir(dir: string): string {
+  return dir.replace(/[^A-Za-z0-9]/g, '-');
+}
+
+/**
+ * P1 + R-C1 + R-C2 (Cursor). Two billed turns under the stored Cursor login, and
+ * **no refusal path**: `refuseUnauthorized` assesses Claude runs only. Verified
+ * only through `parseScenarioArgs`/`usage()` tests and the missing-argument error
+ * in `runScenarioCommand`, which fires before this function is reached. Never run
+ * it with a repository path to check it.
+ *
+ * X starts a session and plants a marker; X is disposed (timed, `disposals()`
+ * recorded); Y resumes the same ID (timed) and asks for the marker. Then without
+ * a billed turn: W resumes a fresh ID (R-C1, expected `agent_not_found`) and V
+ * resumes the session's ID under a copy of the fixture (R-C2, expected refused;
+ * unmeasured). Exit 0: both turns finished, the marker recalled with no tool
+ * call, and R-C1 refused. The equal agent ID is a consistency check only.
+ */
+export async function scenarioResumeAfterDispose(
+  repoDir: string,
+  logPath: string,
+  options: ScenarioOptions = {},
+): Promise<number> {
+  if (providerOf(options) !== 'cursor') {
+    throw new Error('resume-after-dispose is a Cursor probe; it takes no --provider flag.');
+  }
+  const target = path.resolve(repoDir);
+  const marker = newNonce();
+  const prompts = markerPrompts(marker);
+  const record: Record<string, unknown> = {
+    scenario:
+      'DSP-122 P1 + R-C1 + R-C2 — Cursor: dispose one adapter instance, resume the ' +
+      'session in another',
+    startedAtUtc: new Date().toISOString(),
+    node: process.versions.node,
+    testRepo: target,
+    marker,
+    prompts: [prompts.first, prompts.second],
+    provider: 'cursor',
+    dspatchSource: (options.sourceRevision ?? readSourceRevision)(),
+    guard:
+      'none: a Cursor run is not assessed by this program; it bills under the stored ' +
+      'Cursor login',
+  };
+  const config = probeConfig('cursor', target);
+  const instances: CursorSdkAdapter[] = [];
+  const cursorAdapter = (): CursorSdkAdapter => {
+    const instance = new CursorSdkAdapter({ toolPolicy: 'provider-default' });
+    instances.push(instance);
+    return instance;
+  };
+  let exitCode = 1;
+  const turns: TurnLog[] = [];
+  try {
+    const x = cursorAdapter();
+    const { sessionId, recorder } = await openSession(x, target, record, 'cursor');
+    const first = await recorder.send('turn-1', prompts.first);
+    await recorder.waitForFinish(first);
+    recorder.stop();
+    turns.push(first);
+
+    const disposeStart = performance.now();
+    await x.dispose();
+    record['disposeX'] = { elapsedMs: round(performance.now() - disposeStart), disposals: x.disposals() };
+
+    const y = cursorAdapter();
+    const resumed = await resumeInto(y, sessionId, config, record, 'resumeY', false);
+    const second = await resumed.send('turn-2', prompts.second);
+    await resumed.waitForFinish(second);
+    resumed.stop();
+    turns.push(second);
+    const answer = second.finalMessage ?? second.deltaText;
+    const toolCallsStarted = second.toolCalls.filter((call) => call.phase === 'started').length;
+    const resumedId = (record['resumeY'] as { providerSessionId: string }).providerSessionId;
+    record['recall'] = {
+      answer,
+      answerContainsMarker: answer.includes(marker),
+      toolCallsStarted,
+      sameAgentId: resumedId === providerSessionIdOf(record),
+      sameAgentIdNote: 'a consistency check only; the recalled marker is the evidence',
+    };
+
+    // R-C1: an ID nothing created. No billed turn.
+    const freshId = `dsp-session-${randomUUID()}`;
+    record['rC1'] = await recordResumeAttempt(
+      cursorAdapter(),
+      freshId,
+      config,
+      'refused with agent_not_found (DSP-4 measured this for Cursor)',
+    );
+    // R-C2: the session's ID under a copy of the fixture. No billed turn.
+    const copy = copyFixture(target);
+    record['rC2'] = {
+      copyOf: target,
+      ...(await recordResumeAttempt(
+        cursorAdapter(),
+        sessionId,
+        { ...config, workspacePath: copy },
+        'refused: the session is keyed by the original path (expected, not measured)',
+      )),
+    };
+    record['turns'] = turns;
+    record['capabilities'] = y.capabilities();
+    const rC1Refused = (record['rC1'] as { refused: boolean }).refused;
+    exitCode =
+      first.terminalStatus === 'finished' &&
+      second.terminalStatus === 'finished' &&
+      answer.includes(marker) &&
+      toolCallsStarted === 0 &&
+      rC1Refused
+        ? 0
+        : 2;
+  } catch (error) {
+    record['failure'] = describeError(error);
+    log(`FAILURE: ${String((record['failure'] as { message: string }).message)}`);
+    exitCode = 3;
+  } finally {
+    const disposals: unknown[] = [];
+    for (const instance of instances) {
+      const startedAt = performance.now();
+      await instance.dispose();
+      disposals.push({
+        elapsedMs: round(performance.now() - startedAt),
+        disposals: instance.disposals(),
+      });
+    }
+    record['disposeAll'] = disposals;
+    record['exitCode'] = exitCode;
+    record['finishedAtUtc'] = new Date().toISOString();
+    writeRecord(logPath, record);
+  }
+  return exitCode;
+}
+
+/**
+ * P3 + P4' (Claude), in two OS processes. `start`: one turn with a marker, a wait
+ * of {@link CHAIN_PROCESS_WAIT_MS}, the process liveness, dispose with its
+ * records, the local lookups in both profiles, the transcript location, and
+ * `<logPath>.state.json`. `continue`: a new process resumes from the state file
+ * with the real lookup and asks for the marker. Pass P3: turn 2 finished with the
+ * marker and no tool call, the init reported the UUID DSpatch passed (a
+ * consistency check), authentication verified. Pass P4': turn 1's process gone
+ * within the wait and dispose had nothing to record; failing it does not
+ * invalidate P3. `--same-process` adds the optional P2 inside `start`.
+ */
+export async function scenarioResumeChain(
+  phase: string,
+  repoDir: string,
+  logPath: string,
+  options: ScenarioOptions = {},
+): Promise<number> {
+  if (phase !== 'start' && phase !== 'continue') {
+    throw new Error(`resume-chain takes start or continue, not "${phase}".\n${usage()}`);
+  }
+  requireClaudeProbe(options, 'resume-chain');
+  return phase === 'start'
+    ? resumeChainStart(repoDir, logPath, options)
+    : resumeChainContinue(repoDir, logPath, options);
+}
+
+async function resumeChainStart(
+  repoDir: string,
+  logPath: string,
+  options: ScenarioOptions,
+): Promise<number> {
+  const target = path.resolve(repoDir);
+  const marker = newNonce();
+  const prompts = markerPrompts(marker);
+  const stateFile = chainStateFile(logPath);
+  const record: Record<string, unknown> = {
+    scenario:
+      "DSP-122 P3 + P4' chain, process 1 (start): one turn, a wait, dispose, the local " +
+      'lookups, and the state file for process 2',
+    startedAtUtc: new Date().toISOString(),
+    node: process.versions.node,
+    testRepo: target,
+    marker,
+    prompts: [prompts.first],
+    stateFile,
+    sameProcess: options.sameProcess === true,
+  };
+  const refused = refuseUnauthorized(options, record, logPath);
+  if (refused !== null) {
+    return refused;
+  }
+  const adapter = createClaudeAdapter(options);
+  let exitCode = 1;
+  try {
+    const { sessionId, recorder } = await openSession(adapter, target, record, 'claude');
+    const first = await recorder.send('turn-1', prompts.first);
+    await recorder.waitForFinish(first);
+    recorder.stop();
+    record['turns'] = recorder.turns;
+
+    // P4': is the turn's process gone on its own, some time after a normal turn?
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, CHAIN_PROCESS_WAIT_MS);
+    });
+    const observations = adapter.processObservations(sessionId);
+    const pid = observations[0]?.process?.pid ?? null;
+    const alive = liveness(pid);
+    record['processAfterTurn1'] = { waitedMs: CHAIN_PROCESS_WAIT_MS, observations, liveness: alive };
+
+    // Observed before the dispose clears the session; the verdict only ever turns 0 into 5.
+    recordClaudeObservations(adapter, record, options);
+    exitCode = first.terminalStatus === 'finished' ? 0 : 2;
+    exitCode = await applyAuthenticationVerdict(adapter, record, recorder.turns, exitCode);
+
+    await disposeAndRecord(adapter, record);
+    const disposals = adapter.disposals();
+    // Only a liveness check actually made can pass P4'; no observed pid is "not measured",
+    // not a failure (review 006 S2).
+    record['p4prime'] =
+      alive['checked'] === true
+        ? {
+            pass: alive['signalZeroDelivered'] === false && disposals.length === 0,
+            note:
+              "pass: turn 1's process was gone within the wait and dispose had nothing to " +
+              "record. A kill or an unconfirmed record fails P4' without invalidating P3.",
+          }
+        : {
+            pass: null,
+            note: 'not measured: no pid was observed',
+          };
+
+    const providerSessionId = providerSessionIdFor(sessionId);
+    record['localLookup'] = await lookupInBothProfiles(providerSessionId, target, options);
+    record['providerState'] = providerStateLocation(options.env ?? process.env, providerSessionId);
+
+    const state: ResumeChainState = {
+      dspatchSessionId: sessionId,
+      providerSessionId,
+      marker,
+      cwd: target,
+      expectedToolPolicy: adapter.policyDigest(),
+      startedAtUtc: String(record['startedAtUtc']),
+      logPath: path.resolve(logPath),
+    };
+    fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    log(`state written: ${stateFile}`);
+
+    if (options.sameProcess === true && exitCode === 0) {
+      // Optional P2: the same process, a new adapter instance, the real lookup.
+      await continueChain(state, target, options, record, 'sameProcessContinue');
+    }
+  } catch (error) {
+    record['failure'] = describeError(error);
+    log(`FAILURE: ${String((record['failure'] as { message: string }).message)}`);
+    exitCode = 3;
+  } finally {
+    await disposeAndRecord(adapter, record);
+    record['exitCode'] = exitCode;
+    record['finishedAtUtc'] = new Date().toISOString();
+    writeRecord(logPath, record);
+  }
+  return exitCode;
+}
+
+async function resumeChainContinue(
+  repoDir: string,
+  logPath: string,
+  options: ScenarioOptions,
+): Promise<number> {
+  const target = path.resolve(repoDir);
+  const stateFile = chainStateFile(logPath);
+  const outPath = `${path.resolve(logPath)}.continue.json`;
+  const record: Record<string, unknown> = {
+    scenario:
+      'DSP-122 P3 chain, process 2 (continue): resume from the state file in a new OS ' +
+      'process, one recall turn',
+    startedAtUtc: new Date().toISOString(),
+    node: process.versions.node,
+    testRepo: target,
+    stateFile,
+  };
+  const refused = refuseUnauthorized(options, record, outPath);
+  if (refused !== null) {
+    return refused;
+  }
+  let state: ResumeChainState;
+  try {
+    state = JSON.parse(fs.readFileSync(stateFile, 'utf8')) as ResumeChainState;
+  } catch (error) {
+    record['failure'] = {
+      ...describeError(error),
+      note: `no readable state file at ${stateFile}; run resume-chain start first`,
+    };
+    record['exitCode'] = 3;
+    record['finishedAtUtc'] = new Date().toISOString();
+    writeRecord(outPath, record);
+    return 3;
+  }
+  record['state'] = state;
+  const sub = await continueChain(state, target, options, record, 'continue');
+  const exitCode = typeof sub['exitCode'] === 'number' ? sub['exitCode'] : 3;
+  record['exitCode'] = exitCode;
+  record['finishedAtUtc'] = new Date().toISOString();
+  writeRecord(outPath, record);
+  return exitCode;
+}
+
+/** The recall half of the chain: a new adapter instance resumes and asks for the marker. */
+async function continueChain(
+  state: ResumeChainState,
+  workspacePath: string,
+  options: ScenarioOptions,
+  record: Record<string, unknown>,
+  key: string,
+): Promise<Record<string, unknown>> {
+  const z = createClaudeAdapter(options);
+  const sub: Record<string, unknown> = {
+    workspacePath,
+    stateCwd: state.cwd,
+    prompt: markerPrompts(state.marker).second,
+  };
+  let exitCode = 1;
+  try {
+    const config = probeConfig('claude', workspacePath, {
+      expectedToolPolicy: state.expectedToolPolicy,
+    });
+    const recorder = await resumeInto(z, state.dspatchSessionId, config, sub, 'resume', true);
+    const second = await recorder.send('turn-2', markerPrompts(state.marker).second);
+    try {
+      await recorder.waitForFinish(second);
+    } catch (error) {
+      sub['waitError'] = describeError(error);
+    }
+    recorder.stop();
+    const answer = second.finalMessage ?? second.deltaText;
+    const toolCallsStarted = second.toolCalls.filter((call) => call.phase === 'started').length;
+    const resumption = z.resumption(state.dspatchSessionId);
+    sub['resumptionAfterTurn'] = resumption;
+    sub['recall'] = {
+      answer,
+      answerContainsMarker: answer.includes(state.marker),
+      toolCallsStarted,
+      initSessionId: resumption?.firstTurn?.initSessionId ?? null,
+      idMatchesPassedUuid: resumption?.firstTurn?.idMatches ?? null,
+      idNote: 'equal IDs are a consistency check; the recalled marker is the evidence',
+    };
+    sub['turns'] = recorder.turns;
+    exitCode =
+      second.terminalStatus === 'finished' &&
+      answer.includes(state.marker) &&
+      toolCallsStarted === 0 &&
+      resumption?.firstTurn?.idMatches === true
+        ? 0
+        : 2;
+    recordClaudeObservations(z, sub, options);
+    exitCode = await applyAuthenticationVerdict(z, sub, recorder.turns, exitCode);
+    log(
+      `${key}: ${String(second.terminalStatus)}, marker recalled ` +
+        `${String(answer.includes(state.marker))}, init id matches ${String(resumption?.firstTurn?.idMatches)}`,
+    );
+  } catch (error) {
+    sub['failure'] = describeError(error);
+    log(`FAILURE (${key}): ${String((sub['failure'] as { message: string }).message)}`);
+    exitCode = 3;
+  } finally {
+    await disposeAndRecord(z, sub);
+    sub['exitCode'] = exitCode;
+  }
+  record[key] = sub;
+  return sub;
+}
+
+/**
+ * R-A0 (Claude, up to one billed turn): what the CLI does with a `resume` of a
+ * UUID it never saw. The local check is bypassed through the adapter's test
+ * seam with a fabricated record — the product's lookup is not used — and the
+ * one turn records the CLI's answer verbatim: terminal status, result subtype
+ * and text, the stderr tail, the init session IDs, and whether a transcript
+ * file appeared. If it answered under that UUID, the local check is the only
+ * guard and the first-send classification table has nothing to recognise; if
+ * it refused, `PROVIDER_MISSING_FORMS` is filled from what is recorded here.
+ * Exit 0 once a terminal event was recorded, whichever way it went.
+ */
+export async function scenarioResumeUnknownId(
+  repoDir: string,
+  logPath: string,
+  options: ScenarioOptions = {},
+): Promise<number> {
+  requireClaudeProbe(options, 'resume-unknown-id');
+  const target = path.resolve(repoDir);
+  const freshId = `dsp-session-${randomUUID()}`;
+  const uuid = providerSessionIdFor(freshId);
+  const prompt = 'Reply with the single word READY. Do not use any tool.';
+  const record: Record<string, unknown> = {
+    scenario:
+      'DSP-122 R-A0 — Claude: resume a UUID the provider never saw, through a ' +
+      'fabricated local record',
+    startedAtUtc: new Date().toISOString(),
+    node: process.versions.node,
+    testRepo: target,
+    dspatchSessionId: freshId,
+    providerSessionId: uuid,
+    prompt,
+    lookup:
+      "substituted through the adapter's localLookup seam with a fabricated record; " +
+      "the product's lookup was not used",
+  };
+  const refused = refuseUnauthorized(options, record, logPath);
+  if (refused !== null) {
+    return refused;
+  }
+  const fabricated: ClaudeLocalLookup = (asked, dir) =>
+    Promise.resolve({
+      sessionId: asked,
+      summary: 'fabricated by the DSP-122 R-A0 probe',
+      lastModified: Date.now(),
+      cwd: dir,
+    });
+  const adapter = createClaudeAdapter(options, fabricated);
+  const env = options.env ?? process.env;
+  let exitCode = 1;
+  let turns: readonly TurnLog[] = [];
+  try {
+    record['providerStateBefore'] = providerStateLocation(env, uuid);
+    const recorder = await resumeInto(adapter, freshId, probeConfig('claude', target), record, 'resume', true);
+    turns = recorder.turns;
+    const turn = await recorder.send('ready', prompt);
+    let waitError: Record<string, unknown> | null = null;
+    try {
+      await recorder.waitForFinish(turn);
+    } catch (error) {
+      waitError = describeError(error);
+    }
+    recorder.stop();
+    const results = adapter
+      .resultMessages(freshId)
+      .map((message) => message as Record<string, unknown>);
+    const observations = adapter.processObservations(freshId);
+    const initSessionIds = adapter.providerSessionIdsObserved(freshId);
+    record['cliAnswer'] = {
+      terminalStatus: turn.terminalStatus,
+      runError: turn.error,
+      waitError,
+      answer: turn.finalMessage ?? turn.deltaText,
+      results: results.map((result) => ({
+        subtype: result['subtype'] ?? null,
+        is_error: result['is_error'] ?? null,
+        result: result['result'] ?? null,
+        errors: result['errors'] ?? null,
+      })),
+      initSessionIds,
+      initReportedPassedUuid: initSessionIds.includes(uuid),
+      stderrTail: observations[0]?.process?.stderrTail ?? null,
+      processes: observations,
+      resumption: adapter.resumption(freshId),
+    };
+    const after = providerStateLocation(env, uuid);
+    record['providerStateAfter'] = after;
+    record['finding'] = {
+      transcriptAppeared: (after['observedTranscriptFiles'] as string[]).length > 0,
+      cliRefused: turn.terminalStatus === 'error',
+      answeredUnderUnknownUuid: turn.terminalStatus === 'finished',
+      note:
+        'answered: the local check is the only guard against resuming into a session ' +
+        'the provider does not hold, and the first-send table has nothing to recognise. ' +
+        'refused: PROVIDER_MISSING_FORMS is filled from runError and stderrTail.',
+    };
+    record['turns'] = recorder.turns;
+    exitCode = turn.terminalStatus === null ? 2 : 0;
+  } catch (error) {
+    record['failure'] = describeError(error);
+    log(`FAILURE: ${String((record['failure'] as { message: string }).message)}`);
+    exitCode = 3;
+  } finally {
+    recordClaudeObservations(adapter, record, options);
+    exitCode = await applyAuthenticationVerdict(adapter, record, turns, exitCode);
+    await disposeAndRecord(adapter, record);
+    record['exitCode'] = exitCode;
+    record['finishedAtUtc'] = new Date().toISOString();
+    writeRecord(logPath, record);
+  }
+  return exitCode;
+}
+
+/**
+ * R-A1 + R-A2 (Claude, no billed turn; the authorization guard applies as to
+ * every Claude probe). R-A1: a never-created ID with the real lookup, expected
+ * `local_record_missing` (or `_unaligned`), no session, no `query()`. R-A2, given
+ * the chain's log path: the chain's ID under a copy of its fixture, expected
+ * refused — "no readable record" under the copy's path or `config_mismatch` from
+ * the record's `cwd` — and recorded whichever way. Exit 0 on R-A1 refused as
+ * expected.
+ */
+export async function scenarioResumeControls(
+  repoDir: string,
+  logPath: string,
+  chainLogPath: string | undefined,
+  options: ScenarioOptions = {},
+): Promise<number> {
+  requireClaudeProbe(options, 'resume-controls');
+  const target = path.resolve(repoDir);
+  const record: Record<string, unknown> = {
+    scenario:
+      'DSP-122 R-A1 + R-A2 — Claude: resume controls with the real local lookup; no model turn',
+    startedAtUtc: new Date().toISOString(),
+    node: process.versions.node,
+    testRepo: target,
+    turns: 0,
+    note: 'nothing here sends a prompt; the authorization guard applies all the same',
+  };
+  const refused = refuseUnauthorized(options, record, logPath);
+  if (refused !== null) {
+    return refused;
+  }
+  const adapter = createClaudeAdapter(options);
+  let exitCode = 1;
+  try {
+    const config = probeConfig('claude', target);
+    const neverCreated = `dsp-session-${randomUUID()}`;
+    record['rA1'] = await recordResumeAttempt(
+      adapter,
+      neverCreated,
+      config,
+      'refused with local_record_missing (or local_record_missing_unaligned): no ' +
+        'record, no session, no query()',
+    );
+    record['rA1Lookup'] = await lookupInBothProfiles(
+      providerSessionIdFor(neverCreated),
+      target,
+      options,
+    );
+    if (chainLogPath === undefined) {
+      record['rA2'] = {
+        skipped: true,
+        reason: 'no chain log path given; pass the resume-chain log path as the third argument',
+      };
+    } else {
+      const state = JSON.parse(
+        fs.readFileSync(chainStateFile(chainLogPath), 'utf8'),
+      ) as ResumeChainState;
+      const copy = copyFixture(state.cwd);
+      record['rA2'] = {
+        copyOf: state.cwd,
+        ...(await recordResumeAttempt(
+          adapter,
+          state.dspatchSessionId,
+          { ...config, workspacePath: copy, expectedToolPolicy: state.expectedToolPolicy },
+          "refused: 'no readable record' under the copy's path, or config_mismatch from " +
+            "the record's cwd (expected, not measured)",
+        )),
+      };
+    }
+    const rA1 = record['rA1'] as { refused: boolean; error?: { providerCode?: unknown } };
+    const code = rA1.error?.providerCode;
+    exitCode =
+      rA1.refused && (code === 'local_record_missing' || code === 'local_record_missing_unaligned')
+        ? 0
+        : 2;
+  } catch (error) {
+    record['failure'] = describeError(error);
+    log(`FAILURE: ${String((record['failure'] as { message: string }).message)}`);
+    exitCode = 3;
+  } finally {
+    recordClaudeObservations(adapter, record, options);
+    await disposeAndRecord(adapter, record);
+    record['exitCode'] = exitCode;
+    record['finishedAtUtc'] = new Date().toISOString();
+    writeRecord(logPath, record);
+  }
+  return exitCode;
+}
+
+/**
+ * Plan 4.5: `getSessionInfo` against this user's existing transcripts. No model
+ * turn, no adapter, nothing written under the profile — but it **reads the Claude
+ * profile**, which is why it is not run during verification. Prints (or writes
+ * with `--log=`) the result or `undefined`, `CLAUDE_CONFIG_DIR`, and the expected
+ * transcript path with the encoding the DSP-115 record showed. Exit 0 when the
+ * lookup ran, found or not; 3 when it threw.
+ */
+export async function scenarioLocalLookup(
+  uuid: string,
+  options: ScenarioOptions = {},
+): Promise<number> {
+  const env = options.env ?? process.env;
+  const configDir = env['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude');
+  const dir = options.lookupDir === undefined ? undefined : path.resolve(options.lookupDir);
+  const expectedPath =
+    dir === undefined ? null : path.join(configDir, 'projects', encodeProjectDir(dir), `${uuid}.jsonl`);
+  const record: Record<string, unknown> = {
+    scenario:
+      "DSP-122 4.5 — read-only check of getSessionInfo against this user's existing " +
+      'transcripts; no model turn, nothing written under the profile',
+    startedAtUtc: new Date().toISOString(),
+    node: process.versions.node,
+    uuid,
+    dir: dir ?? null,
+    dirNote:
+      dir === undefined
+        ? 'omitted: the SDK searches every project directory'
+        : 'passed as { dir }',
+    claudeConfigDir: env['CLAUDE_CONFIG_DIR'] ?? null,
+    configDirSource: env['CLAUDE_CONFIG_DIR'] === undefined ? 'default' : 'CLAUDE_CONFIG_DIR',
+    configDir,
+    expectedTranscriptPath: expectedPath,
+    expectedPathExists: expectedPath === null ? null : fs.existsSync(expectedPath),
+    encodingNote:
+      "the DSP-115 record shows ':' and the path separators becoming '-' " +
+      "(C:\\Users\\... -> C--Users-...); every other non-alphanumeric character is " +
+      "mapped to '-' here as a guess the record does not cover",
+    lookup: options.claudeLocalLookup === undefined ? "the SDK's getSessionInfo" : 'substituted',
+  };
+  let exitCode: number;
+  try {
+    const lookup = await localLookupProbe(options);
+    const info = await lookup(uuid, dir);
+    record['found'] = info !== undefined;
+    record['result'] = info ?? null;
+    log(
+      info === undefined
+        ? 'getSessionInfo: undefined (not found, a sidechain, or no extractable summary)'
+        : `getSessionInfo: found (cwd ${String(info.cwd ?? 'none')}, lastModified ${String(info.lastModified)})`,
+    );
+    exitCode = 0;
+  } catch (error) {
+    record['failure'] = describeError(error);
+    log(`FAILURE: ${String((record['failure'] as { message: string }).message)}`);
+    exitCode = 3;
+  }
+  log(`CLAUDE_CONFIG_DIR: ${env['CLAUDE_CONFIG_DIR'] ?? '(unset; default profile)'}`);
+  log(`expected transcript path: ${expectedPath ?? '(dir omitted: every project directory)'}`);
+  record['exitCode'] = exitCode;
+  record['finishedAtUtc'] = new Date().toISOString();
+  if (options.lookupLog === undefined) {
+    process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
+  } else {
+    writeRecord(options.lookupLog, record);
+  }
+  return exitCode;
+}
+
 // --- Entry point ------------------------------------------------------------
 
 function usage(): string {
@@ -2879,6 +3790,40 @@ function usage(): string {
     '  cancel-stream <workspaceDir> <logPath>',
     '  cancel-test   <repoDir> <logPath>',
     '  sever         <workspaceDir> <logPath>',
+    '',
+    'DSP-122 resume probes (prepared; none has been run — a refusal is a finding):',
+    '  resume-after-dispose <repoDir> <logPath>     Cursor only. NO CODE GUARD: it BILLS TWO',
+    '                                               CURSOR TURNS under the stored Cursor login the',
+    '                                               moment it runs with a repository path. It is',
+    '                                               verified only through the argument-parsing tests',
+    '                                               and the missing-argument error; never run it to',
+    '                                               check it.',
+    '  resume-chain start <repoDir> <logPath>       --provider=claude [auth flag]  one turn with a',
+    '                                               marker, a 10 s wait, the process liveness,',
+    '                                               dispose, the local lookups, then',
+    '                                               <logPath>.state.json for process 2 (P3 + P4\')',
+    '  resume-chain continue <repoDir> <logPath>    --provider=claude [auth flag]  in a new OS',
+    '                                               process: resumes from <logPath>.state.json, one',
+    '                                               recall turn; record at <logPath>.continue.json',
+    '  resume-unknown-id <repoDir> <logPath>        --provider=claude [auth flag]  up to one turn:',
+    '                                               resumes a UUID the provider never saw, through',
+    '                                               a fabricated local record, and records the',
+    '                                               CLI\'s answer verbatim (R-A0)',
+    '  resume-controls <repoDir> <logPath> [chainLogPath]  --provider=claude [auth flag]  no',
+    '                                               turn: a never-created ID with the real lookup',
+    '                                               (R-A1) and, given the chain\'s log path, its ID',
+    '                                               under a copied fixture (R-A2)',
+    '  local-lookup <uuid> [--dir=<cwd>] [--log=<path>]  no model turn and no adapter, but it',
+    '                                               READS THIS USER\'S CLAUDE PROFILE (the SDK\'s',
+    '                                               getSessionInfo) and prints the result or',
+    '                                               undefined, CLAUDE_CONFIG_DIR and the expected',
+    '                                               transcript path; writes nothing under the profile',
+    '  --same-process                               resume-chain start only: after the dispose,',
+    '                                               also continue in this process (optional P2)',
+    'Cost if run: resume-after-dispose 2 Cursor turns; resume-chain 2 Claude turns (+1 with',
+    '--same-process); resume-unknown-id up to 1 Claude turn; resume-controls and local-lookup',
+    'none. Every Claude probe refuses without --subscription-authorization (or an API-key',
+    'approval) before any adapter is built; local-lookup needs neither, since it asks no provider.',
     '',
     'provider flags (DSP-109):',
     '  --provider=cursor|claude                  default cursor',
@@ -2915,6 +3860,9 @@ export function parseScenarioArgs(argv: readonly string[]): {
   const positional: string[] = [];
   let provider: ExperimentProvider = 'cursor';
   let authorization: LiveAuthorization | null = null;
+  let lookupDir: string | undefined;
+  let lookupLog: string | undefined;
+  let sameProcess = false;
   for (const arg of argv) {
     if (!arg.startsWith('--')) {
       positional.push(arg);
@@ -2931,6 +3879,12 @@ export function parseScenarioArgs(argv: readonly string[]): {
       authorization = { kind: 'api-key', approval: value };
     } else if (name === 'subscription-authorization') {
       authorization = { kind: 'subscription', authorization: value };
+    } else if (name === 'dir') {
+      lookupDir = value;
+    } else if (name === 'log') {
+      lookupLog = value;
+    } else if (name === 'same-process') {
+      sameProcess = true;
     } else {
       throw new Error(`Unknown flag ${arg}.\n${usage()}`);
     }
@@ -2942,7 +3896,16 @@ export function parseScenarioArgs(argv: readonly string[]): {
         '--provider=claude; this run is a Cursor run.',
     );
   }
-  return { positional, options: { provider, authorization } };
+  return {
+    positional,
+    options: {
+      provider,
+      authorization,
+      ...(lookupDir === undefined ? {} : { lookupDir }),
+      ...(lookupLog === undefined ? {} : { lookupLog }),
+      ...(sameProcess ? { sameProcess: true } : {}),
+    },
+  };
 }
 
 /** What a test may put behind a command line: never set from the command line itself. */
@@ -2952,6 +3915,7 @@ export type ScenarioSubstitutes = Pick<
   | 'claudeQueryFn'
   | 'claudeSpawnProcess'
   | 'claudeTimers'
+  | 'claudeLocalLookup'
   | 'afterTerminalWatchMs'
   | 'sourceRevision'
 >;
@@ -2976,11 +3940,29 @@ export async function runScenarioCommand(
     return value;
   };
 
-  const providerAware = ['code-change', 'cancel-reply', 'two-turn', 'cancel-then-follow-up'];
+  const providerAware = [
+    'code-change',
+    'cancel-reply',
+    'two-turn',
+    'cancel-then-follow-up',
+    'resume-chain',
+    'resume-unknown-id',
+    'resume-controls',
+    'local-lookup',
+  ];
   if (options.provider !== 'cursor' && !providerAware.includes(subcommand ?? '')) {
     throw new Error(
       `--provider=${String(options.provider)} applies only to ${providerAware.join(', ')}.`,
     );
+  }
+  if (
+    (options.lookupDir !== undefined || options.lookupLog !== undefined) &&
+    subcommand !== 'local-lookup'
+  ) {
+    throw new Error(`--dir and --log apply only to local-lookup.\n${usage()}`);
+  }
+  if (options.sameProcess === true && subcommand !== 'resume-chain') {
+    throw new Error(`--same-process applies only to resume-chain start.\n${usage()}`);
   }
 
   switch (subcommand) {
@@ -3012,6 +3994,16 @@ export async function runScenarioCommand(
       return scenarioCancelTest(arg(0), arg(1));
     case 'sever':
       return scenarioSever(arg(0), arg(1));
+    case 'resume-after-dispose':
+      return scenarioResumeAfterDispose(arg(0), arg(1), options);
+    case 'resume-chain':
+      return scenarioResumeChain(arg(0), arg(1), arg(2), options);
+    case 'resume-unknown-id':
+      return scenarioResumeUnknownId(arg(0), arg(1), options);
+    case 'resume-controls':
+      return scenarioResumeControls(arg(0), arg(1), args[2], options);
+    case 'local-lookup':
+      return scenarioLocalLookup(arg(0), options);
     default:
       process.stderr.write(`${usage()}\n`);
       return 64;
