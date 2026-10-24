@@ -218,13 +218,23 @@ function fromPaneOf(stations: readonly Station[], station: Station | undefined):
   if (station === undefined || from === null || from === undefined) {
     return null;
   }
+  const focusShows = (candidate: Station): boolean => shows({ ...candidate, place: { ...candidate.place, unit: null, context: [] } }, from.ref);
+  let inCode: number | null = null;
   for (let index = station.index - 1; index >= 0; index -= 1) {
     const candidate = stations[index];
-    if (candidate !== undefined && shows(candidate, from.ref)) {
+    if (candidate === undefined) {
+      continue;
+    }
+    // A pane whose own focus is the source line reads most directly; else one that
+    // shows it in its function or prepared context.
+    if (focusShows(candidate)) {
       return index;
     }
+    if (inCode === null && shows(candidate, from.ref)) {
+      inCode = index;
+    }
   }
-  return null;
+  return inCode;
 }
 
 /** Where a station's call is shown: the pane it leads from, or its own pane when that has the file. */
@@ -367,6 +377,9 @@ export function WalkTimeline({
     return { pane, ref: pane === null || station?.place.from == null ? null : station.place.from.ref };
   };
   const [source, setSource] = useState(() => ({ ...sourceSignalFor(active), seq: 0 }));
+  // "Visa källan": the source pane scrolls to the line even when it mounts because of it.
+  const [reveal, setReveal] = useState<{ pane: number | null; seq: number }>({ pane: null, seq: 0 });
+  const handledReveals = useRef(new Map<number, number>());
   useLayoutEffect(() => {
     const forward = active >= previousActive.current;
     const moved = active !== previousActive.current;
@@ -540,6 +553,7 @@ export function WalkTimeline({
     const target = activeRight - left <= viewWidth ? activeRight - viewWidth : left - PANE_GAP;
     setMapX(clampX(Math.min(left, target)));
     setSource((current) => ({ ...sourceSignalFor(active), seq: current.seq + 1 }));
+    setReveal((current) => ({ pane: fromPane, seq: current.seq + 1 }));
   };
   // And back from the source to the place it leads to.
   const returnToPlace = (): void => {
@@ -758,6 +772,9 @@ export function WalkTimeline({
                     arrivalHandled={handledArrivals.current.get(station.index) ?? -1}
                     onArrivalHandled={(seq) => handledArrivals.current.set(station.index, seq)}
                     callArrival={source.pane === station.index && station.index !== active ? source.seq : -1}
+                    reveal={reveal.pane === station.index ? reveal.seq : -1}
+                    revealHandled={handledReveals.current.get(station.index) ?? -1}
+                    onRevealHandled={(seq) => handledReveals.current.set(station.index, seq)}
                   />
                 ) : (
                   <div className="rv-pane-placeholder">
@@ -838,6 +855,9 @@ function TimelinePane({
   onArrivalHandled,
   calls,
   callArrival,
+  reveal,
+  revealHandled,
+  onRevealHandled,
   sourceLink,
   sourceFor,
 }: {
@@ -873,6 +893,11 @@ function TimelinePane({
   readonly calls: readonly CodeLocation[];
   /** The number of the explicit act that asked this pane to show a link's source, or -1. */
   readonly callArrival: number;
+  /** The number of a "show the source" request for this pane, or -1. */
+  readonly reveal: number;
+  /** The last request this pane has acted on, kept while it is not rendered. */
+  readonly revealHandled: number;
+  readonly onRevealHandled: (seq: number) => void;
   /** In the active pane: where its link's source is shown — here on screen, off screen, or nowhere in the walk. */
   readonly sourceLink:
     | { readonly kind: 'shown'; readonly name: string }
@@ -1146,6 +1171,27 @@ function TimelinePane({
       scrollTimer.current = null;
       placeCall('smooth');
     }, 120);
+  });
+  // "Visa källan" asked for this pane: the source line comes into view, also when the
+  // pane has just mounted and restored a remembered position. Only vertically.
+  const revealHere = useRef(-1);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (element === null || content === null || reveal < 0 || reveal === revealHandled || reveal === revealHere.current) {
+      return;
+    }
+    const target = element.querySelector<HTMLElement>('[data-from="1"]');
+    if (target === null) {
+      return;
+    }
+    revealHere.current = reveal;
+    onRevealHandled(reveal);
+    if (scrollTimer.current !== null) {
+      window.clearTimeout(scrollTimer.current);
+      scrollTimer.current = null;
+    }
+    const offset = target.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop;
+    element.scrollTo({ top: Math.max(0, offset - element.clientHeight / 2 + 20), behavior: 'auto' });
   });
   // The room asked for arrives as a new width a render later: the change is placed
   // sideways again for that width, once. A pane just mounted has had no width change.
