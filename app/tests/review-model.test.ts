@@ -626,6 +626,16 @@ test('marks follow a step\'s content when the walks change: unchanged steps keep
   assert.equal(adoptStoredState({ ...base, markHistory: [{ definitionHash: 1 }] }, REVISIONS), null);
 });
 
+test('a short overview is optional and read beside the full one', () => {
+  const { definition } = fixture();
+  assert.deepEqual(definition.overviewSummary, { sv: '', en: '' });
+  const raw = JSON.parse(JSON.stringify({ format: 'dspatch-review/2', title: { sv: 't', en: 't' }, repository: '.', base: REVISIONS.base, target: REVISIONS.target, overview: { sv: 'lång', en: 'long' }, overviewSummary: { sv: 'kort', en: 'short' }, walks: [] }));
+  const parsed = parseReviewDefinition(raw).definition;
+  assert.ok(parsed !== null);
+  assert.deepEqual(parsed.overviewSummary, { sv: 'kort', en: 'short' });
+  assert.deepEqual(parsed.overview, { sv: 'lång', en: 'long' });
+});
+
 test('preferences accept only the two display languages', () => {
   assert.deepEqual(adoptPreferences({ language: 'en' }), { language: 'en' });
   assert.deepEqual(adoptPreferences({ language: 'de' }), { language: 'sv' });

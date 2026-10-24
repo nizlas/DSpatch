@@ -69,6 +69,8 @@ const STEP_DISTANCE = 120;
 /** Space between panes, in pixels. */
 const PANE_GAP = 6;
 const MIN_PANE_WIDTH = 260;
+/** Room the viewport keeps beside a pane that widened for its change. */
+const AUTO_WIDTH_MARGIN = 120;
 /** A pointer must travel this far before a press becomes a drag. */
 const DRAG_THRESHOLD = 6;
 /** The viewport's centre must be this far inside another pane before it becomes active. */
@@ -119,6 +121,62 @@ function stationRange(rows: readonly DiffRow[], place: Place, level: CodeLevel, 
     return [0, rows.length - 1];
   }
   return [Math.max(0, from), Math.min(rows.length - 1, to)];
+}
+
+/**
+ * The horizontal scroll that shows the change itself: the first column where a
+ * removed line and its added counterpart differ (or the first code of a line that is
+ * only added or removed), kept well inside the pane. 0 when the line fits anyway.
+ */
+function changeLeft(element: HTMLElement, rows: readonly DiffRow[], focus: readonly number[]): number {
+  const changed = focus.map((index) => rows[index]).filter((row): row is DiffRow => row !== undefined && row.kind !== 'context');
+  if (changed.length === 0) {
+    return 0;
+  }
+  const deleted = changed.filter((row) => row.kind === 'deleted');
+  const added = changed.filter((row) => row.kind === 'added');
+  let column: number | null = null;
+  for (let pair = 0; pair < Math.min(deleted.length, added.length); pair += 1) {
+    const a = deleted[pair]?.text ?? '';
+    const b = added[pair]?.text ?? '';
+    let at = 0;
+    while (at < a.length && at < b.length && a[at] === b[at]) {
+      at += 1;
+    }
+    if (at < Math.max(a.length, b.length)) {
+      column = column === null ? at : Math.min(column, at);
+    }
+  }
+  if (column === null) {
+    const match = /\S/.exec(changed[0]?.text ?? '');
+    column = match === null ? 0 : match.index;
+  }
+  // Measure that column in the first rendered changed row.
+  const text = element.querySelector('[data-shown-change="1"] .rv-text');
+  if (text === null) {
+    return 0;
+  }
+  const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+  let remaining = column;
+  let node = walker.nextNode();
+  while (node !== null && remaining > (node.textContent?.length ?? 0)) {
+    remaining -= node.textContent?.length ?? 0;
+    node = walker.nextNode();
+  }
+  let x: number;
+  if (node === null) {
+    x = text.getBoundingClientRect().right;
+  } else {
+    const range = document.createRange();
+    range.setStart(node, Math.min(remaining, node.textContent?.length ?? 0));
+    range.collapse(true);
+    x = range.getBoundingClientRect().left;
+  }
+  const inContent = x - element.getBoundingClientRect().left + element.scrollLeft;
+  if (inContent + 80 <= element.clientWidth) {
+    return 0;
+  }
+  return Math.max(0, Math.round(inContent - element.clientWidth * 0.45));
 }
 
 /** Where each pane stands on the map, from the widths chosen so far. */
@@ -208,7 +266,20 @@ export function WalkTimeline({
   // shows two panes side by side; a wide window still gets readable panes.
   const defaultWidth = Math.max(MIN_PANE_WIDTH, Math.min(900, Math.floor((viewWidth - PANE_GAP) / 2)));
   const [widths, setWidths] = useState<ReadonlyMap<number, number>>(new Map());
-  const layout = useMemo(() => layoutOf(stations.length, widths, defaultWidth), [stations.length, widths, defaultWidth]);
+  // A pane the walk arrives in may ask for room for its change; a width the reader
+  // chose by hand always wins over that.
+  const [autoWidths, setAutoWidths] = useState<ReadonlyMap<number, number>>(new Map());
+  const effectiveWidths = useMemo(() => new Map([...autoWidths, ...widths]), [autoWidths, widths]);
+  const layout = useMemo(() => layoutOf(stations.length, effectiveWidths, defaultWidth), [stations.length, effectiveWidths, defaultWidth]);
+  const roomFor = useCallback(
+    (index: number, wanted: number) => {
+      // Never narrower than the shared default; never wider than leaves a margin of the viewport.
+      const cap = Math.max(MIN_PANE_WIDTH, viewWidth - AUTO_WIDTH_MARGIN);
+      const width = Math.min(Math.max(defaultWidth, wanted), cap);
+      setAutoWidths((current) => (current.get(index) === width ? current : new Map([...current, [index, width]])));
+    },
+    [viewWidth, defaultWidth],
+  );
 
   // The map's position: how far it has been moved to the left, in pixels.
   const [mapX, setMapX] = useState(0);
@@ -226,19 +297,28 @@ export function WalkTimeline({
   // back it takes the left side. A pane activated by panning does not move the map.
   const previousActive = useRef(active);
   const panActivated = useRef<number | null>(null);
+  const activatedByPan = useRef(false);
   const [direction, setDirection] = useState<'forward' | 'backward'>(entry);
-  // Read through a ref: a width change must not realign a map the reader has panned.
+  // Read through a ref: a width change by hand must not realign a map the reader has panned.
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  const lastDirection = useRef<'forward' | 'backward'>(entry);
+  const activeAutoWidth = autoWidths.get(active);
   useLayoutEffect(() => {
     const forward = active >= previousActive.current;
     const moved = active !== previousActive.current;
     previousActive.current = active;
     if (moved) {
       setDirection(forward ? 'forward' : 'backward');
+      lastDirection.current = forward ? 'forward' : 'backward';
+      activatedByPan.current = panActivated.current === active;
     }
     if (panActivated.current === active) {
       panActivated.current = null;
+      return;
+    }
+    // The active pane widening for its change realigns only a station reached by navigation.
+    if (!moved && activatedByPan.current) {
       return;
     }
     if (viewWidth === 0) {
@@ -246,10 +326,10 @@ export function WalkTimeline({
     }
     const left = layoutRef.current.lefts[active] ?? 0;
     const width = layoutRef.current.widths[active] ?? defaultWidth;
-    const target = forward ? left + width - viewWidth : left;
+    const target = lastDirection.current === 'forward' ? left + width - viewWidth : left;
     setMapX(Math.min(Math.max(0, target), Math.max(0, layoutRef.current.total - viewWidth)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, viewWidth, defaultWidth]);
+  }, [active, viewWidth, defaultWidth, activeAutoWidth]);
 
   // The active station follows the map when it is panned by hand: the pane under the
   // viewport's centre, once the centre is well inside it.
@@ -402,7 +482,7 @@ export function WalkTimeline({
   }, [measure, mapX, level, view, layout]);
 
   // Each pane's own scroll position survives its pane leaving the rendered range.
-  const scrollTops = useRef(new Map<number, number>());
+  const scrollTops = useRef(new Map<number, { top: number; left: number }>());
   const changedFiles = useMemo(() => new Map(diffFiles.map((file) => [file.path, file])), [diffFiles]);
   const overlayByPath = useMemo(() => {
     const map = new Map<string, Place[]>();
@@ -546,7 +626,10 @@ export function WalkTimeline({
                     lang={lang}
                     onScrolled={measure}
                     savedScroll={scrollTops.current.get(station.index)}
-                    onScrollTop={(top) => scrollTops.current.set(station.index, top)}
+                    onScrollTop={(top, left) => scrollTops.current.set(station.index, { top, left })}
+                    onRoom={(wanted) => roomFor(station.index, wanted)}
+                    userSized={widths.has(station.index)}
+                    width={width}
                   />
                 ) : (
                   <div className="rv-pane-placeholder">
@@ -619,6 +702,9 @@ function TimelinePane({
   onScrolled,
   savedScroll,
   onScrollTop,
+  onRoom,
+  userSized,
+  width,
 }: {
   readonly selection: CodeLocation | null;
   readonly onSelect: (location: CodeLocation | null) => void;
@@ -637,8 +723,12 @@ function TimelinePane({
   readonly words: ReviewWords;
   readonly lang: Lang;
   readonly onScrolled: () => void;
-  readonly savedScroll: number | undefined;
-  readonly onScrollTop: (top: number) => void;
+  readonly savedScroll: { readonly top: number; readonly left: number } | undefined;
+  readonly onScrollTop: (top: number, left: number) => void;
+  /** The pane asks for this much width so its change is readable; ignored once sized by hand. */
+  readonly onRoom: (wanted: number) => void;
+  readonly userSized: boolean;
+  readonly width: number;
 }): JSX.Element {
   const path = station.place.focus.path;
   const side = station.place.focus.side;
@@ -755,7 +845,9 @@ function TimelinePane({
   // Scroll to the change itself — its first changed row — or, on the side a call
   // leads from, to the call. A pane that was scrolled and then left the rendered
   // range comes back where it was.
-  const scrollKey = `${level}:${view}:${fromHere === null ? '' : String(fromHere.start)}:${String(rows.length)}`;
+  // Arriving is part of the key: a pane the walk reaches scrolls to its change again,
+  // and asks for the room it needs, even if it was rendered beside the active one before.
+  const scrollKey = `${isActive ? 'a' : 'i'}:${level}:${view}:${fromHere === null ? '' : String(fromHere.start)}:${String(rows.length)}`;
   const scrolledFor = useRef('');
   const scrollTimer = useRef<number | null>(null);
   useLayoutEffect(() => {
@@ -777,14 +869,28 @@ function TimelinePane({
       scrollTimer.current = null;
     }
     if (first && savedScroll !== undefined) {
-      element.scrollTop = savedScroll;
+      element.scrollTop = savedScroll.top;
+      element.scrollLeft = savedScroll.left;
       return;
+    }
+    // Room for the change: the widest focus row, with the line numbers and margins.
+    if (isActive && !userSized) {
+      let widest = 0;
+      for (const row of element.querySelectorAll('[data-focus="1"] .rv-text')) {
+        widest = Math.max(widest, (row as HTMLElement).scrollWidth);
+      }
+      const numbers = element.querySelector('.rv-row .rv-ln') as HTMLElement | null;
+      const marker = element.querySelector('.rv-row .rv-marker') as HTMLElement | null;
+      if (widest > 0) {
+        onRoom(widest + (numbers?.offsetWidth ?? 0) + (marker?.offsetWidth ?? 0) + 34);
+      }
     }
     const scrollNow = (behavior: ScrollBehavior): void => {
       const target = findTarget();
       if (target !== null) {
         const offset = target.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop;
-        element.scrollTo({ top: Math.max(0, offset - element.clientHeight / 2 + 20), behavior });
+        const left = changeLeft(element, rows, shownFocus.indexes);
+        element.scrollTo({ top: Math.max(0, offset - element.clientHeight / 2 + 20), left, behavior });
       }
     };
     if (first || reducedMotion()) {
@@ -804,6 +910,16 @@ function TimelinePane({
     },
     [],
   );
+  // The room asked for arrives as a new width a render later: the change is placed
+  // again for that width. Only for a pane the walk is in and the reader has not sized.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (element === null || content === null || !isActive || userSized || scrolledFor.current !== scrollKey) {
+      return;
+    }
+    element.scrollLeft = changeLeft(element, rows, shownFocus.indexes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [width]);
 
   // The middle button dragged inside the pane scrolls it, in both directions.
   const localDrag = useRef<{ id: number; x: number; y: number; left: number; top: number } | null>(null);
@@ -890,6 +1006,9 @@ function TimelinePane({
       } else if (side === 'base' && row.baseLine !== null) {
         attrs['data-line'] = String(row.baseLine);
       }
+      if (inShown) {
+        attrs['data-focus'] = '1';
+      }
       if (inShown && firstShown) {
         attrs['data-shown'] = '1';
         firstShown = false;
@@ -946,7 +1065,7 @@ function TimelinePane({
         className="rv-lines rv-pane-lines"
         ref={scroller}
         onScroll={(event) => {
-          onScrollTop(event.currentTarget.scrollTop);
+          onScrollTop(event.currentTarget.scrollTop, event.currentTarget.scrollLeft);
           onScrolled();
         }}
         onPointerDown={(event) => {

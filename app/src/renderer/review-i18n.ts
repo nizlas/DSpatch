@@ -93,6 +93,8 @@ export interface ReviewWords {
   };
   readonly tree: { readonly title: string; readonly onlyChanged: string };
   readonly overviewTitle: string;
+  readonly showMore: string;
+  readonly showLess: string;
   readonly purpose: string;
   readonly status: Record<'added' | 'modified' | 'deleted' | 'type-changed', string>;
   readonly decisions: {
@@ -289,6 +291,8 @@ const sv: ReviewWords = {
   },
   tree: { title: 'Filer', onlyChanged: 'Bara ändrade' },
   overviewTitle: 'Om ändringen',
+  showMore: 'Visa mer',
+  showLess: 'Visa mindre',
   purpose: 'Syfte',
   status: { added: 'ny fil', modified: 'ändrad', deleted: 'borttagen', 'type-changed': 'typ ändrad' },
   decisions: {
@@ -505,6 +509,8 @@ const en: ReviewWords = {
   },
   tree: { title: 'Files', onlyChanged: 'Changed only' },
   overviewTitle: 'About the change',
+  showMore: 'Show more',
+  showLess: 'Show less',
   purpose: 'Purpose',
   status: { added: 'new file', modified: 'changed', deleted: 'deleted', 'type-changed': 'type changed' },
   decisions: {

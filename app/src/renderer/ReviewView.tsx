@@ -573,9 +573,7 @@ function OpenReview({
               <div className="rv-walks-tab">
                 {pick(bundle.definition.overview, lang) !== '' && (
                   <Collapsible title={words.overviewTitle} defaultOpen={state.shownSteps[bundle.definition.walks[0]?.steps[0]?.id ?? ''] === undefined}>
-                    <div className="rv-explanation">
-                      <Markdown text={pick(bundle.definition.overview, lang)} />
-                    </div>
+                    <Overview summary={pick(bundle.definition.overviewSummary, lang)} full={pick(bundle.definition.overview, lang)} words={words} />
                   </Collapsible>
                 )}
                 <WalkList bundle={bundle} state={state} words={words} lang={lang} onStep={goToStep} onToggle={toggleWalk} />
@@ -743,6 +741,22 @@ function OpenReview({
           <NotesHere notes={state.notes} location={focus} stepId={current?.step.id ?? null} words={words} onOpen={goAway} />
         </aside>
       </div>
+    </div>
+  );
+}
+
+/** A few sentences first; the whole account, with what lies outside the walks, on request. */
+function Overview({ summary, full, words }: { readonly summary: string; readonly full: string; readonly words: ReviewWords }): JSX.Element {
+  const [more, setMore] = useState(summary === '');
+  return (
+    <div className="rv-explanation rv-overview">
+      {summary !== '' && <Markdown text={summary} />}
+      {more && <Markdown text={full} />}
+      {summary !== '' && (
+        <button type="button" className="rv-link rv-more-link" aria-expanded={more} onClick={() => setMore(!more)}>
+          {more ? words.showLess : words.showMore}
+        </button>
+      )}
     </div>
   );
 }

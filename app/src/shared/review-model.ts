@@ -156,6 +156,8 @@ export interface ReviewDefinition {
   readonly provenance: LocalText;
   /** What the change as a whole is for: the sum of the walks. Markdown. */
   readonly overview: LocalText;
+  /** The same in a few sentences, shown first; the overview opens on request. Empty when not given. */
+  readonly overviewSummary: LocalText;
   /** Languages every text is written in. A version 1 file has none: its text is shown as written. */
   readonly languages: readonly Lang[];
   readonly walks: readonly Walk[];
@@ -341,6 +343,7 @@ export function parseReviewDefinition(raw: unknown): {
   const teachingMode = typeof raw['teachingMode'] === 'string' ? raw['teachingMode'] : '';
   const provenance = text(raw, 'provenance', 'file', false);
   const overview = text(raw, 'overview', 'file', false);
+  const overviewSummary = text(raw, 'overviewSummary', 'file', false);
   const walksRaw = raw['walks'];
   const walks: Walk[] = [];
   const seenIds = new Set<string>();
@@ -399,6 +402,7 @@ export function parseReviewDefinition(raw: unknown): {
       teachingMode,
       provenance,
       overview,
+      overviewSummary,
       languages: v2 ? LANGS : [],
       walks,
     },
