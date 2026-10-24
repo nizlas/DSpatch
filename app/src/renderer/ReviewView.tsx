@@ -355,9 +355,9 @@ function OpenReview({
   );
 
   const goAway = useCallback(
-    (location: CodeLocation) => {
+    (location: CodeLocation, scope: CodeScope = 'focus') => {
       setSelection(null);
-      setScope('focus');
+      setScope(scope);
       update((value) => ({ ...value, position: { ...value.position, away: location } }));
     },
     [update],
@@ -577,11 +577,12 @@ function OpenReview({
                   onOpen={(path) => {
                     const file = changedFiles.get(path);
                     const hunk = file?.hunks[0];
-                    goAway(
-                      hunk === undefined
-                        ? { path, side: file?.status === 'deleted' ? 'base' : 'target', start: 1, end: 1 }
-                        : hunkLocation(hunk),
-                    );
+                    // A file without changes opens whole: there is no change to centre on.
+                    if (hunk === undefined) {
+                      goAway({ path, side: file?.status === 'deleted' ? 'base' : 'target', start: 1, end: 1 }, 'file');
+                    } else {
+                      goAway(hunkLocation(hunk));
+                    }
                   }}
                 />
               </div>

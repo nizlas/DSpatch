@@ -564,7 +564,9 @@ function TimelinePane({
 
   // Scroll to the change itself — its first changed row — or, on the side a call
   // leads from, to the call.
-  const scrollKey = `${String(shown.index)}:${level}:${view}:${fromHere === null ? '' : String(fromHere.start)}:${String(rows.length)}`;
+  // Becoming the active pane is part of the key: a pane the reader scrolled while it
+  // waited at the side finds its place again when the walk arrives in it.
+  const scrollKey = `${isActive ? 'a' : 'i'}:${String(shown.index)}:${level}:${view}:${fromHere === null ? '' : String(fromHere.start)}:${String(rows.length)}`;
   const scrolledFor = useRef('');
   // The pending move lives in a ref: re-renders while the old marking fades must not
   // cancel it. Only a new target or unmounting does.

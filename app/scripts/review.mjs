@@ -28,8 +28,12 @@ const args = process.argv.slice(2);
 const definition = args.find((arg) => !arg.startsWith('-'));
 const electronArgs = args.filter((arg) => arg !== definition);
 
+// `DSPATCH_REVIEW_PORT` lets a second checkout run beside an open review window
+// without reloading it; the default is the config's fixed port.
+const port = Number(process.env['DSPATCH_REVIEW_PORT'] ?? '');
 const server = await createServer({
   configFile: path.join(appDir, 'vite.config.mts'),
+  ...(Number.isInteger(port) && port > 0 ? { server: { port, strictPort: true } } : {}),
 });
 
 await server.listen();

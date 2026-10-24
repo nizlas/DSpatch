@@ -98,7 +98,7 @@ export interface Place {
   readonly from: PlaceLink | null;
 }
 
-export type UnitKind = 'function' | 'method' | 'constructor' | 'declaration' | 'type' | 'class' | 'member';
+export type UnitKind = 'function' | 'method' | 'constructor' | 'declaration' | 'type' | 'class' | 'member' | 'block';
 
 export interface PlaceUnit {
   readonly ref: CodeReference;
@@ -111,7 +111,7 @@ export interface PlaceLink {
   readonly label: LocalText;
 }
 
-const UNIT_KINDS: readonly UnitKind[] = ['function', 'method', 'constructor', 'declaration', 'type', 'class', 'member'];
+const UNIT_KINDS: readonly UnitKind[] = ['function', 'method', 'constructor', 'declaration', 'type', 'class', 'member', 'block'];
 
 export interface StepEvidence {
   readonly label: EvidenceLabel;
