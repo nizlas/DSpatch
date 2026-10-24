@@ -367,6 +367,38 @@ body {
   margin-bottom: 0.25rem;
 }
 
+/* DSP-121 UX: the choice panel while no agent session is open. A heading, one
+   short body and the buttons in the open; the rest behind `.continuity__technical`.
+   Same palette, same `.app__error` frame; the buttons wrap in a narrow window. */
+.continuity__heading {
+  margin: 0;
+  font-weight: 600;
+}
+
+.continuity__body {
+  margin: 0.35rem 0 0;
+  line-height: 1.55;
+}
+
+.continuity__actions {
+  margin-top: 0.75rem;
+}
+
+.continuity__note {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.continuity__technical {
+  margin-top: 0.75rem;
+}
+
+.continuity__facts {
+  margin: 0.5rem 0;
+  font-size: 0.8125rem;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -1036,6 +1068,28 @@ body {
 
 .model__fixed {
   color: var(--text);
+}
+
+/* What the model choice applies to, one click away (DSP-121 UX). Inline, so the
+   closed summary sits on the control's row and the sentence follows it when open. */
+.model__help {
+  display: inline;
+}
+
+.model__help-summary {
+  /* `inline list-item`, not `inline` or `inline-block`: only a list-item draws the
+     ::marker, and the marker is what says there is something to open (the Folders
+     summary keeps the default list-item display for the same reason); `inline` keeps
+     it on the control's row. */
+  display: inline list-item;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  list-style: revert;
+}
+
+.model__help[open] > .model__help-summary {
+  margin-right: 0.375rem;
 }
 
 /* What DSpatch told the model in front of this message, when it had to. Collapsed

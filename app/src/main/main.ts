@@ -1656,6 +1656,18 @@ async function captureWindowImage(label: string | null = null): Promise<boolean>
     return false;
   }
   try {
+    // `capturePage` copies the last composited frame, and a window the launching
+    // terminal is covering composes none: a picture taken 1.5 s after the DOM
+    // changed then shows the previous milestone (seen in run 20261024-060000, where
+    // "resumed" was byte-identical to "opened" while the record said the panel was
+    // gone). Raising the window in z-order, without taking focus, lets Chromium
+    // paint again; the short wait is for the occlusion tracker and one frame.
+    if (!window.isFocused()) {
+      window.moveTop();
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 300);
+      });
+    }
     const image = await window.webContents.capturePage();
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, image.toPNG());

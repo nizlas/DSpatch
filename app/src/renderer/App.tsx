@@ -63,7 +63,16 @@ import {
   type BridgeFailure,
 } from './recovery';
 import { describePlainly } from './plain-error';
-import { continuityView, providerSessionFact, simulationNotice } from './continuity-view';
+import {
+  DRAWER_POINTER,
+  composerStatus,
+  continuityView,
+  providerSessionFact,
+  runningCommandNote,
+  simulationLabel,
+  simulationNotice,
+  type ContinuityView,
+} from './continuity-view';
 import {
   attachUsage,
   currentTurn as currentTurnOf,
@@ -631,7 +640,11 @@ function Workbench({
    * steps that had — the composer was reading the direct chat's send-wait clock,
    * which no loop run ever stops.
    */
-  const activityText = running === null ? activity.text : (running.stepText ?? running.text);
+  const activityText = composerStatus(
+    session?.continuity ?? null,
+    running === null ? activity.text : (running.stepText ?? running.text),
+    running !== null,
+  );
 
   /**
    * Which state the newest run is in, and whether anything about it needs doing.
@@ -2890,7 +2903,9 @@ function Workbench({
                   session={session}
                   dismissed={continuityDismissed}
                   busy={busy !== null}
-                  simulated={simulationNotice(scriptedPlan)}
+                  commandRunning={busy === 'running-test'}
+                  adapterId={environment.adapter.id}
+                  scriptedPlan={scriptedPlan}
                   onChoose={(choice) => {
                     if (choice === 'try-again') {
                       void startSession({ kind: 'retry-resume' });
@@ -2963,8 +2978,10 @@ function Workbench({
               session={session}
               sentAnything={chat.turns.length > 0}
               recapDiscarded={recapDiscarded}
+              choicesDismissed={continuityDismissed}
               busy={busy !== null}
-              simulated={simulationNotice(scriptedPlan)}
+              adapterId={environment.adapter.id}
+              scriptedPlan={scriptedPlan}
               onDiscardRecap={() => {
                 void discardRecap();
               }}
@@ -3098,7 +3115,9 @@ function ModelChooser({
   const inForce = chosen ?? connection.modelRequested;
   const listed = connection.models.some((model) => model.id === inForce);
   return (
-    <span className="model">
+    // A div, not a span: the help is a <details>, which is flow content and may not
+    // sit inside a span. `.model` is inline-flex, so the row reads the same.
+    <div className="model">
       {connection.models.length === 0 ? (
         <span className="model__fixed" data-ev="model-name">
           Model {inForce}
@@ -3126,10 +3145,20 @@ function ModelChooser({
           </select>
         </label>
       )}
-      <span className="model__note" data-ev="model-affects">
-        for your next message here. A loop run uses the model it was started with.
-      </span>
-    </span>
+      {/*
+        What the choice applies to, one click away (DSP-121 UX): the sentence is true
+        and worth keeping, but beside the control on every screen it was a line of
+        help nobody had asked for. The text is unchanged inside the disclosure.
+      */}
+      <details className="model__help">
+        <summary className="model__help-summary" data-ev="model-affects-summary">
+          What this applies to
+        </summary>
+        <span className="model__note" data-ev="model-affects">
+          for your next message here. A loop run uses the model it was started with.
+        </span>
+      </details>
+    </div>
   );
 }
 
@@ -4194,8 +4223,15 @@ function RestoredMessage({
  * thread: a paragraph about a resumed provider session, and the whole recap
  * DSpatch would put in front of the next message. §9 keeps long explanations of
  * session restoration and provider mechanics out of the conversation and
- * available as details, so they are here, with their text and their `data-ev`
- * names unchanged.
+ * available as details, so they are here.
+ *
+ * DSP-121 UX (Niclas, 24 October 2026): the drawer does not repeat the panel.
+ * While no provider session is open it shows the heading and either a pointer to
+ * the panel above or, once the panel was dismissed with *Read history*, the same
+ * Technical details block the panel had - the simpler of the two, since the
+ * block is one component drawn in one place at a time. For a new provider session
+ * it shows one short sentence, the recap and its removal, and the service's long
+ * statement under Technical details. A resumed session keeps its statement.
  *
  * The recap is still shown **before** it is sent, which is the point of it: a
  * summary of what the model was told is not what the model was told.
@@ -4204,54 +4240,52 @@ function SessionContinuity({
   session,
   sentAnything,
   recapDiscarded,
+  choicesDismissed,
   busy,
-  simulated,
+  adapterId,
+  scriptedPlan,
   onDiscardRecap,
 }: {
   readonly session: ChatSessionInfo;
   readonly sentAnything: boolean;
   readonly recapDiscarded: boolean;
+  /** The user chose *Read history*, so the panel above the composer is gone. */
+  readonly choicesDismissed: boolean;
   readonly busy: boolean;
-  /** The simulation line of a presentation run (DSP-121), or `null` for a real one. */
-  readonly simulated: string | null;
+  readonly adapterId: string;
+  /** The scripted plan of a presentation run, for the simulation label; `null` otherwise. */
+  readonly scriptedPlan: ScriptedRunPlan | null;
   readonly onDiscardRecap: () => void;
 }): JSX.Element | null {
   const view = continuityView(session.continuity, {
     sentAnything,
     recapDiscarded,
-    // The drawer is the record, not the action surface: it keeps the statement and
-    // the detail whether or not the choices above the message box were dismissed.
+    // The drawer is the record, not the action surface: no buttons here.
     choicesDismissed: true,
   });
-  if (view.statement === null && view.recap === null && view.recapRemovedNote === null) {
+  if (view.drawerLine === null && view.recap === null && view.recapRemovedNote === null) {
     return null;
   }
+  // The panel above the composer shows the state while it is on screen; the drawer
+  // then points at it rather than repeating it.
+  const panelShown = !view.providerSessionOpen && !choicesDismissed;
+  const simulated = simulationLabel(scriptedPlan);
   return (
     <Section title="This session and the earlier conversation">
-      {simulated !== null && !view.providerSessionOpen && (
+      {simulated !== null && !view.providerSessionOpen && !panelShown && (
         <p className="app__note" data-ev="continuity-simulated">
           {simulated}
         </p>
       )}
-      {view.statement !== null && (
+      {view.drawerLine !== null && (
         <p className="app__note" data-ev="session-continuity">
-          {view.statement}
+          {view.drawerLine}
         </p>
       )}
-      {view.technicalDetail !== null && (
-        <details className="error-detail" data-ev="session-continuity-detail">
-          <summary className="error-detail__summary">Technical detail</summary>
-          <p className="card__detail" data-ev="session-continuity-detail-text">
-            {view.technicalDetail}
-          </p>
-        </details>
-      )}
-      {view.earlierSends.length > 0 && (
-        <ul className="app__note" data-ev="session-continuity-earlier-sends">
-          {view.earlierSends.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
+      {panelShown && (
+        <p className="app__note" data-ev="session-continuity-pointer">
+          {DRAWER_POINTER}
+        </p>
       )}
       {view.recap !== null && (
         <details className="turn__resent" data-ev="pending-resend">
@@ -4292,7 +4326,92 @@ function SessionContinuity({
           {view.recapRemovedNote}
         </p>
       )}
+      {/*
+        Everything the service said, verbatim, where it is wanted: after *Read
+        history* this is the only place left, and for a new provider session the long
+        statement lives here rather than above the recap. A resumed session has its
+        statement as the line itself and nothing to add.
+      */}
+      {(!view.providerSessionOpen && !panelShown) ||
+      session.continuity.kind === 'new-provider-session' ? (
+        <ContinuityTechnicalDetails
+          view={view}
+          session={session}
+          adapterId={adapterId}
+          simulatedSentence={simulationNotice(scriptedPlan)}
+          testId="session-continuity-detail"
+          prefix="session-continuity"
+        />
+      ) : null}
     </Section>
+  );
+}
+
+/**
+ * The full account behind the short one, closed until asked for (DSP-121 UX).
+ *
+ * Diagnostics and traceability stay complete: every text the service produced is
+ * here word for word - its statement, the failure's own words, the provider's
+ * code, the session ID, the adapter, what the resume call carried, and each
+ * earlier message with no confirmed end. Drawn in the panel while it is on screen
+ * and in the drawer otherwise, so one `data-ev` name is never on screen twice.
+ */
+function ContinuityTechnicalDetails({
+  view,
+  session,
+  adapterId,
+  simulatedSentence,
+  testId,
+  prefix,
+}: {
+  readonly view: ContinuityView;
+  readonly session: ChatSessionInfo;
+  readonly adapterId: string;
+  /** The full simulation sentence of a presentation run, or `null`. */
+  readonly simulatedSentence: string | null;
+  /** `data-ev` of the disclosure itself. */
+  readonly testId: string;
+  /** Prefix of the `data-ev` names inside it. */
+  readonly prefix: string;
+}): JSX.Element {
+  return (
+    <details className="error-detail continuity__technical" data-ev={testId}>
+      <summary className="error-detail__summary">Technical details</summary>
+      {simulatedSentence !== null && !view.providerSessionOpen && (
+        <p className="card__detail" data-ev={`${prefix}-simulated-detail`}>
+          {simulatedSentence}
+        </p>
+      )}
+      {view.statement !== null && (
+        <p className="card__detail" data-ev={`${prefix}-statement`}>
+          {view.statement}
+        </p>
+      )}
+      {view.technicalDetail !== null && (
+        <p className="card__detail" data-ev={`${prefix}-detail-text`}>
+          {view.technicalDetail}
+        </p>
+      )}
+      <dl className="facts continuity__facts">
+        {view.providerCode !== null && (
+          <Fact label="Provider code" value={view.providerCode} testId={`${prefix}-provider-code`} />
+        )}
+        {view.attemptedSessionId !== null && (
+          <Fact label="Session" value={view.attemptedSessionId} testId={`${prefix}-session`} />
+        )}
+        <Fact label="Adapter" value={adapterId} testId={`${prefix}-adapter`} />
+      </dl>
+      <p className="card__detail" data-ev={`${prefix}-context-statement`}>
+        {session.context.statement}
+      </p>
+      {view.earlierSends.length > 0 && (
+        <ul className="card__detail" data-ev={`${prefix}-earlier-sends`}>
+          {view.earlierSends.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
+    </details>
   );
 }
 
@@ -4300,19 +4419,33 @@ function SessionContinuity({
  * The choices DSP-121 offers while no provider session is open, above the message
  * box where the refused send would be. Draws exactly what `continuityView` returns:
  * the main process decides which choices exist; this only labels them.
+ *
+ * In the open: the heading, one short body keyed on the evidence, the earlier-sends
+ * sentence when it applies, the short test-mode label in a presentation run, and
+ * the three buttons. Everything longer is under Technical details, closed.
  */
 function ContinuityChoices({
   session,
   dismissed,
   busy,
-  simulated,
+  commandRunning,
+  adapterId,
+  scriptedPlan,
   onChoose,
 }: {
   readonly session: ChatSessionInfo;
   readonly dismissed: boolean;
   readonly busy: boolean;
-  /** The simulation line of a presentation run (DSP-121), or `null` for a real one. */
-  readonly simulated: string | null;
+  /**
+   * A workspace command (build or test) is running right now - the same reading
+   * the Build and test panel uses for its own "waiting" line. *Try again* closes
+   * the session on screen first, which stops that command, and the note beside the
+   * button says so only while there is one to stop.
+   */
+  readonly commandRunning: boolean;
+  readonly adapterId: string;
+  /** The scripted plan of a presentation run, for the simulation label; `null` otherwise. */
+  readonly scriptedPlan: ScriptedRunPlan | null;
   readonly onChoose: (choice: 'try-again' | 'new-session' | 'keep-reading') => void;
 }): JSX.Element | null {
   const view = continuityView(session.continuity, {
@@ -4323,37 +4456,46 @@ function ContinuityChoices({
   if (view.choices.length === 0) {
     return null;
   }
+  const simulated = simulationLabel(scriptedPlan);
+  const runningNote = runningCommandNote(commandRunning);
   return (
-    <div className="app__error" data-ev="continuity-choices">
+    <div className="app__error continuity" data-ev="continuity-choices">
+      <p className="continuity__heading" data-ev="continuity-heading">
+        {view.heading}
+      </p>
+      <p className="continuity__body" data-ev="continuity-body">
+        {view.body}
+      </p>
+      {view.earlierSendsNote !== null && (
+        <p className="continuity__body" data-ev="continuity-earlier-sends-note">
+          {view.earlierSendsNote}
+        </p>
+      )}
       {/*
-        Above the statement, because the statement is the service's honest reading of
-        the adapter's answer and reads like a provider's: in a presentation run the
-        window has to say first that no provider was asked.
+        In a presentation run the window has to say that no provider was asked: the
+        statement under Technical details is the service's honest reading of the
+        adapter's answer and reads like a provider's.
       */}
       {simulated !== null && (
         <p className="app__note" data-ev="continuity-simulated">
           {simulated}
         </p>
       )}
-      <p data-ev="continuity-choices-statement">{view.statement}</p>
-      {view.earlierSends.length > 0 && (
-        <ul className="card__detail" data-ev="continuity-choices-earlier-sends">
-          {view.earlierSends.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
+      {/*
+        The consequence before the click (Niclas, 24 October 2026): while a command
+        runs, the buttons stay usable and this line above them says what Try again
+        and Start new session will do to it. Both reach `closeSession`, which stops
+        the command; Read history touches nothing.
+      */}
+      {runningNote !== null && (
+        <p className="continuity__note" data-ev="continuity-running-command-note">
+          {runningNote}
+        </p>
       )}
-      {view.technicalDetail !== null && (
-        <details className="error-detail" data-ev="continuity-choices-detail">
-          <summary className="error-detail__summary">Technical detail</summary>
-          <p className="card__detail" data-ev="continuity-choices-detail-text">
-            {view.technicalDetail}
-          </p>
-        </details>
-      )}
-      {view.choices.map((choice) => (
-        <Fragment key={choice.choice}>
+      <div className="row continuity__actions">
+        {view.choices.map((choice) => (
           <button
+            key={choice.choice}
             type="button"
             className="button"
             data-ev={choice.testId}
@@ -4361,12 +4503,20 @@ function ContinuityChoices({
             onClick={() => {
               onChoose(choice.choice);
             }}
-            disabled={busy}
+            disabled={busy && !commandRunning}
           >
             {choice.label}
-          </button>{' '}
-        </Fragment>
-      ))}
+          </button>
+        ))}
+      </div>
+      <ContinuityTechnicalDetails
+        view={view}
+        session={session}
+        adapterId={adapterId}
+        simulatedSentence={simulationNotice(scriptedPlan)}
+        testId="continuity-technical"
+        prefix="continuity-choices"
+      />
     </div>
   );
 }
@@ -6838,11 +6988,19 @@ function FolderSidebar({
         cost a line to say nothing. The text is unchanged either way — what is decided
         here is when it is on screen.
       */}
+      {/*
+        DSP-121 UX (Niclas, 24 October 2026): the headline alone was three lines of
+        help on every screen, so the summary is now a short label and both sentences
+        are behind it, verbatim, with their `data-ev` names unchanged.
+      */}
       {view.rootsNote !== null && (
         <details className="sidebar__note" data-ev="workspace-roots">
-          <summary className="sidebar__note-summary" data-ev="workspace-roots-note">
-            {view.rootsNote.headline}
+          <summary className="sidebar__note-summary" data-ev="workspace-roots-summary">
+            What these folders are
           </summary>
+          <p className="sidebar__note-detail" data-ev="workspace-roots-note">
+            {view.rootsNote.headline}
+          </p>
           <p className="sidebar__note-detail" data-ev="workspace-roots-detail">
             {view.rootsNote.detail}
           </p>

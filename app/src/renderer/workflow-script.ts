@@ -4731,8 +4731,11 @@ async function runSeveralWorkingRootsScenario(
     // needed, so the disclosure's own state is part of the observation rather than
     // something the trial opens on its way past.
     const detailClosedAtFirst = !detailsOpen('workspace-roots');
+    // Both sentences are behind the disclosure since DSP-121's UX pass; its summary is
+    // a short label, so the gesture is a click on the summary, and the headline is read
+    // from the document (the text is there, closed) exactly as the detail is.
     const headlineOnScreen = textOf('workspace-roots-note');
-    clickInside('workspace-roots-note');
+    clickInside('workspace-roots-summary');
     await sleep(200);
     const detailOpensOnClick = detailsOpen('workspace-roots');
     const detailOnScreen = textOf('workspace-roots-detail');
@@ -4740,7 +4743,7 @@ async function runSeveralWorkingRootsScenario(
     // the state the screenshot should show, since drawing the paragraph unasked is the
     // thing this shape was applied to fix. It closing again is worth recording too: a
     // disclosure that only opens is a paragraph with an extra click in front of it.
-    clickInside('workspace-roots-note');
+    clickInside('workspace-roots-summary');
     await sleep(200);
     const detailClosesAgain = !detailsOpen('workspace-roots');
     observations['rootsNote'] = {
@@ -8211,7 +8214,27 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     [...(element('continuity-choices')?.querySelectorAll<HTMLButtonElement>('button[data-ev]') ?? [])]
       .map((button) => button.getAttribute('data-ev') ?? '')
       .filter((name) => name.startsWith('continuity-choice-'));
+  const panelButtonLabels = (): string[] =>
+    [...(element('continuity-choices')?.querySelectorAll<HTMLButtonElement>('button[data-ev]') ?? [])]
+      .filter((button) => (button.getAttribute('data-ev') ?? '').startsWith('continuity-choice-'))
+      .map((button) => clean(button.textContent));
   const composerText = (): string => (element('prompt') as HTMLTextAreaElement | null)?.value ?? '';
+  /** Whether an element has a box inside the viewport, horizontally and vertically. */
+  const visibleInViewport = (name: string): boolean => {
+    const found = element(name);
+    if (found === null) {
+      return false;
+    }
+    const box = found.getBoundingClientRect();
+    return (
+      box.width > 0 &&
+      box.height > 0 &&
+      box.left >= 0 &&
+      box.right <= window.innerWidth &&
+      box.top >= 0 &&
+      box.bottom <= window.innerHeight
+    );
+  };
 
   /** The window's reading of the state, from the panel, the drawer and the facts. */
   const readState = (label: string): Record<string, unknown> => {
@@ -8224,11 +8247,20 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
         element('continuity-choices')?.querySelector('[data-ev="continuity-simulated"]')?.textContent ??
           null,
       ),
+      panelHeading: textOf('continuity-heading'),
+      panelBody: textOf('continuity-body'),
+      // Under Technical details, read from the document whether the disclosure is
+      // open or not; `technicalOpen` says which it was.
       panelStatement: textOf('continuity-choices-statement'),
       panelDetailText: textOf('continuity-choices-detail-text'),
-      panelDetailOpen: detailsOpen('continuity-choices-detail'),
+      technicalOpen: detailsOpen('continuity-technical'),
       panelButtons: panelButtons(),
+      panelButtonLabels: panelButtonLabels(),
+      runningCommandNote: textOf('continuity-running-command-note'),
+      composerStatus: textOf('active-status'),
       drawerStatement: textOf('session-continuity'),
+      drawerPointer: textOf('session-continuity-pointer'),
+      drawerTechnicalShown: element('session-continuity-detail') !== null,
       drawerDetailText: textOf('session-continuity-detail-text'),
       drawerRecapShown: element('pending-resend') !== null,
       drawerRecapRemovedShown: element('pending-resend-removed') !== null,
@@ -8248,29 +8280,61 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
   /** The refused or failed state as the handoff specifies it, judged from one reading. */
   const expectNotOpenState = (reading: Record<string, unknown>, where: string): void => {
     const statement = String(reading['panelStatement']);
+    const body = String(reading['panelBody']);
+    // The main process's statement, under Technical details, keeps its wording.
     const expectedWording =
       mode === 'failed'
         ? [/the attempt failed/, /This may be temporary/]
         : [/provider answered that it does not have that session/, /No new session was opened and nothing was sent/];
+    // The body in the open is keyed on the evidence: a simulated `agent_not_found`
+    // is the provider saying it no longer has the session; a simulated transport
+    // failure may be temporary, and must not be called missing.
+    const expectedBody =
+      mode === 'failed'
+        ? [/Resuming did not work this time; it may be temporary/, /^(?!.*no longer has this session)/]
+        : [/The agent no longer has this session/];
     expect(
       CHAT_EXIT.resumeStateNotShown,
       reading['panelShown'] === true,
       `${where}: the choice panel was not shown`,
     );
-    // The window must say, above the statement, that this refusal or failure is the
-    // presentation adapter's simulation: the statement itself reads like a provider's.
     expect(
       CHAT_EXIT.resumeStateNotShown,
-      reading['simulationLine'] ===
+      reading['panelHeading'] === 'Could not resume the agent session',
+      `${where}: the heading reads "${String(reading['panelHeading'])}"`,
+    );
+    for (const wording of expectedBody) {
+      expect(
+        CHAT_EXIT.resumeStateNotShown,
+        wording.test(body),
+        `${where}: the panel body does not match ${String(wording)}: "${body}"`,
+      );
+    }
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      /Your saved conversation is still available\. Try again or start a new agent session\./.test(body),
+      `${where}: the panel body does not offer the next step: "${body}"`,
+    );
+    // The window must say that this refusal or failure is the presentation adapter's
+    // simulation: the statement under Technical details reads like a provider's. The
+    // short label stands in the open; the full sentence is under Technical details.
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      reading['simulationLine'] === 'Test mode — no provider calls',
+      `${where}: the panel does not carry the test-mode label: "${String(reading['simulationLine'])}"`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      textOf('continuity-choices-simulated-detail') ===
         'Presentation mode: this refusal or failure is simulated by the presentation adapter ' +
           'on this machine; no provider was asked anything.',
-      `${where}: the panel does not carry the simulation line: "${String(reading['simulationLine'])}"`,
+      `${where}: Technical details does not carry the full simulation sentence: "${textOf('continuity-choices-simulated-detail')}"`,
     );
     for (const wording of expectedWording) {
       expect(
         CHAT_EXIT.resumeStateNotShown,
         wording.test(statement),
-        `${where}: the panel statement does not say ${String(wording)}: "${statement}"`,
+        `${where}: the statement under Technical details does not say ${String(wording)}: "${statement}"`,
       );
     }
     expect(
@@ -8287,10 +8351,31 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
         buttons.includes('continuity-choice-keep-reading'),
       `${where}: the panel offers ${buttons.join(', ') || 'no buttons'}, not exactly the three choices`,
     );
+    const labels = reading['panelButtonLabels'] as string[];
     expect(
       CHAT_EXIT.resumeStateNotShown,
-      reading['drawerStatement'] === statement,
-      `${where}: the drawer statement differs from the panel's: "${String(reading['drawerStatement'])}"`,
+      labels.join('|') === 'Try again|Start new session|Read history',
+      `${where}: the buttons read "${labels.join('|')}", not "Try again|Start new session|Read history"`,
+    );
+    // No workspace command runs in this scenario, so the consequence note is absent.
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      reading['runningCommandNote'] === '',
+      `${where}: a running-command note was shown with no command running: "${String(reading['runningCommandNote'])}"`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      reading['composerStatus'] === 'No agent session — history only',
+      `${where}: the composer status reads "${String(reading['composerStatus'])}"`,
+    );
+    // The drawer does not repeat the panel: one short line and a pointer, no statement.
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      reading['drawerStatement'] === 'Could not resume the agent session' &&
+        reading['drawerPointer'] === 'Details are in the panel above.' &&
+        reading['drawerTechnicalShown'] === false &&
+        !(element('session-details-view')?.textContent ?? '').includes('No new session was opened'),
+      `${where}: the drawer repeats or lacks the state: "${String(reading['drawerStatement'])}" / "${String(reading['drawerPointer'])}" / technical ${String(reading['drawerTechnicalShown'])}`,
     );
     expect(
       CHAT_EXIT.resumeStateNotShown,
@@ -8377,9 +8462,137 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
       60_000,
     );
     await sleep(1_500);
-    // The disclosure is opened as a person opens it, so the detail is read from an
-    // open disclosure and not only from the document's text.
-    const summary = element('continuity-choices-detail')?.querySelector('summary');
+    // Read first as a person meets it: Technical details closed. The narrow-window
+    // milestone follows in that state; the disclosure is opened after it.
+    const closedAtFirst = readState('opened A, Technical details closed');
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      closedAtFirst['technicalOpen'] === false && element('continuity-technical') !== null,
+      'Technical details was not present and closed when the panel first appeared',
+    );
+    await window.dspatch.captureWindow(`${mode}-opened-closed`);
+
+    // --- The two help disclosures: closed at rest, open and close, text intact -------
+    // The Folders note and the model note went behind <details> in DSP-121's UX pass,
+    // and no other runnable scenario opens them (the roots scenario is stale, DSP-123).
+    // A dispatched KeyboardEvent carries no default action in the page, so Enter on the
+    // summary is dispatched and recorded (whether the window intercepts it) but the
+    // open itself is `summary.click()`: the native toggle the key would run is the
+    // browser's, outside what a script in the page can drive. Focus is recorded as the
+    // keyboard evidence the page can give: a summary that takes focus is reachable.
+    const helpDisclosures: Record<string, unknown> = {};
+    for (const [label, detailsName, summaryName, textName] of [
+      ['folders', 'workspace-roots', 'workspace-roots-summary', 'workspace-roots-detail'],
+      ['model', 'model-affects-summary', 'model-affects-summary', 'model-affects'],
+    ] as const) {
+      const summary = element(summaryName);
+      const details = summary?.closest('details') ?? null;
+      const text = element(textName);
+      // Not `offsetParent`: Chromium skips a closed <details>' content through
+      // content-visibility, so the text keeps an offsetParent while nobody can see
+      // it. `checkVisibility()` answers for that case; the box size is the second
+      // reading, so an open disclosure whose text has no height does not pass.
+      const visible = (): boolean =>
+        text !== null && text.checkVisibility() && text.getBoundingClientRect().height > 0;
+      const closedAtRest = details !== null && !details.open && !visible();
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        closedAtRest,
+        `help disclosure "${label}" was not closed at rest (open=${String(details?.open)}, detail visible=${String(visible())})`,
+      );
+      if (!(summary instanceof HTMLElement) || details === null) {
+        helpDisclosures[label] = { present: false };
+        continue;
+      }
+      summary.focus();
+      const tookFocus = document.activeElement === summary;
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      summary.dispatchEvent(enter);
+      await sleep(100);
+      const openedByKey = details.open;
+      if (!openedByKey) {
+        summary.click();
+      }
+      await sleep(200);
+      const openText = clean(text?.textContent ?? null);
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        details.open && visible() && openText !== '',
+        `help disclosure "${label}" did not open with its text visible (open=${String(details.open)}, visible=${String(visible())}, text="${openText}")`,
+      );
+      helpDisclosures[label] = {
+        detailsName,
+        summaryText: clean(summary.textContent),
+        tookFocus,
+        enterIntercepted: enter.defaultPrevented,
+        openedBy: openedByKey ? 'keyboard' : 'click',
+        detailText: openText,
+      };
+    }
+    await window.dspatch.captureWindow(`${mode}-help-open`);
+    for (const [label, summaryName, textName] of [
+      ['folders', 'workspace-roots-summary', 'workspace-roots-detail'],
+      ['model', 'model-affects-summary', 'model-affects'],
+    ] as const) {
+      const summary = element(summaryName);
+      const details = summary?.closest('details') ?? null;
+      if (!(summary instanceof HTMLElement) || details === null) {
+        continue;
+      }
+      summary.click();
+      await sleep(200);
+      const text = element(textName);
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        !details.open && (text === null || !text.checkVisibility()),
+        `help disclosure "${label}" did not close again (open=${String(details.open)}, text visible=${String(text?.checkVisibility())})`,
+      );
+      (helpDisclosures[label] as Record<string, unknown>)['closedAgain'] = !details.open;
+    }
+    record('help disclosures', helpDisclosures);
+
+    // --- Narrow window: the buttons wrap, nothing overflows -------------------------
+    // Taken as a person meets the panel, Technical details closed. Only the main
+    // process can resize the window; the width is put back afterwards so the rest of
+    // the scenario, and a held window, read as they did before. The thread's own
+    // horizontal overflow is recorded and not judged: it is the transcript's layout,
+    // measured by the width trial of the presentation scenario, not this panel's.
+    const widthBefore = window.outerWidth;
+    const narrowContentWidthPx = await window.dspatch.setWindowWidth(700);
+    await sleep(600);
+    const thread = element('transcript');
+    const narrow = {
+      contentWidthPx: narrowContentWidthPx,
+      innerWidthPx: window.innerWidth,
+      scrollWidthPx: document.documentElement.scrollWidth,
+      conversationOverflowPx:
+        thread === null ? null : Math.round(thread.scrollWidth - thread.clientWidth),
+      panelBottomPx: Math.round(element('continuity-choices')?.getBoundingClientRect().bottom ?? 0),
+      innerHeightPx: window.innerHeight,
+      buttonsVisible: {
+        tryAgain: visibleInViewport('continuity-choice-try-again'),
+        newSession: visibleInViewport('continuity-choice-new-session'),
+        keepReading: visibleInViewport('continuity-choice-keep-reading'),
+      },
+    };
+    record('narrow window', narrow);
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      narrow.scrollWidthPx <= narrow.innerWidthPx,
+      `at ${String(narrow.innerWidthPx)} px the document overflows horizontally to ${String(narrow.scrollWidthPx)} px`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      narrow.buttonsVisible.tryAgain && narrow.buttonsVisible.newSession && narrow.buttonsVisible.keepReading,
+      `at ${String(narrow.innerWidthPx)} px not all three buttons are inside the viewport: ${JSON.stringify(narrow.buttonsVisible)}`,
+    );
+    await window.dspatch.captureWindow(`${mode}-narrow`);
+    await window.dspatch.setWindowWidth(widthBefore);
+    await sleep(400);
+
+    // Then opened as a person opens it, so the statement and the detail are read
+    // from an open disclosure and not only from the document's text.
+    const summary = element('continuity-technical')?.querySelector('summary');
     if (summary instanceof HTMLElement) {
       summary.click();
       await sleep(200);
@@ -8393,8 +8606,8 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     );
     expect(
       CHAT_EXIT.resumeStateNotShown,
-      opened['panelDetailOpen'] === true,
-      'the technical detail disclosure did not open when its summary was clicked',
+      opened['technicalOpen'] === true,
+      'the Technical details disclosure did not open when its summary was clicked',
     );
     await window.dspatch.captureWindow(`${mode}-opened`);
 
@@ -8447,6 +8660,17 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
         String(keptReading['providerSessionFact']).endsWith('(on record, not open)'),
         'Keep reading changed the Provider session fact',
       );
+      // With the panel gone, the drawer is where Technical details lives, so the
+      // full statement stays reachable; the pointer to the panel goes.
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        keptReading['drawerStatement'] === 'Could not resume the agent session' &&
+          keptReading['drawerPointer'] === '' &&
+          keptReading['drawerTechnicalShown'] === true &&
+          /No new session was opened and nothing was sent/.test(textOf('session-continuity-statement')) &&
+          /simulated/i.test(String(keptReading['drawerDetailText'])),
+        `after Read history the drawer does not carry Technical details: "${String(keptReading['drawerStatement'])}" / technical ${String(keptReading['drawerTechnicalShown'])}`,
+      );
       // Send again from the box: refused again, and "Show the choices" brings the panel back.
       await sendFromComposer();
       // The main process counts this refusal; the window's reading is the error block.
@@ -8490,6 +8714,19 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
           element('pending-resend-discard') instanceof HTMLButtonElement &&
           !String(fresh['providerSessionFact']).endsWith('(on record, not open)'),
         'the new provider session did not show a removable recap with the panel gone and a session open',
+      );
+      // The drawer's line is the short note; the service's statement is under its
+      // Technical details, verbatim.
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        fresh['drawerStatement'] ===
+          "The agent's earlier context does not follow automatically. DSpatch will send this " +
+            'summary first; you can remove it.' &&
+          fresh['drawerTechnicalShown'] === true &&
+          /This is a new provider session, opened because you asked for one/.test(
+            textOf('session-continuity-statement'),
+          ),
+        `the new provider session's drawer reads "${String(fresh['drawerStatement'])}" / technical ${String(fresh['drawerTechnicalShown'])}`,
       );
       const recapText = textOf('pending-resend-text');
       record('recap', { recapChars: recapText.length, recapHead: recapText.slice(0, 160) });

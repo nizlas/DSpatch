@@ -308,9 +308,9 @@ Two things can happen next, and the window says which:
   disk touched.
 - It cannot be resumed. Since DSP-121 (24 October 2026) DSpatch then opens
   nothing and sends nothing: the recorded session ID stays on record and the
-  window offers three choices — try the resume again, start a new provider
-  session with a recap you can remove before sending, or keep reading without
-  starting an agent. The passage below describes the behaviour **before
+  window offers three choices — *Try again* (the same resume once more), *Start
+  new session* (with a recap you can remove before sending), or *Read history*
+  without starting an agent. The passage below describes the behaviour **before
   DSP-121**, measured on 15–16 September 2026, when a refused resume opened a new
   session by itself: *the model then has no memory of the conversation, so
   DSpatch puts its own recap in front of your next message — and shows you that
@@ -741,24 +741,40 @@ happens, and the window says which:
   behind it; and a resume can also fail for a reason that may pass — a moved
   folder, a file lock, a network or authentication error. Since DSP-121 DSpatch
   does **not** open a new session on its own in either case. The recorded session
-  ID stays on record unchanged, no recap is queued, nothing is sent, and the
-  window says which of the two it was where the evidence allows it: *the provider
-  answered that it does not have that session* (Cursor's `agent_not_found`, the
-  provider's own answer) or *the attempt failed: <the error>, which may be
-  temporary*; an adapter that cannot resume at all says so and that the provider
-  was not asked. Opening the history or seeing that failure starts no model turn.
-  If an earlier message of this conversation has no confirmed end — an attempt
-  the window closed on — the statement lists it and says it is not resent. Three
-  choices are offered: **try again** (the same resume, attempted again; like any
-  reopen it stops a build or test command still running), **start a new provider
-  session**, or **keep reading** without starting an agent. Until you choose, a
-  message or a cancel is refused with that same explanation.
+  ID stays on record unchanged, no recap is queued, nothing is sent, and a panel
+  above the message box, headed **Could not resume the agent session**, says in
+  one sentence which of the two it was where the evidence allows it: *The agent no
+  longer has this session* only when the provider answered so itself (Cursor's
+  `agent_not_found`); *Resuming did not work this time; it may be temporary* for
+  an attempt that failed with an error; *DSpatch could not tell whether the agent
+  still has this session* when the evidence does not say; an adapter that cannot
+  resume at all says so. Every sentence ends *Your saved conversation is still
+  available. Try again or start a new agent session.* Opening the history or
+  seeing that failure starts no model turn. If an earlier message of this
+  conversation has no confirmed end — an attempt the window closed on — one line
+  says *An earlier message may have reached the agent; nothing is resent.* Three
+  buttons follow: **Try again** (the same resume, attempted again; like any reopen
+  it stops a build or test command still running; a line above the buttons says so
+  only while a command runs, and the buttons stay usable), **Start new session**
+  (which closes this view's session the same way), or **Read history**
+  without starting an agent. Everything longer — the service's full statement, the
+  failure's own words, the provider's code, the session ID, the adapter and what
+  the resume call carried — is under **Technical details**, closed until opened;
+  nothing is dropped, it is simply not in the open. The composer's status reads
+  *No agent session — history only* instead of *Waiting for your message*, and the
+  session drawer shows the heading and *Details are in the panel above* rather
+  than repeating the panel (after *Read history* the Technical details move into
+  the drawer). Until you choose, a message or a cancel is refused with *Show the
+  choices*, which brings the panel back.
 - **A new provider session was opened, because you chose one** — from that
   refusal, or from *Continue in a new provider session* beside a session holding
   a run — or because the conversation had no session recorded at all. The model
   then has **no memory of the conversation on screen**, so DSpatch prepares its
   own short recap for the front of your next message and shows you that recap
-  **word for word** before you send. You can remove it (*Remove the recap*);
+  **word for word** before you send. The drawer says so in one line — *The
+  agent's earlier context does not follow automatically. DSpatch will send this
+  summary first; you can remove it.* — with the recap under it and the service's
+  full statement under Technical details. You can remove it (*Remove the recap*);
   then only your message goes, and the recap does not come back for that session.
   What the model was told is saved with the message that carried it, so the same
   question has the same answer after the next restart.
@@ -1031,19 +1047,31 @@ adapter then refuses or fails:
 
 | `DSPATCH_CHAT_RESUME` | The adapter's answer to `resume()` | What the phase does after the open |
 | --- | --- | --- |
-| `refused` | every resume is refused with `providerCode: 'agent_not_found'`, the shape of "the provider does not have that session" | a send refused with *Show the choices* and the text kept; *Keep reading* (panel gone, a second send refused, *Show the choices* brings it back); *Try again* (refused again); *Start a new provider session* (the recap in the drawer, *Remove the recap*, one message sent alone and answered locally) |
+| `refused` | every resume is refused with `providerCode: 'agent_not_found'`, the shape of "the provider does not have that session" | a send refused with *Show the choices* and the text kept; *Read history* (panel gone, a second send refused, *Show the choices* brings it back); *Try again* (refused again); *Start new session* (the recap in the drawer, *Remove the recap*, one message sent alone and answered locally) |
 | `failed` | every resume throws with no provider code (`TypeError: fetch failed`), the shape of a transport failure | *Try again*, which fails again |
 | `refused-once` | the first resume of each session ID is refused, later ones succeed | *Try again*, which resumes: same conversation, three messages, no panel |
 | `ok` (or unset) | every resume succeeds, as in every other scenario | the scenario reports that it was given no refusal to show (exit 37) |
 
-In these phases the window itself says so: one line above the statement, in the panel
-and in the drawer, reads *Presentation mode: this refusal or failure is simulated by the
-presentation adapter on this machine; no provider was asked anything.* - drawn only
-when the scripted plan asked for a simulated resume, never in an ordinary launch.
-In each phase the open itself is read first: that line, the panel above the message box with its
-statement, the "Technical detail" disclosure (which says *simulated*), exactly the three
-buttons, the drawer with the same statement and no recap, the "Provider session" fact
-reading `(on record, not open)`, and the session context statement. The main process
+In these phases the window itself says so: a short label in the panel reads *Test mode —
+no provider calls*, and its Technical details carry the full sentence *Presentation mode:
+this refusal or failure is simulated by the presentation adapter on this machine; no
+provider was asked anything.* - drawn only when the scripted plan asked for a simulated
+resume, never in an ordinary launch. In each phase the open itself is read first, twice:
+once as a person meets it, with Technical details closed (picture `<shot>-<phase>-opened-closed.png`),
+and once with it opened by a click on its summary. Judged: the heading *Could not resume
+the agent session*; the body for the phase (`refused`: *The agent no longer has this
+session*; `failed`: *Resuming did not work this time; it may be temporary*, and not
+"missing"); the three buttons reading exactly *Try again*, *Start new session*, *Read
+history*; no running-command note; the test-mode label; the composer status *No agent
+session — history only*; under Technical details the main process's statement with its
+earlier wording and the detail that says *simulated*; the drawer showing the heading and
+*Details are in the panel above* and **not** the statement; no recap; the "Provider
+session" fact reading `(on record, not open)`; and the session context statement. Then
+the window is narrowed to 700 px (`<shot>-<phase>-narrow.png`): the document must not
+overflow horizontally and all three buttons must be inside the viewport; the width is put
+back afterwards. After *Read history* the drawer must carry Technical details with the
+full statement; after *Start new session* its line must be the short note with the
+service's statement under Technical details. The main process
 records, beside what the DOM showed, the conversation file's `session` block before and
 after each session start the window asked for, how the service described the continuity,
 and what the adapter had been asked by then - how many resumes, how many sessions
@@ -1114,8 +1142,8 @@ shows is simulated, and it says so when it starts.
 | 84 | Two conversations sharing an attempt ID were not shown as two, or the command gate did not name both and disable the plain Run. |
 | 85 | The acknowledged command did not pass, or a save failed while it ran. |
 | 86 | After the restart, a conversation did not come back as it was left. |
-| 87 | The refused or failed resume state was not shown as such: no panel, the wrong statement, a technical detail that does not say *simulated*, not exactly the three choices, a drawer or fact that disagreed, or a recap while no provider session was open. |
-| 88 | A choice did not behave: a send was not refused with *Show the choices* or lost its text, *Keep reading* changed something, *Try again* changed the conversation on screen, the new provider session showed no removable recap, the recap did not read as removed, or the message was not answered. |
+| 87 | The refused or failed resume state was not shown as such: no panel, the wrong heading or body (or "missing" claimed for a failure), Technical details open at first or lacking the statement or a detail that says *simulated*, not exactly the three buttons with their labels, a running-command note with nothing running, the wrong composer status, a drawer that repeated the statement, a fact that disagreed, a recap while no provider session was open, or a horizontal overflow or hidden button at 700 px. |
+| 88 | A choice did not behave: a send was not refused with *Show the choices* or lost its text, *Read history* changed something, *Try again* changed the conversation on screen, the new provider session showed no removable recap, the recap did not read as removed, or the message was not answered. |
 | 89 | The main process's record contradicted the window: the file's `session` block changed before a choice, a different number of resume attempts, a session started or something sent that should not have been, or the one message reached the adapter with a recap in front of it. |
 | 25 | `DSPATCH_CHAT_EXPECT_USERDATA` names a directory other than the one in force. Nothing of DSpatch's was created or written. |
 

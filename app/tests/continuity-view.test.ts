@@ -15,11 +15,21 @@ import { test } from 'node:test';
 
 import type { SessionContinuity, SessionContinuityKind } from '../src/shared/bridge';
 import {
+  CONTINUITY_HEADING,
+  EARLIER_SENDS_NOTE,
+  NEW_SESSION_NOTE,
+  NO_SESSION_STATUS,
   RECAP_REMOVED_NOTE,
+  RUNNING_COMMAND_NOTE,
+  SIMULATION_LABEL,
   SIMULATION_NOTICE,
+  composerStatus,
+  continuityBody,
   continuityView,
   earlierSendLine,
   providerSessionFact,
+  runningCommandNote,
+  simulationLabel,
   simulationNotice,
 } from '../src/renderer/continuity-view';
 
@@ -57,15 +67,15 @@ for (const kind of ['resume-refused', 'resume-failed', 'resume-unavailable'] as 
     );
     assert.deepEqual(
       view.choices.map((choice) => choice.label),
-      [
-        'Try again to resume this session',
-        'Start a new provider session',
-        'Keep reading without starting an agent',
-      ],
+      ['Try again', 'Start new session', 'Read history'],
     );
     for (const choice of view.choices) {
       assert.notEqual(choice.note.trim(), '');
     }
+    assert.equal(view.heading, CONTINUITY_HEADING);
+    assert.equal(view.drawerLine, CONTINUITY_HEADING, 'the drawer line is the heading, not the statement');
+    assert.notEqual(view.body, null);
+    assert.equal(view.earlierSendsNote, null, 'no earlier-sends note without earlier sends');
     assert.equal(view.recap, null, 'no recap is shown while nothing is open');
     assert.equal(view.recapRemovedNote, null);
   });
@@ -196,4 +206,152 @@ test('DSP-121 SIMULATED: the simulation line appears only for a scripted plan th
   assert.equal(simulationNotice(undefined), null);
   assert.equal(simulationNotice({}), null);
   assert.equal(simulationNotice({ resumeMode: 'ok' }), null);
+});
+
+// --- DSP-121 UX (Niclas, 24 October 2026): short in the open, complete behind -----
+
+test('the body is keyed on what the failure established, and never says missing unless the provider said so', () => {
+  const body = (
+    kind: SessionContinuityKind,
+    failure: SessionContinuity['resumeFailure'],
+  ): string => String(continuityBody({ kind, providerSessionOpen: false, resumeFailure: failure }));
+  const still = 'Your saved conversation is still available. Try again or start a new agent session.';
+
+  assert.equal(
+    body('resume-refused', { kind: 'provider-missing', detail: 'x', providerCode: 'agent_not_found' }),
+    `The agent no longer has this session. ${still}`,
+  );
+  assert.equal(
+    body('resume-failed', { kind: 'error', detail: 'TypeError: fetch failed', providerCode: null }),
+    `Resuming did not work this time; it may be temporary. ${still}`,
+  );
+  // A refusal with a plain error is the adapter's own rule, not a transport failure:
+  // not called temporary, and still not called missing.
+  assert.equal(
+    body('resume-refused', { kind: 'error', detail: 'config mismatch', providerCode: 'config_mismatch' }),
+    `Resuming did not work this time. ${still}`,
+  );
+  assert.equal(
+    body('resume-refused', { kind: 'unknown', detail: 'x', providerCode: 'local_record_missing_unaligned' }),
+    `DSpatch could not tell whether the agent still has this session. ${still}`,
+  );
+  assert.equal(
+    body('resume-refused', { kind: 'local-record-missing', detail: 'x', providerCode: 'local_record_missing' }),
+    `No local record of this session was found; the agent was not asked. ${still}`,
+  );
+  assert.equal(
+    body('resume-refused', { kind: 'unconfirmed-end', detail: 'x', providerCode: null }),
+    `The last message of this conversation has no confirmed end, so the session was not resumed. ${still}`,
+  );
+  assert.equal(
+    body('resume-unavailable', { kind: 'error', detail: 'x', providerCode: null }),
+    'This adapter cannot resume sessions. Your saved conversation is still available. ' +
+      'Start a new agent session or read the history.',
+  );
+  // No failure recorded at all while not open: the uncertainty is stated, not a loss.
+  assert.match(body('resume-failed', null), /^DSpatch could not tell/);
+
+  for (const failureKind of ['error', 'unknown', 'local-record-missing', 'unconfirmed-end'] as const) {
+    for (const kind of ['resume-refused', 'resume-failed'] as const) {
+      const text = body(kind, { kind: failureKind, detail: 'x', providerCode: null });
+      assert.doesNotMatch(text, /no longer has/, `${kind}/${failureKind} must not claim the session is missing`);
+      assert.doesNotMatch(text, /missing/i, `${kind}/${failureKind} must not claim the session is missing`);
+    }
+  }
+  // An open session has no body.
+  assert.equal(
+    continuityBody({ kind: 'provider-session-resumed', providerSessionOpen: true, resumeFailure: null }),
+    null,
+  );
+});
+
+test('the earlier-sends sentence appears only when an earlier message has no confirmed end', () => {
+  const none = continuityView(notOpen('resume-refused', 'x'), NOT_ON_SCREEN);
+  assert.equal(none.earlierSendsNote, null);
+  const some = continuityView(
+    {
+      ...notOpen('resume-refused', 'x'),
+      earlierSendsMayHaveReached: [
+        { attemptId: 'dsp-attempt-0003', label: 'a job left going', state: 'outcome-unknown', acknowledged: false },
+      ],
+    },
+    NOT_ON_SCREEN,
+  );
+  assert.equal(some.earlierSendsNote, EARLIER_SENDS_NOTE);
+  assert.equal(EARLIER_SENDS_NOTE, 'An earlier message may have reached the agent; nothing is resent.');
+  assert.equal(some.earlierSends.length, 1, 'the full list is still there for Technical details');
+});
+
+test('Technical details has every text the service produced: statement, detail, provider code, session', () => {
+  const view = continuityView(
+    {
+      ...notOpen('resume-refused', 'Presentation adapter: simulated refusal'),
+      resumeFailure: {
+        kind: 'provider-missing',
+        detail: 'Presentation adapter: simulated refusal',
+        providerCode: 'agent_not_found',
+      },
+    },
+    NOT_ON_SCREEN,
+  );
+  assert.equal(view.statement, 'Statement for resume-refused. No new session was opened and nothing was sent.');
+  assert.equal(view.technicalDetail, 'Presentation adapter: simulated refusal');
+  assert.equal(view.providerCode, 'agent_not_found');
+  assert.equal(view.attemptedSessionId, 'dsp-session-1');
+  const noCode = continuityView(notOpen('resume-failed', 'TypeError: fetch failed'), NOT_ON_SCREEN);
+  assert.equal(noCode.providerCode, null);
+});
+
+test('the running-command note is shown only while a workspace command runs', () => {
+  assert.equal(runningCommandNote(true), RUNNING_COMMAND_NOTE);
+  assert.equal(RUNNING_COMMAND_NOTE, 'A running command is stopped by Try again or Start new session.');
+  assert.equal(runningCommandNote(false), null);
+});
+
+test('DSP-121 SIMULATED: the short test-mode label stands in the open, the full sentence behind it', () => {
+  assert.equal(SIMULATION_LABEL, 'Test mode — no provider calls');
+  for (const mode of ['refused', 'failed', 'refused-once'] as const) {
+    assert.equal(simulationLabel({ resumeMode: mode }), SIMULATION_LABEL, mode);
+    assert.equal(simulationNotice({ resumeMode: mode }), SIMULATION_NOTICE, mode);
+  }
+  assert.equal(simulationLabel(null), null);
+  assert.equal(simulationLabel({ resumeMode: 'ok' }), null);
+});
+
+test('the composer status says there is no agent session rather than waiting for a message', () => {
+  assert.equal(NO_SESSION_STATUS, 'No agent session — history only');
+  assert.equal(composerStatus({ providerSessionOpen: false }, 'Waiting for your message.', false), NO_SESSION_STATUS);
+  assert.equal(composerStatus({ providerSessionOpen: true }, 'Waiting for your message.', false), 'Waiting for your message.');
+  assert.equal(composerStatus(null, 'No project open, so nothing is running.', false), 'No project open, so nothing is running.');
+  // A loop run has sessions of its own; its line wins while it runs.
+  assert.equal(composerStatus({ providerSessionOpen: false }, 'Step 2 of 4', true), 'Step 2 of 4');
+});
+
+test('the drawer line is the heading while not open, the short note for a new session, the statement when resumed', () => {
+  const base = { ...notOpen('resume-refused', 'x') };
+  assert.equal(continuityView(base, NOT_ON_SCREEN).drawerLine, CONTINUITY_HEADING);
+  const fresh: SessionContinuity = {
+    ...base,
+    kind: 'new-provider-session',
+    providerSessionOpen: true,
+    resumeFailure: null,
+    choices: [],
+    contextToResend: 'RECAP',
+    statement: 'This is a new provider session, opened because you asked for one. (long)',
+  };
+  const freshView = continuityView(fresh, NOT_ON_SCREEN);
+  assert.equal(freshView.drawerLine, NEW_SESSION_NOTE);
+  assert.equal(
+    NEW_SESSION_NOTE,
+    "The agent's earlier context does not follow automatically. DSpatch will send this summary first; you can remove it.",
+  );
+  assert.equal(freshView.statement, fresh.statement, 'the long statement is kept for Technical details');
+  assert.equal(freshView.heading, null);
+  assert.equal(freshView.body, null);
+  const resumed = continuityView(
+    { ...fresh, kind: 'provider-session-resumed', contextToResend: null, statement: 'Session x was resumed.' },
+    NOT_ON_SCREEN,
+  );
+  assert.equal(resumed.drawerLine, 'Session x was resumed.');
+  assert.equal(continuityView({ ...fresh, kind: 'first-session', contextToResend: null }, NOT_ON_SCREEN).drawerLine, null);
 });
