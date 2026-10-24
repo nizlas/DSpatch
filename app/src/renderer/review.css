@@ -745,6 +745,7 @@
 .rv-row {
   display: flex;
   min-width: max-content;
+  background: var(--bg);
 }
 
 .rv-old {
@@ -782,13 +783,17 @@
   outline-offset: -1px;
 }
 
+/* The line numbers stay put while a long line is scrolled sideways. */
 .rv .rv-ln {
   display: inline-flex;
   flex: none;
+  position: sticky;
+  left: 0;
+  z-index: 1;
   gap: 0.4rem;
   border: none;
   border-radius: 0;
-  background: transparent;
+  background: inherit;
   color: var(--muted);
   padding: 0 0.4rem;
   font-family: inherit;
