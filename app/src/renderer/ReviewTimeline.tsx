@@ -216,6 +216,9 @@ export function WalkTimeline({
   const mapXRef = useRef(0);
   mapXRef.current = mapX;
   const maxMapX = Math.max(0, layout.total - viewWidth);
+  useEffect(() => {
+    setMapX((x) => Math.min(x, maxMapX));
+  }, [maxMapX]);
   const clampX = useCallback((x: number) => Math.min(Math.max(0, x), Math.max(0, layout.total - viewWidth)), [layout.total, viewWidth]);
 
   // Direction of travel decides where the active pane settles: moving forward it
@@ -224,6 +227,9 @@ export function WalkTimeline({
   const previousActive = useRef(active);
   const panActivated = useRef<number | null>(null);
   const [direction, setDirection] = useState<'forward' | 'backward'>(entry);
+  // Read through a ref: a width change must not realign a map the reader has panned.
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
   useLayoutEffect(() => {
     const forward = active >= previousActive.current;
     const moved = active !== previousActive.current;
@@ -238,11 +244,12 @@ export function WalkTimeline({
     if (viewWidth === 0) {
       return;
     }
-    const left = layout.lefts[active] ?? 0;
-    const width = layout.widths[active] ?? defaultWidth;
+    const left = layoutRef.current.lefts[active] ?? 0;
+    const width = layoutRef.current.widths[active] ?? defaultWidth;
     const target = forward ? left + width - viewWidth : left;
-    setMapX(clampX(Math.max(0, target)));
-  }, [active, viewWidth, layout, defaultWidth, clampX]);
+    setMapX(Math.min(Math.max(0, target), Math.max(0, layoutRef.current.total - viewWidth)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, viewWidth, defaultWidth]);
 
   // The active station follows the map when it is panned by hand: the pane under the
   // viewport's centre, once the centre is well inside it.
@@ -314,12 +321,14 @@ export function WalkTimeline({
         setShiftHeld(false);
       }
     };
+    const blur = (): void => setShiftHeld(false);
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
-    window.addEventListener('blur', () => setShiftHeld(false));
+    window.addEventListener('blur', blur);
     return () => {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
     };
   }, []);
 
@@ -416,6 +425,8 @@ export function WalkTimeline({
         className={`rv-timeline-viewport${panning ? ' rv-panning' : shiftHeld ? ' rv-pan-ready' : ''}`}
         ref={viewport}
         onPointerDown={(event) => {
+          // A new press starts clean: only the click of a pan that just ended is swallowed.
+          swallowClick.current = false;
           const handle = (event.target as HTMLElement).closest('[data-resize-index]');
           if (event.button === 0 && handle !== null) {
             const index = Number(handle.getAttribute('data-resize-index'));
@@ -431,9 +442,10 @@ export function WalkTimeline({
             return;
           }
           if (event.button === 0 && event.shiftKey) {
-            // Nothing is captured or prevented yet: a Shift-click that does not travel
-            // must reach the line number as an ordinary click. Text selection is off
-            // while Shift is held (CSS).
+            // Nothing is captured yet: a Shift-click that does not travel must reach
+            // the line number as an ordinary click. The pointer event is the truth
+            // about Shift (the key may have gone down while the window was unfocused).
+            setShiftHeld(true);
             pan.current = { id: event.pointerId, startX: event.clientX, startMapX: mapXRef.current, moved: false };
           }
         }}
@@ -461,6 +473,8 @@ export function WalkTimeline({
           if (!pan.current.moved) {
             pan.current = { ...pan.current, moved: true };
             event.currentTarget.setPointerCapture(event.pointerId);
+            // A pan moves the map, never a text selection.
+            window.getSelection()?.removeAllRanges();
             setPanning(true);
           }
           const x = clampX(pan.current.startMapX + delta);
