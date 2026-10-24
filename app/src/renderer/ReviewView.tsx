@@ -660,6 +660,7 @@ function OpenReview({
                 highlightWalk={state.ui.highlightWalk}
                 words={words}
                 lang={lang}
+                onOpenLocation={goAway}
               />
             </>
           ) : focus === null ? (

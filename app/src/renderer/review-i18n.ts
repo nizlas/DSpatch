@@ -85,7 +85,16 @@ export interface ReviewWords {
     readonly unit: Record<UnitKind, string>;
     readonly label: string;
   };
-  readonly timeline: { readonly label: string; readonly hint: string; readonly call: string; readonly resize: string };
+  readonly timeline: {
+    readonly label: string;
+    readonly hint: string;
+    readonly call: string;
+    readonly resize: string;
+    readonly sourceIn: (place: string) => string;
+    readonly showSource: (place: string) => string;
+    readonly openSource: string;
+    readonly sourceFor: (place: string) => string;
+  };
   readonly nav: {
     readonly previous: string;
     readonly next: string;
@@ -281,7 +290,11 @@ const sv: ReviewWords = {
   timeline: {
     label: 'Walkens kodställen i tidsordning',
     hint: 'Shift + vänster musknapp och dra panorerar kartan. Mushjulsknappen och dra scrollar en panel. Shift + scrollhjul eller Alt + ← / → stegar.',
-    call: 'anrop',
+    call: 'källa',
+    sourceIn: (place) => `källan visas i ${place}`,
+    showSource: (place) => ` · visa källan i ${place}`,
+    openSource: ' · öppna källan (den visas inte i walken)',
+    sourceFor: (place) => `källa för ${place} →`,
     resize: 'Dra för att ändra bredd. Dubbelklicka för att passa den längsta raden.',
   },
   nav: {
@@ -499,7 +512,11 @@ const en: ReviewWords = {
   timeline: {
     label: 'The walk’s code places in time order',
     hint: 'Shift + left mouse button and drag pans the map. The wheel button and drag scrolls one pane. Shift + scroll wheel or Alt + ← / → steps.',
-    call: 'call',
+    call: 'source',
+    sourceIn: (place) => `the source is shown in ${place}`,
+    showSource: (place) => ` · show the source in ${place}`,
+    openSource: ' · open the source (no pane of the walk shows it)',
+    sourceFor: (place) => `source for ${place} →`,
     resize: 'Drag to change the width. Double-click to fit the longest line.',
   },
   nav: {

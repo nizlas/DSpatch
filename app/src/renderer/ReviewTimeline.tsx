@@ -198,18 +198,29 @@ function layoutOf(count: number, widths: ReadonlyMap<number, number>, fallback: 
   return { lefts, widths: sizes, total: Math.max(0, x - PANE_GAP) };
 }
 
+/** Whether a station's own code — its focus, unit or prepared context — contains the lines. */
+function shows(station: Station, ref: CodeLocation): boolean {
+  const place = station.place;
+  const ranges = [place.focus, ...(place.unit === null ? [] : [place.unit.ref]), ...place.context];
+  return ranges.some(
+    (range) => range.path === ref.path && (range.side ?? 'target') === (ref.side ?? 'target') && range.start <= ref.start && range.end >= ref.end,
+  );
+}
+
 /**
- * The pane the walk's link into `station` leads from: the nearest earlier pane that
- * shows the file and side of the call. Two panes of the same file are two panes.
+ * The pane the walk's link into `station` leads from: the nearest earlier pane whose
+ * own code contains the source line. The same file is not enough: a pane showing
+ * another function of that file is not the source, and gets no arrow. Null when no
+ * pane of the walk shows the source; the link is then a reference that opens it.
  */
 function fromPaneOf(stations: readonly Station[], station: Station | undefined): number | null {
   const from = station?.place.from;
   if (station === undefined || from === null || from === undefined) {
     return null;
   }
-  const key = `${from.ref.path}\|${from.ref.side}`;
   for (let index = station.index - 1; index >= 0; index -= 1) {
-    if (stations[index]?.key === key) {
+    const candidate = stations[index];
+    if (candidate !== undefined && shows(candidate, from.ref)) {
       return index;
     }
   }
@@ -226,8 +237,7 @@ function callPaneOf(stations: readonly Station[], station: Station | undefined):
   if (pane !== null) {
     return pane;
   }
-  const focus = station.place.focus;
-  return from.ref.path === focus.path && from.ref.side === focus.side ? station.index : null;
+  return shows(station, from.ref) ? station.index : null;
 }
 
 const NO_CALLS: readonly CodeLocation[] = [];
@@ -247,6 +257,7 @@ export function WalkTimeline({
   onSelect,
   words,
   lang,
+  onOpenLocation,
 }: {
   readonly walk: Walk;
   /** How this walk was entered: from the walk before it, or back from the one after. */
@@ -263,6 +274,8 @@ export function WalkTimeline({
   readonly highlightWalk: boolean;
   readonly words: ReviewWords;
   readonly lang: Lang;
+  /** Opens code outside the walk (a source no pane of the walk shows). */
+  readonly onOpenLocation: (location: CodeLocation) => void;
 }): JSX.Element {
   const viewport = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
@@ -342,10 +355,18 @@ export function WalkTimeline({
   // Each arrival by navigation is numbered; the pane it reaches makes room for its
   // change and places it in view once per number. The station the map opens on is
   // arrival 0. Panning activates panes without arriving anywhere.
-  const [arrival, setArrival] = useState(() => ({ index: active, seq: 0, from: fromPaneOf(stations, stations[active]) }));
+  const [arrival, setArrival] = useState(() => ({ index: active, seq: 0 }));
   const arrivalRef = useRef(arrival);
   arrivalRef.current = arrival;
   const handledArrivals = useRef(new Map<number, number>());
+  // The source of a link is unfolded and brought into view only by an explicit act —
+  // arriving at the place by navigation, or asking for its source — never by panning.
+  const sourceSignalFor = (index: number): { pane: number | null; ref: CodeLocation | null } => {
+    const station = stations[index];
+    const pane = callPaneOf(stations, station);
+    return { pane, ref: pane === null || station?.place.from == null ? null : station.place.from.ref };
+  };
+  const [source, setSource] = useState(() => ({ ...sourceSignalFor(active), seq: 0 }));
   useLayoutEffect(() => {
     const forward = active >= previousActive.current;
     const moved = active !== previousActive.current;
@@ -355,7 +376,8 @@ export function WalkTimeline({
       lastDirection.current = forward ? 'forward' : 'backward';
       activatedByPan.current = panActivated.current === active;
       if (!activatedByPan.current) {
-        setArrival((current) => ({ index: active, seq: current.seq + 1, from: fromPaneOf(stations, stations[active]) }));
+        setArrival((current) => ({ index: active, seq: current.seq + 1 }));
+        setSource((current) => ({ ...sourceSignalFor(active), seq: current.seq + 1 }));
       } else {
         // Panning takes over: an arrival not yet placed is dropped, never placed later.
         const pending = arrivalRef.current;
@@ -491,12 +513,40 @@ export function WalkTimeline({
   // unfolded for the latest navigation and stay so until the next one: panning neither
   // folds nor unfolds rows in any pane.
   const callPane = useMemo(() => callPaneOf(stations, activeStation), [stations, activeStation]);
-  const arrivalStation = stations[arrival.index];
-  const arrivalCallPane = useMemo(() => callPaneOf(stations, arrivalStation), [stations, arrivalStation]);
-  const arrivalCalls = useMemo(
-    (): readonly CodeLocation[] => (arrivalStation === undefined || arrivalStation.place.from === null ? NO_CALLS : [arrivalStation.place.from.ref]),
-    [arrivalStation],
-  );
+  const sourceCalls = useMemo((): readonly CodeLocation[] => (source.ref === null ? NO_CALLS : [source.ref]), [source.ref]);
+  // Where the active place's source is, for the reference in its header: a pane of the
+  // walk (on screen or not), or nowhere in the walk.
+  const placeName = (index: number): string => {
+    const station = stations[index];
+    if (station === undefined) {
+      return '';
+    }
+    const count = stations.filter((other) => other.stepId === station.stepId).length;
+    return words.nav.placeOf(station.stepId, station.placeIndex + 1, count);
+  };
+  const paneOnScreen = (index: number): boolean => {
+    const left = layout.lefts[index] ?? 0;
+    const width = layout.widths[index] ?? defaultWidth;
+    return Math.min(left + width, mapX + viewWidth) - Math.max(left, mapX) >= Math.min(160, width * 0.5);
+  };
+  // Bring the source pane into view — together with the active pane when both fit —
+  // unfold the source and scroll it to the source line. An explicit act, like navigation.
+  const revealSource = (): void => {
+    if (fromPane === null) {
+      return;
+    }
+    const left = layout.lefts[fromPane] ?? 0;
+    const activeRight = (layout.lefts[active] ?? 0) + (layout.widths[active] ?? defaultWidth);
+    const target = activeRight - left <= viewWidth ? activeRight - viewWidth : left - PANE_GAP;
+    setMapX(clampX(Math.min(left, target)));
+    setSource((current) => ({ ...sourceSignalFor(active), seq: current.seq + 1 }));
+  };
+  // And back from the source to the place it leads to.
+  const returnToPlace = (): void => {
+    const left = layout.lefts[active] ?? 0;
+    const width = layout.widths[active] ?? defaultWidth;
+    setMapX(clampX(left + width - viewWidth));
+  };
   const [arrow, setArrow] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const measure = useCallback(() => {
     const element = viewport.current;
@@ -675,7 +725,19 @@ export function WalkTimeline({
                     direction={direction}
                     fromRow={isActive ? (activeStation?.place.from ?? null) : null}
                     fromHere={callPane === station.index && activeStation !== undefined && activeStation.place.from !== null ? activeStation.place.from.ref : null}
-                    calls={arrivalCallPane === station.index ? arrivalCalls : NO_CALLS}
+                    calls={source.pane === station.index ? sourceCalls : NO_CALLS}
+                    sourceLink={
+                      isActive && activeStation?.place.from != null
+                        ? fromPane === null
+                          ? { kind: 'open', onClick: () => onOpenLocation(activeStation.place.from!.ref) }
+                          : paneOnScreen(fromPane)
+                            ? { kind: 'shown', name: placeName(fromPane) }
+                            : { kind: 'reveal', name: placeName(fromPane), onClick: revealSource }
+                        : null
+                    }
+                    sourceFor={
+                      fromPane === station.index && !paneOnScreen(active) ? { name: placeName(active), onClick: returnToPlace } : null
+                    }
                     diffFile={changedFiles.get(path) ?? null}
                     files={files}
                     level={level}
@@ -695,7 +757,7 @@ export function WalkTimeline({
                     arrival={arrival.index === station.index ? arrival.seq : -1}
                     arrivalHandled={handledArrivals.current.get(station.index) ?? -1}
                     onArrivalHandled={(seq) => handledArrivals.current.set(station.index, seq)}
-                    callArrival={arrival.from === station.index ? arrival.seq : -1}
+                    callArrival={source.pane === station.index && station.index !== active ? source.seq : -1}
                   />
                 ) : (
                   <div className="rv-pane-placeholder">
@@ -776,6 +838,8 @@ function TimelinePane({
   onArrivalHandled,
   calls,
   callArrival,
+  sourceLink,
+  sourceFor,
 }: {
   readonly selection: CodeLocation | null;
   readonly onSelect: (location: CodeLocation | null) => void;
@@ -807,8 +871,16 @@ function TimelinePane({
   readonly onArrivalHandled: (seq: number) => void;
   /** The call of the latest navigation, when it is shown in this pane: kept unfolded. */
   readonly calls: readonly CodeLocation[];
-  /** The number of the navigation that reached a place called from this pane, or -1. */
+  /** The number of the explicit act that asked this pane to show a link's source, or -1. */
   readonly callArrival: number;
+  /** In the active pane: where its link's source is shown — here on screen, off screen, or nowhere in the walk. */
+  readonly sourceLink:
+    | { readonly kind: 'shown'; readonly name: string }
+    | { readonly kind: 'reveal'; readonly name: string; readonly onClick: () => void }
+    | { readonly kind: 'open'; readonly onClick: () => void }
+    | null;
+  /** In the source pane, when the place it leads to is off screen: the way back. */
+  readonly sourceFor: { readonly name: string; readonly onClick: () => void } | null;
 }): JSX.Element {
   const path = station.place.focus.path;
   const side = station.place.focus.side;
@@ -1235,7 +1307,23 @@ function TimelinePane({
         {isActive && fromRow !== null && (
           <span className="rv-pane-from">
             ← <Inline text={pick(fromRow.label, lang)} /> ({fileName(fromRow.ref.path)}:{rangeText(fromRow.ref)})
+            {sourceLink?.kind === 'shown' && <span className="rv-sub"> · {words.timeline.sourceIn(sourceLink.name)}</span>}
+            {sourceLink?.kind === 'reveal' && (
+              <button type="button" className="rv-link rv-source-link" onClick={sourceLink.onClick}>
+                {words.timeline.showSource(sourceLink.name)}
+              </button>
+            )}
+            {sourceLink?.kind === 'open' && (
+              <button type="button" className="rv-link rv-source-link" onClick={sourceLink.onClick}>
+                {words.timeline.openSource}
+              </button>
+            )}
           </span>
+        )}
+        {sourceFor !== null && (
+          <button type="button" className="rv-link rv-source-link" onClick={sourceFor.onClick}>
+            {words.timeline.sourceFor(sourceFor.name)}
+          </button>
         )}
       </header>
       <div
