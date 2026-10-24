@@ -1655,7 +1655,7 @@ function WalkNavBar({
         <div className="rv-nav-where">
           <span className="rv-sub">{words.nav.placeOf(stepId, placeIndex + 1, placeCount)}</span>
           {place !== null && (
-            <span className="rv-nav-label">
+            <span className="rv-nav-label" title={pick(place.label, lang).replace(/`/g, '')}>
               <Inline text={pick(place.label, lang)} />
             </span>
           )}

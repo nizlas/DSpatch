@@ -753,6 +753,11 @@
 .rv-row {
   display: flex;
   min-width: max-content;
+}
+
+/* In the map's panes a row is opaque, so the sticky line numbers below can carry its
+   colour; the colour classes after this rule override it. */
+:where(.rv-pane-lines) .rv-row {
   background: var(--bg);
 }
 
@@ -791,22 +796,36 @@
   outline-offset: -1px;
 }
 
-/* The line numbers stay put while a long line is scrolled sideways. */
 .rv .rv-ln {
   display: inline-flex;
   flex: none;
-  position: sticky;
-  left: 0;
-  z-index: 1;
   gap: 0.4rem;
   border: none;
   border-radius: 0;
-  background: inherit;
+  background: transparent;
   color: var(--muted);
   padding: 0 0.4rem;
   font-family: inherit;
   font-size: 0.75rem;
   line-height: inherit;
+}
+
+/* In the map's panes the line numbers stay put while a long line is scrolled
+   sideways, with their row's colour and its left edge mark (call, walk, arrival). */
+.rv .rv-pane-lines .rv-ln {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: inherit;
+  box-shadow: inherit;
+}
+
+/* The links that open folded lines stay at the left edge too. */
+.rv-pane-lines .rv-gap,
+.rv-pane-lines .rv-nothing {
+  position: sticky;
+  left: 0;
+  align-self: flex-start;
 }
 
 .rv-ln span {
@@ -919,8 +938,14 @@
   text-align: center;
 }
 
+/* One line, so the code below keeps its height from step to step; the full label
+   is in the tooltip and in the step panel. */
 .rv-nav-label {
   font-weight: 600;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .rv-nav-label code,
