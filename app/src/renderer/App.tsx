@@ -32,6 +32,7 @@ import type {
   SampleCleanupOutcome,
   SampleProjectsView,
   StartSessionRequest,
+  ScriptedRunPlan,
   StoredMessage,
   TestFreshness,
   TestOutcome,
@@ -62,7 +63,7 @@ import {
   type BridgeFailure,
 } from './recovery';
 import { describePlainly } from './plain-error';
-import { continuityView, providerSessionFact } from './continuity-view';
+import { continuityView, providerSessionFact, simulationNotice } from './continuity-view';
 import {
   attachUsage,
   currentTurn as currentTurnOf,
@@ -433,6 +434,12 @@ function Workbench({
 
   const pendingPrompt = useRef('');
   const scriptStarted = useRef(false);
+  /**
+   * The scripted plan this window runs under, or `null` for an ordinary launch. Kept
+   * for one reading: whether a refused or failed resume on screen is the presentation
+   * adapter's simulation (DSP-121), which the window then says above the statement.
+   */
+  const [scriptedPlan, setScriptedPlan] = useState<ScriptedRunPlan | null>(null);
   /**
    * The conversation's one scroller.
    *
@@ -2170,6 +2177,7 @@ function Workbench({
       if (plan === null) {
         return;
       }
+      setScriptedPlan(plan);
       void runScriptedWorkflow(plan).then((report) => {
         window.dspatch.reportScriptedRun(report);
       });
@@ -2882,6 +2890,7 @@ function Workbench({
                   session={session}
                   dismissed={continuityDismissed}
                   busy={busy !== null}
+                  simulated={simulationNotice(scriptedPlan)}
                   onChoose={(choice) => {
                     if (choice === 'try-again') {
                       void startSession({ kind: 'retry-resume' });
@@ -2955,6 +2964,7 @@ function Workbench({
               sentAnything={chat.turns.length > 0}
               recapDiscarded={recapDiscarded}
               busy={busy !== null}
+              simulated={simulationNotice(scriptedPlan)}
               onDiscardRecap={() => {
                 void discardRecap();
               }}
@@ -4195,12 +4205,15 @@ function SessionContinuity({
   sentAnything,
   recapDiscarded,
   busy,
+  simulated,
   onDiscardRecap,
 }: {
   readonly session: ChatSessionInfo;
   readonly sentAnything: boolean;
   readonly recapDiscarded: boolean;
   readonly busy: boolean;
+  /** The simulation line of a presentation run (DSP-121), or `null` for a real one. */
+  readonly simulated: string | null;
   readonly onDiscardRecap: () => void;
 }): JSX.Element | null {
   const view = continuityView(session.continuity, {
@@ -4215,6 +4228,11 @@ function SessionContinuity({
   }
   return (
     <Section title="This session and the earlier conversation">
+      {simulated !== null && !view.providerSessionOpen && (
+        <p className="app__note" data-ev="continuity-simulated">
+          {simulated}
+        </p>
+      )}
       {view.statement !== null && (
         <p className="app__note" data-ev="session-continuity">
           {view.statement}
@@ -4287,11 +4305,14 @@ function ContinuityChoices({
   session,
   dismissed,
   busy,
+  simulated,
   onChoose,
 }: {
   readonly session: ChatSessionInfo;
   readonly dismissed: boolean;
   readonly busy: boolean;
+  /** The simulation line of a presentation run (DSP-121), or `null` for a real one. */
+  readonly simulated: string | null;
   readonly onChoose: (choice: 'try-again' | 'new-session' | 'keep-reading') => void;
 }): JSX.Element | null {
   const view = continuityView(session.continuity, {
@@ -4304,6 +4325,16 @@ function ContinuityChoices({
   }
   return (
     <div className="app__error" data-ev="continuity-choices">
+      {/*
+        Above the statement, because the statement is the service's honest reading of
+        the adapter's answer and reads like a provider's: in a presentation run the
+        window has to say first that no provider was asked.
+      */}
+      {simulated !== null && (
+        <p className="app__note" data-ev="continuity-simulated">
+          {simulated}
+        </p>
+      )}
       <p data-ev="continuity-choices-statement">{view.statement}</p>
       {view.earlierSends.length > 0 && (
         <ul className="card__detail" data-ev="continuity-choices-earlier-sends">

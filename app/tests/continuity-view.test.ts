@@ -16,9 +16,11 @@ import { test } from 'node:test';
 import type { SessionContinuity, SessionContinuityKind } from '../src/shared/bridge';
 import {
   RECAP_REMOVED_NOTE,
+  SIMULATION_NOTICE,
   continuityView,
   earlierSendLine,
   providerSessionFact,
+  simulationNotice,
 } from '../src/renderer/continuity-view';
 
 const ALL_CHOICES = ['try-again', 'new-session', 'keep-reading'] as const;
@@ -178,4 +180,20 @@ test('a new provider session shows its recap until it is sent or removed', () =>
 test('the provider session fact says when the session is on record but not open', () => {
   assert.equal(providerSessionFact('agent-1', true), 'agent-1');
   assert.equal(providerSessionFact('agent-1', false), 'agent-1 (on record, not open)');
+});
+
+test('DSP-121 SIMULATED: the simulation line appears only for a scripted plan that asked for a simulated resume', () => {
+  assert.equal(
+    SIMULATION_NOTICE,
+    'Presentation mode: this refusal or failure is simulated by the presentation adapter ' +
+      'on this machine; no provider was asked anything.',
+  );
+  for (const mode of ['refused', 'failed', 'refused-once'] as const) {
+    assert.equal(simulationNotice({ resumeMode: mode }), SIMULATION_NOTICE, mode);
+  }
+  // An ordinary launch has no plan; a plan that asked for no simulation gets nothing.
+  assert.equal(simulationNotice(null), null);
+  assert.equal(simulationNotice(undefined), null);
+  assert.equal(simulationNotice({}), null);
+  assert.equal(simulationNotice({ resumeMode: 'ok' }), null);
 });

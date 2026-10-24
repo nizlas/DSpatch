@@ -4,7 +4,7 @@ title: 'Preserve conversations, changes and execution results after restart'
 status: Review
 assignee: []
 created_date: '2026-09-13'
-updated_date: '2026-10-24 01:37'
+updated_date: '2026-10-24 04:29'
 labels:
   - storage
 milestone: m-0
@@ -113,4 +113,6 @@ WS-1c result (24 Oct 2026, run 20261024-000000-ws1c, base 0b52baf, accepted cand
 - Product observations (unchanged; backlog): (a) after opening a project the live Build and test panel says "Not run yet." although the service holds the saved last run - the saved verdict is visible only in the restored panel after Read this back (DSP-4 #6 holds; a UX gap: show the held last result at open or point at Read this back); (c) after acknowledgement the Execution state line says "N attempts are unresolved. While that is true, DSpatch will not repeat the same kind of action on its own." - truthful (acknowledged attempts stay unresolved) but reads as if the gate still held; count unacknowledged separately. The manual kit's WINDOW-TEST.md step 3.1 expected "passed" in the live panel and is corrected.
 - DSP-120 registers the stopWorkspaceTest process risk (a leaf process surviving a session change) as a precondition for Cancel and switch.
 Niclas's manual UX acceptance remains pending; nothing here is it.
+
+24 Oct 2026: DSP-121 (3e764a2) replaced the automatic resume fallback, so the manual kit's WINDOW-TEST.md step 3 (a new provider session opened on a refused resume) and its 'passed' expectation in the live panel (product observation (a)) are superseded. The current manual instruction is .dspatch-loop/MANUAL-CHECK-20261024.md (copy beside the kit): Part 1 regression on the presentation adapter, Part 2 the choice panel with a real refused Cursor resume. Final candidate 3f847a0, build identity a6dc3f83f6bde967. Status stays Review until Niclas's acceptance.
 <!-- SECTION:NOTES:END -->

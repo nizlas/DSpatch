@@ -42,7 +42,9 @@ import type {
   ScriptedRunPlan,
   ScriptedRunReport,
   ScriptedScenario,
+  ChatSessionInfo,
   StartSessionRequest,
+  StoredSession,
   TestRunRequest,
 } from '../shared/bridge';
 import {
@@ -59,7 +61,12 @@ import type { LoopNode, RoleReference, RoleResolver } from '../shared/loop-graph
 import type { RunResult, RunStatus } from '../shared/loop-run';
 import { ChatService, type ChatAdapter } from './chat-service';
 import { ConversationStore } from './conversation-store';
-import { PresentationAdapter, presentationAuthStatus } from './presentation-adapter';
+import {
+  PresentationAdapter,
+  PresentationResumeBehaviour,
+  presentationAuthStatus,
+  presentationResumeMode,
+} from './presentation-adapter';
 import { InstructionQueue } from './instruction-queue';
 import { instructionPreamble } from '../shared/loop-instruction';
 import { createFileRoleResolver } from './loop-graph-roles';
@@ -270,7 +277,9 @@ const chatRunScenario: ScriptedScenario =
                                 ? 'how-the-liveness-looks'
                                 : chatRunValue === 'switch'
                                   ? 'workspace-switch'
-                                  : 'full-workflow';
+                                  : chatRunValue === 'resume-choice'
+                                    ? 'resume-choice'
+                                    : 'full-workflow';
 
 /**
  * The one run that talks to no provider.
@@ -337,7 +346,19 @@ const presentationMode =
   // DSP-4 WS-1: what the window shows of saved conversations as it switches between
   // them, and after a restart. Everything in it is read from files on this machine;
   // the adapter only lets a session open, and nothing is sent to it.
-  chatRunScenario === 'workspace-switch';
+  chatRunScenario === 'workspace-switch' ||
+  // DSP-121: the refused and failed resume states through the real choice panel. The
+  // refusal is the presentation adapter's own, simulated on this machine; the one
+  // message the scenario sends after choosing a new session is answered locally.
+  chatRunScenario === 'resume-choice';
+
+/**
+ * Hold mode (`DSPATCH_CHAT_HOLD=1`, `resume-choice` only): the scenario performs the
+ * open, the record is written, and the window is left open for a person to look at
+ * instead of being exited. The window is an ordinary window then - the real panel,
+ * every button working - it is simply not driven further.
+ */
+const chatRunHold = chatRunScenario === 'resume-choice' && process.env['DSPATCH_CHAT_HOLD'] === '1';
 
 /**
  * How fast the canned reply arrives, when a scripted run needs to say
@@ -352,11 +373,31 @@ const presentationMode =
  * script's timing. Slowing the fixture widens the interval being sampled; it changes
  * nothing about what the product does in it.
  */
-function presentationAdapterOptions(): { readonly deltaMs?: number } {
+function presentationAdapterOptions(): {
+  readonly deltaMs?: number;
+  readonly resume: PresentationResumeBehaviour;
+} {
   const raw = process.env['DSPATCH_PRESENTATION_DELTA_MS'] ?? '';
   const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? { deltaMs: parsed } : {};
+  return {
+    ...(Number.isFinite(parsed) && parsed > 0 ? { deltaMs: parsed } : {}),
+    resume: presentationResume,
+  };
 }
+
+/**
+ * How the presentation adapter answers `resume()` (`DSPATCH_CHAT_RESUME`, DSP-121),
+ * and the record of what it was asked.
+ *
+ * One object for the whole process, because `ChatService` replaces its adapter with
+ * the session and `refused-once` has to remember a refusal across that. Read only
+ * in presentation mode: an ordinary launch constructs no presentation adapter, so
+ * the variable cannot reach a provider. A value that is not one of the four modes is
+ * logged and treated as `ok`; the `resume-choice` scenario then reports that it was
+ * given no refusal to show, rather than running a different trial.
+ */
+const presentationResumeRequested = presentationResumeMode(process.env['DSPATCH_CHAT_RESUME']);
+const presentationResume = new PresentationResumeBehaviour(presentationResumeRequested ?? 'ok');
 
 /**
  * What a file chooser answers during a scripted window run (`DSPATCH_PICK_FILE`).
@@ -464,7 +505,11 @@ const chatRunTimeoutMs =
                               // Nothing waits for a provider.
                               chatRunScenario === 'workspace-switch'
                               ? 300_000
-                              : 900_000;
+                              : // One project opened, three buttons pressed, one local
+                                // reply. Nothing waits for a provider.
+                                chatRunScenario === 'resume-choice'
+                                ? 300_000
+                                : 900_000;
 const chatRunTurnTimeoutMs = 240_000;
 
 /**
@@ -494,6 +539,13 @@ const CHAT_EXIT_NO_REPORT = 39;
  * same directory before this code runs, and that is outside DSpatch's control.
  */
 const CHAT_EXIT_WRONG_USERDATA = 25;
+/**
+ * The resume-choice record's main-process checks contradicted a window that passed
+ * (DSP-121): the session block changed before a choice, a resume was attempted a
+ * different number of times, something was started or sent that should not have
+ * been, or the one message went with a recap in front of it.
+ */
+const CHAT_EXIT_RESUME_RECORD_WRONG = 89;
 
 function log(message: string): void {
   process.stdout.write(`[dspatch] ${message}\n`);
@@ -1543,7 +1595,10 @@ function exitNow(code: number): void {
   disposeThenEnd((shutdown) => {
     // After the close, which is itself a save: the switch scenario's record says what
     // the close wrote. Other scenarios keep their single record as it was.
-    if (chatRunScenario === 'workspace-switch' && lastScriptedReport !== undefined) {
+    if (
+      (chatRunScenario === 'workspace-switch' || chatRunScenario === 'resume-choice') &&
+      lastScriptedReport !== undefined
+    ) {
       writeChatRunRecord(lastScriptedReport, 'after-close', shutdown);
     }
     app.exit(code);
@@ -2289,6 +2344,11 @@ interface ConversationFileObservation {
   }[];
   readonly testRuns: readonly { readonly attemptId: string | null; readonly verdict: string }[];
   readonly reviewedDiffFiles: readonly string[] | null;
+  /**
+   * The file's `session` block, verbatim (DSP-121): what the resume-choice record
+   * compares before and after a refused resume, where it must not have changed.
+   */
+  readonly session: StoredSession | null;
   readonly error: string | null;
 }
 
@@ -2308,6 +2368,7 @@ function observeConversationFiles(): readonly ConversationFileObservation[] {
         attempts: [],
         testRuns: [],
         reviewedDiffFiles: null,
+        session: null,
         error: read.error ?? entry.error,
       };
     }
@@ -2333,9 +2394,226 @@ function observeConversationFiles(): readonly ConversationFileObservation[] {
         diff === null
           ? null
           : [...diff.changed, ...diff.added, ...diff.removed].map((file) => file.relPath),
+      session: conversation.session,
       error: null,
     };
   });
+}
+
+/**
+ * The resume-choice scenario's main-process timeline (DSP-121).
+ *
+ * One entry per session start the window asked for and per message it sent, taken
+ * in the real IPC handlers as the request passes through: what the conversation
+ * file's `session` block held on disk before and after, how the service described
+ * the continuity afterwards, and what the presentation adapter had been asked by
+ * then. The renderer's record says what the window showed; this says what was on
+ * disk and what reached the adapter at the same moments, which is the half the
+ * DOM cannot see - that the session ID stayed on record until a choice was made,
+ * that nothing was sent, and that the one message sent later went without a recap.
+ */
+interface ResumeChoiceTimelineEntry {
+  readonly event: 'start-session' | 'send';
+  readonly request: string;
+  readonly atUtc: string;
+  readonly outcome: 'ok' | 'refused';
+  readonly detail: string | null;
+  readonly fileSessionBefore: StoredSession | null;
+  readonly fileSessionAfter: StoredSession | null;
+  readonly continuityAfter: {
+    readonly kind: string;
+    readonly providerSessionOpen: boolean;
+    readonly resumeFailure: unknown;
+  } | null;
+  readonly resumeAttempts: number;
+  readonly startSessionCalls: number;
+  readonly sentCount: number;
+}
+
+const resumeChoiceTimeline: ResumeChoiceTimelineEntry[] = [];
+
+/** The `session` block of project A's conversation file, read from disk now. */
+function resumeChoiceFileSession(): StoredSession | null {
+  const projectA = (process.env['DSPATCH_CHAT_SWITCH_PROJECTS'] ?? '').split(';')[0]?.trim() ?? '';
+  if (projectA === '') {
+    return null;
+  }
+  const found = observeConversationFiles().find(
+    (file) => file.projectPath !== null && samePathSpelling(file.projectPath, projectA),
+  );
+  return found?.session ?? null;
+}
+
+function recordResumeChoice(
+  event: ResumeChoiceTimelineEntry['event'],
+  request: string,
+  before: StoredSession | null,
+  outcome: ResumeChoiceTimelineEntry['outcome'],
+  detail: string | null,
+): void {
+  const continuity = chatService.sessionContinuity();
+  const adapter = presentationResume.record();
+  resumeChoiceTimeline.push({
+    event,
+    request,
+    atUtc: new Date().toISOString(),
+    outcome,
+    detail,
+    fileSessionBefore: before,
+    fileSessionAfter: resumeChoiceFileSession(),
+    continuityAfter:
+      chatService.openSession() === null
+        ? null
+        : {
+            kind: continuity.kind,
+            providerSessionOpen: continuity.providerSessionOpen,
+            resumeFailure: continuity.resumeFailure,
+          },
+    resumeAttempts: adapter.resumeAttempts.length,
+    startSessionCalls: adapter.startSessionCalls,
+    sentCount: adapter.sent.length,
+  });
+}
+
+/**
+ * What the main process can say about the resume-choice run, checked here rather
+ * than left for a reader: each line is one claim the DOM cannot make, with the
+ * evidence it was judged on. A failed line turns the exit into 89, so the scenario
+ * cannot pass on what the window showed while the disk or the adapter disagreed.
+ */
+function resumeChoiceChecks(
+  report: ScriptedRunReport | null,
+): readonly { readonly check: string; readonly ok: boolean; readonly evidence: string }[] {
+  const checks: { check: string; ok: boolean; evidence: string }[] = [];
+  const claim = (check: string, ok: boolean, evidence: string): void => {
+    checks.push({ check, ok, evidence });
+  };
+  const same = (left: unknown, right: unknown): boolean =>
+    JSON.stringify(left) === JSON.stringify(right);
+  const mode = presentationResume.mode;
+  const starts = resumeChoiceTimeline.filter((entry) => entry.event === 'start-session');
+  const sends = resumeChoiceTimeline.filter((entry) => entry.event === 'send');
+  const opened = starts[0];
+  const seeded = opened?.fileSessionBefore ?? null;
+  claim(
+    'the first session start was the open of project A from Recent',
+    opened !== undefined && opened.request === 'folder',
+    `first start request: ${opened?.request ?? 'none'}`,
+  );
+  claim(
+    'project A had a session on record before the open',
+    seeded !== null,
+    seeded === null ? 'no session block read' : `dspatchSessionId ${seeded.dspatchSessionId}`,
+  );
+  const expectedKind =
+    mode === 'failed' ? 'resume-failed' : mode === 'ok' ? 'provider-session-resumed' : 'resume-refused';
+  claim(
+    `after the open the continuity was ${expectedKind} with no provider session open`,
+    opened?.continuityAfter?.kind === expectedKind &&
+      (mode === 'ok' || opened?.continuityAfter?.providerSessionOpen === false),
+    `kind ${opened?.continuityAfter?.kind ?? 'none'}, open ${String(opened?.continuityAfter?.providerSessionOpen ?? 'none')}`,
+  );
+  if (mode !== 'ok') {
+    claim(
+      'after the open the file session block was unchanged',
+      opened !== undefined && same(opened.fileSessionAfter, seeded),
+      `after: ${JSON.stringify(opened?.fileSessionAfter ?? null)}`,
+    );
+    claim(
+      'the open made exactly one resume attempt, started no session and sent nothing',
+      opened?.resumeAttempts === 1 && opened.startSessionCalls === 0 && opened.sentCount === 0,
+      `attempts ${String(opened?.resumeAttempts)}, starts ${String(opened?.startSessionCalls)}, sent ${String(opened?.sentCount)}`,
+    );
+  }
+  if (mode === 'failed') {
+    const failure = opened?.continuityAfter?.resumeFailure as
+      | { readonly kind?: unknown; readonly providerCode?: unknown }
+      | null
+      | undefined;
+    claim(
+      'the failure was recorded as an error with no provider code',
+      failure?.kind === 'error' && failure.providerCode === null,
+      JSON.stringify(failure ?? null),
+    );
+  }
+  const refusedSends = sends.filter((entry) => entry.outcome === 'refused');
+  claim(
+    'every send before a choice was refused by the no-provider-session guard, and sent nothing',
+    refusedSends.every(
+      (entry) => (entry.detail ?? '').startsWith('No provider session is open') && entry.sentCount === 0,
+    ),
+    `${String(refusedSends.length)} refused send(s): ${refusedSends.map((entry) => entry.detail ?? '').join(' | ')}`,
+  );
+  if (mode === 'refused' && !chatRunHold) {
+    // Two refused sends are driven - one before Keep reading and one after - so the
+    // `every` above cannot pass on an empty list (Reviewer S2).
+    claim(
+      'exactly two sends were refused before a choice was made',
+      refusedSends.length === 2,
+      `${String(refusedSends.length)} refused send(s), 2 expected`,
+    );
+  }
+  const retry = starts.find((entry) => entry.request === 'retry-resume');
+  if (!chatRunHold && mode !== 'ok') {
+    claim(
+      'Try again was asked for and made a second resume attempt',
+      retry !== undefined && retry.resumeAttempts === 2,
+      `retry: ${retry === undefined ? 'none' : `attempts ${String(retry.resumeAttempts)}`}`,
+    );
+  }
+  if (retry !== undefined) {
+    if (mode === 'refused-once') {
+      claim(
+        'after Try again the session was resumed, with no session started and nothing sent',
+        retry.continuityAfter?.kind === 'provider-session-resumed' &&
+          retry.continuityAfter.providerSessionOpen === true &&
+          retry.startSessionCalls === 0 &&
+          retry.sentCount === 0 &&
+          retry.fileSessionAfter?.dspatchSessionId === seeded?.dspatchSessionId,
+        `kind ${retry.continuityAfter?.kind ?? 'none'}, starts ${String(retry.startSessionCalls)}, sent ${String(retry.sentCount)}, file id ${retry.fileSessionAfter?.dspatchSessionId ?? 'none'}`,
+      );
+    } else if (mode !== 'ok') {
+      claim(
+        'after Try again the file session block was still unchanged and nothing was sent',
+        same(retry.fileSessionAfter, seeded) &&
+          retry.sentCount === 0 &&
+          retry.startSessionCalls === 0 &&
+          retry.continuityAfter?.kind === expectedKind,
+        `kind ${retry.continuityAfter?.kind ?? 'none'}, sent ${String(retry.sentCount)}, file after: ${JSON.stringify(retry.fileSessionAfter)}`,
+      );
+    }
+  }
+  const fresh = starts.find((entry) => entry.request === 'new-provider-session');
+  if (mode === 'refused' && !chatRunHold) {
+    claim(
+      'a new provider session was asked for and opened one',
+      fresh !== undefined &&
+        fresh.continuityAfter?.kind === 'new-provider-session' &&
+        fresh.startSessionCalls === 1 &&
+        fresh.sentCount === 0,
+      fresh === undefined
+        ? 'no new-provider-session request'
+        : `kind ${fresh.continuityAfter?.kind ?? 'none'}, starts ${String(fresh.startSessionCalls)}, sent ${String(fresh.sentCount)}`,
+    );
+    const sent = presentationResume.record().sent;
+    const message = report?.observations['messageSentInNewSession'];
+    claim(
+      'exactly the one message the window sent reached the adapter, with no recap in front of it',
+      typeof message === 'string' && message !== '' && sent.length === 1 && sent[0] === message,
+      `window sent ${JSON.stringify(message ?? null)}; adapter received ${JSON.stringify(sent)}`,
+    );
+    const current = chatService.openSession();
+    const fileNow = resumeChoiceFileSession();
+    claim(
+      'the file now holds the new session ID, which is not the seeded one',
+      fileNow !== null &&
+        seeded !== null &&
+        fileNow.dspatchSessionId !== seeded.dspatchSessionId &&
+        fileNow.dspatchSessionId === current?.dspatchSessionId,
+      `file ${fileNow?.dspatchSessionId ?? 'none'}, seeded ${seeded?.dspatchSessionId ?? 'none'}, current ${current?.dspatchSessionId ?? 'none'}`,
+    );
+  }
+  return checks;
 }
 
 /** The files as they were when the renderer reported, kept for the after-close record. */
@@ -2344,6 +2622,8 @@ let conversationFilesAtReport: readonly ConversationFileObservation[] | null = n
 let mainEvidenceAtReport: Record<string, unknown> | null = null;
 /** What was reported, so the after-close write carries the same renderer record. */
 let lastScriptedReport: ScriptedRunReport | null | undefined;
+/** The resume-choice verdicts, judged when the renderer reported (DSP-121). */
+let resumeChoiceChecksAtReport: ReturnType<typeof resumeChoiceChecks> | null | undefined;
 
 /**
  * Write the scripted run's record.
@@ -2368,10 +2648,14 @@ function writeChatRunRecord(
     return;
   }
   lastScriptedReport = report;
-  const switching = chatRunScenario === 'workspace-switch';
+  const resuming = chatRunScenario === 'resume-choice';
+  const switching = chatRunScenario === 'workspace-switch' || resuming;
   if (switching && conversationFilesAtReport === null) {
     conversationFilesAtReport = observeConversationFiles();
   }
+  // Judged once, when the renderer reports; the after-close write repeats the same
+  // verdicts rather than re-judging a service that has been disposed.
+  resumeChoiceChecksAtReport ??= resuming ? resumeChoiceChecks(report) : null;
   mainEvidenceAtReport ??= chatService.evidence();
   const record = {
     run:
@@ -2397,7 +2681,9 @@ function writeChatRunRecord(
                         ? 'DSP-88 — an unsaved drawing put to the dropdown, Open loop… and File → Open Graph File…, answered Save, Discard changes and Cancel, with what the window showed and what reached the disk read for each, and no provider call'
                         : chatRunScenario === 'workspace-switch'
                           ? `DSP-4 WS-1 — saved conversations switched between in one window and read back after a restart (phase ${process.env['DSPATCH_CHAT_SWITCH_PHASE'] ?? 'first'}), over a seeded user-data directory, with no provider call`
-                          : 'DSP-1 substep 7 — the whole workflow driven through the window',
+                          : chatRunScenario === 'resume-choice'
+                            ? `DSP-121 — the refused or failed resume state and the three choices, through the real choice panel (DSPATCH_CHAT_RESUME=${presentationResume.mode}${chatRunHold ? ', hold mode' : ''}), over a seeded user-data directory. SIMULATED: the refusal and the failure are the presentation adapter's own answers on this machine; no provider was asked anything, and nothing here says what any provider would do`
+                            : 'DSP-1 substep 7 — the whole workflow driven through the window',
     scenario: chatRunScenario,
     startupProjectPath: startupProjectPath ?? null,
     startedAtUtc: chatRunStartedAtUtc,
@@ -2433,6 +2719,21 @@ function writeChatRunRecord(
                 : shutdown?.completed === true
                   ? null
                   : `not read: the close did not complete (${shutdown?.detail ?? 'no outcome'})`,
+          },
+        }
+      : {}),
+    ...(resuming
+      ? {
+          resumeChoice: {
+            simulated:
+              'Every refusal and failure in this record is the presentation adapter\'s ' +
+              'simulated answer, chosen by DSPATCH_CHAT_RESUME. No provider was asked ' +
+              'anything. What is shown is the window\'s behaviour on a refused or failed ' +
+              'resume, and nothing about any provider.',
+            hold: chatRunHold,
+            adapter: presentationResume.record(),
+            timeline: resumeChoiceTimeline,
+            checks: resumeChoiceChecksAtReport ?? [],
           },
         }
       : {}),
@@ -2878,7 +3179,29 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(START_SESSION, async (_event, request: StartSessionRequest) => {
-    const session = await chatService.startChatSession(request);
+    // The resume-choice record's main-process half (DSP-121): the file's session
+    // block before and after each start the window asks for. Read only in that
+    // scenario; an ordinary launch does not touch this.
+    const fileSessionBefore =
+      chatRunScenario === 'resume-choice' ? resumeChoiceFileSession() : null;
+    let session: ChatSessionInfo;
+    try {
+      session = await chatService.startChatSession(request);
+    } catch (error) {
+      if (chatRunScenario === 'resume-choice') {
+        recordResumeChoice(
+          'start-session',
+          request.kind,
+          fileSessionBefore,
+          'refused',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
+    if (chatRunScenario === 'resume-choice') {
+      recordResumeChoice('start-session', request.kind, fileSessionBefore, 'ok', null);
+    }
     if (request.kind === 'folder') {
       // Remembered only once the session actually opened. A folder that was
       // refused or unreadable has no business in the list of recent projects.
@@ -2905,8 +3228,28 @@ function registerIpc(): void {
   ipcMain.handle(DISCARD_PENDING_RECAP, () => chatService.discardPendingRecap());
   ipcMain.handle(
     SEND_PROMPT,
-    (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) =>
-      chatService.sendPrompt(prompt, acknowledgedAttemptIds ?? []),
+    async (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) => {
+      if (chatRunScenario !== 'resume-choice') {
+        return chatService.sendPrompt(prompt, acknowledgedAttemptIds ?? []);
+      }
+      // The record's main-process half (DSP-121): a send refused by the guard, with
+      // its reason, or one that went - and the adapter's count of what it received.
+      const fileSessionBefore = resumeChoiceFileSession();
+      try {
+        const reference = await chatService.sendPrompt(prompt, acknowledgedAttemptIds ?? []);
+        recordResumeChoice('send', prompt, fileSessionBefore, 'ok', null);
+        return reference;
+      } catch (error) {
+        recordResumeChoice(
+          'send',
+          prompt,
+          fileSessionBefore,
+          'refused',
+          error instanceof Error ? error.message : String(error),
+        );
+        throw error;
+      }
+    },
   );
   ipcMain.handle(CANCEL_RUN, () => chatService.cancelRun());
   ipcMain.handle(ABANDON_SEND, () => chatService.abandonSend());
@@ -2993,11 +3336,22 @@ function registerIpc(): void {
               process.env['DSPATCH_CHAT_SWITCH_PHASE'] === 'again'
                 ? ('again' as const)
                 : ('first' as const),
+          }
+        : {}),
+      // The seeded projects, for the switch scenario and for resume-choice, which
+      // reads the first of them (A) from the same variable rather than a new one.
+      ...(chatRunScenario === 'workspace-switch' || chatRunScenario === 'resume-choice'
+        ? {
             switchProjects: (process.env['DSPATCH_CHAT_SWITCH_PROJECTS'] ?? '')
               .split(';')
               .map((entry) => entry.trim())
               .filter((entry) => entry !== ''),
           }
+        : {}),
+      // DSP-121: how the presentation adapter was told to answer resumes, and
+      // whether the window is to be left open after the open.
+      ...(chatRunScenario === 'resume-choice'
+        ? { resumeMode: presentationResume.mode, resumeHold: chatRunHold }
         : {}),
       ...((): { ownRepositoryPath?: string } => {
         const own = ownRepositoryRoot(app.getAppPath());
@@ -3098,8 +3452,29 @@ function registerIpc(): void {
       log(`scripted run failure: ${failure}`);
     }
     writeChatRunRecord(report);
+    // DSP-121: the main-process verdicts of the resume-choice record. A failed one
+    // takes the exit over a window that passed, because what was on disk and what
+    // reached the adapter is half of what that scenario claims.
+    const mainChecksFailed = (resumeChoiceChecksAtReport ?? []).filter((check) => !check.ok);
+    for (const check of mainChecksFailed) {
+      log(`resume-choice main-process check failed: ${check.check} (${check.evidence})`);
+    }
+    const exitCode =
+      report.exitCode === 0 && mainChecksFailed.length > 0
+        ? CHAT_EXIT_RESUME_RECORD_WRONG
+        : report.exitCode;
     void captureWindowImage().then(() => {
-      exitWith(report.exitCode);
+      if (chatRunHold) {
+        // Hold mode: the record is written and the window stays. Nothing else is
+        // driven; the person closes it when they have looked.
+        log(
+          `hold mode: the window is left open with the ${presentationResume.mode} state ` +
+            `shown (SIMULATED by the presentation adapter). Close it when done; would have ` +
+            `exited with ${String(exitCode)}.`,
+        );
+        return;
+      }
+      exitWith(exitCode);
     });
   });
 
@@ -4653,6 +5028,18 @@ function main(): void {
     // cannot be recognised as such, so a log that says nothing about it would
     // leave that limit invisible in exactly the run where it applies.
     log(`ownRepo=${ownRepoRoot ?? 'none'} generatorBoundary=${probeRepoRoot()}`);
+    if (presentationMode && presentationResumeRequested === null) {
+      log(
+        `DSPATCH_CHAT_RESUME is "${process.env['DSPATCH_CHAT_RESUME'] ?? ''}", which is none of ` +
+          'ok, refused, failed or refused-once; the presentation adapter resumes everything (ok).',
+      );
+    }
+    if (presentationMode && presentationResume.mode !== 'ok') {
+      log(
+        `presentation adapter resume mode: ${presentationResume.mode} - SIMULATED refusals ` +
+          'or failures on this machine; no provider is asked anything.',
+      );
+    }
     // Before anything of DSpatch's is created or written: the project store below is
     // the first thing that touches `userData`.
     const expectedUserData = process.env['DSPATCH_CHAT_EXPECT_USERDATA'] ?? '';
@@ -4690,7 +5077,9 @@ function main(): void {
       }, smokeTimeoutMs);
     }
 
-    if (chatRunMode) {
+    // Hold mode has no timeout: the window is meant to stay open for a person, and
+    // a timer that exited it would be the one thing that mode exists to avoid.
+    if (chatRunMode && !chatRunHold) {
       setTimeout(() => {
         if (chatRunReported) {
           return;

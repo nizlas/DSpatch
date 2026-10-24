@@ -1667,7 +1667,19 @@ export type ScriptedScenario =
    * second process over the same directory and checks what came back. No provider
    * call: the presentation adapter opens sessions and nothing is sent.
    */
-  | 'workspace-switch';
+  | 'workspace-switch'
+  /**
+   * DSP-121: the refused and failed resume states, through the real choice panel.
+   *
+   * Over the same seeded kit, opening project A, whose stored session the
+   * presentation adapter is told to refuse (`DSPATCH_CHAT_RESUME`): the panel, the
+   * drawer, the "on record, not open" fact, a send refused with the text kept, Keep
+   * reading, Try again, a new provider session with its recap removed and one
+   * message sent alone. **Every refusal and failure is simulated by the presentation
+   * adapter**: no provider is asked anything, and the run shows the window's
+   * behaviour only. Hold mode leaves the window open after the open for a person.
+   */
+  | 'resume-choice';
 
 export interface ScriptedRunPlan {
   readonly enabled: true;
@@ -1746,8 +1758,20 @@ export interface ScriptedRunPlan {
   /**
    * The seeded projects, in the order A, B, X, X-sub, spelled as the seed recorded
    * them. Given rather than discovered so the trial names what it opens.
+   * `resume-choice` reads only the first entry, A.
    */
   readonly switchProjects?: readonly string[];
+  /**
+   * How the presentation adapter answers resumes in `resume-choice`, from
+   * `DSPATCH_CHAT_RESUME`. `undefined` for every other scenario, and `ok` means the
+   * variable named no refusal, which that scenario reports rather than runs.
+   */
+  readonly resumeMode?: 'ok' | 'refused' | 'failed' | 'refused-once';
+  /**
+   * `DSPATCH_CHAT_HOLD=1`: `resume-choice` performs only the open, reports, and the
+   * main process leaves the window open for a person instead of exiting.
+   */
+  readonly resumeHold?: boolean;
 }
 
 /** Where the renderer's own observations end up. */

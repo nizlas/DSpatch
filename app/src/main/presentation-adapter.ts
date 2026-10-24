@@ -119,6 +119,128 @@ export function presentationAuthStatus(): Promise<AuthStatusReading> {
   });
 }
 
+/**
+ * How this adapter answers `resume()` (`DSPATCH_CHAT_RESUME`, DSP-121).
+ *
+ * - `ok`: every resume succeeds, as it always has.
+ * - `refused`: every resume throws the shape the Cursor adapter throws when the
+ *   provider answers that it does not have the session (`providerCode:
+ *   'agent_not_found'`).
+ * - `failed`: every resume throws an error with no provider code, the shape of a
+ *   transport failure.
+ * - `refused-once`: the first resume of each session ID is refused and later ones
+ *   succeed, so that *Try again* can be shown succeeding.
+ *
+ * **Simulated, every one of them.** Nothing here asks any provider anything; the
+ * message of every thrown error says so, and the window's "Technical detail" shows
+ * that message. What a run over this shows is what the window does with a refusal
+ * or a failure, and nothing about whether any provider would give one.
+ */
+export type PresentationResumeMode = 'ok' | 'refused' | 'failed' | 'refused-once';
+
+const RESUME_MODES: readonly PresentationResumeMode[] = ['ok', 'refused', 'failed', 'refused-once'];
+
+/**
+ * The mode an environment value names: unset or empty is `ok`, today's behaviour;
+ * any other value must be one of the four, exactly, or `null` is returned so the
+ * caller can say so rather than silently running a different trial.
+ */
+export function presentationResumeMode(raw: string | undefined): PresentationResumeMode | null {
+  const value = (raw ?? '').trim();
+  if (value === '') {
+    return 'ok';
+  }
+  return RESUME_MODES.find((mode) => mode === value) ?? null;
+}
+
+/** One `resume()` the adapter was asked for, and how it answered. */
+export interface PresentationResumeAttempt {
+  readonly sessionId: string;
+  readonly outcome: 'resumed' | 'refused' | 'failed';
+  readonly atUtc: string;
+}
+
+/**
+ * The resume behaviour and the record of what the adapter was asked, shared by
+ * every `PresentationAdapter` instance of one process.
+ *
+ * Shared rather than per instance because `ChatService` replaces its adapter with
+ * the session: a second *Try again* is a second instance, and `refused-once` has
+ * to remember the first refusal across it. The record is what a scripted run's
+ * main-process evidence reads: how many resumes were attempted and with what
+ * answer, how many sessions were started outright, and the exact text of every
+ * `send()` - the whole prompt as it reached the adapter, recap and all, which is
+ * what settles whether a recap was in front of a message.
+ */
+export class PresentationResumeBehaviour {
+  readonly mode: PresentationResumeMode;
+
+  private readonly refusedOnce = new Set<string>();
+
+  private readonly attempts: PresentationResumeAttempt[] = [];
+
+  private readonly sentTexts: string[] = [];
+
+  private startSessionCount = 0;
+
+  constructor(mode: PresentationResumeMode = 'ok') {
+    this.mode = mode;
+  }
+
+  /**
+   * Answer one `resume()` of `sessionId`: return when it is to succeed, throw the
+   * simulated refusal or failure otherwise. Records the attempt either way.
+   */
+  decideResume(sessionId: string): void {
+    const refuse =
+      this.mode === 'refused' ||
+      (this.mode === 'refused-once' && !this.refusedOnce.has(sessionId));
+    if (refuse) {
+      this.refusedOnce.add(sessionId);
+      this.attempts.push({ sessionId, outcome: 'refused', atUtc: new Date().toISOString() });
+      throw Object.assign(
+        new Error(
+          `Presentation adapter: simulated refusal - no session "${sessionId}" (agent_not_found)`,
+        ),
+        { name: 'PresentationResumeRefused', providerCode: 'agent_not_found' },
+      );
+    }
+    if (this.mode === 'failed') {
+      this.attempts.push({ sessionId, outcome: 'failed', atUtc: new Date().toISOString() });
+      throw Object.assign(
+        new Error('Presentation adapter: simulated temporary failure - TypeError: fetch failed'),
+        { name: 'PresentationResumeFailed' },
+      );
+    }
+    this.attempts.push({ sessionId, outcome: 'resumed', atUtc: new Date().toISOString() });
+  }
+
+  recordStartSession(): void {
+    this.startSessionCount += 1;
+  }
+
+  recordSent(text: string): void {
+    this.sentTexts.push(text);
+  }
+
+  /** What was asked and answered so far, for a run record. */
+  record(): {
+    readonly mode: PresentationResumeMode;
+    readonly simulated: true;
+    readonly resumeAttempts: readonly PresentationResumeAttempt[];
+    readonly startSessionCalls: number;
+    readonly sent: readonly string[];
+  } {
+    return {
+      mode: this.mode,
+      simulated: true,
+      resumeAttempts: [...this.attempts],
+      startSessionCalls: this.startSessionCount,
+      sent: [...this.sentTexts],
+    };
+  }
+}
+
 interface SessionState {
   readonly dspatchSessionId: string;
   listener: AgentEventListener | null;
@@ -137,8 +259,17 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
   /** How fast the canned reply arrives. Small enough to keep the trial short. */
   private readonly deltaMs: number;
 
-  constructor(options: { readonly deltaMs?: number } = {}) {
+  /** How `resume()` answers, and the record of what was asked. `ok` unless given. */
+  private readonly behaviour: PresentationResumeBehaviour;
+
+  constructor(
+    options: {
+      readonly deltaMs?: number;
+      readonly resume?: PresentationResumeBehaviour;
+    } = {},
+  ) {
     this.deltaMs = options.deltaMs ?? 45;
+    this.behaviour = options.resume ?? new PresentationResumeBehaviour('ok');
   }
 
   capabilities(): CapabilityReport {
@@ -150,6 +281,12 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
   }
 
   startSession(config: SessionConfig): Promise<SessionHandle> {
+    this.behaviour.recordStartSession();
+    return Promise.resolve(this.open(config));
+  }
+
+  /** A fresh local session, counted as a start only when asked for as one. */
+  private open(config: SessionConfig): SessionHandle {
     this.sessionCounter += 1;
     // Shaped like the real adapter's ids, so the window and anything reading it
     // sees a session identifier of the usual form rather than a special case.
@@ -162,19 +299,26 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       activeRun: null,
       timers: new Set(),
     });
-    return Promise.resolve({
+    return {
       dspatchSessionId,
       provider: 'cursor',
       providerSessionId: `local-${dspatchSessionId}`,
       createdAt: new Date().toISOString(),
-    });
+    };
   }
 
-  async resume(sessionId: string, config: SessionConfig): Promise<SessionHandle> {
+  resume(sessionId: string, config: SessionConfig): Promise<SessionHandle> {
+    // The shared behaviour answers first: a simulated refusal or failure is thrown
+    // here and no local session is opened, which is the shape of the real refusal.
+    try {
+      this.behaviour.decideResume(sessionId);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
     // Nothing is checked: a presentation "resume" is a fresh local session under the
     // old ID, and the continuity wording must not claim more than that.
-    const handle = await this.startSession({ ...config, dspatchSessionId: sessionId });
-    return { ...handle, resumeEvidence: 'none' };
+    const handle = this.open({ ...config, dspatchSessionId: sessionId });
+    return Promise.resolve({ ...handle, resumeEvidence: 'none' });
   }
 
   hasActiveRun(sessionId: string): boolean {
@@ -197,6 +341,9 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     if (state === undefined) {
       return Promise.reject(new Error(`No presentation session ${sessionId}.`));
     }
+    // The whole text as it arrived, recap and all: what the record reads to say
+    // whether a recap was in front of the message.
+    this.behaviour.recordSent(prompt);
     state.runCounter += 1;
     const dspatchRunId = `${sessionId}-run-${String(state.runCounter)}`;
     state.activeRun = dspatchRunId;

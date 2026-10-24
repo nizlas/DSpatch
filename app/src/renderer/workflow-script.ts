@@ -129,6 +129,12 @@ const CHAT_EXIT = {
   switchSharedIdWrong: 84,
   switchRunAgainFailed: 85,
   switchRestartWrong: 86,
+  /**
+   * 87–89 belong to DSP-121: the refused or failed resume state and its choices.
+   * 89 is set by the main process when its own record contradicts the window.
+   */
+  resumeStateNotShown: 87,
+  resumeChoiceWrong: 88,
 } as const;
 
 const CHANGE_REQUEST =
@@ -709,6 +715,8 @@ export async function runScriptedWorkflow(
       return runHowTheLivenessLooksScenario(plan);
     case 'workspace-switch':
       return runWorkspaceSwitchScenario(plan);
+    case 'resume-choice':
+      return runResumeChoiceScenario(plan);
     default:
       return runFullWorkflow(plan);
   }
@@ -8104,6 +8112,448 @@ async function runWorkspaceSwitchScenario(plan: ScriptedRunPlan): Promise<Script
         )}", diff ${promptsOf(bRead, 'diffPathsShownInWindow').join(', ')}`,
       );
       await window.dspatch.captureWindow('again-b-read-back');
+    }
+
+    const code =
+      failures.length === 0
+        ? CHAT_EXIT.ok
+        : failed.size === 0
+          ? CHAT_EXIT.scriptFailed
+          : Math.min(...failed);
+    return finish(code, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* The refused or failed resume, and the three choices: DSP-121               */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The refused or failed resume state, through the real choice panel.
+ *
+ * Over the same kit as `workspace-switch`, opening project A, whose stored session the
+ * presentation adapter has been told to refuse or fail (`DSPATCH_CHAT_RESUME`). What
+ * is read is what the window drew: the panel above the message box with its
+ * statement, its "Technical detail" and exactly the three buttons; the drawer with
+ * the same statement and no recap; the "Provider session" fact reading "on record,
+ * not open"; a send refused with "Show the choices" and the text kept; Keep reading;
+ * Try again; a new provider session whose recap is shown and removed; and one
+ * message answered locally. The main process records, beside this, what the file
+ * held and what reached the adapter at each of those moments.
+ *
+ * **Everything refused or failed here is simulated by the presentation adapter.**
+ * No provider is asked anything. The run shows what the window does with a
+ * refusal or a failure, and nothing about whether any provider would give one.
+ *
+ * Hold mode (`resumeHold`): only the open, then the report; the main process leaves
+ * the window open with the real panel for a person to look at.
+ */
+async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const mode = plan.resumeMode ?? 'ok';
+  const hold = plan.resumeHold === true;
+  const projectA = plan.switchProjects?.[0];
+  const observations: Record<string, unknown> = {
+    plan,
+    mode,
+    hold,
+    limits:
+      'SIMULATED. The refusal or failure shown was the presentation adapter\'s own answer, ' +
+      'chosen by DSPATCH_CHAT_RESUME; no provider was asked anything, and nothing here says ' +
+      'what any provider would do with this session. The one message sent after choosing a ' +
+      'new provider session was answered by the same local adapter. What is evidenced is the ' +
+      'window\'s behaviour in these states and, in the main process\'s half of the record, ' +
+      'what the conversation file held and what reached the adapter at each step.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const failed = new Set<number>();
+  const expect = (code: number, ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+      failed.add(code);
+    }
+  };
+  const samePath = (left: string, right: string): boolean =>
+    left.replace(/[\\/]+$/, '').toLowerCase() === right.replace(/[\\/]+$/, '').toLowerCase();
+  const clean = (text: string | null): string => (text ?? '').replace(/\s+/g, ' ').trim();
+  const rowOf = (target: string): number | null => {
+    for (let index = 0; index < 50; index += 1) {
+      const found = element(`project-${String(index)}-path`);
+      if (found === null) {
+        return null;
+      }
+      if (samePath(clean(found.textContent), target)) {
+        return index;
+      }
+    }
+    return null;
+  };
+  const historyPrompts = (): string[] => {
+    const prompts: string[] = [];
+    for (let index = 0; index < 200; index += 1) {
+      const found = element(`history-turn-${String(index)}-prompt`);
+      if (found === null) {
+        break;
+      }
+      prompts.push(clean(found.textContent));
+    }
+    return prompts;
+  };
+  /** The buttons inside the panel, by their `data-ev`, in document order. */
+  const panelButtons = (): string[] =>
+    [...(element('continuity-choices')?.querySelectorAll<HTMLButtonElement>('button[data-ev]') ?? [])]
+      .map((button) => button.getAttribute('data-ev') ?? '')
+      .filter((name) => name.startsWith('continuity-choice-'));
+  const composerText = (): string => (element('prompt') as HTMLTextAreaElement | null)?.value ?? '';
+
+  /** The window's reading of the state, from the panel, the drawer and the facts. */
+  const readState = (label: string): Record<string, unknown> => {
+    const reading = {
+      label,
+      panelShown: element('continuity-choices') !== null,
+      // The simulation line inside the panel (the drawer has one of its own, read
+      // through the same name only when the panel is absent).
+      simulationLine: clean(
+        element('continuity-choices')?.querySelector('[data-ev="continuity-simulated"]')?.textContent ??
+          null,
+      ),
+      panelStatement: textOf('continuity-choices-statement'),
+      panelDetailText: textOf('continuity-choices-detail-text'),
+      panelDetailOpen: detailsOpen('continuity-choices-detail'),
+      panelButtons: panelButtons(),
+      drawerStatement: textOf('session-continuity'),
+      drawerDetailText: textOf('session-continuity-detail-text'),
+      drawerRecapShown: element('pending-resend') !== null,
+      drawerRecapRemovedShown: element('pending-resend-removed') !== null,
+      providerSessionFact: textOf('provider-session-id'),
+      sessionShown: textOf('session-id'),
+      conversationShown: textOf('conversation-id'),
+      contextStatement: textOf('context-statement'),
+      historyTurns: historyPrompts().length,
+      actionErrorShown: element('action-error') !== null,
+      actionErrorAction: textOf('action-error-action'),
+      composerText: composerText(),
+    };
+    record(label, reading);
+    return reading;
+  };
+
+  /** The refused or failed state as the handoff specifies it, judged from one reading. */
+  const expectNotOpenState = (reading: Record<string, unknown>, where: string): void => {
+    const statement = String(reading['panelStatement']);
+    const expectedWording =
+      mode === 'failed'
+        ? [/the attempt failed/, /This may be temporary/]
+        : [/provider answered that it does not have that session/, /No new session was opened and nothing was sent/];
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      reading['panelShown'] === true,
+      `${where}: the choice panel was not shown`,
+    );
+    // The window must say, above the statement, that this refusal or failure is the
+    // presentation adapter's simulation: the statement itself reads like a provider's.
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      reading['simulationLine'] ===
+        'Presentation mode: this refusal or failure is simulated by the presentation adapter ' +
+          'on this machine; no provider was asked anything.',
+      `${where}: the panel does not carry the simulation line: "${String(reading['simulationLine'])}"`,
+    );
+    for (const wording of expectedWording) {
+      expect(
+        CHAT_EXIT.resumeStateNotShown,
+        wording.test(statement),
+        `${where}: the panel statement does not say ${String(wording)}: "${statement}"`,
+      );
+    }
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      /simulated/i.test(String(reading['panelDetailText'])),
+      `${where}: the technical detail does not say "simulated": "${String(reading['panelDetailText'])}"`,
+    );
+    const buttons = reading['panelButtons'] as string[];
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      buttons.length === 3 &&
+        buttons.includes('continuity-choice-try-again') &&
+        buttons.includes('continuity-choice-new-session') &&
+        buttons.includes('continuity-choice-keep-reading'),
+      `${where}: the panel offers ${buttons.join(', ') || 'no buttons'}, not exactly the three choices`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      reading['drawerStatement'] === statement,
+      `${where}: the drawer statement differs from the panel's: "${String(reading['drawerStatement'])}"`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      reading['drawerRecapShown'] === false,
+      `${where}: a recap was shown while no provider session is open`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      String(reading['providerSessionFact']).endsWith('(on record, not open)'),
+      `${where}: the Provider session fact reads "${String(reading['providerSessionFact'])}"`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      String(reading['contextStatement']) !== '',
+      `${where}: no session context statement was shown`,
+    );
+  };
+
+  /**
+   * Wait for a session start the window asked for to end. The panel's buttons are
+   * disabled only while the start is in flight, and a start over the presentation
+   * adapter can be shorter than one poll, so a busy state that was never seen is
+   * recorded rather than failed: the main process's record counts the attempts.
+   */
+  const waitForStartToSettle = async (why: string): Promise<boolean> => {
+    let sawBusy = false;
+    try {
+      await waitFor(
+        `the session start (${why}) to begin`,
+        () => {
+          const button = element('continuity-choice-try-again');
+          return button instanceof HTMLButtonElement && button.disabled;
+        },
+        3_000,
+        16,
+      );
+      sawBusy = true;
+    } catch {
+      sawBusy = false;
+    }
+    await sleep(sawBusy ? 0 : 2_000);
+    await waitFor(
+      `the session start (${why}) to end`,
+      () => {
+        const button = element('continuity-choice-try-again');
+        return !(button instanceof HTMLButtonElement) || !button.disabled;
+      },
+      60_000,
+    );
+    // The save status and the drawer are polled; give them one round.
+    await sleep(1_200);
+    return sawBusy;
+  };
+
+  try {
+    if (mode === 'ok') {
+      throw new Error(
+        'DSPATCH_CHAT_RESUME must be refused, failed or refused-once for this scenario: ' +
+          'with ok (or unset) the presentation adapter resumes everything and there is ' +
+          'no refusal to show.',
+      );
+    }
+    if (projectA === undefined) {
+      throw new Error(
+        'DSPATCH_CHAT_SWITCH_PROJECTS must name the seeded project A (its first entry). ' +
+          'The seed script prints it.',
+      );
+    }
+    await waitFor(
+      'the connection to reach a decided state',
+      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      60_000,
+    );
+    await waitFor('the Recent list', () => element('project-0-path') !== null, 60_000);
+    await waitFor(`A to be offered in Recent`, () => rowOf(projectA) !== null, 60_000);
+
+    // --- Open A: the resume is refused or fails, simulated --------------------------
+    await click(`open-project-${String(rowOf(projectA) ?? 0)}`);
+    await waitFor(
+      'a session over A',
+      () =>
+        textOf('session-id').startsWith('dsp-session-') &&
+        samePath(attributeOf('project-path', 'title'), projectA),
+      60_000,
+    );
+    await sleep(1_500);
+    // The disclosure is opened as a person opens it, so the detail is read from an
+    // open disclosure and not only from the document's text.
+    const summary = element('continuity-choices-detail')?.querySelector('summary');
+    if (summary instanceof HTMLElement) {
+      summary.click();
+      await sleep(200);
+    }
+    const opened = readState('opened A');
+    expectNotOpenState(opened, 'after opening A');
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      opened['historyTurns'] === 3,
+      `A opened with ${String(opened['historyTurns'])} earlier messages on screen, not 3`,
+    );
+    expect(
+      CHAT_EXIT.resumeStateNotShown,
+      opened['panelDetailOpen'] === true,
+      'the technical detail disclosure did not open when its summary was clicked',
+    );
+    await window.dspatch.captureWindow(`${mode}-opened`);
+
+    if (hold) {
+      record('hold', {
+        note: 'Hold mode: nothing further is driven. The window stays open with the real panel.',
+      });
+      const code = failures.length === 0 ? CHAT_EXIT.ok : failed.size === 0 ? CHAT_EXIT.scriptFailed : Math.min(...failed);
+      return finish(code, steps, failures, observations);
+    }
+
+    if (mode === 'refused') {
+      // --- (a) A send is refused; the text stays -----------------------------------
+      const refusedText = `Refused send check ${newNonce()}`;
+      await typeInto('prompt', refusedText);
+      await sendFromComposer();
+      await waitFor('the refused send to be shown', () => element('action-error') !== null, 30_000);
+      const afterRefusedSend = readState('sent while no provider session is open');
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        afterRefusedSend['actionErrorAction'] === 'Show the choices',
+        `the refused send offers "${String(afterRefusedSend['actionErrorAction'])}", not "Show the choices"`,
+      );
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        afterRefusedSend['composerText'] === refusedText,
+        `the composer holds "${String(afterRefusedSend['composerText'])}" after the refusal, not the typed text`,
+      );
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        element('turn-0') === null && element('active-answer') === null,
+        'a turn appeared after the refused send',
+      );
+
+      // --- (b) Keep reading: the panel goes, nothing else changes -------------------
+      await click('continuity-choice-keep-reading');
+      await waitFor('the panel to be hidden', () => element('continuity-choices') === null, 10_000);
+      await sleep(300);
+      const keptReading = readState('keep reading');
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        keptReading['panelShown'] === false &&
+          element('prompt') instanceof HTMLTextAreaElement &&
+          keptReading['composerText'] === refusedText &&
+          keptReading['historyTurns'] === 3,
+        'Keep reading did not leave the composer, its text and the history as they were',
+      );
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        String(keptReading['providerSessionFact']).endsWith('(on record, not open)'),
+        'Keep reading changed the Provider session fact',
+      );
+      // Send again from the box: refused again, and "Show the choices" brings the panel back.
+      await sendFromComposer();
+      // The main process counts this refusal; the window's reading is the error block.
+      await sleep(1_500);
+      await waitFor('the second refusal to be shown', () => element('action-error') !== null, 30_000);
+      const refusedAgain = readState('sent again after keep reading');
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        refusedAgain['panelShown'] === false && refusedAgain['actionErrorAction'] === 'Show the choices',
+        'after Keep reading the second send was not refused with "Show the choices" and the panel hidden',
+      );
+      await click('action-error-action');
+      await waitFor('the panel to come back', () => element('continuity-choices') !== null, 10_000);
+      const shownAgain = readState('show the choices');
+      expectNotOpenState(shownAgain, 'after Show the choices');
+
+      // --- (c) Try again: refused again, same state ---------------------------------
+      await click('continuity-choice-try-again');
+      const retrySawBusy = await waitForStartToSettle('try again');
+      const retried = readState('try again');
+      record('try again settled', { busyStateObserved: retrySawBusy });
+      expectNotOpenState(retried, 'after Try again');
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        retried['sessionShown'] === opened['sessionShown'] &&
+          retried['conversationShown'] === opened['conversationShown'] &&
+          retried['historyTurns'] === 3,
+        'Try again changed the session on screen, the conversation or the history',
+      );
+      await window.dspatch.captureWindow(`${mode}-tried-again`);
+
+      // --- (d) A new provider session: the recap, removed, then one message ----------
+      await click('continuity-choice-new-session');
+      await waitFor('the recap to be shown in the drawer', () => element('pending-resend') !== null, 60_000);
+      await sleep(1_200);
+      const fresh = readState('new provider session');
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        fresh['panelShown'] === false &&
+          fresh['drawerRecapShown'] === true &&
+          element('pending-resend-discard') instanceof HTMLButtonElement &&
+          !String(fresh['providerSessionFact']).endsWith('(on record, not open)'),
+        'the new provider session did not show a removable recap with the panel gone and a session open',
+      );
+      const recapText = textOf('pending-resend-text');
+      record('recap', { recapChars: recapText.length, recapHead: recapText.slice(0, 160) });
+      await click('pending-resend-discard');
+      await waitFor('the recap to read as removed', () => element('pending-resend-removed') !== null, 30_000);
+      const removed = readState('recap removed');
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        removed['drawerRecapShown'] === false && removed['drawerRecapRemovedShown'] === true,
+        'removing the recap did not replace it with the removed note',
+      );
+      await window.dspatch.captureWindow(`${mode}-recap-removed`);
+
+      const message = `Sent alone ${newNonce()}: reply with anything.`;
+      observations['messageSentInNewSession'] = message;
+      await sendAndSettle(0, message, plan.turnTimeoutMs);
+      await sleep(1_500);
+      const answered = readState('one message sent in the new session');
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        statusOfTurn(0) === 'finished' && textOf('turn-0-answer') !== '',
+        `the message was not answered: turn status "${statusOfTurn(0)}"`,
+      );
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        answered['historyTurns'] === 3 && answered['panelShown'] === false,
+        'the history or the panel changed after the message',
+      );
+      await window.dspatch.captureWindow(`${mode}-answered`);
+    } else if (mode === 'failed') {
+      // --- Try again: fails again -----------------------------------------------------
+      await click('continuity-choice-try-again');
+      const retrySawBusy = await waitForStartToSettle('try again');
+      const retried = readState('try again');
+      record('try again settled', { busyStateObserved: retrySawBusy });
+      expectNotOpenState(retried, 'after Try again');
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        retried['sessionShown'] === opened['sessionShown'] && retried['historyTurns'] === 3,
+        'Try again changed the session on screen or the history',
+      );
+      await window.dspatch.captureWindow(`${mode}-tried-again`);
+    } else {
+      // --- refused-once: Try again succeeds ------------------------------------------
+      await click('continuity-choice-try-again');
+      await waitFor('the panel to go after the resume', () => element('continuity-choices') === null, 60_000);
+      await sleep(1_500);
+      const resumed = readState('try again, resumed');
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        resumed['panelShown'] === false &&
+          /was resumed by the presentation-local adapter/.test(String(resumed['drawerStatement'])) &&
+          !String(resumed['providerSessionFact']).endsWith('(on record, not open)') &&
+          resumed['drawerRecapShown'] === false,
+        `after Try again the window did not read as resumed: "${String(resumed['drawerStatement'])}", fact "${String(resumed['providerSessionFact'])}"`,
+      );
+      expect(
+        CHAT_EXIT.resumeChoiceWrong,
+        resumed['sessionShown'] === opened['sessionShown'] &&
+          resumed['conversationShown'] === opened['conversationShown'] &&
+          resumed['historyTurns'] === 3,
+        'the resumed session is not the same conversation with its three messages',
+      );
+      await window.dspatch.captureWindow(`${mode}-resumed`);
     }
 
     const code =

@@ -16,8 +16,33 @@
 import type {
   ContinuityChoice,
   EarlierSendMayHaveReached,
+  ScriptedRunPlan,
   SessionContinuity,
 } from '../shared/bridge';
+
+/**
+ * The line the window shows above a refusal or failure that the presentation
+ * adapter simulated (DSP-121 presentation runs), or `null`.
+ *
+ * Keyed on the scripted plan's `resumeMode` and on nothing else: an ordinary launch
+ * has no plan, and a plan whose mode is `ok` or absent asked for no simulation, so
+ * both get nothing. The statement under it is the service's honest reading of what
+ * the adapter answered ("the provider answered that it does not have that
+ * session"); this line is what keeps that reading apart from a real provider's
+ * answer in the one place a person looks.
+ */
+export const SIMULATION_NOTICE =
+  'Presentation mode: this refusal or failure is simulated by the presentation adapter ' +
+  'on this machine; no provider was asked anything.';
+
+export function simulationNotice(
+  plan: Pick<ScriptedRunPlan, 'resumeMode'> | null | undefined,
+): string | null {
+  const mode = plan?.resumeMode;
+  return mode === 'refused' || mode === 'failed' || mode === 'refused-once'
+    ? SIMULATION_NOTICE
+    : null;
+}
 
 /** One button, in the order the main process listed the choices. */
 export interface ContinuityChoiceView {

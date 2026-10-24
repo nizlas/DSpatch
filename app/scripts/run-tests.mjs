@@ -57,6 +57,7 @@ const AREAS = {
       'text-diff.test.ts',
       'recovery.test.ts',
       'continuity-view.test.ts',
+      'presentation-resume.test.ts',
       'window-reads-well.test.ts',
       'workflow-gates.test.ts',
       'loop-run-view.test.ts',

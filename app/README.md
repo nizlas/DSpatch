@@ -1022,6 +1022,65 @@ save-error lines under a real fault, and anything that needs Cursor.
 process's kept separate, because what the document showed and what was on disk are
 different kinds of evidence.
 
+`resume-choice` is the refused-or-failed-resume scenario (DSP-121) and makes **no
+provider call** either. **The refusal and the failure are simulated by the presentation
+adapter**, chosen by `DSPATCH_CHAT_RESUME`, and the run shows the window's behaviour in
+those states only - nothing about what any provider would do with a session. It runs
+over the same seeded kit as `switch` and opens project A, whose stored session the
+adapter then refuses or fails:
+
+| `DSPATCH_CHAT_RESUME` | The adapter's answer to `resume()` | What the phase does after the open |
+| --- | --- | --- |
+| `refused` | every resume is refused with `providerCode: 'agent_not_found'`, the shape of "the provider does not have that session" | a send refused with *Show the choices* and the text kept; *Keep reading* (panel gone, a second send refused, *Show the choices* brings it back); *Try again* (refused again); *Start a new provider session* (the recap in the drawer, *Remove the recap*, one message sent alone and answered locally) |
+| `failed` | every resume throws with no provider code (`TypeError: fetch failed`), the shape of a transport failure | *Try again*, which fails again |
+| `refused-once` | the first resume of each session ID is refused, later ones succeed | *Try again*, which resumes: same conversation, three messages, no panel |
+| `ok` (or unset) | every resume succeeds, as in every other scenario | the scenario reports that it was given no refusal to show (exit 37) |
+
+In these phases the window itself says so: one line above the statement, in the panel
+and in the drawer, reads *Presentation mode: this refusal or failure is simulated by the
+presentation adapter on this machine; no provider was asked anything.* - drawn only
+when the scripted plan asked for a simulated resume, never in an ordinary launch.
+In each phase the open itself is read first: that line, the panel above the message box with its
+statement, the "Technical detail" disclosure (which says *simulated*), exactly the three
+buttons, the drawer with the same statement and no recap, the "Provider session" fact
+reading `(on record, not open)`, and the session context statement. The main process
+records, beside what the DOM showed, the conversation file's `session` block before and
+after each session start the window asked for, how the service described the continuity,
+and what the adapter had been asked by then - how many resumes, how many sessions
+started outright, and the exact text of every send. Those are judged in the record
+(`resumeChoice.checks`), and a failed one is exit 89 even when the window passed.
+
+```powershell
+$kit = "$env:TEMP\dspatch-resume-$(Get-Date -Format HHmmss)"
+node --import ./scripts/ts-resolve.mjs scripts/seed-switch-kit.mjs $kit
+$env:DSPATCH_CHAT_RUN="resume-choice"
+$env:DSPATCH_CHAT_RESUME="refused"            # or failed, refused-once
+$env:DSPATCH_CHAT_SWITCH_PROJECTS="$kit\projects\A"
+$env:DSPATCH_CHAT_EXPECT_USERDATA="$kit\userData"
+$env:DSPATCH_CHAT_LOG="C:\somewhere\resume-refused.json"
+$env:DSPATCH_CHAT_SHOT="C:\somewhere\resume-refused.png"
+npx electron . "--user-data-dir=$kit\userData"
+Remove-Item Env:\DSPATCH_CHAT_RUN, Env:\DSPATCH_CHAT_RESUME, Env:\DSPATCH_CHAT_SWITCH_PROJECTS, Env:\DSPATCH_CHAT_EXPECT_USERDATA, Env:\DSPATCH_CHAT_LOG, Env:\DSPATCH_CHAT_SHOT
+Remove-Item -Recurse -Force $kit
+```
+
+The `refused` phase writes to the kit (the one message and the new session ID), so seed a
+fresh kit per launch rather than reusing one. `DSPATCH_CHAT_SWITCH_PROJECTS` is read for
+its first entry only, A; it is the same variable the seed prints, so nothing new has to
+be spelled.
+
+**Hold mode**, `DSPATCH_CHAT_HOLD=1` with any phase: the scenario performs only the open,
+the record is written, and the window is **left open** with the real panel - every button
+works, it is simply not driven further - for a person to look at, with no timeout. Close
+it yourself. `scripts\start-resume-choice.cmd` is that mode as a double-click: it keeps a
+kit at `%TEMP%\dspatch-resume-choice`, seeds it if it is missing, and starts the built
+application with `--user-data-dir` on that kit and `DSPATCH_CHAT_EXPECT_USERDATA` set, so
+nothing of your own DSpatch data is read or written. `start-resume-choice.cmd failed` or
+`refused-once` selects the phase; `start-resume-choice.cmd reset [phase]` deletes the kit
+and seeds it again first, which is the way back to a clean A after the refused phase has
+written into it. It needs `node` on `PATH` and `npm run build` done in `app\`. What it
+shows is simulated, and it says so when it starts.
+
 | Exit code | Meaning |
 | --- | --- |
 | 0 | The whole scenario ran. |
@@ -1055,6 +1114,9 @@ different kinds of evidence.
 | 84 | Two conversations sharing an attempt ID were not shown as two, or the command gate did not name both and disable the plain Run. |
 | 85 | The acknowledged command did not pass, or a save failed while it ran. |
 | 86 | After the restart, a conversation did not come back as it was left. |
+| 87 | The refused or failed resume state was not shown as such: no panel, the wrong statement, a technical detail that does not say *simulated*, not exactly the three choices, a drawer or fact that disagreed, or a recap while no provider session was open. |
+| 88 | A choice did not behave: a send was not refused with *Show the choices* or lost its text, *Keep reading* changed something, *Try again* changed the conversation on screen, the new provider session showed no removable recap, the recap did not read as removed, or the message was not answered. |
+| 89 | The main process's record contradicted the window: the file's `session` block changed before a choice, a different number of resume attempts, a session started or something sent that should not have been, or the one message reached the adapter with a recap in front of it. |
 | 25 | `DSPATCH_CHAT_EXPECT_USERDATA` names a directory other than the one in force. Nothing of DSpatch's was created or written. |
 
 `DSPATCH_SMOKE`, `DSPATCH_PROBE` and `DSPATCH_CHAT_RUN` each own the exit code.
