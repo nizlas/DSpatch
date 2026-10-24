@@ -59,6 +59,7 @@ export interface ReviewWords {
     readonly wholeFile: string;
     readonly highlightWalk: string;
     readonly noChangeHere: string;
+    readonly unchangedHere: string;
     readonly unchangedFile: string;
     readonly moreAbove: string;
     readonly moreBelow: string;
@@ -84,7 +85,7 @@ export interface ReviewWords {
     readonly unit: Record<UnitKind, string>;
     readonly label: string;
   };
-  readonly timeline: { readonly label: string; readonly hint: string; readonly call: string };
+  readonly timeline: { readonly label: string; readonly hint: string; readonly call: string; readonly resize: string };
   readonly nav: {
     readonly previous: string;
     readonly next: string;
@@ -240,6 +241,7 @@ const sv: ReviewWords = {
     wholeFile: 'Hela filen',
     highlightWalk: 'Markera hela walken',
     noChangeHere: 'Ingen ändring på det här stället',
+    unchangedHere: 'Oförändrad kod',
     unchangedFile: 'Filen är oförändrad mellan versionerna',
     moreAbove: 'Visa mer ovanför',
     moreBelow: 'Visa mer nedanför',
@@ -276,8 +278,9 @@ const sv: ReviewWords = {
   },
   timeline: {
     label: 'Walkens kodställen i tidsordning',
-    hint: 'Shift + scrollhjul, eller dra med höger musknapp, flyttar i tiden. Alt + ← / → stegar.',
+    hint: 'Shift + vänster musknapp och dra panorerar kartan. Mushjulsknappen och dra scrollar en panel. Shift + scrollhjul eller Alt + ← / → stegar.',
     call: 'anrop',
+    resize: 'Dra för att ändra bredd. Dubbelklicka för att passa den längsta raden.',
   },
   nav: {
     previous: '← Föregående',
@@ -454,6 +457,7 @@ const en: ReviewWords = {
     wholeFile: 'Whole file',
     highlightWalk: 'Highlight entire walk',
     noChangeHere: 'No change at this place',
+    unchangedHere: 'Unchanged code',
     unchangedFile: 'The file is the same in both versions',
     moreAbove: 'Show more above',
     moreBelow: 'Show more below',
@@ -490,8 +494,9 @@ const en: ReviewWords = {
   },
   timeline: {
     label: 'The walk’s code places in time order',
-    hint: 'Shift + scroll wheel, or drag with the right mouse button, moves in time. Alt + ← / → steps.',
+    hint: 'Shift + left mouse button and drag pans the map. The wheel button and drag scrolls one pane. Shift + scroll wheel or Alt + ← / → steps.',
     call: 'call',
+    resize: 'Drag to change the width. Double-click to fit the longest line.',
   },
   nav: {
     previous: '← Previous',

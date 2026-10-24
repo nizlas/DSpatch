@@ -937,17 +937,62 @@
 }
 
 .rv-timeline-track {
-  display: flex;
+  position: relative;
   height: 100%;
   transition: transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
   will-change: transform;
 }
 
+/* One pane per station, placed on the map by its left edge and width. */
 .rv-pane-slot {
-  flex: none;
+  position: absolute;
+  top: 0;
   height: 100%;
   min-width: 0;
   border-right: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.rv-pane-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.rv-pane-resize:hover {
+  background: color-mix(in srgb, var(--unknown) 35%, transparent);
+}
+
+/* Panning: the hand shows while Shift is held over the map and grips while dragging. */
+.rv-pan-ready {
+  cursor: grab;
+  user-select: none;
+}
+
+.rv-panning,
+.rv-panning * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+.rv-unchanged-tag {
+  font-size: 0.75rem;
+  padding: 0 0.4rem;
+  border-radius: 0.3rem;
+  background: var(--rv-neutral);
+  color: var(--muted);
+}
+
+.rv-pane-step {
+  color: var(--muted);
+}
+
+.rv-strip-position {
+  margin-left: auto;
 }
 
 .rv-pane-placeholder {
@@ -962,9 +1007,22 @@
   transition: opacity 400ms ease, filter 400ms ease;
 }
 
+/* Earlier and later panes: the focus is quieter, but added, removed and unchanged
+   code keep their colours and the text stays readable. */
 .rv-pane-inactive {
-  opacity: 0.62;
-  filter: saturate(0.75);
+  opacity: 0.9;
+}
+
+.rv-pane-inactive .rv-old {
+  background: color-mix(in srgb, var(--no) 22%, var(--bg));
+}
+
+.rv-pane-inactive .rv-new {
+  background: color-mix(in srgb, var(--ok) 20%, var(--bg));
+}
+
+.rv-pane-inactive .rv-neutral-focus {
+  background: color-mix(in srgb, var(--text) 7%, var(--bg));
 }
 
 .rv-pane-active {
