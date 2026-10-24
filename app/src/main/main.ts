@@ -142,6 +142,7 @@ const RESUME_CONVERSATION: BridgeChannel = 'dspatch:resume-conversation';
 const EXPORT_CONVERSATION: BridgeChannel = 'dspatch:export-conversation';
 const REVEAL_CONVERSATION: BridgeChannel = 'dspatch:reveal-conversation';
 const START_SESSION: BridgeChannel = 'dspatch:start-session';
+const DISCARD_PENDING_RECAP: BridgeChannel = 'dspatch:discard-pending-recap';
 const SEND_PROMPT: BridgeChannel = 'dspatch:send-prompt';
 const CANCEL_RUN: BridgeChannel = 'dspatch:cancel-run';
 const ABANDON_SEND: BridgeChannel = 'dspatch:abandon-send';
@@ -2899,6 +2900,9 @@ function registerIpc(): void {
     announceWorkspace();
     return session;
   });
+  // DSP-121: the user removing the recap. Sends nothing; the service answers with
+  // the continuity the window shows from then on.
+  ipcMain.handle(DISCARD_PENDING_RECAP, () => chatService.discardPendingRecap());
   ipcMain.handle(
     SEND_PROMPT,
     (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) =>

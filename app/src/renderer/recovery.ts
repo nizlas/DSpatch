@@ -57,6 +57,12 @@ export type FailureKind =
   | 'connection'
   | 'session-holds-a-run'
   | 'nothing-open'
+  /**
+   * A session is open on screen but no provider session is behind it (DSP-121): the
+   * recorded one could not be resumed and DSpatch did not open another by itself.
+   * The main process refuses a send or a cancel with this until the user chooses.
+   */
+  | 'no-provider-session'
   | 'other';
 
 /** The action the window offers beside the message. */
@@ -67,7 +73,8 @@ export type RecoveryAction =
   | 'acknowledge-then-repeat'
   | 'choose-another-folder'
   | 'open-project-again'
-  | 'continue-in-new-session';
+  | 'continue-in-new-session'
+  | 'choose-continuity';
 
 export interface BridgeFailure {
   /** The message to show, with the transport's own wrapping removed. */
@@ -209,6 +216,20 @@ function classify(message: string): {
         'same project answered at once. Whether such a run ever reports an end is ' +
         'unknown — DSpatch never subscribed to it and cannot see it end, so nothing ' +
         'here is waiting on your behalf.',
+    };
+  }
+  // Before the `No session is open` rule, and on a different prefix, so neither can
+  // take the other's case: this one is a session on screen with no provider session
+  // behind it, and "open a project again" would only attempt the same resume.
+  if (message.startsWith('No provider session is open')) {
+    return {
+      kind: 'no-provider-session',
+      action: 'choose-continuity',
+      actionNote:
+        'The earlier provider session could not be resumed and DSpatch did not open ' +
+        'another by itself, so nothing was sent. Choose what to do next: try the ' +
+        'resume again, start a new provider session with a recap you can remove ' +
+        'before sending, or keep reading. Your text stays in the box.',
     };
   }
   if (message.startsWith('No session is open')) {

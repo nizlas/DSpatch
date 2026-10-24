@@ -62,6 +62,7 @@ import {
   type BridgeFailure,
 } from './recovery';
 import { describePlainly } from './plain-error';
+import { continuityView, providerSessionFact } from './continuity-view';
 import {
   attachUsage,
   currentTurn as currentTurnOf,
@@ -308,6 +309,13 @@ function Workbench({
   const [chat, setChat] = useState<ChatState>(emptyChatState(null));
   const [busy, setBusy] = useState<Busy>(null);
   const [actionError, setActionError] = useState<BridgeFailure | null>(null);
+  /**
+   * What the window has done with the continuity choices of DSP-121. "Keep reading"
+   * is a choice made here and nowhere else - nothing is sent and nothing is written
+   * - so the window has to remember it; both reset when a session is opened.
+   */
+  const [continuityDismissed, setContinuityDismissed] = useState(false);
+  const [recapDiscarded, setRecapDiscarded] = useState(false);
   const [test, setTest] = useState<TestOutcome | null>(null);
   const [testError, setTestError] = useState<BridgeFailure | null>(null);
   const [testCommand, setTestCommand] = useState('');
@@ -1593,6 +1601,8 @@ function Workbench({
       setRecheckNote(null);
       setComposerNote(null);
       setResolvedNote(null);
+      setContinuityDismissed(false);
+      setRecapDiscarded(false);
       try {
         const opened = await window.dspatch.startChatSession(request);
         setSession(opened);
@@ -1633,6 +1643,24 @@ function Workbench({
       restoreLoopRuns,
     ],
   );
+
+  /**
+   * Remove the recap before it is sent (DSP-121 AC#2).
+   *
+   * The main process answers with the continuity the window shows from then on; the
+   * session on screen is updated from that answer rather than from a guess. Nothing
+   * is sent by this.
+   */
+  const discardRecap = useCallback(async (): Promise<void> => {
+    setActionError(null);
+    try {
+      const continuity = await window.dspatch.discardPendingRecap();
+      setSession((previous) => (previous === null ? previous : { ...previous, continuity }));
+      setRecapDiscarded(true);
+    } catch (error) {
+      setActionError(describeBridgeFailure(error));
+    }
+  }, []);
 
   /**
    * Read a saved conversation back.
@@ -2842,6 +2870,29 @@ function Workbench({
                 session over the same project and the same conversation, and the
                 recap it will send is shown before anything is sent.
               */}
+              {/*
+                DSP-121: no provider session is open behind the session on screen.
+                The main process opened nothing and sent nothing when the resume was
+                refused or failed, and it refuses every send until one of these is
+                chosen. "Keep reading" is decided here: it hides the choices and
+                changes nothing, and the next refused send offers them again.
+              */}
+              {session !== null && (
+                <ContinuityChoices
+                  session={session}
+                  dismissed={continuityDismissed}
+                  busy={busy !== null}
+                  onChoose={(choice) => {
+                    if (choice === 'try-again') {
+                      void startSession({ kind: 'retry-resume' });
+                    } else if (choice === 'new-session') {
+                      void startSession({ kind: 'new-provider-session' });
+                    } else {
+                      setContinuityDismissed(true);
+                    }
+                  }}
+                />
+              )}
               {actionError !== null && (
                 <Failure
                   failure={actionError}
@@ -2858,6 +2909,9 @@ function Workbench({
                   }}
                   onContinueInNewSession={() => {
                     void startSession({ kind: 'new-provider-session' });
+                  }}
+                  onChooseContinuity={() => {
+                    setContinuityDismissed(false);
                   }}
                 />
               )}
@@ -2896,7 +2950,15 @@ function Workbench({
 
         {session !== null && (
           <>
-            <SessionContinuity session={session} sentAnything={chat.turns.length > 0} />
+            <SessionContinuity
+              session={session}
+              sentAnything={chat.turns.length > 0}
+              recapDiscarded={recapDiscarded}
+              busy={busy !== null}
+              onDiscardRecap={() => {
+                void discardRecap();
+              }}
+            />
 
             <ProjectDetails session={session} />
 
@@ -4131,32 +4193,59 @@ function RestoredMessage({
 function SessionContinuity({
   session,
   sentAnything,
+  recapDiscarded,
+  busy,
+  onDiscardRecap,
 }: {
   readonly session: ChatSessionInfo;
   readonly sentAnything: boolean;
+  readonly recapDiscarded: boolean;
+  readonly busy: boolean;
+  readonly onDiscardRecap: () => void;
 }): JSX.Element | null {
-  const pendingRecap = sentAnything ? null : session.continuity.contextToResend;
-  if (session.continuity.kind === 'first-session' && pendingRecap === null) {
+  const view = continuityView(session.continuity, {
+    sentAnything,
+    recapDiscarded,
+    // The drawer is the record, not the action surface: it keeps the statement and
+    // the detail whether or not the choices above the message box were dismissed.
+    choicesDismissed: true,
+  });
+  if (view.statement === null && view.recap === null && view.recapRemovedNote === null) {
     return null;
   }
   return (
     <Section title="This session and the earlier conversation">
-      {session.continuity.kind !== 'first-session' && (
+      {view.statement !== null && (
         <p className="app__note" data-ev="session-continuity">
-          {session.continuity.statement}
+          {view.statement}
         </p>
       )}
-      {pendingRecap !== null && (
+      {view.technicalDetail !== null && (
+        <details className="error-detail" data-ev="session-continuity-detail">
+          <summary className="error-detail__summary">Technical detail</summary>
+          <p className="card__detail" data-ev="session-continuity-detail-text">
+            {view.technicalDetail}
+          </p>
+        </details>
+      )}
+      {view.earlierSends.length > 0 && (
+        <ul className="app__note" data-ev="session-continuity-earlier-sends">
+          {view.earlierSends.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
+      {view.recap !== null && (
         <details className="turn__resent" data-ev="pending-resend">
           <summary data-ev="pending-resend-summary">
-            {pendingRecap.length} characters of recap will go in front of your next
+            {view.recap.text.length} characters of recap will go in front of your next
             message. Read it first.
           </summary>
           <p className="app__note" data-ev="pending-resend-note">
-            {session.continuity.contextNote}
+            {view.recap.note}
           </p>
           <pre className="turn__answer" data-ev="pending-resend-text">
-            {pendingRecap}
+            {view.recap.text}
           </pre>
           <p className="app__note" data-ev="pending-resend-envelope">
             This is DSpatch&apos;s text, complete and exact. The provider adds an
@@ -4164,9 +4253,90 @@ function SessionContinuity({
             its own tags — so the model receives a little more than this, and none of
             the extra comes from DSpatch or from you.
           </p>
+          {/*
+            DSP-121 AC#2: the recap is DSpatch talking, and the user may decide the
+            model should hear only them. Removing it sends nothing and is final for
+            this session; the main process answers with the continuity shown next.
+          */}
+          <button
+            type="button"
+            className="button"
+            data-ev="pending-resend-discard"
+            onClick={onDiscardRecap}
+            disabled={busy}
+          >
+            Remove the recap
+          </button>
         </details>
       )}
+      {view.recapRemovedNote !== null && (
+        <p className="app__note" data-ev="pending-resend-removed">
+          {view.recapRemovedNote}
+        </p>
+      )}
     </Section>
+  );
+}
+
+/**
+ * The choices DSP-121 offers while no provider session is open, above the message
+ * box where the refused send would be. Draws exactly what `continuityView` returns:
+ * the main process decides which choices exist; this only labels them.
+ */
+function ContinuityChoices({
+  session,
+  dismissed,
+  busy,
+  onChoose,
+}: {
+  readonly session: ChatSessionInfo;
+  readonly dismissed: boolean;
+  readonly busy: boolean;
+  readonly onChoose: (choice: 'try-again' | 'new-session' | 'keep-reading') => void;
+}): JSX.Element | null {
+  const view = continuityView(session.continuity, {
+    sentAnything: false,
+    recapDiscarded: false,
+    choicesDismissed: dismissed,
+  });
+  if (view.choices.length === 0) {
+    return null;
+  }
+  return (
+    <div className="app__error" data-ev="continuity-choices">
+      <p data-ev="continuity-choices-statement">{view.statement}</p>
+      {view.earlierSends.length > 0 && (
+        <ul className="card__detail" data-ev="continuity-choices-earlier-sends">
+          {view.earlierSends.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
+      {view.technicalDetail !== null && (
+        <details className="error-detail" data-ev="continuity-choices-detail">
+          <summary className="error-detail__summary">Technical detail</summary>
+          <p className="card__detail" data-ev="continuity-choices-detail-text">
+            {view.technicalDetail}
+          </p>
+        </details>
+      )}
+      {view.choices.map((choice) => (
+        <Fragment key={choice.choice}>
+          <button
+            type="button"
+            className="button"
+            data-ev={choice.testId}
+            title={choice.note}
+            onClick={() => {
+              onChoose(choice.choice);
+            }}
+            disabled={busy}
+          >
+            {choice.label}
+          </button>{' '}
+        </Fragment>
+      ))}
+    </div>
   );
 }
 
@@ -4188,7 +4358,14 @@ function ProjectDetails({ session }: { readonly session: ChatSessionInfo }): JSX
           value={session.restoredHistory.conversationId}
           testId="conversation-id"
         />
-        <Fact label="Provider session" value={session.providerSessionId} />
+        <Fact
+          label="Provider session"
+          value={providerSessionFact(
+            session.providerSessionId,
+            session.continuity.providerSessionOpen,
+          )}
+          testId="provider-session-id"
+        />
         <Fact label="Model requested" value={session.modelRequested} />
         <Fact label="Tool policy" value={session.toolPolicy} />
         <Fact label="Working copy" value={session.workspacePath} testId="workspace-path" />
@@ -4804,6 +4981,7 @@ function Failure({
   onAcknowledge,
   onChooseFolder,
   onContinueInNewSession,
+  onChooseContinuity,
 }: {
   readonly failure: BridgeFailure;
   readonly testId: string;
@@ -4813,6 +4991,8 @@ function Failure({
   readonly onAcknowledge?: () => void;
   readonly onChooseFolder?: () => void;
   readonly onContinueInNewSession?: () => void;
+  /** DSP-121: show the continuity choices again after "keep reading" hid them. */
+  readonly onChooseContinuity?: () => void;
 }): JSX.Element {
   const handler =
     failure.action === 'retry'
@@ -4827,7 +5007,9 @@ function Failure({
               ? onChooseFolder
               : failure.action === 'continue-in-new-session'
                 ? onContinueInNewSession
-                : undefined;
+                : failure.action === 'choose-continuity'
+                  ? onChooseContinuity
+                  : undefined;
   const label =
     failure.action === 'retry'
       ? 'Try again'
@@ -4839,7 +5021,9 @@ function Failure({
             ? 'Continue, leaving the earlier attempt unresolved'
             : failure.action === 'continue-in-new-session'
               ? 'Continue in a new provider session'
-              : 'Choose another folder';
+              : failure.action === 'choose-continuity'
+                ? 'Show the choices'
+                : 'Choose another folder';
 
   const plain = describePlainly(failure);
 

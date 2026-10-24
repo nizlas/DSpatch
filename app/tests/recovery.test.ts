@@ -125,6 +125,15 @@ test('each kind of failure is offered the action that applies to it', () => {
       'continue-in-new-session',
     ],
     ['No session is open. Start one first.', 'nothing-open', 'open-project-again'],
+    // DSP-121's guard, verbatim from `ChatService.requireSession`. Its own kind and
+    // action: "open a project again" would only attempt the same resume.
+    [
+      'No provider session is open for this conversation: the provider answered that ' +
+        'it does not have session dsp-session-fake. Choose: try again, a new provider ' +
+        'session, or keep reading.',
+      'no-provider-session',
+      'choose-continuity',
+    ],
     [
       'Cursor adapter operation "send" failed: TypeError: fetch failed',
       'connection',

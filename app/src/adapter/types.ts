@@ -119,6 +119,21 @@ export interface SessionConfig {
   readonly workspacePaths?: readonly string[];
 }
 
+/**
+ * What a `resume()` actually checked before it returned a handle (DSP-121).
+ *
+ * The wording a session's continuity is allowed to use comes from this and from
+ * nothing else; in particular not from `CapabilityReport.resume`, which says what
+ * an adapter claims in general and not what one call did.
+ *
+ * - `provider-answered` — the provider itself was asked for the session and
+ *   answered (Cursor's `Agent.resume`, measured to refuse an unknown ID).
+ * - `local-record` — a local record of the session was found and registered; the
+ *   provider was not asked, and the first turn is where it answers.
+ * - `none` — the adapter checked nothing it can describe.
+ */
+export type ResumeEvidence = 'provider-answered' | 'local-record' | 'none';
+
 /** What the adapter returns when a session is started or resumed. */
 export interface SessionHandle {
   readonly dspatchSessionId: DspatchSessionId;
@@ -126,6 +141,11 @@ export interface SessionHandle {
   /** The provider's own session ID, for correlation with its logs. */
   readonly providerSessionId: string;
   readonly createdAt: Timestamp;
+  /**
+   * Set by `resume()` only; absent from a handle `startSession()` returned. An
+   * absent value on a resumed handle is read as `'none'`.
+   */
+  readonly resumeEvidence?: ResumeEvidence;
 }
 
 /** What `send` returns: the grouping identity, not a provider run-level object. */

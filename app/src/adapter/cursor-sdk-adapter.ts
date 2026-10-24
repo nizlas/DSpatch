@@ -360,7 +360,10 @@ export class CursorSdkAdapter implements AgentAdapter {
       throw toAdapterError('resume', error);
     }
 
-    return this.register(sessionId, config, agent);
+    // `Agent.resume` is the provider answering for the session: an ID it does not
+    // hold is refused with `agent_not_found` (DSP-4's three-process probe), so a
+    // handle here means the provider said it has the session.
+    return { ...this.register(sessionId, config, agent), resumeEvidence: 'provider-answered' };
   }
 
   /**

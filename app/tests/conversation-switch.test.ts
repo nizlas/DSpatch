@@ -65,12 +65,19 @@ function makeProject(name: string, file: string, text: string): string {
 /**
  * A provider that answers only when told to. Modelled on the one in
  * `chat-service.test.ts`, reduced to what switching needs: sends that start a run,
- * and a resume the provider always refuses, so every reopen takes the recap path.
+ * and a resume that succeeds unless a test says otherwise. Since DSP-121 a refused
+ * resume opens nothing and refuses every send until the user chooses, so the tests
+ * about switching, ledgers and saves — none of which is about the resume — reopen
+ * into a resumed session; the one test about the recap path (#10) sets
+ * `resumeBehaviour = 'not-found'` and makes the choice itself.
  */
 class FakeAdapter implements ChatAdapter {
   readonly id = 'fake-adapter';
 
   readonly sent: string[] = [];
+
+  /** The refusal is the wrapped shape the real adapter throws, with `providerCode`. */
+  resumeBehaviour: 'ok' | 'not-found' = 'ok';
 
   resume?: (dspatchSessionId: string, config: SessionConfig) => Promise<SessionHandle>;
 
@@ -83,13 +90,28 @@ class FakeAdapter implements ChatAdapter {
   private lastRunId: string | null = null;
 
   constructor() {
-    this.resume = (dspatchSessionId) =>
-      Promise.reject(
-        Object.assign(new Error(`Agent ${dspatchSessionId} not found`), {
-          name: 'AgentNotFoundError',
-          code: 'agent_not_found',
-        }),
-      );
+    this.resume = (dspatchSessionId, config) => {
+      if (this.resumeBehaviour === 'not-found') {
+        return Promise.reject(
+          Object.assign(
+            new Error(
+              `Cursor adapter operation "resume" failed: AgentNotFoundError: Agent ` +
+                `${dspatchSessionId} not found`,
+            ),
+            { name: 'CursorAdapterError', providerCode: 'agent_not_found' },
+          ),
+        );
+      }
+      this.sessionId = dspatchSessionId;
+      return Promise.resolve({
+        dspatchSessionId,
+        provider: 'cursor',
+        providerSessionId: 'agent-resumed',
+        createdAt: new Date().toISOString(),
+        workspacePath: config.workspacePath,
+        resumeEvidence: 'provider-answered',
+      } as unknown as SessionHandle);
+    };
   }
 
   capabilities(): CapabilityReport {
@@ -522,16 +544,26 @@ test('WS-1 #10: the recap and the saved-message count include this run\'s turns'
     live.adapter.answer('A-answer-3');
     await live.open(projectB);
 
+    // The provider refuses the resume. Since DSP-121 that opens nothing and offers
+    // no recap by itself: the recorded session stays as it was, and the recap is
+    // built only when the user chooses a new provider session.
+    live.adapter.resumeBehaviour = 'not-found';
+    const sessionBefore = store.read(idA).conversation?.session ?? null;
     const again = await live.open(projectA);
-    assert.equal(again.continuity.kind, 'new-provider-session');
-    assert.match(again.continuity.contextToResend ?? '', /A-now-3/);
-    assert.match(again.continuity.contextToResend ?? '', /A-earlier-1/);
+    assert.equal(again.continuity.kind, 'resume-refused');
+    assert.equal(again.continuity.contextToResend, null);
     assert.equal(again.continuity.savedMessageCount, 3);
     assert.equal(again.continuity.savedMessageCount, again.restoredHistory.messages.length);
+    assert.deepEqual(store.read(idA).conversation?.session ?? null, sessionBefore);
 
+    // The user's choice: the recap is built from the same merged conversation the
+    // window shows — the file's messages and this run's turn.
     const fresh = await live.service.startChatSession({ kind: 'new-provider-session' });
+    assert.equal(fresh.continuity.kind, 'new-provider-session');
     assert.match(fresh.continuity.contextToResend ?? '', /A-now-3/);
+    assert.match(fresh.continuity.contextToResend ?? '', /A-earlier-1/);
     assert.equal(fresh.continuity.savedMessageCount, 3);
+    live.adapter.resumeBehaviour = 'ok';
 
     // A conversation begun in this run has no file messages at its first open.
     await live.open(projectC);

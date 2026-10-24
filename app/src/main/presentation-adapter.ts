@@ -170,8 +170,11 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     });
   }
 
-  resume(sessionId: string, config: SessionConfig): Promise<SessionHandle> {
-    return this.startSession({ ...config, dspatchSessionId: sessionId });
+  async resume(sessionId: string, config: SessionConfig): Promise<SessionHandle> {
+    // Nothing is checked: a presentation "resume" is a fresh local session under the
+    // old ID, and the continuity wording must not claim more than that.
+    const handle = await this.startSession({ ...config, dspatchSessionId: sessionId });
+    return { ...handle, resumeEvidence: 'none' };
   }
 
   hasActiveRun(sessionId: string): boolean {

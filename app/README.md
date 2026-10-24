@@ -306,13 +306,20 @@ Two things can happen next, and the window says which:
   provider session* as **the** way out: a fresh session over the same project and
   the same conversation, nothing sent to the run that is in the way, nothing on
   disk touched.
-- It cannot be resumed, or you asked for a new session. The model then has no
-  memory of the conversation, so DSpatch puts its own recap in front of your next
-  message — and shows you that recap, in full, **before** you send it. In the
-  measured run it was 2 519 characters and the text sent was identical to the
-  text shown. Whether the model then acts on it is the model's decision: one run
-  answered the question the recap set up, another declined to trust a passphrase
-  quoted from a previous session.
+- It cannot be resumed. Since DSP-121 (24 October 2026) DSpatch then opens
+  nothing and sends nothing: the recorded session ID stays on record and the
+  window offers three choices — try the resume again, start a new provider
+  session with a recap you can remove before sending, or keep reading without
+  starting an agent. The passage below describes the behaviour **before
+  DSP-121**, measured on 15–16 September 2026, when a refused resume opened a new
+  session by itself: *the model then has no memory of the conversation, so
+  DSpatch puts its own recap in front of your next message — and shows you that
+  recap, in full, before you send it. In the measured run it was 2 519 characters
+  and the text sent was identical to the text shown. Whether the model then acts
+  on it is the model's decision: one run answered the question the recap set up,
+  another declined to trust a passphrase quoted from a previous session.* The
+  recap itself, and its being shown before it is sent, are unchanged; only when a
+  new session is opened has changed — by your choice, never as a fallback.
 
 ### Where the data lives
 
@@ -726,23 +733,45 @@ happens, and the window says which:
   in a three-process trial — an agent was told a passphrase in one process and
   repeated it verbatim in another, and a resume of an ID nothing had created was
   refused in 11 ms with `AgentNotFoundError`.
-- **A new provider session was opened.** Cursor's store is under your user profile
-  and keyed by the project's path — a different place, on a different key, with a
-  different lifetime from the conversation file DSpatch writes. The two can drift
-  apart: a conversation carried to another machine, or one whose provider store has
-  been cleared, comes back as history with no session behind it. The model then has
-  **no memory of the conversation on screen**, so DSpatch puts its own short recap
-  in front of your next message and shows you that recap **word for word**, before
-  you send and again on the message that carried it. What the model was told is
-  also saved with that message, so the same question has the same answer after the
-  next restart.
+- **The resume was refused or failed, and nothing was opened.** Cursor's store is
+  under your user profile and keyed by the project's path — a different place, on
+  a different key, with a different lifetime from the conversation file DSpatch
+  writes. The two can drift apart: a conversation carried to another machine, or
+  one whose provider store has been cleared, comes back as history with no session
+  behind it; and a resume can also fail for a reason that may pass — a moved
+  folder, a file lock, a network or authentication error. Since DSP-121 DSpatch
+  does **not** open a new session on its own in either case. The recorded session
+  ID stays on record unchanged, no recap is queued, nothing is sent, and the
+  window says which of the two it was where the evidence allows it: *the provider
+  answered that it does not have that session* (Cursor's `agent_not_found`, the
+  provider's own answer) or *the attempt failed: <the error>, which may be
+  temporary*; an adapter that cannot resume at all says so and that the provider
+  was not asked. Opening the history or seeing that failure starts no model turn.
+  If an earlier message of this conversation has no confirmed end — an attempt
+  the window closed on — the statement lists it and says it is not resent. Three
+  choices are offered: **try again** (the same resume, attempted again; like any
+  reopen it stops a build or test command still running), **start a new provider
+  session**, or **keep reading** without starting an agent. Until you choose, a
+  message or a cancel is refused with that same explanation.
+- **A new provider session was opened, because you chose one** — from that
+  refusal, or from *Continue in a new provider session* beside a session holding
+  a run — or because the conversation had no session recorded at all. The model
+  then has **no memory of the conversation on screen**, so DSpatch prepares its
+  own short recap for the front of your next message and shows you that recap
+  **word for word** before you send. You can remove it (*Remove the recap*);
+  then only your message goes, and the recap does not come back for that session.
+  What the model was told is saved with the message that carried it, so the same
+  question has the same answer after the next restart.
 
 The recap is deliberately small and says so inside itself: the last few exchanges
 with long answers shortened, the names of the files in the diff you reviewed, and
 how the last command ended. It is a summary, not the conversation, and it is sent
 once — in front of the first message of that session, not attached to every later
 one. It is not a way of making a new session into the old one; it is a way of not
-pretending the difference does not exist.
+pretending the difference does not exist. Before DSP-121 (measured 15–16
+September 2026) a refused resume opened the new session and queued this recap by
+itself, and the next save replaced the recorded session ID with the new one, so a
+temporary cause lost the pointer for good; that is what the choice replaces.
 
 **"Word for word" covers DSpatch's text, not the whole envelope.** The character
 count and the text shown are exact for what DSpatch composed. The provider then
@@ -1112,9 +1141,12 @@ has not yet assessed.
   conversation actually tells the model* above — but it depends on Cursor's store,
   which is keyed by the project's path and is not DSpatch's to keep. Move the
   project, move the conversation to another machine, or clear that store, and the
-  resume is refused; what the model then gets is DSpatch's short recap, which is
-  a summary and not the conversation. Nothing here extends the provider's
-  retention or reconstructs a session it no longer holds.
+  resume is refused; DSpatch then keeps the session ID on record and asks you
+  what to do (try again, a new provider session with a removable recap, or keep
+  reading) rather than opening a new session by itself. What the model gets in a
+  new session is DSpatch's short recap, which is a summary and not the
+  conversation. Nothing here extends the provider's retention or reconstructs a
+  session it no longer holds.
 - **Answering an approval request.** DSpatch surfaces one if it ever arrives, so
   it is visible as waiting rather than as a hang, but this transport gives no way
   to answer it. None has appeared yet, including on turns that edited files.

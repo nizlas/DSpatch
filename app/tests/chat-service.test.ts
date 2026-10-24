@@ -809,15 +809,27 @@ class FakeAdapter implements ChatAdapter {
   cancelEndBoundMs?: number;
 
   /**
-   * What `resume` does. Both branches were measured against Cursor by a probe:
-   * an agent the provider still holds is returned in a brand new process, and one
-   * it does not hold is refused with `AgentNotFoundError` rather than silently
-   * replaced by a fresh agent.
+   * What `resume` does. The first two were measured against Cursor by a probe: an
+   * agent the provider still holds is returned in a brand new process, and one it
+   * does not hold is refused with `AgentNotFoundError [agent_not_found]` rather than
+   * silently replaced by a fresh agent. The real adapter wraps that refusal in a
+   * `CursorAdapterError` carrying `providerCode`, which is the field the service
+   * classifies on, so the fake throws the wrapped shape. `'error'` is a failure
+   * with no provider code at all — a network or runtime error — which the service
+   * must report as a failure that may be temporary, not as the provider's answer.
    *
    * An adapter without the capability at all is modelled by deleting `resume`,
    * because that is what the service actually tests for.
    */
-  resumeBehaviour: 'ok' | 'not-found' = 'not-found';
+  resumeBehaviour: 'ok' | 'not-found' | 'error' = 'not-found';
+
+  /**
+   * What a successful `resume` reports it checked. `'provider-answered'` by default,
+   * because this fake models Cursor's measured behaviour; a test models another
+   * adapter by setting it.
+   */
+  resumeEvidence: 'provider-answered' | 'local-record' | 'none' | undefined =
+    'provider-answered';
 
   readonly resumeAttempts: string[] = [];
 
@@ -828,11 +840,20 @@ class FakeAdapter implements ChatAdapter {
     // on the interface is itself load-bearing: the service checks for it.
     this.resume = async (dspatchSessionId, config) => {
       this.resumeAttempts.push(dspatchSessionId);
-      if (this.resumeBehaviour !== 'ok') {
-        throw Object.assign(new Error(`Agent ${dspatchSessionId} not found`), {
-          name: 'AgentNotFoundError',
-          code: 'agent_not_found',
-        });
+      if (this.resumeBehaviour === 'not-found') {
+        throw Object.assign(
+          new Error(
+            `Cursor adapter operation "resume" failed: AgentNotFoundError: Agent ` +
+              `${dspatchSessionId} not found`,
+          ),
+          { name: 'CursorAdapterError', providerCode: 'agent_not_found' },
+        );
+      }
+      if (this.resumeBehaviour === 'error') {
+        throw Object.assign(
+          new Error('Cursor adapter operation "resume" failed: TypeError: fetch failed'),
+          { name: 'CursorAdapterError' },
+        );
       }
       this.sessionId = dspatchSessionId;
       return {
@@ -841,6 +862,7 @@ class FakeAdapter implements ChatAdapter {
         providerSessionId: 'agent-resumed',
         createdAt: new Date().toISOString(),
         workspacePath: config.workspacePath,
+        ...(this.resumeEvidence === undefined ? {} : { resumeEvidence: this.resumeEvidence }),
       } as unknown as SessionHandle;
     };
   }
@@ -858,7 +880,8 @@ class FakeAdapter implements ChatAdapter {
       start: 'supported',
       streaming: 'supported',
       cancel: 'supported',
-      resume: 'unknown',
+      // As the Cursor adapter declares; the service must not word anything from it.
+      resume: 'supported',
       modelSelection: 'supported',
       approvals: 'unsupported',
       usageReporting: 'unknown',
@@ -871,7 +894,11 @@ class FakeAdapter implements ChatAdapter {
     ]);
   }
 
+  /** How many new sessions were opened; the refusal states must leave this at 0. */
+  startSessionCalls = 0;
+
   startSession(config: SessionConfig): Promise<SessionHandle> {
+    this.startSessionCalls += 1;
     this.sessionId = 'dsp-session-fake';
     return Promise.resolve({
       dspatchSessionId: this.sessionId,
@@ -1693,7 +1720,9 @@ test('SIMULATED: a run left going when the window closed comes back unknown and 
   );
 
   // The gate: continuing the conversation is refused until the attempt is named,
-  // and the refusal happens before the provider is touched.
+  // and the refusal happens before the provider is touched. The provider still holds
+  // the session here: the gate under test is the ledger's, not DSP-121's.
+  second.adapter.resumeBehaviour = 'ok';
   await second.service.startChatSession({ kind: 'folder', path: workspace });
   await assert.rejects(
     () => second.service.sendPrompt('carry on then'),
@@ -1736,6 +1765,8 @@ test('SIMULATED: a restored attempt already confirmed is not asked about again',
 
   const second = serviceOver('persist-ack-2', workspace, store);
   await second.service.resumeConversation(session.conversationId);
+  // The provider still holds the session; the acknowledgement is what is under test.
+  second.adapter.resumeBehaviour = 'ok';
   await second.service.startChatSession({ kind: 'folder', path: workspace });
   // The acknowledgement, made the only way anything can make it: a send that names
   // the attempt. That is what the window's own button does.
@@ -1766,7 +1797,8 @@ test('SIMULATED: a restored attempt already confirmed is not asked about again',
   assert.match(restored.reconciliation.note, /unresolved rather than marked done/);
 
   // And the behaviour the note now describes, measured rather than asserted about:
-  // the next message sends with nothing named.
+  // the next message sends with nothing named. The provider still holds the session.
+  third.adapter.resumeBehaviour = 'ok';
   await third.service.startChatSession({ kind: 'folder', path: workspace });
   await third.service.sendPrompt('and again');
   assert.equal(third.adapter.sent.length, 1);
@@ -1811,6 +1843,8 @@ test('SIMULATED: nothing unresolved means nothing to reconcile', async () => {
   assert.deepEqual(restored.reconciliation.needsAcknowledgement.agentTurn, []);
   assert.match(restored.reconciliation.note, /nothing to reconcile/);
 
+  // The provider still holds the session; this test is about the ledger, not the resume.
+  second.adapter.resumeBehaviour = 'ok';
   await second.service.startChatSession({ kind: 'folder', path: workspace });
   await second.service.sendPrompt('carry on');
   assert.equal(second.adapter.sent.length, 1);
@@ -1866,46 +1900,304 @@ test('SIMULATED: a resumed provider session says so and resends nothing', async 
   // model has the earlier turns from the provider's own store.
   assert.equal(session.continuity.contextToResend, null);
   assert.match(session.continuity.statement, /was resumed/);
+  // The fake reports `resumeEvidence: 'provider-answered'`, as the Cursor adapter
+  // does, and only then may the statement claim the provider was asked.
+  assert.equal(session.continuity.providerSessionOpen, true);
+  assert.match(session.continuity.statement, /checked by asking the provider/);
+  assert.deepEqual(session.continuity.choices, []);
 
   await second.service.sendPrompt('and what did I just ask you');
   assert.deepEqual(second.adapter.sent, ['and what did I just ask you']);
   await second.service.dispose();
 });
 
-test('SIMULATED: a refused resume is disclosed and the recap is shown word for word', async () => {
-  const { workspace, second } = await restartInto('continuity-new');
+test('SIMULATED: the resumed wording comes from what the adapter checked, not from its capability flag', async () => {
+  // The fake declares `capabilities().resume = 'supported'` throughout; what changes
+  // between the two cases is only what `resume()` reports it did.
+  const local = await restartInto('continuity-evidence-local');
+  local.second.adapter.resumeBehaviour = 'ok';
+  local.second.adapter.resumeEvidence = 'local-record';
+  const fromRecord = await local.second.service.startChatSession({
+    kind: 'folder',
+    path: local.workspace,
+  });
+  assert.equal(fromRecord.continuity.kind, 'provider-session-resumed');
+  assert.match(fromRecord.continuity.statement, /found a local record of session dsp-session-fake/);
+  assert.match(fromRecord.continuity.statement, /not something DSpatch checks/);
+  assert.doesNotMatch(fromRecord.continuity.statement, /asking the provider/);
+  await local.second.service.dispose();
+
+  const silent = await restartInto('continuity-evidence-none');
+  silent.second.adapter.resumeBehaviour = 'ok';
+  silent.second.adapter.resumeEvidence = undefined;
+  const unsaid = await silent.second.service.startChatSession({
+    kind: 'folder',
+    path: silent.workspace,
+  });
+  assert.equal(unsaid.continuity.kind, 'provider-session-resumed');
+  assert.match(unsaid.continuity.statement, /the adapter does not say what it checked/);
+  assert.doesNotMatch(unsaid.continuity.statement, /asking the provider/);
+  assert.doesNotMatch(unsaid.continuity.statement, /local record/);
+  await silent.second.service.dispose();
+});
+
+// --- DSP-121: a refused or failed resume is the user's choice, not a fallback -----
+//
+// Until DSP-121 a refused resume opened a new provider session at once, queued the
+// recap and let the next save overwrite the recorded session ID, so a temporary
+// cause lost the pointer for good. Now DSpatch opens nothing, sends nothing, keeps
+// the record exactly as it was and offers three choices. These tests use the fake
+// adapter only; no provider is called.
+
+const ALL_CHOICES = ['try-again', 'new-session', 'keep-reading'] as const;
+
+test('SIMULATED: a refused resume opens nothing, sends nothing and keeps the session on record', async () => {
+  const { workspace, conversationId, second } = await restartInto('continuity-refused');
   second.adapter.resumeBehaviour = 'not-found';
+  const before = second.store.read(conversationId).conversation?.session ?? null;
+  assert.notEqual(before, null, 'the first run recorded a provider session');
+  const attemptsBefore = second.service.getRunState().attempts.length;
 
   const session = await second.service.startChatSession({
     kind: 'folder',
     path: workspace,
   });
-  assert.equal(session.continuity.kind, 'new-provider-session');
+  assert.equal(session.continuity.kind, 'resume-refused');
+  assert.equal(session.continuity.providerSessionOpen, false);
   assert.deepEqual(second.adapter.resumeAttempts, ['dsp-session-fake']);
-  assert.match(String(session.continuity.resumeError), /not found/);
-  assert.equal(session.continuity.savedMessageCount, 1);
-
-  // The honesty requirement: the window is given the exact text, not a claim that
-  // context was "restored".
-  const recap = String(session.continuity.contextToResend);
-  assert.match(recap, /what does this project do/);
-  assert.match(recap, /It dispatches things\./);
-  assert.match(session.continuity.statement, /no memory of the conversation above/);
-
-  // And the recap reaches the provider, in front of the first message and only it.
-  await second.service.sendPrompt('carry on from there');
-  assert.equal(second.adapter.sent.length, 1);
-  const first = String(second.adapter.sent[0]);
-  assert.equal(first.includes(recap), true, 'the exact text shown is the text sent');
-  assert.equal(first.endsWith('carry on from there'), true);
-
-  second.adapter.emit({ type: 'run.finished', status: 'finished' });
-  await second.service.sendPrompt('and again');
-  assert.equal(
-    second.adapter.sent[1],
-    'and again',
-    'the recap is owed once, not attached to every later message',
+  assert.equal(second.adapter.startSessionCalls, 0, 'no new provider session');
+  assert.equal(session.continuity.contextToResend, null, 'no recap queued by itself');
+  assert.deepEqual(session.continuity.resumeFailure, {
+    kind: 'provider-missing',
+    detail:
+      'CursorAdapterError: Cursor adapter operation "resume" failed: ' +
+      'AgentNotFoundError: Agent dsp-session-fake not found',
+    providerCode: 'agent_not_found',
+  });
+  assert.deepEqual(session.continuity.choices, ALL_CHOICES);
+  assert.match(
+    session.continuity.statement,
+    /DSpatch asked the provider to resume dsp-session-fake and the provider answered that it does not have that session \(agent_not_found\)\./,
   );
+  assert.match(session.continuity.statement, /No new session was opened and nothing was sent/);
+  assert.match(session.continuity.statement, /The session ID stays on record/);
+  assert.equal(session.continuity.savedMessageCount, 1);
+  // The one call made was the resume, and it carried the config (review 004 B1):
+  // the context statement must say so rather than claim nothing was sent.
+  assert.match(session.context.statement, /gave the provider's SDK/);
+
+  // The session info describes the recorded session, and the file still holds it
+  // unchanged — every field, `createdAt` included — after the open's own save.
+  assert.equal(session.dspatchSessionId, before?.dspatchSessionId);
+  assert.equal(session.providerSessionId, before?.providerSessionId);
+  assert.equal(session.createdAt, before?.createdAt);
+  assert.deepEqual(second.store.read(conversationId).conversation?.session, before);
+
+  // The guard: nothing that would reach the adapter goes through, and no attempt
+  // is opened, so nothing new reaches the file either.
+  await assert.rejects(
+    () => second.service.sendPrompt('carry on'),
+    /No provider session is open for this conversation: the provider answered that it does not have session dsp-session-fake\. Choose: try again, a new provider session, or keep reading\./,
+  );
+  await assert.rejects(
+    () => second.service.cancelRun(),
+    /No provider session is open for this conversation/,
+  );
+  assert.deepEqual(second.adapter.sent, []);
+  assert.equal(second.service.getRunState().attempts.length, attemptsBefore);
+
+  // The report path reads the adapter only through a session it holds; here it holds none.
+  const evidence = second.service.evidence();
+  assert.equal(evidence['providerMessageTypes'], null);
+  assert.equal(evidence['streamPumpFinished'], null);
+  assert.equal(evidence['modelReported'], null);
+
+  await second.service.dispose();
+  assert.deepEqual(
+    second.store.read(conversationId).conversation?.session,
+    before,
+    'closing saves, and the save keeps the recorded session as it was',
+  );
+});
+
+test('SIMULATED: a resume that fails with an error is a failure that may be temporary, not the provider\'s answer', async () => {
+  const { workspace, conversationId, second } = await restartInto('continuity-failed');
+  second.adapter.resumeBehaviour = 'error';
+  const before = second.store.read(conversationId).conversation?.session ?? null;
+
+  const session = await second.service.startChatSession({
+    kind: 'folder',
+    path: workspace,
+  });
+  assert.equal(session.continuity.kind, 'resume-failed');
+  assert.equal(session.continuity.providerSessionOpen, false);
+  assert.equal(session.continuity.resumeFailure?.kind, 'error');
+  assert.equal(session.continuity.resumeFailure?.providerCode, null);
+  assert.match(String(session.continuity.resumeFailure?.detail), /fetch failed/);
+  assert.deepEqual(session.continuity.choices, ALL_CHOICES);
+  assert.match(
+    session.continuity.statement,
+    /DSpatch tried to resume dsp-session-fake and the attempt failed: .*fetch failed/,
+  );
+  assert.match(session.continuity.statement, /This may be temporary/);
+  assert.doesNotMatch(
+    session.continuity.statement,
+    /does not have that session/,
+    'an error without a provider code is not presented as the provider\'s answer',
+  );
+  assert.equal(second.adapter.startSessionCalls, 0);
+  assert.deepEqual(second.adapter.sent, []);
+  assert.deepEqual(second.store.read(conversationId).conversation?.session, before);
+  await assert.rejects(
+    () => second.service.sendPrompt('carry on'),
+    /No provider session is open for this conversation: resuming dsp-session-fake failed \(/,
+  );
+  await second.service.dispose();
+});
+
+test('SIMULATED: trying again resumes the same conversation and sends nothing', async () => {
+  const { workspace, conversationId, second } = await restartInto('continuity-retry');
+  second.adapter.resumeBehaviour = 'error';
+  const refused = await second.service.startChatSession({
+    kind: 'folder',
+    path: workspace,
+  });
+  assert.equal(refused.continuity.kind, 'resume-failed');
+
+  // The cause has passed; the user tries again. No path is named: it is the
+  // project already open, and the resume is attempted again with the same ID.
+  second.adapter.resumeBehaviour = 'ok';
+  const retried = await second.service.startChatSession({ kind: 'retry-resume' });
+  assert.equal(retried.continuity.kind, 'provider-session-resumed');
+  assert.equal(retried.continuity.providerSessionOpen, true);
+  assert.equal(retried.conversationId, conversationId, 'the same conversation');
+  assert.equal(retried.workspacePath, refused.workspacePath);
+  assert.deepEqual(second.adapter.resumeAttempts, ['dsp-session-fake', 'dsp-session-fake']);
+  assert.equal(second.adapter.startSessionCalls, 0);
+  assert.deepEqual(second.adapter.sent, [], 'trying again sends nothing');
+  assert.equal(retried.continuity.contextToResend, null);
+
+  await second.service.sendPrompt('and now');
+  assert.deepEqual(second.adapter.sent, ['and now']);
+  await second.service.dispose();
+});
+
+test('SIMULATED: trying again when nothing is open is refused', async () => {
+  const workspace = makeDir('no-session-retry');
+  fs.writeFileSync(path.join(workspace, 'readme.txt'), 'x\n', 'utf8');
+  const { service, adapter } = serviceOver(
+    'no-session-retry',
+    workspace,
+    storeFor('no-session-retry'),
+  );
+  await assert.rejects(
+    () => service.startChatSession({ kind: 'retry-resume' }),
+    /No project is open, so there is no recorded provider session to try to resume again/,
+  );
+  assert.deepEqual(adapter.resumeAttempts, []);
+  assert.deepEqual(adapter.sent, []);
+  await service.dispose();
+});
+
+test('SIMULATED: after a refusal, a new provider session shows its recap, and the recap can be removed', async () => {
+  const { workspace, conversationId, second } = await restartInto('continuity-discard');
+  second.adapter.resumeBehaviour = 'not-found';
+  const refused = await second.service.startChatSession({
+    kind: 'folder',
+    path: workspace,
+  });
+  assert.equal(refused.continuity.kind, 'resume-refused');
+
+  const fresh = await second.service.startChatSession({ kind: 'new-provider-session' });
+  assert.equal(fresh.continuity.kind, 'new-provider-session');
+  assert.equal(fresh.conversationId, conversationId);
+  assert.equal(second.adapter.startSessionCalls, 1);
+  const recap = String(fresh.continuity.contextToResend);
+  assert.match(recap, /what does this project do/);
+  assert.match(fresh.continuity.statement, /unless you remove it first/);
+  assert.deepEqual(second.adapter.sent, [], 'choosing a new session sends nothing');
+
+  // The recorded session was replaced only now, by the user's choice.
+  const stored = second.store.read(conversationId).conversation?.session;
+  assert.equal(stored?.providerSessionId, 'agent-fake');
+
+  const after = second.service.discardPendingRecap();
+  assert.equal(after.contextToResend, null);
+  assert.match(after.contextNote, /The recap was removed at your request/);
+  assert.equal(second.service.sessionContinuity().contextToResend, null);
+  assert.deepEqual(second.service.discardPendingRecap(), after, 'removing twice changes nothing');
+
+  await second.service.sendPrompt('only my words');
+  assert.deepEqual(second.adapter.sent, ['only my words'], 'the message goes without the recap');
+  second.adapter.emit({ type: 'run.finished', status: 'finished' });
+
+  // A refused send does not bring the removed recap back.
+  second.adapter.sendBehaviour = 'reject-network';
+  await assert.rejects(() => second.service.sendPrompt('again'), /fetch failed/);
+  second.adapter.sendBehaviour = 'ok';
+  await second.service.sendPrompt('again');
+  assert.equal(second.adapter.sent[2], 'again');
+  await second.service.dispose();
+});
+
+test('SIMULATED: an earlier message with no confirmed end is listed, and nothing is resent', async () => {
+  const workspace = makeDir('continuity-unresolved');
+  fs.writeFileSync(path.join(workspace, 'readme.txt'), 'x\n', 'utf8');
+  const store = storeFor('continuity-unresolved');
+
+  const first = serviceOver('continuity-unresolved-1', workspace, store);
+  const session = await first.service.startChatSession({ kind: 'folder', path: workspace });
+  await first.service.sendPrompt('a job left going');
+  // No end ever arrives; the window closes, which records the attempt as unknown.
+  await first.service.dispose();
+
+  const second = serviceOver('continuity-unresolved-2', workspace, store);
+  await second.service.resumeConversation(session.conversationId);
+  second.adapter.resumeBehaviour = 'not-found';
+  const reopened = await second.service.startChatSession({
+    kind: 'folder',
+    path: workspace,
+  });
+  assert.equal(reopened.continuity.kind, 'resume-refused');
+  const listed = reopened.continuity.earlierSendsMayHaveReached;
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]?.label, 'a job left going');
+  assert.equal(listed[0]?.state, 'outcome-unknown');
+  assert.equal(listed[0]?.acknowledged, false);
+  assert.match(
+    reopened.continuity.statement,
+    /1 earlier message of this conversation may have reached the provider and has no confirmed end: "a job left going" \(dsp-attempt-\d+, outcome-unknown\)/,
+  );
+  assert.match(reopened.continuity.statement, /Nothing is resent/);
+  assert.deepEqual(second.adapter.sent, []);
+
+  // A new session, if chosen, shows DSpatch's record as a recap and still sends
+  // nothing; the unresolved attempt gates the next message until it is named.
+  const fresh = await second.service.startChatSession({ kind: 'new-provider-session' });
+  assert.deepEqual(second.adapter.sent, []);
+  assert.equal(fresh.continuity.earlierSendsMayHaveReached.length, 1);
+  assert.match(String(fresh.continuity.contextToResend), /a job left going/);
+  await assert.rejects(() => second.service.sendPrompt('carry on'), /unresolved/);
+  assert.deepEqual(second.adapter.sent, []);
+  await second.service.dispose();
+});
+
+test('SIMULATED: a saved conversation without a provider field resumes as before', async () => {
+  // Every file this build writes is format 1 and records no provider; DSP-122's
+  // reader will default that to Cursor. Nothing here reads such a field.
+  const { workspace, conversationId, second } = await restartInto('continuity-v1');
+  const saved = second.store.read(conversationId).conversation;
+  assert.equal(saved?.formatVersion, 1);
+  assert.equal(saved !== null && saved !== undefined && 'provider' in saved.session, false);
+
+  second.adapter.resumeBehaviour = 'ok';
+  const session = await second.service.startChatSession({
+    kind: 'folder',
+    path: workspace,
+  });
+  assert.equal(session.continuity.kind, 'provider-session-resumed');
+  assert.deepEqual(second.adapter.resumeAttempts, ['dsp-session-fake']);
+  assert.equal(second.adapter.startSessionCalls, 0);
   await second.service.dispose();
 });
 
@@ -1926,10 +2218,14 @@ test('SIMULATED: what the model was told is kept with the turn that carried it',
   const second = serviceOver('continuity-saved-2', workspace, store);
   await second.service.resumeConversation(session.conversationId);
   second.adapter.resumeBehaviour = 'not-found';
-  const reopened = await second.service.startChatSession({
+  const refused = await second.service.startChatSession({
     kind: 'folder',
     path: workspace,
   });
+  assert.equal(refused.continuity.kind, 'resume-refused');
+  // The recap exists only once the user chooses a new provider session.
+  const reopened = await second.service.startChatSession({ kind: 'new-provider-session' });
+  assert.notEqual(reopened.continuity.contextToResend, null);
   await second.service.sendPrompt('the second question');
   second.adapter.emit({ type: 'run.finished', status: 'finished' });
   await second.service.dispose();
@@ -1952,10 +2248,24 @@ test('SIMULATED: an adapter that cannot resume at all says that, not that it fai
     kind: 'folder',
     path: workspace,
   });
-  assert.equal(session.continuity.kind, 'new-provider-session');
+  // Treated like a refusal (DSP-121): no automatic new session, the choice is the user's.
+  assert.equal(session.continuity.kind, 'resume-unavailable');
+  assert.equal(session.continuity.providerSessionOpen, false);
   assert.deepEqual(second.adapter.resumeAttempts, [], 'nothing was asked of the provider');
+  assert.equal(second.adapter.startSessionCalls, 0);
+  assert.equal(session.continuity.resumeFailure?.kind, 'error');
   assert.match(String(session.continuity.resumeError), /cannot resume a session/);
-  assert.notEqual(session.continuity.contextToResend, null);
+  assert.match(session.continuity.statement, /This build cannot resume a session on the .* adapter\. The provider was not asked\./);
+  assert.match(session.continuity.statement, /Trying again in this build gives the same answer\./);
+  // No call was made at all here, so "nothing was sent" is the true statement.
+  assert.match(session.context.statement, /has sent the agent nothing/);
+  assert.match(session.context.statement, /The provider was not asked\./);
+  assert.deepEqual(session.continuity.choices, ALL_CHOICES);
+  assert.equal(session.continuity.contextToResend, null);
+  await assert.rejects(
+    () => second.service.sendPrompt('carry on'),
+    /No provider session is open for this conversation: this build cannot resume a session/,
+  );
   await second.service.dispose();
 });
 
@@ -2006,6 +2316,11 @@ test('SIMULATED: a session holding an inherited run is escaped by a new provider
   const sent = String(second.adapter.sent[sentBefore]);
   assert.equal(sent.includes(recap), true, 'the exact text shown is the text sent');
   assert.equal(sent.endsWith('carry on'), true);
+
+  // The recap is owed once, not attached to every later message (DSP-4; review 004 S1).
+  second.adapter.emit({ type: 'run.finished', status: 'finished' });
+  await second.service.sendPrompt('and again');
+  assert.equal(second.adapter.sent[sentBefore + 1], 'and again');
   await second.service.dispose();
 });
 
@@ -2151,6 +2466,8 @@ test('SIMULATED: opening a project again continues its conversation rather than 
   await first.service.dispose();
 
   const second = serviceOver('persist-continue-2', workspace, store, () => pointer);
+  // The provider still holds the session; this test is about the conversation file.
+  second.adapter.resumeBehaviour = 'ok';
   const reopened = await second.service.startChatSession({
     kind: 'folder',
     path: workspace,
@@ -2215,6 +2532,8 @@ test('SIMULATED: reopening a project hands the window the conversation so far', 
   // The window is closed and a new one opens the same folder, which is the case that
   // used to show nothing.
   const second = serviceOver('persist-history-2', workspace, store, () => pointer);
+  // The provider still holds the session; this test is about the history handed over.
+  second.adapter.resumeBehaviour = 'ok';
   const reopened = await second.service.startChatSession({
     kind: 'folder',
     path: workspace,

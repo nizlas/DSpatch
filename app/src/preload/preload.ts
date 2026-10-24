@@ -45,6 +45,7 @@ import type {
   SampleProjectsView,
   ScriptedRunPlan,
   ScriptedRunReport,
+  SessionContinuity,
   StartSessionRequest,
   StoredRunRecordEntry,
   TestFreshness,
@@ -79,6 +80,7 @@ const RESUME_CONVERSATION: BridgeChannel = 'dspatch:resume-conversation';
 const EXPORT_CONVERSATION: BridgeChannel = 'dspatch:export-conversation';
 const REVEAL_CONVERSATION: BridgeChannel = 'dspatch:reveal-conversation';
 const START_SESSION: BridgeChannel = 'dspatch:start-session';
+const DISCARD_PENDING_RECAP: BridgeChannel = 'dspatch:discard-pending-recap';
 const SEND_PROMPT: BridgeChannel = 'dspatch:send-prompt';
 const CANCEL_RUN: BridgeChannel = 'dspatch:cancel-run';
 const ABANDON_SEND: BridgeChannel = 'dspatch:abandon-send';
@@ -178,6 +180,8 @@ const bridge: DspatchBridge = {
     }>,
   startChatSession: (request: StartSessionRequest) =>
     ipcRenderer.invoke(START_SESSION, request) as Promise<ChatSessionInfo>,
+  discardPendingRecap: () =>
+    ipcRenderer.invoke(DISCARD_PENDING_RECAP) as Promise<SessionContinuity>,
   sendPrompt: (text: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) =>
     ipcRenderer.invoke(SEND_PROMPT, text, acknowledgedAttemptIds) as Promise<{
       readonly dspatchRunId: string;

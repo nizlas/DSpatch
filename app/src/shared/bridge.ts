@@ -388,11 +388,19 @@ export type ConversationExportResult =
  * resume is what lands in the session holding the run. It carries no path: taking
  * one would make it a way of opening something else, and the main process already
  * knows what is open.
+ *
+ * The fourth kind is the "try again" choice of DSP-121: the project already open is
+ * reopened and the resume of its recorded provider session is attempted again, the
+ * same way opening the folder would. Like every reopen it closes the current session
+ * first, which stops a build or test command that is still running. Carries no path
+ * for the same reason as the third kind. `acknowledgedAttemptIds` is reserved for the
+ * unconfirmed-end refusal of DSP-122; this build reads it but acts on nothing in it.
  */
 export type StartSessionRequest =
   | { readonly kind: 'folder'; readonly path: string }
   | { readonly kind: 'sample' }
-  | { readonly kind: 'new-provider-session' };
+  | { readonly kind: 'new-provider-session' }
+  | { readonly kind: 'retry-resume'; readonly acknowledgedAttemptIds?: readonly string[] };
 
 export type SessionOrigin = 'chosen-folder' | 'generated-sample';
 
@@ -486,28 +494,106 @@ export interface SessionContextInfo {
  * - `provider-session-resumed` — Cursor still had the agent and it was resumed,
  *   so the model has the earlier turns from **its own** store. DSpatch resent
  *   nothing, because nothing needed resending.
- * - `new-provider-session` — resumption was attempted and refused, or there was
- *   nothing to resume into. The model has been told nothing, and `contextToResend`
- *   is exactly what DSpatch will put in front of the next message to change that.
+ * - `new-provider-session` — the user asked for a new session, or there was no
+ *   earlier session to resume into. The model has been told nothing, and
+ *   `contextToResend` is exactly what DSpatch will put in front of the next
+ *   message to change that — unless the user removes it first.
+ *
+ * The three kinds below have **no provider session open** (DSP-121). Until DSP-121
+ * a refused or failed resume fell through to `new-provider-session` on its own,
+ * and the next save overwrote the recorded session ID with the new one, so a
+ * temporary cause lost the pointer for good. Now DSpatch stops and asks:
+ *
+ * - `resume-refused` — the provider, or the adapter's own check, answered that
+ *   the recorded session cannot be resumed; `resumeFailure` says which check it was.
+ * - `resume-failed` — the attempt failed with an error that may be temporary.
+ * - `resume-unavailable` — this adapter cannot resume at all. The provider was
+ *   not asked.
+ *
+ * In all three the recorded session stays on record unchanged, nothing was opened
+ * and nothing was sent, and `choices` lists what the user can do next.
  */
 export type SessionContinuityKind =
   | 'first-session'
   | 'provider-session-resumed'
-  | 'new-provider-session';
+  | 'new-provider-session'
+  | 'resume-refused'
+  | 'resume-failed'
+  | 'resume-unavailable';
+
+/**
+ * What a refused or failed resume established, by the evidence and no further.
+ *
+ * - `provider-missing` — the provider itself answered that it does not have the
+ *   session. Final, as far as that answer goes.
+ * - `local-record-missing` — the adapter's local check found no readable record;
+ *   the provider was not asked (DSP-122's Claude resume).
+ * - `error` — the attempt failed with an error, quoted in `detail`.
+ * - `unknown` — the evidence does not say which of the above it was.
+ * - `unconfirmed-end` — not resumed because the session's last turn has no
+ *   confirmed end in DSpatch's record (DSP-122; not produced by this build).
+ */
+export type ResumeFailureKind =
+  | 'provider-missing'
+  | 'local-record-missing'
+  | 'error'
+  | 'unknown'
+  | 'unconfirmed-end';
+
+export interface ResumeFailure {
+  readonly kind: ResumeFailureKind;
+  /** The error or answer, verbatim. */
+  readonly detail: string;
+  /** The provider's own code, unchanged, when the thrown error carried one. */
+  readonly providerCode: string | null;
+}
+
+/**
+ * What the user can do when no provider session is open. Every non-open state
+ * offers all three; "keep reading" needs no call to the main process at all.
+ */
+export type ContinuityChoice = 'try-again' | 'new-session' | 'keep-reading';
+
+/**
+ * An earlier message of this conversation that may have reached the provider and
+ * has no confirmed end: an unresolved agent-turn attempt in the conversation's
+ * ledger. Acknowledged ones stay listed, flagged. The ledger records no session
+ * ID, so this is "of this conversation", not "of the recorded session".
+ */
+export interface EarlierSendMayHaveReached {
+  readonly attemptId: string;
+  readonly label: string;
+  readonly state: AttemptState;
+  readonly acknowledged: boolean;
+}
 
 export interface SessionContinuity {
   readonly kind: SessionContinuityKind;
+  /**
+   * Whether a provider session is open behind this `ChatSessionInfo`. Stated, so the
+   * window never infers it from the kind. `false` in the three DSP-121 kinds: the
+   * session fields then describe the **recorded** session, which is on record but
+   * not open, and sending or cancelling is refused until the user chooses.
+   */
+  readonly providerSessionOpen: boolean;
   /** The session DSpatch tried to continue. `null` when there was none. */
   readonly attemptedDspatchSessionId: string | null;
   /** Cursor's own agent ID for it, when resumption succeeded. */
   readonly resumedProviderSessionId: string | null;
   /** Why resumption was not used, in the provider's own words. */
   readonly resumeError: string | null;
+  /** What the refused or failed resume established; `null` when it did not fail. */
+  readonly resumeFailure: ResumeFailure | null;
+  /** Earlier messages with no confirmed end; nothing in it is resent. */
+  readonly earlierSendsMayHaveReached: readonly EarlierSendMayHaveReached[];
+  /** Empty while a provider session is open. */
+  readonly choices: readonly ContinuityChoice[];
   /**
    * The exact text DSpatch will put before the next message, or `null`.
    *
    * The literal string, not a description of it. "Which saved context was
-   * actually resent" cannot be answered by a summary of the answer.
+   * actually resent" cannot be answered by a summary of the answer. `null` once
+   * the user has removed the recap; a removed recap is not reinstated.
    */
   readonly contextToResend: string | null;
   /** What the recap covers and, more importantly, what it leaves out. */
@@ -1747,6 +1833,14 @@ export interface DspatchBridge {
   /** Open a session over the requested working copy. Replaces any open session. */
   startChatSession(request: StartSessionRequest): Promise<ChatSessionInfo>;
   /**
+   * Remove the recap DSpatch would put in front of the next message (DSP-121).
+   *
+   * Sends nothing and writes nothing; the returned continuity has `contextToResend`
+   * `null` and is what the window shows from then on. Final for this session: a
+   * refused send does not bring the recap back.
+   */
+  discardPendingRecap(): Promise<SessionContinuity>;
+  /**
    * Send a prompt.
    *
    * `acknowledgedAttemptIds` names every earlier attempt of this kind whose
@@ -2537,6 +2631,7 @@ export type BridgeChannel =
   | 'dspatch:export-conversation'
   | 'dspatch:reveal-conversation'
   | 'dspatch:start-session'
+  | 'dspatch:discard-pending-recap'
   | 'dspatch:send-prompt'
   | 'dspatch:cancel-run'
   | 'dspatch:abandon-send'

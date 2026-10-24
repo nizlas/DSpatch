@@ -56,6 +56,7 @@ const AREAS = {
       'turn-routing.test.ts',
       'text-diff.test.ts',
       'recovery.test.ts',
+      'continuity-view.test.ts',
       'window-reads-well.test.ts',
       'workflow-gates.test.ts',
       'loop-run-view.test.ts',

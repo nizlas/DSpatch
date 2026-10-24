@@ -74,6 +74,8 @@ export const SHORT_NEXT_STEP: Record<FailureKind, string> = {
   'session-holds-a-run':
     'This provider session is holding a run. Continuing in a new one is the way out.',
   'nothing-open': 'Open a project first.',
+  'no-provider-session':
+    'No provider session is open. Choose: try again, a new provider session, or keep reading.',
   other: 'Your text is kept. Trying again starts a new attempt.',
 };
 

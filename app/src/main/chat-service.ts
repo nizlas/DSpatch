@@ -12,6 +12,7 @@ import type {
   AgentEventListener,
   CapabilityReport,
   ModelInfo,
+  ResumeEvidence,
   RunReference,
   SessionConfig,
   SessionHandle,
@@ -30,18 +31,22 @@ import type {
   CancelOutcome,
   ChatSessionInfo,
   ConnectionStatus,
+  ContinuityChoice,
   ModelChoice,
   ConversationListing,
   ConversationSaveStatus,
   DirtyFileInfo,
+  EarlierSendMayHaveReached,
   GitBaselineInfo,
   RestoredConversation,
   RestoredHistory,
   RestoredDiff,
   RestoredTestResult,
+  ResumeFailure,
   RunStateReport,
   SessionContextInfo,
   SessionContinuity,
+  SessionContinuityKind,
   SessionOrigin,
   StartSessionRequest,
   StoredBaseline,
@@ -178,9 +183,13 @@ const RESEND_LIMITS = {
 
 const FIRST_SESSION_CONTINUITY: SessionContinuity = {
   kind: 'first-session',
+  providerSessionOpen: true,
   attemptedDspatchSessionId: null,
   resumedProviderSessionId: null,
   resumeError: null,
+  resumeFailure: null,
+  earlierSendsMayHaveReached: [],
+  choices: [],
   contextToResend: null,
   contextNote:
     'Nothing was resent, because there is nothing saved to resend: this ' +
@@ -190,6 +199,197 @@ const FIRST_SESSION_CONTINUITY: SessionContinuity = {
     'A new provider session over this project. There was no earlier conversation ' +
     'to continue, so nothing has been resumed and nothing has been resent.',
 };
+
+/**
+ * What the user can do while no provider session is open (DSP-121). All three in
+ * every such state: the card offers them without exception, and the statement says
+ * when trying again would only ask the same question with the same inputs.
+ */
+const NO_SESSION_CHOICES: readonly ContinuityChoice[] = [
+  'try-again',
+  'new-session',
+  'keep-reading',
+];
+
+/**
+ * What `openProviderSession` hands back. `handle` is `null` exactly when no provider
+ * session is open; `recorded` is then the stored session the attempt was about, which
+ * the session info describes and the next save leaves untouched.
+ */
+type OpenedProviderSession =
+  | {
+      readonly handle: SessionHandle;
+      readonly recorded: StoredSession | null;
+      readonly continuity: SessionContinuity;
+    }
+  | {
+      readonly handle: null;
+      readonly recorded: StoredSession;
+      readonly continuity: SessionContinuity;
+    };
+
+/** The provider's own code on a thrown error, read from the field only — never from prose. */
+function providerCodeOf(error: unknown): string | null {
+  if (typeof error === 'object' && error !== null && 'providerCode' in error) {
+    const { providerCode } = error as { providerCode?: unknown };
+    return typeof providerCode === 'string' ? providerCode : null;
+  }
+  return null;
+}
+
+/**
+ * What a refused or failed resume established, keyed on `providerCode` alone.
+ *
+ * The DSP-121 table: `agent_not_found` is the provider answering that it does not
+ * have the session (measured by DSP-4's probe); the `local_*` and `config_mismatch`
+ * codes are the Claude adapter's own checks of DSP-122, which this build never sees
+ * but maps the same way so the table lives in one place; anything else is an error
+ * quoted verbatim, which may be temporary. The `unconfirmed-end` kind is not produced
+ * here: that rule reads the ledger, not an error, and arrives with DSP-122.
+ */
+function classifyResumeFailure(error: unknown): {
+  readonly kind: Extract<SessionContinuityKind, 'resume-refused' | 'resume-failed'>;
+  readonly failure: ResumeFailure;
+  /** What the statement adds after the quoted failure. */
+  readonly note: string;
+} {
+  const detail = describeError(error);
+  const providerCode = providerCodeOf(error);
+  switch (providerCode) {
+    case 'agent_not_found':
+      return {
+        kind: 'resume-refused',
+        failure: { kind: 'provider-missing', detail, providerCode },
+        note: 'The provider answered this itself. Trying again asks it again with the same ID.',
+      };
+    case 'local_record_missing':
+      return {
+        kind: 'resume-refused',
+        failure: { kind: 'local-record-missing', detail, providerCode },
+        note:
+          'The provider was not asked: the adapter\'s own local check found no ' +
+          'readable record of the session.',
+      };
+    case 'config_mismatch':
+      return {
+        kind: 'resume-refused',
+        failure: { kind: 'error', detail, providerCode },
+        note: 'Trying again with the same inputs gives the same answer.',
+      };
+    case 'local_lookup_failed':
+      return {
+        kind: 'resume-failed',
+        failure: { kind: 'error', detail, providerCode },
+        note: 'This may be temporary.',
+      };
+    case 'authentication_refused':
+      return {
+        kind: 'resume-failed',
+        failure: { kind: 'error', detail, providerCode },
+        // The rule is quoted in the detail; nothing is added to it.
+        note: '',
+      };
+    default:
+      return {
+        kind: 'resume-failed',
+        failure: { kind: 'error', detail, providerCode },
+        note: 'This may be temporary.',
+      };
+  }
+}
+
+/**
+ * The sentence for earlier messages with no confirmed end (DSP-121 AC#4), or `''`.
+ * The ledger carries no session ID, hence "of this conversation".
+ */
+function earlierSendsSentence(sends: readonly EarlierSendMayHaveReached[]): string {
+  if (sends.length === 0) {
+    return '';
+  }
+  const count = sends.length;
+  const listed = sends
+    .map(
+      (send) =>
+        `"${send.label}" (${send.attemptId}, ${send.state}` +
+        `${send.acknowledged ? ', acknowledged' : ''})`,
+    )
+    .join('; ');
+  return (
+    ` ${String(count)} earlier message${count === 1 ? '' : 's'} of this conversation ` +
+    `may have reached the provider and ${count === 1 ? 'has' : 'have'} no confirmed ` +
+    `end: ${listed}. Nothing is resent. If you continue in a new provider session, ` +
+    'the recap DSpatch offers is its own record of the conversation, not a resend.'
+  );
+}
+
+/** What each choice does, said once, the same way in every no-session state. */
+const CHOICES_SENTENCE =
+  ' You can try again, which closes this view\'s session first (a build or test ' +
+  'command still running is stopped) and asks to resume the same ID once more; ' +
+  'start a new provider session, with a recap you can remove before sending; or ' +
+  'keep reading the history without starting an agent.';
+
+/** The `contextNote` while no provider session is open: nothing is or will be resent. */
+function noSessionOpenNote(savedMessageCount: number): string {
+  return (
+    'Nothing was resent and nothing will be: no provider session is open. The ' +
+    `conversation's ${String(savedMessageCount)} saved message${
+      savedMessageCount === 1 ? ' is' : 's are'
+    } on screen as history only. A new provider session, if you choose one, shows ` +
+    'its recap before anything is sent.'
+  );
+}
+
+/**
+ * The resumed statement, worded from what the adapter reports it checked and from
+ * nothing else — in particular not from `capabilities().resume`, which says what an
+ * adapter claims in general rather than what this call did.
+ */
+function resumedWording(
+  previousId: string,
+  adapterId: string,
+  evidence: ResumeEvidence | undefined,
+): { readonly statement: string; readonly contextNote: string } {
+  if (evidence === 'provider-answered') {
+    return {
+      statement:
+        `The provider session ${previousId} was resumed, so this is the same ` +
+        'agent you were talking to before, with the earlier turns in its own ' +
+        'memory. That was checked by asking the provider for it, not assumed: ' +
+        'resuming an agent the provider does not have is refused rather than ' +
+        'silently starting a new one.',
+      contextNote:
+        'DSpatch resent nothing, because nothing needed resending: the ' +
+        'provider still holds this session and the earlier turns are in its ' +
+        'own store. That store is Cursor\'s, under your user profile and keyed ' +
+        'by this project\'s path — a different place from the conversation file ' +
+        'DSpatch writes. The two can drift apart: deleting one does not delete ' +
+        'the other, and a conversation moved to another machine will come back ' +
+        'as history with no provider session behind it.',
+    };
+  }
+  if (evidence === 'local-record') {
+    return {
+      statement:
+        `DSpatch found a local record of session ${previousId} and registered it. ` +
+        'The first turn will show whether the provider reports the same session; ' +
+        'whether it recalled the earlier turns is not something DSpatch checks.',
+      contextNote:
+        'DSpatch resent nothing: the session was registered from a local record, and ' +
+        'the earlier turns, if the provider still has them, are in its own store rather ' +
+        'than in the conversation file DSpatch writes. The two can drift apart.',
+    };
+  }
+  return {
+    statement:
+      `Session ${previousId} was resumed by the ${adapterId} adapter; the adapter ` +
+      'does not say what it checked.',
+    contextNote:
+      'DSpatch resent nothing: the session was registered as resumed, and whether the ' +
+      'provider has the earlier turns is not something this adapter reports. The ' +
+      'conversation file DSpatch writes is a separate record.',
+  };
+}
 
 /** Cut text to a limit and say so, rather than ending mid-word in silence. */
 function clip(text: string, limit: number, what: string): string {
@@ -1148,11 +1348,14 @@ export class ChatService {
     let workspaceOrigin: string;
     let origin: SessionOrigin;
 
-    if (request.kind === 'new-provider-session') {
+    if (request.kind === 'new-provider-session' || request.kind === 'retry-resume') {
       if (openBeforeClose === null) {
         throw new Error(
-          'No project is open, so there is nothing to continue in a new provider ' +
-            'session. Open a project first.',
+          request.kind === 'retry-resume'
+            ? 'No project is open, so there is no recorded provider session to try ' +
+                'to resume again. Open a project first.'
+            : 'No project is open, so there is nothing to continue in a new provider ' +
+                'session. Open a project first.',
         );
       }
       // Nothing is generated, chosen or validated again: the same working copy,
@@ -1216,6 +1419,19 @@ export class ChatService {
       modelRequested: this.modelRequested(),
       workspacePath,
     };
+    if (request.kind === 'retry-resume') {
+      // The same path as opening the folder: the resume is simply attempted again.
+      // The acknowledgements are reserved for DSP-122's unconfirmed-end rule; this
+      // build has no such rule, so they are logged and nothing acts on them.
+      const acknowledged = request.acknowledgedAttemptIds ?? [];
+      this.options.log(
+        `trying again to resume the recorded provider session of ${conversationId}` +
+          (acknowledged.length === 0
+            ? ''
+            : ` (acknowledged attempts given: ${acknowledged.join(', ')}; no rule in ` +
+              'this build reads them)'),
+      );
+    }
     const continued = await this.openProviderSession(
       adapter,
       config,
@@ -1223,36 +1439,81 @@ export class ChatService {
       workspacePath,
       request.kind === 'new-provider-session',
     );
-    const handle = continued.handle;
     this.continuity = continued.continuity;
     this.pendingResendContext = continued.continuity.contextToResend;
 
-    this.unsubscribe = adapter.subscribe(handle.dspatchSessionId, (event) => {
-      this.onAgentEvent(event);
-    });
+    // The identity this session info describes: the open provider session, or — when
+    // none is open (DSP-121) — the recorded one, on record and unchanged, so the
+    // window shows which session the choice is about. No subscription then: the
+    // adapter instance holds no session and there is nothing to listen to.
+    const providerSessionOpen = continued.handle !== null;
+    let identity: {
+      readonly dspatchSessionId: string;
+      readonly providerSessionId: string;
+      readonly createdAt: string;
+      readonly toolPolicy: string;
+    };
+    if (continued.handle === null) {
+      identity = {
+        dspatchSessionId: continued.recorded.dspatchSessionId,
+        providerSessionId: continued.recorded.providerSessionId,
+        createdAt: continued.recorded.createdAt,
+        toolPolicy: continued.recorded.toolPolicy,
+      };
+    } else {
+      const handle = continued.handle;
+      identity = {
+        dspatchSessionId: handle.dspatchSessionId,
+        providerSessionId: handle.providerSessionId,
+        createdAt: handle.createdAt,
+        toolPolicy: 'provider-default',
+      };
+      this.unsubscribe = adapter.subscribe(handle.dspatchSessionId, (event) => {
+        this.onAgentEvent(event);
+      });
+    }
 
     const context: SessionContextInfo = {
       workingDirectorySent: workspacePath,
       modelSent: this.modelRequested(),
       toolPolicySent: 'provider-default',
       fileContentsSentByDspatch: 0,
-      statement:
-        'DSpatch sent the agent this working directory path, the model name and ' +
-        'your prompt text. It read no file and uploaded no file content. Opening a ' +
-        'project does not put it in front of the model: the agent reads files ' +
-        'itself, as tool calls, and every tool call it makes is listed in the ' +
-        'conversation. DSpatch sees the tool name but not which file it touched, ' +
-        'so the files on disk are the evidence for what changed.',
+      statement: providerSessionOpen
+        ? 'DSpatch sent the agent this working directory path, the model name and ' +
+          'your prompt text. It read no file and uploaded no file content. Opening a ' +
+          'project does not put it in front of the model: the agent reads files ' +
+          'itself, as tool calls, and every tool call it makes is listed in the ' +
+          'conversation. DSpatch sees the tool name but not which file it touched, ' +
+          'so the files on disk are the evidence for what changed.'
+        : continued.continuity.kind === 'resume-unavailable'
+          ? // No call was made: the adapter has no `resume`, so nothing was handed on.
+            'No provider session is open for this conversation, so DSpatch has sent ' +
+            'the agent nothing: not this working directory path, not the model name, ' +
+            'no prompt text and no file content. The provider was not asked. Opening ' +
+            'the history started no agent and no model turn. The values here are what ' +
+            'DSpatch would send if you chose to try again or to start a new provider ' +
+            'session.'
+          : // The resume attempt is one call, and it carries the session config: the
+            // Cursor adapter passes `config.modelRequested` and `config.workspacePath`
+            // to `Agent.resume` with the ID (review 004 B1). Saying nothing was sent
+            // would be false for that call.
+            'No provider session is open for this conversation. The one call DSpatch ' +
+            'made was the resume attempt, which gave the provider\'s SDK the recorded ' +
+            'session ID, the model name and this working directory path; it started ' +
+            'no agent and ran no model turn, and no prompt text and no file content ' +
+            'went anywhere. Opening the history started nothing. The values here are ' +
+            'what DSpatch would send if you chose to try again or to start a new ' +
+            'provider session.',
     };
 
     const session: ChatSessionInfo = {
       conversationId,
-      dspatchSessionId: handle.dspatchSessionId,
-      providerSessionId: handle.providerSessionId,
+      dspatchSessionId: identity.dspatchSessionId,
+      providerSessionId: identity.providerSessionId,
       modelRequested: this.modelRequested(),
       workspacePath,
-      createdAt: handle.createdAt,
-      toolPolicy: 'provider-default',
+      createdAt: identity.createdAt,
+      toolPolicy: identity.toolPolicy,
       origin,
       workspaceOrigin,
       git: gitInfo,
@@ -1279,7 +1540,8 @@ export class ChatService {
     // project still leaves a conversation to come back to.
     this.saveConversation();
     this.options.log(
-      `chat session ${session.dspatchSessionId} -> ${session.providerSessionId} ` +
+      `chat session ${session.dspatchSessionId} -> ${session.providerSessionId}` +
+        `${providerSessionOpen ? '' : ' (recorded; no provider session open)'} ` +
         `workspace=${workspacePath} baseline=${baseline.snapshotId} ` +
         `files=${String(baseline.fileCount)} dirtyAtStart=${String(
           gitInfo.dirtyFiles.length,
@@ -1304,8 +1566,14 @@ export class ChatService {
    * The store behind it is Cursor's, under `~/.cursor/projects/<workspace>/`, keyed
    * by the working copy's path — a different store from DSpatch's conversation
    * file, on a different key, with a different lifetime. The two can therefore
-   * disagree, which is why the fallback exists and why both branches say which one
-   * happened rather than letting the window imply either.
+   * disagree, and every branch says which one happened rather than letting the
+   * window imply either.
+   *
+   * **No automatic fallback (DSP-121, Niclas's decision of 24 October 2026).** When
+   * the resume is refused, fails, or cannot be attempted, no new session is opened,
+   * nothing is sent and the recorded session ID is left on record unchanged. The
+   * result then has `handle: null` and a continuity whose `choices` the window
+   * offers; the one call to the adapter in that branch is the `resume` itself.
    */
   private async openProviderSession(
     adapter: ChatAdapter,
@@ -1315,23 +1583,20 @@ export class ChatService {
     /**
      * Do not attempt a resume, because the user asked for a new provider session.
      *
-     * The only caller that sets this is the way out of a session that holds an
-     * unfinished run: resuming is precisely what lands back in it. This takes the
-     * same branch as a refused resume — new agent, same conversation, recap
-     * disclosed before it is sent — so the honest path is the existing one rather
-     * than a second one written for this case.
+     * Set by the way out of a session that holds an unfinished run — resuming is
+     * precisely what lands back in it — and by the "new session" choice after a
+     * refused or failed resume. New agent, same conversation, recap disclosed before
+     * it is sent and removable until then.
      */
     newProviderSessionRequested = false,
-  ): Promise<{
-    readonly handle: SessionHandle;
-    readonly continuity: SessionContinuity;
-  }> {
+  ): Promise<OpenedProviderSession> {
     const saved = this.savedSessionFor(conversationId);
     // The same merged conversation the window is given (WS-1 #10): the file's
     // messages and this run's turns, so a conversation worked in earlier in this run
     // is not recapped as if those turns had never happened.
     const savedMessageCount = this.mergedMessages(conversationId).length;
     const previousId = saved?.dspatchSessionId ?? null;
+    const earlierSends = this.earlierSendsMayHaveReached(conversationId);
 
     if (newProviderSessionRequested) {
       const handle = await adapter.startSession(config);
@@ -1345,11 +1610,16 @@ export class ChatService {
       );
       return {
         handle,
+        recorded: saved,
         continuity: {
           kind: 'new-provider-session',
+          providerSessionOpen: true,
           attemptedDspatchSessionId: previousId,
           resumedProviderSessionId: null,
           resumeError: null,
+          resumeFailure: null,
+          earlierSendsMayHaveReached: earlierSends,
+          choices: [],
           contextToResend: recap,
           contextNote: resendNote(recap, savedMessageCount),
           savedMessageCount,
@@ -1360,97 +1630,166 @@ export class ChatService {
             'doing, it is left alone rather than joined or repeated, and it may ' +
             'still be running on the provider\'s side. The model here has no memory ' +
             'of the conversation above. What it will be given is below, word for ' +
-            'word, in front of your next message.',
+            'word, in front of your next message — unless you remove it first.',
         },
       };
     }
 
-    if (previousId !== null && adapter.resume !== undefined) {
+    if (saved !== null && previousId !== null) {
+      if (adapter.resume === undefined) {
+        // Treated like a refusal (DSP-121 default (a)): no automatic new session.
+        // Unreachable in the product today, where the Cursor adapter has `resume`.
+        const detail = `this build cannot resume a session on the ${adapter.id} adapter`;
+        this.options.log(`resume of ${previousId} not attempted: ${detail}`);
+        return {
+          handle: null,
+          recorded: saved,
+          continuity: {
+            kind: 'resume-unavailable',
+            providerSessionOpen: false,
+            attemptedDspatchSessionId: previousId,
+            resumedProviderSessionId: null,
+            resumeError: detail,
+            resumeFailure: { kind: 'error', detail, providerCode: null },
+            earlierSendsMayHaveReached: earlierSends,
+            choices: NO_SESSION_CHOICES,
+            contextToResend: null,
+            contextNote: noSessionOpenNote(savedMessageCount),
+            savedMessageCount,
+            statement:
+              `This build cannot resume a session on the ${adapter.id} adapter. The ` +
+              'provider was not asked. No new session was opened and nothing was ' +
+              `sent. The session ID ${previousId} stays on record. Trying again in ` +
+              'this build gives the same answer.' +
+              earlierSendsSentence(earlierSends) +
+              CHOICES_SENTENCE,
+          },
+        };
+      }
       try {
         const handle = await adapter.resume(previousId, config);
+        const wording = resumedWording(previousId, adapter.id, handle.resumeEvidence);
         return {
           handle,
+          recorded: saved,
           continuity: {
             kind: 'provider-session-resumed',
+            providerSessionOpen: true,
             attemptedDspatchSessionId: previousId,
             resumedProviderSessionId: handle.providerSessionId,
             resumeError: null,
+            resumeFailure: null,
+            earlierSendsMayHaveReached: earlierSends,
+            choices: [],
             contextToResend: null,
-            contextNote:
-              'DSpatch resent nothing, because nothing needed resending: the ' +
-              'provider still holds this session and the earlier turns are in its ' +
-              'own store. That store is Cursor\'s, under your user profile and keyed ' +
-              'by this project\'s path — a different place from the conversation file ' +
-              'DSpatch writes. The two can drift apart: deleting one does not delete ' +
-              'the other, and a conversation moved to another machine will come back ' +
-              'as history with no provider session behind it.',
+            contextNote: wording.contextNote,
             savedMessageCount,
-            statement:
-              `The provider session ${previousId} was resumed, so this is the same ` +
-              'agent you were talking to before, with the earlier turns in its own ' +
-              'memory. That was checked by asking the provider for it, not assumed: ' +
-              'resuming an agent the provider does not have is refused rather than ' +
-              'silently starting a new one.',
+            statement: wording.statement,
           },
         };
       } catch (error) {
-        const reason = describeError(error);
-        this.options.log(`resume of ${previousId} refused: ${reason}`);
-        const handle = await adapter.startSession(config);
-        const recap = this.recapFor(conversationId, workspacePath, reason);
+        const classified = classifyResumeFailure(error);
+        const { detail } = classified.failure;
+        this.options.log(
+          `resume of ${previousId} ${
+            classified.kind === 'resume-refused' ? 'refused' : 'failed'
+          } (${classified.failure.kind}, code ${classified.failure.providerCode ?? 'none'}): ` +
+            `${detail}; no new session opened, nothing sent, session ID kept on record`,
+        );
+        const opening =
+          classified.failure.kind === 'provider-missing'
+            ? `DSpatch asked the provider to resume ${previousId} and the provider ` +
+              'answered that it does not have that session ' +
+              `(${classified.failure.providerCode ?? 'no code'}).`
+            : classified.kind === 'resume-refused'
+              ? `DSpatch tried to resume ${previousId} and the resume was refused: ` +
+                `${detail}`
+              : `DSpatch tried to resume ${previousId} and the attempt failed: ${detail}`;
         return {
-          handle,
+          handle: null,
+          recorded: saved,
           continuity: {
-            kind: 'new-provider-session',
+            kind: classified.kind,
+            providerSessionOpen: false,
             attemptedDspatchSessionId: previousId,
             resumedProviderSessionId: null,
-            resumeError: reason,
-            contextToResend: recap,
-            contextNote: resendNote(recap, savedMessageCount),
+            resumeError: detail,
+            resumeFailure: classified.failure,
+            earlierSendsMayHaveReached: earlierSends,
+            choices: NO_SESSION_CHOICES,
+            contextToResend: null,
+            contextNote: noSessionOpenNote(savedMessageCount),
             savedMessageCount,
             statement:
-              `This is a new provider session. DSpatch asked the provider to resume ` +
-              `${previousId} and was refused: ${reason} The model therefore has no ` +
-              'memory of the conversation above. What it will be given is below, ' +
-              'word for word, in front of your next message.',
+              `${opening}${classified.note === '' ? '' : ` ${classified.note}`} No new ` +
+              'session was opened and nothing was sent. The session ID stays on record.' +
+              earlierSendsSentence(earlierSends) +
+              CHOICES_SENTENCE,
           },
         };
       }
     }
 
+    // No session is recorded, so there is nothing to resume into and nothing a
+    // choice could keep: a new session is opened (DSP-121 default (b)).
     const handle = await adapter.startSession(config);
     if (savedMessageCount === 0) {
       return {
         handle,
+        recorded: saved,
         continuity: {
           ...FIRST_SESSION_CONTINUITY,
           attemptedDspatchSessionId: previousId,
+          earlierSendsMayHaveReached: earlierSends,
         },
       };
     }
     // A saved conversation with messages but no session to resume into: a file
-    // carried from another machine, or one whose provider store has been cleared.
-    const noSession =
-      previousId === null
-        ? 'this conversation has no earlier provider session recorded'
-        : `this build cannot resume a session on the ${adapter.id} adapter`;
+    // carried from another machine, or one written before sessions were recorded.
+    const noSession = 'this conversation has no earlier provider session recorded';
     const recap = this.recapFor(conversationId, workspacePath, noSession);
     return {
       handle,
+      recorded: saved,
       continuity: {
         kind: 'new-provider-session',
+        providerSessionOpen: true,
         attemptedDspatchSessionId: previousId,
         resumedProviderSessionId: null,
         resumeError: noSession,
+        resumeFailure: null,
+        earlierSendsMayHaveReached: earlierSends,
+        choices: [],
         contextToResend: recap,
         contextNote: resendNote(recap, savedMessageCount),
         savedMessageCount,
         statement:
           `This is a new provider session, because ${noSession}. The model has no ` +
           'memory of the conversation above. What it will be given is below, word ' +
-          'for word, in front of your next message.',
+          'for word, in front of your next message — unless you remove it first.',
       },
     };
+  }
+
+  /**
+   * This conversation's agent-turn attempts with no confirmed end, acknowledged ones
+   * included and flagged (DSP-121 AC#4). Read from the conversation's own ledger —
+   * the record DSpatch keeps — and from nothing else; the adapter's in-memory
+   * disposal records are not consulted.
+   */
+  private earlierSendsMayHaveReached(
+    conversationId: string,
+  ): readonly EarlierSendMayHaveReached[] {
+    const held = this.held.get(conversationId) ?? null;
+    if (held === null) {
+      return [];
+    }
+    return held.ledger.unresolved('agent-turn').map((attempt) => ({
+      attemptId: attempt.attemptId,
+      label: attempt.label,
+      state: attempt.state,
+      acknowledged: attempt.acknowledgedAtUtc !== null,
+    }));
   }
 
   /** DSpatch's record of a conversation for a model that was told nothing. */
@@ -1468,6 +1807,57 @@ export class ChatService {
   /** How this session relates to the conversation's earlier one. */
   sessionContinuity(): SessionContinuity {
     return this.continuity;
+  }
+
+  /**
+   * Remove the recap DSpatch would put in front of the next message (DSP-121 AC#2).
+   *
+   * One mechanism for every new provider session, the deliberate one included: the
+   * recap is DSpatch talking, and the user may decide the model should hear only
+   * them. Final for this session — a send that is then refused does not bring the
+   * recap back, because nothing has changed about what the user chose. The record
+   * itself is untouched: the conversation file and the history on screen keep every
+   * message; only what goes to the provider changes. Nothing is sent by this call.
+   */
+  discardPendingRecap(): SessionContinuity {
+    const session = this.session;
+    if (session === null) {
+      throw new Error('No session is open. Start one first.');
+    }
+    if (this.pendingResendContext === null && this.continuity.contextToResend === null) {
+      return this.continuity;
+    }
+    this.pendingResendContext = null;
+    this.continuity = {
+      ...this.continuity,
+      contextToResend: null,
+      contextNote:
+        'The recap was removed at your request, so only your message will be sent. ' +
+        'The model has not been given the conversation above; DSpatch\'s record of it ' +
+        'stays in the conversation file and on screen.',
+    };
+    this.session = { ...session, continuity: this.continuity };
+    this.options.log('pending recap removed by the user; the next message goes without it');
+    return this.continuity;
+  }
+
+  /** The one-line reason `requireSession` gives while no provider session is open. */
+  private noProviderSessionHeadline(): string {
+    const continuity = this.continuity;
+    const id = continuity.attemptedDspatchSessionId ?? 'the recorded session';
+    const detail = continuity.resumeFailure?.detail ?? 'no detail';
+    switch (continuity.kind) {
+      case 'resume-refused':
+        return continuity.resumeFailure?.kind === 'provider-missing'
+          ? `the provider answered that it does not have session ${id}`
+          : `resuming ${id} was refused (${detail})`;
+      case 'resume-failed':
+        return `resuming ${id} failed (${detail})`;
+      case 'resume-unavailable':
+        return detail;
+      default:
+        return `no provider session was opened (${continuity.kind})`;
+    }
   }
 
   /**
@@ -2833,8 +3223,13 @@ export class ChatService {
     const session =
       this.session !== null && this.conversationId === conversationId ? this.session : null;
 
+    // While no provider session is open (DSP-121) the session on screen is the
+    // recorded one, and the file keeps it exactly as it was — every field, including
+    // `createdAt` — until the user's choice opens something. Writing it from
+    // `this.session` here would be harmless today and would silently become the old
+    // overwrite the moment a field drifted, so it is not written from there at all.
     const storedSession: StoredSession | null =
-      session === null
+      session === null || !this.continuity.providerSessionOpen
         ? (held.session ?? this.savedSessionFor(conversationId))
         : {
             dspatchSessionId: session.dspatchSessionId,
@@ -3314,16 +3709,19 @@ export class ChatService {
       attempts: this.currentLedger().all(),
       nodeRunner: this.runner,
       workspaceChangesAtEnd: this.session === null ? null : this.getWorkspaceChanges(),
+      // `null` as well while no provider session is open (DSP-121): the adapter
+      // instance then holds no session, and the Cursor adapter throws for an ID it
+      // does not hold. Unknown, not zero, and not an exception in the report path.
       providerMessageTypes:
-        this.adapter === null || this.session === null
+        this.adapter === null || this.session === null || !this.continuity.providerSessionOpen
           ? null
           : this.adapter.providerMessageTypes(this.session.dspatchSessionId),
       streamPumpFinished:
-        this.adapter === null || this.session === null
+        this.adapter === null || this.session === null || !this.continuity.providerSessionOpen
           ? null
           : this.adapter.streamPumpFinished(this.session.dspatchSessionId),
       modelReported:
-        this.adapter === null || this.session === null
+        this.adapter === null || this.session === null || !this.continuity.providerSessionOpen
           ? null
           : this.adapter.modelReported(this.session.dspatchSessionId),
       capabilities: this.adapter?.capabilities() ?? null,
@@ -3505,6 +3903,16 @@ export class ChatService {
     const session = this.session;
     if (adapter === null || session === null) {
       throw new Error('No session is open. Start one first.');
+    }
+    // The guard of DSP-121: a session info over a recorded-but-not-open provider
+    // session refuses everything that would reach the adapter, so that opening the
+    // history or seeing the failure can never start a model turn. "Keep reading"
+    // is exactly this refusal staying in force.
+    if (!this.continuity.providerSessionOpen) {
+      throw new Error(
+        `No provider session is open for this conversation: ${this.noProviderSessionHeadline()}. ` +
+          'Choose: try again, a new provider session, or keep reading.',
+      );
     }
     return { adapter, session };
   }
