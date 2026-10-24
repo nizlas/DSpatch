@@ -338,7 +338,9 @@ function OpenReview({
       }));
     }, OPENED_AFTER_MS);
     return () => window.clearTimeout(timer);
-  }, [current, away, shownKey, state.shownSteps, state.shownRefs, update]);
+    // The step id, not the step object: a re-render for any other reason must not restart the wait.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.step.id, away, shownKey, state.shownSteps, state.shownRefs, update]);
 
   const goToStep = useCallback(
     (stepId: string, placeIndex = 0) => {

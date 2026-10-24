@@ -604,6 +604,22 @@ test('marks follow a step\'s content when the walks change: unchanged steps keep
   assert.deepEqual(rewritten.state.shownSteps, {});
   assert.equal(rewritten.moved, 2);
 
+  // Every text and reference of a step is content: a changed why, evidence, link label or context moves the marks too.
+  const vary = (patch: Partial<typeof step>): string => stepContentHash({ ...step, ...patch });
+  const place = step.places[0];
+  assert.ok(place !== undefined);
+  for (const changed of [
+    vary({ why: { sv: 'annat', en: 'other' } }),
+    vary({ evidence: [...step.evidence, { label: 'analysis', text: { sv: 'ny', en: 'new' } }] }),
+    vary({ places: [{ ...place, context: [...place.context, { path: 'src/x.ts', start: 1, end: 1, role: 'context' as const }] }] }),
+    vary({ places: [{ ...place, from: { ref: { path: 'src/x.ts', start: 1, end: 1, role: 'context' as const }, label: { sv: 'a', en: 'a' } } }] }),
+  ]) {
+    assert.notEqual(changed, hashes[step.id]);
+  }
+  if (place.from !== null) {
+    assert.notEqual(vary({ places: [{ ...place, from: { ...place.from, label: { sv: 'ändrad', en: 'changed' } } }] }), hashes[step.id]);
+  }
+
   // Round trip through the stored shape.
   const adopted = adoptStoredState(JSON.parse(JSON.stringify(strict.state)), REVISIONS);
   assert.deepEqual(adopted?.markHistory, strict.state.markHistory);

@@ -1062,19 +1062,23 @@ function contentHash(text: string): string {
   return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
 }
 
-/** What a step says and shows: its texts and its places' focus, unit and link. */
+/** Everything a step says and shows: all its texts, and its places' focus, context, unit and link. */
 export function stepContentHash(step: WalkStep): string {
   return contentHash(
     JSON.stringify({
       title: step.title,
       summary: step.summary,
       body: step.body,
+      why: step.why,
+      evidence: step.evidence,
+      evidenceRefs: step.evidenceRefs,
       places: step.places.map((place) => ({
         id: place.id,
         label: place.label,
         focus: place.focus,
+        context: place.context,
         unit: place.unit === null ? null : { ref: place.unit.ref, kind: place.unit.kind, name: place.unit.name },
-        from: place.from === null ? null : place.from.ref,
+        from: place.from === null ? null : { ref: place.from.ref, label: place.from.label },
       })),
     }),
   );
