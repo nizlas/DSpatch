@@ -69,8 +69,11 @@ export interface ConversationWriteResult {
   readonly error: string | null;
   readonly bytesWritten: number | null;
   /**
-   * `true` when the file was refused because DSpatch must not overwrite it (a newer
-   * or unreadable format). Trying again cannot help, so the window must not promise it.
+   * `true` when the file was refused because DSpatch must never overwrite it: a
+   * newer format, or bytes this build cannot parse. Trying again cannot help, so
+   * the window must not promise it. **Not** set for a file whose bytes could not
+   * be read at all (a lock, a permission, a disconnected drive): that refusal is
+   * also returned, but the next save may well succeed, and the error text says so.
    */
   readonly readOnly?: boolean;
 }
@@ -90,8 +93,26 @@ export interface ConversationReadResult {
    * will fix it" — every branch here ends with the file still on disk.
    */
   readonly recovery: string | null;
-  /** From a later DSpatch: read, never rewritten. */
+  /**
+   * The file must never be rewritten by this build: a newer format, or bytes it
+   * cannot parse. Reading it again would find the same thing.
+   */
   readonly readOnly: boolean;
+  /**
+   * The file is there and its bytes could not be read: a permission, a lock held by
+   * another program, a disconnected drive. Nothing is known about what it holds,
+   * so a save over it is refused too — but a later read may succeed, and a later
+   * save with it. Kept apart from `readOnly` so the window does not call a passing
+   * lock permanent (WS-1 review N1).
+   */
+  readonly readFailed: boolean;
+  /**
+   * The format version found, when the file is newer than this build understands;
+   * `null` otherwise. The one read-only cause the window may call "a newer DSpatch":
+   * the others (invalid JSON, not an object, missing fields) are damage, and saying
+   * a newer build wrote them would be a guess (WS-1 review S1).
+   */
+  readonly newerFormatVersion: number | null;
 }
 
 /** The raw bytes of a stored conversation, whether or not they can be parsed. */
@@ -219,11 +240,25 @@ export class ConversationStore {
       return {
         filePath,
         error:
-          `${filePath} was written by a DSpatch this build does not recognise, so ` +
-          `it has been left exactly as it is: ${existing.error ?? 'unknown reason'} ` +
+          `${filePath} is a file this build must not overwrite, so it has been ` +
+          `left exactly as it is: ${existing.error ?? 'unknown reason'} ` +
           'This conversation is not being saved, and the file on disk is intact.',
         bytesWritten: null,
         readOnly: true,
+      };
+    }
+    if (existing.readFailed) {
+      // Not `readOnly`: the file was not understood to be anything, it simply could
+      // not be opened just now. Overwriting what could not be read would be the
+      // one way to lose it, so the save is refused — and retried, like any other
+      // failed save, because a lock clears and a drive comes back.
+      return {
+        filePath,
+        error:
+          `${filePath} could not be read before saving: ${
+            existing.error ?? 'unknown reason'
+          } DSpatch did not overwrite it.`,
+        bytesWritten: null,
       };
     }
     const body = `${JSON.stringify({ ...conversation, appVersion: this.appVersion }, null, 2)}\n`;
@@ -270,6 +305,8 @@ export class ConversationStore {
           'file with this name is genuinely yours, move it into the directory under ' +
           'a name made only of letters, digits, dots, dashes and underscores.',
         readOnly: true,
+        readFailed: false,
+        newerFormatVersion: null,
       };
     }
     let raw: string;
@@ -277,7 +314,15 @@ export class ConversationStore {
       raw = fs.readFileSync(filePath, 'utf8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { filePath, conversation: null, error: null, recovery: null, readOnly: false };
+        return {
+          filePath,
+          conversation: null,
+          error: null,
+          recovery: null,
+          readOnly: false,
+          readFailed: false,
+          newerFormatVersion: null,
+        };
       }
       return {
         filePath,
@@ -289,7 +334,11 @@ export class ConversationStore {
             'the file system rather than the conversation: a permission, a lock held ' +
             'by another program, or a disconnected drive.',
         ),
-        readOnly: true,
+        // Not read-only: nothing is known about the file, and the next read may
+        // work. A save over it is refused until one does (see `write`).
+        readOnly: false,
+        readFailed: true,
+        newerFormatVersion: null,
       };
     }
 
@@ -326,6 +375,8 @@ export class ConversationStore {
                 'means it has been edited by hand.',
         ),
         readOnly: true,
+        readFailed: false,
+        newerFormatVersion: null,
       };
     }
     if (!isRecord(parsed)) {
@@ -339,6 +390,8 @@ export class ConversationStore {
             'at all — something else has been written to this path.',
         ),
         readOnly: true,
+        readFailed: false,
+        newerFormatVersion: null,
       };
     }
     const version = parsed['formatVersion'];
@@ -356,6 +409,8 @@ export class ConversationStore {
             'DSpatch cannot tell which rules to read it by and will not guess.',
         ),
         readOnly: true,
+        readFailed: false,
+        newerFormatVersion: null,
       };
     }
     if (version > CONVERSATION_FORMAT_VERSION) {
@@ -373,6 +428,8 @@ export class ConversationStore {
             'nothing in it can be lost by running this one.',
         ),
         readOnly: true,
+        readFailed: false,
+        newerFormatVersion: version,
       };
     }
 
@@ -393,9 +450,19 @@ export class ConversationStore {
             'file would be a record of something that never happened.',
         ),
         readOnly: true,
+        readFailed: false,
+        newerFormatVersion: null,
       };
     }
-    return { filePath, conversation, error: null, recovery: null, readOnly: false };
+    return {
+      filePath,
+      conversation,
+      error: null,
+      recovery: null,
+      readOnly: false,
+      readFailed: false,
+      newerFormatVersion: null,
+    };
   }
 
   /**
@@ -507,12 +574,13 @@ export class ConversationStore {
           unacknowledgedAttemptCount: 0,
           hasReviewedDiff: false,
           hasTestResult: false,
-          formatVersion: 0,
+          formatVersion: result.newerFormatVersion ?? 0,
           error: result.error ?? 'this conversation could not be read.',
           recovery:
             result.recovery ??
             recoveryAdvice(result.filePath, 'This conversation could not be read.'),
           readOnly: result.readOnly,
+          newerFormat: result.newerFormatVersion !== null,
         });
         continue;
       }
@@ -541,6 +609,7 @@ export class ConversationStore {
         formatVersion: conversation.formatVersion,
         error: null,
         readOnly: false,
+        newerFormat: false,
       });
     }
     // Newest work first: the conversation someone wants back is usually the last

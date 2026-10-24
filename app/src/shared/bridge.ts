@@ -302,8 +302,16 @@ export interface ConversationListEntry {
    * reader with nowhere to go. `null` when there is nothing to recover from.
    */
   readonly recovery: string | null;
-  /** Written by a newer DSpatch: read, never rewritten. */
+  /**
+   * Read and never rewritten by this build: a newer format, or bytes it cannot
+   * parse. `error` says which was found; `newerFormat` says whether it is the first.
+   */
   readonly readOnly: boolean;
+  /**
+   * The one read-only cause that is a newer DSpatch rather than damage, so the row
+   * may say so (WS-1 review S1). `formatVersion` then carries the version found.
+   */
+  readonly newerFormat: boolean;
 }
 
 /**
@@ -597,6 +605,14 @@ export interface ConversationSaveStatus {
   readonly filePath: string | null;
   readonly error: string | null;
   /**
+   * The conversation on screen is refused because its file must never be
+   * overwritten by this build (a newer or unparsable format). No save, retried or
+   * not, can succeed into it, so the window must not say that one will be tried.
+   * `false` for every other failure, including a file that could not be read just
+   * now: those are retried.
+   */
+  readonly readOnly: boolean;
+  /**
    * Other conversations held in this window whose latest save failed (WS-1 follow-up).
    *
    * A conversation that is not on screen still changes: a command it started ends
@@ -611,8 +627,10 @@ export interface ConversationSaveStatus {
     readonly filePath: string | null;
     readonly error: string;
     /**
-     * The file is one DSpatch must not overwrite (newer or unreadable format), so no
-     * later save will be attempted into it with any chance of success.
+     * The file is one DSpatch must never overwrite (a newer or unparsable format),
+     * so no later save into it can succeed. Not set for a file that merely could
+     * not be read at the moment of the save (a lock, a permission, a drive): that
+     * save is refused too, and retried like any other failed one (WS-1 review N1).
      */
     readonly readOnly: boolean;
   }[];
@@ -1236,6 +1254,8 @@ export interface RestoredConversation {
   /** What was restored and what was not, for the window to show as it is. */
   readonly statement: string;
   readonly readOnly: boolean;
+  /** As on the listing row: read-only because a newer DSpatch wrote it, not damage. */
+  readonly newerFormat: boolean;
   /** Non-null when part of the file could not be used, saying which part. */
   readonly error: string | null;
 }
@@ -1529,7 +1549,18 @@ export type ScriptedScenario =
    *
    * No provider call, no run, no project. Seconds rather than minutes.
    */
-  | 'how-the-liveness-looks';
+  | 'how-the-liveness-looks'
+  /**
+   * DSP-4 WS-1: switching between saved conversations in one window, and a restart.
+   *
+   * Over a **seeded** user-data directory (`scripts/seed-switch-kit.mjs`): four
+   * projects with saved conversations, two of them carrying one unresolved command
+   * attempt under the same ID. Phase `first` opens them in turn, reads them back and
+   * acknowledges the shared attempt through the command gate; phase `again` is a
+   * second process over the same directory and checks what came back. No provider
+   * call: the presentation adapter opens sessions and nothing is sent.
+   */
+  | 'workspace-switch';
 
 export interface ScriptedRunPlan {
   readonly enabled: true;
@@ -1599,6 +1630,17 @@ export interface ScriptedRunPlan {
    * in. `undefined` for every other scenario.
    */
   readonly lookGraphPath?: string;
+  /**
+   * Which half of `workspace-switch` this process is: `first` works the seeded
+   * conversations, `again` is the restart over the same user data. `undefined` for
+   * every other scenario.
+   */
+  readonly switchPhase?: 'first' | 'again';
+  /**
+   * The seeded projects, in the order A, B, X, X-sub, spelled as the seed recorded
+   * them. Given rather than discovered so the trial names what it opens.
+   */
+  readonly switchProjects?: readonly string[];
 }
 
 /** Where the renderer's own observations end up. */

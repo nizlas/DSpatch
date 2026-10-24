@@ -2340,10 +2340,16 @@ function Workbench({
                   ? ''
                   : `; the file DSpatch was writing to is ${saveStatus.filePath}`}
                 . At risk is only what changed since the last save that succeeded
-                (everything, if none did). DSpatch tries to save again when this
-                conversation next changes and when this window closes; if none of those
-                saves succeeds, a restart loses it, so copy anything you need before
-                closing this window.
+                (everything, if none did).{' '}
+                {saveStatus.readOnly
+                  ? // A newer or unparsable file: no retry can succeed, so none is
+                    // promised (WS-1 review N1).
+                    'DSpatch will not overwrite that file, so nothing done here is being ' +
+                    'saved; a restart loses it, so copy anything you need before closing ' +
+                    'this window.'
+                  : 'DSpatch tries to save again when this conversation next changes and ' +
+                    'when this window closes; if none of those saves succeeds, a restart ' +
+                    'loses it, so copy anything you need before closing this window.'}
               </p>
             )}
             {(saveStatus?.otherConversations ?? []).map((other) => (
@@ -3592,8 +3598,12 @@ function ConversationRow({
         )}
         {entry.readOnly && (
           <p className="files__meta" data-ev={`conversation-readonly-${String(index)}`}>
-            Written by a newer DSpatch (format {entry.formatVersion}). It will be read
-            and never rewritten, so nothing in it can be lost by this build.
+            {entry.newerFormat
+              ? `Written by a newer DSpatch (format ${String(entry.formatVersion)}). It ` +
+                'will be read and never rewritten, so nothing in it can be lost by this build.'
+              : // Damage rather than a newer build (WS-1 review S1): the error line
+                // beside this says what was found.
+                'DSpatch will read and never rewrite this file.'}
           </p>
         )}
         {entry.error !== null && (
@@ -3810,7 +3820,9 @@ function RestoredPanel({
       </p>
       {restored.readOnly && (
         <p className="app__note" data-ev="restored-readonly">
-          This file was written by a newer DSpatch, so it is read and never rewritten.
+          {restored.newerFormat
+            ? 'This file was written by a newer DSpatch, so it is read and never rewritten. '
+            : 'DSpatch will read and never rewrite this file. '}
           Continuing would save into a new conversation rather than change this one.
         </p>
       )}

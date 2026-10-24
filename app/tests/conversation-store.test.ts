@@ -161,10 +161,53 @@ test('a file from a newer DSpatch is not read, and the next save leaves it alone
 
   const written = store.write(conversation({ conversationId: id }));
   assert.notEqual(written.error, null);
+  assert.match(String(written.error), /must not overwrite/);
   assert.match(String(written.error), /left exactly as it is/);
   // Trying again cannot help, so the window must not promise it (review 005 S2).
   assert.equal(written.readOnly, true);
+  assert.equal(read.readFailed, false);
+  assert.equal(read.newerFormatVersion, CONVERSATION_FORMAT_VERSION + 1);
+  // The row may call this a newer DSpatch, and name the version it found (S1).
+  const entry = store.list().entries.find((candidate) => candidate.conversationId === id);
+  assert.equal(entry?.readOnly, true);
+  assert.equal(entry?.newerFormat, true);
+  assert.equal(entry?.formatVersion, CONVERSATION_FORMAT_VERSION + 1);
   assert.deepEqual(JSON.parse(fs.readFileSync(filePath, 'utf8')), future);
+});
+
+test('a file that cannot be read is not overwritten, and the refusal is one to try again (N1)', () => {
+  const { store } = storeIn('unreadable');
+  const id = 'dsp-conv-20260915000000-locked';
+  // A directory where the file should be: the bytes cannot be read, which is the
+  // shape a lock, a permission problem or a disconnected drive has — and, unlike
+  // those, the same on every machine and undone by one call.
+  const filePath = store.filePathFor(id);
+  fs.mkdirSync(filePath, { recursive: true });
+
+  const read = store.read(id);
+  assert.equal(read.conversation, null);
+  assert.match(String(read.error), /could not be read/);
+  assert.equal(read.readFailed, true);
+  assert.equal(read.readOnly, false, 'a read failure is not a format refusal');
+
+  const written = store.write(conversation({ conversationId: id }));
+  assert.match(String(written.error), /could not be read before saving/);
+  assert.match(String(written.error), /did not overwrite it/);
+  // The window adds the one retry sentence; the store does not say it too (S5).
+  assert.doesNotMatch(String(written.error), /tries again/);
+  assert.notEqual(written.readOnly, true, 'the window may say a retry will happen');
+  assert.ok(fs.statSync(filePath).isDirectory(), 'nothing was written over it');
+
+  // The listing says the file could not be read, not that a newer DSpatch wrote it.
+  const entry = store.list().entries.find((candidate) => candidate.conversationId === id);
+  assert.equal(entry?.readOnly, false);
+  assert.match(String(entry?.error), /could not be read/);
+
+  // Once the file can be read again, the next save goes through.
+  fs.rmdirSync(filePath);
+  const again = store.write(conversation({ conversationId: id }));
+  assert.equal(again.error, null);
+  assert.equal(store.read(id).conversation?.conversationId, id);
 });
 
 test('an unparsable file is reported, listed and never overwritten', () => {
@@ -183,6 +226,10 @@ test('an unparsable file is reported, listed and never overwritten', () => {
   assert.equal(listing.entries.length, 1);
   assert.equal(listing.entries[0]?.conversationId, 'dsp-conv-broken');
   assert.notEqual(listing.entries[0]?.error, null);
+  // Read-only, and not called a newer DSpatch: this is damage (S1).
+  assert.equal(listing.entries[0]?.readOnly, true);
+  assert.equal(listing.entries[0]?.newerFormat, false);
+  assert.equal(read.newerFormatVersion, null);
 
   store.write(conversation({ conversationId: 'dsp-conv-broken' }));
   assert.equal(fs.readFileSync(filePath, 'utf8'), '{ half a file');

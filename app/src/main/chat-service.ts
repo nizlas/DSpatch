@@ -2335,6 +2335,8 @@ export class ChatService {
           ? null
           : store.filePathFor(conversationId),
       error: conversationId === null ? null : (this.saveErrors.get(conversationId)?.error ?? null),
+      readOnly:
+        conversationId !== null && (this.saveErrors.get(conversationId)?.readOnly ?? false),
       otherConversations: this.otherSaveErrors(),
     };
   }
@@ -2457,6 +2459,7 @@ export class ChatService {
         inMemory === null ? 'file' : 'window',
       ),
       readOnly: result.readOnly,
+      newerFormat: result.newerFormatVersion !== null,
       error: joinErrors(result.error, adoptNote),
     };
   }

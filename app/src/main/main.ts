@@ -267,7 +267,9 @@ const chatRunScenario: ScriptedScenario =
                               ? 'liveness-and-an-ending'
                               : chatRunValue === 'liveness-look'
                                 ? 'how-the-liveness-looks'
-                                : 'full-workflow';
+                                : chatRunValue === 'switch'
+                                  ? 'workspace-switch'
+                                  : 'full-workflow';
 
 /**
  * The one run that talks to no provider.
@@ -330,7 +332,11 @@ const presentationMode =
   // distribution of light cannot break a state rule and a full walk would prove nothing
   // about it — so there is nothing here for a provider to be asked. The adapter exists
   // only because the window asks for a login reading on the way to the editor.
-  chatRunScenario === 'how-the-liveness-looks';
+  chatRunScenario === 'how-the-liveness-looks' ||
+  // DSP-4 WS-1: what the window shows of saved conversations as it switches between
+  // them, and after a restart. Everything in it is read from files on this machine;
+  // the adapter only lets a session open, and nothing is sent to it.
+  chatRunScenario === 'workspace-switch';
 
 /**
  * How fast the canned reply arrives, when a scripted run needs to say
@@ -453,7 +459,11 @@ const chatRunTimeoutMs =
                             // it is stuck rather than working.
                             chatRunScenario === 'how-the-liveness-looks'
                             ? 90_000
-                            : 900_000;
+                            : // Four projects opened and read back, one local command run.
+                              // Nothing waits for a provider.
+                              chatRunScenario === 'workspace-switch'
+                              ? 300_000
+                              : 900_000;
 const chatRunTurnTimeoutMs = 240_000;
 
 /**
@@ -474,6 +484,15 @@ const EXIT_RENDERER_GONE = 4;
 /** Scripted-run codes. 0–4 belong to the smoke test, 10–19 to the probe. */
 const CHAT_EXIT_TIMEOUT = 38;
 const CHAT_EXIT_NO_REPORT = 39;
+/**
+ * The user-data directory is not the one the trial expected (`DSPATCH_CHAT_EXPECT_USERDATA`).
+ *
+ * Checked before any store of DSpatch's exists, so a scripted run that was meant to
+ * work on a seeded copy can never write into somebody's real profile by mistake. Only
+ * DSpatch's own files are protected by it: Chromium opens its profile files under the
+ * same directory before this code runs, and that is outside DSpatch's control.
+ */
+const CHAT_EXIT_WRONG_USERDATA = 25;
 
 function log(message: string): void {
   process.stdout.write(`[dspatch] ${message}\n`);
@@ -1476,20 +1495,31 @@ const DISPOSE_TIMEOUT_MS = 8_000;
  * closes having said its cleanup did not finish, so the log states which of the
  * two happened and, when it did not finish, what may be left behind.
  */
-function disposeThenEnd(end: () => void, path: string): void {
+/**
+ * How the close went: whether the service and its adapter finished closing before
+ * the end, and what was said about it. A record that reads the files after a close
+ * that was cut short would present a mid-close state as final (WS-1 review S4).
+ */
+interface ShutdownOutcome {
+  readonly completed: boolean;
+  readonly detail: string;
+}
+
+function disposeThenEnd(end: (shutdown: ShutdownOutcome) => void, path: string): void {
   const startedAt = Date.now();
   let ended = false;
-  const finish = (outcome: string): void => {
+  const finish = (completed: boolean, outcome: string): void => {
     if (ended) {
       return;
     }
     ended = true;
     clearTimeout(timer);
     log(`shutdown (${path}) after ${String(Date.now() - startedAt)} ms: ${outcome}`);
-    end();
+    end({ completed, detail: outcome });
   };
   const timer = setTimeout(() => {
     finish(
+      false,
       `the adapter did not finish closing within ${String(DISPOSE_TIMEOUT_MS)} ms, ` +
         'so DSpatch is closing anyway. A provider agent runtime and its on-disk ' +
         'session store may still be open, and whatever the close itself would have ' +
@@ -1499,17 +1529,22 @@ function disposeThenEnd(end: () => void, path: string): void {
   }, DISPOSE_TIMEOUT_MS);
   disposeAdapterOnce().then(
     () => {
-      finish('adapter closed');
+      finish(true, 'adapter closed');
     },
     (error: unknown) => {
-      finish(`the adapter failed to close (${String(error)}). Closing anyway.`);
+      finish(false, `the adapter failed to close (${String(error)}). Closing anyway.`);
     },
   );
 }
 
 /** Dispose and exit. `app.quit()` would lose the exit code. */
 function exitNow(code: number): void {
-  disposeThenEnd(() => {
+  disposeThenEnd((shutdown) => {
+    // After the close, which is itself a save: the switch scenario's record says what
+    // the close wrote. Other scenarios keep their single record as it was.
+    if (chatRunScenario === 'workspace-switch' && lastScriptedReport !== undefined) {
+      writeChatRunRecord(lastScriptedReport, 'after-close', shutdown);
+    }
     app.exit(code);
   }, `exit ${String(code)}`);
 }
@@ -2224,18 +2259,119 @@ function startProbeIfRequested(): void {
   );
 }
 
+/** The same directory, however it was spelled: resolved, and case-blind on Windows. */
+function samePathSpelling(left: string, right: string): boolean {
+  const a = path.resolve(left);
+  const b = path.resolve(right);
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+/**
+ * What one conversation file holds, read from disk by the main process.
+ *
+ * For the `workspace-switch` record: the Verifier compares these with what the DOM
+ * showed, and the two must stay apart in the record because they are different
+ * kinds of evidence. Everything here is read through the real store.
+ */
+interface ConversationFileObservation {
+  readonly conversationId: string;
+  readonly filePath: string;
+  readonly projectPath: string | null;
+  readonly savedAtUtc: string | null;
+  readonly formatVersion: number | null;
+  readonly messages: number | null;
+  readonly attempts: readonly {
+    readonly attemptId: string;
+    readonly kind: string;
+    readonly state: string;
+    readonly acknowledgedAtUtc: string | null;
+  }[];
+  readonly testRuns: readonly { readonly attemptId: string | null; readonly verdict: string }[];
+  readonly reviewedDiffFiles: readonly string[] | null;
+  readonly error: string | null;
+}
+
+function observeConversationFiles(): readonly ConversationFileObservation[] {
+  const store = requireConversationStore();
+  return store.list().entries.map((entry) => {
+    const read = store.read(entry.conversationId);
+    const conversation = read.conversation;
+    if (conversation === null) {
+      return {
+        conversationId: entry.conversationId,
+        filePath: read.filePath,
+        projectPath: null,
+        savedAtUtc: null,
+        formatVersion: null,
+        messages: null,
+        attempts: [],
+        testRuns: [],
+        reviewedDiffFiles: null,
+        error: read.error ?? entry.error,
+      };
+    }
+    const diff = conversation.reviewedDiff;
+    return {
+      conversationId: conversation.conversationId,
+      filePath: read.filePath,
+      projectPath: conversation.project.path,
+      savedAtUtc: conversation.savedAtUtc,
+      formatVersion: conversation.formatVersion,
+      messages: conversation.messages.length,
+      attempts: conversation.attempts.map((attempt) => ({
+        attemptId: attempt.attemptId,
+        kind: attempt.kind,
+        state: attempt.state,
+        acknowledgedAtUtc: attempt.acknowledgedAtUtc,
+      })),
+      testRuns: conversation.testRuns.map((run) => ({
+        attemptId: run.attemptId,
+        verdict: run.verdict,
+      })),
+      reviewedDiffFiles:
+        diff === null
+          ? null
+          : [...diff.changed, ...diff.added, ...diff.removed].map((file) => file.relPath),
+      error: null,
+    };
+  });
+}
+
+/** The files as they were when the renderer reported, kept for the after-close record. */
+let conversationFilesAtReport: readonly ConversationFileObservation[] | null = null;
+/** The main-process evidence at report time; the service is gone by the after-close write. */
+let mainEvidenceAtReport: Record<string, unknown> | null = null;
+/** What was reported, so the after-close write carries the same renderer record. */
+let lastScriptedReport: ScriptedRunReport | null | undefined;
+
 /**
  * Write the scripted run's record.
  *
  * The renderer's own observations and the main process's are kept apart on
  * purpose: what the DOM showed and what was on disk are different kinds of
  * evidence and must not be presented as one.
+ *
+ * `workspace-switch` writes it twice: once when the renderer reports, and once more
+ * after the close, because the close is itself a save and what it wrote is part of
+ * what that scenario is about. The second write carries both readings — unless the
+ * close was cut short, in which case the after-close reading is withheld and the
+ * record says why, because a mid-close state is not what the close wrote.
  */
-function writeChatRunRecord(report: ScriptedRunReport | null): void {
+function writeChatRunRecord(
+  report: ScriptedRunReport | null,
+  moment: 'at-report' | 'after-close' = 'at-report',
+  shutdown: ShutdownOutcome | null = null,
+): void {
   const target = process.env['DSPATCH_CHAT_LOG'];
   if (target === undefined || target.trim() === '') {
     return;
   }
+  lastScriptedReport = report;
+  const switching = chatRunScenario === 'workspace-switch';
+  if (switching && conversationFilesAtReport === null) {
+    conversationFilesAtReport = observeConversationFiles();
+  }
+  mainEvidenceAtReport ??= chatService.evidence();
   const record = {
     run:
       chatRunScenario === 'interactive-chat'
@@ -2258,7 +2394,9 @@ function writeChatRunRecord(report: ScriptedRunReport | null): void {
                       ? 'DSP-86 — one graph view before, during and after a run: the same layout, zoom, pan and selected node either side of a run, locked while it walks and unlocked by itself when it ends, with no provider call'
                       : chatRunScenario === 'unsaved-edits-survive-a-switch'
                         ? 'DSP-88 — an unsaved drawing put to the dropdown, Open loop… and File → Open Graph File…, answered Save, Discard changes and Cancel, with what the window showed and what reached the disk read for each, and no provider call'
-                        : 'DSP-1 substep 7 — the whole workflow driven through the window',
+                        : chatRunScenario === 'workspace-switch'
+                          ? `DSP-4 WS-1 — saved conversations switched between in one window and read back after a restart (phase ${process.env['DSPATCH_CHAT_SWITCH_PHASE'] ?? 'first'}), over a seeded user-data directory, with no provider call`
+                          : 'DSP-1 substep 7 — the whole workflow driven through the window',
     scenario: chatRunScenario,
     startupProjectPath: startupProjectPath ?? null,
     startedAtUtc: chatRunStartedAtUtc,
@@ -2276,7 +2414,27 @@ function writeChatRunRecord(report: ScriptedRunReport | null): void {
       sandbox: true,
     },
     renderer: report,
-    main: chatService.evidence(),
+    main: mainEvidenceAtReport,
+    ...(switching
+      ? {
+          // Read by the main process from disk, apart from what the DOM showed.
+          userDataInUse: app.getPath('userData'),
+          shutdown: moment === 'after-close' ? shutdown : null,
+          conversationFiles: {
+            atReport: conversationFilesAtReport,
+            afterClose:
+              moment === 'after-close' && shutdown?.completed === true
+                ? observeConversationFiles()
+                : null,
+            afterCloseNote:
+              moment !== 'after-close'
+                ? 'not yet: this record was written when the renderer reported'
+                : shutdown?.completed === true
+                  ? null
+                  : `not read: the close did not complete (${shutdown?.detail ?? 'no outcome'})`,
+          },
+        }
+      : {}),
   };
   try {
     const resolved = path.resolve(target);
@@ -2823,6 +2981,20 @@ function registerIpc(): void {
       ...(process.env['DSPATCH_LOOK_GRAPH'] === undefined
         ? {}
         : { lookGraphPath: process.env['DSPATCH_LOOK_GRAPH'] }),
+      // The switch scenario's half and its seeded projects, from the harness that
+      // seeded them. `first` unless the restart is asked for by name.
+      ...(chatRunScenario === 'workspace-switch'
+        ? {
+            switchPhase:
+              process.env['DSPATCH_CHAT_SWITCH_PHASE'] === 'again'
+                ? ('again' as const)
+                : ('first' as const),
+            switchProjects: (process.env['DSPATCH_CHAT_SWITCH_PROJECTS'] ?? '')
+              .split(';')
+              .map((entry) => entry.trim())
+              .filter((entry) => entry !== ''),
+          }
+        : {}),
       ...((): { ownRepositoryPath?: string } => {
         const own = ownRepositoryRoot(app.getAppPath());
         return own === null ? {} : { ownRepositoryPath: own };
@@ -4477,6 +4649,22 @@ function main(): void {
     // cannot be recognised as such, so a log that says nothing about it would
     // leave that limit invisible in exactly the run where it applies.
     log(`ownRepo=${ownRepoRoot ?? 'none'} generatorBoundary=${probeRepoRoot()}`);
+    // Before anything of DSpatch's is created or written: the project store below is
+    // the first thing that touches `userData`.
+    const expectedUserData = process.env['DSPATCH_CHAT_EXPECT_USERDATA'] ?? '';
+    if (chatRunMode && expectedUserData.trim() !== '') {
+      const actual = app.getPath('userData');
+      if (!samePathSpelling(actual, expectedUserData)) {
+        log(
+          `scripted run refused: userData is ${actual} but DSPATCH_CHAT_EXPECT_USERDATA ` +
+            `names ${expectedUserData}. Nothing of DSpatch's was created or written; ` +
+            `exiting with ${String(CHAT_EXIT_WRONG_USERDATA)}.`,
+        );
+        app.exit(CHAT_EXIT_WRONG_USERDATA);
+        return;
+      }
+      log(`userData matches DSPATCH_CHAT_EXPECT_USERDATA (${expectedUserData})`);
+    }
     // Before `registerIpc`, because the loop-definition handlers read the
     // workspace's remembered definition and a window that opened first would ask
     // for the list before there was one to prefer.

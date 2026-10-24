@@ -123,6 +123,12 @@ const CHAT_EXIT = {
   theLightIsWrong: 80,
   /** 81 belongs to DSP-90: a stop the person asked for was explained to them anyway. */
   stopWasExplainedAnyway: 81,
+  /** 82–86 belong to DSP-4 WS-1: saved conversations switched between, and a restart. */
+  switchHistoryWrong: 82,
+  switchDiffWrong: 83,
+  switchSharedIdWrong: 84,
+  switchRunAgainFailed: 85,
+  switchRestartWrong: 86,
 } as const;
 
 const CHANGE_REQUEST =
@@ -701,6 +707,8 @@ export async function runScriptedWorkflow(
       return runLivenessAndAnEndingScenario(plan);
     case 'how-the-liveness-looks':
       return runHowTheLivenessLooksScenario(plan);
+    case 'workspace-switch':
+      return runWorkspaceSwitchScenario(plan);
     default:
       return runFullWorkflow(plan);
   }
@@ -7572,6 +7580,543 @@ async function runHowTheLivenessLooksScenario(
   }
 
   return finish(exitCode, steps, failures, observations);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Saved conversations switched between, and a restart: DSP-4 WS-1           */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Saved conversations switched between in one window, and read back after a restart.
+ *
+ * Over the kit `scripts/seed-switch-kit.mjs` writes: A (3 messages, a passing test),
+ * B (1 message, a reviewed diff of `src/greet.js`, a failing test), X and X-sub (each
+ * one command attempt left running under the same ID, `dsp-attempt-0001`). Phase
+ * `first` opens A, B and A again, reads X and X-sub back, and acknowledges both
+ * attempts through the command gate in X-sub; phase `again` is a second process over
+ * the same user data and checks that each conversation came back as its own.
+ *
+ * No provider call: the presentation adapter lets a session open and nothing is sent
+ * to it. The saved test verdict and the reviewed diff are read in the restored
+ * conversation panel, because the live panels draw only what this session did — see
+ * `limits` in the record. Every reading is what the DOM showed; the main process
+ * records what the files held, apart from this.
+ */
+async function runWorkspaceSwitchScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const phase = plan.switchPhase ?? 'first';
+  const [projectA, projectB, projectX, projectXSub] = plan.switchProjects ?? [];
+  const observations: Record<string, unknown> = {
+    plan,
+    phase,
+    limits:
+      'No provider call was made. Sessions were opened on the local presentation ' +
+      'adapter, which resumes any session it is asked to, so the continuity statement ' +
+      'is recorded and not judged: what a real provider does with a seeded session is ' +
+      'not evidenced here. Nothing was sent, so no turn of this run’s own was saved. ' +
+      'The saved test verdicts and the reviewed diff were read in the restored ' +
+      'conversation panel ("Read this back"); the live test panel after opening a ' +
+      'project showed only what this session ran. The save-error lines were recorded ' +
+      'and not provoked: the window has no scripted seam that makes a file unwritable, ' +
+      'and none was built.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  // Each expectation group has a code of its own; the lowest failed one is the exit.
+  const failed = new Set<number>();
+  const expect = (code: number, ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+      failed.add(code);
+    }
+  };
+  const samePath = (left: string, right: string): boolean =>
+    left.replace(/[\\/]+$/, '').toLowerCase() === right.replace(/[\\/]+$/, '').toLowerCase();
+  const clean = (text: string | null): string => (text ?? '').replace(/\s+/g, ' ').trim();
+
+  /** The index of the row whose `<prefix>-<n><suffix>` element names `target`. */
+  const rowOf = (prefix: string, suffix: string, target: string): number | null => {
+    for (let index = 0; index < 50; index += 1) {
+      const found = element(`${prefix}-${String(index)}${suffix}`);
+      if (found === null) {
+        return null;
+      }
+      if (samePath(clean(found.textContent), target)) {
+        return index;
+      }
+    }
+    return null;
+  };
+  const promptsUnder = (prefix: string): string[] => {
+    const prompts: string[] = [];
+    for (let index = 0; index < 200; index += 1) {
+      const found = element(`${prefix}-${String(index)}-prompt`);
+      if (found === null) {
+        break;
+      }
+      prompts.push(clean(found.textContent));
+    }
+    return prompts;
+  };
+  const otherSaveErrors = (): string[] =>
+    [...document.querySelectorAll<HTMLElement>('[data-ev="save-error-other"]')].map((node) =>
+      clean(node.textContent),
+    );
+  const attemptRows = (): Record<string, string>[] => {
+    const rows: Record<string, string>[] = [];
+    for (let index = 0; index < 50; index += 1) {
+      if (element(`attempt-${String(index)}`) === null) {
+        break;
+      }
+      const at = `attempt-${String(index)}`;
+      rows.push({
+        id: textOf(`${at}-id`),
+        state: textOf(`${at}-state`),
+        // The head names the kind ("command: …" or "message: …") beside the badge.
+        head: clean(element(at)?.querySelector('.attempt__head')?.textContent ?? null),
+        reason: textOf(`${at}-reason`),
+        alsoNamed: textOf(`${at}-also-named`),
+        actionNote: textOf(`${at}-action-note`),
+        action: textOf(`${at}-action`),
+      });
+    }
+    return rows;
+  };
+  const diffPathsInside = (name: string): string[] => {
+    const container = element(name);
+    if (container === null) {
+      return [];
+    }
+    return [...container.querySelectorAll<HTMLElement>('[data-ev]')]
+      .filter((node) => /^diff-\d+-path$/.test(node.getAttribute('data-ev') ?? ''))
+      .map((node) => clean(node.textContent));
+  };
+
+  /**
+   * The chooser with Recent and the saved conversations, which is on screen while no
+   * project is open and otherwise behind File → Open another project. The menu bar is
+   * native, so the item is pressed through the scripted-run seam, as a person presses it.
+   */
+  const showChooser = async (why: string): Promise<void> => {
+    if (element('projects') !== null) {
+      return;
+    }
+    const pressed = await window.dspatch.pressMenuItem('change-project');
+    record('pressed Open another project', { why, menuItemExisted: pressed });
+    await waitFor(`the project chooser (${why})`, () => element('projects') !== null, 10_000);
+  };
+
+  /** Open a seeded project from Recent and read what the window drew for it. */
+  const openProject = async (label: string, target: string): Promise<Record<string, unknown>> => {
+    await showChooser(`to open ${label}`);
+    await waitFor(
+      `${label} to be offered in Recent`,
+      () => rowOf('project', '-path', target) !== null,
+      60_000,
+    );
+    const previousSession = textOf('session-id');
+    await click(`open-project-${String(rowOf('project', '-path', target) ?? 0)}`);
+    await waitFor(
+      `a session over ${label}`,
+      () =>
+        textOf('session-id').startsWith('dsp-session-') &&
+        textOf('session-id') !== previousSession &&
+        samePath(attributeOf('project-path', 'title'), target),
+      60_000,
+    );
+    // The save status is polled every 3 s: a line that was going to appear has had time to.
+    await sleep(3_500);
+    const prompts = promptsUnder('history-turn');
+    const reading = {
+      label,
+      conversationShownInWindow: textOf('conversation-id'),
+      sessionShownInWindow: textOf('session-id'),
+      projectShownInWindow: attributeOf('project-path', 'title'),
+      historyTurnsShownInWindow: prompts.length,
+      historyPromptsShownInWindow: prompts,
+      historyErrorShownInWindow: textOf('history-error'),
+      continuityShownInWindow: textOf('session-continuity'),
+      liveTestStatusShownInWindow: textOf('test-status'),
+      liveTestResultShownInWindow: textOf('test-result'),
+      saveErrorShownInWindow: textOf('save-error'),
+      otherSaveErrorsShownInWindow: otherSaveErrors(),
+    };
+    record(`opened ${label}`, reading);
+    return reading;
+  };
+
+  /** "Read this back" on a saved conversation, and what the restored panel drew. */
+  const readBack = async (label: string, target: string): Promise<Record<string, unknown>> => {
+    await showChooser(`to read ${label} back`);
+    await waitFor(
+      `${label} to be listed among the saved conversations`,
+      () => rowOf('conversation-project', '', target) !== null,
+      60_000,
+    );
+    const previousRestored = textOf('restored-id');
+    await click(`resume-${String(rowOf('conversation-project', '', target) ?? 0)}`);
+    await waitFor(
+      `${label} to be read back`,
+      () =>
+        element('restored') !== null &&
+        textOf('restored-id') !== previousRestored &&
+        samePath(textOf('restored-project'), target),
+      60_000,
+    );
+    // The execution-state rows are re-read after the restore; give that one poll.
+    await sleep(1_000);
+    const prompts = promptsUnder('restored-turn');
+    const reading = {
+      label,
+      conversationShownInWindow: textOf('restored-id'),
+      projectShownInWindow: textOf('restored-project'),
+      messagesShownInWindow: prompts.length,
+      promptsShownInWindow: prompts,
+      testPresentedShownInWindow: textOf('restored-test-presented'),
+      testStatusShownInWindow: textOf('restored-test-status'),
+      diffNoteShownInWindow: textOf('restored-diff-note'),
+      diffPathsShownInWindow: diffPathsInside('restored'),
+      errorShownInWindow: textOf('restored-error'),
+      statementShownInWindow: textOf('restored-statement'),
+      attemptRowsShownInWindow: attemptRows(),
+    };
+    record(`read back ${label}`, reading);
+    return reading;
+  };
+
+  /** Type the command and read the gate, without running anything. */
+  const typeCommand = async (): Promise<Record<string, unknown>> => {
+    const command =
+      plan.nodePath === null ? 'node -e "process.exit(0)"' : `"${plan.nodePath}" -e "process.exit(0)"`;
+    await typeIntoField('test-command-input', command);
+    // The gate is drawn from the run state, which is re-read as the session opens.
+    await sleep(1_500);
+    // The gate's sentence, apart from the button under it, which names the same attempts.
+    const gate = clean(element('run-needs-acknowledgement')?.querySelector('p')?.textContent ?? null);
+    const reading = {
+      commandTyped: command,
+      gateShownInWindow: gate,
+      qualifiedLabelsInGate: gate.split('dsp-attempt-0001 (conversation ').length - 1,
+      runAnywayShownInWindow: textOf('run-anyway'),
+      runItDisabled: (element('run-test') as HTMLButtonElement | null)?.disabled ?? null,
+      unresolvedShownInWindow: textOf('unresolved-attempts'),
+      attemptRowsShownInWindow: attemptRows(),
+    };
+    record('typed the command', reading);
+    return reading;
+  };
+
+  const promptsOf = (reading: Record<string, unknown>, key: string): string[] =>
+    Array.isArray(reading[key]) ? (reading[key] as string[]) : [];
+
+  try {
+    if (
+      projectA === undefined ||
+      projectB === undefined ||
+      projectX === undefined ||
+      projectXSub === undefined
+    ) {
+      throw new Error(
+        'DSPATCH_CHAT_SWITCH_PROJECTS must name the seeded projects A, B, X and X-sub, ' +
+          'separated by ";". The seed script prints them.',
+      );
+    }
+    await waitFor(
+      'the connection to reach a decided state',
+      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      60_000,
+    );
+    await waitFor('the Recent list', () => element('project-0-path') !== null, 60_000);
+    const recent: string[] = [];
+    for (let index = 0; index < 50; index += 1) {
+      const found = element(`project-${String(index)}-path`);
+      if (found === null) {
+        break;
+      }
+      recent.push(clean(found.textContent));
+    }
+    record('recent', { recentShownInWindow: recent });
+    for (const [name, target] of [
+      ['A', projectA],
+      ['B', projectB],
+      ['X', projectX],
+      ['X-sub', projectXSub],
+    ] as const) {
+      expect(
+        CHAT_EXIT.switchHistoryWrong,
+        recent.some((entry) => samePath(entry, target)),
+        `${name} (${target}) is not in the Recent list: ${recent.join(' | ')}`,
+      );
+    }
+
+    if (phase === 'first') {
+      // --- A, then B, then A again ------------------------------------------
+      const a1 = await openProject('A', projectA);
+      expect(
+        CHAT_EXIT.switchHistoryWrong,
+        a1['historyTurnsShownInWindow'] === 3,
+        `A opened with ${String(a1['historyTurnsShownInWindow'])} earlier messages, not 3`,
+      );
+      await window.dspatch.captureWindow('first-a-opened');
+
+      // --- One message in A, answered by the local adapter: this run's own turn -----
+      // The one thing the seeded files cannot show is a turn of this run surviving a
+      // switch and a restart (WS-1 #7 "open A and send", #10). No provider: the
+      // presentation adapter answers it.
+      const sentInA = `Switch check ${newNonce()}: reply with anything.`;
+      await sendAndSettle(0, sentInA, plan.turnTimeoutMs);
+      await sleep(3_500);
+      const afterSend = {
+        sentPrompt: sentInA,
+        turnStatusShownInWindow: statusOfTurn(0),
+        continuityShownInWindow: textOf('session-continuity'),
+        saveErrorShownInWindow: textOf('save-error'),
+        otherSaveErrorsShownInWindow: otherSaveErrors(),
+      };
+      record('sent in A', afterSend);
+      expect(
+        CHAT_EXIT.switchHistoryWrong,
+        afterSend.saveErrorShownInWindow === '' && afterSend.otherSaveErrorsShownInWindow.length === 0,
+        `a save failed after the message in A: ${afterSend.saveErrorShownInWindow} ${afterSend.otherSaveErrorsShownInWindow.join(' | ')}`,
+      );
+      const aPrompts = [...promptsOf(a1, 'historyPromptsShownInWindow'), sentInA];
+
+      const b1 = await openProject('B', projectB);
+      expect(
+        CHAT_EXIT.switchHistoryWrong,
+        b1['historyTurnsShownInWindow'] === 1,
+        `B opened with ${String(b1['historyTurnsShownInWindow'])} earlier messages, not 1`,
+      );
+      expect(
+        CHAT_EXIT.switchHistoryWrong,
+        !promptsOf(b1, 'historyPromptsShownInWindow').some((prompt) => aPrompts.includes(prompt)),
+        'a message of A was drawn in B',
+      );
+
+      const bRead = await readBack('B', projectB);
+      expect(
+        CHAT_EXIT.switchHistoryWrong,
+        bRead['messagesShownInWindow'] === 1 && bRead['testPresentedShownInWindow'] === 'failed',
+        `B read back as ${String(bRead['messagesShownInWindow'])} messages and test "${String(
+          bRead['testPresentedShownInWindow'],
+        )}", not 1 and "failed"`,
+      );
+      expect(
+        CHAT_EXIT.switchDiffWrong,
+        promptsOf(bRead, 'diffPathsShownInWindow').includes('src/greet.js'),
+        `B's reviewed diff does not name src/greet.js: ${promptsOf(bRead, 'diffPathsShownInWindow').join(', ')}`,
+      );
+      await window.dspatch.captureWindow('first-b-read-back');
+
+      const a2 = await openProject('A again', projectA);
+      // The three seeded prompts in order, and this run's own message last.
+      expect(
+        CHAT_EXIT.switchHistoryWrong,
+        a2['historyTurnsShownInWindow'] === 4 &&
+          JSON.stringify(promptsOf(a2, 'historyPromptsShownInWindow')) === JSON.stringify(aPrompts),
+        `A reopened with ${String(a2['historyTurnsShownInWindow'])} earlier messages, not the ` +
+          `seeded 3 plus the one sent: ${promptsOf(a2, 'historyPromptsShownInWindow').join(' | ')}`,
+      );
+      expect(
+        CHAT_EXIT.switchHistoryWrong,
+        !/failed/i.test(String(a2['liveTestStatusShownInWindow'])),
+        `A reopened showing a failed test: ${String(a2['liveTestStatusShownInWindow'])}`,
+      );
+      const aDiff = await readDiff('A again');
+      expect(
+        CHAT_EXIT.switchDiffWrong,
+        !promptsOf(aDiff, 'pathsShownInWindow').includes('src/greet.js'),
+        `A's diff names B's file: ${promptsOf(aDiff, 'pathsShownInWindow').join(', ')}`,
+      );
+      const aRead = await readBack('A again', projectA);
+      expect(
+        CHAT_EXIT.switchHistoryWrong,
+        aRead['messagesShownInWindow'] === 4 &&
+          promptsOf(aRead, 'promptsShownInWindow').at(-1) === sentInA &&
+          aRead['testPresentedShownInWindow'] === 'passed',
+        `A read back as ${String(aRead['messagesShownInWindow'])} messages and test "${String(
+          aRead['testPresentedShownInWindow'],
+        )}", not 4 (the sent one last) and "passed"`,
+      );
+      expect(
+        CHAT_EXIT.switchDiffWrong,
+        !promptsOf(aRead, 'diffPathsShownInWindow').includes('src/greet.js'),
+        `A's saved diff names B's file: ${promptsOf(aRead, 'diffPathsShownInWindow').join(', ')}`,
+      );
+
+      // --- X and X-sub: one ID, two conversations -----------------------------
+      const xRead = await readBack('X', projectX);
+      const xSubRead = await readBack('X-sub', projectXSub);
+      const rows = attemptRows().filter((row) => row.id === 'dsp-attempt-0001');
+      expect(
+        CHAT_EXIT.switchSharedIdWrong,
+        rows.length === 2,
+        `${String(rows.length)} rows carry dsp-attempt-0001 after reading X and X-sub back, not 2`,
+      );
+      for (const row of rows) {
+        expect(
+          CHAT_EXIT.switchSharedIdWrong,
+          /outcome unknown/i.test(row['state'] ?? ''),
+          `a dsp-attempt-0001 row reads "${row['state'] ?? ''}", not "outcome unknown"`,
+        );
+        expect(
+          CHAT_EXIT.switchSharedIdWrong,
+          /last saved record of this conversation shows this as still going/.test(row['reason'] ?? ''),
+          `a dsp-attempt-0001 row does not carry the restart text: ${row['reason'] ?? ''}`,
+        );
+        if ((row['alsoNamed'] ?? '') !== '') {
+          expect(
+            CHAT_EXIT.switchSharedIdWrong,
+            /dsp-attempt-0001 \(conversation dsp-conv-/.test(row['alsoNamed'] ?? ''),
+            `the "also named" note does not qualify the other attempt: ${row['alsoNamed'] ?? ''}`,
+          );
+        }
+      }
+      record('shared id', {
+        xConversation: xRead['conversationShownInWindow'],
+        xSubConversation: xSubRead['conversationShownInWindow'],
+        rowsShownInWindow: rows,
+      });
+      await window.dspatch.captureWindow('first-shared-id');
+
+      // --- The command gate in X-sub, and Run again -----------------------------
+      const xSub = await openProject('X-sub', projectXSub);
+      const gate = await typeCommand();
+      expect(
+        CHAT_EXIT.switchSharedIdWrong,
+        gate['qualifiedLabelsInGate'] === 2,
+        `the gate names ${String(gate['qualifiedLabelsInGate'])} qualified attempts, not 2: ${String(
+          gate['gateShownInWindow'],
+        )}`,
+      );
+      for (const id of [xRead['conversationShownInWindow'], xSubRead['conversationShownInWindow']]) {
+        expect(
+          CHAT_EXIT.switchSharedIdWrong,
+          String(gate['gateShownInWindow']).includes(`(conversation ${String(id)})`),
+          `the gate does not name ${String(id)}: ${String(gate['gateShownInWindow'])}`,
+        );
+      }
+      expect(
+        CHAT_EXIT.switchSharedIdWrong,
+        gate['runItDisabled'] === true,
+        'the plain Run it button is enabled while two attempts have no known outcome',
+      );
+      expect(
+        CHAT_EXIT.switchSharedIdWrong,
+        String(gate['runAnywayShownInWindow']).startsWith('Run again, leaving all 2 unresolved'),
+        `the acknowledging button reads "${String(gate['runAnywayShownInWindow'])}"`,
+      );
+      await window.dspatch.captureWindow('first-gate');
+
+      await click('run-anyway');
+      await waitFor(
+        'the acknowledged command to start',
+        () => element('test-pending') !== null || element('test-status') !== null,
+        30_000,
+      );
+      await waitFor('the acknowledged command to end', () => element('test-pending') === null, 120_000, 200);
+      // One more poll of the save status, so a failed save of either file is on screen.
+      await sleep(3_500);
+      const afterRun = {
+        testStatusShownInWindow: textOf('test-status'),
+        testStatusKindShownInWindow: textOf('test-status-kind'),
+        testVerdictShownInWindow: textOf('test-verdict'),
+        testErrorShownInWindow: textOf('test-error'),
+        gateShownInWindow: textOf('run-needs-acknowledgement'),
+        saveErrorShownInWindow: textOf('save-error'),
+        otherSaveErrorsShownInWindow: otherSaveErrors(),
+        attemptRowsShownInWindow: attemptRows(),
+        sessionShownInWindow: xSub['sessionShownInWindow'],
+      };
+      record('ran again', afterRun);
+      expect(
+        CHAT_EXIT.switchRunAgainFailed,
+        afterRun.testStatusKindShownInWindow === 'passed',
+        `the acknowledged command did not pass: "${afterRun.testStatusShownInWindow}" ${afterRun.testErrorShownInWindow}`,
+      );
+      expect(
+        CHAT_EXIT.switchRunAgainFailed,
+        afterRun.saveErrorShownInWindow === '' && afterRun.otherSaveErrorsShownInWindow.length === 0,
+        `a save failed: ${afterRun.saveErrorShownInWindow} ${afterRun.otherSaveErrorsShownInWindow.join(' | ')}`,
+      );
+      await window.dspatch.captureWindow('first-after-run');
+    } else {
+      // --- The restart: the same user data, a second process ---------------------
+      // Phase first sent one message in A, so A is the seeded three plus that one.
+      const a = await openProject('A', projectA);
+      expect(
+        CHAT_EXIT.switchRestartWrong,
+        a['historyTurnsShownInWindow'] === 4,
+        `after the restart A opened with ${String(a['historyTurnsShownInWindow'])} earlier messages, not 4`,
+      );
+      const aRead = await readBack('A', projectA);
+      expect(
+        CHAT_EXIT.switchRestartWrong,
+        aRead['messagesShownInWindow'] === 4 && aRead['testPresentedShownInWindow'] === 'passed',
+        `after the restart A read back as ${String(aRead['messagesShownInWindow'])} messages and test "${String(
+          aRead['testPresentedShownInWindow'],
+        )}", not 4 and "passed"`,
+      );
+      await window.dspatch.captureWindow('again-a-read-back');
+
+      await openProject('X-sub', projectXSub);
+      const gate = await typeCommand();
+      expect(
+        CHAT_EXIT.switchRestartWrong,
+        gate['gateShownInWindow'] === '' && gate['runItDisabled'] === false,
+        `after the restart X-sub still gates the command: "${String(gate['gateShownInWindow'])}" (Run it disabled=${String(
+          gate['runItDisabled'],
+        )})`,
+      );
+      await window.dspatch.captureWindow('again-x-sub-gate');
+      // The acknowledged run of phase first, as the file has it: a passed command and a
+      // completed command attempt beside the acknowledged one (WS-1 #8, #12).
+      const xSubRead = await readBack('X-sub', projectXSub);
+      const completedCommands = (
+        xSubRead['attemptRowsShownInWindow'] as Record<string, string>[]
+      ).filter((row) => /^completed$/i.test(row['state'] ?? '') && /command:/.test(row['head'] ?? ''));
+      expect(
+        CHAT_EXIT.switchRestartWrong,
+        xSubRead['testPresentedShownInWindow'] === 'passed' && completedCommands.length >= 1,
+        `after the restart X-sub read back with test "${String(
+          xSubRead['testPresentedShownInWindow'],
+        )}" and ${String(completedCommands.length)} completed command attempt rows, not "passed" and at least 1`,
+      );
+      await window.dspatch.captureWindow('again-x-sub-read-back');
+
+      const b = await openProject('B', projectB);
+      expect(
+        CHAT_EXIT.switchRestartWrong,
+        b['historyTurnsShownInWindow'] === 1,
+        `after the restart B opened with ${String(b['historyTurnsShownInWindow'])} earlier messages, not 1`,
+      );
+      const bRead = await readBack('B', projectB);
+      expect(
+        CHAT_EXIT.switchRestartWrong,
+        bRead['messagesShownInWindow'] === 1 &&
+          bRead['testPresentedShownInWindow'] === 'failed' &&
+          promptsOf(bRead, 'diffPathsShownInWindow').includes('src/greet.js'),
+        `after the restart B read back as ${String(bRead['messagesShownInWindow'])} messages, test "${String(
+          bRead['testPresentedShownInWindow'],
+        )}", diff ${promptsOf(bRead, 'diffPathsShownInWindow').join(', ')}`,
+      );
+      await window.dspatch.captureWindow('again-b-read-back');
+    }
+
+    const code =
+      failures.length === 0
+        ? CHAT_EXIT.ok
+        : failed.size === 0
+          ? CHAT_EXIT.scriptFailed
+          : Math.min(...failed);
+    return finish(code, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
 }
 
 function finish(

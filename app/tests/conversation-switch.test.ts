@@ -1302,6 +1302,85 @@ test('WS-1 follow-up (S1): an off-screen save failure reaches the save status wi
   }
 });
 
+test('WS-1 review N1: a file that cannot be read is refused and retried; a newer-format file is read-only', async () => {
+  const store = storeFor('n1');
+  const projectA = makeProject('n1-project-a', 'a.txt', 'project A\n');
+  const projectB = makeProject('n1-project-b', 'b.txt', 'project B\n');
+  const idA = await seed(store, projectA, 'A', 0);
+  const idB = await seed(store, projectB, 'B', 0);
+  const pointers = new Map([
+    [projectA, idA],
+    [projectB, idB],
+  ]);
+  const fileA = store.filePathFor(idA);
+
+  // --- A read I/O failure: the save is refused, not called read-only, and retried.
+  const live = serviceOver('n1-live', store, pointers);
+  try {
+    await live.open(projectA);
+    await live.service.sendPrompt('A-now-1');
+    live.adapter.answer('A-answer-now-1');
+    assert.equal(live.service.conversationSaveStatus().error, null);
+    const bytesA = fs.readFileSync(fileA);
+    // A directory in the file's place: the bytes cannot be read, the shape a lock or a
+    // permission problem has, and the same on every machine.
+    fs.rmSync(fileA);
+    fs.mkdirSync(fileA);
+    await live.service.sendPrompt('A-now-2');
+    live.adapter.answer('A-answer-now-2');
+
+    const current = live.service.conversationSaveStatus();
+    assert.equal(current.conversationId, idA);
+    assert.match(String(current.error), /could not be read before saving/);
+    assert.match(String(current.error), /did not overwrite it/);
+    assert.equal(current.readOnly, false, 'the current line may promise a retry');
+
+    await live.open(projectB);
+    const hidden = live.service.conversationSaveStatus();
+    assert.equal(hidden.error, null, 'B itself was saved');
+    assert.deepEqual(
+      hidden.otherConversations.map((other) => `${other.conversationId}:${String(other.readOnly)}`),
+      [`${idA}:false`],
+      'the off-screen line may promise a retry',
+    );
+    assert.match(hidden.otherConversations[0]?.error ?? '', /could not be read before saving/);
+    assert.ok(fs.statSync(fileA).isDirectory(), 'nothing was written over the unreadable file');
+
+    // The file is readable again; the close retry writes A with both new turns.
+    fs.rmdirSync(fileA);
+    fs.writeFileSync(fileA, bytesA);
+  } finally {
+    await live.service.dispose();
+  }
+  assert.deepEqual(live.service.conversationSaveStatus().otherConversations, []);
+  assert.deepEqual(prompts(saved(store, idA)), ['A-earlier-1', 'A-earlier-2', 'A-now-1', 'A-now-2']);
+
+  // --- A newer format: refused, read-only on screen and off, never rewritten.
+  const fileB = store.filePathFor(idB);
+  const future = `${JSON.stringify({ formatVersion: 99, conversationId: idB }, null, 2)}\n`;
+  fs.writeFileSync(fileB, future, 'utf8');
+  const next = serviceOver('n1-next', store, pointers);
+  try {
+    await next.open(projectB);
+    const current = next.service.conversationSaveStatus();
+    assert.equal(current.conversationId, idB);
+    assert.match(String(current.error), /must not overwrite/);
+    assert.equal(current.readOnly, true, 'the current line must not promise a retry');
+
+    await next.open(projectA);
+    assert.deepEqual(
+      next.service
+        .conversationSaveStatus()
+        .otherConversations.map((other) => `${other.conversationId}:${String(other.readOnly)}`),
+      [`${idB}:true`],
+      'the off-screen line must not promise a retry',
+    );
+  } finally {
+    await next.service.dispose();
+  }
+  assert.equal(fs.readFileSync(fileB, 'utf8'), future, 'byte for byte');
+});
+
 test('WS-1 #11 (close): a conversation held only as a blocker from disk is not rewritten at close', async () => {
   const store = storeFor('s4');
   const parent = makeProject('s4-parent', 'p.txt', 'parent\n');

@@ -887,6 +887,53 @@ npx electron .
 Remove-Item Env:\DSPATCH_CHAT_RUN, Env:\DSPATCH_CHAT_WORKSPACE
 ```
 
+`switch` is the saved-conversations scenario (DSP-4 WS-1) and makes **no provider
+call** either: the presentation adapter opens the sessions and answers the one message
+it sends. It runs over a **seeded** user-data directory, so nothing of yours is read or
+written, and it is two launches over that directory: `first` works the conversations,
+`again` is the restart. Seed a kit, then launch twice:
+
+```powershell
+$kit = "$env:TEMP\dspatch-switch-$(Get-Date -Format HHmmss)"
+node --import ./scripts/ts-resolve.mjs scripts/seed-switch-kit.mjs $kit
+$env:DSPATCH_CHAT_RUN="switch"
+$env:DSPATCH_CHAT_SWITCH_PROJECTS="$kit\projects\A;$kit\projects\B;$kit\projects\X;$kit\projects\X\sub"
+$env:DSPATCH_CHAT_EXPECT_USERDATA="$kit\userData"
+$env:DSPATCH_CHAT_SWITCH_PHASE="first"
+$env:DSPATCH_CHAT_LOG="C:\somewhere\switch-first.json"
+$env:DSPATCH_CHAT_SHOT="C:\somewhere\switch-first.png"
+npx electron . "--user-data-dir=$kit\userData"
+$env:DSPATCH_CHAT_SWITCH_PHASE="again"
+$env:DSPATCH_CHAT_LOG="C:\somewhere\switch-again.json"
+$env:DSPATCH_CHAT_SHOT="C:\somewhere\switch-again.png"
+npx electron . "--user-data-dir=$kit\userData"
+Remove-Item Env:\DSPATCH_CHAT_RUN, Env:\DSPATCH_CHAT_SWITCH_PROJECTS, Env:\DSPATCH_CHAT_EXPECT_USERDATA, Env:\DSPATCH_CHAT_SWITCH_PHASE, Env:\DSPATCH_CHAT_LOG, Env:\DSPATCH_CHAT_SHOT
+Remove-Item -Recurse -Force $kit
+```
+
+The seed (`scripts/seed-switch-kit.mjs`, run from `app/`; it refuses a kit that already
+holds `userData` or `projects`) writes four plain project folders with saved
+conversations: A (three messages and a passing `node test.js`), B (one message, a
+reviewed diff of `src/greet.js` and a failing test), X and X\sub (each one command
+attempt left running under the same ID, `dsp-attempt-0001`, as a DSpatch that died
+mid-command leaves its file). Every seeded answer says that no model was called, and the
+seed prints the `DSPATCH_CHAT_SWITCH_PROJECTS` value it expects.
+
+`DSPATCH_CHAT_EXPECT_USERDATA` is the guard. Before DSpatch creates or writes anything
+of its own, the main process compares it with the user-data directory in force and exits
+25 if they differ, so a run meant for a kit cannot touch a real profile by mistake.
+Chromium's own profile files are opened before that and are outside it.
+
+Phase `first` opens A and sends one message, opens B and reads it back, reopens A and
+reads it back, reads X and X\sub back, and in X\sub acknowledges both attempts through
+the command gate and runs a local command. Phase `again` checks that A, B and X\sub
+came back as they were left. The record carries, apart from what the DOM showed, what
+every conversation file held when the renderer reported and again after the close
+(withheld, with the reason, when the close did not complete). What it shows nothing
+about: a real provider session or a refused resume (the presentation adapter resumes
+whatever it is asked to, so the continuity statement is recorded and not judged), the
+save-error lines under a real fault, and anything that needs Cursor.
+
 `DSPATCH_CHAT_LOG` receives the record: the renderer's observations and the main
 process's kept separate, because what the document showed and what was on disk are
 different kinds of evidence.
@@ -919,6 +966,12 @@ different kinds of evidence.
 | 62 | Chrome took the conversation's space, the session details were lost or shown unasked, or the model control is not beside the composer. |
 | 63 | An error said nothing about what to do, showed its diagnostics unasked, could not show them at all, lost words out of a refusal in being shortened, or offered no action — or a session opened over a directory DSpatch did not generate. |
 | 72 | A loop run in the window was refused, filed no result, ran two steps in one provider session, or started a second agent without the first step's own words. |
+| 82 | A saved conversation came back with the wrong messages or verdict, or with another conversation's content. |
+| 83 | A reviewed diff was missing from the conversation it belongs to, or appeared in one it does not. |
+| 84 | Two conversations sharing an attempt ID were not shown as two, or the command gate did not name both and disable the plain Run. |
+| 85 | The acknowledged command did not pass, or a save failed while it ran. |
+| 86 | After the restart, a conversation did not come back as it was left. |
+| 25 | `DSPATCH_CHAT_EXPECT_USERDATA` names a directory other than the one in force. Nothing of DSpatch's was created or written. |
 
 `DSPATCH_SMOKE`, `DSPATCH_PROBE` and `DSPATCH_CHAT_RUN` each own the exit code.
 Setting more than one exits immediately with code 10 rather than letting them
