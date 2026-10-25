@@ -806,6 +806,18 @@
   flex: none;
 }
 
+/* A pane's rows span both the pane and its longest line, also when that line is not
+   drawn (--rv-longest is set by the pane); the measure is what fitting reads. */
+.rv-pane-lines .rv-rows {
+  min-width: max(100%, var(--rv-longest, 0px));
+}
+
+.rv-longest {
+  flex: none;
+  height: 0;
+  width: var(--rv-longest, 0px);
+}
+
 .rv-old {
   background: var(--rv-old);
 }

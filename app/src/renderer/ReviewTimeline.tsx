@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { JSX } from 'react';
+import type { CSSProperties, JSX } from 'react';
 
 import { Inline, TokensView, fileName, rangeText, rowsOf, useRows, type Files } from './review-code';
 import { pick, type ReviewWords } from './review-i18n';
@@ -622,10 +622,9 @@ export function WalkTimeline({
       if (element === null || element === undefined) {
         return;
       }
-      // The rows box is as wide as the longest line the pane shows — drawn or not — with
-      // its line numbers and label.
-      const rows = element.querySelector<HTMLElement>('.rv-rows');
-      const width = Math.min(Math.max(MIN_PANE_WIDTH, (rows?.offsetWidth ?? 0) + 34), Math.max(MIN_PANE_WIDTH, viewWidth));
+      // The longest line the pane shows — drawn or not — with its line numbers and label.
+      const longest = element.querySelector<HTMLElement>('.rv-longest');
+      const width = Math.min(Math.max(MIN_PANE_WIDTH, (longest?.offsetWidth ?? 0) + 34), Math.max(MIN_PANE_WIDTH, viewWidth));
       setWidths((current) => new Map([...current, [index, width]]));
     },
     [viewWidth],
@@ -1646,7 +1645,9 @@ function TimelinePaneView({
         {content !== null && content.error !== null && (
           <div className="rv-error">{content.error === 'binary' ? words.view.binary : content.error}</div>
         )}
-        <div className="rv-rows" ref={rowsBox} style={{ minWidth: `calc(${String(columns)}ch + 10.4rem)` }}>
+        <div className="rv-rows" ref={rowsBox} style={{ '--rv-longest': `calc(${String(columns)}ch + 10.4rem)` } as CSSProperties}>
+          {/* As wide as the longest line the pane shows, drawn or not: what fitting measures. */}
+          <div className="rv-longest" aria-hidden="true" />
           {body}
         </div>
       </div>
