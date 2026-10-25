@@ -1339,6 +1339,13 @@ function StepPanel({
         </div>
       )}
 
+      {/* What the step says about the place in view: it changes with the place. */}
+      {step.places[active]?.focus.note !== undefined && (
+        <div className="rv-place-note" aria-live="polite">
+          <Markdown text={pick(step.places[active]?.focus.note ?? { sv: '', en: '' }, lang)} />
+        </div>
+      )}
+
       <div className="rv-section-title">{words.whatHappens}</div>
       <div className="rv-explanation">
         <Markdown text={pick(step.body, lang)} />

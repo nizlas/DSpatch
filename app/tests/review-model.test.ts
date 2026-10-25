@@ -735,6 +735,53 @@ test('a place can name its enclosing unit and where the walk arrives from; both 
   assert.ok(ids?.includes('p1.unit:context') && ids.includes('p1.from:context'));
 });
 
+test("a unit's counterpart is the same file at the other side; it is validated, and counts in the step's content only where it exists", () => {
+  const step = (unit: Record<string, unknown>): Record<string, unknown> => ({
+    format: 'dspatch-review/2',
+    title: { sv: 't', en: 't' },
+    overview: { sv: 'Ö', en: 'O' },
+    repository: '.',
+    base: REVISIONS.base,
+    target: REVISIONS.target,
+    walks: [
+      {
+        id: 'W1',
+        title: { sv: 'w', en: 'w' },
+        question: { sv: 'q', en: 'q' },
+        steps: [
+          {
+            id: 'W1.1',
+            title: { sv: 's', en: 's' },
+            summary: { sv: 's', en: 's' },
+            body: { sv: 'b', en: 'b' },
+            places: [{ id: 'p1', label: { sv: 'l', en: 'l' }, focus: { path: 'src/x.ts', start: 20, end: 21 }, unit }],
+          },
+        ],
+      },
+    ],
+  });
+  const plain = { path: 'src/x.ts', start: 10, end: 30, kind: 'method', name: 'run' };
+  const withOld = { ...plain, counterpart: { path: 'src/x.ts', side: 'base', start: 8, end: 40, anchor: 'run' } };
+  const without = parseReviewDefinition(step(plain));
+  const withIt = parseReviewDefinition(step(withOld));
+  assert.deepEqual(withIt.problems, []);
+  const unit = withIt.definition?.walks[0]?.steps[0]?.places[0]?.unit;
+  assert.deepEqual([unit?.counterpart?.side, unit?.counterpart?.start, unit?.counterpart?.end, unit?.counterpart?.role], ['base', 8, 40, 'context']);
+  assert.equal(without.definition?.walks[0]?.steps[0]?.places[0]?.unit?.counterpart, null);
+  // Checked like every reference, and never planned coverage.
+  assert.ok(withIt.definition?.walks[0]?.steps[0]?.refs.some((ref) => ref.id === 'p1.unit.counterpart' && ref.role === 'context'));
+  // It changes what the step shows, so it changes the step's content hash.
+  const hashOf = (outcome: typeof without): string => stepHashesOf(outcome.definition as NonNullable<typeof outcome.definition>)['W1.1'] ?? '';
+  assert.notEqual(hashOf(withIt), hashOf(without));
+  // The same side, or another file, is not a counterpart.
+  const sameSide = parseReviewDefinition(step({ ...plain, counterpart: { path: 'src/x.ts', start: 8, end: 40 } }));
+  const otherFile = parseReviewDefinition(step({ ...plain, counterpart: { path: 'src/y.ts', side: 'base', start: 8, end: 40 } }));
+  for (const outcome of [sameSide, otherFile]) {
+    assert.equal(outcome.definition?.walks[0]?.steps[0]?.places[0]?.unit?.counterpart, null);
+    assert.match(outcome.problems.map((problem) => problem.problem).join('\n'), /same file at the other side/);
+  }
+});
+
 test('the chosen code level is kept with the view arrangement', () => {
   const state = emptyReviewState(REVISIONS, 'def.json', 'hash');
   const stored = { ...state, ui: { openWalks: [], highlightWalk: false, level: 'file' } };

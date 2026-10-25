@@ -104,6 +104,11 @@ export interface PlaceUnit {
   readonly ref: CodeReference;
   readonly kind: UnitKind;
   readonly name: string;
+  /**
+   * The same unit at the other side of the diff, when it is there: a rewritten function
+   * is shown with all of its old and its new lines, wherever the diff puts them.
+   */
+  readonly counterpart: CodeReference | null;
 }
 
 export interface PlaceLink {
@@ -456,7 +461,20 @@ function parseStepV2(raw: Record<string, unknown>, stepId: string, where: string
         if (!UNIT_KINDS.includes(kind as UnitKind)) {
           problems.push({ where: `${placeWhere}.unit`, problem: `"kind" must be one of ${UNIT_KINDS.join(', ')}.` });
         } else if (unitRef !== null) {
-          unit = { ref: { ...unitRef, role: 'context' }, kind: kind as UnitKind, name: typeof unitRaw['name'] === 'string' ? unitRaw['name'] : '' };
+          let counterpart: CodeReference | null = null;
+          const counterpartRaw = unitRaw['counterpart'];
+          if (isRecord(counterpartRaw)) {
+            const counterpartWhere = `${placeWhere}.unit.counterpart`;
+            const ref = parseReference(counterpartRaw, refId(`${placeId}.unit.counterpart`, placeWhere), counterpartWhere, problems, 'context', true);
+            if (ref !== null && (ref.side === unitRef.side || ref.path !== unitRef.path)) {
+              problems.push({ where: counterpartWhere, problem: 'A counterpart is the same file at the other side.' });
+            } else if (ref !== null) {
+              counterpart = { ...ref, role: 'context' };
+            }
+          } else if (counterpartRaw !== undefined) {
+            problems.push({ where: `${placeWhere}.unit`, problem: '"counterpart" must be an object when present.' });
+          }
+          unit = { ref: { ...unitRef, role: 'context' }, kind: kind as UnitKind, name: typeof unitRaw['name'] === 'string' ? unitRaw['name'] : '', counterpart };
         }
       } else if (unitRaw !== undefined) {
         problems.push({ where: placeWhere, problem: '"unit" must be an object when present.' });
@@ -507,6 +525,7 @@ function parseStepV2(raw: Record<string, unknown>, stepId: string, where: string
         place.focus,
         ...place.context,
         ...(place.unit === null ? [] : [place.unit.ref]),
+        ...(place.unit?.counterpart == null ? [] : [place.unit.counterpart]),
         ...(place.from === null ? [] : [place.from.ref]),
       ]),
       ...evidenceRefs,
@@ -1081,7 +1100,11 @@ export function stepContentHash(step: WalkStep): string {
         label: place.label,
         focus: place.focus,
         context: place.context,
-        unit: place.unit === null ? null : { ref: place.unit.ref, kind: place.unit.kind, name: place.unit.name },
+        // A counterpart counts only where there is one, so steps without one keep their hash.
+        unit:
+          place.unit === null
+            ? null
+            : { ref: place.unit.ref, kind: place.unit.kind, name: place.unit.name, ...(place.unit.counterpart === null ? {} : { counterpart: place.unit.counterpart }) },
         from: place.from === null ? null : { ref: place.from.ref, label: place.from.label },
       })),
     }),

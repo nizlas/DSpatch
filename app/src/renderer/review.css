@@ -9,6 +9,9 @@
 
 .rv {
   --rv-old: color-mix(in srgb, var(--no) 32%, var(--bg));
+  /* The active place's own before/after rows: clearly lighter than any other change. */
+  --rv-old-active: color-mix(in srgb, var(--no) 46%, var(--bg));
+  --rv-new-active: color-mix(in srgb, var(--ok) 40%, var(--bg));
   /* Only the moment a place becomes active; not a review status. */
   --rv-gold: color-mix(in srgb, #f0b429 58%, var(--bg));
   --rv-old-faint: color-mix(in srgb, var(--no) 12%, var(--bg));
@@ -542,6 +545,18 @@
   line-height: 1.2rem;
 }
 
+/* The explanation of the place in view, under the list of places. */
+.rv-place-note {
+  margin: 0.5rem 0 0.2rem;
+  padding: 0.45rem 0.7rem;
+  border-left: 3px solid color-mix(in srgb, var(--text) 35%, transparent);
+  background: color-mix(in srgb, var(--text) 5%, var(--panel));
+}
+
+.rv-place-note p {
+  margin: 0;
+}
+
 .rv-place-nav {
   display: flex;
   justify-content: space-between;
@@ -761,6 +776,34 @@
    colour; the colour classes after this rule override it. */
 :where(.rv-pane-lines) .rv-row {
   background: var(--bg);
+}
+
+/* In the map's panes rows, folds and notes have fixed heights, so a long file is drawn
+   a screen at a time (ROW_HEIGHT, GAP_HEIGHT and NOTE_HEIGHT in ReviewTimeline.tsx). */
+.rv-pane-lines .rv-row {
+  height: 19px;
+  line-height: 19px;
+}
+
+.rv-pane-lines .rv-rows > .rv-gap {
+  box-sizing: border-box;
+  height: 24px;
+  padding-top: 0;
+  padding-bottom: 0;
+  align-items: center;
+}
+
+.rv-pane-lines .rv-rows > .rv-nothing {
+  box-sizing: border-box;
+  height: 28px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.rv-spacer {
+  flex: none;
 }
 
 .rv-old {
@@ -1079,6 +1122,30 @@
 
 .rv-pane-active {
   opacity: 1;
+}
+
+/* The active place's focus rows stay clearly lighter than every other changed row —
+   in other panes and around it — after the gold has faded. Unchanged focus stays
+   neutral. The dimmer token colours are lifted on these rows so they keep a contrast
+   of at least 5:1. */
+.rv-pane-active .rv-old {
+  background: var(--rv-old-active);
+}
+
+.rv-pane-active .rv-new {
+  background: var(--rv-new-active);
+}
+
+.rv-pane-active :is(.rv-old, .rv-new) .rv-tk-keyword {
+  color: #dcbcf6;
+}
+
+.rv-pane-active :is(.rv-old, .rv-new) .rv-tk-comment {
+  color: #b4bfcc;
+}
+
+.rv-pane-active :is(.rv-old, .rv-new) .rv-tk-number {
+  color: #ffb59c;
 }
 
 .rv-pane-head {

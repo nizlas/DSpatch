@@ -65,6 +65,10 @@ export interface ReviewWords {
     readonly moreBelow: string;
     readonly wholeContext: string;
     readonly hiddenLines: (count: number) => string;
+    /** A fold that opens a few lines of a larger one. */
+    readonly moreLines: (count: number, hidden: number) => string;
+    /** A fold that opens the rest of the place's function or other unit. */
+    readonly restOfUnit: (name: string, count: number) => string;
     readonly reading: string;
     readonly fileMissing: (path: string, side: string) => string;
     readonly nothingBefore: string;
@@ -258,6 +262,8 @@ const sv: ReviewWords = {
     moreBelow: 'Visa mer nedanför',
     wholeContext: 'Visa hela sammanhanget',
     hiddenLines: (count) => `⋯ visa ${String(count)} oförändrade rader`,
+    moreLines: (count, hidden) => `⋯ visa ${String(count)} rader till (${String(hidden)} dolda)`,
+    restOfUnit: (name, count) => `⋯ visa resten av ${name} (${String(count)} rader)`,
     reading: 'Läser filen …',
     fileMissing: (path, side) => `${path} finns inte i ${side}.`,
     nothingBefore: 'Ingen gammal kod här – de här raderna är nya.',
@@ -480,6 +486,8 @@ const en: ReviewWords = {
     moreBelow: 'Show more below',
     wholeContext: 'Show the whole context',
     hiddenLines: (count) => `⋯ show ${String(count)} unchanged lines`,
+    moreLines: (count, hidden) => `⋯ show ${String(count)} more lines (${String(hidden)} hidden)`,
+    restOfUnit: (name, count) => `⋯ show the rest of ${name} (${String(count)} lines)`,
     reading: 'Reading the file…',
     fileMissing: (path, side) => `${path} does not exist in the ${side}.`,
     nothingBefore: 'No old code here – these lines are new.',

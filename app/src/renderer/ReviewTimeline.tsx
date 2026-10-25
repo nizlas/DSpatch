@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 
-import { Inline, TokensView, fileName, rangeText, useRows, type Files } from './review-code';
+import { Inline, TokensView, fileName, rangeText, rowsOf, useRows, type Files } from './review-code';
 import { pick, type ReviewWords } from './review-i18n';
 import {
-  referenceRows,
   type CodeLevel,
   type CodeLocation,
   type DiffFile,
@@ -27,8 +26,11 @@ import {
  * Two interactions are kept apart: the middle mouse button dragged inside a pane
  * scrolls that pane, and Shift with the left button dragged over the code pans the
  * whole map. Previous/Next and the other step navigation slide the same map; the
- * explanation follows the active station, also when the map is panned by hand, and
- * only switches when the viewport's centre is well inside another pane.
+ * explanation follows the active station, also when the map is panned by hand: the
+ * place whose focus has come into the middle of the view (see settleActive).
+ *
+ * A pane draws only the rows near its visible part, at fixed row heights, so a whole
+ * file stays scrollable without every row being drawn again as the map moves.
  *
  * Before/After is each pane's own choice of revision side and has nothing to do with
  * the map's direction.
@@ -73,6 +75,17 @@ const MIN_PANE_WIDTH = 260;
 const AUTO_WIDTH_MARGIN = 120;
 /** A pointer must travel this far before a press becomes a drag. */
 const DRAG_THRESHOLD = 6;
+/**
+ * In a pane every row, fold and note has a fixed height (set in review.css), so a
+ * long file is drawn a screen at a time while its whole height stays scrollable.
+ */
+const ROW_HEIGHT = 19;
+const GAP_HEIGHT = 24;
+const NOTE_HEIGHT = 28;
+/** Rows drawn beyond the pane's visible part, in pixels, above and below. */
+const OVERSCAN = 600;
+/** A fold away from the place's function opens this many lines at a time. */
+const GAP_STEP = 20;
 /** Panning: a place whose focus is at least this much in view can become active. */
 const FOCUS_IN_VIEW = 0.8;
 /** Panning: two places whose focus visibility differs less than this are about equally in view. */
@@ -105,6 +118,15 @@ export function unitTitle(place: Place | null): string | undefined {
   return context === undefined ? undefined : `${String(context.start)}–${String(context.end)}`;
 }
 
+/** A place's unit in its own file: at its side, and at the other side when it is there too. */
+function unitRefs(place: Place): readonly CodeLocation[] {
+  const unit = place.unit;
+  if (unit === null || unit.ref.path !== place.focus.path) {
+    return [];
+  }
+  return unit.counterpart === null ? [unit.ref] : [unit.ref, unit.counterpart];
+}
+
 /** The rows a station shows at a level: its focus, its unit (or prepared context), or everything. */
 function stationRange(rows: readonly DiffRow[], place: Place, level: CodeLevel, focusIndexes: readonly number[]): [number, number] | null {
   if (rows.length === 0 || focusIndexes.length === 0) {
@@ -115,12 +137,10 @@ function stationRange(rows: readonly DiffRow[], place: Place, level: CodeLevel, 
   let from = first - FOCUS_MARGIN;
   let to = last + FOCUS_MARGIN;
   if (level === 'unit') {
-    const unit =
-      place.unit !== null && place.unit.ref.path === place.focus.path
-        ? place.unit.ref
-        : (place.context.find((ref) => ref.path === place.focus.path) ?? null);
-    if (unit !== null) {
-      const unitRows = referenceRows(rows, unit).indexes;
+    const unit = unitRefs(place);
+    const fallback = place.context.find((ref) => ref.path === place.focus.path);
+    for (const ref of unit.length > 0 ? unit : fallback === undefined ? [] : [fallback]) {
+      const unitRows = rowsOf(rows, ref).indexes;
       if (unitRows.length > 0) {
         from = Math.min(from, unitRows[0] ?? from);
         to = Math.max(to, unitRows[unitRows.length - 1] ?? to);
@@ -685,7 +705,10 @@ export function WalkTimeline({
     // Rows outside their pane's code area are hidden by it: the arrow ends at the edge.
     const y1 = Math.min(Math.max(a.top + a.height / 2, sourceBox.top + 30), sourceBox.bottom - 6) - box.top;
     const y2 = Math.min(Math.max(b.top + b.height / 2, targetBox.top + 30), targetBox.bottom - 6) - box.top;
-    setArrow({ x1: sourceBox.right - box.left - 18, y1, x2: targetBox.left - box.left + 92, y2 });
+    const x1 = sourceBox.right - box.left - 18;
+    const x2 = targetBox.left - box.left + 92;
+    // Measured every frame for a while after the map moves: a new arrow only when it moved.
+    setArrow((current) => (current !== null && current.x1 === x1 && current.y1 === y1 && current.x2 === x2 && current.y2 === y2 ? current : { x1, y1, x2, y2 }));
   }, [activeStation, fromPane, active]);
   useEffect(() => {
     let frame = 0;
@@ -702,6 +725,15 @@ export function WalkTimeline({
 
   // Each pane's own scroll position survives its pane leaving the rendered range.
   const scrollTops = useRef(new Map<number, { top: number; left: number }>());
+  // Each pane gets one lasting box of handlers, refilled on every render: a pane that
+  // skips a render still calls the current ones.
+  const paneHandlers = useRef(new Map<number, { current: PaneHandlers }>());
+  const handlersFor = (index: number, handlers: PaneHandlers): { readonly current: PaneHandlers } => {
+    const box = paneHandlers.current.get(index) ?? { current: handlers };
+    box.current = handlers;
+    paneHandlers.current.set(index, box);
+    return box;
+  };
   const changedFiles = useMemo(() => new Map(diffFiles.map((file) => [file.path, file])), [diffFiles]);
   const overlayByPath = useMemo(() => {
     const map = new Map<string, Place[]>();
@@ -839,15 +871,11 @@ export function WalkTimeline({
                     sourceLink={
                       isActive && activeStation?.place.from != null
                         ? fromPane === null
-                          ? { kind: 'open', onClick: () => onOpenLocation(activeStation.place.from!.ref) }
-                          : paneOnScreen(fromPane)
-                            ? { kind: 'shown', name: placeName(fromPane) }
-                            : { kind: 'reveal', name: placeName(fromPane), onClick: revealSource }
+                          ? { kind: 'open' }
+                          : { kind: paneOnScreen(fromPane) ? 'shown' : 'reveal', name: placeName(fromPane) }
                         : null
                     }
-                    sourceFor={
-                      fromPane === station.index && !paneOnScreen(active) ? { name: placeName(active), onClick: returnToPlace } : null
-                    }
+                    sourceFor={fromPane === station.index && !paneOnScreen(active) ? { name: placeName(active) } : null}
                     diffFile={changedFiles.get(path) ?? null}
                     files={files}
                     level={level}
@@ -855,22 +883,36 @@ export function WalkTimeline({
                     overlay={overlayByPath.get(path) ?? []}
                     sameFile={stations.filter((other) => other.key === station.key && other.index !== station.index)}
                     selection={selection}
-                    onSelect={onSelect}
                     words={words}
                     lang={lang}
-                    onScrolled={measure}
                     savedScroll={scrollTops.current.get(station.index)}
-                    onScrollTop={(top, left) => scrollTops.current.set(station.index, { top, left })}
-                    onRoom={(wanted) => roomFor(station.index, wanted)}
                     userSized={widths.has(station.index)}
                     width={width}
                     arrival={arrival.index === station.index ? arrival.seq : -1}
                     arrivalHandled={handledArrivals.current.get(station.index) ?? -1}
-                    onArrivalHandled={(seq) => handledArrivals.current.set(station.index, seq)}
                     callArrival={source.pane === station.index && station.index !== active ? source.seq : -1}
                     reveal={reveal.pane === station.index ? reveal.seq : -1}
                     revealHandled={handledReveals.current.get(station.index) ?? -1}
-                    onRevealHandled={(seq) => handledReveals.current.set(station.index, seq)}
+                    handlers={handlersFor(station.index, {
+                      select: onSelect,
+                      scrolled: measure,
+                      scrollTop: (top, left) => scrollTops.current.set(station.index, { top, left }),
+                      room: (wanted) => roomFor(station.index, wanted),
+                      arrivalHandled: (seq) => handledArrivals.current.set(station.index, seq),
+                      revealHandled: (seq) => handledReveals.current.set(station.index, seq),
+                      sourceLink: () => {
+                        const from = activeStation?.place.from;
+                        if (from === null || from === undefined) {
+                          return;
+                        }
+                        if (fromPane === null) {
+                          onOpenLocation(from.ref);
+                        } else {
+                          revealSource();
+                        }
+                      },
+                      sourceFor: returnToPlace,
+                    })}
                   />
                 ) : (
                   <div className="rv-pane-placeholder">
@@ -924,7 +966,7 @@ export function WalkTimeline({
   );
 }
 
-function TimelinePane({
+function TimelinePaneView({
   station,
   isActive,
   direction,
@@ -937,28 +979,22 @@ function TimelinePane({
   overlay,
   sameFile,
   selection,
-  onSelect,
   words,
   lang,
-  onScrolled,
   savedScroll,
-  onScrollTop,
-  onRoom,
   userSized,
   width,
   arrival,
   arrivalHandled,
-  onArrivalHandled,
   calls,
   callArrival,
   reveal,
   revealHandled,
-  onRevealHandled,
   sourceLink,
   sourceFor,
+  handlers,
 }: {
   readonly selection: CodeLocation | null;
-  readonly onSelect: (location: CodeLocation | null) => void;
   readonly station: Station;
   readonly isActive: boolean;
   readonly direction: 'forward' | 'backward';
@@ -973,18 +1009,13 @@ function TimelinePane({
   readonly sameFile: readonly Station[];
   readonly words: ReviewWords;
   readonly lang: Lang;
-  readonly onScrolled: () => void;
   readonly savedScroll: { readonly top: number; readonly left: number } | undefined;
-  readonly onScrollTop: (top: number, left: number) => void;
-  /** The pane asks for this much width so its change is readable; true when it will get wider. */
-  readonly onRoom: (wanted: number) => boolean;
   readonly userSized: boolean;
   readonly width: number;
   /** The number of the navigation that brought the walk to this pane, or -1. */
   readonly arrival: number;
   /** The last arrival this pane has placed its change for, kept while it is not rendered. */
   readonly arrivalHandled: number;
-  readonly onArrivalHandled: (seq: number) => void;
   /** The call of the latest navigation, when it is shown in this pane: kept unfolded. */
   readonly calls: readonly CodeLocation[];
   /** The number of the explicit act that asked this pane to show a link's source, or -1. */
@@ -993,29 +1024,25 @@ function TimelinePane({
   readonly reveal: number;
   /** The last request this pane has acted on, kept while it is not rendered. */
   readonly revealHandled: number;
-  readonly onRevealHandled: (seq: number) => void;
   /** In the active pane: where its link's source is shown — here on screen, off screen, or nowhere in the walk. */
-  readonly sourceLink:
-    | { readonly kind: 'shown'; readonly name: string }
-    | { readonly kind: 'reveal'; readonly name: string; readonly onClick: () => void }
-    | { readonly kind: 'open'; readonly onClick: () => void }
-    | null;
+  readonly sourceLink: { readonly kind: 'shown' | 'reveal'; readonly name: string } | { readonly kind: 'open' } | null;
   /** In the source pane, when the place it leads to is off screen: the way back. */
-  readonly sourceFor: { readonly name: string; readonly onClick: () => void } | null;
+  readonly sourceFor: { readonly name: string } | null;
+  /** What the pane calls back; a lasting box the map refills on every render. */
+  readonly handlers: { readonly current: PaneHandlers };
 }): JSX.Element {
   const path = station.place.focus.path;
   const side = station.place.focus.side;
   const content = useRows(files, path, diffFile, side);
   const rows = content?.rows ?? [];
   const scroller = useRef<HTMLDivElement>(null);
-  // A gap is opened in two stages when a declared context ends inside it: first the
-  // rest of that context (the enclosing function of a block), then everything.
-  const [openGaps, setOpenGaps] = useState<ReadonlyMap<number, 'context' | 'all'>>(new Map());
+  // Rows opened by hand beyond what the level shows, as inclusive index ranges.
+  const [opened, setOpened] = useState<readonly (readonly [number, number])[]>([]);
   const inContext = useMemo(() => {
     const set = new Set<number>();
     for (const ref of station.place.context) {
       if (ref.path === path && (ref.side ?? 'target') === side) {
-        for (const index of referenceRows(rows, ref).indexes) {
+        for (const index of rowsOf(rows, ref).indexes) {
           set.add(index);
         }
       }
@@ -1023,38 +1050,38 @@ function TimelinePane({
     return set;
   }, [rows, station.place.context, path, side]);
 
-  const shownFocus = useMemo(() => referenceRows(rows, station.place.focus), [rows, station.place.focus]);
+  const shownFocus = useMemo(() => rowsOf(rows, station.place.focus), [rows, station.place.focus]);
   const shownSet = useMemo(() => new Set(shownFocus.indexes), [shownFocus]);
   const otherFocus = useMemo(() => {
     const set = new Set<number>();
     for (const other of sameFile) {
-      referenceRows(rows, other.place.focus).indexes.forEach((row) => set.add(row));
+      rowsOf(rows, other.place.focus).indexes.forEach((row) => set.add(row));
     }
     return set;
   }, [rows, sameFile]);
   const overlaySet = useMemo(() => {
     const set = new Set<number>();
     for (const place of overlay) {
-      referenceRows(rows, place.focus).indexes.forEach((row) => set.add(row));
+      rowsOf(rows, place.focus).indexes.forEach((row) => set.add(row));
       for (const ref of place.context) {
         if (ref.path === path) {
-          referenceRows(rows, ref).indexes.forEach((row) => set.add(row));
+          rowsOf(rows, ref).indexes.forEach((row) => set.add(row));
         }
       }
     }
     return set;
   }, [overlay, rows, path]);
   // The active place's call is marked; the latest navigation's call stays unfolded.
-  const fromSet = useMemo(() => (fromHere === null ? new Set<number>() : new Set(referenceRows(rows, fromHere).indexes)), [fromHere, rows]);
+  const fromSet = useMemo(() => (fromHere === null ? new Set<number>() : new Set(rowsOf(rows, fromHere).indexes)), [fromHere, rows]);
   const callRows = useMemo(() => {
     const set = new Set<number>();
     for (const ref of calls) {
-      referenceRows(rows, ref).indexes.forEach((row) => set.add(row));
+      rowsOf(rows, ref).indexes.forEach((row) => set.add(row));
     }
     return set;
   }, [calls, rows]);
   const selectionSet = useMemo(
-    () => (selection === null || selection.path !== path ? new Set<number>() : new Set(referenceRows(rows, selection).indexes)),
+    () => (selection === null || selection.path !== path ? new Set<number>() : new Set(rowsOf(rows, selection).indexes)),
     [selection, rows, path],
   );
   const select = (row: DiffRow, extend: boolean): void => {
@@ -1064,11 +1091,14 @@ function TimelinePane({
       return;
     }
     if (extend && selection !== null && selection.path === path && selection.side === rowSide) {
-      onSelect({ ...selection, start: Math.min(selection.start, line), end: Math.max(selection.end, line) });
+      handlers.current.select({ ...selection, start: Math.min(selection.start, line), end: Math.max(selection.end, line) });
     } else {
-      onSelect({ path, side: rowSide, start: line, end: line });
+      handlers.current.select({ path, side: rowSide, start: line, end: line });
     }
   };
+
+  // The place's function or other unit, as rows: the first thing a fold opens.
+  const unitSet = useMemo(() => new Set(unitRefs(station.place).flatMap((ref) => rowsOf(rows, ref).indexes)), [rows, station.place]);
 
   // Visible rows: this station at the chosen level, the latest navigation's call when
   // it is shown here, and anything opened by hand. The rest folds into gaps.
@@ -1081,29 +1111,11 @@ function TimelinePane({
     for (const index of callRows) {
       keep.fill(true, Math.max(0, index - GAP_CONTEXT), Math.min(rows.length, index + GAP_CONTEXT + 1));
     }
-    let index = 0;
-    while (index < keep.length) {
-      if (keep[index] === true) {
-        index += 1;
-        continue;
-      }
-      const start = index;
-      while (index < keep.length && keep[index] !== true) {
-        index += 1;
-      }
-      const stage = openGaps.get(start);
-      if (stage === 'all') {
-        keep.fill(true, start, index);
-      } else if (stage === 'context') {
-        for (let row = start; row < index; row += 1) {
-          if (inContext.has(row)) {
-            keep[row] = true;
-          }
-        }
-      }
+    for (const [from, to] of opened) {
+      keep.fill(true, from, to + 1);
     }
     return keep;
-  }, [rows, station.place, level, shownFocus, callRows, openGaps, inContext]);
+  }, [rows, station.place, level, shownFocus, callRows, opened]);
 
   // Arriving: the focus flashes briefly when the walk reaches this pane.
   const [arriving, setArriving] = useState(false);
@@ -1199,7 +1211,7 @@ function TimelinePane({
       return;
     }
     handledHere.current = arrival;
-    onArrivalHandled(arrival);
+    handlers.current.arrivalHandled(arrival);
     placeAfterRoom.current = false;
     if (!userSized) {
       // The widest focus row, with the line numbers and margins.
@@ -1210,7 +1222,7 @@ function TimelinePane({
       const numbers = element.querySelector('.rv-row .rv-ln') as HTMLElement | null;
       const marker = element.querySelector('.rv-row .rv-marker') as HTMLElement | null;
       if (widest > 0) {
-        placeAfterRoom.current = onRoom(widest + (numbers?.offsetWidth ?? 0) + (marker?.offsetWidth ?? 0) + 34);
+        placeAfterRoom.current = handlers.current.room(widest + (numbers?.offsetWidth ?? 0) + (marker?.offsetWidth ?? 0) + 34);
       }
     }
     if (scrollTimer.current !== null) {
@@ -1281,7 +1293,7 @@ function TimelinePane({
       return;
     }
     revealHere.current = reveal;
-    onRevealHandled(reveal);
+    handlers.current.revealHandled(reveal);
     if (scrollTimer.current !== null) {
       window.clearTimeout(scrollTimer.current);
       scrollTimer.current = null;
@@ -1317,119 +1329,244 @@ function TimelinePane({
 
   const changed = shownFocus.changed;
   const effectiveView: CodeView = changed ? view : 'both';
-  const hidden = (row: DiffRow): boolean =>
-    (effectiveView === 'before' && row.kind === 'added') || (effectiveView === 'after' && row.kind === 'deleted');
 
-  const body: JSX.Element[] = [];
-  if (content !== null && content.error === null) {
-    let index = 0;
-    let firstShown = true;
-    let firstChange = true;
-    let firstFrom = true;
+  // What the pane shows, top to bottom — rows, folds and a note where one side has no
+  // code — with where each item starts. Cheap descriptions; only what is near the
+  // visible part becomes elements.
+  const layoutRows = useMemo(() => {
+    const hidden = (row: DiffRow): boolean =>
+      (effectiveView === 'before' && row.kind === 'added') || (effectiveView === 'after' && row.kind === 'deleted');
+    const items: PaneItem[] = [];
+    const firstFocus = shownFocus.indexes[0] ?? 0;
+    const unitName = station.place.unit?.name ?? '';
+    // A fold opens, in this order: the rest of the place's function, the rest of its
+    // prepared context, then GAP_STEP lines at a time from the side nearest the change.
+    // The whole file is a level of its own, never one click on a fold.
+    const fold = (start: number, end: number): PaneItem => {
+      const part = (set: ReadonlySet<number>): readonly [number, number] | null => {
+        let from = -1;
+        let to = -1;
+        for (let row = start; row < end; row += 1) {
+          if (set.has(row)) {
+            from = from < 0 ? row : from;
+            to = row;
+          }
+        }
+        return from < 0 ? null : [from, to];
+      };
+      const total = end - start;
+      const unitPart = part(unitSet);
+      if (unitPart !== null) {
+        const count = unitPart[1] - unitPart[0] + 1;
+        return { kind: 'gap', start, reveal: unitPart, label: unitName === '' ? words.view.hiddenLines(count) : words.view.restOfUnit(unitName, count) };
+      }
+      const contextPart = part(inContext);
+      if (contextPart !== null) {
+        return { kind: 'gap', start, reveal: contextPart, label: words.view.hiddenLines(contextPart[1] - contextPart[0] + 1) };
+      }
+      if (total <= GAP_STEP + GAP_STEP / 2) {
+        return { kind: 'gap', start, reveal: [start, end - 1], label: words.view.hiddenLines(total) };
+      }
+      const reveal: readonly [number, number] = end <= firstFocus ? [end - GAP_STEP, end - 1] : [start, start + GAP_STEP - 1];
+      return { kind: 'gap', start, reveal, label: words.view.moreLines(GAP_STEP, total) };
+    };
     let noteDone = false;
+    let index = 0;
     while (index < rows.length) {
       if (visible[index] !== true) {
         const start = index;
         while (index < rows.length && visible[index] !== true) {
           index += 1;
         }
-        let contextRows = 0;
-        for (let row = start; row < index; row += 1) {
-          if (inContext.has(row)) {
-            contextRows += 1;
-          }
-        }
-        const partial = openGaps.get(start) !== 'context' && contextRows > 0 && contextRows < index - start;
-        const gapStart = start;
-        body.push(
-          <div key={`gap-${String(start)}`} className="rv-gap">
-            <button type="button" onClick={() => setOpenGaps(new Map([...openGaps, [gapStart, partial ? 'context' : 'all']]))}>
-              {words.view.hiddenLines(partial ? contextRows : index - start)}
-            </button>
-          </div>,
-        );
+        items.push(fold(start, index));
         continue;
       }
       const row = rows[index] as DiffRow;
-      const inShown = shownSet.has(index);
       if (hidden(row)) {
-        if (inShown && !noteDone && !shownFocus.indexes.some((focusIndex) => !hidden(rows[focusIndex] as DiffRow))) {
+        if (shownSet.has(index) && !noteDone && !shownFocus.indexes.some((focusIndex) => !hidden(rows[focusIndex] as DiffRow))) {
           noteDone = true;
-          body.push(
-            <div key={`none-${String(index)}`} className="rv-nothing">
-              {effectiveView === 'before' ? words.view.nothingBefore : words.view.nothingAfter}
-            </div>,
-          );
+          items.push({ kind: 'nothing', index });
         }
         index += 1;
         continue;
       }
-      const rowSide: RevisionSide = row.targetLine !== null ? 'target' : 'base';
-      const lineTokens = rowSide === 'target' ? content.tokens.target[(row.targetLine ?? 1) - 1] : content.tokens.base[(row.baseLine ?? 1) - 1];
-      const classes = ['rv-row'];
-      if (inShown) {
-        classes.push(row.kind === 'deleted' ? 'rv-old' : row.kind === 'added' ? 'rv-new' : 'rv-neutral-focus');
-        if (arriving) {
-          classes.push('rv-arrive');
-        }
-      } else if (otherFocus.has(index)) {
-        classes.push(row.kind === 'deleted' ? 'rv-old-faint' : row.kind === 'added' ? 'rv-new-faint' : 'rv-neutral-faint');
-      } else if (row.kind === 'deleted') {
-        classes.push('rv-old-faint');
-      } else if (row.kind === 'added') {
-        classes.push('rv-new-faint');
-      } else if (overlaySet.has(index)) {
-        classes.push('rv-walk-mark');
-      }
-      if (overlaySet.has(index) && !inShown && row.kind !== 'context') {
-        classes.push('rv-walk-edge');
-      }
-      const isFrom = fromSet.has(index);
-      if (isFrom) {
-        classes.push('rv-from');
-      }
-      if (selectionSet.has(index)) {
-        classes.push('rv-row-selected');
-      }
-      const attrs: Record<string, string> = {};
-      if (side === 'target' && row.targetLine !== null) {
-        attrs['data-line'] = String(row.targetLine);
-      } else if (side === 'base' && row.baseLine !== null) {
-        attrs['data-line'] = String(row.baseLine);
-      }
-      if (inShown) {
-        attrs['data-focus'] = '1';
-      }
-      if (inShown && firstShown) {
-        attrs['data-shown'] = '1';
-        firstShown = false;
-      }
-      if (inShown && row.kind !== 'context' && firstChange) {
-        attrs['data-shown-change'] = '1';
-        firstChange = false;
-      }
-      if (isActive && inShown && (attrs['data-shown-change'] === '1' || (!changed && attrs['data-shown'] === '1'))) {
-        attrs['data-active-focus'] = '1';
-      }
-      if (isFrom && firstFrom) {
-        attrs['data-from'] = '1';
-        firstFrom = false;
-      }
-      const marker = row.kind === 'deleted' ? words.view.before : row.kind === 'added' ? words.view.after : isFrom ? words.timeline.call : '';
-      body.push(
-        <div key={`row-${String(index)}`} className={classes.join(' ')} {...attrs}>
-          <button type="button" className="rv-ln" title={words.view.selectLine} onClick={(event) => select(row, event.shiftKey)}>
-            <span>{row.baseLine ?? ''}</span>
-            <span>{row.targetLine ?? ''}</span>
-          </button>
-          <span className={inShown || isFrom ? 'rv-marker rv-marker-strong' : 'rv-marker'}>{marker}</span>
-          <code className="rv-text">
-            <TokensView tokens={lineTokens} />
-          </code>
-        </div>,
-      );
+      items.push({ kind: 'row', index });
       index += 1;
     }
+    const tops: number[] = [0];
+    let columns = 0;
+    let firstShown = -1;
+    let firstChange = -1;
+    let firstFrom = -1;
+    for (const item of items) {
+      const last = tops[tops.length - 1] ?? 0;
+      tops.push(last + (item.kind === 'row' ? ROW_HEIGHT : item.kind === 'gap' ? GAP_HEIGHT : NOTE_HEIGHT));
+      if (item.kind !== 'row') {
+        continue;
+      }
+      const row = rows[item.index] as DiffRow;
+      columns = Math.max(columns, textColumns(row.text));
+      if (shownSet.has(item.index)) {
+        firstShown = firstShown < 0 ? item.index : firstShown;
+        if (row.kind !== 'context' && firstChange < 0) {
+          firstChange = item.index;
+        }
+      }
+      if (fromSet.has(item.index) && firstFrom < 0) {
+        firstFrom = item.index;
+      }
+    }
+    return { items, tops, columns, firstShown, firstChange, firstFrom };
+  }, [rows, visible, effectiveView, shownFocus, shownSet, fromSet, unitSet, inContext, station.place.unit, words]);
+  const { items, tops, columns } = layoutRows;
+
+  // The part of the pane's content in view, kept in step with scrolling and resizing.
+  // Only when the view nears the edge of what is drawn does the pane draw again.
+  const rowsBox = useRef<HTMLDivElement>(null);
+  const [drawn, setDrawn] = useState<{ readonly from: number; readonly to: number }>({ from: 0, to: 1600 });
+  const drawnRef = useRef(drawn);
+  drawnRef.current = drawn;
+  const follow = useCallback((): void => {
+    const element = scroller.current;
+    const box = rowsBox.current;
+    if (element === null || box === null) {
+      return;
+    }
+    const top = element.scrollTop - (box.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop);
+    const bottom = top + element.clientHeight;
+    const current = drawnRef.current;
+    if (Math.max(0, top - OVERSCAN / 2) >= current.from && bottom + OVERSCAN / 2 <= current.to) {
+      return;
+    }
+    const next = { from: Math.max(0, top - OVERSCAN), to: bottom + OVERSCAN };
+    if (next.from === current.from && next.to === current.to) {
+      return;
+    }
+    drawnRef.current = next;
+    setDrawn(next);
+  }, []);
+  useEffect(() => {
+    const element = scroller.current;
+    if (element === null) {
+      return undefined;
+    }
+    const observer = new ResizeObserver(() => follow());
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [follow]);
+  // After the content changes (a fold opened, another level) the view is checked again.
+  useLayoutEffect(() => follow(), [follow, items]);
+
+  // The items to draw: those near the visible part, and always the focus and the call,
+  // which placement, the arrow and the map's choice of active place measure.
+  const body: JSX.Element[] = [];
+  if (content !== null && content.error === null) {
+    const wanted: number[] = [];
+    const first = firstAtOrAfter(tops, drawn.from);
+    for (let item = Math.max(0, first - 1); item < items.length && (tops[item] ?? 0) < drawn.to; item += 1) {
+      wanted.push(item);
+    }
+    items.forEach((item, at) => {
+      if (item.kind === 'row' && (shownSet.has(item.index) || fromSet.has(item.index))) {
+        wanted.push(at);
+      }
+    });
+    const order = [...new Set(wanted)].sort((a, b) => a - b);
+    let next = 0;
+    for (const at of order) {
+      if (at > next) {
+        body.push(<div key={`space-${String(next)}`} className="rv-spacer" style={{ height: `${String((tops[at] ?? 0) - (tops[next] ?? 0))}px` }} />);
+      }
+      const item = items[at] as PaneItem;
+      body.push(drawItem(item));
+      next = at + 1;
+    }
+    if (next < items.length) {
+      body.push(<div key={`space-${String(next)}`} className="rv-spacer" style={{ height: `${String((tops[items.length] ?? 0) - (tops[next] ?? 0))}px` }} />);
+    }
+  }
+
+  function drawItem(item: PaneItem): JSX.Element {
+    if (item.kind === 'gap') {
+      return (
+        <div key={`gap-${String(item.start)}`} className="rv-gap">
+          <button type="button" onClick={() => setOpened((current) => [...current, item.reveal])}>
+            {item.label}
+          </button>
+        </div>
+      );
+    }
+    if (item.kind === 'nothing') {
+      return (
+        <div key={`none-${String(item.index)}`} className="rv-nothing">
+          {effectiveView === 'before' ? words.view.nothingBefore : words.view.nothingAfter}
+        </div>
+      );
+    }
+    const index = item.index;
+    const row = rows[index] as DiffRow;
+    const inShown = shownSet.has(index);
+    const rowSide: RevisionSide = row.targetLine !== null ? 'target' : 'base';
+    const lineTokens = rowSide === 'target' ? content?.tokens.target[(row.targetLine ?? 1) - 1] : content?.tokens.base[(row.baseLine ?? 1) - 1];
+    const classes = ['rv-row'];
+    if (inShown) {
+      classes.push(row.kind === 'deleted' ? 'rv-old' : row.kind === 'added' ? 'rv-new' : 'rv-neutral-focus');
+      if (arriving) {
+        classes.push('rv-arrive');
+      }
+    } else if (otherFocus.has(index)) {
+      classes.push(row.kind === 'deleted' ? 'rv-old-faint' : row.kind === 'added' ? 'rv-new-faint' : 'rv-neutral-faint');
+    } else if (row.kind === 'deleted') {
+      classes.push('rv-old-faint');
+    } else if (row.kind === 'added') {
+      classes.push('rv-new-faint');
+    } else if (overlaySet.has(index)) {
+      classes.push('rv-walk-mark');
+    }
+    if (overlaySet.has(index) && !inShown && row.kind !== 'context') {
+      classes.push('rv-walk-edge');
+    }
+    const isFrom = fromSet.has(index);
+    if (isFrom) {
+      classes.push('rv-from');
+    }
+    if (selectionSet.has(index)) {
+      classes.push('rv-row-selected');
+    }
+    const attrs: Record<string, string> = {};
+    if (side === 'target' && row.targetLine !== null) {
+      attrs['data-line'] = String(row.targetLine);
+    } else if (side === 'base' && row.baseLine !== null) {
+      attrs['data-line'] = String(row.baseLine);
+    }
+    if (inShown) {
+      attrs['data-focus'] = '1';
+    }
+    if (index === layoutRows.firstShown) {
+      attrs['data-shown'] = '1';
+    }
+    if (index === layoutRows.firstChange) {
+      attrs['data-shown-change'] = '1';
+    }
+    if (isActive && inShown && (index === layoutRows.firstChange || (!changed && index === layoutRows.firstShown))) {
+      attrs['data-active-focus'] = '1';
+    }
+    if (index === layoutRows.firstFrom) {
+      attrs['data-from'] = '1';
+    }
+    const marker = row.kind === 'deleted' ? words.view.before : row.kind === 'added' ? words.view.after : isFrom ? words.timeline.call : '';
+    return (
+      <div key={`row-${String(index)}`} className={classes.join(' ')} {...attrs}>
+        <button type="button" className="rv-ln" title={words.view.selectLine} onClick={(event) => select(row, event.shiftKey)}>
+          <span>{row.baseLine ?? ''}</span>
+          <span>{row.targetLine ?? ''}</span>
+        </button>
+        <span className={inShown || isFrom ? 'rv-marker rv-marker-strong' : 'rv-marker'}>{marker}</span>
+        <code className="rv-text">
+          <TokensView tokens={lineTokens} />
+        </code>
+      </div>
+    );
   }
 
   return (
@@ -1451,19 +1588,19 @@ function TimelinePane({
             ← <Inline text={pick(fromRow.label, lang)} /> ({fileName(fromRow.ref.path)}:{rangeText(fromRow.ref)})
             {sourceLink?.kind === 'shown' && <span className="rv-sub"> · {words.timeline.sourceIn(sourceLink.name)}</span>}
             {sourceLink?.kind === 'reveal' && (
-              <button type="button" className="rv-link rv-source-link" onClick={sourceLink.onClick}>
+              <button type="button" className="rv-link rv-source-link" onClick={() => handlers.current.sourceLink()}>
                 {words.timeline.showSource(sourceLink.name)}
               </button>
             )}
             {sourceLink?.kind === 'open' && (
-              <button type="button" className="rv-link rv-source-link" onClick={sourceLink.onClick}>
+              <button type="button" className="rv-link rv-source-link" onClick={() => handlers.current.sourceLink()}>
                 {words.timeline.openSource}
               </button>
             )}
           </span>
         )}
         {sourceFor !== null && (
-          <button type="button" className="rv-link rv-source-link" onClick={sourceFor.onClick}>
+          <button type="button" className="rv-link rv-source-link" onClick={() => handlers.current.sourceFor()}>
             {words.timeline.sourceFor(sourceFor.name)}
           </button>
         )}
@@ -1472,8 +1609,9 @@ function TimelinePane({
         className="rv-lines rv-pane-lines"
         ref={scroller}
         onScroll={(event) => {
-          onScrollTop(event.currentTarget.scrollTop, event.currentTarget.scrollLeft);
-          onScrolled();
+          handlers.current.scrollTop(event.currentTarget.scrollTop, event.currentTarget.scrollLeft);
+          handlers.current.scrolled();
+          follow();
         }}
         onWheel={yieldToReader}
         onPointerDown={(event) => {
@@ -1512,11 +1650,93 @@ function TimelinePane({
         {content !== null && content.error !== null && (
           <div className="rv-error">{content.error === 'binary' ? words.view.binary : content.error}</div>
         )}
-        <div className="rv-rows">{body}</div>
+        <div className="rv-rows" ref={rowsBox} style={{ minWidth: `calc(${String(columns)}ch + 10.4rem)` }}>
+          {body}
+        </div>
       </div>
     </section>
   );
 }
+
+/** One thing a pane shows, top to bottom. */
+type PaneItem =
+  | { readonly kind: 'row'; readonly index: number }
+  | { readonly kind: 'gap'; readonly start: number; readonly reveal: readonly [number, number]; readonly label: string }
+  | { readonly kind: 'nothing'; readonly index: number };
+
+/** What a pane calls back. The map refills one lasting box per pane on every render. */
+interface PaneHandlers {
+  readonly select: (location: CodeLocation | null) => void;
+  readonly scrolled: () => void;
+  readonly scrollTop: (top: number, left: number) => void;
+  /** The pane asks for this much width so its change is readable; true when it will get wider. */
+  readonly room: (wanted: number) => boolean;
+  readonly arrivalHandled: (seq: number) => void;
+  readonly revealHandled: (seq: number) => void;
+  readonly sourceLink: () => void;
+  readonly sourceFor: () => void;
+}
+
+/** The first item that ends after `y`: `tops` holds every item's start and the end. */
+function firstAtOrAfter(tops: readonly number[], y: number): number {
+  let low = 0;
+  let high = tops.length - 1;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if ((tops[middle + 1] ?? Infinity) <= y) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low;
+}
+
+/** A line's width in columns as `white-space: pre` draws it, tabs every eight. */
+function textColumns(text: string): number {
+  if (!text.includes('\t')) {
+    return text.length;
+  }
+  let column = 0;
+  for (const character of text) {
+    column = character === '\t' ? column + 8 - (column % 8) : column + 1;
+  }
+  return column;
+}
+
+/**
+ * A pane is drawn again only when something it shows changed. Panning moves the map
+ * many times a second; the panes it passes keep their rows. Lists and descriptions
+ * the map builds afresh on every render are compared by content; the remembered
+ * scroll position only matters when a pane mounts.
+ */
+function samePaneProps(before: PaneProps, after: PaneProps): boolean {
+  for (const key of Object.keys(after) as (keyof PaneProps)[]) {
+    const a = before[key];
+    const b = after[key];
+    if (a === b || key === 'savedScroll') {
+      continue;
+    }
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length || a.some((value, index) => value !== b[index])) {
+        return false;
+      }
+      continue;
+    }
+    if ((key === 'sourceLink' || key === 'sourceFor') && a !== null && b !== null && typeof a === 'object' && typeof b === 'object') {
+      if (JSON.stringify(a) !== JSON.stringify(b)) {
+        return false;
+      }
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+type PaneProps = Parameters<typeof TimelinePaneView>[0];
+
+const TimelinePane = memo(TimelinePaneView, samePaneProps);
 
 // --- The file tree ----------------------------------------------------------------
 
