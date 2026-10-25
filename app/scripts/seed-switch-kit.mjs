@@ -17,9 +17,15 @@
  *   written in a store of its own and copied in, which is how two files come to share
  *   an ID.
  *
+ * With `--unknown-turn` (DSP-124), A also holds a fourth message whose **agent-turn**
+ * attempt was left `running`, as a DSpatch that died mid-turn leaves its file; the next
+ * open reads it as `outcome-unknown`, which is what *Send anyway* is offered for. The
+ * default kit is unchanged, so `switch` and the refused and failed phases of
+ * `resume-choice` run over the same A as before.
+ *
  * Run from `app/` (the kit folder must not already hold `userData` or `projects`):
  *
- *     node --import ./scripts/ts-resolve.mjs scripts/seed-switch-kit.mjs <kit-folder>
+ *     node --import ./scripts/ts-resolve.mjs scripts/seed-switch-kit.mjs <kit-folder> [--unknown-turn]
  *
  * It prints the project paths in the order the scenario wants them, ready for
  * `DSPATCH_CHAT_SWITCH_PROJECTS`. The Verifier's and Niclas's window kits are seeded
@@ -37,9 +43,10 @@ import { ProjectStore } from '../src/main/project-store';
 
 const kitArgument = process.argv[2];
 if (kitArgument === undefined || kitArgument.trim() === '') {
-  console.error('usage: node --import ./scripts/ts-resolve.mjs scripts/seed-switch-kit.mjs <kit-folder>');
+  console.error('usage: node --import ./scripts/ts-resolve.mjs scripts/seed-switch-kit.mjs <kit-folder> [--unknown-turn]');
   process.exit(2);
 }
+const UNKNOWN_TURN = process.argv.slice(3).includes('--unknown-turn');
 const KIT = path.resolve(kitArgument);
 const USERDATA = path.join(KIT, 'userData');
 const CONVERSATIONS = path.join(USERDATA, 'conversations');
@@ -267,7 +274,19 @@ const ids = {};
   }
   const test = await service.runWorkspaceTest({ command: command('test.js'), cwd: '' });
   log(`A test: verdict=${test.verdict} exit=${String(test.exitCode)}`);
-  await service.dispose();
+  if (UNKNOWN_TURN) {
+    // A fourth message that is never answered: its attempt is saved as `running`
+    // before the send, and the file is kept as it is now, because disposing the
+    // service would write an ending of its own.
+    await service.sendPrompt('A fourth message whose answer never came.');
+    const file = store.filePathFor(session.conversationId);
+    const leftRunning = fs.readFileSync(file);
+    await service.dispose();
+    fs.writeFileSync(file, leftRunning);
+    log('A: a fourth message left with its agent-turn attempt running (--unknown-turn)');
+  } else {
+    await service.dispose();
+  }
 }
 
 // --- B: one answered message, a reviewed diff (a change after the session opened) and a failing test

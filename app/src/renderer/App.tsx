@@ -126,6 +126,7 @@ import {
   type TrailReply,
 } from '../shared/chat-workspace';
 import {
+  attemptRefLabels,
   composerCanSend,
   composerRouteNote,
   composerSendRoute,
@@ -196,20 +197,6 @@ function samePathOn(platform: string, left: string, right: string): boolean {
   return platform === 'win32'
     ? left.toLowerCase() === right.toLowerCase()
     : left === right;
-}
-
-/**
- * How the window writes attempts that need acknowledging: by ID, and by conversation
- * as well where two of them carry the same ID (WS-1 follow-up). Files saved by
- * earlier builds can share an ID, and "dsp-attempt-0004, dsp-attempt-0004" names
- * nothing. Full owner labels on every row are later work (WS-2).
- */
-function attemptRefLabels(refs: readonly AttemptRef[]): string[] {
-  return refs.map((ref) =>
-    refs.filter((other) => other.attemptId === ref.attemptId).length > 1
-      ? `${ref.attemptId} (conversation ${ref.conversationId ?? 'none'})`
-      : ref.attemptId,
-  );
 }
 
 type LoadState =
@@ -563,7 +550,7 @@ function Workbench({
       loopRunId: loopRunId.current,
       useLoop,
       outstandingTurn: blockingTurn,
-      unresolvedAttempts: attemptRefLabels(runState?.needsAcknowledgement.agentTurn ?? []),
+      unresolvedAttempts: runState?.needsAcknowledgement.agentTurn ?? [],
       otherWorkInProgress: busy !== null && !(busy === 'sending' && loopBusy),
       sessionOpen: session !== null,
       // DSP-121 flow: with no agent session behind the conversation, Enter keeps an
@@ -1877,7 +1864,10 @@ function Workbench({
       if (text === '') {
         return;
       }
-      const route = composerSendRoute(composerState);
+      // The attempts this press names are not in its way (DSP-124): *Send anyway* is
+      // the acknowledgement, and computing the route without it blocked the button on
+      // the very attempts it acknowledges. Enter names none, so it still stops here.
+      const route = composerSendRoute(composerState, acknowledgedAttemptIds ?? []);
       if (route.kind === 'blocked') {
         setComposerNote(route.reason);
         return;
@@ -7072,34 +7062,11 @@ function FolderSidebar({
       )}
 
       {/*
-        What this list is, and what it is not. Beside the folders rather than in a
-        tooltip, because the mistake it exists to prevent — reading a list of folders as
-        a boundary — is made by looking at the list.
-
-        DSP-64's shape, and the same disclosure the `Failure` card uses: one line that is
-        true on its own, the rest one click away. The summary **is** the headline rather
-        than a generic label above it, because in a 300 px column a labelled row would
-        cost a line to say nothing. The text is unchanged either way — what is decided
-        here is when it is on screen.
+        No help text about what these folders are (DSP-125, Niclas, 25 October 2026):
+        the tree shows the folders and their controls. What the folders are to a loop
+        run and to an ordinary message - and that they are not a boundary - is in
+        app/README.md, under "What the window shows".
       */}
-      {/*
-        DSP-121 UX (Niclas, 24 October 2026): the headline alone was three lines of
-        help on every screen, so the summary is now a short label and both sentences
-        are behind it, verbatim, with their `data-ev` names unchanged.
-      */}
-      {view.rootsNote !== null && (
-        <details className="sidebar__note" data-ev="workspace-roots">
-          <summary className="sidebar__note-summary" data-ev="workspace-roots-summary">
-            What these folders are
-          </summary>
-          <p className="sidebar__note-detail" data-ev="workspace-roots-note">
-            {view.rootsNote.headline}
-          </p>
-          <p className="sidebar__note-detail" data-ev="workspace-roots-detail">
-            {view.rootsNote.detail}
-          </p>
-        </details>
-      )}
 
       <div className="sidebar__tree" data-ev="tree" data-row-count={String(rows.length)}>
         {rows.map((row, index) => (

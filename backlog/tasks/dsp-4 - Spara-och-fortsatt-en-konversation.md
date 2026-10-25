@@ -4,7 +4,7 @@ title: 'Preserve conversations, changes and execution results after restart'
 status: Review
 assignee: []
 created_date: '2026-09-13'
-updated_date: '2026-10-24 04:29'
+updated_date: '2026-10-25 22:40'
 labels:
   - storage
 milestone: m-0
@@ -115,4 +115,6 @@ WS-1c result (24 Oct 2026, run 20261024-000000-ws1c, base 0b52baf, accepted cand
 Niclas's manual UX acceptance remains pending; nothing here is it.
 
 24 Oct 2026: DSP-121 (3e764a2) replaced the automatic resume fallback, so the manual kit's WINDOW-TEST.md step 3 (a new provider session opened on a refused resume) and its 'passed' expectation in the live panel (product observation (a)) are superseded. The current manual instruction is .dspatch-loop/MANUAL-CHECK-20261024.md (copy beside the kit): Part 1 regression on the presentation adapter, Part 2 the choice panel with a real refused Cursor resume. Final candidate 3f847a0, build identity a6dc3f83f6bde967. Status stays Review until Niclas's acceptance.
+
+25 Oct 2026: DSP-124 fixed (run 20261025-090000-send-anyway) - the window's Send anyway and the Execution-state Continue were blocked by the composer's own send route before reaching sendPrompt; now an explicit acknowledgement sends exactly once with the named attempts acknowledged, verified offline in the window (presentation adapter) with a regression scenario that failed before and passes after. The window path for AC #3/#11 therefore works offline; Niclas's manual acceptance of DSP-4 is still pending.
 <!-- SECTION:NOTES:END -->

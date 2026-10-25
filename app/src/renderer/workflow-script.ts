@@ -135,6 +135,12 @@ const CHAT_EXIT = {
    */
   resumeStateNotShown: 87,
   resumeChoiceWrong: 88,
+  /**
+   * 90 belongs to DSP-124, the `ok` phase of `resume-choice`: *Send anyway* did not
+   * send the draft once with the outcome-unknown turn acknowledged, or Enter got past
+   * the gate without that choice.
+   */
+  sendAnywayWrong: 90,
 } as const;
 
 const CHANGE_REQUEST =
@@ -4726,43 +4732,8 @@ async function runSeveralWorkingRootsScenario(
     observations['definitionFromElsewhere'] = { key: outsideKey, ...onScreen };
     record('definition-on-screen', onScreen);
 
-    // --- What the window says these folders are, and what it keeps behind a click ---
-    // Read closed first: "the detail is one gesture away" is only true if the gesture is
-    // needed, so the disclosure's own state is part of the observation rather than
-    // something the trial opens on its way past.
-    const detailClosedAtFirst = !detailsOpen('workspace-roots');
-    // Both sentences are behind the disclosure since DSP-121's UX pass; its summary is
-    // a short label, so the gesture is a click on the summary, and the headline is read
-    // from the document (the text is there, closed) exactly as the detail is.
-    const headlineOnScreen = textOf('workspace-roots-note');
-    clickInside('workspace-roots-summary');
-    await sleep(200);
-    const detailOpensOnClick = detailsOpen('workspace-roots');
-    const detailOnScreen = textOf('workspace-roots-detail');
-    // Closed again, so the window is left in the state a person meets — which is also
-    // the state the screenshot should show, since drawing the paragraph unasked is the
-    // thing this shape was applied to fix. It closing again is worth recording too: a
-    // disclosure that only opens is a paragraph with an extra click in front of it.
-    clickInside('workspace-roots-summary');
-    await sleep(200);
-    const detailClosesAgain = !detailsOpen('workspace-roots');
-    observations['rootsNote'] = {
-      fromMain: view.rootsNote,
-      onScreen: { headline: headlineOnScreen, detail: detailOnScreen },
-      detailClosedAtFirst,
-      detailOpensOnClick,
-      detailClosesAgain,
-    };
-    record('roots-note', {
-      headlineChars: headlineOnScreen.length,
-      detailChars: detailOnScreen.length,
-      detailClosedAtFirst,
-      detailOpensOnClick,
-      detailClosesAgain,
-    });
-    if (!detailClosesAgain) {
-      failures.push('the folder note\u2019s detail could be opened and not closed again.');
-    }
+    // The sidebar's note about what these folders are was removed (DSP-125); what it
+    // said is in app/README.md, so there is no note on screen to read here any more.
 
     // --- Send, with DSpatch's own folder among the roots ------------------------
     // Refused before any adapter exists, so this costs nothing. It is also the only
@@ -4801,10 +4772,6 @@ async function runSeveralWorkingRootsScenario(
     const verdict = checkWorkingRootsReadHonestly({
       rootsGiven,
       workingRoot: workingFolder,
-      noteFromMain: view.rootsNote ?? { headline: '', detail: '' },
-      noteOnScreen: { headline: headlineOnScreen, detail: detailOnScreen },
-      detailClosedAtFirst,
-      detailOpensOnClick,
       definitionChosen: outsideKey,
       graphMarkerOnScreen: String(onScreen['graphTextMarker'] ?? ''),
       graphMarkerExpected: plan.rootsGraphMarker ?? '',
@@ -4827,7 +4794,6 @@ async function runSeveralWorkingRootsScenario(
     observations['documentWhenItFailed'] = {
       sessionId: textOf('session-id'),
       connection: textOf('connection-kind'),
-      note: textOf('workspace-roots-note'),
       rows: drawnTreeRows(),
     };
     return finish(CHAT_EXIT.workingRootsReadWrong, steps, failures, observations);
@@ -8365,7 +8331,7 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
       const host = element(name);
       return host !== null && active !== null && host.contains(active);
     };
-    const help = ['workspace-roots-summary', 'model-affects-summary'].map(
+    const help = ['model-affects-summary'].map(
       (name) => element(name)?.closest('details') ?? null,
     );
     const reading = {
@@ -8506,19 +8472,17 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
   };
 
   /**
-   * The two help disclosures beside the conversation, closed at rest, then opened and
-   * closed again with their text intact (they went behind <details> in DSP-121's UX
-   * pass, and no other runnable scenario opens them). A dispatched KeyboardEvent has no
+   * The help disclosure beside the composer (the model's), closed at rest, then opened
+   * and closed again with its text intact (it went behind <details> in DSP-121's UX
+   * pass, and no other runnable scenario opens it). The sidebar's folder help it was
+   * checked beside is gone (DSP-125). A dispatched KeyboardEvent has no
    * default action in the page, so Enter on the summary is dispatched and recorded but
    * the open itself is `summary.click()`; focus is recorded as the keyboard evidence the
    * page can give. Never in hold mode: it moves focus and opens disclosures.
    */
   const checkHelpDisclosures = async (): Promise<void> => {
     const helpDisclosures: Record<string, unknown> = {};
-    const pairs = [
-      ['folders', 'workspace-roots-summary', 'workspace-roots-detail'],
-      ['model', 'model-affects-summary', 'model-affects'],
-    ] as const;
+    const pairs = [['model', 'model-affects-summary', 'model-affects']] as const;
     for (const [label, summaryName, textName] of pairs) {
       const summary = element(summaryName);
       const details = summary?.closest('details') ?? null;
@@ -8888,13 +8852,110 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     return summaryShown;
   };
 
-  try {
-    if (mode === 'ok') {
-      throw new Error(
-        'DSPATCH_CHAT_RESUME must be refused, failed or refused-once for this scenario: ' +
-          'with ok (or unset) the presentation adapter resumes everything and there is ' +
-          'no refusal to show.',
+  /**
+   * The `ok` phase (DSP-124): A is resumed, and the kit was seeded with
+   * `--unknown-turn`, so A holds an agent turn whose outcome is unknown. Enter is held
+   * back by that gate; one press of *Send anyway* sends the draft. Judged here on what
+   * the window showed - one answered turn carrying the draft, the box emptied only
+   * after it, the gate gone, no second turn - and by the main process on what reached
+   * it: one send with that attempt acknowledged, the adapter receiving the draft
+   * alone, and the attempt still unresolved in the file but acknowledged.
+   */
+  const sendAnywayPhase = async (): Promise<void> => {
+    await waitFor(
+      'the Send anyway control for the outcome-unknown turn (seed the kit with --unknown-turn)',
+      () => element('send-anyway') !== null,
+      30_000,
+    );
+    await sleep(800);
+    const offered = {
+      gateText: clean(textOf('send-needs-acknowledgement')),
+      buttonLabel: clean(textOf('send-anyway')),
+      providerSessionFact: textOf('provider-session-id'),
+      composerStatus: textOf('active-status'),
+      panelShown: element('continuity-choices') !== null,
+      historyTurns: historyPrompts().length,
+    };
+    record('send anyway offered', offered);
+    const named = /^Send anyway, leaving (dsp-attempt-\d+) unresolved$/.exec(offered.buttonLabel)?.[1] ?? null;
+    observations['sendAnywayAttemptNamed'] = named;
+    expect(
+      CHAT_EXIT.sendAnywayWrong,
+      named !== null && !offered.panelShown && !offered.providerSessionFact.endsWith('(on record, not open)'),
+      `Send anyway was not offered for one attempt in a resumed session: ${JSON.stringify(offered)}`,
+    );
+    const draft = `Sent anyway ${newNonce()}: reply with anything.`;
+    observations['messageSentAnyway'] = draft;
+    await typeInto('prompt', draft);
+    // Enter without the explicit choice: the gate holds, the draft stays.
+    const enterTaken = await pressKeyInComposer('prompt', 'Enter', { shiftKey: false });
+    await sleep(1_000);
+    const afterEnter = {
+      enterTakenFromTextarea: enterTaken,
+      draftKept: composerText() === draft,
+      turnAppeared: element('turn-0') !== null,
+      routeNote: clean(textOf('composer-route-note')),
+      actionError: textOf('action-error-message'),
+      gateStillShown: element('send-anyway') !== null,
+    };
+    record('enter without the choice', afterEnter);
+    expect(
+      CHAT_EXIT.sendAnywayWrong,
+      afterEnter.draftKept &&
+        !afterEnter.turnAppeared &&
+        afterEnter.actionError === '' &&
+        afterEnter.gateStillShown &&
+        named !== null &&
+        afterEnter.routeNote.includes(named),
+      `Enter without the explicit choice did not just hold the draft back at the gate: ${JSON.stringify(afterEnter)}`,
+    );
+    await capture('send-anyway-gate');
+    // One press of the real button.
+    const button = element('send-anyway');
+    const enabledAtPress = button instanceof HTMLButtonElement && !button.disabled;
+    if (button instanceof HTMLButtonElement) {
+      button.click();
+    }
+    let answered = true;
+    try {
+      await waitFor(
+        'the message sent anyway to be answered',
+        () => statusOfTurn(0) === 'finished' && textOf('turn-0-answer') !== '',
+        20_000,
       );
+    } catch {
+      answered = false;
+    }
+    await sleep(1_500);
+    const after = {
+      enabledAtPress,
+      answered,
+      status: statusOfTurn(0),
+      prompt: clean(element('turn-0-prompt')?.textContent ?? null),
+      composerText: composerText(),
+      composerNote: clean(textOf('composer-note')),
+      routeNote: clean(textOf('composer-route-note')),
+      actionError: textOf('action-error-message'),
+      gateStillShown: element('send-needs-acknowledgement') !== null,
+      secondTurn: element('turn-1') !== null,
+    };
+    record('send anyway pressed once', after);
+    expect(
+      CHAT_EXIT.sendAnywayWrong,
+      enabledAtPress && answered && after.prompt === draft && after.composerText === '',
+      `one press of Send anyway did not send the draft and empty the box: ${JSON.stringify(after)}`,
+    );
+    expect(
+      CHAT_EXIT.sendAnywayWrong,
+      !after.gateStillShown && !after.secondTurn && after.composerNote === '' && after.actionError === '',
+      `after Send anyway the gate, a second turn or a note was still there: ${JSON.stringify(after)}`,
+    );
+    await capture('sent-anyway');
+  };
+
+  try {
+    if (mode === 'ok' && hold) {
+      throw new Error('Hold mode is for the refused and failed states; the ok phase is the Send anyway check.');
     }
     if (projectA === undefined) {
       throw new Error(
@@ -8920,6 +8981,14 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
       60_000,
     );
     await sleep(1_500);
+
+    if (mode === 'ok') {
+      // --- DSP-124: resumed, with an outcome-unknown turn; Send anyway, once ---------
+      await sendAnywayPhase();
+      const okCode =
+        failures.length === 0 ? CHAT_EXIT.ok : failed.size === 0 ? CHAT_EXIT.scriptFailed : Math.min(...failed);
+      return finish(okCode, steps, failures, observations);
+    }
 
     // --- At rest, as a person meets it: read, judged and photographed, nothing touched
     const atRest = readState('at rest');

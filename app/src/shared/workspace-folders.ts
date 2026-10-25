@@ -25,8 +25,6 @@
  * forget to leave out.
  */
 
-import type { WorkingRootsDescription } from './working-roots';
-
 /** What a saved workspace file says it is. Checked on read, written on save. */
 export const WORKSPACE_FILE_FORMAT = 'dspatch-workspace';
 export const WORKSPACE_FILE_FORMAT_VERSION = 1;
@@ -74,19 +72,6 @@ export interface WorkspaceView {
   readonly filePath: string | null;
   /** Set when something about the workspace could not be done, and says what. */
   readonly problem: string | null;
-  /**
-   * What these folders are, and what they are not, in words for a person.
-   *
-   * DSP-72 #6. `describeWorkingRootsForPerson` writes it in the main process and the
-   * sidebar draws the headline with the rest behind a disclosure. It lives on the view
-   * rather than being composed in the renderer so that the folders a run is given and
-   * the sentence a person reads about them come from one place: a window that described
-   * a different list from the one the provider received would be worse than a window
-   * that described nothing.
-   *
-   * `null` when no folder is open, which is when the sidebar draws nothing at all.
-   */
-  readonly rootsNote: WorkingRootsDescription | null;
 }
 
 export const EMPTY_WORKSPACE_VIEW: WorkspaceView = {
@@ -94,7 +79,6 @@ export const EMPTY_WORKSPACE_VIEW: WorkspaceView = {
   loopDefinitionKey: null,
   filePath: null,
   problem: null,
-  rootsNote: null,
 };
 
 /* ------------------------------------------------------------------------- */

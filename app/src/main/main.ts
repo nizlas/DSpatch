@@ -114,7 +114,7 @@ import {
   type UnsavedDrawingAnswer,
   type UnsavedDrawingOccasion,
 } from '../shared/unsaved-drawing';
-import { describeWorkingRootsForPerson, workingRootsFrom } from '../shared/working-roots';
+import { workingRootsFrom } from '../shared/working-roots';
 import type { SampleProjectListing } from './sample-projects';
 import {
   graphVersionIdFor,
@@ -720,9 +720,8 @@ function requireProjectStore(): ProjectStore {
  *
  * **And the ordinary chat path is untouched.** `chat-service.ts` builds its
  * `SessionConfig` with `workspacePath` alone, so a message outside a loop run gives the
- * agent the working directory and nothing else. That asymmetry is real and is why the
- * sidebar's note names which path it is describing rather than saying "the folders reach
- * Cursor" flatly.
+ * agent the working directory and nothing else. That asymmetry is real, and app/README.md
+ * names which path it is describing rather than saying "the folders reach Cursor" flatly.
  *
  * So this still holds only the *extra* folders. The working one is wherever it always was.
  */
@@ -768,14 +767,6 @@ function currentWorkspaceView(problem: string | null = null): WorkspaceView {
     loopDefinitionKey: workspaceLoopDefinitionKey,
     filePath: workspaceFilePath,
     problem,
-    // The same construction the run uses, so the sentence on screen describes the list
-    // a run would actually be given rather than a second idea of it.
-    rootsNote:
-      folders.length === 0
-        ? null
-        : describeWorkingRootsForPerson(
-            workingRootsFrom(folders, resolvedWorking, pathsAreCaseInsensitive),
-          ),
   };
 }
 
@@ -2484,6 +2475,11 @@ interface ResumeChoiceTimelineEntry {
   readonly resumeAttempts: number;
   readonly startSessionCalls: number;
   readonly sentCount: number;
+  /**
+   * A send's `acknowledgedAttemptIds` as they arrived over IPC (DSP-124): what the
+   * window named when it sent, `null` for a session start.
+   */
+  readonly acknowledged: readonly AttemptAcknowledgement[] | null;
 }
 
 const resumeChoiceTimeline: ResumeChoiceTimelineEntry[] = [];
@@ -2506,6 +2502,7 @@ function recordResumeChoice(
   before: StoredSession | null,
   outcome: ResumeChoiceTimelineEntry['outcome'],
   detail: string | null,
+  acknowledged: readonly AttemptAcknowledgement[] | null = null,
 ): void {
   const continuity = chatService.sessionContinuity();
   const adapter = presentationResume.record();
@@ -2528,6 +2525,7 @@ function recordResumeChoice(
     resumeAttempts: adapter.resumeAttempts.length,
     startSessionCalls: adapter.startSessionCalls,
     sentCount: adapter.sent.length,
+    acknowledged,
   });
 }
 
@@ -2564,7 +2562,9 @@ function resumeChoiceChecks(
   const expectedKind =
     mode === 'failed' ? 'resume-failed' : mode === 'ok' ? 'provider-session-resumed' : 'resume-refused';
   claim(
-    `after the open the continuity was ${expectedKind} with no provider session open`,
+    mode === 'ok'
+      ? `after the open the continuity was ${expectedKind}`
+      : `after the open the continuity was ${expectedKind} with no provider session open`,
     opened?.continuityAfter?.kind === expectedKind &&
       (mode === 'ok' || opened?.continuityAfter?.providerSessionOpen === false),
     `kind ${opened?.continuityAfter?.kind ?? 'none'}, open ${String(opened?.continuityAfter?.providerSessionOpen ?? 'none')}`,
@@ -2646,6 +2646,69 @@ function resumeChoiceChecks(
         `kind ${retry.continuityAfter?.kind ?? 'none'}, sent ${String(retry.sentCount)}, file after: ${JSON.stringify(retry.fileSessionAfter)}`,
       );
     }
+  }
+  // DSP-124, the ok phase: one press of Send anyway over an outcome-unknown turn. What
+  // the window cannot see: that exactly one send reached this process, naming exactly
+  // that attempt in this conversation; that the adapter received the draft alone; and
+  // that the file keeps the attempt unresolved but acknowledged, beside the new turn.
+  if (mode === 'ok') {
+    const message = observations['messageSentAnyway'];
+    const named = observations['sendAnywayAttemptNamed'];
+    const sends = resumeChoiceTimeline.filter((entry) => entry.event === 'send');
+    const projectA = (process.env['DSPATCH_CHAT_SWITCH_PROJECTS'] ?? '').split(';')[0]?.trim() ?? '';
+    const fileA = observeConversationFiles().find(
+      (file) => file.projectPath !== null && projectA !== '' && samePathSpelling(file.projectPath, projectA),
+    );
+    claim(
+      'exactly one send reached the main process, accepted, carrying the draft',
+      typeof message === 'string' &&
+        sends.length === 1 &&
+        sends[0]?.outcome === 'ok' &&
+        sends[0].request === message,
+      `${String(sends.length)} send(s): ${
+        sends.map((entry) => `${entry.outcome} ${JSON.stringify(entry.request)}${entry.detail === null ? '' : ` (${entry.detail})`}`).join(' | ') || 'none'
+      }; the window typed ${JSON.stringify(message ?? null)}`,
+    );
+    const acknowledged = sends[0]?.acknowledged ?? null;
+    claim(
+      'that send acknowledged exactly the named attempt, by conversation and attempt ID',
+      typeof named === 'string' &&
+        fileA !== undefined &&
+        acknowledged !== null &&
+        acknowledged.length === 1 &&
+        typeof acknowledged[0] === 'object' &&
+        acknowledged[0].attemptId === named &&
+        acknowledged[0].conversationId === fileA.conversationId,
+      `acknowledged ${JSON.stringify(acknowledged)}; named in the window ${JSON.stringify(named ?? null)}; A's conversation ${
+        fileA?.conversationId ?? 'not found'
+      }`,
+    );
+    const sent = presentationResume.record().sent;
+    claim(
+      'the adapter received exactly the draft, once, with nothing in front of it',
+      typeof message === 'string' && sent.length === 1 && sent[0] === message,
+      `adapter received ${JSON.stringify(sent)}`,
+    );
+    const seenAttempt = fileA?.attempts.find((attempt) => attempt.attemptId === named) ?? null;
+    const turns = fileA?.attempts.filter((attempt) => attempt.kind === 'agent-turn') ?? [];
+    const newest = turns[turns.length - 1] ?? null;
+    claim(
+      "the file keeps the named attempt unresolved but acknowledged, and records the new turn as its own attempt",
+      seenAttempt !== null &&
+        seenAttempt.kind === 'agent-turn' &&
+        seenAttempt.state === 'outcome-unknown' &&
+        seenAttempt.acknowledgedAtUtc !== null &&
+        newest !== null &&
+        newest.attemptId !== named &&
+        newest.state === 'completed',
+      `named attempt ${JSON.stringify(seenAttempt)}; newest agent-turn attempt ${JSON.stringify(newest)}`,
+    );
+    const last = resumeChoiceLastMessage();
+    claim(
+      "the conversation file's last message is the draft",
+      last !== null && typeof message === 'string' && last.prompt === message && last.resentContext === null,
+      `last message ${last === null ? 'none' : JSON.stringify(last.prompt)}`,
+    );
   }
   // The refused and failed phases both choose a new session: refused removes the
   // summary before its one message, failed keeps it.
@@ -3408,7 +3471,7 @@ function registerIpc(): void {
       const fileSessionBefore = resumeChoiceFileSession();
       try {
         const reference = await chatService.sendPrompt(prompt, acknowledgedAttemptIds ?? []);
-        recordResumeChoice('send', prompt, fileSessionBefore, 'ok', null);
+        recordResumeChoice('send', prompt, fileSessionBefore, 'ok', null, acknowledgedAttemptIds ?? []);
         return reference;
       } catch (error) {
         recordResumeChoice(
@@ -3417,6 +3480,7 @@ function registerIpc(): void {
           fileSessionBefore,
           'refused',
           error instanceof Error ? error.message : String(error),
+          acknowledgedAttemptIds ?? [],
         );
         throw error;
       }

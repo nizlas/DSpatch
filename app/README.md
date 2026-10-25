@@ -1080,7 +1080,7 @@ adapter then refuses or fails:
 | `refused` | every resume is refused with `providerCode: 'agent_not_found'`, the shape of "the provider does not have that session" | reads the history with a draft in the box (the thread scrolled to its first message with the way forward still in view, Enter held back with its note); the diagnostics opened by *Details*, copied, closed with *Back to the conversation* and again with Escape; *Try again* (refused again); *Start new session* (the block with its summary, *Remove summary*, the draft sent alone and answered locally) |
 | `failed` | every resume throws with no provider code (`TypeError: fetch failed`), the shape of a transport failure | the diagnostics opened, copied and closed; *Try again*, which fails again with the details still closed; *Start new session* with the summary kept, and one message sent with it |
 | `refused-once` | the first resume of each session ID is refused, later ones succeed | *Try again*, which resumes: same conversation, three messages, no panel |
-| `ok` (or unset) | every resume succeeds, as in every other scenario | the scenario reports that it was given no refusal to show (exit 37) |
+| `ok` (or unset) | every resume succeeds, as in every other scenario | *Send anyway* (DSP-124), over a kit seeded with `--unknown-turn`: see below |
 
 In these phases the panel carries the short label *Test mode — no provider calls*, and the
 diagnostics the full sentence *Presentation mode: this refusal or failure is simulated by
@@ -1097,8 +1097,8 @@ conversation. You can send a summary with your next message.*; the *Details* ent
 test-mode label; no running-command line; no disclosure open in the panel; the session
 details closed; no history introduction, and the three seeded messages on screen; the
 composer status *No agent session — history only*; and the "Provider session" fact
-reading `(on record, not open)`. Then the two help disclosures beside the conversation
-are opened and closed, and the window is narrowed to 700 px (`-at-rest-narrow.png`): the
+reading `(on record, not open)`. Then the help disclosure beside the composer (what the
+model choice applies to) is opened and closed, and the window is narrowed to 700 px (`-at-rest-narrow.png`): the
 document must not overflow horizontally, and *Try again*, *Start new session* and
 *Details* must be inside the viewport; the width is put back. Reading the history needs a
 thread that scrolls, and three seeded messages fill the window at its normal width
@@ -1155,6 +1155,21 @@ The `refused` and `failed` phases write to the kit (one message and a new sessio
 so seed a fresh kit per launch rather than reusing one. `DSPATCH_CHAT_SWITCH_PROJECTS` is
 read for its first entry only, A; it is the same variable the seed prints, so nothing new
 has to be spelled.
+
+**The `ok` phase is the *Send anyway* check (DSP-124).** Seed the kit with
+`--unknown-turn` (`seed-switch-kit.mjs $kit --unknown-turn`): A then also holds a fourth
+message whose agent turn was left running, which the next open reads as an outcome-unknown
+attempt. The phase opens A (resumed by the presentation adapter), waits for *Send anyway,
+leaving dsp-attempt-NNNN unresolved*, types a draft and presses Enter - which must hold the
+draft back with the gate's note and send nothing - and then presses *Send anyway* once.
+The window must show one answered turn carrying the draft, the box emptied, the gate gone
+and no second turn (pictures `<shot>-ok-send-anyway-gate.png` and `-ok-sent-anyway.png`).
+The main process judges, in `resumeChoice.checks`: exactly one send reached it, accepted,
+carrying the draft; that send acknowledged exactly the named attempt, by conversation and
+attempt ID; the adapter received the draft alone; and the conversation file keeps the
+attempt `outcome-unknown` with its acknowledgement time, beside the new turn as its own
+attempt. Like the others it writes to the kit, so seed a fresh one per launch. Hold mode
+is not offered for it.
 
 **Hold mode**, `DSPATCH_CHAT_HOLD=1` with any phase: the scenario performs only the open
 and the reading at rest, then judges the **hand-over** and records it (`handOver`): the
@@ -1214,8 +1229,9 @@ window. The start file never sets it.
 | 85 | The acknowledged command did not pass, or a save failed while it ran. |
 | 86 | After the restart, a conversation did not come back as it was left. |
 | 87 | The refused or failed resume state was not shown as such: no panel, the wrong heading or body ("no longer", "missing", "disappeared" or "existed" claimed), not exactly the offered buttons, *Read history* anywhere, no line under the buttons or no *Details* entry, the test-mode label missing, a running-command line with nothing running, a disclosure open or the session details open at rest, the history introduction still there or the seeded messages missing, the wrong composer status, a fact that disagreed, a new-session block while no session was open, diagnostics lacking a service text, a hand-over not at rest (hold mode), or at 700 px a horizontal overflow, a hidden control or the thread drawn over the composer. |
-| 88 | A step did not behave: the history did not scroll or the way forward left the viewport, the draft was lost, Enter was not held back with its note, the help disclosures did not open and close, *Details* did not open the diagnostics with focus there and the way back in view, the copy did not confirm in place, closing did not bring back the panel with focus on *Details*, *Try again* changed the conversation or the draft, the new session was not explained where it was chosen or its summary did not open in full, removing the summary did not say so, the message was not answered, or the sent turn did not show the summary that went with it (or showed one after it was removed). |
-| 89 | The main process's record contradicted the window: the file's `session` block changed before a choice, a different number of resume attempts, a send reached the main process while no provider session was open, a session started or something sent that should not have been, the copied text differed from the diagnostics shown, the one message reached the adapter other than as the phase sends it (alone, or after the summary as shown), or the sent turn or the message saved in the conversation file recorded a different summary than the one sent. |
+| 88 | A step did not behave: the history did not scroll or the way forward left the viewport, the draft was lost, Enter was not held back with its note, the help disclosure did not open and close, *Details* did not open the diagnostics with focus there and the way back in view, the copy did not confirm in place, closing did not bring back the panel with focus on *Details*, *Try again* changed the conversation or the draft, the new session was not explained where it was chosen or its summary did not open in full, removing the summary did not say so, the message was not answered, or the sent turn did not show the summary that went with it (or showed one after it was removed). |
+| 89 | The main process's record contradicted the window: the file's `session` block changed before a choice, a different number of resume attempts, a send reached the main process while no provider session was open, a session started or something sent that should not have been, the copied text differed from the diagnostics shown, the one message reached the adapter other than as the phase sends it (alone, or after the summary as shown), or the sent turn or the message saved in the conversation file recorded a different summary than the one sent. In the `ok` phase: not exactly one accepted send carrying the draft, an acknowledgement other than exactly the named attempt in A's conversation, the adapter receiving anything but the draft alone, or the file not keeping that attempt `outcome-unknown` and acknowledged beside the new turn. |
+| 90 | *Send anyway* (the `ok` phase, DSP-124) was not offered for one attempt in a resumed session, Enter without the explicit choice did more than hold the draft back at the gate, or one press did not send the draft, empty the box and take the gate away without a second turn or a note. |
 | 25 | `DSPATCH_CHAT_EXPECT_USERDATA` names a directory other than the one in force. Nothing of DSpatch's was created or written. |
 
 `DSPATCH_SMOKE`, `DSPATCH_PROBE` and `DSPATCH_CHAT_RUN` each own the exit code.
@@ -1278,6 +1294,36 @@ npm run package
   given — which is a folder path, a model name and your prompts, and **no file
   content**, because opening a folder does not put it in front of the model; and
   what is happening right now.
+- **Folders** (the sidebar): the project tree, with the open project marked
+  `project` and any folder added beside it with *Add…*. These folders are **not a
+  boundary**. What they are, checked against the code (DSP-125 moved this here from
+  a note in the sidebar):
+  - The open project is the **working directory**: the folder the provider session
+    is opened with as `cwd`, and the default working directory of the build and test
+    command (`chat-service.ts`, `SessionConfig.workspacePath`; `localOptionsFor` in
+    `cursor-sdk-adapter.ts`).
+  - All open folders, and DSpatch's own working copy, are searched for loop definitions (`loopFolders()` in `main.ts`).
+  - **During a loop run** every open folder is a working folder of the run: DSpatch
+    hands them to Cursor as the session's workspace folders (`cwd` plus `dirs`;
+    `workspacePaths: providerRootPathsFor(...)` in `loop-live.ts`) and measures what
+    changed in each one with a before-and-after snapshot - unless no step of the
+    drawing may write, in which case the run's record says that no snapshot was taken
+    (`snapshotDecisionFor` in `loop-live-run.ts`).
+  - **An ordinary chat message** gives the agent the working directory alone; the
+    other folders reach nobody (`chat-service.ts` builds its `SessionConfig` with
+    `workspacePath` only, so `localOptionsFor` passes no `dirs`).
+  - **A folder's own rules, skills and `AGENTS.md` are not loaded** on either path:
+    DSpatch does not turn on Cursor's project settings. `localOptionsFor` passes no
+    `settingSources`, which the SDK reads as every setting source off; DSP-91's probe
+    measured the product's own options reading none of a planted rule, skill or
+    `AGENTS.md`. An agent is governed by what DSpatch sends it.
+  - **Cursor's local agent runs with no filesystem confinement by default** (the
+    SDK's default sandbox policy is `insecure_none`, and `dirs` confines nothing).
+    DSP-1 measured an agent reading and modifying a file outside the folder it was
+    given and a shell command writing outside it; see *Containment* under *Not
+    implemented yet*. What a run can report afterwards is what changed inside the
+    folders it measured; anything outside them was not observed, which is not the
+    same as nothing having changed.
 - **Connection:** connected or not, and to which account, plus the backend, the
   model requested, how many models the account can request, when the credential
   expires and where it came from. A stored login that the provider will not accept

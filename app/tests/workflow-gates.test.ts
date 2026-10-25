@@ -992,26 +992,12 @@ test('rejects a second agent started without the first step\u2019s words', () =>
 });
 
 /* ------------------------------------------------------------------------- */
-/* DSP-72: several working roots, and the sentence about them                 */
+/* DSP-72: several working roots, a definition from elsewhere, the refusal     */
 /* ------------------------------------------------------------------------- */
-
-const HONEST_HEADLINE =
-  '2 working folders. Not a boundary: DSpatch reports what changed inside these folders ' +
-  'and cannot stop an agent leaving them.';
-
-const HONEST_DETAIL =
-  'target is the working directory. Not a boundary: DSpatch reports what changed inside ' +
-  'these folders and cannot stop an agent leaving them. These are the folders this run ' +
-  'works with. DSpatch hands them to Cursor as the session\u2019s workspace folders, and ' +
-  'Cursor\u2019s local agent runs with no filesystem confinement by default.';
 
 const ROOTS_AS_THEY_SHOULD_BE: WorkingRootsObservation = {
   rootsGiven: ['C:/work/target', 'C:/work/source'],
   workingRoot: 'C:/work/target',
-  noteFromMain: { headline: HONEST_HEADLINE, detail: HONEST_DETAIL },
-  noteOnScreen: { headline: HONEST_HEADLINE, detail: HONEST_DETAIL },
-  detailClosedAtFirst: true,
-  detailOpensOnClick: true,
   definitionChosen: 'C:/elsewhere/.dspatch/loops/mine.loop.json',
   graphMarkerOnScreen: 'MARKER-outside-loop',
   graphMarkerExpected: 'MARKER-outside-loop',
@@ -1021,7 +1007,7 @@ const ROOTS_AS_THEY_SHOULD_BE: WorkingRootsObservation = {
   ownRepository: 'C:/dev/DSpatch',
 };
 
-test('accepts two roots, a definition from elsewhere and a note that claims nothing', () => {
+test('accepts two roots, a definition from elsewhere and the refusal naming DSpatch', () => {
   assert.equal(checkWorkingRootsReadHonestly(ROOTS_AS_THEY_SHOULD_BE).failure, null);
 });
 
@@ -1047,79 +1033,6 @@ test('rejects a graph on screen that is not the chosen definition\u2019s own', (
     graphMarkerOnScreen: 'MARKER-something-else',
   });
   assert.match(String(verdict.failure), /is not the one that reached the screen/);
-});
-
-/**
- * The counter-example this gate exists for.
- *
- * A note that reads as a boundary is the defect DSP-72 can ship while every other
- * criterion passes, so the gate has to fail on wording alone with everything else in
- * place.
- */
-test('rejects a note that says the agent is limited to the folders', () => {
-  const claiming = `${HONEST_DETAIL} The agent is limited to these folders.`;
-  const verdict = checkWorkingRootsReadHonestly({
-    ...ROOTS_AS_THEY_SHOULD_BE,
-    noteFromMain: { headline: HONEST_HEADLINE, detail: claiming },
-    noteOnScreen: { headline: HONEST_HEADLINE, detail: claiming },
-  });
-  assert.match(String(verdict.failure), /reads as a restriction/);
-});
-
-/**
- * DSP-64's shape applied badly, which is the regression this pair of tests exists for.
- *
- * Everything else about the observation is correct — the folders, the definition, the
- * refusal, and a full paragraph behind the disclosure that says all the right things.
- * The only fault is that the line most people will actually read is the comfortable
- * half. The gate has to fail on that alone.
- */
-test('rejects a headline that leaves "not a boundary" to whoever clicks', () => {
-  const comfortable = '2 working folders, with target as the working directory.';
-  const verdict = checkWorkingRootsReadHonestly({
-    ...ROOTS_AS_THEY_SHOULD_BE,
-    noteFromMain: { headline: comfortable, detail: HONEST_DETAIL },
-    noteOnScreen: { headline: comfortable, detail: HONEST_DETAIL },
-  });
-  assert.match(String(verdict.failure), /must not come away believing they are one/);
-});
-
-test('rejects a headline that has grown back into a paragraph', () => {
-  const grown = `${HONEST_HEADLINE} ${HONEST_DETAIL} ${HONEST_DETAIL}`;
-  const verdict = checkWorkingRootsReadHonestly({
-    ...ROOTS_AS_THEY_SHOULD_BE,
-    noteFromMain: { headline: grown, detail: HONEST_DETAIL },
-    noteOnScreen: { headline: grown, detail: HONEST_DETAIL },
-  });
-  assert.match(String(verdict.failure), /the detail is where length belongs/);
-  assert.match(String(verdict.failure), /761 characters/);
-});
-
-test('rejects a detail that was already open, unasked', () => {
-  const verdict = checkWorkingRootsReadHonestly({
-    ...ROOTS_AS_THEY_SHOULD_BE,
-    detailClosedAtFirst: false,
-  });
-  assert.match(String(verdict.failure), /drawing the whole paragraph unasked/);
-});
-
-test('rejects a detail that cannot be opened, because unreachable is removed', () => {
-  const verdict = checkWorkingRootsReadHonestly({
-    ...ROOTS_AS_THEY_SHOULD_BE,
-    detailOpensOnClick: false,
-  });
-  assert.match(String(verdict.failure), /unreachable is the same as removed/);
-});
-
-test('rejects a window that describes the folders differently from the main process', () => {
-  const verdict = checkWorkingRootsReadHonestly({
-    ...ROOTS_AS_THEY_SHOULD_BE,
-    noteOnScreen: {
-      headline: HONEST_HEADLINE,
-      detail: `${HONEST_DETAIL} And something the main process never said.`,
-    },
-  });
-  assert.match(String(verdict.failure), /second description/);
 });
 
 test('rejects a run that was not refused with DSpatch among its roots', () => {

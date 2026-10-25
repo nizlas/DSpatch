@@ -38,6 +38,8 @@
  * something. Nothing the user reads calls it that: to them it is their message.
  */
 
+import type { AttemptRef } from './bridge';
+
 /** Which step took a message, recorded after it happened rather than predicted. */
 export interface LoopInstructionDelivery {
   readonly nodeId: string;
@@ -343,8 +345,12 @@ export interface ComposerState {
   readonly useLoop: boolean;
   /** An ordinary provider turn is outstanding and has not been asked to stop. */
   readonly outstandingTurn: boolean;
-  /** Attempts with no known outcome, which gate the next message until named. */
-  readonly unresolvedAttempts: readonly string[];
+  /**
+   * Attempts with no known outcome, which gate the next message until named: by
+   * conversation and ID, so a send that names some of them can be told apart from
+   * the ones it does not (DSP-124).
+   */
+  readonly unresolvedAttempts: readonly AttemptRef[];
   /**
    * Something other than a send is occupying the window: choosing a folder,
    * starting a session, cancelling, reading files, running the command.
@@ -366,7 +372,36 @@ export interface ComposerState {
   readonly noProviderSession: string | null;
 }
 
-export function composerSendRoute(state: ComposerState): ComposerRoute {
+/**
+ * How the window writes attempts that need acknowledging: by ID, and by conversation
+ * as well where two of them carry the same ID (WS-1 follow-up). Files saved by
+ * earlier builds can share an ID, and "dsp-attempt-0004, dsp-attempt-0004" names
+ * nothing. Full owner labels on every row are later work (WS-2).
+ */
+export function attemptRefLabels(refs: readonly AttemptRef[]): string[] {
+  return refs.map((ref) =>
+    refs.filter((other) => other.attemptId === ref.attemptId).length > 1
+      ? `${ref.attemptId} (conversation ${ref.conversationId ?? 'none'})`
+      : ref.attemptId,
+  );
+}
+
+/**
+ * Where a press of Send goes.
+ *
+ * `acknowledged` is what an explicit *Send anyway* (or the Execution state's button)
+ * names, and nothing else passes it: Enter and the ordinary route name nothing.
+ * Those attempts no longer block this one send (DSP-124) - the press is the
+ * acknowledgement, and the main process records it and leaves them unresolved.
+ * Matched by conversation and ID, never by label, so an attempt the press did not
+ * name still blocks. Only for an ordinary message: the acknowledgement travels with
+ * `sendPrompt`, and a loop run or a message into a running walk carries none, so for
+ * those the gate stays exactly as it was.
+ */
+export function composerSendRoute(
+  state: ComposerState,
+  acknowledged: readonly AttemptRef[] = [],
+): ComposerRoute {
   if (state.text.trim() === '') {
     return { kind: 'blocked', reason: 'There is nothing in the box to send.', quiet: true };
   }
@@ -394,12 +429,21 @@ export function composerSendRoute(state: ComposerState): ComposerRoute {
   if (state.noProviderSession !== null && !state.useLoop && !state.loopRunning) {
     return { kind: 'blocked', reason: state.noProviderSession };
   }
-  if (state.unresolvedAttempts.length > 0) {
+  const acknowledgedHere = state.useLoop || state.loopRunning ? [] : acknowledged;
+  const labels = attemptRefLabels(state.unresolvedAttempts);
+  const unnamed = labels.filter((_label, position) => {
+    const ref = state.unresolvedAttempts[position];
+    return !acknowledgedHere.some(
+      (named) =>
+        named.attemptId === ref?.attemptId && named.conversationId === ref.conversationId,
+    );
+  });
+  if (unnamed.length > 0) {
     return {
       kind: 'blocked',
       reason:
-        `${state.unresolvedAttempts.length === 1 ? 'An earlier attempt has' : `${String(state.unresolvedAttempts.length)} earlier attempts have`} ` +
-        `no known outcome (${state.unresolvedAttempts.join(', ')}), so DSpatch will not send ` +
+        `${unnamed.length === 1 ? 'An earlier attempt has' : `${String(unnamed.length)} earlier attempts have`} ` +
+        `no known outcome (${unnamed.join(', ')}), so DSpatch will not send ` +
         'another message by itself. Your text stays where it is.',
     };
   }

@@ -15,13 +15,10 @@ import { describe, it } from 'node:test';
 import {
   describeUnobservedOutside,
   describeWorkingRootsForAgent,
-  describeWorkingRootsForPerson,
   primaryRootOf,
   providerRootPathsFor,
   rootForPath,
   workingRootsFrom,
-  WORKING_ROOTS_ISOLATION_HEADLINE,
-  WORKING_ROOTS_ISOLATION_NOTE,
 } from '../src/shared/working-roots';
 
 describe('the run\u2019s working roots', () => {
@@ -121,19 +118,16 @@ describe('what the agent is told about the folders', () => {
    * The forbidden thing is a sentence that reads as a boundary. These are the phrases
    * that would do it — the ones a well-meaning author reaches for when describing a
    * folder list — and none may appear in anything DSpatch says about the roots, to the
-   * agent or to the person. The list is short and specific on purpose: a test against
-   * "any mention of limits" would fail on the honest note below, which has to talk
-   * about the absence of a limit in order to be honest about it.
+   * agent or in a run's record. The list is short and specific on purpose: a test
+   * against "any mention of limits" would fail on an honest sentence that has to talk
+   * about the absence of a limit in order to be honest about it. (The sidebar's own
+   * note was removed in DSP-125; what it said is in app/README.md.)
    */
-  it('asserts no restriction, in the prompt or on screen', () => {
+  it('asserts no restriction, in the prompt or in the record', () => {
     const roots = workingRootsFrom(['C:/work/left', 'C:/work/right'], 'C:/work/left', true);
-    const shown = describeWorkingRootsForPerson(roots);
     const everything = [
       describeWorkingRootsForAgent(roots).join('\n'),
-      shown.headline,
-      shown.detail,
       describeUnobservedOutside(roots),
-      WORKING_ROOTS_ISOLATION_NOTE,
     ].join('\n');
     const forbidden = [
       'limited to',
@@ -158,150 +152,7 @@ describe('what the agent is told about the folders', () => {
   });
 });
 
-describe('what a person is told about the folders', () => {
-  it('counts the folders in the headline and keeps the note whole in the detail', () => {
-    const roots = workingRootsFrom(['C:/work/left', 'C:/work/right'], 'C:/work/left', true);
-    const shown = describeWorkingRootsForPerson(roots);
-    assert.equal(
-      shown.headline,
-      `2 working folders. ${WORKING_ROOTS_ISOLATION_HEADLINE}`,
-      'the headline is the count plus the one exported line, and nothing written beside it',
-    );
-    // Whole, not summarised: a shortened version of this note is a version that has
-    // stopped being true, and the detail is where its length belongs.
-    assert.ok(shown.detail.includes(WORKING_ROOTS_ISOLATION_NOTE));
-    assert.ok(shown.detail.includes('left is the working directory'));
-  });
-
-  /**
-   * DSP-64's shape, and the trap in applying it.
-   *
-   * A first line short enough to read is only an improvement if it is still true alone.
-   * Most people will not open the disclosure, so the headline — not the paragraph behind
-   * it — is where the claim not to be a boundary has to live.
-   */
-  it('says the folders are not a boundary in the headline, not only in the detail', () => {
-    const roots = workingRootsFrom(['C:/work/left', 'C:/work/right'], 'C:/work/left', true);
-    const headline = describeWorkingRootsForPerson(roots).headline;
-    assert.match(headline, /Not a boundary/);
-    // What DSpatch does do, beside what it cannot: a headline that carried only the
-    // negative would read as alarm, and one that carried only the positive would be the
-    // comfortable half. Both beats, and the capability names the path it holds on.
-    assert.match(headline, /a loop run .*reports what changed/);
-    assert.match(headline, /nothing stops an agent leaving them/);
-    // Short enough to be read at a glance in a 300 px column. The failure this replaced
-    // was 595 characters drawn open, and the way it returns is by the headline growing.
-    assert.ok(
-      headline.length <= 200,
-      `the headline is ${String(headline.length)} characters, which is a paragraph again`,
-    );
-  });
-
-  /**
-   * The single-source property, held by construction rather than by care.
-   *
-   * There is one exported line and one exported paragraph, and the paragraph is built
-   * out of the line — so a future surface cannot reach a friendlier version of either,
-   * and the explanation cannot be drawn without the headline in front of it.
-   */
-  it('builds the whole note out of the headline, so the two cannot drift', () => {
-    assert.ok(
-      WORKING_ROOTS_ISOLATION_NOTE.startsWith(`${WORKING_ROOTS_ISOLATION_HEADLINE} `),
-      'the note has to open with the headline verbatim, or the short line is a summary',
-    );
-  });
-
-  it('keeps every fact the note carried, behind the disclosure', () => {
-    // Each measured elsewhere and none safe to drop: the agent is not confined, DSpatch
-    // has seen it reach outside, and what is outside the roots is unobserved.
-    assert.match(WORKING_ROOTS_ISOLATION_NOTE, /[Nn]ot a boundary/);
-    assert.match(WORKING_ROOTS_ISOLATION_NOTE, /no filesystem confinement by default/);
-    assert.match(WORKING_ROOTS_ISOLATION_NOTE, /reading and writing outside the folder it was given/);
-    assert.match(WORKING_ROOTS_ISOLATION_NOTE, /not observed, which is not the same as nothing/);
-  });
-
-  /**
-   * What the note says a folder's own configuration does, checked against what was
-   * measured — and this is the second time that sentence has been wrong.
-   *
-   * Version one claimed `rules, skills and MCP servers` load per root. The MCP third was
-   * false, and the test that passed on it asserted the literal phrase. Version two fixed
-   * the membership and kept the premise: that each root's rules and skills are loaded at
-   * all. DSP-91's canary probe took that premise away.
-   *
-   * `localOptionsFor` passes `{ cwd }` and no `settingSources`, and the SDK's
-   * `setting-sources.js` maps an absent list to every source **off**. Measured on this
-   * machine with the product's own options (`canary-reads-probe.log`): prewarm read four
-   * paths under the scratch root, the root itself and `.git`, and none of the planted
-   * `.cursor/rules`, `.cursor/skills` or `AGENTS.md`. The same probe with
-   * `settingSources: ['project']` read 30, including all of them — so the instrument
-   * works and the difference is the option. A real turn through `CursorSdkAdapter`
-   * then answered NONE to all four planted tokens (`canary-context-probe.log`).
-   *
-   * So the claim under test is the negative one, and it has to carry its reason: a reader
-   * who is told configuration is not loaded needs to know it is a setting DSpatch has not
-   * turned on rather than something Cursor cannot do.
-   */
-  it('says project configuration is not loaded, which is what was measured', () => {
-    const claim = WORKING_ROOTS_ISOLATION_NOTE.split(/(?<=\.)\s+/).find((sentence) =>
-      /are not loaded/.test(sentence),
-    );
-    assert.ok(
-      claim !== undefined,
-      'the note has to say what a folder\u2019s own configuration does, and what it does ' +
-        'is nothing',
-    );
-    for (const named of ['rules', 'skills', 'AGENTS.md']) {
-      assert.ok(
-        claim.includes(named),
-        `the clause does not mention ${named}, which was planted in the scratch project ` +
-          'and measured unread',
-      );
-    }
-    // The reason, because the fact alone would read as a provider limitation.
-    assert.match(claim, /does not turn on Cursor\u2019s project settings/);
-    // And what governs instead, which is the whole point of the measurement: if nothing
-    // in the folders reaches the agent, the role and the task are the only inputs — and
-    // that is why DSP-91 could be fixed by wording at all.
-    assert.match(
-      WORKING_ROOTS_ISOLATION_NOTE,
-      /governed by the role and the task DSpatch sends it/,
-    );
-    // The retracted claim must not creep back in either form.
-    assert.equal(
-      /load(s|ed)? (from|per) (every|each) (unique )?(path|folder|root)/i.test(
-        WORKING_ROOTS_ISOLATION_NOTE,
-      ),
-      false,
-      'per-root loading was the premise the canary probe removed',
-    );
-  });
-
-  /**
-   * F2: the note is drawn whenever a folder is open, so every claim in it has to name
-   * the path it is true on.
-   *
-   * Only a loop run passes `dirs` and snapshots each root; an ordinary chat message gives
-   * the provider the working directory alone. The headline carried the run-only claim
-   * flatly, and the detail said DSpatch "hands them to Cursor" with no condition, on a
-   * surface drawn on both paths.
-   */
-  it('says which path hands the folders over, on both the headline and the detail', () => {
-    assert.match(
-      WORKING_ROOTS_ISOLATION_HEADLINE,
-      /a loop run/,
-      'the headline\u2019s capability claim is true of a loop run and not of a chat message',
-    );
-    assert.match(WORKING_ROOTS_ISOLATION_NOTE, /During a loop run/);
-    assert.match(WORKING_ROOTS_ISOLATION_NOTE, /An ordinary chat message does neither/);
-    assert.match(WORKING_ROOTS_ISOLATION_NOTE, /the other folders reach nobody/);
-    // What is true whichever path you are on has to be said of both, not left to be
-    // inferred from the run half. The configuration claim is the one that applies to
-    // both, and since DSP-91 it is a negative one — so the phrase is "either" rather
-    // than "both", and the property being held is that the path is still named.
-    assert.match(WORKING_ROOTS_ISOLATION_NOTE, /on either path/);
-  });
-
+describe('what a record says about the folders it did not look at', () => {
   it('says not observed rather than none about everywhere else', () => {
     const roots = workingRootsFrom(['C:/work/left', 'C:/work/right'], 'C:/work/left', true);
     const note = describeUnobservedOutside(roots);

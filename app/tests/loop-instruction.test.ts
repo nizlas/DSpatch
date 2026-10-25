@@ -155,21 +155,111 @@ describe('where a press of Send goes', () => {
   it('names the way forward, not an earlier unresolved attempt, while no agent session is open', () => {
     const note = 'Try again or start a new session to send.';
     const route = composerSendRoute(
-      composer({ noProviderSession: note, unresolvedAttempts: ['dsp-attempt-0003'] }),
+      composer({
+        noProviderSession: note,
+        unresolvedAttempts: [{ conversationId: 'conv-A', attemptId: 'dsp-attempt-0003' }],
+      }),
     );
     assert.deepEqual(route, { kind: 'blocked', reason: note });
     // With an agent session open the unresolved attempt still gates, as before.
-    const gated = composerSendRoute(composer({ unresolvedAttempts: ['dsp-attempt-0003'] }));
+    const gated = composerSendRoute(
+      composer({ unresolvedAttempts: [{ conversationId: 'conv-A', attemptId: 'dsp-attempt-0003' }] }),
+    );
     assert.equal(gated.kind, 'blocked');
     assert.match(gated.kind === 'blocked' ? gated.reason : '', /dsp-attempt-0003/);
   });
 
   it('names every unresolved attempt rather than counting them', () => {
-    const route = composerSendRoute(composer({ unresolvedAttempts: ['dsp-run-1', 'dsp-run-2'] }));
+    const route = composerSendRoute(
+      composer({
+        unresolvedAttempts: [
+          { conversationId: 'conv-A', attemptId: 'dsp-run-1' },
+          { conversationId: 'conv-A', attemptId: 'dsp-run-2' },
+        ],
+      }),
+    );
     assert.equal(route.kind, 'blocked');
     const reason = route.kind === 'blocked' ? route.reason : '';
     assert.match(reason, /dsp-run-1/);
     assert.match(reason, /dsp-run-2/);
+  });
+
+  // DSP-124: *Send anyway* and the Execution state's button name the attempts they
+  // acknowledge. The route used to be computed without them, so the very attempts
+  // being acknowledged blocked the send that acknowledged them and nothing could be
+  // sent in that conversation. Only the named attempts stop counting, by conversation
+  // and ID; every other gate stays where it was.
+  describe('a send that acknowledges unresolved attempts (DSP-124)', () => {
+    const a4 = { conversationId: 'conv-A', attemptId: 'dsp-attempt-0004' };
+    const a5 = { conversationId: 'conv-A', attemptId: 'dsp-attempt-0005' };
+    const b4 = { conversationId: 'conv-B', attemptId: 'dsp-attempt-0004' };
+
+    it('is not blocked by the attempts it acknowledges', () => {
+      assert.deepEqual(composerSendRoute(composer({ unresolvedAttempts: [a5] }), [a5]), {
+        kind: 'agent-turn',
+      });
+      assert.deepEqual(composerSendRoute(composer({ unresolvedAttempts: [a4, a5] }), [a4, a5]), {
+        kind: 'agent-turn',
+      });
+    });
+
+    it('is still blocked by an attempt it does not name', () => {
+      const route = composerSendRoute(composer({ unresolvedAttempts: [a4, a5] }), [a5]);
+      assert.equal(route.kind, 'blocked');
+      const reason = route.kind === 'blocked' ? route.reason : '';
+      assert.match(reason, /An earlier attempt has no known outcome \(dsp-attempt-0004\)/);
+      assert.doesNotMatch(reason, /dsp-attempt-0005/);
+    });
+
+    it('tells two attempts with one ID apart by their conversation', () => {
+      const route = composerSendRoute(composer({ unresolvedAttempts: [a4, b4] }), [a4]);
+      assert.equal(route.kind, 'blocked');
+      assert.match(
+        route.kind === 'blocked' ? route.reason : '',
+        /\(dsp-attempt-0004 \(conversation conv-B\)\)/,
+      );
+    });
+
+    it('still holds Enter back, which names nothing', () => {
+      assert.equal(composerSendRoute(composer({ unresolvedAttempts: [a5] })).kind, 'blocked');
+      assert.equal(composerCanSend(composer({ unresolvedAttempts: [a5] })), false);
+    });
+
+    it('leaves the no-session reason, an outstanding turn and other work in front', () => {
+      const note = 'Try again or start a new session to send.';
+      assert.deepEqual(
+        composerSendRoute(composer({ noProviderSession: note, unresolvedAttempts: [a5] }), [a5]),
+        { kind: 'blocked', reason: note },
+      );
+      assert.equal(
+        composerSendRoute(composer({ outstandingTurn: true, unresolvedAttempts: [a5] }), [a5]).kind,
+        'blocked',
+      );
+      assert.equal(
+        composerSendRoute(composer({ otherWorkInProgress: true, unresolvedAttempts: [a5] }), [a5]).kind,
+        'blocked',
+      );
+      assert.equal(
+        composerSendRoute(composer({ text: '  ', unresolvedAttempts: [a5] }), [a5]).kind,
+        'blocked',
+      );
+    });
+
+    // The acknowledgement travels with `sendPrompt` only; a loop run or a message into
+    // a running walk carries none, so it must not be let through by one.
+    it('does not let an acknowledgement start a loop run or join a walk', () => {
+      assert.equal(
+        composerSendRoute(composer({ useLoop: true, unresolvedAttempts: [a5] }), [a5]).kind,
+        'blocked',
+      );
+      assert.equal(
+        composerSendRoute(
+          composer({ loopRunning: true, loopRunId: 'chat-loop-1', unresolvedAttempts: [a5] }),
+          [a5],
+        ).kind,
+        'blocked',
+      );
+    });
   });
 
   /**

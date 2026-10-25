@@ -159,31 +159,6 @@ body {
   text-align: left;
 }
 
-/* What the folder list is and is not (DSP-72), in DSP-64's shape: a headline that is
-   true on its own, the rest behind the disclosure. `flex: none` so it is never the part
-   that shrinks — this is the sentence that keeps a list of folders from being read as a
-   boundary, and a note squeezed away by a tall tree has stopped saying it. */
-.sidebar__note {
-  flex: none;
-  margin: 0.25rem 0 0;
-  color: var(--muted);
-  font-size: 0.7rem;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-/* `list-style: revert` for the same reason `.error-detail__summary` does it: the
-   disclosure marker is the only thing saying there is more to read. */
-.sidebar__note-summary {
-  cursor: pointer;
-  list-style: revert;
-}
-
-.sidebar__note-detail {
-  margin: 0.35rem 0 0;
-  overflow-wrap: anywhere;
-}
-
 .sidebar__tree {
   flex: 1 1 40%;
   min-height: 4rem;

@@ -1430,14 +1430,6 @@ export interface WorkingRootsObservation {
   readonly rootsGiven: readonly string[];
   /** Which of them the main process calls the working directory. `''` when none. */
   readonly workingRoot: string;
-  /** The note the main process wrote for these folders: headline, and the rest. */
-  readonly noteFromMain: { readonly headline: string; readonly detail: string };
-  /** The same two, as they are drawn in the sidebar. */
-  readonly noteOnScreen: { readonly headline: string; readonly detail: string };
-  /** Whether the detail was closed before anything was clicked. */
-  readonly detailClosedAtFirst: boolean;
-  /** Whether clicking the headline opened it. */
-  readonly detailOpensOnClick: boolean;
   /** The loop definition the window is showing as chosen. */
   readonly definitionChosen: string;
   /** The graph on screen for that definition, read from its own bytes. */
@@ -1451,13 +1443,11 @@ export interface WorkingRootsObservation {
 }
 
 /**
- * DSP-72, in the window: several roots, a definition from outside them, and a
- * description that does not overstate what a folder list is.
+ * DSP-72, in the window: several roots, a definition from outside them, and the refusal
+ * for DSpatch's own folder among them.
  *
- * **The wording half is a gate rather than a note**, and deliberately so. This card's
- * available failure is a feature that implies containment it does not have, and that
- * failure is made of sentences. A trial that recorded the sentence without judging it
- * would be a trial that could not fail on the thing most likely to go wrong.
+ * The wording half this gate used to judge - the sidebar's note about what the folders
+ * are - was removed with the note (DSP-125); what it said is in app/README.md.
  *
  * **The refusal is the negative control for "the roots reached the run".** DSpatch's own
  * folder is added as a *second* root, never the working copy — so if the window's
@@ -1498,87 +1488,6 @@ export function checkWorkingRootsReadHonestly(
         `the graph on screen carries "${observation.graphMarkerOnScreen}" rather than ` +
         `"${observation.graphMarkerExpected}", so the definition from outside the working ` +
         'folders is not the one that reached the screen.',
-    };
-  }
-  if (observation.noteFromMain.headline === '' || observation.noteFromMain.detail === '') {
-    return {
-      failure:
-        'the main process wrote no note about the folders. A list of folders a person can ' +
-        'read as a boundary, with nothing saying it is not one, is the defect this card is ' +
-        'about.',
-    };
-  }
-  for (const part of ['headline', 'detail'] as const) {
-    if (observation.noteOnScreen[part] !== observation.noteFromMain[part]) {
-      return {
-        failure:
-          `the ${part} on screen is not the ${part} the main process wrote. A window that ` +
-          'describes the folders differently from the process that hands them over is a ' +
-          'second description, and one of two descriptions is always the wrong one.',
-      };
-    }
-  }
-  // The phrases that turn a description into a promise. Specific rather than a search
-  // for "limit", because the honest note has to mention the absence of a limit.
-  for (const phrase of [
-    'limited to',
-    'restricted to',
-    'confined to',
-    'may only',
-    'cannot access',
-    'only these folders',
-    'sandbox',
-  ]) {
-    for (const part of ['headline', 'detail'] as const) {
-      if (observation.noteOnScreen[part].toLowerCase().includes(phrase)) {
-        return {
-          failure:
-            `the ${part} on screen says "${phrase}", which reads as a restriction. DSpatch ` +
-            'has no containment to offer here and may not imply one.',
-        };
-      }
-    }
-  }
-  /*
-   * The headline carries it, not just the paragraph behind the disclosure.
-   *
-   * This is the whole point of DSP-64's shape being applied here rather than the note
-   * simply being cut down: a first line that reads comfortably and leaves the
-   * qualification for anyone who clicks would be worse than the wall of text it
-   * replaced, because most people will not click.
-   */
-  if (!observation.noteOnScreen.headline.toLowerCase().includes('not a boundary')) {
-    return {
-      failure:
-        'the headline on screen does not say the folders are not a boundary. Someone who ' +
-        'reads only the first line must not come away believing they are one.',
-    };
-  }
-  /*
-   * A bound, not a style preference. 595 characters drawn open in a 300 px column is
-   * the failure this shape was applied to fix, and the way it comes back is by the
-   * headline growing a sentence at a time until it is the paragraph again.
-   */
-  if (observation.noteOnScreen.headline.length > 200) {
-    return {
-      failure:
-        `the headline is ${String(observation.noteOnScreen.headline.length)} characters. ` +
-        'It is meant to be the line someone reads at a glance; the detail is where length ' +
-        'belongs.',
-    };
-  }
-  if (!observation.detailClosedAtFirst) {
-    return {
-      failure:
-        'the detail was already open, so the sidebar is drawing the whole paragraph ' +
-        'unasked — which is the shape this was meant to replace.',
-    };
-  }
-  if (!observation.detailOpensOnClick) {
-    return {
-      failure:
-        'clicking the headline did not open the detail. Behind a disclosure is only ' +
-        'acceptable while the disclosure works; unreachable is the same as removed.',
     };
   }
   if (observation.refusalForOwnRepository === '') {

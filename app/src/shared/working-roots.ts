@@ -54,11 +54,11 @@
  * from `cwd` alone, has no notion of a folder list, and defaults to the SDK's own
  * `{type:"insecure_none"}`; DSP-1 measured an agent reading and modifying a file
  * outside the folder it was given and a shell command writing outside it. That is why
- * every string in this module is descriptive. {@link WORKING_ROOTS_ISOLATION_NOTE} is
- * the one place the limitation is worded, so the sidebar, the run's report and any
- * later surface say it the same way — and DSP-72 #6 is the property that no string
- * here asserts a restriction. A list a person believes is a boundary is worse than no
- * list.
+ * every string in this module is descriptive, and DSP-72 #6 is the property that no
+ * string here asserts a restriction. A list a person believes is a boundary is worse
+ * than no list. The sidebar no longer carries a note about it (DSP-125); what that
+ * note said, checked against the code, is in app/README.md under "What the window
+ * shows".
  *
  * No `node:fs` and no provider import: the renderer draws these and the main process
  * passes them to the adapter, and both must read the same rules.
@@ -82,83 +82,6 @@ export interface WorkingRoot {
    */
   readonly primary: boolean;
 }
-
-/**
- * The whole of what DSpatch says about a list of working folders, in one sentence.
- *
- * DSP-64 settled the shape for anything too long to read at a glance: **one sentence
- * first, the detail on request.** The first review of this card produced a 595-character
- * paragraph drawn open in a 300 px sidebar, which is the "too long to read" half of the
- * failure `plain-error.ts` was written against.
- *
- * So this is the line, and the hard part of writing it was that **a short version must
- * not be the comfortable half**. Someone who reads only this and never opens the detail
- * must not come away believing the folders are a boundary — so the line opens by saying
- * they are not one, and pairs what DSpatch *does* do with what it cannot. A first line
- * that said only "2 working folders" would be the shortening that quietly stops being
- * true.
- *
- * **"A loop run" is load-bearing and not hedging.** The first version said DSpatch
- * "reports what changed inside these folders", flatly. Only a loop run does: it is the
- * one path that passes `dirs` and snapshots every root, while an ordinary chat message
- * gives the provider the working directory alone. A sentence that is true on one of two
- * paths and drawn on both is a false sentence half the time, and the sidebar is drawn
- * whenever a folder is open. Naming the path costs three words and is also what a
- * person deciding whether to add a folder actually wants to know.
- */
-export const WORKING_ROOTS_ISOLATION_HEADLINE =
-  'Not a boundary: a loop run works in all of them and reports what changed in each, ' +
-  'and nothing stops an agent leaving them.';
-
-/**
- * The rest of it: which path does what, why, measured, and what the record does not say.
- *
- * **It distinguishes the two paths rather than being drawn on only one of them.** A loop
- * run hands the roots to the provider; an ordinary chat message does not, and this is
- * drawn beside the folder list on both. The alternative was to show the run half only
- * while a run is in view, which would remove the sentence exactly when someone is
- * deciding whether to add a folder — the moment the answer is worth having. So it says
- * both, and says which is which.
- *
- * **Not exported.** The only way out of this module is
- * {@link WORKING_ROOTS_ISOLATION_NOTE}, which is the headline followed by this — so no
- * surface can draw the explanation without the headline in front of it, and none can
- * reach a version of the explanation that has been made friendlier. That is the
- * single-source property, held by composition rather than by care: the headline is the
- * note's own opening words because the note is built out of them.
- *
- * This is the same rule `plain-error.ts` applies to a refusal — the headline is the
- * text's own first sentence, verbatim, never a summary written beside it — reached by
- * construction instead of by parsing, because a shared module cannot import the
- * renderer's `firstSentence` and a second copy of that parser would be a second
- * mechanism for a value that is a constant.
- */
-const WORKING_ROOTS_ISOLATION_DETAIL =
-  'These are the folders DSpatch shows you and searches for loop definitions. During a ' +
-  'loop run they are also the run\u2019s working folders: DSpatch hands them to Cursor ' +
-  'as the session\u2019s workspace folders, and the run measures what changed in each ' +
-  'one. An ordinary chat message does neither \u2014 the agent is given the working ' +
-  'directory alone, and the other folders reach nobody. A folder\u2019s own rules, ' +
-  'skills and AGENTS.md are not loaded on either path: DSpatch does not turn on ' +
-  'Cursor\u2019s project settings, so an agent in a loop run is governed by the role and ' +
-  'the task DSpatch sends it and by nothing it found in your folders. And Cursor\u2019s ' +
-  'local agent runs with no filesystem confinement by default: DSpatch has measured an ' +
-  'agent reading and writing outside the folder it was given. What a run can tell you ' +
-  'afterwards is what changed inside these folders. Anything outside them was not ' +
-  'observed, which is not the same as nothing.';
-
-/**
- * What DSpatch says about a list of working folders, whole.
- *
- * One constant and not a phrasing per surface. The failure this card can produce is not
- * a missing feature, it is a feature that implies containment it does not have, and that
- * failure is made of wording. Keeping the wording in one place is what makes it
- * reviewable — and testable, which is why tests assert that the window shows exactly
- * this text, that it begins with {@link WORKING_ROOTS_ISOLATION_HEADLINE}, and that
- * neither contains a restriction verb.
- */
-export const WORKING_ROOTS_ISOLATION_NOTE =
-  `${WORKING_ROOTS_ISOLATION_HEADLINE} ${WORKING_ROOTS_ISOLATION_DETAIL}`;
 
 /** Windows paths differ in case without differing. Same rule as `ProjectStore`. */
 function samePath(left: string, right: string, caseInsensitive: boolean): boolean {
@@ -367,50 +290,6 @@ export function describeWorkingRootsForAgent(roots: readonly WorkingRoot[]): rea
       'below.',
     '',
   ];
-}
-
-/**
- * What a person reads beside the list of folders, and what is one gesture away.
- *
- * Two fields rather than one string, because DSP-64's shape is a shape: the window
- * draws `headline` and puts `detail` behind a disclosure. Nothing here decides *what*
- * is said — {@link WORKING_ROOTS_ISOLATION_NOTE} and its headline do that — this
- * decides only which of it is on screen without being asked for.
- */
-export interface WorkingRootsDescription {
-  /** True on its own: what someone who never opens the detail has been told. */
-  readonly headline: string;
-  /** {@link WORKING_ROOTS_ISOLATION_NOTE} whole, with the folder facts in front of it. */
-  readonly detail: string;
-}
-
-/**
- * The line beside the list of folders, and the whole of it on request.
- *
- * The count is in the headline, because "how many folders is this run given" is the
- * question the list itself raises and it is one word long. **Which** folder is the
- * working directory is in the detail: the sidebar already marks that row `project`, so
- * the headline would be spending its length on something already on screen.
- *
- * **The note itself is not shortened.** `detail` carries it verbatim, headline sentence
- * and all — the same bargain `describePlainly` makes when it puts the whole message in
- * `detail` even though the headline came out of it. A reader who opens a disclosure and
- * finds less in it than the summary promised is the expensive failure; repeating one
- * sentence is the cheap one.
- */
-export function describeWorkingRootsForPerson(
-  roots: readonly WorkingRoot[],
-): WorkingRootsDescription {
-  const primary = primaryRootOf(roots);
-  if (primary === null) {
-    const nothing = 'No folder is open, so a run has nothing to work with.';
-    return { headline: nothing, detail: nothing };
-  }
-  const count = roots.length === 1 ? 'One working folder.' : `${String(roots.length)} working folders.`;
-  return {
-    headline: `${count} ${WORKING_ROOTS_ISOLATION_HEADLINE}`,
-    detail: `${primary.name} is the working directory. ${WORKING_ROOTS_ISOLATION_NOTE}`,
-  };
 }
 
 /**
