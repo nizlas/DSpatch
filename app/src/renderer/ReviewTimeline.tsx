@@ -73,8 +73,18 @@ const MIN_PANE_WIDTH = 260;
 const AUTO_WIDTH_MARGIN = 120;
 /** A pointer must travel this far before a press becomes a drag. */
 const DRAG_THRESHOLD = 6;
-/** The viewport's centre must be this far inside another pane before it becomes active. */
-const ACTIVATION_INSET = 0.15;
+/** Panning: a place whose focus is at least this much in view can become active. */
+const FOCUS_IN_VIEW = 0.8;
+/** Panning: two places whose focus visibility differs less than this are about equally in view. */
+const FOCUS_TIE = 0.1;
+/**
+ * Panning: of two places about equally in view, the one whose focus is nearer the map's
+ * centre takes over — at once when it lies the way the map is travelling, else only when
+ * it is this much nearer.
+ */
+const FOCUS_NEARER = 64;
+/** Panning: after a switch the map must travel this far before the next one, over one drag or several (no flicker). */
+const SWITCH_TRAVEL = 64;
 
 type CodeView = 'before' | 'both' | 'after';
 
@@ -268,6 +278,7 @@ export function WalkTimeline({
   words,
   lang,
   onOpenLocation,
+  navRequest,
 }: {
   readonly walk: Walk;
   /** How this walk was entered: from the walk before it, or back from the one after. */
@@ -286,6 +297,8 @@ export function WalkTimeline({
   readonly lang: Lang;
   /** Opens code outside the walk (a source no pane of the walk shows). */
   readonly onOpenLocation: (location: CodeLocation) => void;
+  /** Counts explicit choices of a step or place: each one shows the active place, also when it is already active. */
+  readonly navRequest: number;
 }): JSX.Element {
   const viewport = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
@@ -356,6 +369,8 @@ export function WalkTimeline({
   const previousActive = useRef(active);
   const panActivated = useRef<number | null>(null);
   const activatedByPan = useRef(false);
+  // Where panning last switched the active place, and to which (see SWITCH_TRAVEL).
+  const lastSwitch = useRef<{ x: number; index: number } | null>(null);
   const [direction, setDirection] = useState<'forward' | 'backward'>(entry);
   // Read through a ref: a width change by hand must not realign a map the reader has panned.
   const layoutRef = useRef(layout);
@@ -380,15 +395,28 @@ export function WalkTimeline({
   // "Visa källan": the source pane scrolls to the line even when it mounts because of it.
   const [reveal, setReveal] = useState<{ pane: number | null; seq: number }>({ pane: null, seq: 0 });
   const handledReveals = useRef(new Map<number, number>());
+  const lastNavRequest = useRef(navRequest);
   useLayoutEffect(() => {
     const forward = active >= previousActive.current;
     const moved = active !== previousActive.current;
     previousActive.current = active;
-    if (moved) {
-      setDirection(forward ? 'forward' : 'backward');
-      lastDirection.current = forward ? 'forward' : 'backward';
-      activatedByPan.current = panActivated.current === active;
+    // An explicit choice of a step or place: shown even when it is already the active one.
+    const chosen = navRequest !== lastNavRequest.current;
+    lastNavRequest.current = navRequest;
+    if (chosen) {
+      panActivated.current = null;
+      if (!moved) {
+        lastDirection.current = (layoutRef.current.lefts[active] ?? 0) < mapXRef.current ? 'backward' : 'forward';
+      }
+    }
+    if (moved || chosen) {
+      if (moved) {
+        setDirection(forward ? 'forward' : 'backward');
+        lastDirection.current = forward ? 'forward' : 'backward';
+      }
+      activatedByPan.current = moved && panActivated.current === active;
       if (!activatedByPan.current) {
+        lastSwitch.current = null;
         setArrival((current) => ({ index: active, seq: current.seq + 1 }));
         setSource((current) => ({ ...sourceSignalFor(active), seq: current.seq + 1 }));
       } else {
@@ -413,27 +441,89 @@ export function WalkTimeline({
     const target = lastDirection.current === 'forward' ? left + width - viewWidth : left;
     setMapX(Math.min(Math.max(0, target), Math.max(0, layoutRef.current.total - viewWidth)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, viewWidth, defaultWidth, activeAutoWidth]);
+  }, [active, viewWidth, defaultWidth, activeAutoWidth, navRequest]);
 
-  // The active station follows the map when it is panned by hand: the pane under the
-  // viewport's centre, once the centre is well inside it.
+  // The active place follows the map when it is panned by hand: the place whose focus
+  // rows are most in view — horizontally in the map and in its pane's code area,
+  // vertically in its pane — once at least FOCUS_IN_VIEW of it is. Between places about
+  // equally in view, the one whose focus is nearer the map's centre (see FOCUS_NEARER).
+  // After a switch the map must travel SWITCH_TRAVEL more while that place is active.
   const settleActive = useCallback(
-    (x: number) => {
-      const centre = x + viewWidth / 2;
-      for (let index = 0; index < stations.length; index += 1) {
-        const left = layout.lefts[index] ?? 0;
-        const width = layout.widths[index] ?? defaultWidth;
-        const inset = width * ACTIVATION_INSET;
-        if (centre >= left + inset && centre <= left + width - inset) {
-          if (index !== active) {
-            panActivated.current = index;
-            onActivate(index);
-          }
-          return;
+    (x: number, direction: number) => {
+      const element = viewport.current;
+      if (element === null) {
+        return;
+      }
+      if (lastSwitch.current !== null && lastSwitch.current.index === active && Math.abs(x - lastSwitch.current.x) < SWITCH_TRAVEL) {
+        return;
+      }
+      // The DOM still shows the map at the rendered position; x is where it is going.
+      const shift = x - mapXRef.current;
+      const view = element.getBoundingClientRect();
+      const middle = (view.left + view.right) / 2;
+      const seen = new Map<number, { amount: number; off: number }>();
+      for (const pane of element.querySelectorAll<HTMLElement>('[data-pane-index]')) {
+        const scroller = pane.querySelector<HTMLElement>('.rv-pane-lines');
+        if (scroller === null) {
+          continue;
+        }
+        const box = scroller.getBoundingClientRect();
+        const numbers = scroller.querySelector<HTMLElement>('.rv-row .rv-ln');
+        const marker = scroller.querySelector<HTMLElement>('.rv-row .rv-marker');
+        const codeLeft = box.left - shift + (numbers?.offsetWidth ?? 0) + (marker?.offsetWidth ?? 0);
+        const codeRight = box.left - shift + scroller.clientWidth;
+        let left = Infinity;
+        let right = -Infinity;
+        let top = Infinity;
+        let bottom = -Infinity;
+        for (const text of scroller.querySelectorAll<HTMLElement>('[data-focus="1"] .rv-text')) {
+          const rect = text.getBoundingClientRect();
+          left = Math.min(left, rect.left - shift);
+          right = Math.max(right, rect.right - shift);
+          top = Math.min(top, rect.top);
+          bottom = Math.max(bottom, rect.bottom);
+        }
+        if (!Number.isFinite(left)) {
+          continue;
+        }
+        // The focus as far as its pane can show it, and how much of that is in the map.
+        const shownLeft = Math.max(left, codeLeft);
+        const shownRight = Math.min(right, codeRight);
+        const across = shownRight > shownLeft ? Math.max(0, Math.min(shownRight, view.right) - Math.max(shownLeft, view.left)) / (shownRight - shownLeft) : 0;
+        // A focus taller than its pane counts as fully in view once it fills half of it.
+        const fullHeight = Math.min(bottom - top, box.height / 2);
+        const down = fullHeight > 0 ? Math.min(1, Math.max(0, Math.min(bottom, box.bottom) - Math.max(top, box.top)) / fullHeight) : 0;
+        seen.set(Number(pane.dataset.paneIndex), { amount: across * down, off: Math.abs((shownLeft + shownRight) / 2 - middle) });
+      }
+      // A candidate is clearly more in view than an active place that is leaving the view,
+      // or about as much in view and nearer the centre. The most visible one wins; on a
+      // tie, the most central.
+      const current = seen.get(active) ?? { amount: 0, off: Infinity };
+      let best = active;
+      let bestSeen = { amount: -1, off: Infinity };
+      for (const [index, candidate] of seen) {
+        if (index === active || candidate.amount < FOCUS_IN_VIEW) {
+          continue;
+        }
+        const clearer = current.amount < FOCUS_IN_VIEW && candidate.amount > current.amount + FOCUS_TIE;
+        const ahead = direction !== 0 && Math.sign(index - active) === Math.sign(direction);
+        const nearer = candidate.amount >= current.amount - FOCUS_TIE && candidate.off <= current.off - (ahead ? 0 : FOCUS_NEARER);
+        if (!clearer && !nearer) {
+          continue;
+        }
+        const better = candidate.amount > bestSeen.amount + FOCUS_TIE || (Math.abs(candidate.amount - bestSeen.amount) <= FOCUS_TIE && candidate.off < bestSeen.off);
+        if (better) {
+          best = index;
+          bestSeen = candidate;
         }
       }
+      if (best !== active) {
+        lastSwitch.current = { x, index: best };
+        panActivated.current = best;
+        onActivate(best);
+      }
     },
-    [viewWidth, stations.length, layout, defaultWidth, active, onActivate],
+    [active, onActivate],
   );
 
   // Stepping in time: Shift+wheel or Alt+arrow keys (in the view). Each step is one station.
@@ -684,7 +774,7 @@ export function WalkTimeline({
           }
           const x = clampX(pan.current.startMapX + delta);
           setMapX(x);
-          settleActive(x);
+          settleActive(x, Math.sign(x - mapXRef.current));
         }}
         onPointerUp={(event) => {
           // The pointer event is also the truth about Shift being released.
@@ -696,7 +786,7 @@ export function WalkTimeline({
           if (pan.current?.id === event.pointerId) {
             swallowClick.current = pan.current.moved;
             if (pan.current.moved) {
-              settleActive(mapXRef.current);
+              settleActive(mapXRef.current, 0);
             }
             pan.current = null;
             setPanning(false);

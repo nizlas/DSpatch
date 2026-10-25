@@ -9,6 +9,8 @@
 
 .rv {
   --rv-old: color-mix(in srgb, var(--no) 32%, var(--bg));
+  /* Only the moment a place becomes active; not a review status. */
+  --rv-gold: color-mix(in srgb, #f0b429 58%, var(--bg));
   --rv-old-faint: color-mix(in srgb, var(--no) 12%, var(--bg));
   --rv-new: color-mix(in srgb, var(--ok) 30%, var(--bg));
   --rv-new-faint: color-mix(in srgb, var(--ok) 11%, var(--bg));
@@ -1146,18 +1148,17 @@
 }
 
 /* Arriving: a short flash, then the row settles into its own colour. */
+/* Activation: the focus rows turn warm gold for a moment, then settle into their own
+   red, green or grey. Colour only — no edges, no size change, once. */
 @keyframes rv-flash {
-  0% {
-    background: color-mix(in srgb, var(--text) 38%, var(--bg));
-    box-shadow: inset 4px 0 0 var(--text);
-  }
-  100% {
-    box-shadow: inset 4px 0 0 transparent;
+  0%,
+  25% {
+    background-color: var(--rv-gold);
   }
 }
 
 .rv-arrive {
-  animation: rv-flash 1200ms ease-out;
+  animation: rv-flash 1500ms ease-out;
 }
 
 /* Leaving: a brief pulse so the fading is noticed, then the faint colour. */

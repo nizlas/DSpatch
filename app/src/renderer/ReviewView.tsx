@@ -342,6 +342,8 @@ function OpenReview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.step.id, away, shownKey, state.shownSteps, state.shownRefs, update]);
 
+  // Explicit choices of a step or place in the lists: each one shows its place in the map.
+  const [navRequest, setNavRequest] = useState(0);
   const goToStep = useCallback(
     (stepId: string, placeIndex = 0) => {
       const found = findStep(bundle, stepId);
@@ -576,7 +578,17 @@ function OpenReview({
                     <Overview summary={pick(bundle.definition.overviewSummary, lang)} full={pick(bundle.definition.overview, lang)} words={words} />
                   </Collapsible>
                 )}
-                <WalkList bundle={bundle} state={state} words={words} lang={lang} onStep={goToStep} onToggle={toggleWalk} />
+                <WalkList
+                  bundle={bundle}
+                  state={state}
+                  words={words}
+                  lang={lang}
+                  onStep={(stepId) => {
+                    goToStep(stepId);
+                    setNavRequest((count) => count + 1);
+                  }}
+                  onToggle={toggleWalk}
+                />
                 <FileTree
                   paths={treePaths}
                   changed={changedFiles}
@@ -661,6 +673,7 @@ function OpenReview({
                 words={words}
                 lang={lang}
                 onOpenLocation={goAway}
+                navRequest={navRequest}
               />
             </>
           ) : focus === null ? (
@@ -698,7 +711,10 @@ function OpenReview({
               state={state}
               words={words}
               lang={lang}
-              onPlace={(index) => goToStep(current.step.id, index)}
+              onPlace={(index) => {
+                goToStep(current.step.id, index);
+                setNavRequest((count) => count + 1);
+              }}
               onOpenEvidence={goAway}
             />
           )}
