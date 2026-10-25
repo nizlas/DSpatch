@@ -461,7 +461,7 @@ export function WalkTimeline({
       const shift = x - mapXRef.current;
       const view = element.getBoundingClientRect();
       const middle = (view.left + view.right) / 2;
-      const seen = new Map<number, { amount: number; off: number }>();
+      const seen = new Map<number, { amount: number; off: number; paneOff: number }>();
       for (const pane of element.querySelectorAll<HTMLElement>('[data-pane-index]')) {
         const scroller = pane.querySelector<HTMLElement>('.rv-pane-lines');
         if (scroller === null) {
@@ -493,19 +493,25 @@ export function WalkTimeline({
         // A focus taller than its pane counts as fully in view once it fills half of it.
         const fullHeight = Math.min(bottom - top, box.height / 2);
         const down = fullHeight > 0 ? Math.min(1, Math.max(0, Math.min(bottom, box.bottom) - Math.max(top, box.top)) / fullHeight) : 0;
-        seen.set(Number(pane.dataset.paneIndex), { amount: across * down, off: Math.abs((shownLeft + shownRight) / 2 - middle) });
+        const paneBox = pane.getBoundingClientRect();
+        seen.set(Number(pane.dataset.paneIndex), {
+          amount: across * down,
+          off: Math.abs((shownLeft + shownRight) / 2 - middle),
+          paneOff: Math.abs((paneBox.left + paneBox.right) / 2 - shift - middle),
+        });
       }
-      // A candidate is clearly more in view than an active place that is leaving the view,
-      // or about as much in view and nearer the centre. The most visible one wins; on a
-      // tie, the most central.
-      const current = seen.get(active) ?? { amount: 0, off: Infinity };
+      // A candidate is clearly more in view than an active place whose focus is leaving
+      // the view — and nearer the centre than the active pane itself, which the reader may
+      // have scrolled away from its focus — or about as much in view and nearer the
+      // centre. The most visible one wins; on a tie, the most central.
+      const current = seen.get(active) ?? { amount: 0, off: Infinity, paneOff: Infinity };
       let best = active;
-      let bestSeen = { amount: -1, off: Infinity };
+      let bestSeen = { amount: -1, off: Infinity, paneOff: Infinity };
       for (const [index, candidate] of seen) {
         if (index === active || candidate.amount < FOCUS_IN_VIEW) {
           continue;
         }
-        const clearer = current.amount < FOCUS_IN_VIEW && candidate.amount > current.amount + FOCUS_TIE;
+        const clearer = current.amount < FOCUS_IN_VIEW && candidate.amount > current.amount + FOCUS_TIE && candidate.off < current.paneOff;
         const ahead = direction !== 0 && Math.sign(index - active) === Math.sign(direction);
         const nearer = candidate.amount >= current.amount - FOCUS_TIE && candidate.off <= current.off - (ahead ? 0 : FOCUS_NEARER);
         if (!clearer && !nearer) {
