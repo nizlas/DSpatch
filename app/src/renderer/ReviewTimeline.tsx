@@ -622,14 +622,10 @@ export function WalkTimeline({
       if (element === null || element === undefined) {
         return;
       }
-      let longest = 0;
-      for (const text of element.querySelectorAll('.rv-row .rv-text')) {
-        longest = Math.max(longest, (text as HTMLElement).scrollWidth);
-      }
-      const numbers = element.querySelector('.rv-row .rv-ln') as HTMLElement | null;
-      const marker = element.querySelector('.rv-row .rv-marker') as HTMLElement | null;
-      const fixed = (numbers?.offsetWidth ?? 0) + (marker?.offsetWidth ?? 0) + 34;
-      const width = Math.min(Math.max(MIN_PANE_WIDTH, longest + fixed), Math.max(MIN_PANE_WIDTH, viewWidth));
+      // The rows box is as wide as the longest line the pane shows — drawn or not — with
+      // its line numbers and label.
+      const rows = element.querySelector<HTMLElement>('.rv-rows');
+      const width = Math.min(Math.max(MIN_PANE_WIDTH, (rows?.offsetWidth ?? 0) + 34), Math.max(MIN_PANE_WIDTH, viewWidth));
       setWidths((current) => new Map([...current, [index, width]]));
     },
     [viewWidth],
