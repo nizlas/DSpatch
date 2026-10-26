@@ -56,6 +56,14 @@ import type {
   WorkspaceReport,
 } from '../shared/bridge';
 import type { StepActivity } from '../shared/loop-activity';
+import type {
+  ReviewBridge,
+  ReviewFileOutcome,
+  ReviewOpenOutcome,
+  ReviewPreferences,
+  ReviewState,
+  RevisionSide,
+} from '../shared/review-model';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
 import type { RoleReference } from '../shared/loop-graph';
 import type { RunJournalEntry } from '../shared/loop-run';
@@ -378,3 +386,28 @@ const bridge: DspatchBridge = {
 
 // The renderer has no Node access and no other Electron access.
 contextBridge.exposeInMainWorld('dspatch', bridge);
+
+/**
+ * The review surface's own bridge (`#review`). Separate from `dspatch` because review
+ * is a standalone capability: read-only git at a fixed revision pair, and the
+ * reviewer's record. Channel names match `src/main/review-ipc.ts`; they are literals
+ * here because the sandboxed preload cannot load that module.
+ */
+const reviewBridge: ReviewBridge = {
+  initial: () => ipcRenderer.invoke('dspatch:review-initial') as Promise<ReviewOpenOutcome>,
+  choose: () => ipcRenderer.invoke('dspatch:review-choose') as Promise<ReviewOpenOutcome>,
+  readFile: (side: RevisionSide, filePath: string) =>
+    ipcRenderer.invoke('dspatch:review-read-file', side, filePath) as Promise<ReviewFileOutcome>,
+  listFiles: (side: RevisionSide) =>
+    ipcRenderer.invoke('dspatch:review-list-files', side) as Promise<readonly string[]>,
+  search: (side: RevisionSide, query: string) =>
+    ipcRenderer.invoke('dspatch:review-search', side, query) as ReturnType<ReviewBridge['search']>,
+  saveState: (state: ReviewState) =>
+    ipcRenderer.invoke('dspatch:review-save-state', state) as ReturnType<ReviewBridge['saveState']>,
+  getPreferences: () =>
+    ipcRenderer.invoke('dspatch:review-get-preferences') as ReturnType<ReviewBridge['getPreferences']>,
+  setPreferences: (preferences: ReviewPreferences) =>
+    ipcRenderer.invoke('dspatch:review-set-preferences', preferences) as ReturnType<ReviewBridge['setPreferences']>,
+};
+contextBridge.exposeInMainWorld('dspatchReview', reviewBridge);
+

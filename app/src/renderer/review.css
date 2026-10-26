@@ -1,0 +1,1437 @@
+/* The review surface (`#review`). Uses the approved palette from styles.css; every
+   class is prefixed `rv-` so nothing here reaches the chat or the editor.
+
+   Colour roles, kept apart on purpose:
+   - before / after: soft red and soft green backgrounds, always with a text label;
+     they mean old and new code, never rejected or accepted;
+   - neutral focus: what a step explains when that code did not change;
+   - walk overview: a faint purple, optional, below the step's own marking. */
+
+.rv {
+  --rv-old: color-mix(in srgb, var(--no) 32%, var(--bg));
+  /* The active place's own before/after rows: clearly lighter than any other change. */
+  --rv-old-active: color-mix(in srgb, var(--no) 46%, var(--bg));
+  --rv-new-active: color-mix(in srgb, var(--ok) 40%, var(--bg));
+  /* Only the moment a place becomes active; not a review status. */
+  --rv-gold: color-mix(in srgb, #f0b429 58%, var(--bg));
+  --rv-old-faint: color-mix(in srgb, var(--no) 12%, var(--bg));
+  --rv-new: color-mix(in srgb, var(--ok) 30%, var(--bg));
+  --rv-new-faint: color-mix(in srgb, var(--ok) 11%, var(--bg));
+  --rv-neutral: color-mix(in srgb, var(--text) 10%, var(--bg));
+  --rv-walk: color-mix(in srgb, var(--unknown) 14%, var(--bg));
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  color: var(--text);
+  background: var(--bg);
+  font-size: 0.9rem;
+}
+
+.rv button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+}
+
+.rv button:hover:not(:disabled) {
+  background: var(--raised);
+}
+
+.rv button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rv input,
+.rv textarea,
+.rv select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.25rem 0.4rem;
+}
+
+.rv code {
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+
+.rv h1 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.rv h2 {
+  font-size: 1.05rem;
+  margin: 0.2rem 0;
+}
+
+.rv-empty {
+  padding: 2rem;
+  color: var(--muted);
+}
+
+.rv-error {
+  color: var(--no);
+}
+
+.rv-sub {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.rv-center {
+  text-align: center;
+}
+
+.rv-step-id {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+/* --- Header ---------------------------------------------------------------- */
+
+.rv-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+  padding: 0.5rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.rv-header-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.rv-save.rv-error {
+  font-size: 0.85rem;
+  font-weight: 600;
+  max-width: 40rem;
+}
+
+.rv-findings {
+  color: var(--no);
+  font-size: 0.85rem;
+}
+
+.rv-lang {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.rv-full {
+  flex-basis: 100%;
+}
+
+.rv-details {
+  flex-basis: 100%;
+  border-top: 1px solid var(--line);
+  padding-top: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.rv-details dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.8rem;
+  margin: 0 0 0.4rem;
+}
+
+.rv-details dt {
+  color: var(--muted);
+}
+
+.rv-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.rv-details p {
+  margin: 0.3rem 0;
+}
+
+.rv-notice {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.4rem 0.9rem;
+  background: color-mix(in srgb, var(--unknown) 16%, var(--bg));
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+/* --- Three columns ----------------------------------------------------------- */
+
+.rv-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(14rem, 20rem) minmax(0, 1fr) minmax(17rem, 25rem);
+}
+
+.rv-body-wide {
+  grid-template-columns: minmax(26rem, 42rem) minmax(0, 1fr) minmax(17rem, 25rem);
+}
+
+@media (max-width: 1150px) {
+  .rv-body,
+  .rv-body-wide {
+    grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr) minmax(15rem, 19rem);
+  }
+
+  .rv-body-wide {
+    grid-template-columns: minmax(20rem, 26rem) minmax(0, 1fr) minmax(15rem, 19rem);
+  }
+}
+
+.rv-left,
+.rv-right {
+  min-height: 0;
+  overflow: auto;
+}
+
+.rv-left {
+  border-right: 1px solid var(--line);
+}
+
+.rv-right {
+  border-left: 1px solid var(--line);
+  padding: 0.6rem 0.9rem 2rem;
+}
+
+.rv-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.rv .rv-tab {
+  font-size: 0.8rem;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.rv .rv-tab-on {
+  border-color: var(--line);
+  background: var(--raised);
+  color: var(--text);
+}
+
+.rv-left-body {
+  padding: 0.5rem;
+}
+
+.rv-legend {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0 0 0.5rem;
+}
+
+/* --- Walk list --------------------------------------------------------------- */
+
+.rv-walk {
+  margin-bottom: 0.3rem;
+}
+
+.rv .rv-walk-head {
+  display: grid;
+  grid-template-columns: 1rem 1fr;
+  gap: 0 0.3rem;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0.35rem 0.3rem;
+}
+
+.rv-walk-current > .rv-walk-head .rv-walk-name {
+  font-weight: 600;
+}
+
+.rv-walk-count {
+  grid-column: 2;
+}
+
+.rv-chevron {
+  color: var(--muted);
+}
+
+.rv-steps {
+  list-style: none;
+  padding: 0 0 0.3rem 1.2rem;
+  margin: 0;
+}
+
+.rv .rv-step,
+.rv .rv-file,
+.rv .rv-place {
+  display: flex;
+  gap: 0.45rem;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+  margin: 1px 0;
+}
+
+.rv .rv-step-on,
+.rv .rv-file-on,
+.rv .rv-place-on {
+  border-color: var(--line);
+  background: var(--raised);
+}
+
+.rv-step-title {
+  flex: 1;
+}
+
+.rv-mark-walked {
+  color: var(--ok);
+}
+
+.rv-files {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.rv .rv-file {
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.rv-dir {
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.rv-path {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  overflow-wrap: anywhere;
+}
+
+/* --- Coverage and notes ---------------------------------------------------------- */
+
+.rv-totals,
+.rv-hunks {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-bottom: 0.6rem;
+}
+
+.rv-totals th,
+.rv-hunks th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.rv-totals th,
+.rv-totals td,
+.rv-hunks th,
+.rv-hunks td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.25rem 0.35rem;
+  vertical-align: top;
+}
+
+.rv-hunk-row {
+  cursor: pointer;
+}
+
+.rv-hunk-row:hover {
+  background: var(--panel);
+}
+
+.rv-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.rv-browse form,
+.rv-browse > input {
+  display: flex;
+  gap: 0.3rem;
+  margin: 0.4rem 0;
+  width: 100%;
+}
+
+.rv-browse form input {
+  flex: 1;
+}
+
+.rv-hits ul,
+.rv-all-files {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.rv-hits li {
+  margin-bottom: 0.3rem;
+}
+
+.rv-hit-text {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rv .rv-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--muted);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.8rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.rv-note {
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  margin: 0.35rem 0;
+}
+
+.rv-note-finding {
+  border-left-color: var(--no);
+}
+
+.rv-note-question {
+  border-left-color: var(--unknown);
+}
+
+.rv-note-resolved {
+  opacity: 0.65;
+}
+
+.rv-note-text {
+  white-space: pre-wrap;
+  margin: 0.2rem 0;
+}
+
+.rv-note-actions {
+  display: flex;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+
+.rv-note-actions input {
+  flex: 1;
+}
+
+.rv-history {
+  padding-left: 1.2rem;
+  font-size: 0.82rem;
+}
+
+.rv-note-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.rv-note-kind {
+  display: flex;
+  gap: 0.8rem;
+}
+
+/* --- Step panel ------------------------------------------------------------------- */
+
+.rv-walk-title {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.rv h1 code,
+.rv-walk-name code,
+.rv-step-title code,
+.rv-summary code,
+.rv-walk-title code,
+.rv-step-panel h2 code {
+  background: var(--panel);
+  border-radius: 3px;
+  padding: 0 0.2rem;
+  font-size: 0.92em;
+}
+
+.rv-summary {
+  font-size: 0.95rem;
+  line-height: 1.45;
+  margin: 0.5rem 0 0.7rem;
+}
+
+.rv-section-title {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0.8rem 0 0.25rem;
+}
+
+/* Prepared explanations keep their line breaks: a code name on its own line, its
+   meaning on the next. */
+.rv-explanation .markdown p,
+.rv-place .markdown p {
+  white-space: pre-line;
+  margin: 0 0 0.6rem;
+  line-height: 1.45;
+}
+
+.rv-explanation .markdown code {
+  background: var(--panel);
+  border-radius: 3px;
+  padding: 0 0.2rem;
+}
+
+.rv-explanation .markdown ol,
+.rv-explanation .markdown ul {
+  margin: 0 0 0.6rem;
+  padding-left: 1.3rem;
+}
+
+.rv-places ol {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.rv-place .markdown p {
+  margin: 0;
+}
+
+.rv-place-number {
+  flex: none;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  text-align: center;
+  font-size: 0.75rem;
+  line-height: 1.2rem;
+}
+
+/* The explanation of the place in view, under the list of places. */
+.rv-place-note {
+  margin: 0.5rem 0 0.2rem;
+  padding: 0.45rem 0.7rem;
+  border-left: 3px solid color-mix(in srgb, var(--text) 35%, transparent);
+  background: color-mix(in srgb, var(--text) 5%, var(--panel));
+}
+
+.rv-place-note p {
+  margin: 0;
+}
+
+.rv-place-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.rv-place-nav button {
+  font-size: 0.78rem;
+}
+
+.rv-evidence {
+  margin-top: 0.6rem;
+}
+
+.rv-evidence-summary {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.3rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.rv-evidence-summary li {
+  margin-bottom: 0.3rem;
+}
+
+.rv-evidence-detail {
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+}
+
+.rv-evidence-detail .markdown,
+.rv-evidence-detail .markdown p {
+  display: inline;
+}
+
+.rv .rv-quiet {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+  text-decoration: underline;
+  font-size: 0.8rem;
+}
+
+.rv-step-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.rv-collapsible {
+  border-top: 1px solid var(--line);
+  margin-top: 0.8rem;
+  padding-top: 0.4rem;
+}
+
+.rv .rv-collapsible-head {
+  border: none;
+  background: none;
+  padding: 0.2rem 0;
+  font-weight: 600;
+}
+
+.rv-collapsible-body {
+  padding: 0.3rem 0;
+}
+
+.rv-walked {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.6rem;
+}
+
+.rv-decision {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  margin: 0.35rem 0;
+  font-size: 0.85rem;
+}
+
+.rv-decision-actions {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.3rem;
+}
+
+.rv-decision-accepted {
+  color: var(--ok);
+}
+
+.rv-decision-exempted {
+  color: var(--unknown);
+}
+
+.rv-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.rv-confirm > div {
+  flex-basis: 100%;
+}
+
+.rv-confirm input {
+  flex: 1;
+  min-width: 10rem;
+}
+
+.rv-notes-here {
+  margin-top: 0.6rem;
+}
+
+/* --- Code ----------------------------------------------------------------------- */
+
+.rv-code {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rv-away {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.35rem 0.7rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.rv-code-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rv-code-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.8rem;
+  padding: 0.35rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.rv-seg {
+  display: inline-flex;
+}
+
+.rv-seg button {
+  border-radius: 0;
+  font-size: 0.82rem;
+}
+
+.rv-seg button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.rv-seg button:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.rv .rv-seg .rv-on {
+  background: var(--raised);
+  border-color: var(--muted);
+}
+
+.rv-legend-bar {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  min-height: 1.6rem;
+}
+
+.rv-key {
+  padding: 0 0.4rem;
+  border-radius: 3px;
+}
+
+.rv-lines {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  padding: 0.3rem 0 2rem;
+}
+
+/* Every row spans the widest line, so the sticky line numbers have room to stay. */
+.rv-rows {
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: 100%;
+}
+
+.rv-row {
+  display: flex;
+  min-width: max-content;
+}
+
+/* In the map's panes a row is opaque, so the sticky line numbers below can carry its
+   colour; the colour classes after this rule override it. */
+:where(.rv-pane-lines) .rv-row {
+  background: var(--bg);
+}
+
+/* In the map's panes rows, folds and notes have fixed heights, so a long file is drawn
+   a screen at a time (ROW_HEIGHT, GAP_HEIGHT and NOTE_HEIGHT in ReviewTimeline.tsx). */
+.rv-pane-lines .rv-row {
+  height: 19px;
+  line-height: 19px;
+}
+
+.rv-pane-lines .rv-rows > .rv-gap {
+  box-sizing: border-box;
+  height: 24px;
+  padding-top: 0;
+  padding-bottom: 0;
+  align-items: center;
+}
+
+.rv-pane-lines .rv-rows > .rv-nothing {
+  box-sizing: border-box;
+  height: 28px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.rv-spacer {
+  flex: none;
+}
+
+/* A pane's rows span both the pane and its longest line, also when that line is not
+   drawn (--rv-longest is set by the pane); the measure is what fitting reads. */
+.rv-pane-lines .rv-rows {
+  min-width: max(100%, var(--rv-longest, 0px));
+}
+
+.rv-longest {
+  flex: none;
+  height: 0;
+  width: var(--rv-longest, 0px);
+}
+
+.rv-old {
+  background: var(--rv-old);
+}
+
+.rv-old-faint {
+  background: var(--rv-old-faint);
+}
+
+.rv-new {
+  background: var(--rv-new);
+}
+
+.rv-new-faint {
+  background: var(--rv-new-faint);
+}
+
+.rv-neutral-focus {
+  background: var(--rv-neutral);
+}
+
+.rv-walk-mark {
+  background: var(--rv-walk);
+}
+
+/* Changed lines of the walk that the step does not explain: their faint before/after
+   colour stays, with a thin purple edge to show they belong to the walk. */
+.rv-walk-edge {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--unknown) 55%, transparent);
+}
+
+.rv-row-selected {
+  outline: 1px dashed var(--muted);
+  outline-offset: -1px;
+}
+
+.rv .rv-ln {
+  display: inline-flex;
+  flex: none;
+  gap: 0.4rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 0.4rem;
+  font-family: inherit;
+  font-size: 0.75rem;
+  line-height: inherit;
+}
+
+/* In the map's panes the line numbers stay put while a long line is scrolled
+   sideways, with their row's colour and its left edge mark (call, walk, arrival). */
+.rv .rv-pane-lines .rv-ln {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: inherit;
+  box-shadow: inherit;
+}
+
+/* So does the before/after label beside them (the numbers are 6rem wide). */
+.rv .rv-pane-lines .rv-marker {
+  position: sticky;
+  left: 6rem;
+  z-index: 1;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: inherit;
+}
+
+/* The links that open folded lines stay at the left edge too. */
+.rv-pane-lines .rv-gap,
+.rv-pane-lines .rv-nothing {
+  position: sticky;
+  left: 0;
+  align-self: flex-start;
+}
+
+.rv-ln span {
+  display: inline-block;
+  min-width: 2.4rem;
+  text-align: right;
+}
+
+.rv-marker {
+  flex: none;
+  width: 3.4rem;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-align: center;
+  align-self: center;
+}
+
+.rv-marker-strong {
+  color: var(--text);
+}
+
+.rv-text {
+  white-space: pre;
+  padding-right: 1rem;
+}
+
+.rv-tk-keyword {
+  color: #c792ea;
+}
+
+.rv-tk-string {
+  color: #c3e88d;
+}
+
+.rv-tk-comment {
+  color: #7f8b99;
+  font-style: italic;
+}
+
+.rv-tk-number {
+  color: #f78c6c;
+}
+
+.rv-nothing {
+  padding: 0.3rem 0.8rem;
+  color: var(--muted);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-style: italic;
+}
+
+.rv-problem {
+  padding: 0.25rem 0.7rem;
+  font-size: 0.82rem;
+}
+
+.rv-gap,
+.rv-more {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.15rem 0.6rem;
+}
+
+.rv .rv-gap button,
+.rv .rv-more button {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+
+/* --- Walk navigation, always in the same place ------------------------------------ */
+
+.rv-navbar {
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  padding: 0.35rem 0.7rem;
+}
+
+.rv-navbar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.rv-navbar-controls {
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+
+.rv .rv-nav-button {
+  flex: none;
+  min-width: 8rem;
+  font-weight: 600;
+}
+
+.rv-nav-next {
+  margin-left: auto;
+}
+
+.rv-nav-where {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+/* One line, so the code below keeps its height from step to step; the full label
+   is in the tooltip and in the step panel. */
+.rv-nav-label {
+  font-weight: 600;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rv-nav-label code,
+.rv-pane-from code,
+.rv-place-from code,
+.rv-purpose code,
+.rv-walk-purpose code {
+  background: var(--bg);
+  border-radius: 3px;
+  padding: 0 0.2rem;
+}
+
+/* --- Timeline ------------------------------------------------------------------- */
+
+.rv-timeline {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rv-timeline-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rv-timeline-track {
+  position: relative;
+  height: 100%;
+  transition: transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: transform;
+}
+
+/* One pane per station, placed on the map by its left edge and width. */
+.rv-pane-slot {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 0;
+  border-right: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.rv-pane-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.rv-pane-resize:hover {
+  background: color-mix(in srgb, var(--unknown) 35%, transparent);
+}
+
+/* Panning: the hand shows while Shift is held over the map and grips while dragging. */
+.rv-pan-ready {
+  cursor: grab;
+  user-select: none;
+}
+
+.rv-panning,
+.rv-panning * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+.rv-unchanged-tag {
+  font-size: 0.75rem;
+  padding: 0 0.4rem;
+  border-radius: 0.3rem;
+  background: var(--rv-neutral);
+  color: var(--muted);
+}
+
+.rv-pane-step {
+  color: var(--muted);
+}
+
+.rv-strip-position {
+  margin-left: auto;
+}
+
+.rv-pane-placeholder {
+  padding: 1rem;
+  color: var(--muted);
+}
+
+.rv-pane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  transition: opacity 400ms ease, filter 400ms ease;
+}
+
+/* Earlier and later panes: the focus is quieter, but added, removed and unchanged
+   code keep their colours and the text stays readable. */
+.rv-pane-inactive {
+  opacity: 0.9;
+}
+
+.rv-pane-inactive .rv-old {
+  background: color-mix(in srgb, var(--no) 22%, var(--bg));
+}
+
+.rv-pane-inactive .rv-new {
+  background: color-mix(in srgb, var(--ok) 20%, var(--bg));
+}
+
+.rv-pane-inactive .rv-neutral-focus {
+  background: color-mix(in srgb, var(--text) 7%, var(--bg));
+}
+
+.rv-pane-active {
+  opacity: 1;
+}
+
+/* The active place's focus rows stay clearly lighter than every other changed row —
+   in other panes and around it — after the gold has faded. Unchanged focus stays
+   neutral. The dimmer token colours are lifted on these rows so they keep a contrast
+   of at least 5:1. */
+.rv-pane-active .rv-old {
+  background: var(--rv-old-active);
+}
+
+.rv-pane-active .rv-new {
+  background: var(--rv-new-active);
+}
+
+.rv-pane-active :is(.rv-old, .rv-new) .rv-tk-keyword {
+  color: #dcbcf6;
+}
+
+.rv-pane-active :is(.rv-old, .rv-new) .rv-tk-comment {
+  color: #b4bfcc;
+}
+
+.rv-pane-active :is(.rv-old, .rv-new) .rv-tk-number {
+  color: #ffb59c;
+}
+
+.rv-pane-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.6rem;
+  align-items: baseline;
+  padding: 0.3rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.rv-pane-active .rv-pane-head {
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--unknown) 60%, transparent);
+}
+
+.rv-pane-from {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.rv-pane-lines {
+  flex: 1;
+}
+
+.rv-arrow {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.rv-arrow path {
+  fill: none;
+  stroke: color-mix(in srgb, var(--unknown) 85%, var(--text));
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.rv-arrow marker path {
+  fill: color-mix(in srgb, var(--unknown) 85%, var(--text));
+  stroke: none;
+}
+
+.rv-from {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--unknown) 85%, var(--text));
+  background: color-mix(in srgb, var(--unknown) 18%, var(--bg));
+}
+
+.rv-neutral-faint {
+  background: color-mix(in srgb, var(--text) 5%, var(--bg));
+}
+
+/* The place shown before the current one: weaker than the focus, stronger than the diff. */
+.rv-was.rv-old-faint {
+  background: color-mix(in srgb, var(--no) 22%, var(--bg));
+}
+
+.rv-was.rv-new-faint {
+  background: color-mix(in srgb, var(--ok) 20%, var(--bg));
+}
+
+.rv-was.rv-neutral-faint {
+  background: color-mix(in srgb, var(--text) 13%, var(--bg));
+}
+
+/* Arriving: a short flash, then the row settles into its own colour. */
+/* Activation: the focus rows turn warm gold for a moment, then settle into their own
+   red, green or grey. Colour only — no edges, no size change, once. */
+@keyframes rv-flash {
+  0%,
+  25% {
+    background-color: var(--rv-gold);
+  }
+}
+
+.rv-arrive {
+  animation: rv-flash 1500ms ease-out;
+}
+
+/* Leaving: a brief pulse so the fading is noticed, then the faint colour. */
+@keyframes rv-fade {
+  0% {
+    filter: brightness(1.6);
+  }
+  35% {
+    filter: brightness(1.25);
+  }
+  100% {
+    filter: none;
+  }
+}
+
+.rv-leave {
+  animation: rv-fade 650ms ease-in;
+}
+
+.rv-timeline-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.35rem 0.7rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.rv .rv-strip-dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--line);
+  border: none;
+}
+
+.rv .rv-strip-file {
+  margin-left: 0.55rem;
+}
+
+.rv .rv-strip-on {
+  background: var(--unknown);
+  transform: scale(1.35);
+}
+
+.rv-strip-hint {
+  margin-left: auto;
+  font-size: 0.72rem;
+}
+
+/* --- Left column: overview, walks and the file tree ---------------------------------- */
+
+.rv-walks-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.rv-walk-purpose,
+.rv-purpose {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  margin: 0.1rem 0 0.4rem 1.3rem;
+}
+
+.rv-purpose {
+  margin: 0.2rem 0 0.4rem;
+}
+
+.rv-place-from {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0.2rem 0 0;
+}
+
+.rv-tree {
+  border-top: 1px solid var(--line);
+  padding-top: 0.3rem;
+  max-height: 45vh;
+  overflow: auto;
+}
+
+.rv-tree-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+
+.rv-tree-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+@keyframes rv-tree-open {
+  from {
+    opacity: 0;
+    transform: translateY(-0.3rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rv-tree-opening {
+  animation: rv-tree-open 380ms ease-out;
+}
+
+.rv .rv-tree-dir,
+.rv .rv-tree-file {
+  display: flex;
+  gap: 0.35rem;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding-top: 0.05rem;
+  padding-bottom: 0.05rem;
+  font-size: 0.82rem;
+}
+
+.rv .rv-tree-file {
+  color: var(--muted);
+}
+
+.rv .rv-tree-changed {
+  color: var(--text);
+}
+
+.rv .rv-tree-current {
+  background: var(--raised);
+  color: var(--text);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rv-timeline-track,
+  .rv-pane {
+    transition: none;
+  }
+
+  .rv-arrive,
+  .rv-leave,
+  .rv-tree-opening {
+    animation: none;
+  }
+}
+
+.rv-no-motion {
+  transition: none !important;
+}
+
+/* Entering a walk: it slides in from the side of travel. */
+@keyframes rv-enter-forward {
+  from {
+    opacity: 0.3;
+    translate: 18% 0;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes rv-enter-backward {
+  from {
+    opacity: 0.3;
+    translate: -18% 0;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.rv-enter-forward {
+  animation: rv-enter-forward 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.rv-enter-backward {
+  animation: rv-enter-backward 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rv-enter-forward,
+  .rv-enter-backward {
+    animation: none;
+  }
+}

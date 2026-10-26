@@ -110,6 +110,10 @@ const AREAS = {
       { file: 'conversation-switch.test.ts', heavy: true },
     ],
   },
+  review: {
+    what: 'the review surface: the real diff, prepared walks, coverage and the reviewer record',
+    files: ['review-model.test.ts', { file: 'review-service.test.ts', heavy: true }],
+  },
   provider: {
     what: 'provider adapters and their experiment scenarios, with a substituted provider',
     files: [
