@@ -294,7 +294,9 @@ const chatRunScenario: ScriptedScenario =
                                         ? 'review-direct'
                                         : chatRunValue === 'review-discussion'
                                           ? 'review-discussion'
-                                          : 'full-workflow';
+                                          : chatRunValue === 'review-hold'
+                                            ? 'review-hold'
+                                            : 'full-workflow';
 
 /**
  * The one run that talks to no provider.
@@ -370,17 +372,22 @@ const presentationMode =
   chatRunScenario === 'review-window' ||
   chatRunScenario === 'review-direct' ||
   // DSP-127: the review discussion, answered by presentation adapters of its own.
-  chatRunScenario === 'review-discussion';
+  chatRunScenario === 'review-discussion' ||
+  // DSP-126/127 hand-over: P1 opened and left at rest for a person; every answer simulated.
+  chatRunScenario === 'review-hold';
 
 /**
- * Hold mode (`DSPATCH_CHAT_HOLD=1`, `resume-choice` only): the scenario performs the
+ * Hold mode (`DSPATCH_CHAT_HOLD=1` with `resume-choice`, or `review-hold`): the scenario performs the
  * open, the record is written, and the window is left open for a person to look at
  * instead of being exited. The conversation view then behaves as in an ordinary launch
  * - the real panel and its buttons - and is simply not driven further. Not the whole
  * window: `chatRunMode` stays on, so the graph editor's file dialogs and the
  * unsaved-drawing question still answer from the scripted queues.
  */
-const chatRunHold = chatRunScenario === 'resume-choice' && process.env['DSPATCH_CHAT_HOLD'] === '1';
+const chatRunHold =
+  (chatRunScenario === 'resume-choice' && process.env['DSPATCH_CHAT_HOLD'] === '1') ||
+  // A hold by nature: P1 is opened and the window is left to the person (`start-review.cmd`).
+  chatRunScenario === 'review-hold';
 
 /**
  * The hold-mode verification aid (`DSPATCH_CHAT_HOLD_CLOSE_MS`, DSP-121 flow).
@@ -2990,7 +2997,9 @@ function writeChatRunRecord(
                             ? `DSP-121 — the refused or failed resume state and the three choices, through the real choice panel (DSPATCH_CHAT_RESUME=${presentationResume.mode}${chatRunHold ? ', hold mode' : ''}), over a seeded user-data directory. SIMULATED: the refusal and the failure are the presentation adapter's own answers on this machine; no provider was asked anything, and nothing here says what any provider would do`
                             : chatRunScenario === 'review-window'
                               ? 'DSP-126 — review opened from the chat as a separate window: one window per review, the chooser or the last review, the chat untouched, identity kept across a project switch, and the position kept across a close inside the save delay, driven through both windows with no provider call'
-                              : chatRunScenario === 'review-discussion'
+                              : chatRunScenario === 'review-hold'
+                                ? 'DSP-126/127 hand-over — the main chat opened on P1 and left at rest for a person, with Open review going to the seeded walk. SIMULATED: every chat and review answer is a presentation adapter\'s; no provider was asked anything, and nothing was sent by the script'
+                                : chatRunScenario === 'review-discussion'
                                 ? 'DSP-127 — a discussion about the code under review in the review window: answers on their own questions while the window moves, Stop with and without a run, a review-only send failure, the main chat beside it, drafts across a close and in two windows, and nothing sent on open or navigation. SIMULATED: every answer and every failure is the presentation adapter\'s; no provider was asked anything'
                                 : 'DSP-1 substep 7 — the whole workflow driven through the window',
     scenario: chatRunScenario,
@@ -4014,7 +4023,8 @@ function registerIpc(): void {
       ...(chatRunScenario === 'workspace-switch' ||
       chatRunScenario === 'resume-choice' ||
       chatRunScenario === 'review-window' ||
-      chatRunScenario === 'review-discussion'
+      chatRunScenario === 'review-discussion' ||
+      chatRunScenario === 'review-hold'
         ? {
             switchProjects: (process.env['DSPATCH_CHAT_SWITCH_PROJECTS'] ?? '')
               .split(';')
@@ -4149,9 +4159,12 @@ function registerIpc(): void {
         // Hold mode: the record is written and the window stays. Nothing else is
         // driven; the person closes it when they have looked.
         log(
-          `hold mode: the window is left open with the ${presentationResume.mode} state ` +
-            `shown (SIMULATED by the presentation adapter). Close it when done; would have ` +
-            `exited with ${String(exitCode)}.`,
+          chatRunScenario === 'review-hold'
+            ? `hold mode: the window is left open on P1 with nothing sent (every answer SIMULATED by ` +
+                `the presentation adapters). Close it when done; would have exited with ${String(exitCode)}.`
+            : `hold mode: the window is left open with the ${presentationResume.mode} state ` +
+                `shown (SIMULATED by the presentation adapter). Close it when done; would have ` +
+                `exited with ${String(exitCode)}.`,
         );
         // The verification aid, for an agent that cannot close a window: an ordinary
         // close after the delay, so the after-close record is written as for a person.
@@ -5790,7 +5803,8 @@ function main(): void {
         }
       },
       development: !app.isPackaged,
-      scriptedPick: chatRunMode ? () => scriptedFilePick('review definition') : null,
+      // A held window is a person's: their review chooser is the real dialog, never the queue.
+      scriptedPick: chatRunMode && !chatRunHold ? () => scriptedFilePick('review definition') : null,
       log: (message) => {
         log(`[review] ${message}`);
       },

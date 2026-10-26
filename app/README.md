@@ -1189,6 +1189,16 @@ and seeds it again first, which is the way back to a clean A after the window ha
 written into it. It needs `node` on `PATH` and `npm run build` done in `app\`. What it
 shows is simulated, and it says so when it starts.
 
+`scripts\start-review.cmd` (DSP-126, DSP-127) is the same kind of double-click for review: it
+seeds a kit at `%TEMP%\dspatch-review-handover` (`seed-review-kit.mjs --recent`, so the
+three-step walk is P1's last review) and starts the built application with
+`DSPATCH_CHAT_RUN=review-hold`, `--user-data-dir` on the kit and `DSPATCH_CHAT_EXPECT_USERDATA`.
+The chat opens P1 and nothing more is driven: *Open review* opens the walk directly, the
+Discussion tab can be used, and the review chooser is the real dialog. Every chat and
+review answer is simulated by the presentation adapters (`DSPATCH_PRESENTATION_DELTA_MS=200`,
+about three seconds a reply, so Stop can be pressed); the file says so when it starts.
+`start-review.cmd reset` seeds the kit again. The window stays until you close it.
+
 `DSPATCH_CHAT_HOLD_CLOSE_MS` is for an agent verifying the hand-over, which cannot close a
 window: in hold mode only, set to a positive number of milliseconds, the main process
 closes the window that long after writing the record - an ordinary close, so the record

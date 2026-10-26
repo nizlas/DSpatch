@@ -13,6 +13,9 @@
  *     <kit>\p2\other                          P2: a second fixture repository (other commits), never reviewed
  *     <kit>\seed-summary.json                 the paths and revisions written
  *
+ * With `--recent` it also writes `<kit>\userData\reviews\recent.json` naming the walk as P1's
+ * last review, so *Open review* opens it directly (the hand-over, `start-review.cmd`).
+ *
  * Run from `app/` (the kit folder must not already hold `userData`):
  *
  *     node --import ./scripts/ts-resolve.mjs scripts/seed-review-kit.mjs <kit-folder>
@@ -21,6 +24,7 @@
  * definition ready for `DSPATCH_PICK_FILE` (or `DSPATCH_REVIEW_DEFINITION`).
  */
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -58,6 +62,19 @@ const base = Date.now() - 60 * 60 * 1000;
     throw new Error(state.error);
   }
 });
+
+// `--recent` (the hand-over, `start-review.cmd`): the walk is P1's last review, so the first
+// *Open review* opens it directly. The same file and key the review windows write.
+if (process.argv.includes('--recent')) {
+  const top = path.resolve(execFileSync('git', ['-C', one.repo, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
+  const key = process.platform === 'win32' ? top.toLowerCase() : top;
+  fs.mkdirSync(path.join(USERDATA, 'reviews'), { recursive: true });
+  fs.writeFileSync(
+    path.join(USERDATA, 'reviews', 'recent.json'),
+    `${JSON.stringify({ version: 1, repositories: { [key]: { repository: top, definitionPath: definition, openedAt: new Date().toISOString() } } }, null, 2)}\n`,
+    'utf8',
+  );
+}
 
 const summary = {
   kit: KIT,

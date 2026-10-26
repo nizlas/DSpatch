@@ -747,6 +747,8 @@ export async function runScriptedWorkflow(
       return runReviewWindowScenario(plan);
     case 'review-discussion':
       return runReviewDiscussionScenario(plan);
+    case 'review-hold':
+      return runReviewHoldScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -9505,6 +9507,72 @@ async function runReviewWindowScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     } catch {
       // The exit closes them in any case.
     }
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/**
+ * The hand-over window (`start-review.cmd`): open P1 from Recent, read the state at rest
+ * and stop. Nothing is typed, sent or opened; the window is the person's from here.
+ */
+async function runReviewHoldScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const [projectOne] = plan.switchProjects ?? [];
+  const observations: Record<string, unknown> = {
+    plan,
+    limits: 'SIMULATED: every chat and review answer is a presentation adapter\'s; no provider is asked anything. The script only opened P1.',
+  };
+  const samePath = (left: string | null | undefined, right: string | null | undefined): boolean =>
+    (left ?? '').replace(/[\\/]+$/, '').toLowerCase() === (right ?? '').replace(/[\\/]+$/, '').toLowerCase();
+  try {
+    if (projectOne === undefined) {
+      throw new Error('the hand-over needs P1 in DSPATCH_CHAT_SWITCH_PROJECTS');
+    }
+    await waitFor('the connection to reach a decided state', () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')), 60_000);
+    if (element('projects') === null) {
+      await window.dspatch.pressMenuItem('change-project');
+      await waitFor('the project chooser', () => element('projects') !== null, 10_000);
+    }
+    const rowOf = (): number | null => {
+      for (let index = 0; index < 50; index += 1) {
+        const found = element(`project-${String(index)}-path`);
+        if (found === null) {
+          return null;
+        }
+        if (samePath((found.textContent ?? '').replace(/\s+/g, ' ').trim(), projectOne)) {
+          return index;
+        }
+      }
+      return null;
+    };
+    await waitFor('P1 to be offered in Recent', () => rowOf() !== null, 60_000);
+    await click(`open-project-${String(rowOf() ?? 0)}`);
+    await waitFor(
+      'a session over P1',
+      () => textOf('session-id').startsWith('dsp-session-') && samePath(attributeOf('project-path', 'title'), projectOne) && element('projects') === null,
+      60_000,
+    );
+    const reading = (await window.dspatch.reviewWindowCheck({ action: 'read' })).detail as {
+      readonly reviewWindows: readonly unknown[];
+      readonly chat: { readonly workspacePath: string | null };
+      readonly recentReviews: unknown;
+      readonly adapterSent: { readonly chat: readonly string[] | null; readonly review: readonly string[] | null };
+    };
+    steps.push({ step: 'at rest', project: textOf('project-path'), session: textOf('session-id'), turns: countEntries('turn'), main: reading });
+    observations['atRest'] = {
+      p1Open: samePath(reading.chat.workspacePath, projectOne),
+      chatSent: reading.adapterSent.chat?.length ?? null,
+      reviewSent: reading.adapterSent.review?.length ?? null,
+      reviewWindows: reading.reviewWindows.length,
+      recentReviews: reading.recentReviews,
+    };
+    if (!samePath(reading.chat.workspacePath, projectOne)) failures.push('P1 is not the open project');
+    if ((reading.adapterSent.chat?.length ?? -1) !== 0 || (reading.adapterSent.review?.length ?? -1) !== 0) failures.push('something was sent');
+    if (reading.reviewWindows.length !== 0) failures.push('a review window was opened by the script');
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
   }
 }

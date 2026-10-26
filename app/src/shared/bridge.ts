@@ -1703,7 +1703,13 @@ export type ScriptedScenario =
    * the main chat sending and cancelling beside a review answer, drafts across a close
    * and in two windows, and nothing sent on open, load or navigation.
    */
-  | 'review-discussion';
+  | 'review-discussion'
+  /**
+   * DSP-126/127 hand-over (`scripts/start-review.cmd`): the chat opens P1 and the window
+   * is left at rest for a person, with *Open review* going to the seeded last review.
+   * Nothing is sent; every answer the person asks for is SIMULATED.
+   */
+  | 'review-hold';
 
 /** What the `review-window` scenario asks the main process to read or do. Scripted runs only. */
 export type ReviewWindowCheckRequest =
