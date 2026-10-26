@@ -93,6 +93,25 @@ async function commit(repository: string, revision: string): Promise<ReviewCommi
   return { sha, subject: subject ?? '' };
 }
 
+/**
+ * The identity of one review: the repository, the two resolved commits and the
+ * definition file. It is also the name of the reviewer's record, so two windows with
+ * the same identity would be two writers of one file; the window registry keeps that
+ * from happening.
+ */
+export interface ReviewIdentity {
+  readonly key: string;
+  readonly definitionPath: string;
+  readonly repository: string;
+  readonly base: string;
+  readonly target: string;
+}
+
+/** The record key for an identity, as the record file is named. */
+export function reviewRecordKey(repository: string, base: string, target: string, definitionPath: string): string {
+  return createHash('sha256').update(`${repository}\0${base}\0${target}\0${definitionPath}`).digest('hex').slice(0, 24);
+}
+
 export interface ReviewServiceOptions {
   /** Where review records are kept: DSpatch's data directory. */
   readonly recordsDir: string;
@@ -101,6 +120,7 @@ export interface ReviewServiceOptions {
 
 /** One open review: its fixed revisions and a cache of file contents at them. */
 interface OpenReview {
+  readonly definitionPath: string;
   readonly repository: string;
   readonly base: string;
   readonly target: string;
@@ -111,10 +131,47 @@ interface OpenReview {
 export class ReviewService {
   private open: OpenReview | null = null;
 
+  /**
+   * Every review this service has opened, by record key. A window that switches to
+   * another review can still be saving the one it showed before; that save goes to
+   * the record it names (its revisions and definition), never to whichever review
+   * happens to be open now.
+   */
+  private readonly opened = new Map<string, OpenReview>();
+
   private readonly options: ReviewServiceOptions;
 
   constructor(options: ReviewServiceOptions) {
     this.options = options;
+  }
+
+  /**
+   * Which review a definition file names, without opening it: the definition is read
+   * and its two revisions resolved, nothing more. Lets the window registry find a
+   * window that already has this review before a second one is opened on it.
+   */
+  async identify(definitionPath: string): Promise<{ readonly identity: ReviewIdentity } | { readonly error: string }> {
+    try {
+      const absolute = path.resolve(definitionPath);
+      const { definition, problems } = parseReviewDefinition(JSON.parse(fs.readFileSync(absolute, 'utf8')));
+      if (definition === null) {
+        return { error: problems.map((entry) => entry.problem).join(' ') };
+      }
+      const repository = path.resolve(path.dirname(absolute), definition.repository);
+      const base = await commit(repository, definition.base);
+      const target = await commit(repository, definition.target);
+      return {
+        identity: {
+          key: reviewRecordKey(repository, base.sha, target.sha, absolute),
+          definitionPath: absolute,
+          repository,
+          base: base.sha,
+          target: target.sha,
+        },
+      };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   /** Read a definition file, resolve its revisions, compute the diff and validate every reference. */
@@ -144,11 +201,10 @@ export class ReviewService {
       const unified = await git(repository, ['diff', '-U0', '--src-prefix=a/', '--dst-prefix=b/', ...diffArgs]);
       const files: DiffFile[] = [...parseDiff(nameStatus, unified)];
 
-      const recordPath = path.join(
-        this.options.recordsDir,
-        `${createHash('sha256').update(`${repository}\0${base.sha}\0${target.sha}\0${absolute}`).digest('hex').slice(0, 24)}.json`,
-      );
-      this.open = { repository, base: base.sha, target: target.sha, recordPath, cache: new Map() };
+      const recordKey = reviewRecordKey(repository, base.sha, target.sha, absolute);
+      const recordPath = path.join(this.options.recordsDir, `${recordKey}.json`);
+      this.open = { definitionPath: absolute, repository, base: base.sha, target: target.sha, recordPath, cache: new Map() };
+      this.opened.set(recordKey, this.open);
 
       const referenceProblems: { stepId: string; refId: string; problem: string }[] = [];
       for (const walk of definition.walks) {
@@ -319,7 +375,7 @@ export class ReviewService {
   }
 
   saveState(state: unknown): { saved: boolean; at: string; error?: string } {
-    const open = this.open;
+    const open = this.recordFor(state);
     const at = new Date().toISOString();
     if (open === null) {
       return { saved: false, at, error: 'No review is open.' };
@@ -337,6 +393,26 @@ export class ReviewService {
     } catch (error) {
       return { saved: false, at, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  /**
+   * The open review a record to save belongs to: the one with its revisions and
+   * definition, else the current one (which the check below then judges).
+   */
+  private recordFor(state: unknown): OpenReview | null {
+    if (typeof state === 'object' && state !== null) {
+      const record = state as { revisions?: { base?: unknown; target?: unknown }; definitionPath?: unknown };
+      for (const candidate of this.opened.values()) {
+        if (
+          candidate.base === record.revisions?.base &&
+          candidate.target === record.revisions?.target &&
+          candidate.definitionPath === record.definitionPath
+        ) {
+          return candidate;
+        }
+      }
+    }
+    return this.open;
   }
 
   /** The reviewer's preferences, kept beside the review records. */

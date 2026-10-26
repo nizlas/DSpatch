@@ -1683,7 +1683,40 @@ export type ScriptedScenario =
    * adapter**: no provider is asked anything, and the run shows the window's
    * behaviour only. Hold mode leaves the window open after the open for a person.
    */
-  | 'resume-choice';
+  | 'resume-choice'
+  /**
+   * DSP-126: review opened from the chat as a separate window, driven through both
+   * windows with no provider call. The chat window's script opens projects, keeps a
+   * draft and presses *Open review*; the main process reads and drives the review
+   * windows (`reviewWindowCheck`) and records what it saw beside what the chat showed.
+   */
+  | 'review-window'
+  /**
+   * DSP-126: `npm run review -- <definition>` without a chat. No chat window exists, so
+   * the main process alone drives and reads the one review window and writes the record.
+   */
+  | 'review-direct';
+
+/** What the `review-window` scenario asks the main process to read or do. Scripted runs only. */
+export type ReviewWindowCheckRequest =
+  | { readonly action: 'read' }
+  | { readonly action: 'choose'; readonly webContentsId: number }
+  | {
+      readonly action: 'go-to-step';
+      readonly webContentsId: number;
+      readonly stepId: string;
+      /** Close the window straight after, inside the view's 250 ms save delay. */
+      readonly closeAfter: boolean;
+    }
+  | { readonly action: 'close'; readonly webContentsId: number }
+  | { readonly action: 'capture'; readonly webContentsId: number; readonly label: string; readonly width: number | null }
+  | { readonly action: 'refuse-chat-sender' };
+
+/** The main process's answer: what it did, and what it read, kept apart from the DOM. */
+export interface ReviewWindowCheckAnswer {
+  readonly ok: boolean;
+  readonly detail: unknown;
+}
 
 export interface ScriptedRunPlan {
   readonly enabled: true;
@@ -2038,6 +2071,20 @@ export interface DspatchBridge {
    * focuses the window that is already open rather than making a second one.
    */
   openLoopEditor(): Promise<LoopEditorWindowOutcome>;
+  /**
+   * Open review for the project this chat is working in, in a window of its own (DSP-126).
+   *
+   * The main process hands review the open session's folder and nothing else; review
+   * opens the last review opened for that repository, or its chooser. Asking again
+   * focuses the window that already has it. Opening starts no work and changes nothing
+   * in this window.
+   */
+  openReview(): Promise<LoopEditorWindowOutcome>;
+  /**
+   * Read or drive the review windows for the `review-window` scenario. Registered only
+   * during a scripted run; an ordinary launch has no such channel.
+   */
+  reviewWindowCheck(request: ReviewWindowCheckRequest): Promise<ReviewWindowCheckAnswer>;
   /**
    * Every addressed thing that happens to a loop run, in any window.
    *
@@ -2712,6 +2759,8 @@ export type BridgeChannel =
   | 'dspatch:resolve-loop-roles'
   | 'dspatch:reveal-role-source'
   | 'dspatch:open-loop-editor'
+  | 'dspatch:open-review'
+  | 'dspatch:check-review-windows'
   | 'dspatch:start-editor-loop-run'
   | 'dspatch:cancel-editor-loop-run'
   | 'dspatch:loop-run-event'

@@ -23,11 +23,20 @@ if (host === null) {
  * added beside it without touching it: `#editor` chooses, and `npm run editor` opens
  * the window on that hash.
  */
-function chosenView(): 'editor' | 'chat' | 'review' {
+function chosenView(): 'editor' | 'chat' {
   const hash = window.location.hash.replace(/^#/, '');
-  // `#review`: the standalone review surface (`npm run review`). It needs no chat.
-  return hash === 'editor' ? 'editor' : hash === 'review' ? 'review' : 'chat';
+  return hash === 'editor' ? 'editor' : 'chat';
 }
+
+/**
+ * A review window (`?window=review`), opened by the main process for the review module.
+ *
+ * It shows review and nothing else: it never mounts the chat, never follows a hash
+ * change and has only the review bridge (`review-preload.ts`). Review is reached from
+ * the chat's *Open review* button or `npm run review`, both of which open such a
+ * window; it is no longer a view the chat window can switch to.
+ */
+const isReviewWindow = new URLSearchParams(window.location.search).get('window') === 'review';
 
 /** The hash the window was opened on, which decides whether it has a chat to keep. */
 const initialView = chosenView();
@@ -50,7 +59,7 @@ const initialView = chosenView();
  * one until the user asks for it; `npm run editor` therefore stays what it was.
  */
 function Surfaces(): JSX.Element {
-  const [view, setView] = useState<'editor' | 'chat' | 'review'>(initialView);
+  const [view, setView] = useState<'editor' | 'chat'>(initialView);
 
   useEffect(() => {
     function follow(): void {
@@ -80,13 +89,8 @@ function Surfaces(): JSX.Element {
         </div>
       )}
       {view === 'editor' && <LoopEditor />}
-      {view === 'review' && <ReviewView />}
     </>
   );
 }
 
-createRoot(host).render(
-  <StrictMode>
-    <Surfaces />
-  </StrictMode>,
-);
+createRoot(host).render(<StrictMode>{isReviewWindow ? <ReviewView /> : <Surfaces />}</StrictMode>);

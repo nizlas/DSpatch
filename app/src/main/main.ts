@@ -38,6 +38,8 @@ import type {
   LoopDefinitionChooseOutcome,
   LoopDefinitionListing,
   ResolvedRoleEntry,
+  ReviewWindowCheckAnswer,
+  ReviewWindowCheckRequest,
   SampleProjectsView,
   ScriptedRunPlan,
   ScriptedRunReport,
@@ -96,7 +98,8 @@ import { ownRepositoryRoot } from './own-repository';
 import { PROBE_EXIT, runCursorProbe } from './probe-cursor';
 import { ProjectStore } from './project-store';
 import { readDirectoryPage, readFileForViewing } from './workspace-tree';
-import { registerReviewIpc } from './review-ipc';
+import { registerReviewIpc, reviewSenderRefusal } from './review-ipc';
+import { ReviewWindows } from './review-windows';
 import {
   addFolderTo,
   folderDisplayName,
@@ -174,6 +177,8 @@ const SAVE_LOOP_GRAPH: BridgeChannel = 'dspatch:save-loop-graph';
 const RESOLVE_LOOP_ROLES: BridgeChannel = 'dspatch:resolve-loop-roles';
 const REVEAL_ROLE_SOURCE: BridgeChannel = 'dspatch:reveal-role-source';
 const OPEN_LOOP_EDITOR: BridgeChannel = 'dspatch:open-loop-editor';
+const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
+const CHECK_REVIEW_WINDOWS: BridgeChannel = 'dspatch:check-review-windows';
 const START_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:start-editor-loop-run';
 const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
 const CURRENT_LOOP_RUN: BridgeChannel = 'dspatch:current-loop-run';
@@ -281,7 +286,11 @@ const chatRunScenario: ScriptedScenario =
                                   ? 'workspace-switch'
                                   : chatRunValue === 'resume-choice'
                                     ? 'resume-choice'
-                                    : 'full-workflow';
+                                    : chatRunValue === 'review-window'
+                                      ? 'review-window'
+                                      : chatRunValue === 'review-direct'
+                                        ? 'review-direct'
+                                        : 'full-workflow';
 
 /**
  * The one run that talks to no provider.
@@ -352,7 +361,10 @@ const presentationMode =
   // DSP-121: the refused and failed resume states through the real choice panel. The
   // refusal is the presentation adapter's own, simulated on this machine; the one
   // message the scenario sends after choosing a new session is answered locally.
-  chatRunScenario === 'resume-choice';
+  chatRunScenario === 'resume-choice' ||
+  // DSP-126: windows, IPC and the review record. Nothing in either needs a model.
+  chatRunScenario === 'review-window' ||
+  chatRunScenario === 'review-direct';
 
 /**
  * Hold mode (`DSPATCH_CHAT_HOLD=1`, `resume-choice` only): the scenario performs the
@@ -554,7 +566,11 @@ const chatRunTimeoutMs =
                                 // reply. Nothing waits for a provider.
                                 chatRunScenario === 'resume-choice'
                                 ? 300_000
-                                : 900_000;
+                                : // A handful of windows opened and closed over a local
+                                  // git fixture. Nothing waits for a provider.
+                                  chatRunScenario === 'review-window' || chatRunScenario === 'review-direct'
+                                  ? 180_000
+                                  : 900_000;
 const chatRunTurnTimeoutMs = 240_000;
 
 /**
@@ -565,6 +581,23 @@ const chatRunTurnTimeoutMs = 240_000;
  * Reusing it would silently change what DSP-1's recorded procedure did.
  */
 const startupProjectPath = process.env['DSPATCH_PROJECT_PATH'];
+
+/**
+ * Review opened directly, without a chat (DSP-126 #6): `npm run review -- <definition>`.
+ *
+ * `scripts/review.mjs` sets `DSPATCH_REVIEW_DEFINITION` (when a file is named) and puts
+ * `#review` on the development URL. Either one asks for review alone: the review module
+ * opens its own window through the same call the chat's *Open review* makes, with no
+ * folder and the named definition, and no chat window is created. Closing it quits.
+ *
+ * The startup smoke test, the probe and every other scripted run ignore it and say so:
+ * each of them is about the chat window, and a launch that silently became a review
+ * window would pass or fail for the wrong reason.
+ */
+const reviewDefinitionAtStart = process.env['DSPATCH_REVIEW_DEFINITION'] ?? null;
+const reviewAskedAtStart = reviewDefinitionAtStart !== null || (rendererUrl?.endsWith('#review') ?? false);
+const directReviewMode =
+  chatRunScenario === 'review-direct' || (reviewAskedAtStart && !smokeMode && !probeMode && !chatRunMode);
 
 /** `app.quit()` loses the exit code; `app.exit(code)` preserves it. */
 const EXIT_OK = 0;
@@ -591,6 +624,8 @@ const CHAT_EXIT_WRONG_USERDATA = 25;
  * been, or the one message went with a recap in front of it.
  */
 const CHAT_EXIT_RESUME_RECORD_WRONG = 89;
+/** `review-direct` (DSP-126): the review did not open by itself as it should. */
+const REVIEW_EXIT_DIRECT_FAILED = 91;
 
 function log(message: string): void {
   process.stdout.write(`[dspatch] ${message}\n`);
@@ -1488,6 +1523,20 @@ let mainWindow: BrowserWindow | null = null;
  */
 let editorWindow: BrowserWindow | null = null;
 
+/**
+ * The review module's windows (DSP-126). Created when the app is ready; the chat
+ * reaches review only through `open()`. Review windows are deliberately not in the
+ * run audience: they show no run, and the review preload has no channel to hear one on.
+ */
+let reviewWindows: ReviewWindows | null = null;
+
+function requireReviewWindows(): ReviewWindows {
+  if (reviewWindows === null) {
+    throw new Error('Review is not ready yet: the application has not finished starting.');
+  }
+  return reviewWindows;
+}
+
 const runAudience = new LoopRunAudience();
 
 /**
@@ -1671,7 +1720,10 @@ function exitWith(code: number): void {
  * variable is set, and a failure to capture never changes the run's exit code —
  * the run's result is about the window, not about this.
  */
-async function captureWindowImage(label: string | null = null): Promise<boolean> {
+async function captureWindowImage(
+  label: string | null = null,
+  which: BrowserWindow | null = liveMainWindow(),
+): Promise<boolean> {
   const target = process.env['DSPATCH_CHAT_SHOT'];
   if (target === undefined || target.trim() === '') {
     return false;
@@ -1686,8 +1738,9 @@ async function captureWindowImage(label: string | null = null): Promise<boolean>
           path.dirname(target),
           `${path.basename(target, path.extname(target))}-${label.replace(/[^A-Za-z0-9._-]/g, '-')}.png`,
         );
-  const window = liveMainWindow();
-  if (window === null || window.webContents.isDestroyed()) {
+  // The chat window unless another is named: the review scenario photographs its own.
+  const window = which;
+  if (window === null || window.isDestroyed() || window.webContents.isDestroyed()) {
     log('screenshot not taken: the window was already gone');
     return false;
   }
@@ -1983,7 +2036,11 @@ async function openGraphFileForEditing(): Promise<void> {
 function installApplicationMenu(): void {
   const tell = (command: MenuCommand): void => {
     const focused = BrowserWindow.getFocusedWindow();
-    if (focused !== null && !focused.isDestroyed() && !focused.webContents.isDestroyed()) {
+    // A review window has its own View-only menu and no listener for these commands
+    // (DSP-126); one that is focused when this menu is pressed passes it to the chat.
+    const focusedIsReview =
+      focused !== null && reviewWindows !== null && reviewWindows.list().some((entry) => entry.window === focused);
+    if (focused !== null && !focusedIsReview && !focused.isDestroyed() && !focused.webContents.isDestroyed()) {
       focused.webContents.send(MENU_COMMAND, command);
       return;
     }
@@ -2898,7 +2955,9 @@ function writeChatRunRecord(
                           ? `DSP-4 WS-1 — saved conversations switched between in one window and read back after a restart (phase ${process.env['DSPATCH_CHAT_SWITCH_PHASE'] ?? 'first'}), over a seeded user-data directory, with no provider call`
                           : chatRunScenario === 'resume-choice'
                             ? `DSP-121 — the refused or failed resume state and the three choices, through the real choice panel (DSPATCH_CHAT_RESUME=${presentationResume.mode}${chatRunHold ? ', hold mode' : ''}), over a seeded user-data directory. SIMULATED: the refusal and the failure are the presentation adapter's own answers on this machine; no provider was asked anything, and nothing here says what any provider would do`
-                            : 'DSP-1 substep 7 — the whole workflow driven through the window',
+                            : chatRunScenario === 'review-window'
+                              ? 'DSP-126 — review opened from the chat as a separate window: one window per review, the chooser or the last review, the chat untouched, identity kept across a project switch, and the position kept across a close inside the save delay, driven through both windows with no provider call'
+                              : 'DSP-1 substep 7 — the whole workflow driven through the window',
     scenario: chatRunScenario,
     startupProjectPath: startupProjectPath ?? null,
     startedAtUtc: chatRunStartedAtUtc,
@@ -2917,6 +2976,11 @@ function writeChatRunRecord(
     },
     renderer: report,
     main: mainEvidenceAtReport,
+    // DSP-126: what the main process read and did for the review scenario, kept apart
+    // from what the chat window's DOM showed.
+    ...(chatRunScenario === 'review-window'
+      ? { reviewWindows: { userDataInUse: app.getPath('userData'), checks: reviewCheckLog } }
+      : {}),
     // DSP-121 flow: what *Copy diagnostic info* was asked to copy, recorded here instead
     // of the system clipboard in an unattended run. Empty when nothing was copied.
     copiedInsteadOfClipboard: [...scriptedClipboard],
@@ -3213,6 +3277,288 @@ function startPanelTrial(): void {
   })().catch((error: unknown) => {
     fail(String(error));
   });
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-126: the review windows, read and driven for the scripted scenarios     */
+/* ------------------------------------------------------------------------- */
+
+/** Every request the review scenarios made of the main process, and its answer. */
+const reviewCheckLog: unknown[] = [];
+
+/** Run a script in a review window and give back what it returned, or why not. */
+async function inReviewWindow(webContentsId: number, script: string): Promise<{ ok: boolean; value: unknown }> {
+  const entry = requireReviewWindows()
+    .list()
+    .find((candidate) => candidate.contents.id === webContentsId);
+  if (entry === undefined || entry.contents.isDestroyed()) {
+    return { ok: false, value: `no review window with webContents id ${String(webContentsId)}` };
+  }
+  try {
+    return { ok: true, value: (await entry.contents.executeJavaScript(script)) as unknown };
+  } catch (error) {
+    return { ok: false, value: String(error) };
+  }
+}
+
+/** Every file under a folder, relative, sorted; for the "nothing changed here" checks. */
+function filesUnder(root: string): readonly string[] {
+  const found: string[] = [];
+  const walk = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else {
+        found.push(`${path.relative(root, full)} ${String(fs.statSync(full).size)}`);
+      }
+    }
+  };
+  walk(root);
+  return found.sort();
+}
+
+/** What the main process can say about the review windows, the chat and the loops right now. */
+async function reviewScenarioReading(): Promise<Record<string, unknown>> {
+  const windows = requireReviewWindows();
+  const views: unknown[] = [];
+  for (const reading of windows.readings()) {
+    const view = await inReviewWindow(
+      reading.webContentsId,
+      'window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read() : null',
+    );
+    views.push({ ...reading, view: view.value });
+  }
+  const session = chatService.openSession();
+  const focused = BrowserWindow.getFocusedWindow();
+  return {
+    reviewWindows: views,
+    chat: {
+      sessionId: session?.dspatchSessionId ?? null,
+      conversationId: session?.conversationId ?? null,
+      workspacePath: session?.workspacePath ?? null,
+      windowOpen: liveMainWindow() !== null,
+    },
+    focusedWindow:
+      focused === null
+        ? null
+        : focused === liveMainWindow()
+          ? 'chat'
+          : windows.list().some((entry) => entry.window === focused)
+            ? 'review'
+            : 'other',
+    allWindows: BrowserWindow.getAllWindows().length,
+    loops: {
+      current: runAudience.current(),
+      loopRunFiles: filesUnder(path.join(app.getPath('userData'), 'loop-runs')),
+    },
+    recentReviews: windows.recentIndex(),
+    reviewsFolder: filesUnder(path.join(app.getPath('userData'), 'reviews')),
+  };
+}
+
+async function reviewWindowCheck(
+  request: ReviewWindowCheckRequest,
+  sender: Electron.WebContents,
+): Promise<ReviewWindowCheckAnswer> {
+  const answer = await reviewWindowCheckNow(request, sender);
+  reviewCheckLog.push({ atUtc: new Date().toISOString(), request, answer });
+  return answer;
+}
+
+async function reviewWindowCheckNow(
+  request: ReviewWindowCheckRequest,
+  sender: Electron.WebContents,
+): Promise<ReviewWindowCheckAnswer> {
+  const windows = requireReviewWindows();
+  const entryOf = (id: number) => windows.list().find((entry) => entry.contents.id === id) ?? null;
+  switch (request.action) {
+    case 'read':
+      return { ok: true, detail: await reviewScenarioReading() };
+    case 'choose': {
+      const result = await inReviewWindow(
+        request.webContentsId,
+        'window.__dspatchReviewCheck ? window.__dspatchReviewCheck.choose() : false',
+      );
+      return { ok: result.ok && result.value === true, detail: result.value };
+    }
+    case 'go-to-step': {
+      const entry = entryOf(request.webContentsId);
+      if (entry === null) {
+        return { ok: false, detail: 'no such review window' };
+      }
+      const startedAt = Date.now();
+      const moved = await inReviewWindow(
+        request.webContentsId,
+        `window.__dspatchReviewCheck ? window.__dspatchReviewCheck.goToStep(${JSON.stringify(request.stepId)}) : false`,
+      );
+      if (!request.closeAfter) {
+        return { ok: moved.ok && moved.value === true, detail: { moved: moved.value } };
+      }
+      // An ordinary close, the one the window's X makes, straight after the move: inside
+      // the view's 250 ms save delay, which is the case the close has to save for.
+      const closeAskedAfterMs = Date.now() - startedAt;
+      const closed = new Promise<number>((resolve) => {
+        entry.window.once('closed', () => {
+          resolve(Date.now() - startedAt);
+        });
+      });
+      entry.window.close();
+      const closedAfterMs = await closed;
+      return {
+        ok: moved.ok && moved.value === true,
+        detail: { moved: moved.value, closeAskedAfterMs, closedAfterMs },
+      };
+    }
+    case 'close': {
+      const entry = entryOf(request.webContentsId);
+      if (entry === null) {
+        return { ok: false, detail: 'no such review window' };
+      }
+      const startedAt = Date.now();
+      const closed = new Promise<number>((resolve) => {
+        entry.window.once('closed', () => {
+          resolve(Date.now() - startedAt);
+        });
+      });
+      entry.window.close();
+      return { ok: true, detail: { closedAfterMs: await closed } };
+    }
+    case 'capture': {
+      const entry = entryOf(request.webContentsId);
+      if (entry === null) {
+        return { ok: false, detail: 'no such review window' };
+      }
+      const before = entry.window.getBounds();
+      if (request.width !== null) {
+        if (entry.window.isMaximized()) {
+          entry.window.unmaximize();
+        }
+        entry.window.setBounds({ ...before, width: Math.max(Math.round(request.width), 320) });
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 600);
+        });
+      }
+      const view = await inReviewWindow(
+        request.webContentsId,
+        'window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read() : null',
+      );
+      const written = await captureWindowImage(request.label, entry.window);
+      const contentWidth = entry.window.getContentBounds().width;
+      if (request.width !== null) {
+        entry.window.setBounds(before);
+      }
+      return { ok: true, detail: { written, contentWidth, view: view.value } };
+    }
+    case 'refuse-chat-sender': {
+      // The review IPC's own guard, given the chat window's sender. The chat window has
+      // no review bridge at all (its preload exposes none), so this is the second line.
+      const refusal = reviewSenderRefusal(windows, sender);
+      return { ok: refusal !== null, detail: { refusal, senderIsChat: sender === liveMainWindow()?.webContents } };
+    }
+    default:
+      return { ok: false, detail: 'unknown request' };
+  }
+}
+
+/**
+ * `review-direct` (DSP-126 #6): review opened by itself, read from main, recorded, exited.
+ *
+ * There is no chat window to run a script in, so the main process waits for the one
+ * review window to show its review, reads it, photographs it and closes it the
+ * ordinary way. Exit 0 when one review window opened on the named definition with its
+ * identity in the header and no chat window exists; 91 otherwise.
+ */
+async function runReviewDirectCheck(openNote: string): Promise<void> {
+  const failures: string[] = [];
+  const startedAt = Date.now();
+  let reading: Record<string, unknown> = {};
+  let view: Record<string, unknown> | null = null;
+  try {
+    for (;;) {
+      reading = await reviewScenarioReading();
+      const first = (reading['reviewWindows'] as { view?: Record<string, unknown> | null }[])[0];
+      view = first?.view ?? null;
+      if (view !== null && view['kind'] !== 'opening') {
+        break;
+      }
+      if (Date.now() - startedAt > 60_000) {
+        failures.push('the review window did not finish opening within 60 s');
+        break;
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 250);
+      });
+    }
+    const windows = reading['reviewWindows'] as { webContentsId: number; title: string; identity: { definitionPath: string } | null }[];
+    const chat = reading['chat'] as { windowOpen: boolean };
+    if (windows.length !== 1) failures.push(`expected one review window, found ${String(windows.length)}`);
+    if (chat.windowOpen) failures.push('a chat window exists in direct review');
+    if (reading['allWindows'] !== 1) failures.push(`expected one window in all, found ${String(reading['allWindows'])}`);
+    if (view?.['kind'] !== 'opened') failures.push(`the review did not open: ${JSON.stringify(view)}`);
+    if (typeof view?.['identity'] !== 'string' || !/ · [0-9a-f]{7}→[0-9a-f]{7}$/.test(view['identity'])) {
+      failures.push(`the header does not show the identity: ${JSON.stringify(view?.['identity'])}`);
+    }
+    if (view?.['hasChatBridge'] !== false || view['hasReviewBridge'] !== true) {
+      failures.push('the review window does not have exactly the review bridge');
+    }
+    const only = windows[0];
+    if (only !== undefined) {
+      if (reviewDefinitionAtStart !== null && (only.identity === null || path.resolve(only.identity.definitionPath) !== path.resolve(reviewDefinitionAtStart))) {
+        failures.push('the window is not on the definition that was named');
+      }
+      if (!only.title.includes('·')) failures.push(`the window title carries no identity: ${only.title}`);
+      await reviewWindowCheck({ action: 'capture', webContentsId: only.webContentsId, label: 'direct', width: null }, BrowserWindow.getAllWindows()[0]?.webContents as Electron.WebContents);
+    }
+  } catch (error) {
+    failures.push(String(error));
+  }
+  const exitCode = failures.length === 0 ? EXIT_OK : REVIEW_EXIT_DIRECT_FAILED;
+  const target = process.env['DSPATCH_CHAT_LOG'];
+  if (target !== undefined && target.trim() !== '') {
+    try {
+      fs.mkdirSync(path.dirname(path.resolve(target)), { recursive: true });
+      fs.writeFileSync(
+        path.resolve(target),
+        `${JSON.stringify(
+          {
+            run: 'DSP-126 #6 — review opened directly for a named definition, with no chat window, read from the main process, with no provider call',
+            scenario: chatRunScenario,
+            definitionNamed: reviewDefinitionAtStart,
+            openNote,
+            startedAtUtc: chatRunStartedAtUtc,
+            finishedAtUtc: new Date().toISOString(),
+            userDataInUse: app.getPath('userData'),
+            exitCode,
+            failures,
+            main: reading,
+            checks: reviewCheckLog,
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      );
+      log(`review-direct record written: ${path.resolve(target)}`);
+    } catch (error) {
+      log(`could not write the review-direct record: ${String(error)}`);
+    }
+  }
+  chatRunReported = true;
+  for (const failure of failures) {
+    log(`review-direct failure: ${failure}`);
+  }
+  // Closed the ordinary way first, so the close path (and its save) is the one a person gets.
+  for (const entry of requireReviewWindows().list()) {
+    await reviewWindowCheck({ action: 'close', webContentsId: entry.contents.id }, entry.contents);
+  }
+  exitNow(exitCode);
 }
 
 function registerIpc(): void {
@@ -3576,7 +3922,9 @@ function registerIpc(): void {
         : {}),
       // The seeded projects, for the switch scenario and for resume-choice, which
       // reads the first of them (A) from the same variable rather than a new one.
-      ...(chatRunScenario === 'workspace-switch' || chatRunScenario === 'resume-choice'
+      ...(chatRunScenario === 'workspace-switch' ||
+      chatRunScenario === 'resume-choice' ||
+      chatRunScenario === 'review-window'
         ? {
             switchProjects: (process.env['DSPATCH_CHAT_SWITCH_PROJECTS'] ?? '')
               .split(';')
@@ -3614,6 +3962,13 @@ function registerIpc(): void {
     ipcMain.handle(
       CAPTURE_WINDOW,
       async (_event, label: string): Promise<boolean> => captureWindowImage(label),
+    );
+    // DSP-126: the review windows are another renderer, which the chat's script cannot
+    // see. The main process reads and drives them for it, and logs every answer.
+    ipcMain.handle(
+      CHECK_REVIEW_WINDOWS,
+      (event, request: ReviewWindowCheckRequest): Promise<ReviewWindowCheckAnswer> =>
+        reviewWindowCheck(request, event.sender),
     );
     // Only the main process can resize a window, and "the chat does not follow the
     // window's width" is a claim about a window being resized. Answers the content
@@ -4173,6 +4528,16 @@ function registerLoopGraphIpc(): void {
   );
 
   ipcMain.handle(OPEN_LOOP_EDITOR, (): LoopEditorWindowOutcome => openLoopEditorWindow());
+  /*
+   * Open review (DSP-126). The input is read here, in main, from the session the chat
+   * service has open - not sent by the renderer - and it is only the folder: review
+   * uses it as the chooser's start folder and to find the last review opened for that
+   * repository. Nothing else of the chat goes to review, and nothing comes back.
+   */
+  ipcMain.handle(OPEN_REVIEW, (): Promise<LoopEditorWindowOutcome> => {
+    const session = chatService.openSession();
+    return requireReviewWindows().open({ repository: session?.workspacePath ?? null, definitionPath: null });
+  });
 
   ipcMain.handle(
     START_EDITOR_LOOP_RUN,
@@ -5317,17 +5682,50 @@ function main(): void {
     // workspace's remembered definition and a window that opened first would ask
     // for the list before there was one to prefer.
     restoreRememberedWorkspace();
-    registerIpc();
-    // The review surface (`#review`): read-only git at a fixed revision pair, no adapter.
-    registerReviewIpc({
+    // The review module (DSP-126): read-only git at a fixed revision pair, no adapter,
+    // in windows of its own. Before `registerIpc`, whose *Open review* handler uses it.
+    reviewWindows = new ReviewWindows({
       recordsDir: path.join(app.getPath('userData'), 'reviews'),
-      initialDefinition: process.env['DSPATCH_REVIEW_DEFINITION'] ?? null,
-      window: () => mainWindow,
+      preloadPath: path.join(__dirname, '..', 'preload', 'review-preload.js'),
+      load: (window) => {
+        // `window=review` makes the renderer mount review alone (`renderer/main.tsx`).
+        if (rendererUrl === undefined) {
+          void window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), {
+            hash: 'review',
+            search: 'window=review',
+          });
+        } else {
+          const base = rendererUrl.split('#')[0] ?? rendererUrl;
+          void window.loadURL(`${base}${base.includes('?') ? '&' : '?'}window=review#review`);
+        }
+      },
+      development: !app.isPackaged,
+      scriptedPick: chatRunMode ? () => scriptedFilePick('review definition') : null,
       log: (message) => {
         log(`[review] ${message}`);
       },
     });
-    mainWindow = createWindow();
+    registerReviewIpc(reviewWindows);
+    registerIpc();
+    if (reviewAskedAtStart && !directReviewMode) {
+      log(
+        'DSPATCH_REVIEW_DEFINITION or #review was set and is ignored: this launch is a ' +
+          'smoke test, a probe or another scripted run, each of which is about the chat window.',
+      );
+    }
+    if (directReviewMode) {
+      // Review alone: its own window through the same call *Open review* makes, no chat.
+      void requireReviewWindows()
+        .open({ repository: null, definitionPath: reviewDefinitionAtStart })
+        .then((outcome) => {
+          log(`direct review: ${outcome.kind}: ${outcome.note}`);
+          if (chatRunScenario === 'review-direct') {
+            void runReviewDirectCheck(outcome.note);
+          }
+        });
+    } else {
+      mainWindow = createWindow();
+    }
 
     if (smokeMode) {
       setTimeout(() => {

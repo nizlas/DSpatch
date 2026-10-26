@@ -109,6 +109,22 @@
   background: var(--panel);
 }
 
+.rv-header-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.8rem;
+  min-width: 0;
+}
+
+/* Which repository and revisions: quiet, but always in the header. */
+.rv-identity {
+  color: var(--muted);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
 .rv-header-side {
   display: flex;
   flex-wrap: wrap;

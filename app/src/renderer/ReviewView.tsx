@@ -11,6 +11,7 @@ import {
   currentHunkDecisions,
   placeKey,
   referenceRows,
+  reviewIdentityLabel,
   type CodeLevel,
   type CodeLocation,
   type CoverageSummary,
@@ -36,8 +37,51 @@ import {
 declare global {
   interface Window {
     readonly dspatchReview?: ReviewBridge;
+    /**
+     * Save whatever the open review has not saved yet, and say when it is done. The
+     * main process calls it before a review window closes (`review-windows.ts`).
+     */
+    __dspatchReviewFlush?: () => Promise<string>;
+    /** What the scripted `review-window` scenario reads and drives, from the main process. */
+    __dspatchReviewCheck?: ReviewCheck;
   }
 }
+
+/** The scenario's view of a review window: readings, and the two gestures it makes. */
+export interface ReviewCheckReading {
+  readonly kind: 'opening' | 'chooser' | 'opened' | 'failed';
+  readonly emptyText: string;
+  readonly chooseNote: string | null;
+  readonly title: string;
+  readonly identity: string;
+  readonly repository: string | null;
+  readonly base: string | null;
+  readonly target: string | null;
+  readonly position: { readonly walkId: string | null; readonly stepId: string | null; readonly refIndex: number } | null;
+  readonly stepIds: readonly string[];
+  readonly saveText: string;
+  readonly lang: Lang;
+  /** Whether the chat's bridge reached this window. It must not. */
+  readonly hasChatBridge: boolean;
+  readonly hasReviewBridge: boolean;
+  readonly overflowX: boolean;
+  readonly documentWidth: number;
+}
+
+interface ReviewCheck {
+  read(): ReviewCheckReading;
+  /** Press the view's own "Open a review definition…" button. */
+  choose(): boolean;
+  /** Go to a step, as choosing it in the walk list does. */
+  goToStep(stepId: string): boolean;
+}
+
+/** What the open review lends the scenario hook; empty while none is open. */
+const openReviewHooks: {
+  goToStep: ((stepId: string) => boolean) | null;
+  position: (() => ReviewCheckReading['position']) | null;
+  stepIds: (() => readonly string[]) | null;
+} = { goToStep: null, position: null, stepIds: null };
 
 /**
  * DSpatch's own review surface: a fixed revision pair, its complete diff, prepared
@@ -152,29 +196,94 @@ export function ReviewView(): JSX.Element {
     [bridge],
   );
 
+  // What the last choice said when it opened nothing here: dismissed, or already
+  // open in another window (which was brought to the front instead).
+  const [chooseNote, setChooseNote] = useState<string | null>(null);
   const choose = useCallback(() => {
     if (bridge !== undefined) {
-      void bridge.choose().then((next) => {
-        if (next.kind !== 'none') {
-          setOutcome(next);
-        }
-      });
+      void bridge.choose().then(
+        (next) => {
+          if (next.kind !== 'none') {
+            setChooseNote(null);
+            setOutcome(next);
+          } else {
+            setChooseNote(next.note);
+          }
+        },
+        (error: unknown) => {
+          setChooseNote(String(error));
+        },
+      );
     }
   }, [bridge]);
+
+  const latestOutcome = useRef(outcome);
+  latestOutcome.current = outcome;
+  const latestNote = useRef(chooseNote);
+  latestNote.current = chooseNote;
+  const latestLang = useRef(lang);
+  latestLang.current = lang;
+  useEffect(() => {
+    const text = (selector: string): string =>
+      (document.querySelector(selector)?.textContent ?? '').replace(/\s+/g, ' ').trim();
+    window.__dspatchReviewCheck = {
+      read: () => {
+        const current = latestOutcome.current;
+        const bundle = current?.kind === 'opened' ? current.bundle : null;
+        return {
+          kind: current === null ? 'opening' : current.kind === 'opened' ? 'opened' : current.kind === 'none' ? 'chooser' : 'failed',
+          emptyText: text('.rv-empty'),
+          chooseNote: latestNote.current,
+          title: text('.rv-header h1'),
+          identity: text('[data-ev="review-identity"]'),
+          repository: bundle?.repository ?? (current?.kind === 'none' ? (current.repository ?? null) : null),
+          base: bundle?.base.sha ?? null,
+          target: bundle?.target.sha ?? null,
+          position: openReviewHooks.position?.() ?? null,
+          stepIds: openReviewHooks.stepIds?.() ?? [],
+          saveText: text('.rv-save'),
+          lang: latestLang.current,
+          hasChatBridge: typeof (window as { dspatch?: unknown }).dspatch !== 'undefined',
+          hasReviewBridge: window.dspatchReview !== undefined,
+          overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          documentWidth: document.documentElement.clientWidth,
+        };
+      },
+      choose: () => {
+        const button = document.querySelector<HTMLButtonElement>('[data-ev="review-choose"]');
+        if (button === null) {
+          return false;
+        }
+        button.click();
+        return true;
+      },
+      goToStep: (stepId) => openReviewHooks.goToStep?.(stepId) ?? false,
+    };
+    return () => {
+      delete window.__dspatchReviewCheck;
+    };
+  }, []);
 
   const words = WORDS[lang];
   if (outcome === null) {
     return <div className="rv-empty">{words.opening}</div>;
   }
   if (outcome.kind !== 'opened') {
+    const folder = outcome.kind === 'none' ? (outcome.repository ?? null) : null;
     return (
       <div className="rv-empty">
         <p className={outcome.kind === 'failed' ? 'rv-error' : ''}>
-          {outcome.kind === 'failed' ? outcome.error : words.noDefinition}
+          {outcome.kind === 'failed' ? outcome.error : folder === null ? words.noDefinition : words.chooseFor(folder)}
         </p>
-        <button type="button" onClick={choose}>
+        {outcome.kind === 'none' && outcome.problem !== undefined && <p className="rv-error">{outcome.problem}</p>}
+        <button type="button" data-ev="review-choose" onClick={choose}>
           {words.openDefinition}
         </button>
+        {chooseNote !== null && (
+          <p className="rv-sub" role="status" data-ev="review-choose-note">
+            {chooseNote}
+          </p>
+        )}
       </div>
     );
   }
@@ -240,12 +349,14 @@ function OpenReview({
   const dirty = useRef(false);
   const urgent = useRef(false);
   const [saving, setSaving] = useState(false);
-  const flush = useCallback(() => {
+  /** The save on its way, so a flush asked for while one runs waits for it too. */
+  const inFlight = useRef<Promise<string> | null>(null);
+  const flush = useCallback((): Promise<string> => {
     if (!dirty.current || bridge === undefined) {
-      return;
+      return inFlight.current ?? Promise.resolve('nothing unsaved');
     }
     dirty.current = false;
-    void bridge.saveState(latest.current).then(
+    const pending = bridge.saveState(latest.current).then(
       (result) => {
         if (!result.saved) {
           // Still unsaved: the next change, closing the view or unloading tries again.
@@ -253,13 +364,22 @@ function OpenReview({
         }
         setSaving(result.saved && dirty.current);
         setSave(result.saved ? { at: result.at } : { at: result.at, error: result.error ?? 'not saved' });
+        return result.saved ? `saved at ${result.at}` : `not saved: ${result.error ?? 'no reason given'}`;
       },
       (error: unknown) => {
         dirty.current = true;
         setSaving(false);
         setSave({ at: new Date().toISOString(), error: String(error) });
+        return `not saved: ${String(error)}`;
       },
     );
+    inFlight.current = pending;
+    void pending.finally(() => {
+      if (inFlight.current === pending) {
+        inFlight.current = null;
+      }
+    });
+    return pending;
   }, [bridge]);
 
   const firstRender = useRef(true);
@@ -278,10 +398,18 @@ function OpenReview({
   }, [state, flush]);
 
   useEffect(() => {
-    window.addEventListener('beforeunload', flush);
+    const onUnload = (): void => {
+      void flush();
+    };
+    window.addEventListener('beforeunload', onUnload);
+    // Asked for by the main process before the window closes, and awaited there.
+    window.__dspatchReviewFlush = flush;
     return () => {
-      window.removeEventListener('beforeunload', flush);
-      flush();
+      window.removeEventListener('beforeunload', onUnload);
+      if (window.__dspatchReviewFlush === flush) {
+        delete window.__dspatchReviewFlush;
+      }
+      void flush();
     };
   }, [flush]);
 
@@ -365,6 +493,28 @@ function OpenReview({
     },
     [bundle, update],
   );
+
+  // Lent to the scenario hook in `ReviewView`; gone with this review.
+  useEffect(() => {
+    openReviewHooks.goToStep = (stepId) => {
+      if (findStep(bundle, stepId) === null) {
+        return false;
+      }
+      goToStep(stepId);
+      return true;
+    };
+    openReviewHooks.position = () => ({
+      walkId: latest.current.position.walkId,
+      stepId: latest.current.position.stepId,
+      refIndex: latest.current.position.refIndex,
+    });
+    openReviewHooks.stepIds = () => bundle.definition.walks.flatMap((walk) => walk.steps.map((step) => step.id));
+    return () => {
+      openReviewHooks.goToStep = null;
+      openReviewHooks.position = null;
+      openReviewHooks.stepIds = null;
+    };
+  }, [bundle, goToStep]);
 
   const goAway = useCallback(
     (location: CodeLocation, scope: CodeScope = 'focus') => {
@@ -833,9 +983,16 @@ function Header({
   const problems = bundle.definitionProblems.length + bundle.referenceProblems.length;
   return (
     <header className="rv-header">
-      <h1>
-        <Inline text={pick(bundle.definition.title, lang)} />
-      </h1>
+      <div className="rv-header-title">
+        <h1>
+          <Inline text={pick(bundle.definition.title, lang)} />
+        </h1>
+        {/* Which repository and revisions, always in view: a review window left open
+            while the chat moves on still says what it is about. */}
+        <span className="rv-identity" data-ev="review-identity" title={`${bundle.repository}\n${bundle.base.sha} → ${bundle.target.sha}`}>
+          {reviewIdentityLabel(bundle.repository, bundle.base.sha, bundle.target.sha)}
+        </span>
+      </div>
       <div className="rv-header-side">
         {coverage.openFindings > 0 && <span className="rv-findings">{words.openFindings(coverage.openFindings)}</span>}
         <span className={save?.error !== undefined ? 'rv-error rv-save' : 'rv-sub rv-save'} role="status">

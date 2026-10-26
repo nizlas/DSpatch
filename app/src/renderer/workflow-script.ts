@@ -141,6 +141,16 @@ const CHAT_EXIT = {
    * the gate without that choice.
    */
   sendAnywayWrong: 90,
+  /**
+   * 92–97 belong to DSP-126, review opened from the chat as a separate window (91 is
+   * `review-direct`'s, set by the main process). The lowest failed one is the exit.
+   */
+  reviewWindowWrong: 92,
+  reviewTouchedTheChat: 93,
+  reviewIdentityLost: 94,
+  reviewPositionLost: 95,
+  reviewBoundaryWrong: 96,
+  reviewTouchedLoops: 97,
 } as const;
 
 const CHANGE_REQUEST =
@@ -723,6 +733,11 @@ export async function runScriptedWorkflow(
       return runWorkspaceSwitchScenario(plan);
     case 'resume-choice':
       return runResumeChoiceScenario(plan);
+    case 'review-window':
+      return runReviewWindowScenario(plan);
+    case 'review-direct':
+      // Driven by the main process alone: there is no chat window to run this in.
+      return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
     default:
       return runFullWorkflow(plan);
   }
@@ -9154,6 +9169,330 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     return finish(code, steps, failures, observations);
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-126: review opened from the chat as a separate window                  */
+/* ------------------------------------------------------------------------- */
+
+/** One review window as the main process reads it: its own facts and its view's. */
+interface ReviewWindowSeen {
+  readonly webContentsId: number;
+  readonly title: string;
+  readonly focusCount: number;
+  readonly startFolder: string | null;
+  readonly identity: { readonly repository: string; readonly base: string; readonly target: string; readonly definitionPath: string } | null;
+  readonly identityLabel: string | null;
+  readonly recordPosition: { readonly stepId?: string | null } | null;
+  readonly view: {
+    readonly kind: string;
+    readonly emptyText: string;
+    readonly chooseNote: string | null;
+    readonly identity: string;
+    readonly title: string;
+    readonly repository: string | null;
+    readonly base: string | null;
+    readonly target: string | null;
+    readonly position: { readonly stepId: string | null } | null;
+    readonly stepIds: readonly string[];
+    readonly hasChatBridge: boolean;
+    readonly hasReviewBridge: boolean;
+    readonly overflowX: boolean;
+  } | null;
+}
+
+interface ReviewMainReading {
+  readonly reviewWindows: readonly ReviewWindowSeen[];
+  readonly chat: { readonly sessionId: string | null; readonly conversationId: string | null; readonly workspacePath: string | null };
+  readonly loops: { readonly current: unknown; readonly loopRunFiles: readonly string[] };
+  readonly recentReviews: unknown;
+}
+
+/**
+ * DSP-126 #1-#5 and #7, through both windows with no provider call.
+ *
+ * The chat's own controls are operated here; the review windows are another renderer,
+ * so the main process reads and drives them on request (`reviewWindowCheck`) and logs
+ * every answer in its half of the record. The definition the review chooser opens is
+ * the scripted file pick (`DSPATCH_PICK_FILE`), the one thing a script cannot click.
+ */
+async function runReviewWindowScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const [projectOne, projectTwo] = plan.switchProjects ?? [];
+  const observations: Record<string, unknown> = {
+    plan,
+    limits:
+      'No provider call was made; review calls no agent at all, and the chat sent nothing. ' +
+      'The review definition was chosen by the scripted file pick, not a native dialog. ' +
+      'The review windows were read and driven by the main process through a hook in their ' +
+      'view; the chat window was operated through its own controls. The refusal of a review ' +
+      'request from the chat window is the review IPC guard called with the chat window\'s ' +
+      'sender: the chat window has no review bridge to send one with.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const failed = new Set<number>();
+  const expect = (code: number, ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+      failed.add(code);
+    }
+  };
+  const samePath = (left: string | null | undefined, right: string | null | undefined): boolean =>
+    (left ?? '').replace(/[\\/]+$/, '').toLowerCase() === (right ?? '').replace(/[\\/]+$/, '').toLowerCase();
+  const clean = (text: string | null): string => (text ?? '').replace(/\s+/g, ' ').trim();
+  const rowOf = (target: string): number | null => {
+    for (let index = 0; index < 50; index += 1) {
+      const found = element(`project-${String(index)}-path`);
+      if (found === null) {
+        return null;
+      }
+      if (samePath(clean(found.textContent), target)) {
+        return index;
+      }
+    }
+    return null;
+  };
+  const composerText = (): string => (element('prompt') as HTMLTextAreaElement | null)?.value ?? '';
+  const button = (name: string): { exists: boolean; disabled: boolean | null } => {
+    const found = element(name);
+    return { exists: found !== null, disabled: found instanceof HTMLButtonElement ? found.disabled : null };
+  };
+  /** What the chat window shows of its own work: the things review must not touch. */
+  const chatState = (): Record<string, unknown> => ({
+    project: textOf('project-path'),
+    session: textOf('session-id'),
+    conversation: textOf('conversation-id'),
+    draft: composerText(),
+    editorNote: element('editor-window-note') === null ? null : textOf('editor-window-note'),
+    editAgentLoops: button('edit-agent-loops'),
+    openReview: button('open-review'),
+    turns: countEntries('turn'),
+  });
+  const read = async (label: string): Promise<ReviewMainReading> => {
+    const answer = await window.dspatch.reviewWindowCheck({ action: 'read' });
+    record(`main reading: ${label}`, { main: answer.detail });
+    return answer.detail as ReviewMainReading;
+  };
+  /** Read until the review windows satisfy `predicate`, or fail naming what never happened. */
+  const readUntil = async (
+    label: string,
+    predicate: (reading: ReviewMainReading) => boolean,
+    timeoutMs = 30_000,
+  ): Promise<ReviewMainReading> => {
+    const until = performance.now() + timeoutMs;
+    for (;;) {
+      const answer = await window.dspatch.reviewWindowCheck({ action: 'read' });
+      const reading = answer.detail as ReviewMainReading;
+      if (predicate(reading)) {
+        record(`main reading: ${label}`, { main: reading });
+        return reading;
+      }
+      if (performance.now() > until) {
+        record(`main reading: ${label} (timed out)`, { main: reading });
+        throw new Error(`timed out waiting for: ${label}. This is a timeout, not a verdict.`);
+      }
+      await sleep(250);
+    }
+  };
+  const settled = (entry: ReviewWindowSeen): boolean => entry.view !== null && entry.view.kind !== 'opening';
+  const openProject = async (label: string, target: string): Promise<void> => {
+    if (element('projects') === null) {
+      await window.dspatch.pressMenuItem('change-project');
+      await waitFor(`the project chooser (to open ${label})`, () => element('projects') !== null, 10_000);
+    }
+    await waitFor(`${label} to be offered in Recent`, () => rowOf(target) !== null, 60_000);
+    await click(`open-project-${String(rowOf(target) ?? 0)}`);
+    // By the folder, not the session id: the presentation adapter numbers its sessions
+    // afresh for each project, so two projects can show the same id.
+    await waitFor(
+      `a session over ${label}`,
+      () =>
+        textOf('session-id').startsWith('dsp-session-') &&
+        samePath(attributeOf('project-path', 'title'), target) &&
+        element('projects') === null,
+      60_000,
+    );
+  };
+  const pressOpenReview = async (label: string): Promise<string | null> => {
+    const before = textOf('review-window-note');
+    await click('open-review');
+    // The note is drawn only when the window was focused or could not be opened.
+    await sleep(800);
+    const note = element('review-window-note') === null ? null : textOf('review-window-note');
+    record(`pressed Open review: ${label}`, { noteBefore: before, note });
+    return note;
+  };
+
+  try {
+    if (projectOne === undefined || projectTwo === undefined) {
+      throw new Error('the scenario needs two projects in DSPATCH_CHAT_SWITCH_PROJECTS (P1;P2)');
+    }
+    await waitFor(
+      'the connection to reach a decided state',
+      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      60_000,
+    );
+
+    // --- P1 open, a draft in the box: the work review must leave alone ----------------
+    await openProject('P1', projectOne);
+    const draft = 'A draft that must survive review opening and closing — DSP-126.';
+    await typeInto('prompt', draft);
+    const chatBefore = chatState();
+    record('chat before review', chatBefore);
+    const mainBefore = await read('before review');
+    expect(CHAT_EXIT.reviewBoundaryWrong, (window as { dspatchReview?: unknown }).dspatchReview === undefined, 'the chat window has a review bridge (window.dspatchReview)');
+    expect(CHAT_EXIT.reviewWindowWrong, mainBefore.reviewWindows.length === 0, 'a review window existed before Open review was pressed');
+
+    // --- (b) no earlier review: the chooser, naming P1, nothing opened -----------------
+    const firstNote = await pressOpenReview('first, no earlier review');
+    const opened = await readUntil('one review window settled', (reading) => reading.reviewWindows.length === 1 && reading.reviewWindows.every(settled));
+    const chooser = opened.reviewWindows[0];
+    expect(CHAT_EXIT.reviewWindowWrong, firstNote === null, `the first Open review drew a note: ${String(firstNote)}`);
+    expect(CHAT_EXIT.reviewWindowWrong, chooser?.view?.kind === 'chooser', `with no earlier review the window is not the chooser: ${String(chooser?.view?.kind)}`);
+    expect(CHAT_EXIT.reviewWindowWrong, (chooser?.view?.emptyText ?? '').includes(projectOne), `the chooser does not name P1: "${chooser?.view?.emptyText ?? ''}"`);
+    expect(CHAT_EXIT.reviewWindowWrong, chooser?.identity === null && chooser.view?.base === null, 'the chooser has a review identity before anything was chosen');
+
+    // --- (g) the boundary, from both sides ------------------------------------------
+    expect(CHAT_EXIT.reviewBoundaryWrong, chooser?.view?.hasChatBridge === false, 'the review window has the chat bridge (window.dspatch)');
+    expect(CHAT_EXIT.reviewBoundaryWrong, chooser?.view?.hasReviewBridge === true, 'the review window has no review bridge');
+    const refusal = await window.dspatch.reviewWindowCheck({ action: 'refuse-chat-sender' });
+    record('review IPC asked with the chat window as sender', { answer: refusal.detail });
+    expect(CHAT_EXIT.reviewBoundaryWrong, refusal.ok, `the review IPC guard did not refuse the chat window: ${JSON.stringify(refusal.detail)}`);
+
+    // --- (a) asked again: the same window, brought to the front once -----------------
+    const secondNote = await pressOpenReview('second, same project');
+    const again = await read('after the second press');
+    expect(CHAT_EXIT.reviewWindowWrong, again.reviewWindows.length === 1, `a second press made ${String(again.reviewWindows.length)} review windows`);
+    expect(CHAT_EXIT.reviewWindowWrong, again.reviewWindows[0]?.focusCount === 1, `the focus count after one repeated press is ${String(again.reviewWindows[0]?.focusCount)}`);
+    expect(CHAT_EXIT.reviewWindowWrong, (secondNote ?? '').includes('brought to the front'), `the repeated press did not say it focused the window: ${String(secondNote)}`);
+
+    // --- Choose the definition in the review window ----------------------------------
+    const reviewId = chooser?.webContentsId ?? -1;
+    const chose = await window.dspatch.reviewWindowCheck({ action: 'choose', webContentsId: reviewId });
+    record('pressed the review window\'s own chooser button', { answer: chose.detail });
+    const chosen = await readUntil('the chosen review open', (reading) => reading.reviewWindows[0]?.view?.kind === 'opened');
+    const shown = chosen.reviewWindows[0];
+    const label = shown?.identityLabel ?? '';
+    expect(CHAT_EXIT.reviewWindowWrong, /^repo · [0-9a-f]{7}→[0-9a-f]{7}$/.test(shown?.view?.identity ?? ''), `the header identity reads "${shown?.view?.identity ?? ''}"`);
+    expect(CHAT_EXIT.reviewWindowWrong, shown?.view?.identity === label && label !== '', 'the header identity differs from the main process\'s');
+    expect(CHAT_EXIT.reviewWindowWrong, (shown?.title ?? '').endsWith(label), `the window title does not carry the identity: "${shown?.title ?? ''}"`);
+    expect(CHAT_EXIT.reviewWindowWrong, samePath(shown?.identity?.repository, projectOne), 'the review is not of P1\'s repository');
+    expect(
+      CHAT_EXIT.reviewWindowWrong,
+      shown?.view?.base === shown?.identity?.base && shown?.view?.target === shown?.identity?.target,
+      'the view and the main process name different revisions',
+    );
+    const pictures: Record<string, unknown> = {};
+    pictures['normal'] = (await window.dspatch.reviewWindowCheck({ action: 'capture', webContentsId: reviewId, label: 'review-normal', width: null })).detail;
+    pictures['narrow'] = (await window.dspatch.reviewWindowCheck({ action: 'capture', webContentsId: reviewId, label: 'review-narrow', width: 1000 })).detail;
+    record('review window pictures', pictures);
+    const narrowView = (pictures['narrow'] as { view?: { overflowX?: boolean } } | undefined)?.view;
+    expect(CHAT_EXIT.reviewWindowWrong, narrowView?.overflowX === false, 'the review window overflows horizontally at 1000 px');
+
+    // --- (e) a move, then a close inside the save delay, then reopen from the chat ---
+    const steps0 = shown?.view?.stepIds ?? [];
+    const middle = steps0[1];
+    const last = steps0[steps0.length - 1];
+    if (middle === undefined || last === undefined || middle === last) {
+      throw new Error(`the walk needs at least two steps to move between: ${JSON.stringify(steps0)}`);
+    }
+    await window.dspatch.reviewWindowCheck({ action: 'go-to-step', webContentsId: reviewId, stepId: middle, closeAfter: false });
+    const savedMiddle = await readUntil(
+      `the record saved at ${middle}`,
+      (reading) => reading.reviewWindows[0]?.recordPosition?.stepId === middle,
+      10_000,
+    );
+    record('the record before the close', { recordPosition: savedMiddle.reviewWindows[0]?.recordPosition ?? null });
+    const closing = await window.dspatch.reviewWindowCheck({ action: 'go-to-step', webContentsId: reviewId, stepId: last, closeAfter: true });
+    record('moved and closed at once', { answer: closing.detail });
+    const closeTiming = closing.detail as { closeAskedAfterMs?: number; closedAfterMs?: number };
+    expect(CHAT_EXIT.reviewPositionLost, closing.ok, `the move before the close did not happen: ${JSON.stringify(closing.detail)}`);
+    expect(CHAT_EXIT.reviewPositionLost, (closeTiming.closeAskedAfterMs ?? 9_999) < 250, `the close was asked ${String(closeTiming.closeAskedAfterMs)} ms after the move, not inside the 250 ms save delay`);
+    const afterClose = await read('after the review window closed');
+    expect(CHAT_EXIT.reviewWindowWrong, afterClose.reviewWindows.length === 0, 'the review window was still open after its close');
+    const chatAfterClose = chatState();
+    record('chat after review closed', chatAfterClose);
+
+    const reopenNote = await pressOpenReview('reopen, last review known');
+    const reopened = await readUntil('the last review reopened', (reading) => reading.reviewWindows.length === 1 && reading.reviewWindows.every(settled));
+    const back = reopened.reviewWindows[0];
+    expect(CHAT_EXIT.reviewWindowWrong, reopenNote === null, `reopening drew a note: ${String(reopenNote)}`);
+    expect(CHAT_EXIT.reviewWindowWrong, back?.view?.kind === 'opened' && back.identityLabel === label, `the last review did not open directly with its identity: ${String(back?.view?.kind)} ${String(back?.identityLabel)}`);
+    expect(CHAT_EXIT.reviewPositionLost, back?.view?.position?.stepId === last, `the reopened review is at ${String(back?.view?.position?.stepId)}, not ${last}`);
+    expect(CHAT_EXIT.reviewPositionLost, back?.recordPosition?.stepId === last, `the record holds ${String(back?.recordPosition?.stepId)}, not ${last}`);
+
+    // --- (c) the chat, unchanged by review opening and closing ------------------------
+    const chatNow = chatState();
+    record('chat with review reopened', chatNow);
+    for (const [when, state] of [['after the close', chatAfterClose], ['with review reopened', chatNow]] as const) {
+      expect(CHAT_EXIT.reviewTouchedTheChat, JSON.stringify(state) === JSON.stringify(chatBefore), `the chat changed ${when}: ${JSON.stringify(state)} against ${JSON.stringify(chatBefore)}`);
+    }
+    expect(
+      CHAT_EXIT.reviewTouchedTheChat,
+      reopened.chat.sessionId === mainBefore.chat.sessionId && reopened.chat.conversationId === mainBefore.chat.conversationId,
+      'the chat service\'s session or conversation changed while review opened and closed',
+    );
+
+    // --- (d) the chat moves to P2; the P1 review stays what it was ---------------------
+    await openProject('P2', projectTwo);
+    const switched = await read('after the chat switched to P2');
+    const kept = switched.reviewWindows.find((entry) => entry.webContentsId === back?.webContentsId);
+    expect(CHAT_EXIT.reviewIdentityLost, kept !== undefined, 'the P1 review window went away when the chat switched project');
+    expect(
+      CHAT_EXIT.reviewIdentityLost,
+      kept?.view?.identity === label && kept.view.base === back?.view?.base && kept.view.target === back?.view?.target && samePath(kept.identity?.repository, projectOne),
+      `the P1 review window changed identity after the switch: ${JSON.stringify(kept?.view)}`,
+    );
+    expect(CHAT_EXIT.reviewIdentityLost, samePath(switched.chat.workspacePath, projectTwo), 'the chat did not move to P2');
+    const fromTwo = await pressOpenReview('from P2');
+    const two = await readUntil('a second review window', (reading) => reading.reviewWindows.length === 2 && reading.reviewWindows.every(settled));
+    const other = two.reviewWindows.find((entry) => entry.webContentsId !== back?.webContentsId);
+    const stillOne = two.reviewWindows.find((entry) => entry.webContentsId === back?.webContentsId);
+    expect(CHAT_EXIT.reviewIdentityLost, fromTwo === null, `Open review from P2 drew a note: ${String(fromTwo)}`);
+    expect(CHAT_EXIT.reviewIdentityLost, other?.view?.kind === 'chooser' && (other.view.emptyText ?? '').includes(projectTwo), `the window opened from P2 is not P2's chooser: ${JSON.stringify(other?.view)}`);
+    expect(
+      CHAT_EXIT.reviewIdentityLost,
+      JSON.stringify(stillOne?.view) === JSON.stringify(kept?.view) && stillOne?.focusCount === kept?.focusCount,
+      'the P1 review window changed when review was opened from P2',
+    );
+    if (other !== undefined) {
+      record('P2 chooser picture', (await window.dspatch.reviewWindowCheck({ action: 'capture', webContentsId: other.webContentsId, label: 'review-chooser-p2', width: null })).detail as Record<string, unknown>);
+    }
+
+    // --- Close both the ordinary way; (h) nothing about loops moved --------------------
+    for (const entry of two.reviewWindows) {
+      await window.dspatch.reviewWindowCheck({ action: 'close', webContentsId: entry.webContentsId });
+    }
+    const end = await read('after both review windows closed');
+    expect(CHAT_EXIT.reviewWindowWrong, end.reviewWindows.length === 0, 'a review window was left open');
+    expect(CHAT_EXIT.reviewTouchedLoops, end.loops.current === null && mainBefore.loops.current === null, 'a loop run was announced during the scenario');
+    expect(
+      CHAT_EXIT.reviewTouchedLoops,
+      JSON.stringify(end.loops.loopRunFiles) === JSON.stringify(mainBefore.loops.loopRunFiles),
+      'the loop-run records changed during the scenario',
+    );
+    observations['recentReviews'] = end.recentReviews;
+    await window.dspatch.captureWindow('chat-at-end');
+
+    const code = failures.length === 0 ? CHAT_EXIT.ok : failed.size === 0 ? CHAT_EXIT.scriptFailed : Math.min(...failed);
+    return finish(code, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+    // Never leave a review window behind for nothing to close.
+    try {
+      const left = await window.dspatch.reviewWindowCheck({ action: 'read' });
+      for (const entry of (left.detail as ReviewMainReading).reviewWindows) {
+        await window.dspatch.reviewWindowCheck({ action: 'close', webContentsId: entry.webContentsId });
+      }
+    } catch {
+      // The exit closes them in any case.
+    }
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
   }
 }

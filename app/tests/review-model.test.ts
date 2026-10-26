@@ -13,6 +13,7 @@ import { test } from 'node:test';
 
 import {
   REVIEW_CHANNELS,
+  reviewIdentityLabel,
   adoptPreferences,
   adoptStoredState,
   buildDiffRows,
@@ -422,14 +423,26 @@ test('a definition naming a short or symbolic revision is warned about', () => {
   assert.deepEqual(problems.map((problem) => problem.problem.slice(0, 33)), ['"base" is "main", not a full comm']);
 });
 
-test('the preload repeats every review channel name exactly', async () => {
+test('the review preload repeats every review channel name exactly, and the chat preload has none', async () => {
   const fs = await import('node:fs');
-  const preload = fs.readFileSync(new URL('../src/preload/preload.ts', import.meta.url), 'utf8');
+  const preload = fs.readFileSync(new URL('../src/preload/review-preload.ts', import.meta.url), 'utf8');
   for (const channel of Object.values(REVIEW_CHANNELS)) {
     assert.ok(preload.includes(`'${channel}'`), channel);
   }
   const literal = preload.match(/'dspatch:review-[a-z-]+'/g) ?? [];
   assert.deepEqual([...new Set(literal)].sort(), Object.values(REVIEW_CHANNELS).map((channel) => `'${channel}'`).sort());
+  // The chat and editor windows' preload exposes no review bridge and no review channel.
+  const chatPreload = fs.readFileSync(new URL('../src/preload/preload.ts', import.meta.url), 'utf8');
+  assert.equal(chatPreload.match(/'dspatch:review-[a-z-]+'/g), null);
+  assert.ok(!chatPreload.includes('dspatchReview'));
+});
+
+test('a review is identified by its repository folder name and both short revisions', () => {
+  assert.equal(
+    reviewIdentityLabel('C:\\work\\project\\', 'abcdef0123456789', '0123456fedcba'),
+    'project · abcdef0→0123456',
+  );
+  assert.equal(reviewIdentityLabel('/home/me/repo', 'a'.repeat(40), 'b'.repeat(40)), 'repo · aaaaaaa→bbbbbbb');
 });
 
 test('highlighting keeps every character and carries block comments and template strings across lines', () => {
@@ -638,8 +651,10 @@ test('a short overview is optional and read beside the full one', () => {
 
 test('preferences accept only the two display languages', () => {
   assert.deepEqual(adoptPreferences({ language: 'en' }), { language: 'en' });
-  assert.deepEqual(adoptPreferences({ language: 'de' }), { language: 'sv' });
-  assert.deepEqual(adoptPreferences(null), { language: 'sv' });
+  // A stored Swedish choice is kept: the English default applies only when nothing usable is stored.
+  assert.deepEqual(adoptPreferences({ language: 'sv' }), { language: 'sv' });
+  assert.deepEqual(adoptPreferences({ language: 'de' }), { language: 'en' });
+  assert.deepEqual(adoptPreferences(null), { language: 'en' });
 });
 
 test('opened coverage counts only the focus of opened places; declared context counts as planned', () => {

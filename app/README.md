@@ -1232,7 +1232,63 @@ window. The start file never sets it.
 | 88 | A step did not behave: the history did not scroll or the way forward left the viewport, the draft was lost, Enter was not held back with its note, the help disclosure did not open and close, *Details* did not open the diagnostics with focus there and the way back in view, the copy did not confirm in place, closing did not bring back the panel with focus on *Details*, *Try again* changed the conversation or the draft, the new session was not explained where it was chosen or its summary did not open in full, removing the summary did not say so, the message was not answered, or the sent turn did not show the summary that went with it (or showed one after it was removed). |
 | 89 | The main process's record contradicted the window: the file's `session` block changed before a choice, a different number of resume attempts, a send reached the main process while no provider session was open, a session started or something sent that should not have been, the copied text differed from the diagnostics shown, the one message reached the adapter other than as the phase sends it (alone, or after the summary as shown), or the sent turn or the message saved in the conversation file recorded a different summary than the one sent. In the `ok` phase: not exactly one accepted send carrying the draft, an acknowledgement other than exactly the named attempt in A's conversation, the adapter receiving anything but the draft alone, or the file not keeping that attempt `outcome-unknown` and acknowledged beside the new turn. |
 | 90 | *Send anyway* (the `ok` phase, DSP-124) was not offered for one attempt in a resumed session, Enter without the explicit choice did more than hold the draft back at the gate, or one press did not send the draft, empty the box and take the gate away without a second turn or a note. |
+| 91 | `review-direct`: review opened directly did not come up as one review window on the named definition, with its identity in the header and title, exactly the review bridge and no chat window. |
+| 92 | `review-window`: the review windows were wrong - not one window per review (a repeated *Open review* made a second window or did not focus the first once), no chooser naming the folder when there was no earlier review, the last review not opened directly with its identity, the header or title without the identity, a horizontal overflow at 1000 px, or a window left open. |
+| 93 | `review-window`: the chat changed while review opened or closed - project, session, conversation, draft, turns, the loop editor's note or button, or the chat service's session or conversation. |
+| 94 | `review-window`: after the chat moved to P2 the P1 review window changed or went away, or *Open review* from P2 did not open P2's chooser in a second window. |
+| 95 | `review-window`: a move followed by a close inside the 250 ms save delay was lost - the reopened review or its record was not at the step moved to. |
+| 96 | `review-window`: the boundary leaked - the chat window has `window.dspatchReview`, the review window has `window.dspatch` or lacks its own bridge, or the review IPC did not refuse the chat window as sender. |
+| 97 | `review-window`: a loop run was announced or the loop-run records changed. |
 | 25 | `DSPATCH_CHAT_EXPECT_USERDATA` names a directory other than the one in force. Nothing of DSpatch's was created or written. |
+
+#### Review opened from the chat (DSP-126)
+
+`review-window` makes **no provider call**: review calls no agent at all and the chat
+sends nothing. It runs over a kit from `scripts/seed-review-kit.mjs`: two git
+repositories with two commits each and a working tree that disagrees with both (P1
+`p1\repo`, P2 `p2\other`), a three-step walk over P1 (`p1\walk.review.json`), and a
+fresh user-data folder whose Recent list names P1 and P2. The chat window's script opens
+P1, types a draft and presses **Open review**; the review windows are another renderer,
+so the main process reads and drives them on request and logs each answer in its half of
+the record (`reviewWindows.checks`). It checks: no earlier review opens the chooser naming
+P1 and nothing else; a second press focuses that window once and makes no second one; the
+review IPC refuses the chat window as sender, the chat window has no
+`window.dspatchReview` and the review window no `window.dspatch`; the definition chosen in
+the review window (the scripted file pick) opens with `repo · base→target` in the header and
+the window title; a move to another step followed at once by a close (inside the view's
+250 ms save delay) is saved, and *Open review* then opens that last review directly at that
+step, with the record on disk agreeing; the chat's project, session, conversation, draft,
+loop-editor note and buttons are the same before and after; after the chat moves to P2 the
+P1 review window keeps its repository and revisions, and *Open review* from P2 opens P2's
+chooser in a second window; no loop run is announced and the loop-run records do not change.
+Pictures: `<shot>-review-normal.png`, `-review-narrow.png` (1000 px) and
+`-review-chooser-p2.png`.
+
+`review-direct` is `npm run review -- <definition>` without a chat: no chat window exists,
+so the main process waits for the one review window, reads it, photographs it
+(`<shot>-direct.png`), closes it the ordinary way and writes the record itself.
+
+```powershell
+$kit = "$env:TEMP\dspatch-review-$(Get-Date -Format HHmmss)"
+node --import ./scripts/ts-resolve.mjs scripts/seed-review-kit.mjs $kit
+$env:DSPATCH_CHAT_RUN="review-window"
+$env:DSPATCH_CHAT_SWITCH_PROJECTS="$kit\p1\repo;$kit\p2\other"
+$env:DSPATCH_PICK_FILE="$kit\p1\walk.review.json"
+$env:DSPATCH_CHAT_EXPECT_USERDATA="$kit\userData"
+$env:DSPATCH_CHAT_LOG="C:\somewhere\review-window.json"
+$env:DSPATCH_CHAT_SHOT="C:\somewhere\review-window.png"
+npx electron . "--user-data-dir=$kit\userData"
+# review-direct, over the same kit or a fresh one:
+#   $env:DSPATCH_CHAT_RUN="review-direct"; $env:DSPATCH_REVIEW_DEFINITION="$kit\p1\walk.review.json"
+#   (and Remove-Item Env:\DSPATCH_REVIEW_DEFINITION afterwards, or every launch opens review alone)
+Remove-Item Env:\DSPATCH_CHAT_RUN, Env:\DSPATCH_CHAT_SWITCH_PROJECTS, Env:\DSPATCH_PICK_FILE, Env:\DSPATCH_CHAT_EXPECT_USERDATA, Env:\DSPATCH_CHAT_LOG, Env:\DSPATCH_CHAT_SHOT
+Remove-Item -Recurse -Force $kit
+```
+
+Both write into the kit (the review record and `reviews\recent.json`), so seed a fresh kit
+per launch. What they show nothing about: a native file dialog (the pick is scripted),
+Linux, and a person's judgement of the button, the header identity and the window
+behaviour.
 
 `DSPATCH_SMOKE`, `DSPATCH_PROBE` and `DSPATCH_CHAT_RUN` each own the exit code.
 Setting more than one exits immediately with code 10 rather than letting them
@@ -1252,6 +1308,8 @@ every launch.
 | `npm run test:fast` | The 35 files that do not spawn a process, run git or wait on a clock. This is the one to run while working. |
 | `npm run test:list` | The groups, what each covers, and how many files it has. |
 | `npm run clean` | Remove `dist/`. |
+| `npm run review -- <definition.review.json>` | Review alone, in a review window with no chat (development mode). Without a file the window offers to choose one. |
+| `npm run test:review` | The review module's tests: the model, and the service against a real git fixture. |
 
 ### Running part of the suite
 
@@ -1451,13 +1509,19 @@ src/main/                Main process. Compiled by tsc, not bundled.
   experiment-repo.ts     Generates the disposable sample working copy; hashes and diffs trees.
   sample-projects.ts     Where a generated sample project goes, and which folders may be removed on request.
   experiment-work.ts     The DSP-1 substep 5–6 experiments, run as a plain Node program.
-src/preload/             Sandboxed bridge, exposing one interface via contextBridge.
+  review-windows.ts      The review module's windows: the one entry point, one window per review, the last review per repository.
+  review-ipc.ts          The review channels, answered only for review windows, each through that window's own service.
+  review-service.ts      Read-only git at two fixed commits, and the reviewer's record under userData/reviews.
+src/preload/             Sandboxed bridges, each exposing one interface via contextBridge.
+  preload.ts             The chat and loop-editor windows: `window.dspatch`.
+  review-preload.ts      Review windows only: `window.dspatchReview`, and nothing else.
 src/renderer/            React UI, bundled by Vite.
   turn-routing.ts        Event routing, kept pure so the superseded-run rule is testable.
   recovery.ts            What a failure says, how a long wait reads, and the bounded retry.
   plain-error.ts         One sentence first, the technical detail on request, and nothing lost in between.
   workflow-script.ts     Drives the window's own controls (DSPATCH_CHAT_RUN).
   workflow-gates.ts      Those runs' pass/fail rules, kept out of the DOM so a counter-example can be fed to them.
+  ReviewView.tsx         The review surface (with ReviewTimeline.tsx, review-code.tsx, review-i18n.ts, review.css).
 src/shared/              Renderer/main contract. Types only.
 src/adapter/             Provider adapter interface, Cursor implementation, placeholder.
 scripts/dev.mjs          Starts the development server and Electron.
@@ -1477,6 +1541,47 @@ The main process is deliberately not bundled. Cursor's SDK lazily loads parts of
 itself that a single-file bundle cannot follow; its documentation describes such a
 bundle failing on the first `Agent.create()`. Compiling to ordinary modules with
 normal `node_modules` resolution avoids that problem.
+
+### Review as a separate module
+
+Review (code walks over a fixed revision pair, coverage, the reviewer's decisions and
+notes) is its own module in windows of its own, opened from the chat the way the loop
+editor is, and also usable with no chat at all (DSP-126).
+
+- **Input.** The main application makes one call,
+  `ReviewWindows.open({ repository, definitionPath })`, and gets back a note for the button
+  that asked. *Open review* passes the folder of the chat's open session - read in the main
+  process from the chat service, not sent by the renderer - and no definition. That folder
+  is only the file chooser's start folder and the key for the last review opened for its
+  repository (`userData/reviews/recent.json`, by `git rev-parse --show-toplevel`); the
+  review's own repository is the one its definition names. With a last review the window
+  opens it directly; without one it opens the chooser naming the folder. Nothing is chosen
+  for the person: no demo review, no revision picked from the chat's diff (the chat has no
+  identified revision pair to hand over).
+- **What review owns.** Presentation, walks, coverage, decisions and notes, and its record
+  under `userData/reviews/`, keyed by repository, both commits and the definition file.
+  Opening or closing review approves nothing and continues nothing.
+- **One window per review, one service per window.** A review's identity is its record's
+  name, so two windows on one review would be two writers of one file: asking again, or
+  choosing in one window a review another has, brings that window to the front instead.
+  Each window has its own `ReviewService`; a save names the review it belongs to, so a
+  window that switched reviews cannot write one review's state into another's record. A
+  window being closed is held until its view has saved (bounded at 3 s), so a position
+  changed inside the view's 250 ms save delay is not lost.
+- **Separate preload.** Review windows load `review-preload.ts`, which exposes only
+  `window.dspatchReview`; the chat and editor preload exposes no review channel. The main
+  process answers the review channels only for windows it opened as review windows and
+  refuses any other sender. The renderer mounts `ReviewView` alone for `?window=review`
+  and never the chat. Review windows have a View-only menu (zoom; reload and developer
+  tools in development builds), are not part of the loop-run audience, and a chat menu
+  command pressed while one is focused goes to the chat.
+- **What review never reads.** Chat state, sessions, conversations, the draft, the loop
+  editor, loop runs or any provider. It reads git objects at the two commits, never the
+  working tree, and its own records.
+- **Open review vs. direct open.** *Open review* is the chat's way in. `npm run review --
+  <definition>` (or `DSPATCH_REVIEW_DEFINITION`) opens review alone through the same call
+  with no folder and that definition, and no chat window; closing it quits. The startup
+  smoke test and other scripted runs ignore those variables and say so.
 
 ### Two packaging traps, both measured rather than predicted
 

@@ -8,86 +8,16 @@
  */
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { ReviewService } from '../src/main/review-service.ts';
+import { ReviewService, reviewRecordKey } from '../src/main/review-service.ts';
 import { buildDiffRows, computeCoverage, type ReviewBundle } from '../src/shared/review-model.ts';
+import { makeReviewFixture, writeWalkDefinition, type ReviewFixture } from './support/review-fixture.ts';
 
-function git(cwd: string, ...args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-}
-
-interface Fixture {
-  readonly root: string;
-  readonly repo: string;
-  readonly records: string;
-  readonly definitionPath: string;
-  readonly base: string;
-  readonly target: string;
-}
-
-function makeFixture(): Fixture {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-review-'));
-  const repo = path.join(root, 'repo');
-  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
-  git(repo, 'init', '-q');
-  git(repo, 'config', 'user.email', 'test@example.invalid');
-  git(repo, 'config', 'user.name', 'Test');
-  git(repo, 'config', 'core.autocrlf', 'false');
-  fs.writeFileSync(path.join(repo, 'src', 'keep.ts'), 'export const a = 1;\nexport const b = 2;\nexport const c = 3;\n');
-  fs.writeFileSync(path.join(repo, 'src', 'gone.ts'), 'old\n');
-  fs.writeFileSync(path.join(repo, 'src', 'untouched.ts'), 'export const needle = 42;\n');
-  git(repo, 'add', '.');
-  git(repo, 'commit', '-q', '-m', 'base commit');
-  const base = git(repo, 'rev-parse', 'HEAD');
-  fs.writeFileSync(path.join(repo, 'src', 'keep.ts'), 'export const a = 1;\nexport const b = 20;\nexport const c = 3;\nexport const d = 4;\n');
-  fs.rmSync(path.join(repo, 'src', 'gone.ts'));
-  fs.writeFileSync(path.join(repo, 'src', 'new file.ts'), 'export const n = 1;\n');
-  git(repo, 'add', '-A');
-  git(repo, 'commit', '-q', '-m', 'target commit');
-  const target = git(repo, 'rev-parse', 'HEAD');
-  // The working tree now disagrees with both commits; the review must not read it.
-  fs.writeFileSync(path.join(repo, 'src', 'keep.ts'), 'WORKING TREE ONLY\n');
-
-  const definitionPath = path.join(root, 'change.review.json');
-  fs.writeFileSync(
-    definitionPath,
-    JSON.stringify({
-      format: 'dspatch-review/1',
-      title: 'fixture',
-      repository: 'repo',
-      base: base.slice(0, 7),
-      target: target.slice(0, 7),
-      teachingMode: 'Concise',
-      provenance: 'test',
-      walks: [
-        {
-          id: 'W1',
-          title: 'w',
-          question: 'q',
-          steps: [
-            {
-              id: 'W1.1',
-              title: 'b changes',
-              text: 't',
-              refs: [
-                { path: 'src/keep.ts', side: 'target', start: 2, end: 4, role: 'walk', anchor: 'b = 20' },
-                { path: 'src/gone.ts', side: 'base', start: 1, end: 1, role: 'walk', anchor: 'old' },
-                { path: 'src/keep.ts', side: 'target', start: 1, end: 1, role: 'walk', anchor: 'not there' },
-                { path: 'src/missing.ts', side: 'target', start: 1, end: 1, role: 'context' },
-              ],
-            },
-          ],
-        },
-      ],
-    }),
-  );
-  return { root, repo, records: path.join(root, 'records'), definitionPath, base, target };
-}
+const makeFixture = makeReviewFixture;
+type Fixture = ReviewFixture;
 
 async function open(fixture: Fixture): Promise<{ service: ReviewService; bundle: ReviewBundle }> {
   const service = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
@@ -241,6 +171,41 @@ test('a definition naming something that is not a commit fails with the reason',
   }
 });
 
+test('a save goes to the record of the review it names, also after the window has opened another', async () => {
+  const fixture = makeFixture();
+  try {
+    const walkPath = writeWalkDefinition(fixture);
+    const service = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
+    const identified = await service.identify(walkPath);
+    assert.ok('identity' in identified);
+    const first = await service.openDefinition(fixture.definitionPath);
+    const second = await service.openDefinition(walkPath);
+    assert.equal(first.kind, 'opened');
+    assert.equal(second.kind, 'opened');
+    if (first.kind !== 'opened' || second.kind !== 'opened') {
+      return;
+    }
+    // identify() names the same record openDefinition() uses, without opening anything.
+    assert.equal(
+      identified.identity.key,
+      reviewRecordKey(second.bundle.repository, second.bundle.base.sha, second.bundle.target.sha, second.bundle.definitionPath),
+    );
+    // The first review's last state arrives after the second has opened: it is written
+    // to the first review's record, not to the one now open.
+    const late = { ...first.bundle.state, position: { ...first.bundle.state.position, stepId: 'W1.1' } };
+    assert.equal(service.saveState(late).saved, true);
+    const firstRecord = path.join(
+      fixture.records,
+      `${reviewRecordKey(first.bundle.repository, first.bundle.base.sha, first.bundle.target.sha, first.bundle.definitionPath)}.json`,
+    );
+    const secondRecord = path.join(fixture.records, `${identified.identity.key}.json`);
+    assert.equal(JSON.parse(fs.readFileSync(firstRecord, 'utf8')).definitionPath, first.bundle.definitionPath);
+    assert.equal(fs.existsSync(secondRecord), false);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('a damaged record is kept aside unchanged and the review still opens, saying so', async () => {
   const fixture = makeFixture();
   try {
@@ -295,11 +260,12 @@ test('the display language is saved beside the records and read back by a new se
   const fixture = makeFixture();
   try {
     const first = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
-    assert.deepEqual(first.getPreferences(), { language: 'sv' }, 'Swedish until chosen otherwise');
-    assert.deepEqual(first.setPreferences({ language: 'en' }), { saved: true });
+    assert.deepEqual(first.getPreferences(), { language: 'en' }, 'English until chosen otherwise');
+    assert.deepEqual(first.setPreferences({ language: 'sv' }), { saved: true });
     assert.equal(first.setPreferences({ language: 'de' }).saved, false);
+    // A stored Swedish choice overrides the English default in the next service.
     const second = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
-    assert.deepEqual(second.getPreferences(), { language: 'en' });
+    assert.deepEqual(second.getPreferences(), { language: 'sv' });
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }

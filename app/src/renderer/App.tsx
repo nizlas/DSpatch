@@ -375,6 +375,7 @@ function Workbench({
    * — the editor was already open and has been focused, or it could not be opened at all.
    */
   const [editorWindowNote, setEditorWindowNote] = useState<string | null>(null);
+  const [reviewWindowNote, setReviewWindowNote] = useState<string | null>(null);
   const [forgetting, setForgetting] = useState(false);
   /**
    * The sample projects DSpatch has generated, when someone has asked to see them.
@@ -2437,12 +2438,38 @@ function Workbench({
                 >
                   Edit agent loops
                 </button>
+                <button
+                  type="button"
+                  className="button button--quiet"
+                  data-ev="open-review"
+                  title="Opens review in a separate window: the last review opened for this project, or a chooser. This conversation is unaffected."
+                  onClick={() => {
+                    // Review is its own module in its own window (DSP-126). The main
+                    // process hands it this project's folder and nothing else of the
+                    // chat; asking again focuses the window that already has it.
+                    void window.dspatch.openReview().then(
+                      (outcome) => {
+                        setReviewWindowNote(outcome.kind === 'opened' ? null : outcome.note);
+                      },
+                      () => {
+                        setReviewWindowNote('The review window could not be opened, and DSpatch did not get a reason.');
+                      },
+                    );
+                  }}
+                >
+                  Open review
+                </button>
               </div>
             </div>
 
             {editorWindowNote === null ? null : (
               <p className="note" data-ev="editor-window-note">
                 {editorWindowNote}
+              </p>
+            )}
+            {reviewWindowNote === null ? null : (
+              <p className="note" data-ev="review-window-note">
+                {reviewWindowNote}
               </p>
             )}
 

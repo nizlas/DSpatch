@@ -1,11 +1,14 @@
 /**
  * Start DSpatch on the review surface: `npm run review -- <definition.review.json>`.
  *
- * The same development mode as `dev.mjs`, with `#review` on the URL the window loads
- * and the definition file passed as `DSPATCH_REVIEW_DEFINITION`. Without a file the
- * view offers to choose one. A separate script, like `editor.mjs`, so that the
- * ordinary `npm run dev` path is unchanged. Further arguments go to Electron, for
- * example `--user-data-dir=<folder>` to keep a trial's record apart.
+ * The same development mode as `dev.mjs`, with `#review` on the development URL and
+ * the definition file passed as `DSPATCH_REVIEW_DEFINITION`. The main process then opens
+ * review alone, in a review window of its own and with no chat window (DSP-126): the
+ * same `open({ repository: null, definitionPath })` call the chat's *Open review* makes.
+ * Without a file the window offers to choose one. A separate script, like
+ * `editor.mjs`, so that the ordinary `npm run dev` path is unchanged. Further
+ * arguments go to Electron, for example `--user-data-dir=<folder>` to keep a trial's
+ * record apart.
  */
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';

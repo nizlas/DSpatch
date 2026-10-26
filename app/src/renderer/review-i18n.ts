@@ -13,6 +13,8 @@ export interface ReviewWords {
   readonly openDefinition: string;
   readonly openAnother: string;
   readonly noDefinition: string;
+  /** The empty review window opened for a folder: names it, chooses nothing. */
+  readonly chooseFor: (folder: string) => string;
   readonly language: string;
   readonly details: string;
   readonly hideDetails: string;
@@ -205,6 +207,8 @@ const sv: ReviewWords = {
   openDefinition: 'Öppna en granskningsdefinition …',
   openAnother: 'Öppna en annan granskning …',
   noDefinition: 'Ingen granskning angavs vid start. Välj en granskningsdefinition (*.review.json).',
+  chooseFor: (folder) =>
+    `Ingen granskning har öppnats för ${folder} ännu. Välj en granskningsdefinition (*.review.json); filväljaren börjar i den mappen.`,
   language: 'Språk',
   details: 'Detaljer',
   hideDetails: 'Dölj detaljer',
@@ -429,6 +433,8 @@ const en: ReviewWords = {
   openDefinition: 'Open a review definition…',
   openAnother: 'Open another review…',
   noDefinition: 'No review was named at start. Choose a review definition (*.review.json).',
+  chooseFor: (folder) =>
+    `No review has been opened for ${folder} yet. Choose a review definition (*.review.json); the file chooser starts in that folder.`,
   language: 'Language',
   details: 'Details',
   hideDetails: 'Hide details',

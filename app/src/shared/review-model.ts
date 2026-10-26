@@ -1520,8 +1520,9 @@ function findClosingQuote(line: string, from: number, quote: string): number {
 // --- The bridge between the main process and the view ------------------------------
 
 /**
- * The review surface's IPC channels. `preload.ts` repeats them as literals because
- * the sandboxed preload cannot load this module; a test compares the two.
+ * The review surface's IPC channels. `review-preload.ts` repeats them as literals
+ * because the sandboxed preload cannot load this module; a test compares the two.
+ * The main process answers them only for windows it opened as review windows.
  */
 export const REVIEW_CHANNELS = {
   initial: 'dspatch:review-initial',
@@ -1539,7 +1540,7 @@ export interface ReviewPreferences {
   readonly language: Lang;
 }
 
-export const DEFAULT_PREFERENCES: ReviewPreferences = { language: 'sv' };
+export const DEFAULT_PREFERENCES: ReviewPreferences = { language: 'en' };
 
 export function adoptPreferences(raw: unknown): ReviewPreferences {
   return isRecord(raw) && (raw['language'] === 'sv' || raw['language'] === 'en')
@@ -1627,8 +1628,49 @@ export type ReviewStateNotice =
 
 export type ReviewOpenOutcome =
   | { readonly kind: 'opened'; readonly bundle: ReviewBundle }
-  | { readonly kind: 'none'; readonly note: string }
+  | {
+      readonly kind: 'none';
+      readonly note: string;
+      /**
+       * The folder the window was opened for, when there was one: where the file
+       * chooser starts and what the empty view names. Never the review's repository;
+       * that is the one the chosen definition names.
+       */
+      readonly repository?: string | null;
+      /** Why the last review opened for that folder could not be opened again, if it could not. */
+      readonly problem?: string;
+    }
   | { readonly kind: 'failed'; readonly error: string };
+
+/**
+ * What the main application hands the review module, and all it hands it.
+ *
+ * `repository` is the folder the person is working in, used only as the file
+ * chooser's start folder and to find the last review opened for it. `definitionPath`
+ * names a review definition to open directly. Review reads nothing else of the
+ * caller: no chat, session, loop or window state.
+ */
+export interface ReviewWindowInput {
+  readonly repository: string | null;
+  readonly definitionPath: string | null;
+}
+
+/** How opening a review window went, for the note beside the button that asked. */
+export interface ReviewWindowOutcome {
+  readonly kind: 'opened' | 'focused' | 'failed';
+  readonly note: string;
+}
+
+/**
+ * The short identity of an open review: `repo-name · abc1234→def5678`.
+ *
+ * Shown in the review header and the window title, so a review window left open while
+ * the chat moves to another project still says which repository and revisions it is.
+ */
+export function reviewIdentityLabel(repository: string, base: string, target: string): string {
+  const name = repository.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? repository;
+  return `${name === '' ? repository : name} · ${base.slice(0, 7)}→${target.slice(0, 7)}`;
+}
 
 export type ReviewFileOutcome =
   | { readonly kind: 'text'; readonly lines: readonly string[] }

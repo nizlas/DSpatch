@@ -52,18 +52,12 @@ import type {
   TestOutcome,
   TestRunRequest,
   TurnUsage,
+  ReviewWindowCheckAnswer,
+  ReviewWindowCheckRequest,
   UiAgentEvent,
   WorkspaceReport,
 } from '../shared/bridge';
 import type { StepActivity } from '../shared/loop-activity';
-import type {
-  ReviewBridge,
-  ReviewFileOutcome,
-  ReviewOpenOutcome,
-  ReviewPreferences,
-  ReviewState,
-  RevisionSide,
-} from '../shared/review-model';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
 import type { RoleReference } from '../shared/loop-graph';
 import type { RunJournalEntry } from '../shared/loop-run';
@@ -112,6 +106,8 @@ const SAVE_LOOP_GRAPH: BridgeChannel = 'dspatch:save-loop-graph';
 const RESOLVE_LOOP_ROLES: BridgeChannel = 'dspatch:resolve-loop-roles';
 const REVEAL_ROLE_SOURCE: BridgeChannel = 'dspatch:reveal-role-source';
 const OPEN_LOOP_EDITOR: BridgeChannel = 'dspatch:open-loop-editor';
+const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
+const CHECK_REVIEW_WINDOWS: BridgeChannel = 'dspatch:check-review-windows';
 const START_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:start-editor-loop-run';
 const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
 const LOOP_RUN_EVENT: BridgeChannel = 'dspatch:loop-run-event';
@@ -258,6 +254,9 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(CANCEL_EDITOR_LOOP_RUN) as Promise<EditorLoopCancelOutcome>,
   openLoopEditor: () =>
     ipcRenderer.invoke(OPEN_LOOP_EDITOR) as Promise<LoopEditorWindowOutcome>,
+  openReview: () => ipcRenderer.invoke(OPEN_REVIEW) as Promise<LoopEditorWindowOutcome>,
+  reviewWindowCheck: (request: ReviewWindowCheckRequest) =>
+    ipcRenderer.invoke(CHECK_REVIEW_WINDOWS, request) as Promise<ReviewWindowCheckAnswer>,
   onLoopRunEvent: (listener: (event: LoopRunEvent) => void) => {
     const handler = (_event: unknown, payload: LoopRunEvent): void => {
       listener(payload);
@@ -386,28 +385,4 @@ const bridge: DspatchBridge = {
 
 // The renderer has no Node access and no other Electron access.
 contextBridge.exposeInMainWorld('dspatch', bridge);
-
-/**
- * The review surface's own bridge (`#review`). Separate from `dspatch` because review
- * is a standalone capability: read-only git at a fixed revision pair, and the
- * reviewer's record. Channel names match `src/main/review-ipc.ts`; they are literals
- * here because the sandboxed preload cannot load that module.
- */
-const reviewBridge: ReviewBridge = {
-  initial: () => ipcRenderer.invoke('dspatch:review-initial') as Promise<ReviewOpenOutcome>,
-  choose: () => ipcRenderer.invoke('dspatch:review-choose') as Promise<ReviewOpenOutcome>,
-  readFile: (side: RevisionSide, filePath: string) =>
-    ipcRenderer.invoke('dspatch:review-read-file', side, filePath) as Promise<ReviewFileOutcome>,
-  listFiles: (side: RevisionSide) =>
-    ipcRenderer.invoke('dspatch:review-list-files', side) as Promise<readonly string[]>,
-  search: (side: RevisionSide, query: string) =>
-    ipcRenderer.invoke('dspatch:review-search', side, query) as ReturnType<ReviewBridge['search']>,
-  saveState: (state: ReviewState) =>
-    ipcRenderer.invoke('dspatch:review-save-state', state) as ReturnType<ReviewBridge['saveState']>,
-  getPreferences: () =>
-    ipcRenderer.invoke('dspatch:review-get-preferences') as ReturnType<ReviewBridge['getPreferences']>,
-  setPreferences: (preferences: ReviewPreferences) =>
-    ipcRenderer.invoke('dspatch:review-set-preferences', preferences) as ReturnType<ReviewBridge['setPreferences']>,
-};
-contextBridge.exposeInMainWorld('dspatchReview', reviewBridge);
 
