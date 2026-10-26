@@ -153,6 +153,34 @@ export function presentationResumeMode(raw: string | undefined): PresentationRes
   return RESUME_MODES.find((mode) => mode === value) ?? null;
 }
 
+/**
+ * How this adapter answers `send()` (`DSPATCH_REVIEW_PRESENTATION_SEND`, DSP-127).
+ *
+ * - `ok`: every send starts a run, as it always has.
+ * - `markers`: a prompt containing {@link SIMULATED_SEND_FAILS} is refused before any
+ *   run exists, and one containing {@link SIMULATED_SLOW_START} announces its run and
+ *   then holds `send` for {@link SIMULATED_SLOW_START_MS} before it returns: the
+ *   interval in which Stop has no run to cancel.
+ *
+ * Read for the **review** discussion's adapters only (`reviewAdapterFactory`), whose
+ * behaviour object is their own: the main chat's sends can never meet it. SIMULATED:
+ * nothing is asked of any provider, and the refusal says so.
+ */
+export type PresentationSendMode = 'ok' | 'markers';
+
+export const SIMULATED_SEND_FAILS = '[simulate: send fails]';
+export const SIMULATED_SLOW_START = '[simulate: slow start]';
+export const SIMULATED_SLOW_START_MS = 2_500;
+
+/** The mode an environment value names: unset or empty is `ok`; anything else unknown is `null`. */
+export function presentationSendMode(raw: string | undefined): PresentationSendMode | null {
+  const value = (raw ?? '').trim();
+  if (value === '' || value === 'ok') {
+    return 'ok';
+  }
+  return value === 'markers' ? 'markers' : null;
+}
+
 /** One `resume()` the adapter was asked for, and how it answered. */
 export interface PresentationResumeAttempt {
   readonly sessionId: string;
@@ -183,8 +211,29 @@ export class PresentationResumeBehaviour {
 
   private startSessionCount = 0;
 
-  constructor(mode: PresentationResumeMode = 'ok') {
+  /** How `send()` answers; `ok` unless a review factory was told otherwise. */
+  readonly sendMode: PresentationSendMode;
+
+  constructor(mode: PresentationResumeMode = 'ok', sendMode: PresentationSendMode = 'ok') {
     this.mode = mode;
+    this.sendMode = sendMode;
+  }
+
+  /**
+   * How one `send()` of `prompt` is to go: refused, held, or as usual. Throws the
+   * simulated refusal; returns how long to hold otherwise.
+   */
+  decideSend(prompt: string): number {
+    if (this.sendMode !== 'markers') {
+      return 0;
+    }
+    if (prompt.includes(SIMULATED_SEND_FAILS)) {
+      throw Object.assign(
+        new Error('Presentation adapter: simulated send failure - the question was refused before any run started. Nothing was asked of any provider.'),
+        { name: 'PresentationSendFailed' },
+      );
+    }
+    return prompt.includes(SIMULATED_SLOW_START) ? SIMULATED_SLOW_START_MS : 0;
   }
 
   /**
@@ -344,6 +393,12 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // The whole text as it arrived, recap and all: what the record reads to say
     // whether a recap was in front of the message.
     this.behaviour.recordSent(prompt);
+    let holdMs: number;
+    try {
+      holdMs = this.behaviour.decideSend(prompt);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
     state.runCounter += 1;
     const dspatchRunId = `${sessionId}-run-${String(state.runCounter)}`;
     state.activeRun = dspatchRunId;
@@ -383,7 +438,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // run 20261024-070000-dsp121-flow). The reply below keeps its timers as before.
     emit({ ...base, type: 'run.started', at: new Date().toISOString() });
 
-    setTimeout(() => {
+    const reply = (): void => {
       chunks.forEach((chunk, index) => {
         const timer = setTimeout(
           () => {
@@ -428,7 +483,19 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
         );
         state.timers.add(timer);
       });
-    }, 0);
+    };
+    if (holdMs > 0) {
+      // A slow start: the run is announced, and `send` returns only after the hold.
+      return new Promise<RunReference>((resolve) => {
+        const timer = setTimeout(() => {
+          state.timers.delete(timer);
+          reply();
+          resolve({ dspatchRunId });
+        }, holdMs);
+        state.timers.add(timer);
+      });
+    }
+    setTimeout(reply, 0);
 
     return Promise.resolve({ dspatchRunId });
   }

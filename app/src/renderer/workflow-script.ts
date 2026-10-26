@@ -151,6 +151,16 @@ const CHAT_EXIT = {
   reviewPositionLost: 95,
   reviewBoundaryWrong: 96,
   reviewTouchedLoops: 97,
+  /**
+   * 98-103 belong to DSP-127, the discussion in the review window. The lowest failed
+   * one is the exit; 92 and 97 are reused for the window and loop checks it repeats.
+   */
+  reviewDiscussionMisplaced: 98,
+  reviewDiscussionSentWrong: 99,
+  reviewDiscussionStopWrong: 100,
+  reviewDiscussionTouchedChat: 101,
+  reviewDiscussionDraftLost: 102,
+  reviewDiscussionLooksWrong: 103,
 } as const;
 
 const CHANGE_REQUEST =
@@ -735,6 +745,8 @@ export async function runScriptedWorkflow(
       return runResumeChoiceScenario(plan);
     case 'review-window':
       return runReviewWindowScenario(plan);
+    case 'review-discussion':
+      return runReviewDiscussionScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -9485,6 +9497,400 @@ async function runReviewWindowScenario(plan: ScriptedRunPlan): Promise<ScriptedR
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));
     // Never leave a review window behind for nothing to close.
+    try {
+      const left = await window.dspatch.reviewWindowCheck({ action: 'read' });
+      for (const entry of (left.detail as ReviewMainReading).reviewWindows) {
+        await window.dspatch.reviewWindowCheck({ action: 'close', webContentsId: entry.webContentsId });
+      }
+    } catch {
+      // The exit closes them in any case.
+    }
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-127: the discussion about the code, in the review window               */
+/* ------------------------------------------------------------------------- */
+
+/** The discussion panel as the main process reads it from a review window. */
+interface DiscussionSeen {
+  readonly shown: boolean;
+  readonly messages: readonly {
+    readonly id: string;
+    readonly role: string;
+    readonly status: string;
+    readonly subject: string;
+    readonly text: string;
+    readonly questionId: string | null;
+    readonly sentPrompt: string | null;
+  }[];
+  readonly status: {
+    readonly turn: { readonly answerId: string | null; readonly stopping: boolean } | null;
+    readonly unresolved: readonly { readonly attemptId: string; readonly state: string }[];
+    readonly needsAcknowledgement: readonly string[];
+  } | null;
+  readonly composer: string;
+  readonly subjectLine: string;
+  readonly statusLine: string;
+  readonly error: string;
+  readonly errorLine: string;
+  readonly contextOpen: number;
+}
+
+interface DiscussionMainReading extends ReviewMainReading {
+  readonly adapterSent: { readonly chat: readonly string[] | null; readonly review: readonly string[] | null };
+  readonly discussionFiles: readonly { readonly file: string; readonly draft?: unknown }[];
+}
+
+/**
+ * DSP-127 through both windows, with presentation adapters only. The review window is
+ * read and operated by the main process through the discussion panel's own controls;
+ * the chat window through its own. Every answer, every failure and every slow start is
+ * SIMULATED by the presentation adapter.
+ */
+async function runReviewDiscussionScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const [projectOne, projectTwo] = plan.switchProjects ?? [];
+  const SLOW = '[simulate: slow start]';
+  const FAILS = '[simulate: send fails]';
+  const observations: Record<string, unknown> = {
+    plan,
+    limits:
+      'SIMULATED: every answer is the presentation adapter\'s canned reply, the send failure and the slow ' +
+      'start are its own markers (DSPATCH_REVIEW_PRESENTATION_SEND=markers, read for the review adapters only), ' +
+      'and no provider was asked anything. The review windows were read and operated by the main process ' +
+      'through the discussion panel\'s controls; the definitions were chosen by the scripted file pick.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const failed = new Set<number>();
+  const expect = (code: number, ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+      failed.add(code);
+    }
+  };
+  const samePath = (left: string | null | undefined, right: string | null | undefined): boolean =>
+    (left ?? '').replace(/[\\/]+$/, '').toLowerCase() === (right ?? '').replace(/[\\/]+$/, '').toLowerCase();
+  const clean = (text: string | null): string => (text ?? '').replace(/\s+/g, ' ').trim();
+  const rowOf = (target: string): number | null => {
+    for (let index = 0; index < 50; index += 1) {
+      const found = element(`project-${String(index)}-path`);
+      if (found === null) {
+        return null;
+      }
+      if (samePath(clean(found.textContent), target)) {
+        return index;
+      }
+    }
+    return null;
+  };
+  const composerText = (): string => (element('prompt') as HTMLTextAreaElement | null)?.value ?? '';
+  const chatState = (): Record<string, unknown> => ({
+    project: textOf('project-path'),
+    session: textOf('session-id'),
+    conversation: textOf('conversation-id'),
+    draft: composerText(),
+    turns: countEntries('turn'),
+  });
+  const read = async (label: string): Promise<DiscussionMainReading> => {
+    const answer = await window.dspatch.reviewWindowCheck({ action: 'read' });
+    record(`main reading: ${label}`, { main: answer.detail });
+    return answer.detail as DiscussionMainReading;
+  };
+  const readUntil = async (
+    label: string,
+    predicate: (reading: DiscussionMainReading) => boolean,
+    timeoutMs = 30_000,
+  ): Promise<DiscussionMainReading> => {
+    const until = performance.now() + timeoutMs;
+    for (;;) {
+      const answer = await window.dspatch.reviewWindowCheck({ action: 'read' });
+      const reading = answer.detail as DiscussionMainReading;
+      if (predicate(reading)) {
+        record(`main reading: ${label}`, { main: reading });
+        return reading;
+      }
+      if (performance.now() > until) {
+        record(`main reading: ${label} (timed out)`, { main: reading });
+        throw new Error(`timed out waiting for: ${label}. This is a timeout, not a verdict.`);
+      }
+      await sleep(200);
+    }
+  };
+  const settled = (entry: ReviewWindowSeen): boolean => entry.view !== null && entry.view.kind !== 'opening';
+  const windowOf = (reading: DiscussionMainReading, id: number): ReviewWindowSeen | undefined =>
+    reading.reviewWindows.find((entry) => entry.webContentsId === id);
+  const discussionOf = (reading: DiscussionMainReading, id: number): DiscussionSeen | null =>
+    ((windowOf(reading, id) as unknown as { discussion?: DiscussionSeen | null } | undefined)?.discussion ?? null);
+  const questionsOf = (seen: DiscussionSeen | null): DiscussionSeen['messages'] =>
+    (seen?.messages ?? []).filter((message) => message.role === 'question');
+  const answerOf = (seen: DiscussionSeen | null, index: number): DiscussionSeen['messages'][number] | undefined => {
+    const question = questionsOf(seen)[index];
+    return question === undefined ? undefined : seen?.messages.find((message) => message.role === 'answer' && message.questionId === question.id);
+  };
+  const reviewSent = (reading: DiscussionMainReading): number => reading.adapterSent.review?.length ?? -1;
+  const chatSent = (reading: DiscussionMainReading): number => reading.adapterSent.chat?.length ?? -1;
+  const operate = async (
+    id: number,
+    op: 'read' | 'type' | 'enter' | 'stop' | 'send-anyway' | 'go-to' | 'tab',
+    extra: { text?: string; times?: number; index?: number; tab?: 'step' | 'discussion' } = {},
+  ): Promise<boolean> => {
+    const answer = await window.dspatch.reviewWindowCheck({ action: 'discussion', webContentsId: id, op, ...extra });
+    record(`discussion ${op}`, { webContentsId: id, ...extra, ok: answer.ok });
+    return answer.ok;
+  };
+  const openProject = async (label: string, target: string): Promise<void> => {
+    if (element('projects') === null) {
+      await window.dspatch.pressMenuItem('change-project');
+      await waitFor(`the project chooser (to open ${label})`, () => element('projects') !== null, 10_000);
+    }
+    await waitFor(`${label} to be offered in Recent`, () => rowOf(target) !== null, 60_000);
+    await click(`open-project-${String(rowOf(target) ?? 0)}`);
+    await waitFor(
+      `a session over ${label}`,
+      () =>
+        textOf('session-id').startsWith('dsp-session-') &&
+        samePath(attributeOf('project-path', 'title'), target) &&
+        element('projects') === null,
+      60_000,
+    );
+  };
+  const pressOpenReview = async (label: string): Promise<string | null> => {
+    await click('open-review');
+    await sleep(800);
+    const note = element('review-window-note') === null ? null : textOf('review-window-note');
+    record(`pressed Open review: ${label}`, { note });
+    return note;
+  };
+  /** Type a question into the review composer and press Enter `times` times. */
+  const ask = async (id: number, text: string, times = 1): Promise<void> => {
+    await operate(id, 'type', { text });
+    await sleep(100);
+    await operate(id, 'enter', { times });
+  };
+  const streaming = (id: number, index: number) => (reading: DiscussionMainReading): boolean => {
+    const answer = answerOf(discussionOf(reading, id), index);
+    return answer !== undefined && answer.status === 'streaming' && answer.text.length > 0;
+  };
+  const answered = (id: number, index: number) => (reading: DiscussionMainReading): boolean => {
+    const seen = discussionOf(reading, id);
+    return answerOf(seen, index)?.status === 'done' && seen?.status?.turn === null;
+  };
+
+  try {
+    if (projectOne === undefined || projectTwo === undefined) {
+      throw new Error('the scenario needs two projects in DSPATCH_CHAT_SWITCH_PROJECTS (P1;P2)');
+    }
+    await waitFor(
+      'the connection to reach a decided state',
+      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      60_000,
+    );
+
+    // --- The main chat on P1 with a draft; review opened on the fixture -----------------
+    await openProject('P1', projectOne);
+    await typeInto('prompt', 'A chat draft that review must leave alone — DSP-127.');
+    const chatBefore = chatState();
+    record('chat before review', chatBefore);
+    const main0 = await read('before review');
+    const chatSent0 = chatSent(main0);
+    expect(CHAT_EXIT.reviewDiscussionSentWrong, reviewSent(main0) === 0, 'the review adapters were sent something before review opened');
+
+    expect(CHAT_EXIT.reviewWindowWrong, (await pressOpenReview('first')) === null, 'the first Open review drew a note');
+    const chooser = (await readUntil('the chooser', (reading) => reading.reviewWindows.length === 1 && reading.reviewWindows.every(settled))).reviewWindows[0];
+    const id = chooser?.webContentsId ?? -1;
+    await window.dspatch.reviewWindowCheck({ action: 'choose', webContentsId: id });
+    const opened = await readUntil('the review open', (reading) => windowOf(reading, id)?.view?.kind === 'opened');
+    const stepIds = windowOf(opened, id)?.view?.stepIds ?? [];
+    const [stepA, stepB] = stepIds;
+    if (stepA === undefined || stepB === undefined) {
+      throw new Error(`the walk needs two steps: ${JSON.stringify(stepIds)}`);
+    }
+
+    // --- DSP-126 S1: Open review while the opened review is open focuses it --------------
+    const again = await pressOpenReview('again, with the opened review open');
+    const focusedReading = await read('after Open review on the opened review');
+    expect(CHAT_EXIT.reviewWindowWrong, focusedReading.reviewWindows.length === 1, `Open review on the opened review made ${String(focusedReading.reviewWindows.length)} windows`);
+    expect(CHAT_EXIT.reviewWindowWrong, windowOf(focusedReading, id)?.focusCount === 1, `the opened review's focus count is ${String(windowOf(focusedReading, id)?.focusCount)}, not 1`);
+    expect(CHAT_EXIT.reviewWindowWrong, (again ?? '').includes('brought to the front'), `the repeated press did not say it focused the window: ${String(again)}`);
+
+    // --- Nothing is sent on open or navigation ----------------------------------------------
+    await operate(id, 'tab', { tab: 'discussion' });
+    await window.dspatch.reviewWindowCheck({ action: 'go-to-step', webContentsId: id, stepId: stepB, closeAfter: false });
+    await window.dspatch.reviewWindowCheck({ action: 'go-to-step', webContentsId: id, stepId: stepA, closeAfter: false });
+    const navigated = await readUntil('the discussion shown at the first step', (reading) => discussionOf(reading, id)?.shown === true && windowOf(reading, id)?.view?.position?.stepId === stepA);
+    expect(CHAT_EXIT.reviewDiscussionSentWrong, reviewSent(navigated) === 0, `opening and moving around sent ${String(reviewSent(navigated))} prompts`);
+    expect(CHAT_EXIT.reviewDiscussionLooksWrong, (discussionOf(navigated, id)?.subjectLine ?? '').startsWith('Walk 1 › b becomes 20 › '), `the subject line at the first step reads "${discussionOf(navigated, id)?.subjectLine ?? ''}"`);
+
+    // --- Q1 on A, slow stream; the window moves to B mid-answer -----------------------------
+    await ask(id, 'What does this change do? mark-a');
+    await readUntil('the first answer streaming', streaming(id, 0));
+    await window.dspatch.reviewWindowCheck({ action: 'go-to-step', webContentsId: id, stepId: stepB, closeAfter: false });
+    const q1 = await readUntil('the first answer finished', answered(id, 0), 60_000);
+    const seen1 = discussionOf(q1, id);
+    const question1 = questionsOf(seen1)[0];
+    const answer1 = answerOf(seen1, 0);
+    expect(CHAT_EXIT.reviewDiscussionMisplaced, answer1 !== undefined && answer1.questionId === question1?.id && answer1.subject === question1.subject, 'the first answer is not on its question with its subject');
+    expect(CHAT_EXIT.reviewDiscussionMisplaced, (question1?.subject ?? '').includes('b becomes 20'), `the first question's subject is "${question1?.subject ?? ''}"`);
+    expect(CHAT_EXIT.reviewDiscussionMisplaced, (seen1?.subjectLine ?? '').includes('d is added'), `after the move the next subject is "${seen1?.subjectLine ?? ''}"`);
+    expect(CHAT_EXIT.reviewDiscussionMisplaced, (answer1?.text ?? '').includes('What I did for mark-a'), 'the first answer is not the reply to the first question');
+    const prompt1 = question1?.sentPrompt ?? '';
+    expect(CHAT_EXIT.reviewDiscussionSentWrong, prompt1.includes('2 | export const b = 20;') && !prompt1.includes('WORKING TREE ONLY'), 'the sent prompt does not carry the target blob, or carries the working tree');
+    expect(CHAT_EXIT.reviewDiscussionSentWrong, q1.adapterSent.review?.[0] === prompt1 && reviewSent(q1) === 1, 'the adapter was sent something other than the frozen prompt');
+
+    // Go to point brings the window back to A.
+    await operate(id, 'go-to', { index: 0 });
+    await readUntil('Go to point at A', (reading) => windowOf(reading, id)?.view?.position?.stepId === stepA, 10_000);
+
+    // --- Q2: Stop once its run exists -------------------------------------------------------
+    await ask(id, 'Second question, stopped while it answers. mark-b');
+    await readUntil('the second answer streaming', streaming(id, 1));
+    await operate(id, 'stop');
+    const q2 = await readUntil('the second answer stopped', (reading) => {
+      const seen = discussionOf(reading, id);
+      return answerOf(seen, 1)?.status === 'cancelled' && seen?.status?.turn === null && seen.status.unresolved.length === 0;
+    });
+    record('second answer stopped', { status: discussionOf(q2, id)?.status ?? null });
+
+    // --- Q3: Stop before its run exists -----------------------------------------------------
+    await ask(id, `Third question, stopped before its run exists. mark-c ${SLOW}`);
+    await readUntil('the third question waiting on the provider', (reading) => questionsOf(discussionOf(reading, id)).length === 3 && discussionOf(reading, id)?.status?.turn !== null, 5_000);
+    await operate(id, 'stop');
+    const abandoned = await read('right after Stop before the run');
+    const abandonedSeen = discussionOf(abandoned, id);
+    expect(CHAT_EXIT.reviewDiscussionStopWrong, abandonedSeen?.status?.turn === null && (abandonedSeen.status.unresolved.some((attempt) => attempt.state === 'outcome-unknown')), `Stop before the run did not leave an unknown outcome: ${JSON.stringify(abandonedSeen?.status)}`);
+    expect(CHAT_EXIT.reviewDiscussionStopWrong, questionsOf(abandonedSeen)[2]?.status === 'unknown', `the third question reads ${String(questionsOf(abandonedSeen)[2]?.status)}, not unknown`);
+    const q3 = await readUntil('the late run cancelled and confirmed', (reading) => {
+      const seen = discussionOf(reading, id);
+      return seen?.status?.unresolved.length === 0 && answerOf(seen, 2)?.status === 'cancelled';
+    }, 15_000);
+    record('third question after its late run was stopped', { status: discussionOf(q3, id)?.status ?? null });
+    expect(CHAT_EXIT.reviewDiscussionStopWrong, questionsOf(discussionOf(q3, id))[2]?.status === 'sent', `after the confirmed late cancel the third question reads ${String(questionsOf(discussionOf(q3, id))[2]?.status)}, not sent`);
+
+    // --- Q4: a simulated send failure for the review adapter alone -------------------------
+    const failingText = `Fourth question, refused by the simulated adapter. mark-d ${FAILS}`;
+    await ask(id, failingText);
+    const q4 = await readUntil('the refusal shown', (reading) => (discussionOf(reading, id)?.error ?? '') !== '');
+    const seen4 = discussionOf(q4, id);
+    expect(CHAT_EXIT.reviewDiscussionStopWrong, (seen4?.error ?? '').includes('simulated send failure'), `the error reads "${seen4?.error ?? ''}"`);
+    expect(
+      CHAT_EXIT.reviewDiscussionLooksWrong,
+      (seen4?.errorLine ?? '').startsWith('Presentation adapter: simulated send failure') && !(seen4?.errorLine ?? '').includes('PresentationSendFailed'),
+      `the error line shows "${seen4?.errorLine ?? ''}"`,
+    );
+    expect(CHAT_EXIT.reviewDiscussionStopWrong, seen4?.composer === failingText, 'the question text was not kept after the failure');
+    expect(CHAT_EXIT.reviewDiscussionStopWrong, questionsOf(seen4)[3]?.status === 'failed', 'the failed question is not marked failed');
+    expect(CHAT_EXIT.reviewDiscussionTouchedChat, chatSent(q4) === chatSent0, 'the chat adapter was sent something by the review failure');
+    await operate(id, 'type', { text: '' });
+
+    // --- The chat untouched so far ----------------------------------------------------------
+    const chatNow = chatState();
+    record('chat before its own sends', chatNow);
+    expect(CHAT_EXIT.reviewDiscussionTouchedChat, JSON.stringify(chatNow) === JSON.stringify(chatBefore), `the chat changed while review discussed: ${JSON.stringify(chatNow)} against ${JSON.stringify(chatBefore)}`);
+
+    // --- Q5 while the main chat sends -------------------------------------------------------
+    await ask(id, 'Fifth question, answered while the chat sends. mark-e');
+    await readUntil('the fifth answer streaming', streaming(id, 4));
+    const turnsBefore = countEntries('turn');
+    await typeInto('prompt', 'A chat message sent while a review answer arrives.');
+    await sendFromComposer();
+    await waitFor('the chat turn to finish', () => countEntries('turn') > turnsBefore && element('active-answer') === null, 60_000);
+    const q5 = await readUntil('the fifth answer finished', answered(id, 4), 60_000);
+    const answer5 = answerOf(discussionOf(q5, id), 4);
+    expect(CHAT_EXIT.reviewDiscussionTouchedChat, (answer5?.text ?? '').includes('What I did for mark-e') && !(answer5?.text ?? '').includes('A chat message'), 'the fifth review answer is not its own');
+    const thread = element('transcript')?.textContent ?? '';
+    expect(CHAT_EXIT.reviewDiscussionTouchedChat, !thread.includes('mark-e') && !thread.includes('Fifth question'), 'review text appeared in the chat');
+    expect(CHAT_EXIT.reviewDiscussionTouchedChat, chatSent(q5) === chatSent0 + 1, `the chat adapter was sent ${String(chatSent(q5) - chatSent0)} prompts, not 1`);
+
+    // --- Q6 while the main chat sends and cancels -------------------------------------------
+    await ask(id, 'Sixth question, answered while the chat cancels. mark-f');
+    await readUntil('the sixth answer streaming', streaming(id, 5));
+    await typeInto('prompt', 'A chat message cancelled while a review answer arrives.');
+    await sendFromComposer();
+    await waitFor('the chat answer to start', () => element('active-answer') !== null, 30_000);
+    await click('cancel');
+    await waitFor('the chat turn to end', () => element('active-answer') === null, 60_000);
+    const q6 = await readUntil('the sixth answer finished', answered(id, 5), 60_000);
+    const seen6 = discussionOf(q6, id);
+    expect(CHAT_EXIT.reviewDiscussionTouchedChat, (answerOf(seen6, 5)?.text ?? '').includes('Finally, this must be text') && seen6?.status?.unresolved.length === 0, 'the review answer did not finish whole beside the chat\'s cancel');
+
+    // --- Q7: Enter three times sends once ---------------------------------------------------
+    const sentBefore = reviewSent(q6);
+    await ask(id, 'Seventh question, Enter pressed three times. mark-g', 3);
+    const q7 = await readUntil('the seventh answer finished', answered(id, 6), 60_000);
+    expect(CHAT_EXIT.reviewDiscussionSentWrong, reviewSent(q7) === sentBefore + 1 && questionsOf(discussionOf(q7, id)).length === 7, `three Enters sent ${String(reviewSent(q7) - sentBefore)} prompts`);
+
+    // --- Pictures: shown and hidden, at 1400 px and about 1000 px -----------------------------
+    const pictures: Record<string, unknown> = {};
+    pictures['shown'] = (await window.dspatch.reviewWindowCheck({ action: 'capture', webContentsId: id, label: 'discussion-shown', width: 1400 })).detail;
+    pictures['shown-narrow'] = (await window.dspatch.reviewWindowCheck({ action: 'capture', webContentsId: id, label: 'discussion-shown-narrow', width: 1000 })).detail;
+    const atRest = await read('the discussion at rest');
+    expect(CHAT_EXIT.reviewDiscussionLooksWrong, discussionOf(atRest, id)?.contextOpen === 0, 'a Context disclosure is open at rest');
+    await operate(id, 'tab', { tab: 'step' });
+    await sleep(300);
+    pictures['hidden'] = (await window.dspatch.reviewWindowCheck({ action: 'capture', webContentsId: id, label: 'discussion-hidden', width: 1400 })).detail;
+    pictures['hidden-narrow'] = (await window.dspatch.reviewWindowCheck({ action: 'capture', webContentsId: id, label: 'discussion-hidden-narrow', width: 1000 })).detail;
+    record('discussion pictures', pictures);
+    for (const [name, picture] of Object.entries(pictures)) {
+      const view = (picture as { view?: { overflowX?: boolean } } | undefined)?.view;
+      expect(CHAT_EXIT.reviewDiscussionLooksWrong, view?.overflowX === false, `the review window overflows horizontally (${name})`);
+    }
+    const hidden = await read('the discussion hidden');
+    expect(CHAT_EXIT.reviewDiscussionLooksWrong, discussionOf(hidden, id)?.shown === false, 'the Step tab did not hide the discussion');
+    await operate(id, 'tab', { tab: 'discussion' });
+
+    // --- The draft across a close, and the thread back without a send ----------------------
+    const draft = 'A review draft kept across a close. mark-h';
+    await operate(id, 'type', { text: draft });
+    await sleep(900);
+    const sentBeforeClose = reviewSent(await read('before the close'));
+    await window.dspatch.reviewWindowCheck({ action: 'close', webContentsId: id });
+    expect(CHAT_EXIT.reviewWindowWrong, (await pressOpenReview('reopen')) === null, 'reopening drew a note');
+    const reopened = await readUntil('the review reopened', (reading) => reading.reviewWindows.length === 1 && reading.reviewWindows.every((entry) => entry.view?.kind === 'opened') && discussionOf(reading, reading.reviewWindows[0]?.webContentsId ?? -1) !== null);
+    const id2 = reopened.reviewWindows[0]?.webContentsId ?? -1;
+    await operate(id2, 'tab', { tab: 'discussion' });
+    const back = await readUntil('the thread and draft back', (reading) => questionsOf(discussionOf(reading, id2)).length === 7 && discussionOf(reading, id2)?.composer === draft, 10_000);
+    expect(CHAT_EXIT.reviewDiscussionSentWrong, reviewSent(back) === sentBeforeClose, 'reopening sent something');
+
+    // --- Two review windows keep their own drafts --------------------------------------------
+    await openProject('P2', projectTwo);
+    expect(CHAT_EXIT.reviewWindowWrong, (await pressOpenReview('from P2')) === null, 'Open review from P2 drew a note');
+    const two = await readUntil('a second review window', (reading) => reading.reviewWindows.length === 2 && reading.reviewWindows.every(settled));
+    const otherId = two.reviewWindows.find((entry) => entry.webContentsId !== id2)?.webContentsId ?? -1;
+    await window.dspatch.reviewWindowCheck({ action: 'choose', webContentsId: otherId });
+    await readUntil('the second review open', (reading) => windowOf(reading, otherId)?.view?.kind === 'opened' && discussionOf(reading, otherId) !== null);
+    await operate(otherId, 'tab', { tab: 'discussion' });
+    const secondDraft = 'A draft in the second review window. mark-i';
+    await operate(otherId, 'type', { text: secondDraft });
+    await sleep(900);
+    const drafts = await read('two windows, two drafts');
+    expect(CHAT_EXIT.reviewDiscussionDraftLost, discussionOf(drafts, id2)?.composer === draft && discussionOf(drafts, otherId)?.composer === secondDraft, 'the two review windows do not keep their own drafts');
+    expect(CHAT_EXIT.reviewDiscussionDraftLost, questionsOf(discussionOf(drafts, otherId)).length === 0, 'the second review shows the first review\'s thread');
+    const storedDrafts = drafts.discussionFiles.map((entry) => entry.draft).sort();
+    expect(CHAT_EXIT.reviewDiscussionDraftLost, JSON.stringify(storedDrafts) === JSON.stringify([draft, secondDraft].sort()), `the stored drafts are ${JSON.stringify(storedDrafts)}`);
+
+    // --- Close everything; what each adapter was sent ----------------------------------------
+    for (const entry of drafts.reviewWindows) {
+      await window.dspatch.reviewWindowCheck({ action: 'close', webContentsId: entry.webContentsId });
+    }
+    const end = await read('after all review windows closed');
+    expect(CHAT_EXIT.reviewWindowWrong, end.reviewWindows.length === 0, 'a review window was left open');
+    expect(CHAT_EXIT.reviewDiscussionSentWrong, reviewSent(end) === 7, `the review adapters were sent ${String(reviewSent(end))} prompts for seven questions`);
+    expect(CHAT_EXIT.reviewDiscussionTouchedChat, chatSent(end) === chatSent0 + 2, `the chat adapter was sent ${String(chatSent(end) - chatSent0)} prompts for two chat messages`);
+    expect(CHAT_EXIT.reviewDiscussionTouchedChat, (end.adapterSent.chat ?? []).every((text) => !text.includes('mark-')), 'a review question reached the chat adapter');
+    expect(CHAT_EXIT.reviewTouchedLoops, end.loops.current === null && JSON.stringify(end.loops.loopRunFiles) === JSON.stringify(main0.loops.loopRunFiles), 'a loop run was announced or the loop-run records changed');
+    observations['discussionFiles'] = end.discussionFiles;
+    await window.dspatch.captureWindow('chat-at-end');
+
+    const code = failures.length === 0 ? CHAT_EXIT.ok : failed.size === 0 ? CHAT_EXIT.scriptFailed : Math.min(...failed);
+    return finish(code, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
     try {
       const left = await window.dspatch.reviewWindowCheck({ action: 'read' });
       for (const entry of (left.detail as ReviewMainReading).reviewWindows) {

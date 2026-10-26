@@ -9,6 +9,7 @@
  *     <kit>\userData\dspatch-projects.json    Recent = P1, P2 (no conversations)
  *     <kit>\p1\repo                           P1: the fixture repository
  *     <kit>\p1\walk.review.json               a three-step walk over P1, the definition chosen
+ *     <kit>\p1\walk-second.review.json        the same walk under another file: a second review (DSP-127)
  *     <kit>\p2\other                          P2: a second fixture repository (other commits), never reviewed
  *     <kit>\seed-summary.json                 the paths and revisions written
  *
@@ -45,6 +46,8 @@ fs.mkdirSync(path.join(KIT, 'p2'));
 const one = makeReviewFixture(path.join(KIT, 'p1'));
 const two = makeReviewFixture(path.join(KIT, 'p2'), { repoName: 'other', variant: 'P2' });
 const definition = writeWalkDefinition(one);
+// A second review over P1 (DSP-127): another definition, so another identity and window.
+const secondDefinition = writeWalkDefinition(one, 'walk-second.review.json');
 
 const projects = new ProjectStore(path.join(USERDATA, 'dspatch-projects.json'));
 const base = Date.now() - 60 * 60 * 1000;
@@ -61,6 +64,7 @@ const summary = {
   userData: USERDATA,
   projects: { P1: one.repo, P2: two.repo },
   definition,
+  secondDefinition,
   revisions: { P1: { base: one.base, target: one.target }, P2: { base: two.base, target: two.target } },
   recent: projects.read().recentProjects.map((entry) => entry.path),
 };
@@ -68,4 +72,5 @@ fs.writeFileSync(path.join(KIT, 'seed-summary.json'), `${JSON.stringify(summary,
 
 console.log(`DSPATCH_CHAT_SWITCH_PROJECTS=${one.repo};${two.repo}`);
 console.log(`DSPATCH_PICK_FILE=${definition}`);
+console.log(`DSPATCH_PICK_FILE (review-discussion)=${definition};${secondDefinition}`);
 console.log(`userData=${USERDATA}`);

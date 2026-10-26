@@ -13,8 +13,16 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { ReviewService, reviewRecordKey } from '../src/main/review-service.ts';
-import { buildDiffRows, computeCoverage, type ReviewBundle } from '../src/shared/review-model.ts';
-import { makeReviewFixture, writeWalkDefinition, type ReviewFixture } from './support/review-fixture.ts';
+import { PROVIDER_ADDED_CONTEXT_LINE, buildEnvelopePrompt } from '../src/shared/review-discussion.ts';
+import {
+  buildDiffRows,
+  computeCoverage,
+  type CodeLocation,
+  type ReviewBundle,
+  type ReviewNote,
+  type RevisionPair,
+} from '../src/shared/review-model.ts';
+import { WORKING_TREE_ONLY, makeReviewFixture, writeWalkDefinition, type ReviewFixture } from './support/review-fixture.ts';
 
 const makeFixture = makeReviewFixture;
 type Fixture = ReviewFixture;
@@ -266,6 +274,105 @@ test('the display language is saved beside the records and read back by a new se
     // A stored Swedish choice overrides the English default in the next service.
     const second = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
     assert.deepEqual(second.getPreferences(), { language: 'sv' });
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+function note(id: string, stepId: string | null, location: CodeLocation | null, revisions: RevisionPair): ReviewNote {
+  return { id, kind: 'finding', text: `note ${id}`, location, stepId, status: 'open', resolution: '', createdAt: 't', updatedAt: 't', revisions };
+}
+
+test('a question\'s envelope carries the code at the reviewed commit, never the working tree, and the notes that concern it', async () => {
+  const fixture = makeFixture();
+  try {
+    const { service, bundle } = await open(fixture);
+    const revisions = bundle.state.revisions;
+    // Notes come from the record as last saved, not from anything the window sends with the question.
+    assert.equal(
+      service.saveState({
+        ...bundle.state,
+        notes: [
+          note('on-step', 'W1.1', null, revisions),
+          note('on-focus', null, { path: 'src/keep.ts', side: 'target', start: 3, end: 3 }, revisions),
+          note('on-selection', null, { path: 'src/gone.ts', side: 'base', start: 1, end: 1 }, revisions),
+          note('elsewhere', null, { path: 'src/untouched.ts', side: 'target', start: 1, end: 1 }, revisions),
+        ],
+      }).saved,
+      true,
+    );
+
+    const point = await service.envelopeFor({
+      subject: { kind: 'point', walkId: 'W1', stepId: 'W1.1', placeIndex: 0 },
+      selection: { path: 'src/gone.ts', side: 'base', start: 1, end: 1 },
+      language: 'en',
+    });
+    assert.equal(point.kind, 'built', point.kind === 'refused' ? point.error : '');
+    if (point.kind !== 'built') {
+      return;
+    }
+    const envelope = point.envelope;
+    assert.equal(envelope.identity.target.sha, fixture.target);
+    assert.equal(envelope.identity.base.subject, 'base commit');
+    const focus = envelope.ranges.find((range) => range.role === 'focus');
+    assert.deepEqual(focus?.lines, ['export const b = 20;', 'export const c = 3;', 'export const d = 4;']);
+    assert.equal(focus?.sha, fixture.target);
+    const selected = envelope.ranges.find((range) => range.role === 'selection');
+    assert.deepEqual([selected?.lines, selected?.sha], [['old'], fixture.base]);
+    assert.deepEqual(envelope.notes.map((entry) => entry.text), ['note on-step', 'note on-focus', 'note on-selection']);
+    assert.equal(envelope.explanation?.stepTitle, 'b changes');
+    assert.equal(envelope.explanation?.walkNumber, 1);
+    assert.equal(envelope.providerContext, PROVIDER_ADDED_CONTEXT_LINE);
+
+    // The working tree says something else; it never reaches the text sent.
+    const prompt = buildEnvelopePrompt(envelope, 'Why 20?', null);
+    assert.ok(prompt.includes('2 | export const b = 20;'));
+    assert.ok(!prompt.includes(WORKING_TREE_ONLY));
+    assert.equal(fs.readFileSync(path.join(fixture.repo, 'src', 'keep.ts'), 'utf8'), `${WORKING_TREE_ONLY}\n`);
+
+    // A code location away from the walk, and a place whose file is not in the commit.
+    const away = await service.envelopeFor({ subject: { kind: 'away', location: { path: 'src/keep.ts', side: 'base', start: 2, end: 2, extra: 'dropped' } }, selection: null });
+    assert.equal(away.kind, 'built');
+    if (away.kind === 'built') {
+      assert.deepEqual(away.envelope.ranges.map((range) => [range.role, range.lines, range.sha]), [['location', ['export const b = 2;'], fixture.base]]);
+      assert.deepEqual(away.envelope.subject, { kind: 'away', location: { path: 'src/keep.ts', side: 'base', start: 2, end: 2 } });
+      assert.deepEqual(away.envelope.notes, []);
+    }
+    const missing = await service.envelopeFor({ subject: { kind: 'point', walkId: 'W1', stepId: 'W1.1', placeIndex: 3 }, selection: null });
+    assert.match(missing.kind === 'built' ? (missing.envelope.ranges[0]?.problem ?? '') : '', /src\/missing\.ts does not exist at target/);
+
+    // The review as a whole: overview and changed files, every note, and no code unless something is selected.
+    const whole = await service.envelopeFor({ subject: { kind: 'review' }, selection: null });
+    assert.equal(whole.kind, 'built');
+    if (whole.kind === 'built') {
+      assert.deepEqual(whole.envelope.ranges, []);
+      assert.deepEqual(whole.envelope.overview?.changedFiles.map((file) => file.path), ['src/gone.ts', 'src/keep.ts', 'src/new file.ts']);
+      assert.deepEqual(whole.envelope.overview?.walkTitles, ['w']);
+      assert.equal(whole.envelope.notes.length, 4);
+    }
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a question about something the review does not have is refused in plain words', async () => {
+  const fixture = makeFixture();
+  try {
+    const { service } = await open(fixture);
+    const refused = async (request: unknown): Promise<string> => {
+      const outcome = await service.envelopeFor(request);
+      assert.equal(outcome.kind, 'refused', JSON.stringify(request));
+      return outcome.kind === 'refused' ? outcome.error : '';
+    };
+    assert.equal(await refused({ subject: { kind: 'point', walkId: 'W9', stepId: 'W1.1', placeIndex: 0 }, selection: null }), 'This review has no walk "W9".');
+    assert.equal(await refused({ subject: { kind: 'point', walkId: 'W1', stepId: 'W9.9', placeIndex: 0 }, selection: null }), 'Walk "W1" has no step "W9.9".');
+    assert.equal(await refused({ subject: { kind: 'point', walkId: 'W1', stepId: 'W1.1', placeIndex: 9 }, selection: null }), 'Step "W1.1" has no place 9.');
+    assert.match(await refused({ subject: { kind: 'away', location: { path: 'src/keep.ts', side: 'target', start: 0, end: 1 } }, selection: null }), /not a valid location/);
+    assert.match(await refused({ subject: { kind: 'review' }, selection: { path: 'src/keep.ts', side: 'working', start: 1, end: 1 } }), /selected lines/);
+    assert.match(await refused({ subject: { kind: 'anything' }, selection: null }), /not about a point/);
+    assert.equal(await refused(null), 'The question has no subject.');
+    const closed = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
+    assert.deepEqual(await closed.envelopeFor({ subject: { kind: 'review' }, selection: null }), { kind: 'refused', error: 'No review is open.' });
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }

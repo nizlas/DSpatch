@@ -279,7 +279,15 @@ export class ReviewWindows {
     if (chosen === undefined) {
       return { kind: 'none', note: 'No file was chosen.', repository: entry.startFolder };
     }
+    // The dialog is outside the queue (it waits on a person); opening is inside it, so a
+    // review being opened by `open()` and by this window at once is opened by one of them.
+    const picked = chosen;
+    const next = this.queue.then(() => this.openChosen(entry, picked));
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
 
+  private async openChosen(entry: ReviewWindowEntry, chosen: string): Promise<ReviewOpenOutcome> {
     const identified = await entry.service.identify(chosen);
     if ('identity' in identified) {
       const other = this.byIdentity(identified.identity.key);
@@ -295,6 +303,16 @@ export class ReviewWindows {
     const outcome = await entry.service.openDefinition(chosen);
     if (outcome.kind === 'opened') {
       const identity = this.identityOf(outcome);
+      // Checked again after reading git: another window may have taken it meanwhile.
+      const other = identity === null ? null : this.byIdentity(identity.key);
+      if (other !== null && other !== entry) {
+        this.focus(other);
+        return {
+          kind: 'none',
+          note: `That review was opened in another window (${this.labelOf(other)}) meanwhile, which has been brought to the front. One window per review.`,
+          repository: entry.startFolder,
+        };
+      }
       entry.identity = identity;
       entry.initial = outcome;
       if (identity !== null) {

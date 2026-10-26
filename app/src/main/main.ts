@@ -68,6 +68,7 @@ import {
   PresentationResumeBehaviour,
   presentationAuthStatus,
   presentationResumeMode,
+  presentationSendMode,
 } from './presentation-adapter';
 import { InstructionQueue } from './instruction-queue';
 import { instructionPreamble } from '../shared/loop-instruction';
@@ -98,6 +99,7 @@ import { ownRepositoryRoot } from './own-repository';
 import { PROBE_EXIT, runCursorProbe } from './probe-cursor';
 import { ProjectStore } from './project-store';
 import { readDirectoryPage, readFileForViewing } from './workspace-tree';
+import { ReviewDiscussions, reviewAdapterFactory } from './review-discussion-service';
 import { registerReviewIpc, reviewSenderRefusal } from './review-ipc';
 import { ReviewWindows } from './review-windows';
 import {
@@ -290,7 +292,9 @@ const chatRunScenario: ScriptedScenario =
                                       ? 'review-window'
                                       : chatRunValue === 'review-direct'
                                         ? 'review-direct'
-                                        : 'full-workflow';
+                                        : chatRunValue === 'review-discussion'
+                                          ? 'review-discussion'
+                                          : 'full-workflow';
 
 /**
  * The one run that talks to no provider.
@@ -364,7 +368,9 @@ const presentationMode =
   chatRunScenario === 'resume-choice' ||
   // DSP-126: windows, IPC and the review record. Nothing in either needs a model.
   chatRunScenario === 'review-window' ||
-  chatRunScenario === 'review-direct';
+  chatRunScenario === 'review-direct' ||
+  // DSP-127: the review discussion, answered by presentation adapters of its own.
+  chatRunScenario === 'review-discussion';
 
 /**
  * Hold mode (`DSPATCH_CHAT_HOLD=1`, `resume-choice` only): the scenario performs the
@@ -570,6 +576,8 @@ const chatRunTimeoutMs =
                                   // git fixture. Nothing waits for a provider.
                                   chatRunScenario === 'review-window' || chatRunScenario === 'review-direct'
                                   ? 180_000
+                                  : chatRunScenario === 'review-discussion'
+                                    ? 300_000
                                   : 900_000;
 const chatRunTurnTimeoutMs = 240_000;
 
@@ -1493,7 +1501,13 @@ async function disposeAdapterOnce(): Promise<void> {
     return;
   }
   serviceDisposed = true;
-  await chatService.dispose();
+  // The chat's adapter and every review discussion's, side by side, inside the one
+  // bounded shutdown. A review answer still arriving is recorded as unknown.
+  const results = await Promise.allSettled([chatService.dispose(), reviewDiscussions?.dispose() ?? Promise.resolve()]);
+  const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (failed !== undefined) {
+    throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason));
+  }
 }
 
 /**
@@ -1529,6 +1543,25 @@ let editorWindow: BrowserWindow | null = null;
  * run audience: they show no run, and the review preload has no channel to hear one on.
  */
 let reviewWindows: ReviewWindows | null = null;
+
+/**
+ * The review discussions (DSP-127): one per review, each with an adapter of its own,
+ * created on the first question and closed with its last window or at quit. In
+ * presentation mode the adapters are presentation adapters with their own record,
+ * never the chat's `presentationResume`.
+ */
+const reviewPresentationSend = presentationSendMode(process.env['DSPATCH_REVIEW_PRESENTATION_SEND']);
+const reviewAdapters = reviewAdapterFactory({
+  presentation: presentationMode,
+  // SIMULATED send failures and slow starts, for the review discussion's adapters only:
+  // read here and nowhere else, so the main chat's adapter never meets them.
+  sendMode: presentationMode ? (reviewPresentationSend ?? 'ok') : 'ok',
+  ...((): { deltaMs?: number } => {
+    const parsed = Number.parseInt(process.env['DSPATCH_PRESENTATION_DELTA_MS'] ?? '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? { deltaMs: parsed } : {};
+  })(),
+});
+let reviewDiscussions: ReviewDiscussions | null = null;
 
 function requireReviewWindows(): ReviewWindows {
   if (reviewWindows === null) {
@@ -2957,7 +2990,9 @@ function writeChatRunRecord(
                             ? `DSP-121 — the refused or failed resume state and the three choices, through the real choice panel (DSPATCH_CHAT_RESUME=${presentationResume.mode}${chatRunHold ? ', hold mode' : ''}), over a seeded user-data directory. SIMULATED: the refusal and the failure are the presentation adapter's own answers on this machine; no provider was asked anything, and nothing here says what any provider would do`
                             : chatRunScenario === 'review-window'
                               ? 'DSP-126 — review opened from the chat as a separate window: one window per review, the chooser or the last review, the chat untouched, identity kept across a project switch, and the position kept across a close inside the save delay, driven through both windows with no provider call'
-                              : 'DSP-1 substep 7 — the whole workflow driven through the window',
+                              : chatRunScenario === 'review-discussion'
+                                ? 'DSP-127 — a discussion about the code under review in the review window: answers on their own questions while the window moves, Stop with and without a run, a review-only send failure, the main chat beside it, drafts across a close and in two windows, and nothing sent on open or navigation. SIMULATED: every answer and every failure is the presentation adapter\'s; no provider was asked anything'
+                                : 'DSP-1 substep 7 — the whole workflow driven through the window',
     scenario: chatRunScenario,
     startupProjectPath: startupProjectPath ?? null,
     startedAtUtc: chatRunStartedAtUtc,
@@ -2978,7 +3013,7 @@ function writeChatRunRecord(
     main: mainEvidenceAtReport,
     // DSP-126: what the main process read and did for the review scenario, kept apart
     // from what the chat window's DOM showed.
-    ...(chatRunScenario === 'review-window'
+    ...(chatRunScenario === 'review-window' || chatRunScenario === 'review-discussion'
       ? { reviewWindows: { userDataInUse: app.getPath('userData'), checks: reviewCheckLog } }
       : {}),
     // DSP-121 flow: what *Copy diagnostic info* was asked to copy, recorded here instead
@@ -3333,7 +3368,35 @@ async function reviewScenarioReading(): Promise<Record<string, unknown>> {
       reading.webContentsId,
       'window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read() : null',
     );
-    views.push({ ...reading, view: view.value });
+    const discussion = await inReviewWindow(
+      reading.webContentsId,
+      'window.__dspatchDiscussionCheck ? window.__dspatchDiscussionCheck.read() : null',
+    );
+    views.push({ ...reading, view: view.value, discussion: discussion.value });
+  }
+  // DSP-127: the discussion records on disk, and what each presentation adapter was sent.
+  const reviewsDir = path.join(app.getPath('userData'), 'reviews');
+  const discussionFiles: unknown[] = [];
+  try {
+    for (const name of fs.readdirSync(reviewsDir).filter((entry) => entry.endsWith('.discussion.json'))) {
+      try {
+        const stored = JSON.parse(fs.readFileSync(path.join(reviewsDir, name), 'utf8')) as {
+          draft?: unknown;
+          messages?: { role?: unknown; status?: unknown }[];
+          attempts?: { state?: unknown }[];
+        };
+        discussionFiles.push({
+          file: name,
+          draft: stored.draft,
+          messages: (stored.messages ?? []).map((message) => `${String(message.role)}:${String(message.status)}`),
+          attempts: (stored.attempts ?? []).map((attempt) => attempt.state),
+        });
+      } catch (error) {
+        discussionFiles.push({ file: name, unreadable: String(error) });
+      }
+    }
+  } catch {
+    // No reviews folder yet: nothing has been discussed.
   }
   const session = chatService.openSession();
   const focused = BrowserWindow.getFocusedWindow();
@@ -3360,6 +3423,12 @@ async function reviewScenarioReading(): Promise<Record<string, unknown>> {
     },
     recentReviews: windows.recentIndex(),
     reviewsFolder: filesUnder(path.join(app.getPath('userData'), 'reviews')),
+    discussionFiles,
+    // Each presentation behaviour's own record: the chat's and the review adapters'.
+    adapterSent: {
+      chat: presentationMode ? presentationResume.record().sent : null,
+      review: reviewAdapters.presentationBehaviour?.record().sent ?? null,
+    },
   };
 }
 
@@ -3455,6 +3524,26 @@ async function reviewWindowCheckNow(
         entry.window.setBounds(before);
       }
       return { ok: true, detail: { written, contentWidth, view: view.value } };
+    }
+    case 'discussion': {
+      const call =
+        request.op === 'tab'
+          ? `(() => { const b = document.querySelector('[data-ev="right-tab-${request.tab === 'step' ? 'step' : 'discussion'}"]'); if (b) { b.click(); } return b !== null; })()`
+          : `(() => { const d = window.__dspatchDiscussionCheck; if (!d) { return null; } ${
+              request.op === 'read'
+                ? 'return d.read();'
+                : request.op === 'type'
+                  ? `return d.type(${JSON.stringify(request.text ?? '')});`
+                  : request.op === 'enter'
+                    ? `return d.enter(${String(Math.max(1, Math.min(5, request.times ?? 1)))});`
+                    : request.op === 'stop'
+                      ? 'return d.stop();'
+                      : request.op === 'send-anyway'
+                        ? 'return d.sendAnyway();'
+                        : `return d.goTo(${String(request.index ?? 0)});`
+            } })()`;
+      const result = await inReviewWindow(request.webContentsId, call);
+      return { ok: result.ok && result.value !== null && result.value !== false, detail: result.value };
     }
     case 'refuse-chat-sender': {
       // The review IPC's own guard, given the chat window's sender. The chat window has
@@ -3924,7 +4013,8 @@ function registerIpc(): void {
       // reads the first of them (A) from the same variable rather than a new one.
       ...(chatRunScenario === 'workspace-switch' ||
       chatRunScenario === 'resume-choice' ||
-      chatRunScenario === 'review-window'
+      chatRunScenario === 'review-window' ||
+      chatRunScenario === 'review-discussion'
         ? {
             switchProjects: (process.env['DSPATCH_CHAT_SWITCH_PROJECTS'] ?? '')
               .split(';')
@@ -5705,7 +5795,15 @@ function main(): void {
         log(`[review] ${message}`);
       },
     });
-    registerReviewIpc(reviewWindows);
+    reviewDiscussions = new ReviewDiscussions({
+      recordsDir: path.join(app.getPath('userData'), 'reviews'),
+      createAdapter: reviewAdapters.create,
+      model: process.env['DSPATCH_CHAT_MODEL'] ?? undefined,
+      log: (message) => {
+        log(`[review] ${message}`);
+      },
+    });
+    registerReviewIpc(reviewWindows, reviewDiscussions);
     registerIpc();
     if (reviewAskedAtStart && !directReviewMode) {
       log(

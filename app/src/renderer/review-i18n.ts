@@ -8,6 +8,40 @@ import type { EvidenceLabel, Lang, LocalText, UnitKind } from '../shared/review-
  * it. Code names, source code and repository documents stay English. Nothing here is
  * translated at run time, and the reviewer's own notes are never translated.
  */
+/** The discussion panel's words. Short and about the action; detail behind Context. */
+export interface DiscussionWords {
+  readonly empty: string;
+  readonly about: string;
+  readonly wholeReview: string;
+  readonly placeholder: string;
+  readonly stop: string;
+  readonly answering: string;
+  readonly stopping: string;
+  readonly context: string;
+  readonly goToPoint: string;
+  readonly pointGone: string;
+  readonly status: { readonly sending: string; readonly unknown: string; readonly cancelled: string; readonly failed: string };
+  readonly needsAcknowledgement: string;
+  readonly sendAnyway: string;
+  readonly continueAnyway: string;
+  readonly readOnly: (reason: string) => string;
+  readonly details: string;
+  readonly hideDetails: string;
+  readonly contextLabels: {
+    readonly subject: string;
+    readonly revisions: string;
+    readonly code: string;
+    readonly notes: string;
+    readonly instruction: string;
+    readonly providerContext: string;
+    readonly model: string;
+    readonly sent: string;
+  };
+  readonly noCode: string;
+  readonly noNotes: string;
+  readonly notSent: string;
+}
+
 export interface ReviewWords {
   readonly opening: string;
   readonly openDefinition: string;
@@ -48,6 +82,9 @@ export interface ReviewWords {
   readonly evidenceMeaning: Record<EvidenceLabel, string>;
   readonly notesSection: string;
   readonly reviewSection: string;
+  /** The right column's two tabs: the step's own text, or the discussion about the code (DSP-127). */
+  readonly rightTabs: { readonly step: string; readonly discussion: string };
+  readonly discussion: DiscussionWords;
   readonly markWalked: string;
   readonly walkedUndo: string;
   readonly walkedNote: string;
@@ -247,6 +284,39 @@ const sv: ReviewWords = {
   },
   notesSection: 'Anteckna fråga eller fynd',
   reviewSection: 'Granskning',
+  rightTabs: { step: 'Steg', discussion: 'Diskussion' },
+  discussion: {
+    empty: 'Fråga om koden du tittar på. Inget skickas förrän du trycker Enter.',
+    about: 'Om',
+    wholeReview: 'granskningen som helhet',
+    placeholder: 'Fråga om koden – Enter skickar, Skift+Enter ny rad',
+    stop: 'Stoppa',
+    answering: 'Svaret är på väg…',
+    stopping: 'Stoppar… räknas som stoppat först när leverantören bekräftar.',
+    context: 'Kontext',
+    goToPoint: 'Gå till punkten',
+    pointGone: 'Punkten finns inte längre i walken; koden frågan gällde visas i stället.',
+    status: { sending: 'Skickar…', unknown: 'Utfallet okänt', cancelled: 'Stoppad', failed: 'Misslyckades' },
+    needsAcknowledgement: 'En tidigare fråga har inget känt utfall. Inget skickades om.',
+    sendAnyway: 'Skicka ändå',
+    continueAnyway: 'Fortsätt ändå',
+    readOnly: (reason) => `Diskussionen kan bara läsas: ${reason}`,
+    details: 'Detaljer',
+    hideDetails: 'Dölj detaljer',
+    contextLabels: {
+      subject: 'Gäller',
+      revisions: 'Revisioner',
+      code: 'Kod som skickades',
+      notes: 'Dina anteckningar som skickades',
+      instruction: 'DSpatchs instruktion',
+      providerContext: 'Tillagt av leverantören',
+      model: 'Modell som begärdes',
+      sent: 'Exakt text som skickades',
+    },
+    noCode: 'Ingen kod skickades.',
+    noNotes: 'Inga.',
+    notSent: 'Frågan nådde aldrig leverantören.',
+  },
   markWalked: 'Markera steget som genomgånget',
   walkedUndo: 'Genomgånget ✓ – ångra',
   walkedNote: 'Genomgånget är din egen markering av framsteg. Det godkänner ingen kod.',
@@ -473,6 +543,39 @@ const en: ReviewWords = {
   },
   notesSection: 'Note a question or finding',
   reviewSection: 'Review',
+  rightTabs: { step: 'Step', discussion: 'Discussion' },
+  discussion: {
+    empty: 'Ask about the code you are looking at. Nothing is sent until you press Enter.',
+    about: 'About',
+    wholeReview: 'the review as a whole',
+    placeholder: 'Ask about this code – Enter sends, Shift+Enter for a new line',
+    stop: 'Stop',
+    answering: 'Answer on its way…',
+    stopping: 'Stopping… it counts as stopped only when the provider confirms.',
+    context: 'Context',
+    goToPoint: 'Go to point',
+    pointGone: 'This point is no longer in the walk; showing the code it was asked about.',
+    status: { sending: 'Sending…', unknown: 'Outcome unknown', cancelled: 'Stopped', failed: 'Failed' },
+    needsAcknowledgement: 'An earlier question has no known outcome. Nothing was resent.',
+    sendAnyway: 'Send anyway',
+    continueAnyway: 'Continue anyway',
+    readOnly: (reason) => `This discussion is read-only: ${reason}`,
+    details: 'Details',
+    hideDetails: 'Hide details',
+    contextLabels: {
+      subject: 'About',
+      revisions: 'Revisions',
+      code: 'Code sent',
+      notes: 'Your notes sent',
+      instruction: "DSpatch's instruction",
+      providerContext: 'Added by the provider',
+      model: 'Model asked for',
+      sent: 'Exact text sent',
+    },
+    noCode: 'No code was sent.',
+    noNotes: 'None.',
+    notSent: 'The question never reached the provider.',
+  },
   markWalked: 'Mark this step walked through',
   walkedUndo: 'Walked through ✓ – undo',
   walkedNote: 'Walked through is your own mark of progress. It approves no code.',

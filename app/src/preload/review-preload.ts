@@ -8,6 +8,7 @@ import type {
   ReviewState,
   RevisionSide,
 } from '../shared/review-model';
+import type { ReviewDiscussionBridge, ReviewDiscussionEvent } from '../shared/review-discussion';
 
 /**
  * The review window's preload, and the only bridge a review window has.
@@ -38,5 +39,29 @@ const reviewBridge: ReviewBridge = {
     ipcRenderer.invoke('dspatch:review-set-preferences', preferences) as ReturnType<ReviewBridge['setPreferences']>,
 };
 
+/**
+ * The discussion about the code under review (DSP-127). Channel literals match
+ * `REVIEW_DISCUSSION_CHANNELS` in `src/shared/review-discussion.ts`; a test compares
+ * them. Events arrive only for the review this window shows.
+ */
+const discussionBridge: ReviewDiscussionBridge = {
+  load: (request) => ipcRenderer.invoke('dspatch:review-discussion-load', request) as ReturnType<ReviewDiscussionBridge['load']>,
+  send: (input) => ipcRenderer.invoke('dspatch:review-discussion-send', input) as ReturnType<ReviewDiscussionBridge['send']>,
+  cancel: () => ipcRenderer.invoke('dspatch:review-discussion-cancel') as ReturnType<ReviewDiscussionBridge['cancel']>,
+  acknowledge: (attemptIds) =>
+    ipcRenderer.invoke('dspatch:review-discussion-acknowledge', attemptIds) as ReturnType<ReviewDiscussionBridge['acknowledge']>,
+  saveDraft: (text) => ipcRenderer.invoke('dspatch:review-discussion-draft', text) as ReturnType<ReviewDiscussionBridge['saveDraft']>,
+  onEvent: (listener) => {
+    const handler = (_event: unknown, payload: ReviewDiscussionEvent): void => {
+      listener(payload);
+    };
+    ipcRenderer.on('dspatch:review-discussion-event', handler);
+    return () => {
+      ipcRenderer.removeListener('dspatch:review-discussion-event', handler);
+    };
+  },
+};
+
 // The renderer has no Node access and no other Electron access.
 contextBridge.exposeInMainWorld('dspatchReview', reviewBridge);
+contextBridge.exposeInMainWorld('dspatchReviewDiscussion', discussionBridge);

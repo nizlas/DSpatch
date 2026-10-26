@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { JSX, ReactNode } from 'react';
 
 import { Markdown } from './Markdown';
+import { ReviewDiscussion } from './ReviewDiscussion';
 import { Inline, TokensView, asLocation, capitalise, fileName, rangeText, useFiles, useRows, type Files } from './review-code';
 import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
@@ -33,6 +34,7 @@ import {
   type Walk,
   type WalkStep,
 } from '../shared/review-model';
+import type { DiscussionRequest } from '../shared/review-discussion';
 
 declare global {
   interface Window {
@@ -321,6 +323,8 @@ function OpenReview({
     bundle.state.savedAt === '' ? null : { at: bundle.state.savedAt },
   );
   const [tab, setTab] = useState<LeftTab>('walks');
+  /** The right column: the step's own text, or the discussion about the code (DSP-127). */
+  const [rightTab, setRightTab] = useState<'step' | 'discussion'>('step');
   const [selection, setSelection] = useState<CodeLocation | null>(null);
   const [view, setView] = useState<CodeView>('both');
   const [scope, setScope] = useState<CodeScope>('focus');
@@ -678,6 +682,22 @@ function OpenReview({
 
   const revisionText = `${short(bundle.base.sha)}→${short(bundle.target.sha)}`;
 
+  // What a question asked now would be about: the place on screen, a location away
+  // from the walk, or the review as a whole; and the lines selected, if any.
+  const discussionRequest: DiscussionRequest = useMemo(
+    () => ({
+      subject:
+        away !== null
+          ? { kind: 'away', location: away }
+          : current !== null && place !== null
+            ? { kind: 'point', walkId: current.walk.id, stepId: current.step.id, placeIndex }
+            : { kind: 'review' },
+      selection,
+      language: lang,
+    }),
+    [away, current?.walk.id, current?.step.id, place, placeIndex, selection, lang],
+  );
+
   return (
     <div className="rv">
       <Header
@@ -851,61 +871,93 @@ function OpenReview({
         </main>
 
         <aside className="rv-right">
-          {current !== null && away === null && place !== null && (
-            <StepPanel
-              walk={current.walk}
-              step={current.step}
-              index={current.index}
-              placeIndex={placeIndex}
-              referenceProblems={bundle.referenceProblems}
-              state={state}
-              words={words}
-              lang={lang}
-              onPlace={(index) => {
-                goToStep(current.step.id, index);
-                setNavRequest((count) => count + 1);
-              }}
-              onOpenEvidence={goAway}
-            />
-          )}
-          {away !== null && current !== null && (
-            <section className="rv-step-panel">
-              <div className="rv-walk-title">{words.outsideWalk}</div>
-              <button type="button" onClick={returnToWalk}>
-                {words.backTo(current.step.id)}
+          <div className="rv-tabs rv-right-tabs" role="tablist">
+            {(['step', 'discussion'] as const).map((key) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                data-ev={`right-tab-${key}`}
+                aria-selected={rightTab === key}
+                className={rightTab === key ? 'rv-tab rv-tab-on' : 'rv-tab'}
+                onClick={() => setRightTab(key)}
+              >
+                {words.rightTabs[key]}
               </button>
-            </section>
+            ))}
+          </div>
+          <ReviewDiscussion
+            bundle={bundle}
+            request={discussionRequest}
+            lang={lang}
+            words={words.discussion}
+            shown={rightTab === 'discussion'}
+            flush={flush}
+            onGoToPoint={(stepId, index) => {
+              goToStep(stepId, index);
+              setNavRequest((count) => count + 1);
+            }}
+            onGoToLocation={(location) => goAway(location)}
+          />
+          {rightTab === 'step' && (
+            <>
+              {current !== null && away === null && place !== null && (
+                <StepPanel
+                  walk={current.walk}
+                  step={current.step}
+                  index={current.index}
+                  placeIndex={placeIndex}
+                  referenceProblems={bundle.referenceProblems}
+                  state={state}
+                  words={words}
+                  lang={lang}
+                  onPlace={(index) => {
+                    goToStep(current.step.id, index);
+                    setNavRequest((count) => count + 1);
+                  }}
+                  onOpenEvidence={goAway}
+                />
+              )}
+              {away !== null && current !== null && (
+                <section className="rv-step-panel">
+                  <div className="rv-walk-title">{words.outsideWalk}</div>
+                  <button type="button" onClick={returnToWalk}>
+                    {words.backTo(current.step.id)}
+                  </button>
+                </section>
+              )}
+              <Collapsible title={words.reviewSection} defaultOpen={false}>
+                {current !== null && away === null && (
+                  <div className="rv-walked">
+                    <button type="button" onClick={() => toggleWalked(current.step.id)}>
+                      {state.walkedSteps[current.step.id] === undefined ? words.markWalked : words.walkedUndo}
+                    </button>
+                    <span className="rv-sub">{words.walkedNote}</span>
+                  </div>
+                )}
+                <HunkDecisions
+                  focus={focus}
+                  diffFile={diffFile}
+                  files={files}
+                  coverage={coverageByHunk}
+                  decisions={state.decisions}
+                  onDecide={decide}
+                  revisionText={revisionText}
+                  words={words}
+                />
+              </Collapsible>
+              <Collapsible title={words.notesSection} defaultOpen={false}>
+                <NoteForm
+                  selection={selection}
+                  shown={focus}
+                  stepId={away === null ? (current?.step.id ?? null) : null}
+                  words={words}
+                  onAdd={addNote}
+                />
+              </Collapsible>
+              <NotesHere notes={state.notes} location={focus} stepId={current?.step.id ?? null} words={words} onOpen={goAway} />
+            </>
           )}
-          <Collapsible title={words.reviewSection} defaultOpen={false}>
-            {current !== null && away === null && (
-              <div className="rv-walked">
-                <button type="button" onClick={() => toggleWalked(current.step.id)}>
-                  {state.walkedSteps[current.step.id] === undefined ? words.markWalked : words.walkedUndo}
-                </button>
-                <span className="rv-sub">{words.walkedNote}</span>
-              </div>
-            )}
-            <HunkDecisions
-              focus={focus}
-              diffFile={diffFile}
-              files={files}
-              coverage={coverageByHunk}
-              decisions={state.decisions}
-              onDecide={decide}
-              revisionText={revisionText}
-              words={words}
-            />
-          </Collapsible>
-          <Collapsible title={words.notesSection} defaultOpen={false}>
-            <NoteForm
-              selection={selection}
-              shown={focus}
-              stepId={away === null ? (current?.step.id ?? null) : null}
-              words={words}
-              onAdd={addNote}
-            />
-          </Collapsible>
-          <NotesHere notes={state.notes} location={focus} stepId={current?.step.id ?? null} words={words} onOpen={goAway} />
         </aside>
       </div>
     </div>

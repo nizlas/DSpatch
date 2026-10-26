@@ -1239,6 +1239,12 @@ window. The start file never sets it.
 | 95 | `review-window`: a move followed by a close inside the 250 ms save delay was lost - the reopened review or its record was not at the step moved to. |
 | 96 | `review-window`: the boundary leaked - the chat window has `window.dspatchReview`, the review window has `window.dspatch` or lacks its own bridge, or the review IPC did not refuse the chat window as sender. |
 | 97 | `review-window`: a loop run was announced or the loop-run records changed. |
+| 98 | `review-discussion`: an answer was not on its own question with that question's subject after the window moved, it was not the reply to that question, or *Go to point* did not return to the point. |
+| 99 | `review-discussion`: something was sent on open, navigation or reopen; three Enters sent more than once; the prompt lacked the target-blob text or carried the working tree's; or the adapter got other text than the frozen prompt. |
+| 100 | `review-discussion`: Stop before the run did not leave an unknown outcome that ended confirmed when the late run was cancelled, Stop with a run did not end as stopped, or the simulated failure did not show with the question text kept. |
+| 101 | `review-discussion`: the chat changed while review discussed, review text reached the chat or its adapter, or a chat send or cancel beside a review answer changed that answer. |
+| 102 | `review-discussion`: the review draft did not survive a close and reopen, or two review windows did not keep their own drafts and threads. |
+| 103 | `review-discussion`: a Context disclosure was open at rest, the Step tab did not hide the discussion, or the window overflowed horizontally. |
 | 25 | `DSPATCH_CHAT_EXPECT_USERDATA` names a directory other than the one in force. Nothing of DSpatch's was created or written. |
 
 #### Review opened from the chat (DSP-126)
@@ -1263,6 +1269,34 @@ P1 review window keeps its repository and revisions, and *Open review* from P2 o
 chooser in a second window; no loop run is announced and the loop-run records do not change.
 Pictures: `<shot>-review-normal.png`, `-review-narrow.png` (1000 px) and
 `-review-chooser-p2.png`.
+
+`review-discussion` (DSP-127) runs over the same kit with presentation adapters only:
+the chat opens P1 with a draft and opens review; *Open review* again focuses that window
+(DSP-126 S1); nothing is sent on open or navigation; a question at the first step streams
+slowly while the window moves to the second, and the answer stays under the first with its
+subject; *Go to point* returns; a second question is stopped while it answers, a third
+before its run exists (unknown, then confirmed stopped when the late run is cancelled), a
+fourth meets the review-only simulated send failure with its text kept; a fifth and sixth
+answer while the chat sends and while it cancels; three Enters send once; pictures with the
+discussion shown and hidden at 1400 px and 1000 px (`<shot>-discussion-shown.png`,
+`-shown-narrow`, `-hidden`, `-hidden-narrow`); the draft survives a close and reopen with
+the thread back and nothing sent; a second review window (`walk-second.review.json`,
+chosen from P2's chooser) keeps its own draft; each presentation adapter's record says what
+it was sent.
+
+```powershell
+# over a fresh kit from seed-review-kit.mjs, as above
+$env:DSPATCH_CHAT_RUN="review-discussion"
+$env:DSPATCH_CHAT_SWITCH_PROJECTS="$kit\p1\repo;$kit\p2\other"
+$env:DSPATCH_PICK_FILE="$kit\p1\walk.review.json;$kit\p1\walk-second.review.json"
+$env:DSPATCH_REVIEW_PRESENTATION_SEND="markers"
+$env:DSPATCH_PRESENTATION_DELTA_MS="150"
+$env:DSPATCH_CHAT_EXPECT_USERDATA="$kit\userData"
+$env:DSPATCH_CHAT_LOG="C:\somewhere\review-discussion.json"
+$env:DSPATCH_CHAT_SHOT="C:\somewhere\review-discussion.png"
+npx electron . "--user-data-dir=$kit\userData"
+Remove-Item Env:\DSPATCH_CHAT_RUN, Env:\DSPATCH_CHAT_SWITCH_PROJECTS, Env:\DSPATCH_PICK_FILE, Env:\DSPATCH_REVIEW_PRESENTATION_SEND, Env:\DSPATCH_PRESENTATION_DELTA_MS, Env:\DSPATCH_CHAT_EXPECT_USERDATA, Env:\DSPATCH_CHAT_LOG, Env:\DSPATCH_CHAT_SHOT
+```
 
 `review-direct` is `npm run review -- <definition>` without a chat: no chat window exists,
 so the main process waits for the one review window, reads it, photographs it
@@ -1309,7 +1343,7 @@ every launch.
 | `npm run test:list` | The groups, what each covers, and how many files it has. |
 | `npm run clean` | Remove `dist/`. |
 | `npm run review -- <definition.review.json>` | Review alone, in a review window with no chat (development mode). Without a file the window offers to choose one. |
-| `npm run test:review` | The review module's tests: the model, and the service against a real git fixture. |
+| `npm run test:review` | The review module's tests: the model and the discussion's prompt and record, and the review and discussion services against a real git fixture with a scripted adapter. |
 
 ### Running part of the suite
 
@@ -1511,17 +1545,18 @@ src/main/                Main process. Compiled by tsc, not bundled.
   experiment-work.ts     The DSP-1 substep 5–6 experiments, run as a plain Node program.
   review-windows.ts      The review module's windows: the one entry point, one window per review, the last review per repository.
   review-ipc.ts          The review channels, answered only for review windows, each through that window's own service.
-  review-service.ts      Read-only git at two fixed commits, and the reviewer's record under userData/reviews.
+  review-service.ts      Read-only git at two fixed commits, the reviewer's record under userData/reviews, and a question's context envelope.
+  review-discussion-service.ts  The discussion about the code (DSP-127): one per review, its own text-only adapter, ledger and file.
 src/preload/             Sandboxed bridges, each exposing one interface via contextBridge.
   preload.ts             The chat and loop-editor windows: `window.dspatch`.
-  review-preload.ts      Review windows only: `window.dspatchReview`, and nothing else.
+  review-preload.ts      Review windows only: `window.dspatchReview` and `window.dspatchReviewDiscussion`, and nothing else.
 src/renderer/            React UI, bundled by Vite.
   turn-routing.ts        Event routing, kept pure so the superseded-run rule is testable.
   recovery.ts            What a failure says, how a long wait reads, and the bounded retry.
   plain-error.ts         One sentence first, the technical detail on request, and nothing lost in between.
   workflow-script.ts     Drives the window's own controls (DSPATCH_CHAT_RUN).
   workflow-gates.ts      Those runs' pass/fail rules, kept out of the DOM so a counter-example can be fed to them.
-  ReviewView.tsx         The review surface (with ReviewTimeline.tsx, review-code.tsx, review-i18n.ts, review.css).
+  ReviewView.tsx         The review surface (with ReviewTimeline.tsx, review-code.tsx, ReviewDiscussion.tsx, review-i18n.ts, review.css).
 src/shared/              Renderer/main contract. Types only.
 src/adapter/             Provider adapter interface, Cursor implementation, placeholder.
 scripts/dev.mjs          Starts the development server and Electron.
@@ -1576,12 +1611,70 @@ editor is, and also usable with no chat at all (DSP-126).
   tools in development builds), are not part of the loop-run audience, and a chat menu
   command pressed while one is focused goes to the chat.
 - **What review never reads.** Chat state, sessions, conversations, the draft, the loop
-  editor, loop runs or any provider. It reads git objects at the two commits, never the
-  working tree, and its own records.
+  editor or loop runs. It reads git objects at the two commits, never the working tree,
+  and its own records. Its one provider path is the discussion below, with an adapter of
+  its own.
 - **Open review vs. direct open.** *Open review* is the chat's way in. `npm run review --
   <definition>` (or `DSPATCH_REVIEW_DEFINITION`) opens review alone through the same call
   with no folder and that definition, and no chat window; closing it quits. The startup
   smoke test and other scripted runs ignore those variables and say so.
+
+### The discussion about the code in review (DSP-127)
+
+The review window's right column has two tabs, **Step** and **Discussion**. Step is the
+prepared walk text as before; Discussion is a thread of questions about the code on screen.
+The code column keeps its width either way.
+
+- **What is sent.** Nothing on opening, loading or moving around: only Enter in the
+  composer sends (Shift+Enter is a new line; there is no Send button). The window names
+  the subject - the place on screen, a location away from the walk, or the review as a
+  whole - and any selected lines, after saving its record. The main process builds the
+  **context envelope** (`ReviewService.envelopeFor`) from the definition, the reviewer's
+  saved notes and code read from git at the two fixed commits, never the working tree:
+  for a place its focus, unit and counterpart and context ranges, the step's text and
+  evidence labels in the display language; for a location that location; for the whole
+  review the overview, walk titles and changed files. `buildEnvelopePrompt`
+  (`src/shared/review-discussion.ts`) turns it into the exact text sent: DSpatch's one
+  instruction `REVIEW_DISCUSSION_INSTRUCTION` first, then the review's identity and both
+  full commits, the subject line, the explanation, the code with path, side and commit,
+  the notes, a bounded recap of earlier questions on the first question of a new session,
+  and the question. Every cut is stated as `[truncated: …]`.
+- **What is shown.** The thread; above the composer one line saying what the next
+  question is about (`Walk 2 › step › place · path 120–148 @abc1234 (+ selection …)`);
+  a one-line status while an answer runs (with **Stop**), when an earlier question has no
+  known outcome (with **Send anyway**), or when the file is read-only; an error as one
+  sentence with *Details*. Each question has **Go to point** and a closed **Context**:
+  subject, revisions, the code ranges with their commits, the notes, DSpatch's
+  instruction verbatim, "provider-added context (user-level rules and hooks): unknown",
+  the model asked for and the exact text sent. An answer stays on the question it
+  answers, whatever the window shows when it arrives.
+- **Read-only, as far as DSpatch can make it.** Each review's discussion has its own
+  `CursorSdkAdapter({ toolPolicy: 'text-only' })` (`tools: []`), created on the first
+  question and closed with the review's last window or at quit, and its session runs in
+  an empty DSpatch-owned folder (`userData/reviews/discussion-cwd/<key>/`). Five limits:
+  (1) whether `tools: []` also removes user-level MCP tools is undocumented and
+  unobserved; (2) Cursor's user-level hooks and rules may still apply; (3) that text-only
+  yields no tool events has not been observed live; (4) the presentation adapter has no
+  tools, so offline runs show only that DSpatch chose text-only and the empty folder;
+  (5) the reviewed repository's own hooks and ignore rules are not loaded, and DSpatch
+  itself supplies its code with no exclusion applied - `envelopeFor` is where a
+  content-exclusion check would go.
+- **Gates.** One answer at a time per review; Stop before the provider has answered the
+  send makes the outcome unknown and cancels the run when it appears; a cancel with no
+  confirmed end becomes unknown, never "stopped"; an unknown outcome blocks the next
+  question until acknowledged. A review question is not blocked by a running loop or a
+  main-chat turn and does not block them (Niclas's decision 2). The caveat: that rests on
+  "a text-only turn in an empty folder writes nothing", which limit (1) leaves not fully
+  established.
+- **Kept.** `userData/reviews/<key>.discussion.json` beside the reviewer's record: the
+  messages with each question's envelope and sent text, the attempt ledger and the draft,
+  written whole by the main process. A newer format is left unwritten; an unreadable file
+  is kept aside. Reopening shows the thread and draft and sends nothing; the next question
+  starts a new session with a recap.
+- **Simulated failures.** In presentation mode `DSPATCH_REVIEW_PRESENTATION_SEND=markers`
+  makes the review adapters - never the chat's - refuse a question containing
+  `[simulate: send fails]` and hold one containing `[simulate: slow start]` for 2.5 s
+  before the send returns. `DSPATCH_PRESENTATION_DELTA_MS` slows the stream for both.
 
 ### Two packaging traps, both measured rather than predicted
 

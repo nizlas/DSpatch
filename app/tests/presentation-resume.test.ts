@@ -17,7 +17,11 @@ import { test } from 'node:test';
 import {
   PresentationAdapter,
   PresentationResumeBehaviour,
+  SIMULATED_SEND_FAILS,
+  SIMULATED_SLOW_START,
+  SIMULATED_SLOW_START_MS,
   presentationResumeMode,
+  presentationSendMode,
 } from '../src/main/presentation-adapter';
 
 const CONFIG = { workspacePath: 'C:\somewhere\A', modelRequested: 'claude-haiku-4-5' } as const;
@@ -165,4 +169,34 @@ test('the run starts inside send, before it returns, as the real adapters start 
   // The reply itself still arrives on its timers, after the send has returned.
   assert.deepEqual(seen, ['run.started']);
   await adapter.dispose();
+});
+
+test('DSP-127 SIMULATED: the review send mode is read only from its own value, and markers refuse or hold a send', async () => {
+  assert.equal(presentationSendMode(undefined), 'ok');
+  assert.equal(presentationSendMode('markers'), 'markers');
+  assert.equal(presentationSendMode('fail-always'), null);
+
+  // A default behaviour - the chat's - never refuses a send, whatever the prompt says.
+  const chat = new PresentationAdapter({ deltaMs: 1 });
+  const chatSession = await chat.startSession({ ...CONFIG, provider: 'cursor' });
+  assert.ok((await chat.send(chatSession.dspatchSessionId, `hello ${SIMULATED_SEND_FAILS}`)).dspatchRunId !== '');
+  await chat.dispose();
+
+  const behaviour = new PresentationResumeBehaviour('ok', 'markers');
+  const review = new PresentationAdapter({ deltaMs: 1, resume: behaviour });
+  const session = await review.startSession({ ...CONFIG, provider: 'cursor' });
+  const events: string[] = [];
+  review.subscribe(session.dspatchSessionId, (event) => events.push(event.type));
+  await assert.rejects(review.send(session.dspatchSessionId, `q ${SIMULATED_SEND_FAILS}`), /simulated send failure/);
+  assert.deepEqual(events, [], 'a refused send starts no run');
+  assert.equal(review.hasActiveRun(session.dspatchSessionId), false);
+
+  const startedAt = Date.now();
+  const held = review.send(session.dspatchSessionId, `q ${SIMULATED_SLOW_START}`);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(events, ['run.started'], 'a slow start announces its run before send returns');
+  await held;
+  assert.ok(Date.now() - startedAt >= SIMULATED_SLOW_START_MS - 50);
+  assert.deepEqual(behaviour.record().sent.length, 2);
+  await review.dispose();
 });

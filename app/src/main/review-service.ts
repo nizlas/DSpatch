@@ -16,6 +16,9 @@ import {
   splitLines,
   carryStepMarks,
   stepHashesOf,
+  type CodeLocation,
+  type Lang,
+  type ReviewDefinition,
   type ReviewPreferences,
   type ReviewStateNotice,
   type DiffFile,
@@ -27,6 +30,19 @@ import {
   type ReviewState,
   type RevisionSide,
 } from '../shared/review-model';
+import {
+  ENVELOPE_LIMITS,
+  EVIDENCE_LABEL_TEXT,
+  PROVIDER_ADDED_CONTEXT_LINE,
+  type DiscussionRequest,
+  type DiscussionSubject,
+  type EnvelopeExplanation,
+  type EnvelopeNote,
+  type EnvelopeOutcome,
+  type EnvelopeOverview,
+  type EnvelopeRange,
+  type EnvelopeRangeRole,
+} from '../shared/review-discussion';
 
 /**
  * The review surface's access to a repository: read-only git at two fixed commits.
@@ -118,14 +134,52 @@ export interface ReviewServiceOptions {
   readonly log: (message: string) => void;
 }
 
-/** One open review: its fixed revisions and a cache of file contents at them. */
+/**
+ * One open review: its fixed revisions, the definition it was opened with, the
+ * reviewer's record as last saved, and a cache of file contents at the revisions.
+ */
 interface OpenReview {
   readonly definitionPath: string;
+  readonly definitionHash: string;
   readonly repository: string;
   readonly base: string;
   readonly target: string;
+  readonly baseSubject: string;
+  readonly targetSubject: string;
   readonly recordPath: string;
   readonly cache: Map<string, ReviewFileOutcome>;
+  /** As opened, with the revisions resolved to full commits. */
+  readonly definition: ReviewDefinition;
+  readonly files: readonly DiffFile[];
+  /** The record as opened, then as last saved: what a discussion reads the notes from. */
+  state: ReviewState;
+}
+
+function isLocation(value: unknown): value is CodeLocation {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const location = value as Record<string, unknown>;
+  const start = location['start'];
+  const end = location['end'];
+  return (
+    checkFileRequest(location['side'], location['path']) === null &&
+    typeof start === 'number' &&
+    typeof end === 'number' &&
+    Number.isInteger(start) &&
+    Number.isInteger(end) &&
+    start >= 1 &&
+    end >= start
+  );
+}
+
+/** Only the four fields of a location: nothing else the window sent travels on. */
+function cleanLocation(location: CodeLocation): CodeLocation {
+  return { path: location.path, side: location.side, start: location.start, end: location.end };
+}
+
+function overlaps(a: CodeLocation, b: CodeLocation): boolean {
+  return a.path === b.path && a.side === b.side && a.start <= b.end && b.start <= a.end;
 }
 
 export class ReviewService {
@@ -203,8 +257,22 @@ export class ReviewService {
 
       const recordKey = reviewRecordKey(repository, base.sha, target.sha, absolute);
       const recordPath = path.join(this.options.recordsDir, `${recordKey}.json`);
-      this.open = { definitionPath: absolute, repository, base: base.sha, target: target.sha, recordPath, cache: new Map() };
-      this.opened.set(recordKey, this.open);
+      const opened: OpenReview = {
+        definitionPath: absolute,
+        definitionHash,
+        repository,
+        base: base.sha,
+        target: target.sha,
+        baseSubject: base.subject,
+        targetSubject: target.subject,
+        recordPath,
+        cache: new Map(),
+        definition: { ...definition, base: base.sha, target: target.sha },
+        files,
+        state: emptyReviewState({ base: base.sha, target: target.sha }, absolute, definitionHash),
+      };
+      this.open = opened;
+      this.opened.set(recordKey, opened);
 
       const referenceProblems: { stepId: string; refId: string; problem: string }[] = [];
       for (const walk of definition.walks) {
@@ -254,6 +322,7 @@ export class ReviewService {
       }
       // The hashes always describe the definition in use, also for a record from before they existed.
       state = { ...state, stepHashes: stepHashesOf(definition) };
+      opened.state = state;
       this.options.log(
         `review opened: ${absolute} ${base.sha.slice(0, 7)}..${target.sha.slice(0, 7)} ` +
           `files=${String(files.length)} referenceProblems=${String(referenceProblems.length)}`,
@@ -389,6 +458,7 @@ export class ReviewService {
       const temporary = `${open.recordPath}.tmp`;
       fs.writeFileSync(temporary, `${JSON.stringify({ ...(state as ReviewState), savedAt: at }, null, 2)}\n`, 'utf8');
       fs.renameSync(temporary, open.recordPath);
+      open.state = { ...(state as ReviewState), savedAt: at };
       return { saved: true, at };
     } catch (error) {
       return { saved: false, at, error: error instanceof Error ? error.message : String(error) };
@@ -413,6 +483,170 @@ export class ReviewService {
       }
     }
     return this.open;
+  }
+
+  /**
+   * What a question about the open review is sent with, built here in main from the
+   * definition, the reviewer's last saved record and code read from git at the fixed
+   * commits: never from the working tree, and never from text the window sends.
+   *
+   * This is where repository bytes become model context. Nothing is excluded today;
+   * a content-exclusion check belongs here, before an envelope exists.
+   */
+  async envelopeFor(request: unknown): Promise<EnvelopeOutcome> {
+    const open = this.open;
+    if (open === null) {
+      return { kind: 'refused', error: 'No review is open.' };
+    }
+    if (typeof request !== 'object' || request === null) {
+      return { kind: 'refused', error: 'The question has no subject.' };
+    }
+    const raw = request as Partial<Record<keyof DiscussionRequest, unknown>>;
+    const selectionRaw = raw.selection ?? null;
+    if (selectionRaw !== null && !isLocation(selectionRaw)) {
+      return { kind: 'refused', error: 'The selected lines are not a valid location in this review.' };
+    }
+    const selection = selectionRaw === null ? null : cleanLocation(selectionRaw);
+    const language: Lang = raw.language === 'sv' || raw.language === 'en' ? raw.language : this.getPreferences().language;
+    const subjectRaw = typeof raw.subject === 'object' && raw.subject !== null ? (raw.subject as Record<string, unknown>) : null;
+    const definition = open.definition;
+    const notes = open.state.notes;
+    const near = (note: (typeof notes)[number], location: CodeLocation): boolean =>
+      note.location !== null && (overlaps(note.location, location) || (selection !== null && overlaps(note.location, selection)));
+    const ranges: { role: EnvelopeRangeRole; location: CodeLocation }[] = [];
+    let subject: DiscussionSubject;
+    let explanation: EnvelopeExplanation | null = null;
+    let overview: EnvelopeOverview | null = null;
+    let relevantNotes: typeof notes = [];
+
+    if (subjectRaw?.['kind'] === 'point') {
+      const walkIndex = definition.walks.findIndex((walk) => walk.id === subjectRaw['walkId']);
+      const walk = definition.walks[walkIndex];
+      if (walk === undefined) {
+        return { kind: 'refused', error: `This review has no walk "${String(subjectRaw['walkId'])}".` };
+      }
+      const step = walk.steps.find((candidate) => candidate.id === subjectRaw['stepId']);
+      if (step === undefined) {
+        return { kind: 'refused', error: `Walk "${walk.id}" has no step "${String(subjectRaw['stepId'])}".` };
+      }
+      const placeIndex = subjectRaw['placeIndex'];
+      const place = typeof placeIndex === 'number' && Number.isInteger(placeIndex) ? step.places[placeIndex] : undefined;
+      if (place === undefined || typeof placeIndex !== 'number') {
+        return { kind: 'refused', error: `Step "${step.id}" has no place ${String(placeIndex)}.` };
+      }
+      subject = { kind: 'point', walkId: walk.id, stepId: step.id, placeIndex };
+      ranges.push({ role: 'focus', location: place.focus });
+      if (place.unit !== null) {
+        ranges.push({ role: 'unit', location: place.unit.ref });
+        if (place.unit.counterpart !== null) {
+          ranges.push({ role: 'counterpart', location: place.unit.counterpart });
+        }
+      }
+      for (const context of place.context) {
+        ranges.push({ role: 'context', location: context });
+      }
+      explanation = {
+        walkNumber: walkIndex + 1,
+        walkTitle: walk.title[language],
+        stepTitle: step.title[language],
+        summary: step.summary[language],
+        body: step.body[language],
+        why: step.why[language],
+        placeLabel: place.label[language],
+        evidence: step.evidence.map((entry) => ({
+          label: entry.label,
+          labelText: EVIDENCE_LABEL_TEXT[language][entry.label],
+          text: entry.text[language],
+        })),
+      };
+      relevantNotes = notes.filter((note) => note.stepId === step.id || near(note, place.focus));
+    } else if (subjectRaw?.['kind'] === 'away') {
+      const location = subjectRaw['location'];
+      if (!isLocation(location)) {
+        return { kind: 'refused', error: 'The code location asked about is not a valid location in this review.' };
+      }
+      const clean = cleanLocation(location);
+      subject = { kind: 'away', location: clean };
+      ranges.push({ role: 'location', location: clean });
+      relevantNotes = notes.filter((note) => near(note, clean));
+    } else if (subjectRaw?.['kind'] === 'review') {
+      subject = { kind: 'review' };
+      overview = {
+        summary: definition.overviewSummary[language],
+        walkTitles: definition.walks.map((walk) => walk.title[language]),
+        changedFiles: open.files.map((file) => ({ path: file.path, status: file.status })),
+      };
+      // A question about the whole review is about every note in it.
+      relevantNotes = notes;
+    } else {
+      return { kind: 'refused', error: 'The question is not about a point, a code location or the review as a whole.' };
+    }
+    if (selection !== null) {
+      ranges.push({ role: 'selection', location: selection });
+    }
+
+    const read: EnvelopeRange[] = [];
+    for (const { role, location } of ranges) {
+      read.push(await this.rangeOf(open, role, location));
+    }
+    const envelopeNotes: EnvelopeNote[] = relevantNotes.map((note) => ({
+      kind: note.kind,
+      status: note.status,
+      text: note.text,
+      resolution: note.resolution,
+      location: note.location,
+      stepId: note.stepId,
+    }));
+    return {
+      kind: 'built',
+      envelope: {
+        version: 1,
+        identity: {
+          title: definition.title[language],
+          definitionPath: open.definitionPath,
+          definitionHash: open.definitionHash,
+          repository: open.repository,
+          base: { sha: open.base, subject: open.baseSubject },
+          target: { sha: open.target, subject: open.targetSubject },
+        },
+        language,
+        subject,
+        selection,
+        explanation,
+        overview,
+        ranges: read,
+        notes: envelopeNotes,
+        providerContext: PROVIDER_ADDED_CONTEXT_LINE,
+        builtAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  /** One range of code at its commit, bounded to `ENVELOPE_LIMITS.rangeLines` lines. */
+  private async rangeOf(open: OpenReview, role: EnvelopeRangeRole, location: CodeLocation): Promise<EnvelopeRange> {
+    const sha = location.side === 'base' ? open.base : open.target;
+    const base = { role, path: location.path, side: location.side, sha, start: location.start, end: location.end };
+    const content = await this.readFile(location.side, location.path);
+    if (content.kind !== 'text') {
+      const problem =
+        content.kind === 'missing'
+          ? `${location.path} does not exist at ${location.side} (${sha.slice(0, 7)}).`
+          : content.kind === 'binary'
+            ? `${location.path} is a binary file.`
+            : content.error;
+      return { ...base, lines: [], omittedLines: 0, problem };
+    }
+    const wanted = content.lines.slice(location.start - 1, location.end);
+    if (wanted.length === 0) {
+      return {
+        ...base,
+        lines: [],
+        omittedLines: 0,
+        problem: `${location.path} has ${String(content.lines.length)} lines at ${location.side}; lines ${String(location.start)}–${String(location.end)} are not there.`,
+      };
+    }
+    const kept = wanted.slice(0, ENVELOPE_LIMITS.rangeLines);
+    return { ...base, lines: kept, omittedLines: wanted.length - kept.length, problem: null };
   }
 
   /** The reviewer's preferences, kept beside the review records. */

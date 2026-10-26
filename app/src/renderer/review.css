@@ -1451,3 +1451,146 @@
     animation: none;
   }
 }
+
+/* --- The discussion about the code (DSP-127) ------------------------------------
+   A tab of the right column, so the code keeps its room. Quiet: the thread, one line
+   saying what the next question is about, and the composer. What was sent is behind
+   each question's Context, closed. */
+
+.rv-right-tabs {
+  margin: -0.6rem -0.9rem 0.6rem;
+  /* Sticky against the column's own top padding, so nothing scrolls past above it. */
+  top: -0.6rem;
+}
+
+.rv-discussion {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100% - 2.6rem);
+}
+
+.rv-discussion[hidden] {
+  display: none;
+}
+
+.rv-discussion-thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding-bottom: 0.6rem;
+}
+
+.rv-discussion-question {
+  border-left: 2px solid var(--line);
+  padding-left: 0.55rem;
+}
+
+.rv-discussion-subject {
+  color: var(--muted);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.rv-discussion-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0.15rem 0;
+}
+
+.rv-discussion-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.rv-discussion-answer {
+  margin-top: 0.4rem;
+  overflow-wrap: anywhere;
+}
+
+.rv-discussion-context {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.rv-discussion-context summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.rv-discussion-context dl {
+  margin: 0.3rem 0 0;
+}
+
+.rv-discussion-context dt {
+  color: var(--text);
+  margin-top: 0.35rem;
+}
+
+.rv-discussion-context dd {
+  margin: 0.1rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.rv-discussion-context ul {
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.rv-discussion-prompt,
+.rv-discussion-detail {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 18rem;
+  overflow: auto;
+  font-size: 0.72rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.4rem;
+  margin: 0.2rem 0 0;
+}
+
+.rv-discussion-composer-area {
+  position: sticky;
+  bottom: -2rem;
+  background: var(--bg);
+  padding: 0.5rem 0 2rem;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.rv-discussion-status,
+.rv-discussion-error {
+  font-size: 0.8rem;
+}
+
+.rv-discussion-error {
+  color: var(--no);
+}
+
+.rv-discussion-about {
+  color: var(--muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rv-discussion-composer {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.4rem;
+}

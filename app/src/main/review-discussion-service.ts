@@ -1,0 +1,926 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+import type { AgentEvent, Unsubscribe } from '../adapter/types';
+import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
+import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
+import {
+  REVIEW_DISCUSSION_INSTRUCTION,
+  adoptDiscussionRecord,
+  buildEnvelopePrompt,
+  emptyDiscussionRecord,
+  recapFor,
+  subjectLine,
+  type DiscussionCancelOutcome,
+  type DiscussionIdentity,
+  type DiscussionLoadOutcome,
+  type DiscussionMessage,
+  type DiscussionRecord,
+  type DiscussionRequest,
+  type DiscussionSendInput,
+  type DiscussionSendOutcome,
+  type DiscussionStatus,
+  type DiscussionStatusView,
+  type EnvelopeOutcome,
+  type ReviewDiscussionEvent,
+} from '../shared/review-discussion';
+import { AttemptLedger } from './attempt-ledger';
+import type { ChatAdapter } from './chat-service';
+import { PresentationAdapter, PresentationResumeBehaviour, type PresentationSendMode } from './presentation-adapter';
+
+/*
+ * A discussion about the code under review (DSP-127): one per review, with its own
+ * adapter instance, its own session, its own attempt ledger and its own file.
+ *
+ * **Not a second `ChatService`.** That service is built around one working-copy
+ * session (baseline snapshots, test runs, the working-copy repeat block, the project's
+ * conversation, `ensureAdapter` replacing the adapter with the session); a review
+ * question has none of those. What is shared is the adapter *interface*
+ * (`ChatAdapter`), the `AttemptLedger` and the protections the main chat learned the
+ * hard way, mirrored here rather than shared, so `sendPrompt` is untouched:
+ *
+ * | Protection here | Mirrors in `chat-service.ts` |
+ * | --- | --- |
+ * | question and attempt saved before `adapter.send` | `sendPrompt`: `ledger.open` then `saveConversation()` before `send` |
+ * | Stop before the run exists: `outcome-unknown`, the run cancelled when it appears | `abandonSend`, `abandonedAttempts`, `stopAbandonedRun` |
+ * | a requested cancel is unknown, not stopped, unless an end arrives in time | `armCancelConfirmation`, `cancelConfirmWindow`, `CANCEL_CONFIRM_MS`, `CANCEL_CONFIRM_GRACE_MS` |
+ * | a terminal event settles the attempt of *its* run | `onAgentEvent`'s `run.finished` branch (incl. DSP-116's `end`) |
+ * | events from another session are dropped | `onAgentEvent`'s first guard |
+ * | "already has a run": ours or the provider's, read from the adapter | `saysSessionAlreadyHasARun`, `hasActiveRun`, `explainSessionHoldsARun` |
+ * | an unknown outcome blocks the next send until acknowledged | `AttemptLedger.mayRepeat` (DSP-6, DSP-124's explicit acknowledgement) |
+ * | errors as `name: message`, the person's text kept | `describeError` |
+ *
+ * **Gates (Niclas's decision 2, with its caveat).** A review question is not blocked
+ * by a running loop or a main-chat turn, and does not block them: it uses neither the
+ * working-copy repeat block nor the loop lock. That rests on "a text-only turn in an
+ * empty folder writes nothing", and whether `tools: []` also removes user-level MCP
+ * tools is undocumented and unobserved, so the premise is not fully established.
+ *
+ * **Read-only by construction, as far as DSpatch can make it.** The adapter is
+ * created with `toolPolicy: 'text-only'` (`tools: []`) and its session's working
+ * folder is an empty folder DSpatch owns, so the reviewed repository's own project
+ * rules, hooks and ignore files are not loaded either. Cursor's user-level rules and
+ * hooks may still apply; what the provider adds is unknown, and every message's
+ * Context says so.
+ */
+
+/** Without a declared adapter bound: how long a cancel is given to be confirmed (chat: `CANCEL_CONFIRM_MS`). */
+const CANCEL_CONFIRM_MS = 10_000;
+
+/** Extra time after an adapter's declared bound (chat: `CANCEL_CONFIRM_GRACE_MS`). */
+const CANCEL_CONFIRM_GRACE_MS = 1_000;
+
+/** The model asked for when nothing else is named: the main chat's default. */
+export const REVIEW_DISCUSSION_DEFAULT_MODEL = 'claude-haiku-4-5';
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function formatSeconds(ms: number): string {
+  const seconds = ms / 1000;
+  return Number.isInteger(seconds) ? String(seconds) : String(Math.round(seconds * 10) / 10);
+}
+
+/** Where a discussion's record is kept: beside the reviewer's record, with the same key. */
+export function discussionRecordPath(recordsDir: string, key: string): string {
+  return path.join(recordsDir, `${key}.discussion.json`);
+}
+
+/** The DSpatch-owned empty folder a discussion's session runs in. Never the reviewed repository. */
+export function discussionWorkingFolder(recordsDir: string, key: string): string {
+  return path.join(recordsDir, 'discussion-cwd', key);
+}
+
+/**
+ * How review discussions get their adapters.
+ *
+ * Production: a `CursorSdkAdapter` with `toolPolicy: 'text-only'`. Presentation mode:
+ * a `PresentationAdapter` with **its own** `PresentationResumeBehaviour`, created
+ * here, so what the review sends is never in the main chat's record and a simulated
+ * failure meant for one can never reach the other (plan addendum 15).
+ */
+export interface ReviewAdapterFactory {
+  readonly create: () => ChatAdapter;
+  /** The review adapters' own presentation record, in presentation mode; `null` otherwise. */
+  readonly presentationBehaviour: PresentationResumeBehaviour | null;
+}
+
+export function reviewAdapterFactory(options: {
+  readonly presentation: boolean;
+  readonly deltaMs?: number;
+  /** `DSPATCH_REVIEW_PRESENTATION_SEND`: simulated send failures for the review adapters only. */
+  readonly sendMode?: PresentationSendMode;
+}): ReviewAdapterFactory {
+  if (options.presentation) {
+    const behaviour = new PresentationResumeBehaviour('ok', options.sendMode ?? 'ok');
+    return {
+      create: () => new PresentationAdapter({ resume: behaviour, ...(options.deltaMs === undefined ? {} : { deltaMs: options.deltaMs }) }),
+      presentationBehaviour: behaviour,
+    };
+  }
+  return { create: () => new CursorSdkAdapter({ toolPolicy: 'text-only' }), presentationBehaviour: null };
+}
+
+/** What builds the envelope: the asking window's own `ReviewService`. */
+export interface EnvelopeSource {
+  envelopeFor(request: unknown): Promise<EnvelopeOutcome>;
+}
+
+/** One window showing this review, as the service sees it: something to send events to. */
+export type DiscussionTargetSend = (event: ReviewDiscussionEvent) => void;
+
+export interface ReviewDiscussionServiceOptions {
+  readonly identity: DiscussionIdentity;
+  /** `userData/reviews`. */
+  readonly recordsDir: string;
+  readonly createAdapter: () => ChatAdapter;
+  readonly log: (message: string) => void;
+  /** The model asked for. {@link REVIEW_DISCUSSION_DEFAULT_MODEL} when absent. */
+  readonly model?: string;
+  /** Test overrides for the confirmation window. Production passes nothing. */
+  readonly timings?: { readonly cancelConfirmMs?: number; readonly cancelConfirmGraceMs?: number };
+}
+
+type MutableMessage = { -readonly [K in keyof DiscussionMessage]: DiscussionMessage[K] };
+
+interface Turn {
+  readonly questionId: string;
+  answerId: string | null;
+  readonly attemptId: string;
+  runId: string | null;
+  /** `adapter.send` has not returned yet: no run exists that `cancel()` could act on. */
+  sendPending: boolean;
+  stopping: boolean;
+}
+
+interface Session {
+  readonly adapter: ChatAdapter;
+  readonly sessionId: string;
+  readonly unsubscribe: Unsubscribe;
+  /** Questions sent in this session; the first of a new session carries the recap. */
+  sends: number;
+}
+
+export class ReviewDiscussionService {
+  readonly identity: DiscussionIdentity;
+
+  private readonly options: ReviewDiscussionServiceOptions;
+
+  private readonly ledger = new AttemptLedger();
+
+  private messages: MutableMessage[] = [];
+
+  private draft = '';
+
+  /** Why the stored file must not be written, when it must not. */
+  private readOnly: string | null = null;
+
+  /** Something to tell the window once about the stored file. */
+  private loadNote: string | null = null;
+
+  private session: Session | null = null;
+
+  /** Starting a session, so two quick sends cannot start two. */
+  private starting: Promise<Session> | null = null;
+
+  /** The answer being waited for. One at a time. */
+  private turn: Turn | null = null;
+
+  /** A send is being prepared (envelope, session) and has not reached the ledger yet. */
+  private preparing = false;
+
+  /** Turns whose `adapter.send` is still pending, the current one or an abandoned one. */
+  private pendingSends = 0;
+
+  /** The turn whose `send` is running: `run.started` arrives inside it (chat: `pendingAttemptId`). */
+  private pendingTurn: Turn | null = null;
+
+  /** Every run this discussion started, so a late event lands on its own question. */
+  private readonly runs = new Map<string, Turn>();
+
+  /** Stop was pressed before a run existed (chat: `abandonedAttempts`). */
+  private readonly abandoned = new Set<string>();
+
+  private readonly targets = new Map<number, DiscussionTargetSend>();
+
+  private closedForQuit = false;
+
+  private messageCounter = 0;
+
+  /** Events dropped because they named another session. */
+  foreignEventsDropped = 0;
+
+  constructor(options: ReviewDiscussionServiceOptions) {
+    this.options = options;
+    this.identity = options.identity;
+    this.readStored();
+  }
+
+  // --- Reading and writing the record ------------------------------------------
+
+  private recordPath(): string {
+    return discussionRecordPath(this.options.recordsDir, this.identity.key);
+  }
+
+  private readStored(): void {
+    const file = this.recordPath();
+    if (!fs.existsSync(file)) {
+      return;
+    }
+    let raw: unknown = null;
+    try {
+      raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      raw = null;
+    }
+    const adopted = adoptDiscussionRecord(raw, this.identity);
+    if (adopted.kind === 'newer') {
+      this.readOnly = adopted.problem;
+      this.loadNote = adopted.problem;
+      return;
+    }
+    if (adopted.kind === 'unusable') {
+      // Kept aside, never overwritten: it may be the only copy of someone's discussion.
+      const aside = `${file}.unusable-${nowIso().replace(/[:.]/g, '-')}`;
+      try {
+        fs.renameSync(file, aside);
+        this.loadNote = `The stored discussion could not be read (${adopted.problem}) and was kept aside as ${aside}. This discussion starts empty.`;
+      } catch (error) {
+        this.readOnly = `The stored discussion could not be read (${adopted.problem}) or moved aside (${describeError(error)}), so it is not written over.`;
+        this.loadNote = this.readOnly;
+      }
+      return;
+    }
+    const record = adopted.record;
+    this.messages = record.messages.map((message) => ({ ...message }));
+    this.draft = record.draft;
+    const restored = this.ledger.restore(record.attempts);
+    if (restored.reconciliations.some((entry) => entry.blocksRepeat)) {
+      this.loadNote =
+        'An earlier question in this discussion has no known outcome: DSpatch closed, or stopped waiting, before its answer ended. ' +
+        'Nothing has been sent again. Acknowledge it to ask the next question.';
+    }
+    this.messageCounter = this.messages.length;
+  }
+
+  private persistable(): DiscussionRecord {
+    return {
+      ...emptyDiscussionRecord(this.identity),
+      messages: this.messages.map((message) => ({ ...message })),
+      attempts: this.ledger.persistable(),
+      draft: this.draft,
+      savedAt: nowIso(),
+    };
+  }
+
+  /** Written whole to a temporary file and renamed. Never for a read-only record. */
+  private save(): { saved: boolean; error?: string } {
+    if (this.readOnly !== null) {
+      return { saved: false, error: this.readOnly };
+    }
+    try {
+      const file = this.recordPath();
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const temporary = `${file}.tmp`;
+      fs.writeFileSync(temporary, `${JSON.stringify(this.persistable(), null, 2)}\n`, 'utf8');
+      fs.renameSync(temporary, file);
+      return { saved: true };
+    } catch (error) {
+      const message = describeError(error);
+      this.options.log(`review discussion ${this.identity.key}: could not be saved (${message})`);
+      return { saved: false, error: message };
+    }
+  }
+
+  // --- Windows -------------------------------------------------------------------
+
+  /**
+   * A window showing this review. A window that comes back while an answer is still
+   * arriving is the event target from now on and is told where the turn stands.
+   */
+  attach(targetId: number, send: DiscussionTargetSend): void {
+    this.targets.set(targetId, send);
+  }
+
+  /** A window has gone. With no window left and no turn running, the adapter is closed. */
+  detach(targetId: number): void {
+    this.targets.delete(targetId);
+    void this.closeIdleAdapter();
+  }
+
+  /** How many windows are showing this review. */
+  targetCount(): number {
+    return this.targets.size;
+  }
+
+  private emit(event: ReviewDiscussionEvent): void {
+    for (const send of this.targets.values()) {
+      try {
+        send(event);
+      } catch (error) {
+        this.options.log(`review discussion ${this.identity.key}: an event could not be delivered (${describeError(error)})`);
+      }
+    }
+  }
+
+  private emitMessage(message: MutableMessage): void {
+    this.emit({ kind: 'message', message: { ...message } });
+  }
+
+  private emitStatus(note?: string): void {
+    this.emit({ kind: 'status', status: this.status(), ...(note === undefined ? {} : { note }) });
+  }
+
+  status(): DiscussionStatusView {
+    const unresolved = this.ledger.unresolved('agent-turn');
+    const decision = this.ledger.mayRepeat('agent-turn');
+    return {
+      turn:
+        this.turn === null
+          ? null
+          : {
+              questionId: this.turn.questionId,
+              answerId: this.turn.answerId,
+              attemptId: this.turn.attemptId,
+              dspatchRunId: this.turn.runId,
+              stopping: this.turn.stopping,
+            },
+      unresolved: unresolved.map((attempt) => ({
+        attemptId: attempt.attemptId,
+        label: attempt.label,
+        state: attempt.state,
+        reason: attempt.stateReason,
+        acknowledged: attempt.acknowledgedAtUtc !== null,
+      })),
+      needsAcknowledgement: decision.allowed ? [] : decision.acknowledgeableAttemptIds,
+      readOnly: this.readOnly,
+    };
+  }
+
+  /** What the window shows on open. Reads the record and, for a subject, git. Never the adapter. */
+  async load(request: DiscussionRequest | null, envelopes: EnvelopeSource): Promise<DiscussionLoadOutcome> {
+    let line: string | null = null;
+    if (request !== null) {
+      const outcome = await envelopes.envelopeFor(request);
+      line = outcome.kind === 'built' ? subjectLine(outcome.envelope) : null;
+    }
+    const note = this.loadNote;
+    return {
+      kind: 'loaded',
+      messages: this.messages.map((message) => ({ ...message })),
+      draft: this.draft,
+      status: this.status(),
+      subjectLine: line,
+      note,
+    };
+  }
+
+  saveDraft(text: unknown): { saved: boolean; error?: string } {
+    if (typeof text !== 'string') {
+      return { saved: false, error: 'A draft is text.' };
+    }
+    this.draft = text;
+    return this.save();
+  }
+
+  /** The person has seen these unknown outcomes and asks the next question anyway (DSP-124's pattern). */
+  acknowledge(attemptIds: unknown): DiscussionStatusView {
+    const ids = Array.isArray(attemptIds) ? attemptIds.filter((id): id is string => typeof id === 'string') : [];
+    const unresolved = new Set(this.ledger.unresolved('agent-turn').map((attempt) => attempt.attemptId));
+    for (const id of ids) {
+      if (unresolved.has(id)) {
+        this.ledger.acknowledge(id, 'Seen in the review discussion. The next question is sent with this attempt left unresolved; nothing was repeated.');
+      }
+    }
+    this.save();
+    this.emitStatus();
+    return this.status();
+  }
+
+  // --- Asking ---------------------------------------------------------------------
+
+  private nextId(prefix: string): string {
+    this.messageCounter += 1;
+    return `${prefix}-${String(this.messageCounter).padStart(4, '0')}-${Date.now().toString(36)}`;
+  }
+
+  private message(id: string): MutableMessage | null {
+    return this.messages.find((message) => message.id === id) ?? null;
+  }
+
+  private setStatus(id: string | null, status: DiscussionStatus, extra: Partial<MutableMessage> = {}): void {
+    const message = id === null ? null : this.message(id);
+    if (message === null) {
+      return;
+    }
+    Object.assign(message, extra, { status });
+    this.emitMessage(message);
+  }
+
+  private ensureSession(): Promise<Session> {
+    if (this.session !== null) {
+      return Promise.resolve(this.session);
+    }
+    if (this.starting !== null) {
+      return this.starting;
+    }
+    const starting = (async (): Promise<Session> => {
+      const workspacePath = discussionWorkingFolder(this.options.recordsDir, this.identity.key);
+      fs.mkdirSync(workspacePath, { recursive: true });
+      const adapter = this.options.createAdapter();
+      try {
+        const handle = await adapter.startSession({
+          provider: 'cursor',
+          modelRequested: this.model(),
+          workspacePath,
+        });
+        const unsubscribe = adapter.subscribe(handle.dspatchSessionId, (event) => {
+          this.onAgentEvent(event);
+        });
+        this.options.log(`review discussion ${this.identity.key}: session ${handle.dspatchSessionId} started in ${workspacePath} (adapter ${adapter.id})`);
+        return { adapter, sessionId: handle.dspatchSessionId, unsubscribe, sends: 0 };
+      } catch (error) {
+        await adapter.dispose().catch(() => undefined);
+        throw error;
+      }
+    })();
+    this.starting = starting;
+    return starting.then(
+      (session) => {
+        this.session = session;
+        this.starting = null;
+        return session;
+      },
+      (error: unknown) => {
+        this.starting = null;
+        throw error;
+      },
+    );
+  }
+
+  private model(): string {
+    return this.options.model ?? REVIEW_DISCUSSION_DEFAULT_MODEL;
+  }
+
+  /**
+   * Ask a question about what the window is showing. Nothing is sent on open, load or
+   * navigation; only this, from an explicit action.
+   */
+  async send(input: unknown, envelopes: EnvelopeSource): Promise<DiscussionSendOutcome> {
+    const closing: DiscussionSendOutcome = { kind: 'refused', error: 'DSpatch is closing; the question was not sent.' };
+    if (this.closedForQuit) {
+      return closing;
+    }
+    if (this.readOnly !== null) {
+      return { kind: 'refused', error: `This discussion cannot be written: ${this.readOnly}` };
+    }
+    if (this.turn !== null || this.preparing) {
+      return { kind: 'refused', error: 'An answer is still on its way. Wait for it, or press Stop, before asking the next question.' };
+    }
+    const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<Record<keyof DiscussionSendInput, unknown>>;
+    const question = typeof raw.question === 'string' ? raw.question.trim() : '';
+    if (question === '') {
+      return { kind: 'refused', error: 'An empty question is not sent.' };
+    }
+    const decision = this.ledger.mayRepeat('agent-turn');
+    if (!decision.allowed) {
+      return { kind: 'refused', error: decision.reason, acknowledgeable: decision.acknowledgeableAttemptIds };
+    }
+    this.preparing = true;
+    let turn: Turn;
+    let session: Session;
+    let prompt: string;
+    try {
+      const built = await envelopes.envelopeFor({ subject: raw.subject, selection: raw.selection ?? null, language: raw.language });
+      // A quit while the envelope was read: no adapter may be created after `dispose`.
+      if (this.closedForQuit) {
+        return closing;
+      }
+      if (built.kind === 'refused') {
+        return { kind: 'refused', error: built.error };
+      }
+      const envelope = built.envelope;
+      if (
+        envelope.identity.base.sha !== this.identity.base ||
+        envelope.identity.target.sha !== this.identity.target ||
+        envelope.identity.definitionPath !== this.identity.definitionPath
+      ) {
+        return { kind: 'refused', error: 'The window is showing another review than this discussion belongs to; nothing was sent.' };
+      }
+      try {
+        session = await this.ensureSession();
+      } catch (error) {
+        return { kind: 'refused', error: `The review discussion could not start a session with the provider: ${describeError(error)}` };
+      }
+      // A quit while the session started: it is closed here, since `dispose` ran before it existed.
+      if (this.closedForQuit) {
+        if (this.session === session) {
+          this.session = null;
+          session.unsubscribe();
+          await session.adapter.dispose().catch(() => undefined);
+        }
+        return closing;
+      }
+      // A new session has been told nothing: earlier questions and answers go in front, bounded and shown.
+      const recap = session.sends === 0 ? recapFor(this.messages) : '';
+      prompt = buildEnvelopePrompt(envelope, question, recap === '' ? null : recap);
+      const questionId = this.nextId('q');
+      const attempt = this.ledger.open('agent-turn', `Review question: ${question.split('\n')[0]?.slice(0, 70) ?? ''}`);
+      const message: MutableMessage = {
+        id: questionId,
+        role: 'question',
+        text: question,
+        at: nowIso(),
+        subject: subjectLine(envelope),
+        envelope,
+        sentPrompt: prompt,
+        status: 'sending',
+        model: this.model(),
+      };
+      this.messages.push(message);
+      turn = { questionId, answerId: null, attemptId: attempt.attemptId, runId: null, sendPending: true, stopping: false };
+      this.turn = turn;
+      // Before the send, not after it: a question that never reached the disk cannot be
+      // reconciled as an unknown outcome after a restart (chat: `sendPrompt`).
+      this.save();
+      this.emitMessage(message);
+      this.emitStatus();
+    } finally {
+      this.preparing = false;
+    }
+
+    this.pendingTurn = turn;
+    this.pendingSends += 1;
+    this.options.log(`review discussion ${this.identity.key}: ${turn.attemptId} sending a question (${String(prompt.length)} characters, instruction ${String(REVIEW_DISCUSSION_INSTRUCTION.length)})`);
+    try {
+      const reference = await session.adapter.send(session.sessionId, prompt);
+      session.sends += 1;
+      turn.sendPending = false;
+      this.runs.set(reference.dspatchRunId, turn);
+      if (turn.runId === null) {
+        turn.runId = reference.dspatchRunId;
+      }
+      const question = this.message(turn.questionId);
+      if (question !== null && question.status === 'sending') {
+        this.setStatus(question.id, 'sent', { dspatchRunId: reference.dspatchRunId });
+      } else if (question !== null) {
+        question.dspatchRunId = reference.dspatchRunId;
+      }
+      if (this.abandoned.has(turn.attemptId)) {
+        // Stop was pressed while this was pending, and a run exists after all: it is
+        // asked to stop at once, so no turn is left going unwatched (chat: `stopAbandonedRun`).
+        await this.stopAbandonedRun(turn, session, reference.dspatchRunId);
+      }
+      this.save();
+      this.emitStatus();
+      return { kind: 'sent', questionId: turn.questionId, dspatchRunId: reference.dspatchRunId };
+    } catch (error) {
+      let message = describeError(error);
+      if (saysSessionAlreadyHasARun(message)) {
+        message = `${message} ${this.explainSessionHoldsARun(session)}`;
+      }
+      this.ledger.markFailed(turn.attemptId, `The provider refused the question: ${message}`);
+      this.setStatus(turn.questionId, 'failed', { error: message });
+      if (this.turn === turn) {
+        this.turn = null;
+      }
+      this.save();
+      this.emitStatus();
+      return { kind: 'failed', error: message, questionId: turn.questionId };
+    } finally {
+      this.pendingSends -= 1;
+      if (this.pendingTurn === turn) {
+        this.pendingTurn = null;
+      }
+      void this.closeIdleAdapter();
+    }
+  }
+
+  /** Which of the two "already has a run" cases this is, from the adapter's own state (chat: `explainSessionHoldsARun`). */
+  private explainSessionHoldsARun(session: Session): string {
+    if (session.adapter.hasActiveRun?.(session.sessionId) === true) {
+      return (
+        'The previous answer was asked to stop but has not reported an end, so this discussion\'s session still holds it. ' +
+        'DSpatch started that run and is subscribed to it, so it sees the end when it arrives; ask again then.'
+      );
+    }
+    return (
+      'That run is not one this discussion started, and DSpatch is not subscribed to it, so it cannot say whether or when it ends. ' +
+      'Close and reopen the review window to continue in a new session; nothing is repeated.'
+    );
+  }
+
+  // --- Stopping -------------------------------------------------------------------
+
+  /** Stop the answer being waited for. Never claims an end it has not seen. */
+  async cancel(): Promise<DiscussionCancelOutcome> {
+    const turn = this.turn;
+    if (turn === null) {
+      return { kind: 'nothing', note: 'No answer is on its way, so there is nothing to stop.' };
+    }
+    const session = this.session;
+    if (turn.sendPending || session === null) {
+      // Before the provider has answered `send`, there is nothing `cancel()` could act
+      // on (chat: `abandonSend`). Recorded as unknown, and the run cancelled if it appears.
+      this.abandoned.add(turn.attemptId);
+      this.ledger.markOutcomeUnknown(
+        turn.attemptId,
+        'You stopped waiting for this question before the provider had replied to it. DSpatch cannot tell how far it got, ' +
+          'so this outcome is unknown rather than cancelled. As soon as a run for it can be cancelled, DSpatch asks the provider to cancel it.',
+      );
+      this.setStatus(turn.questionId, 'unknown');
+      this.setStatus(turn.answerId, 'unknown');
+      this.turn = null;
+      this.save();
+      this.emitStatus();
+      this.options.log(`review discussion ${this.identity.key}: ${turn.attemptId} abandoned before any run could be cancelled`);
+      return {
+        kind: 'abandoned',
+        note: 'DSpatch stopped waiting for it. Whether the provider received the question is unknown, and nothing is claimed about it.',
+      };
+    }
+    turn.stopping = true;
+    this.ledger.markCancelRequested(
+      turn.attemptId,
+      `Cancellation requested at ${nowIso()}. The request returning is not an ending; DSpatch is waiting for something that confirms one.`,
+    );
+    this.emitStatus();
+    try {
+      await session.adapter.cancel(session.sessionId);
+    } catch (error) {
+      this.ledger.markOutcomeUnknown(
+        turn.attemptId,
+        `The cancellation request itself failed: ${describeError(error)} Whether the answer is still being produced is unknown.`,
+      );
+      this.setStatus(turn.answerId, 'unknown');
+      if (this.turn === turn) {
+        this.turn = null;
+      }
+      this.save();
+      this.emitStatus();
+      return { kind: 'failed', note: `The request to stop failed: ${describeError(error)}` };
+    }
+    this.armCancelConfirmation(turn, session);
+    this.save();
+    return { kind: 'cancel-requested', note: 'Asked to stop. It counts as stopped only when the provider reports an end.' };
+  }
+
+  private async stopAbandonedRun(turn: Turn, session: Session, runId: string): Promise<void> {
+    this.abandoned.delete(turn.attemptId);
+    this.ledger.markCancelRequested(
+      turn.attemptId,
+      `A run (${runId}) started after you stopped waiting, so DSpatch asked the provider to cancel it. That request has not been confirmed yet.`,
+    );
+    try {
+      await session.adapter.cancel(session.sessionId);
+      this.armCancelConfirmation(turn, session);
+    } catch (error) {
+      this.ledger.markOutcomeUnknown(
+        turn.attemptId,
+        `A run (${runId}) started after you stopped waiting, and the request to cancel it failed: ${describeError(error)}`,
+      );
+    }
+  }
+
+  /** A bounded wait for the end of a cancelled run; silence becomes unknown, never stopped (chat: `armCancelConfirmation`). */
+  private armCancelConfirmation(turn: Turn, session: Session): void {
+    const configured = this.options.timings?.cancelConfirmMs ?? CANCEL_CONFIRM_MS;
+    const grace = this.options.timings?.cancelConfirmGraceMs ?? CANCEL_CONFIRM_GRACE_MS;
+    const declared = session.adapter.cancelEndBoundMs;
+    const ms = declared === undefined || !Number.isFinite(declared) || declared < 0 ? configured : Math.max(configured, declared + grace);
+    const timer = setTimeout(() => {
+      const current = this.ledger.get(turn.attemptId);
+      if (current === null || current.state !== 'cancel-requested') {
+        return;
+      }
+      this.ledger.markOutcomeUnknown(
+        turn.attemptId,
+        `No end arrived within ${formatSeconds(ms)} s of the cancellation, so this answer's ending cannot be established. ` +
+          'It is not being treated as stopped.',
+      );
+      this.setStatus(turn.answerId, 'unknown');
+      if (this.turn === turn) {
+        this.turn = null;
+      }
+      this.save();
+      this.emitStatus();
+      this.options.log(`review discussion ${this.identity.key}: ${turn.attemptId} no terminal event within ${String(ms)} ms of cancellation; outcome unknown`);
+      void this.closeIdleAdapter();
+    }, ms);
+    timer.unref?.();
+  }
+
+  // --- Events -----------------------------------------------------------------------
+
+  private onAgentEvent(event: AgentEvent): void {
+    // First guard (chat: `onAgentEvent`): an event from a session that is not this
+    // discussion's must not land on any of its questions.
+    const sessionId = this.session?.sessionId ?? null;
+    if (sessionId !== null && event.dspatchSessionId !== sessionId) {
+      this.foreignEventsDropped += 1;
+      this.options.log(`review discussion ${this.identity.key}: dropped a ${event.type} event from session ${event.dspatchSessionId}`);
+      return;
+    }
+
+    if (event.type === 'run.started') {
+      const turn = this.pendingTurn ?? this.runs.get(event.dspatchRunId) ?? null;
+      if (turn === null) {
+        return;
+      }
+      this.runs.set(event.dspatchRunId, turn);
+      turn.runId = event.dspatchRunId;
+      this.ledger.markRunning(turn.attemptId, { providerRunId: event.dspatchRunId }, `The provider started run ${event.dspatchRunId} at ${event.at}.`);
+      const question = this.message(turn.questionId);
+      if (turn.answerId === null) {
+        const answer: MutableMessage = {
+          id: this.nextId('a'),
+          role: 'answer',
+          text: '',
+          at: event.at,
+          subject: question?.subject ?? '',
+          questionId: turn.questionId,
+          dspatchRunId: event.dspatchRunId,
+          // An abandoned question's answer is as unknown as the question.
+          status: this.abandoned.has(turn.attemptId) ? 'unknown' : 'streaming',
+        };
+        turn.answerId = answer.id;
+        this.messages.push(answer);
+        this.emitMessage(answer);
+      }
+      if (question !== null) {
+        question.dspatchRunId = event.dspatchRunId;
+      }
+      this.save();
+      this.emitStatus();
+      return;
+    }
+
+    // Everything else belongs to the run it names, never to whatever is on screen.
+    const turn = this.runs.get(event.dspatchRunId);
+    if (turn === undefined) {
+      return;
+    }
+    const answer = turn.answerId === null ? null : this.message(turn.answerId);
+
+    if (event.type === 'assistant.delta' && answer !== null) {
+      answer.text += event.text;
+      this.emit({ kind: 'delta', messageId: answer.id, text: event.text });
+      return;
+    }
+    if (event.type === 'assistant.message' && answer !== null) {
+      // The provider's own complete text replaces the assembled deltas.
+      answer.text = event.text;
+      this.emitMessage(answer);
+      return;
+    }
+    if (event.type !== 'run.finished') {
+      return;
+    }
+
+    const detail =
+      `Run ${event.dspatchRunId} reported status "${event.status}" at ${event.at}` +
+      `${event.error === undefined ? '' : `: ${event.error.message}`}.`;
+    let status: DiscussionStatus;
+    if (event.status === 'cancelled' && event.end === 'unconfirmed') {
+      this.ledger.markOutcomeUnknown(
+        turn.attemptId,
+        `${detail} The adapter reported the end as unconfirmed, so it is not being treated as stopped.`,
+      );
+      status = 'unknown';
+    } else if (event.status === 'cancelled') {
+      this.ledger.markStopped(turn.attemptId, `${detail} A confirmed end, reported rather than inferred from silence.`);
+      status = 'cancelled';
+    } else if (event.status === 'finished') {
+      this.ledger.markCompleted(turn.attemptId, detail);
+      status = 'done';
+    } else {
+      this.ledger.markFailed(turn.attemptId, detail);
+      status = 'failed';
+    }
+    // The ledger's word is final: a late end after a settled state changes nothing.
+    const settled = this.ledger.get(turn.attemptId)?.state;
+    if (answer !== null) {
+      const finalStatus: DiscussionStatus =
+        settled === 'completed' ? 'done' : settled === 'stopped-confirmed' ? 'cancelled' : settled === 'failed' ? 'failed' : status;
+      this.setStatus(answer.id, finalStatus, event.error === undefined ? {} : { error: event.error.message });
+    }
+    if (settled === 'completed' || settled === 'stopped-confirmed' || settled === 'failed') {
+      // A question abandoned before its run existed read `unknown`; its run has now ended
+      // and been seen, so the question was sent, and how it ended is on the answer.
+      if (this.message(turn.questionId)?.status === 'unknown') {
+        this.setStatus(turn.questionId, 'sent');
+      }
+    }
+    if (this.turn === turn) {
+      this.turn = null;
+    }
+    this.save();
+    this.emitStatus();
+    void this.closeIdleAdapter();
+  }
+
+  // --- Closing --------------------------------------------------------------------
+
+  /** Close the adapter when no window shows this review and nothing is running. */
+  private async closeIdleAdapter(): Promise<void> {
+    if (this.targets.size > 0 || this.turn !== null || this.pendingSends > 0 || this.preparing || this.session === null) {
+      return;
+    }
+    const session = this.session;
+    this.session = null;
+    session.unsubscribe();
+    try {
+      await session.adapter.dispose();
+      this.options.log(`review discussion ${this.identity.key}: adapter closed (no window, no turn)`);
+    } catch (error) {
+      this.options.log(`review discussion ${this.identity.key}: adapter did not close cleanly (${describeError(error)})`);
+    }
+  }
+
+  /**
+   * DSpatch is quitting. A turn still going is recorded as unknown, never as ended, and
+   * the adapter is closed. Bounded by the caller's shutdown timer.
+   */
+  async dispose(): Promise<void> {
+    this.closedForQuit = true;
+    const turn = this.turn;
+    if (turn !== null) {
+      this.ledger.markOutcomeUnknown(
+        turn.attemptId,
+        'DSpatch was closed while this answer was on its way. Whether it finished is unknown; closing is not an ending.',
+      );
+      this.setStatus(turn.answerId, 'unknown');
+      if (this.message(turn.questionId)?.status === 'sending') {
+        this.setStatus(turn.questionId, 'unknown');
+      }
+      this.turn = null;
+      this.save();
+    }
+    const session = this.session;
+    this.session = null;
+    if (session !== null) {
+      session.unsubscribe();
+      await session.adapter.dispose();
+    }
+  }
+
+  /** Whether an adapter is currently held. For tests and the run record. */
+  holdsAdapter(): boolean {
+    return this.session !== null;
+  }
+}
+
+/**
+ * Every review discussion in this process, one per review identity, and which windows
+ * show each. Events go only to those windows, never through the chat's channels.
+ */
+export class ReviewDiscussions {
+  private readonly services = new Map<string, ReviewDiscussionService>();
+
+  private readonly options: Omit<ReviewDiscussionServiceOptions, 'identity'>;
+
+  constructor(options: Omit<ReviewDiscussionServiceOptions, 'identity'>) {
+    this.options = options;
+  }
+
+  serviceFor(identity: DiscussionIdentity): ReviewDiscussionService {
+    let service = this.services.get(identity.key);
+    if (service === undefined) {
+      service = new ReviewDiscussionService({ ...this.options, identity });
+      this.services.set(identity.key, service);
+    }
+    return service;
+  }
+
+  /** Bind a window to the discussion of the review it shows, and to no other. */
+  attach(targetId: number, identity: DiscussionIdentity, send: DiscussionTargetSend): ReviewDiscussionService {
+    const service = this.serviceFor(identity);
+    for (const other of this.services.values()) {
+      if (other !== service) {
+        other.detach(targetId);
+      }
+    }
+    service.attach(targetId, send);
+    return service;
+  }
+
+  detach(targetId: number): void {
+    for (const service of this.services.values()) {
+      service.detach(targetId);
+    }
+  }
+
+  /** Quit: every discussion closes its adapter; a running turn is left unknown. */
+  async dispose(): Promise<void> {
+    const results = await Promise.allSettled([...this.services.values()].map((service) => service.dispose()));
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failed !== undefined) {
+      throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason));
+    }
+  }
+}

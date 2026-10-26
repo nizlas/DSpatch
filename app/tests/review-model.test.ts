@@ -429,7 +429,8 @@ test('the review preload repeats every review channel name exactly, and the chat
   for (const channel of Object.values(REVIEW_CHANNELS)) {
     assert.ok(preload.includes(`'${channel}'`), channel);
   }
-  const literal = preload.match(/'dspatch:review-[a-z-]+'/g) ?? [];
+  // The discussion's channels are compared with their own constant in review-discussion.test.ts.
+  const literal = (preload.match(/'dspatch:review-[a-z-]+'/g) ?? []).filter((channel) => !channel.startsWith("'dspatch:review-discussion-"));
   assert.deepEqual([...new Set(literal)].sort(), Object.values(REVIEW_CHANNELS).map((channel) => `'${channel}'`).sort());
   // The chat and editor windows' preload exposes no review bridge and no review channel.
   const chatPreload = fs.readFileSync(new URL('../src/preload/preload.ts', import.meta.url), 'utf8');

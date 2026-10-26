@@ -1695,7 +1695,15 @@ export type ScriptedScenario =
    * DSP-126: `npm run review -- <definition>` without a chat. No chat window exists, so
    * the main process alone drives and reads the one review window and writes the record.
    */
-  | 'review-direct';
+  | 'review-direct'
+  /**
+   * DSP-127: the discussion in the review window, with the presentation adapter only.
+   * Questions on a point, an answer that stays on its question while the window moves,
+   * Stop with and without a run, a SIMULATED send failure for the review adapter alone,
+   * the main chat sending and cancelling beside a review answer, drafts across a close
+   * and in two windows, and nothing sent on open, load or navigation.
+   */
+  | 'review-discussion';
 
 /** What the `review-window` scenario asks the main process to read or do. Scripted runs only. */
 export type ReviewWindowCheckRequest =
@@ -1710,7 +1718,20 @@ export type ReviewWindowCheckRequest =
     }
   | { readonly action: 'close'; readonly webContentsId: number }
   | { readonly action: 'capture'; readonly webContentsId: number; readonly label: string; readonly width: number | null }
-  | { readonly action: 'refuse-chat-sender' };
+  | { readonly action: 'refuse-chat-sender' }
+  /**
+   * DSP-127: the discussion panel in a review window, read or operated through its own
+   * controls (`window.__dspatchDiscussionCheck`).
+   */
+  | {
+      readonly action: 'discussion';
+      readonly webContentsId: number;
+      readonly op: 'read' | 'type' | 'enter' | 'stop' | 'send-anyway' | 'go-to' | 'tab';
+      readonly text?: string;
+      readonly times?: number;
+      readonly index?: number;
+      readonly tab?: 'step' | 'discussion';
+    };
 
 /** The main process's answer: what it did, and what it read, kept apart from the DOM. */
 export interface ReviewWindowCheckAnswer {
