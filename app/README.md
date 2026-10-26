@@ -1748,9 +1748,12 @@ src/main/                Main process. Compiled by tsc, not bundled.
   sample-projects.ts     Where a generated sample project goes, and which folders may be removed on request.
   experiment-work.ts     The DSP-1 substep 5–6 experiments, run as a plain Node program.
   review-windows.ts      The review module's windows: the one entry point, one window per review, the last review per repository.
-  review-ipc.ts          The review channels, answered only for review windows, each through that window's own service.
+  review-ipc.ts          The review channels, answered only for review windows, each in that window's own review-host session.
   review-service.ts      Read-only git at two fixed commits, the reviewer's record under userData/reviews, and a question's context envelope.
   review-discussion-service.ts  The discussion about the code (DSP-127): one per review, its own text-only adapter, ledger and file.
+src/host/                The review host (DSP-111): no Electron, no renderer; reached only through ReviewHostApi.
+  review-host.ts         Review sessions, definitions, the commits, records, preferences and the last review per repository.
+  local-review-host.ts   The in-process binding: structuredClone both ways, and a throw becomes a host-error.
 src/preload/             Sandboxed bridges, each exposing one interface via contextBridge.
   preload.ts             The chat and loop-editor windows: `window.dspatch`.
   review-preload.ts      Review windows only: `window.dspatchReview` and `window.dspatchReviewDiscussion`, and nothing else.
@@ -1800,13 +1803,28 @@ editor is, and also usable with no chat at all (DSP-126).
 - **What review owns.** Presentation, walks, coverage, decisions and notes, and its record
   under `userData/reviews/`, keyed by repository, both commits and the definition file.
   Opening or closing review approves nothing and continues nothing.
-- **One window per review, one service per window.** A review's identity is its record's
+- **One window per review, one host session per window.** A review's identity is its record's
   name, so two windows on one review would be two writers of one file: asking again, or
   choosing in one window a review another has, brings that window to the front instead.
-  Each window has its own `ReviewService`; a save names the review it belongs to, so a
+  Each window has its own session on the review host, and so its own `ReviewService`; a save names the review it belongs to, so a
   window that switched reviews cannot write one review's state into another's record. A
   window being closed is held until its view has saved (bounded at 3 s), so a position
   changed inside the view's 250 ms save delay is not lost.
+- **The review host (DSP-111).** Repository access and durable review data sit behind an
+  explicit contract, `ReviewHostApi` (`src/shared/review-host-contract.ts`): one host
+  session per review window; opening and validating a definition; reading files, file lists
+  and search at the identified commits; saving the record and the preferences; the
+  discussion's context; and the last review per repository. Every request and answer is
+  plain serialisable data; failures are answers (`{ kind: 'host-error', code, message,
+  detail? }`), never thrown. `src/host/review-host.ts` implements it around `ReviewService`
+  and imports no Electron and nothing of the renderer; `src/host/local-review-host.ts`
+  binds it in-process with `structuredClone` on both sides. `review-windows.ts` and
+  `review-ipc.ts` are the client: windows, dialogs, the menu, the close flush and the
+  one-window-per-review registry, and they reach the repository only through the contract
+  (`review-ipc.ts` turns a `host-error` into the shapes the review preload already
+  returned). This is a local module boundary, not remote operation: there is no separate
+  host process, network transport, authentication or reconnection yet, and the file chooser
+  still returns paths on the machine the window runs on.
 - **Separate preload.** Review windows load `review-preload.ts`, which exposes only
   `window.dspatchReview`; the chat and editor preload exposes no review channel. The main
   process answers the review channels only for windows it opened as review windows and

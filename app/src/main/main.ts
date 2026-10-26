@@ -113,6 +113,8 @@ import { providerAdapters } from './provider-adapters';
 import { providerAvailability } from './provider-availability';
 import { registerReviewIpc, reviewSenderRefusal } from './review-ipc';
 import { ReviewWindows } from './review-windows';
+import { localReviewHost } from '../host/local-review-host';
+import { ReviewHost } from '../host/review-host';
 import {
   addFolderTo,
   folderDisplayName,
@@ -3489,7 +3491,7 @@ function filesUnder(root: string): readonly string[] {
 async function reviewScenarioReading(): Promise<Record<string, unknown>> {
   const windows = requireReviewWindows();
   const views: unknown[] = [];
-  for (const reading of windows.readings()) {
+  for (const reading of await windows.readings()) {
     const view = await inReviewWindow(
       reading.webContentsId,
       'window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read() : null',
@@ -3547,7 +3549,7 @@ async function reviewScenarioReading(): Promise<Record<string, unknown>> {
       current: runAudience.current(),
       loopRunFiles: filesUnder(path.join(app.getPath('userData'), 'loop-runs')),
     },
-    recentReviews: windows.recentIndex(),
+    recentReviews: await windows.recentIndex(),
     reviewsFolder: filesUnder(path.join(app.getPath('userData'), 'reviews')),
     discussionFiles,
     // Each presentation behaviour's own record: the chat's and the review adapters'.
@@ -5921,8 +5923,18 @@ function main(): void {
     restoreRememberedWorkspace();
     // The review module (DSP-126): read-only git at a fixed revision pair, no adapter,
     // in windows of its own. Before `registerIpc`, whose *Open review* handler uses it.
+    // DSP-111: the repository and the review records are the review host's; the windows
+    // reach it only through `ReviewHostApi`, bound locally (no process, no transport yet).
+    const reviewHost = localReviewHost(
+      new ReviewHost({
+        recordsDir: path.join(app.getPath('userData'), 'reviews'),
+        log: (message) => {
+          log(`[review host] ${message}`);
+        },
+      }),
+    );
     reviewWindows = new ReviewWindows({
-      recordsDir: path.join(app.getPath('userData'), 'reviews'),
+      host: reviewHost,
       preloadPath: path.join(__dirname, '..', 'preload', 'review-preload.js'),
       load: (window) => {
         // `window=review` makes the renderer mount review alone (`renderer/main.tsx`).
@@ -5966,7 +5978,7 @@ function main(): void {
         log(`[review] ${message}`);
       },
     });
-    registerReviewIpc(reviewWindows, reviewDiscussions);
+    registerReviewIpc(reviewWindows, reviewHost, reviewDiscussions);
     registerIpc();
     if (reviewAskedAtStart && !directReviewMode) {
       log(

@@ -9,5 +9,5 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src/main", "src/preload", "src/shared", "src/adapter"]
+  "include": ["src/main", "src/preload", "src/shared", "src/adapter", "src/host"]
 }

@@ -1,16 +1,20 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { BrowserWindow, Menu, app, dialog, type MenuItemConstructorOptions, type WebContents } from 'electron';
 
 import {
+  isReviewHostError,
+  type ReviewHostApi,
+  type ReviewHostError,
+  type ReviewIdentity,
+} from '../shared/review-host-contract';
+import {
   reviewIdentityLabel,
   type ReviewOpenOutcome,
   type ReviewWindowInput,
   type ReviewWindowOutcome,
 } from '../shared/review-model';
-import { ReviewService, reviewRecordKey, type ReviewIdentity } from './review-service';
 
 /*
  * Review windows: the review module's own windows, and the only way into it.
@@ -18,9 +22,16 @@ import { ReviewService, reviewRecordKey, type ReviewIdentity } from './review-se
  * The main application makes one call, `open({ repository, definitionPath })`, and
  * gets back a note for the button that asked. Nothing goes the other way: review
  * reads no chat, session, loop or window state of the caller, and its IPC answers
- * only windows opened here (see `review-ipc.ts`). Each window has its own
- * `ReviewService`, so two reviews side by side never share an open review, a cache
+ * only windows opened here (see `review-ipc.ts`). Each window has its own session on
+ * the review host, so two reviews side by side never share an open review, a cache
  * or a dialog parent.
+ *
+ * **The client side of review (DSP-111).** Windows, menus, the file chooser, the close
+ * flush and this registry are here; the repository, the review records and the index
+ * of the last review per repository are the host's, reached only through
+ * `ReviewHostApi` (`shared/review-host-contract.ts`). Nothing here runs git or reads a
+ * review record. The one file-system call is `fs.existsSync` on the chooser's start
+ * folder, a path on this machine that the native dialog opens in.
  *
  * **One window per review.** A review's identity (repository, the two commits, the
  * definition file) is also the name of its record, so two windows on one review
@@ -28,15 +39,12 @@ import { ReviewService, reviewRecordKey, type ReviewIdentity } from './review-se
  * and choosing in one window a review another window has focuses that one instead.
  */
 
-/** The file the last review per repository is kept in, beside the review records. */
-const RECENT_FILE = 'recent.json';
-
 /** How long closing waits for the view to save what it has not saved yet. */
 const CLOSE_FLUSH_TIMEOUT_MS = 3_000;
 
 export interface ReviewWindowsOptions {
-  /** Where review records live: `userData/reviews`. */
-  readonly recordsDir: string;
+  /** The review host: repository access and the review records. */
+  readonly host: ReviewHostApi;
   /** The compiled review preload. */
   readonly preloadPath: string;
   /** Load the renderer into a new review window (`?window=review#review`). */
@@ -56,7 +64,8 @@ export interface ReviewWindowEntry {
   readonly window: BrowserWindow;
   /** Held while the window lives: `closed` must not ask a destroyed window for it. */
   readonly contents: WebContents;
-  readonly service: ReviewService;
+  /** This window's session on the review host; closed when the window is. */
+  readonly sessionId: string;
   /** The folder the window was opened for, if any: the chooser's start folder. */
   readonly startFolder: string | null;
   /** DSP-132: the main window's agent when it opened this review, else `null`. */
@@ -87,24 +96,11 @@ export interface ReviewWindowReading {
   readonly recordPosition: unknown;
 }
 
-/** A repository's top level, or the folder itself when git cannot say. */
-function topLevel(folder: string): Promise<string> {
-  return new Promise((resolve) => {
-    execFile(
-      'git',
-      ['-C', folder, 'rev-parse', '--show-toplevel'],
-      { windowsHide: true, encoding: 'utf8', timeout: 10_000 },
-      (error, stdout) => {
-        const found = stdout.trim();
-        resolve(error === null && found !== '' ? path.resolve(found) : path.resolve(folder));
-      },
-    );
-  });
-}
-
-function folderKey(folder: string): string {
-  const resolved = path.resolve(folder);
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+/** A host error as the review view shows a review that did not open. */
+export function openFailureOf(error: ReviewHostError): ReviewOpenOutcome {
+  return error.detail === undefined
+    ? { kind: 'failed', error: error.message }
+    : { kind: 'failed', error: error.message, detail: error.detail };
 }
 
 function titleFor(entry: Pick<ReviewWindowEntry, 'identity' | 'startFolder'>): string {
@@ -170,60 +166,69 @@ export class ReviewWindows {
       }
 
       if (definitionPath !== null) {
-        const service = this.newService();
-        const identified = await service.identify(definitionPath);
-        if ('identity' in identified) {
-          const existing = this.byIdentity(identified.identity.key);
-          if (existing !== null) {
-            this.focus(existing);
-            return {
-              kind: 'focused',
-              note: `This review is already open in its own window (${this.labelOf(existing)}). It has been brought to the front — one window per review, so two windows never write the same record.`,
-            };
-          }
-        }
-        const outcome = await service.openDefinition(definitionPath);
-        if (outcome.kind === 'opened') {
-          const identity = this.identityOf(outcome);
-          if (identity !== null) {
-            // A second request may have opened it while this one read git.
-            const existing = this.byIdentity(identity.key);
+        const host = this.options.host;
+        const sessionId = await this.newSession();
+        // The session goes with the window made for it; every other way out closes it.
+        let handedOver = false;
+        try {
+          const identified = await host.identify({ sessionId, definitionPath });
+          if (!isReviewHostError(identified) && 'identity' in identified) {
+            const existing = this.byIdentity(identified.identity.key);
             if (existing !== null) {
               this.focus(existing);
-              return { kind: 'focused', note: `This review is already open in its own window (${this.labelOf(existing)}). It has been brought to the front.` };
-            }
-            if (input.remember !== false) {
-              await this.rememberRecent(identity);
+              return {
+                kind: 'focused',
+                note: `This review is already open in its own window (${this.labelOf(existing)}). It has been brought to the front — one window per review, so two windows never write the same record.`,
+              };
             }
           }
-          const entry = this.create({ service, startFolder: input.repository, defaultProvider: input.defaultProvider ?? null, initial: outcome, identity, chooserKey: null });
-          return {
-            kind: 'opened',
-            note: `Review opened in its own window: ${this.labelOf(entry)}${fromRecent ? ' (the last review opened for this project)' : ''}. The chat is unaffected.`,
-          };
+          const opened = await host.open({ sessionId, definitionPath, remember: input.remember !== false });
+          const outcome = isReviewHostError(opened) ? openFailureOf(opened) : opened.outcome;
+          if (outcome.kind === 'opened') {
+            const identity = isReviewHostError(opened) ? null : opened.identity;
+            if (identity !== null) {
+              // A second request may have opened it while this one read git.
+              const existing = this.byIdentity(identity.key);
+              if (existing !== null) {
+                this.focus(existing);
+                return { kind: 'focused', note: `This review is already open in its own window (${this.labelOf(existing)}). It has been brought to the front.` };
+              }
+            }
+            const entry = this.create({ sessionId, startFolder: input.repository, defaultProvider: input.defaultProvider ?? null, initial: outcome, identity, chooserKey: null });
+            handedOver = true;
+            return {
+              kind: 'opened',
+              note: `Review opened in its own window: ${this.labelOf(entry)}${fromRecent ? ' (the last review opened for this project)' : ''}. The chat is unaffected.`,
+            };
+          }
+          if (!fromRecent) {
+            // Named directly: show why it did not open, with the chooser beside it.
+            const entry = this.create({
+              sessionId,
+              startFolder: input.repository,
+              defaultProvider: input.defaultProvider ?? null,
+              initial: outcome,
+              identity: null,
+              chooserKey: null,
+            });
+            handedOver = true;
+            return {
+              kind: 'opened',
+              note: `A review window opened (${entry.window.getTitle()}), but the review in it did not: ${outcome.kind === 'failed' ? outcome.error : outcome.note}`,
+            };
+          }
+          problem = `The last review opened for this project could not be opened again: ${
+            outcome.kind === 'failed' ? outcome.error : outcome.note
+          }`;
+        } finally {
+          if (!handedOver) {
+            void host.closeSession({ sessionId });
+          }
         }
-        if (!fromRecent) {
-          // Named directly: show why it did not open, with the chooser beside it.
-          const entry = this.create({
-            service,
-            startFolder: input.repository,
-            defaultProvider: input.defaultProvider ?? null,
-            initial: outcome,
-            identity: null,
-            chooserKey: null,
-          });
-          return {
-            kind: 'opened',
-            note: `A review window opened (${entry.window.getTitle()}), but the review in it did not: ${outcome.kind === 'failed' ? outcome.error : outcome.note}`,
-          };
-        }
-        problem = `The last review opened for this project could not be opened again: ${
-          outcome.kind === 'failed' ? outcome.error : outcome.note
-        }`;
       }
 
       // No review to open: the chooser, naming the folder it was opened for.
-      const chooserKey = input.repository === null ? '' : folderKey(await topLevel(input.repository));
+      const chooserKey = input.repository === null ? '' : await this.repositoryKeyOf(input.repository);
       const existingChooser = [...this.entries].find(
         (entry) => entry.identity === null && entry.chooserKey === chooserKey && !entry.window.isDestroyed(),
       );
@@ -239,7 +244,7 @@ export class ReviewWindows {
           ? 'No review was named. Choose a review definition file (*.review.json).'
           : `No review has been opened for ${input.repository} yet. Choose a review definition file (*.review.json); the chooser starts in this folder.`;
       this.create({
-        service: this.newService(),
+        sessionId: await this.newSession(),
         startFolder: input.repository,
         defaultProvider: input.defaultProvider ?? null,
         initial: { kind: 'none', note, repository: input.repository, ...(problem === null ? {} : { problem }) },
@@ -294,8 +299,9 @@ export class ReviewWindows {
   }
 
   private async openChosen(entry: ReviewWindowEntry, chosen: string): Promise<ReviewOpenOutcome> {
-    const identified = await entry.service.identify(chosen);
-    if ('identity' in identified) {
+    const host = this.options.host;
+    const identified = await host.identify({ sessionId: entry.sessionId, definitionPath: chosen });
+    if (!isReviewHostError(identified) && 'identity' in identified) {
       const other = this.byIdentity(identified.identity.key);
       if (other !== null && other !== entry) {
         this.focus(other);
@@ -306,9 +312,10 @@ export class ReviewWindows {
         };
       }
     }
-    const outcome = await entry.service.openDefinition(chosen);
+    const opened = await host.open({ sessionId: entry.sessionId, definitionPath: chosen, remember: true });
+    const outcome = isReviewHostError(opened) ? openFailureOf(opened) : opened.outcome;
     if (outcome.kind === 'opened') {
-      const identity = this.identityOf(outcome);
+      const identity = isReviewHostError(opened) ? null : opened.identity;
       // Checked again after reading git: another window may have taken it meanwhile.
       const other = identity === null ? null : this.byIdentity(identity.key);
       if (other !== null && other !== entry) {
@@ -321,9 +328,6 @@ export class ReviewWindows {
       }
       entry.identity = identity;
       entry.initial = outcome;
-      if (identity !== null) {
-        await this.rememberRecent(identity);
-      }
       if (!entry.window.isDestroyed()) {
         entry.window.setTitle(titleFor(entry));
       }
@@ -331,20 +335,22 @@ export class ReviewWindows {
     return outcome;
   }
 
-  /** Readings for the scripted scenario: what main knows about each window. */
-  readings(): readonly ReviewWindowReading[] {
-    return this.list().map((entry) => {
-      const recordPath =
-        entry.identity === null ? null : path.join(this.options.recordsDir, `${entry.identity.key}.json`);
+  /** Readings for the scripted scenario: what main knows about each window, and its record on the host. */
+  async readings(): Promise<readonly ReviewWindowReading[]> {
+    const readings: ReviewWindowReading[] = [];
+    for (const entry of this.list()) {
+      let recordPath: string | null = null;
       let recordPosition: unknown = null;
-      if (recordPath !== null && fs.existsSync(recordPath)) {
-        try {
-          recordPosition = (JSON.parse(fs.readFileSync(recordPath, 'utf8')) as { position?: unknown }).position ?? null;
-        } catch (error) {
-          recordPosition = `unreadable: ${String(error)}`;
+      if (entry.identity !== null) {
+        const record = await this.options.host.recordReading({ key: entry.identity.key });
+        if (isReviewHostError(record)) {
+          recordPosition = `unreadable: ${record.message}`;
+        } else {
+          recordPath = record.recordPath;
+          recordPosition = record.recordPosition;
         }
       }
-      return {
+      readings.push({
         webContentsId: entry.contents.id,
         title: entry.window.getTitle(),
         focused: entry.window.isFocused(),
@@ -354,35 +360,30 @@ export class ReviewWindows {
         identityLabel: entry.identity === null ? null : this.labelOf(entry),
         recordPath,
         recordPosition,
-      };
-    });
-  }
-
-  /** The recent-review index as it stands on disk, for the scenario's record. */
-  recentIndex(): unknown {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(this.options.recordsDir, RECENT_FILE), 'utf8'));
-    } catch {
-      return null;
+      });
     }
+    return readings;
   }
 
-  private newService(): ReviewService {
-    return new ReviewService({ recordsDir: this.options.recordsDir, log: this.options.log });
+  /** The recent-review index as the host has it, for the scenario's record. */
+  async recentIndex(): Promise<unknown> {
+    const answer = await this.options.host.recentIndex();
+    return isReviewHostError(answer) ? null : answer.index;
   }
 
-  private identityOf(outcome: ReviewOpenOutcome): ReviewIdentity | null {
-    if (outcome.kind !== 'opened') {
-      return null;
+  /** A new session on the review host, for a window about to be made. */
+  private async newSession(): Promise<string> {
+    const created = await this.options.host.createSession();
+    if (isReviewHostError(created)) {
+      throw new Error(created.message);
     }
-    const bundle = outcome.bundle;
-    return {
-      key: reviewRecordKey(bundle.repository, bundle.base.sha, bundle.target.sha, bundle.definitionPath),
-      definitionPath: bundle.definitionPath,
-      repository: bundle.repository,
-      base: bundle.base.sha,
-      target: bundle.target.sha,
-    };
+    return created.sessionId;
+  }
+
+  /** The repository a folder is in, as a key; the folder itself when the host cannot say. */
+  private async repositoryKeyOf(folder: string): Promise<string> {
+    const answer = await this.options.host.repositoryKey({ folder });
+    return isReviewHostError(answer) ? folder : answer.key;
   }
 
   private labelOf(entry: ReviewWindowEntry): string {
@@ -411,7 +412,7 @@ export class ReviewWindows {
   }
 
   private create(init: {
-    readonly service: ReviewService;
+    readonly sessionId: string;
     readonly startFolder: string | null;
     readonly defaultProvider: 'cursor' | 'claude' | null;
     readonly initial: ReviewOpenOutcome;
@@ -437,7 +438,7 @@ export class ReviewWindows {
     const entry: ReviewWindowEntry = {
       window,
       contents: window.webContents,
-      service: init.service,
+      sessionId: init.sessionId,
       startFolder: init.startFolder,
       defaultProvider: init.defaultProvider,
       initial: init.initial,
@@ -477,6 +478,8 @@ export class ReviewWindows {
     });
     window.on('closed', () => {
       this.entries.delete(entry);
+      // The view has saved (or given up) by now; the host lets the window's session go.
+      void this.options.host.closeSession({ sessionId: entry.sessionId });
       this.options.log('review window closed; the chat and any run were not affected');
     });
     window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
@@ -523,49 +526,9 @@ export class ReviewWindows {
     return Menu.buildFromTemplate([{ label: '&View', submenu: view }]);
   }
 
-  private recentPath(): string {
-    return path.join(this.options.recordsDir, RECENT_FILE);
-  }
-
-  private readRecent(): Record<string, { readonly repository: string; readonly definitionPath: string; readonly openedAt: string }> {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(this.recentPath(), 'utf8')) as { version?: unknown; repositories?: unknown };
-      if (parsed.version === 1 && typeof parsed.repositories === 'object' && parsed.repositories !== null) {
-        return parsed.repositories as Record<string, { repository: string; definitionPath: string; openedAt: string }>;
-      }
-    } catch {
-      // Missing or unreadable: no last review is known, and the chooser opens instead.
-    }
-    return {};
-  }
-
   /** The last definition opened for the repository this folder is in, if it still exists. */
   private async recentFor(folder: string): Promise<string | null> {
-    const key = folderKey(await topLevel(folder));
-    const entry = this.readRecent()[key];
-    if (entry === undefined || typeof entry.definitionPath !== 'string' || !fs.existsSync(entry.definitionPath)) {
-      return null;
-    }
-    return entry.definitionPath;
-  }
-
-  /** Remember the definition just opened as the last one for its repository. */
-  private async rememberRecent(identity: ReviewIdentity): Promise<void> {
-    const root = await topLevel(identity.repository);
-    try {
-      const repositories = { ...this.readRecent() };
-      repositories[folderKey(root)] = {
-        repository: root,
-        definitionPath: identity.definitionPath,
-        openedAt: new Date().toISOString(),
-      };
-      fs.mkdirSync(this.options.recordsDir, { recursive: true });
-      const temporary = `${this.recentPath()}.tmp`;
-      fs.writeFileSync(temporary, `${JSON.stringify({ version: 1, repositories }, null, 2)}\n`, 'utf8');
-      fs.renameSync(temporary, this.recentPath());
-    } catch (error) {
-      // Opening the review is not undone by this; next time the chooser opens instead.
-      this.options.log(`the last review for ${root} could not be remembered: ${String(error)}`);
-    }
+    const answer = await this.options.host.lastReviewFor({ folder });
+    return isReviewHostError(answer) ? null : answer.definitionPath;
   }
 }

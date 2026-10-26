@@ -3,10 +3,10 @@ id: DSP-111
 title: >-
   Render DSpatch locally while the repository and agents run on a remote
   development machine
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-10-21 15:09'
-updated_date: '2026-10-26 13:04'
+updated_date: '2026-10-26 22:54'
 labels:
   - integration
 dependencies: []
@@ -45,4 +45,8 @@ Reuse, do not duplicate: workspace and root records (DSP-71, DSP-72), conversati
 
 <!-- SECTION:NOTES:BEGIN -->
 26 Oct 2026 (run 20261026-200000-linux-claude): map of the current host-client boundary in docs/RUNTIME_PLATFORM_ROADMAP.md section 1.2, 'Where the current code draws the host-client boundary (map, 26 Oct 2026)' - a map and proposal, not an implementation. Proposed first implementation step at home (step 2 of Niclas's 26 Oct order): (a) a test that classifies every bridge channel (62 ipcMain.handle in main.ts, 13 in review-ipc.ts, plus UiAgentEvent) as host or client; (b) move one bounded group of handler bodies into a transport-neutral host module that the Electron IPC binds thinly. No transport chosen. Known coupling to undo: native dialogs return client-local paths; startup constructs a Cursor adapter for environment info.
+
+Focus (Niclas, 26 Oct 2026; run 20261026-230000-host-review): the first host step for review - move opening and validating a review definition, reading identified git revisions, code and diff, and reading and saving review state, notes and decisions into a transport-neutral host module with an explicit serialisable contract and plain errors; no Electron or renderer imports in it; the local app uses the same contract through a local binding. Separate host process, network transport, authentication and reconnection are the next steps, not this one.
+
+Result (run 20261026-230000-host-review; I-3 call 11; Verifier 012 PASS; Reviewer 013 ACCEPT; coordinator applied R-2 item 6): first host step for review done LOCALLY - not remote operation. src/shared/review-host-contract.ts ReviewHostApi (serialisable; host-error codes unknown-session, invalid-request, definition-unreadable, git-failed, save-failed, internal; plain messages, technical detail separate); src/host/review-host.ts (owns repository access via ReviewService per session, the recent index, identity keys and review records; imports no Electron or renderer - pinned by a boundary test and a runtime require walk); src/host/local-review-host.ts binding (structuredClone in/out; throws -> internal). review-windows.ts and review-ipc.ts reach the repository and review records only through the contract; renderer and preloads unchanged. Verified on Windows: the same flows through the binding on a git fixture; in a real window a base-build record restored unchanged, navigation, code views, sv/en, note and position across a restart, a simulated save error keeping the work, Open example review; review-direct, review-window, review-discussion scenarios. ACs #1-#4 stay open. Next steps: a separate host process; a transport; authentication; reconnection; host-side browsing for review definitions (dialogs still return client-local paths); a host-side refusal of a second session on one review (single writer); moving ReviewService under src/host/; the review discussion still runs in main.
 <!-- SECTION:NOTES:END -->

@@ -89,7 +89,7 @@ The first remote milestone demonstrates local rendering, remote repository acces
 
 ### Where the current code draws the host-client boundary (map, 26 Oct 2026)
 
-**A map and a proposal, not an implementation.** It records where the code at the time of loop run 20261026-200000-linux-claude already separates a host (where the repository, agents and history live) from a client (where a person sees and acts), and it proposes a first step for DSP-111. Nothing here has been built, no transport has been chosen and no API has been decided. Paths are relative to `app/src/`.
+**A map and a proposal, not an implementation.** It records where the code at the time of loop run 20261026-200000-linux-claude already separates a host (where the repository, agents and history live) from a client (where a person sees and acts), and it proposes a first step for DSP-111. Apart from the first step for review recorded at the end of this subsection, nothing here has been built, no transport has been chosen and no API beyond that review contract has been decided. Paths are relative to `app/src/`.
 
 **Electron-bound or bound to the local file system today.** Electron is imported only by `main/main.ts`, `main/review-ipc.ts`, `main/review-windows.ts` and the two preloads (`preload/preload.ts`, `preload/review-preload.ts`). The services and adapters import none of it. What is bound to the machine Electron runs on:
 
@@ -125,6 +125,15 @@ The first remote milestone demonstrates local rendering, remote repository acces
 - (a) A test that classifies every bridge channel as *host* or *client*. A new channel then has to say which side it belongs to.
 - (b) Move one bounded group of `ipcMain.handle` bodies (for example the workspace-folder channels, or the conversation list, read and export) into a transport-neutral host module: plain functions keyed by bridge channel name, with no Electron import. Electron IPC then binds that module thinly.
 - No transport is chosen in this step, and nothing is exposed over a network.
+
+**First step taken for review (26 Oct 2026, loop run 20261026-230000-host-review; local, not remote operation).** Niclas chose a working review flow over the channel-classification test in (a). A host module for review now exists locally behind an explicit contract, `ReviewHostApi` (`shared/review-host-contract.ts`), with a local binding:
+
+- *Host* (`host/review-host.ts`): one session per review window around `ReviewService`; opening and validating a definition; reading files, file lists and search at the identified commits (the diff travels in the opened bundle); saving the reviewer's record and the preferences; the discussion's context envelope; the repository top level and the index of the last review per repository. It imports no Electron and nothing of the renderer, and never throws across the contract.
+- *Contract*: plain serialisable requests and answers; failures are answers, `{ kind: 'host-error', code, message, detail? }`, with the codes `unknown-session`, `invalid-request`, `definition-unreadable`, `git-failed`, `save-failed` and `internal`. A closed session answers `unknown-session`.
+- *Local binding* (`host/local-review-host.ts`): the same contract in-process, with `structuredClone` on arguments and answers, so client and host share no reference.
+- *Client* (`main/review-windows.ts`, `main/review-ipc.ts`): windows, the native file chooser, the menu, the close flush and the one-window-per-review registry. They reach the repository only through the contract and turn a `host-error` into the shapes the review preload already returned, so the preload and the view are unchanged.
+
+Still on the client side or not yet done, as next steps: a separate host process; a transport and its measured behaviour; authentication; reconnection; host-side browsing for review definitions (the native chooser still returns paths on the machine the window runs on, which is the same machine today); and a host-side refusal of a second session on a review another session has open (the one-window-per-review invariant is held by the client's window registry only, which is enough while one client exists and not once several can attach). The review discussion still runs in the main process, and the rest of the bridge is unchanged.
 
 <!-- pagebreak -->
 

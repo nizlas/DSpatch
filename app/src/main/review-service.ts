@@ -43,6 +43,7 @@ import {
   type EnvelopeRange,
   type EnvelopeRangeRole,
 } from '../shared/review-discussion';
+import type { ReviewIdentity } from '../shared/review-host-contract';
 
 /**
  * The review surface's access to a repository: read-only git at two fixed commits.
@@ -216,19 +217,8 @@ async function missingRevision(repository: string, revision: string, error: unkn
   );
 }
 
-/**
- * The identity of one review: the repository, the two resolved commits and the
- * definition file. It is also the name of the reviewer's record, so two windows with
- * the same identity would be two writers of one file; the window registry keeps that
- * from happening.
- */
-export interface ReviewIdentity {
-  readonly key: string;
-  readonly definitionPath: string;
-  readonly repository: string;
-  readonly base: string;
-  readonly target: string;
-}
+/** The identity of one review; defined in the host contract, which carries it. */
+export type { ReviewIdentity };
 
 /** The record key for an identity, as the record file is named. */
 export function reviewRecordKey(repository: string, base: string, target: string, definitionPath: string): string {
@@ -553,7 +543,11 @@ export class ReviewService {
     return { hits, truncated: false };
   }
 
-  saveState(state: unknown): { saved: boolean; at: string; error?: string } {
+  /**
+   * `writeFailed` tells a record that could not be written from one that was refused;
+   * the host turns it into a `save-failed` answer and keeps it off the contract.
+   */
+  saveState(state: unknown): { saved: boolean; at: string; error?: string; writeFailed?: true } {
     const open = this.recordFor(state);
     const at = new Date().toISOString();
     if (open === null) {
@@ -571,7 +565,7 @@ export class ReviewService {
       open.state = { ...(state as ReviewState), savedAt: at };
       return { saved: true, at };
     } catch (error) {
-      return { saved: false, at, error: error instanceof Error ? error.message : String(error) };
+      return { saved: false, at, error: error instanceof Error ? error.message : String(error), writeFailed: true };
     }
   }
 
@@ -768,7 +762,7 @@ export class ReviewService {
     }
   }
 
-  setPreferences(raw: unknown): { saved: boolean; error?: string } {
+  setPreferences(raw: unknown): { saved: boolean; error?: string; writeFailed?: true } {
     const preferences = adoptPreferences(raw);
     if (JSON.stringify(preferences) !== JSON.stringify(raw)) {
       return { saved: false, error: 'Unknown preference value.' };
@@ -781,7 +775,7 @@ export class ReviewService {
       fs.renameSync(`${file}.tmp`, file);
       return { saved: true };
     } catch (error) {
-      return { saved: false, error: error instanceof Error ? error.message : String(error) };
+      return { saved: false, error: error instanceof Error ? error.message : String(error), writeFailed: true };
     }
   }
 

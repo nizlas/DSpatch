@@ -9,8 +9,17 @@ import {
   type DiscussionSendOutcome,
   type DiscussionStatusView,
 } from '../shared/review-discussion';
-import { REVIEW_CHANNELS, type ReviewOpenOutcome, type RevisionSide } from '../shared/review-model';
-import type { ReviewDiscussionService, ReviewDiscussions } from './review-discussion-service';
+import { isReviewHostError, type ReviewHostApi, type ReviewHostError } from '../shared/review-host-contract';
+import {
+  REVIEW_CHANNELS,
+  adoptPreferences,
+  type ReviewFileOutcome,
+  type ReviewPreferences,
+  type ReviewOpenOutcome,
+  type ReviewSearchHit,
+  type RevisionSide,
+} from '../shared/review-model';
+import type { EnvelopeSource, ReviewDiscussionService, ReviewDiscussions } from './review-discussion-service';
 import type { ReviewWindowEntry, ReviewWindows } from './review-windows';
 
 /*
@@ -24,10 +33,30 @@ import type { ReviewWindowEntry, ReviewWindows } from './review-windows';
  * opening and navigating never call an adapter. Renderer input is checked in the service.
  *
  * **Only review windows are answered.** Each handler finds the window the request
- * came from in the registry and uses that window's own service. A request from any
- * other window - the chat, the loop editor - is refused, and that refusal is the
- * same function the scripted scenario calls with the chat window's sender.
+ * came from in the registry and asks the review host in that window's own session. A
+ * request from any other window - the chat, the loop editor - is refused, and that
+ * refusal is the same function the scripted scenario calls with the chat window's sender.
+ *
+ * **The host's answers in the view's shapes (DSP-111).** Repository and record access
+ * goes through `ReviewHostApi`; a `host-error` is turned here into the shape the review
+ * preload already returns (a failed file, a search error, an unsaved save with its
+ * reason), so the preload and the view are the same as before the host existed.
  */
+
+/** A host error as the view shows a file that could not be read. */
+function fileFailure(error: ReviewHostError): ReviewFileOutcome {
+  return { kind: 'failed', error: error.message };
+}
+
+/** The review discussion's context, built on the host in this window's session. */
+export function envelopeSourceFor(host: ReviewHostApi, sessionId: string): EnvelopeSource {
+  return {
+    envelopeFor: async (request) => {
+      const answer = await host.envelopeFor({ sessionId, request });
+      return isReviewHostError(answer) ? { kind: 'refused', error: answer.message } : answer;
+    },
+  };
+}
 
 /** Why a sender is refused, or `null` when it is a review window. */
 export function reviewSenderRefusal(windows: ReviewWindows, sender: WebContents): string | null {
@@ -44,7 +73,7 @@ function discussionIdentityOf(entry: ReviewWindowEntry): DiscussionIdentity | nu
     : { key: identity.key, repository: identity.repository, base: identity.base, target: identity.target, definitionPath: identity.definitionPath };
 }
 
-export function registerReviewIpc(windows: ReviewWindows, discussions: ReviewDiscussions): void {
+export function registerReviewIpc(windows: ReviewWindows, host: ReviewHostApi, discussions: ReviewDiscussions): void {
   const entryOf = (event: IpcMainInvokeEvent): ReviewWindowEntry => {
     const refusal = reviewSenderRefusal(windows, event.sender);
     const entry = windows.entryFor(event.sender);
@@ -56,18 +85,40 @@ export function registerReviewIpc(windows: ReviewWindows, discussions: ReviewDis
 
   ipcMain.handle(REVIEW_CHANNELS.initial, (event): ReviewOpenOutcome => entryOf(event).initial);
   ipcMain.handle(REVIEW_CHANNELS.choose, (event): Promise<ReviewOpenOutcome> => windows.choose(entryOf(event)));
-  ipcMain.handle(REVIEW_CHANNELS.readFile, (event, side: RevisionSide, filePath: string) =>
-    entryOf(event).service.readFile(side, filePath),
+  ipcMain.handle(REVIEW_CHANNELS.readFile, async (event, side: RevisionSide, filePath: string): Promise<ReviewFileOutcome> => {
+    const answer = await host.readFile({ sessionId: entryOf(event).sessionId, side, path: filePath });
+    return isReviewHostError(answer) ? fileFailure(answer) : answer;
+  });
+  ipcMain.handle(REVIEW_CHANNELS.listFiles, async (event, side: RevisionSide): Promise<readonly string[]> => {
+    const answer = await host.listFiles({ sessionId: entryOf(event).sessionId, side });
+    if (isReviewHostError(answer)) {
+      // As before the host: a listing that fails is a rejected call, with the reason.
+      throw new Error(answer.detail === undefined ? answer.message : `${answer.message} ${answer.detail}`);
+    }
+    return answer.files;
+  });
+  ipcMain.handle(
+    REVIEW_CHANNELS.search,
+    async (event, side: RevisionSide, query: string): Promise<{ hits: readonly ReviewSearchHit[]; truncated: boolean; error?: string }> => {
+      const answer = await host.search({ sessionId: entryOf(event).sessionId, side, query });
+      return isReviewHostError(answer) ? { hits: [], truncated: false, error: answer.message } : answer;
+    },
   );
-  ipcMain.handle(REVIEW_CHANNELS.listFiles, (event, side: RevisionSide) => entryOf(event).service.listFiles(side));
-  ipcMain.handle(REVIEW_CHANNELS.search, (event, side: RevisionSide, query: string) =>
-    entryOf(event).service.search(side, query),
-  );
-  ipcMain.handle(REVIEW_CHANNELS.saveState, (event, state: unknown) => entryOf(event).service.saveState(state));
-  ipcMain.handle(REVIEW_CHANNELS.getPreferences, (event) => entryOf(event).service.getPreferences());
-  ipcMain.handle(REVIEW_CHANNELS.setPreferences, (event, preferences: unknown) =>
-    entryOf(event).service.setPreferences(preferences),
-  );
+  ipcMain.handle(REVIEW_CHANNELS.saveState, async (event, state: unknown): Promise<{ saved: boolean; at: string; error?: string }> => {
+    const answer = await host.saveState({ sessionId: entryOf(event).sessionId, state });
+    // Not saved, with the reason: the view keeps what it holds and tries again.
+    return isReviewHostError(answer) ? { saved: false, at: new Date().toISOString(), error: answer.message } : answer;
+  });
+  ipcMain.handle(REVIEW_CHANNELS.getPreferences, async (event): Promise<ReviewPreferences> => {
+    entryOf(event);
+    const answer = await host.getPreferences();
+    return isReviewHostError(answer) ? adoptPreferences(null) : answer;
+  });
+  ipcMain.handle(REVIEW_CHANNELS.setPreferences, async (event, preferences: unknown): Promise<{ saved: boolean; error?: string }> => {
+    entryOf(event);
+    const answer = await host.setPreferences({ preferences });
+    return isReviewHostError(answer) ? { saved: false, error: answer.message } : answer;
+  });
 
   // --- The review discussion (DSP-127) ---------------------------------------------
 
@@ -112,7 +163,10 @@ export function registerReviewIpc(windows: ReviewWindows, discussions: ReviewDis
     if (service === null) {
       return { kind: 'refused', error: noReview };
     }
-    return service.load(typeof request === 'object' && request !== null ? (request as never) : null, entry.service);
+    return service.load(
+      typeof request === 'object' && request !== null ? (request as never) : null,
+      envelopeSourceFor(host, entry.sessionId),
+    );
   });
   ipcMain.handle(REVIEW_DISCUSSION_CHANNELS.send, async (event, input: unknown): Promise<DiscussionSendOutcome> => {
     const entry = entryOf(event);
@@ -120,7 +174,7 @@ export function registerReviewIpc(windows: ReviewWindows, discussions: ReviewDis
     if (service === null) {
       return { kind: 'refused', error: noReview };
     }
-    return service.send(input, entry.service);
+    return service.send(input, envelopeSourceFor(host, entry.sessionId));
   });
   ipcMain.handle(REVIEW_DISCUSSION_CHANNELS.cancel, async (event): Promise<DiscussionCancelOutcome> => {
     const service = discussionOf(entryOf(event));
