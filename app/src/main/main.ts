@@ -95,6 +95,7 @@ import { LoopRunController } from './loop-control-runtime';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
 import { LoopRunAudience } from './loop-run-audience';
 import type { LiveRunAnnouncement } from '../shared/loop-run-view';
+import { locateExampleReview } from './example-review';
 import { ownRepositoryRoot } from './own-repository';
 import { PROBE_EXIT, runCursorProbe } from './probe-cursor';
 import { ProjectStore } from './project-store';
@@ -180,6 +181,7 @@ const RESOLVE_LOOP_ROLES: BridgeChannel = 'dspatch:resolve-loop-roles';
 const REVEAL_ROLE_SOURCE: BridgeChannel = 'dspatch:reveal-role-source';
 const OPEN_LOOP_EDITOR: BridgeChannel = 'dspatch:open-loop-editor';
 const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
+const OPEN_EXAMPLE_REVIEW: BridgeChannel = 'dspatch:open-example-review';
 const CHECK_REVIEW_WINDOWS: BridgeChannel = 'dspatch:check-review-windows';
 const START_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:start-editor-loop-run';
 const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
@@ -1577,6 +1579,23 @@ function requireReviewWindows(): ReviewWindows {
   return reviewWindows;
 }
 
+/**
+ * *Open example review* (DSP-129): the bundled DSP-116 walk from this DSpatch's own
+ * clone, through the same `open()` every review goes through. It needs no chat project
+ * and makes no provider call. `remember: false` keeps it out of the last-review index,
+ * so *Open review* for a project in this clone still opens that project's own last
+ * review. Outside a clone it opens nothing and says why.
+ */
+function openExampleReview(): Promise<LoopEditorWindowOutcome> {
+  const located = locateExampleReview(ownRepoRoot);
+  if (located.kind === 'unavailable') {
+    log(`open example review refused: ${located.note}`);
+    return Promise.resolve({ kind: 'failed', note: located.note });
+  }
+  log(`open example review: ${located.definitionPath}`);
+  return requireReviewWindows().open({ repository: null, definitionPath: located.definitionPath, remember: false });
+}
+
 const runAudience = new LoopRunAudience();
 
 /**
@@ -2122,6 +2141,20 @@ function installApplicationMenu(): void {
             label: 'Open Graph File…',
             click: () => {
               void openGraphFileForEditing();
+            },
+          },
+          {
+            // DSP-129. Here as well as beside *Open review*, because that button is on
+            // the conversation panel and the example needs no project to be open.
+            label: 'Open Example Review',
+            click: () => {
+              void openExampleReview().then((outcome) => {
+                if (outcome.kind === 'failed') {
+                  const parent = mainWindow !== null && !mainWindow.isDestroyed() ? mainWindow : null;
+                  const box = { type: 'info' as const, message: 'The example review cannot be opened', detail: outcome.note };
+                  void (parent === null ? dialog.showMessageBox(box) : dialog.showMessageBox(parent, box));
+                }
+              });
             },
           },
           { type: 'separator' },
@@ -4641,6 +4674,7 @@ function registerLoopGraphIpc(): void {
     const session = chatService.openSession();
     return requireReviewWindows().open({ repository: session?.workspacePath ?? null, definitionPath: null });
   });
+  ipcMain.handle(OPEN_EXAMPLE_REVIEW, (): Promise<LoopEditorWindowOutcome> => openExampleReview());
 
   ipcMain.handle(
     START_EDITOR_LOOP_RUN,

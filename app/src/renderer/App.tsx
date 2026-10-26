@@ -2459,6 +2459,26 @@ function Workbench({
                 >
                   Open review
                 </button>
+                <button
+                  type="button"
+                  className="button button--quiet"
+                  data-ev="open-example-review"
+                  title="Opens the bundled example review (DSP-116) from DSpatch's own repository in a separate window. Also in the File menu. This conversation is unaffected."
+                  onClick={() => {
+                    // DSP-129: the example from this DSpatch's own clone, not this project's
+                    // last review. Main resolves the path; the renderer sends nothing.
+                    void window.dspatch.openExampleReview().then(
+                      (outcome) => {
+                        setReviewWindowNote(outcome.kind === 'opened' ? null : outcome.note);
+                      },
+                      () => {
+                        setReviewWindowNote('The example review could not be opened, and DSpatch did not get a reason.');
+                      },
+                    );
+                  }}
+                >
+                  Open example review
+                </button>
               </div>
             </div>
 

@@ -8,9 +8,11 @@
  */
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { ReviewService, reviewRecordKey } from '../src/main/review-service.ts';
 import { PROVIDER_ADDED_CONTEXT_LINE, buildEnvelopePrompt } from '../src/shared/review-discussion.ts';
@@ -374,6 +376,105 @@ test('a question about something the review does not have is refused in plain wo
     const closed = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
     assert.deepEqual(await closed.envelopeFor({ subject: { kind: 'review' }, selection: null }), { kind: 'refused', error: 'No review is open.' });
   } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+/** A definition placed inside `repo` at `examples/review/`, naming the clone root as `../..`. */
+function definitionInClone(fixture: Fixture, clone: string, revisions: { base: string; target: string }): string {
+  const original = JSON.parse(fs.readFileSync(fixture.definitionPath, 'utf8')) as Record<string, unknown>;
+  const folder = path.join(clone, 'examples', 'review');
+  fs.mkdirSync(folder, { recursive: true });
+  const file = path.join(folder, 'example.review.json');
+  fs.writeFileSync(file, JSON.stringify({ ...original, repository: '../..', ...revisions }));
+  return file;
+}
+
+test('a definition inside a clone names the clone root relatively and reviews its two commits there (DSP-129)', async () => {
+  const fixture = makeFixture();
+  try {
+    const file = definitionInClone(fixture, fixture.repo, { base: fixture.base, target: fixture.target });
+    const service = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
+    const outcome = await service.openDefinition(file);
+    assert.equal(outcome.kind, 'opened', outcome.kind === 'failed' ? outcome.error : '');
+    if (outcome.kind !== 'opened') {
+      return;
+    }
+    assert.equal(outcome.bundle.repository, path.resolve(fixture.repo));
+    assert.equal(outcome.bundle.base.sha, fixture.base);
+    assert.equal(outcome.bundle.target.sha, fixture.target);
+    // The reviewer's state goes to the records folder; nothing is written beside the definition.
+    assert.equal(service.saveState(outcome.bundle.state).saved, true);
+    assert.deepEqual(fs.readdirSync(path.dirname(file)), ['example.review.json']);
+    assert.ok(fs.readdirSync(fixture.records).some((name) => name.endsWith('.json')));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('missing history is explained plainly, and nothing is opened in its place (DSP-129)', async () => {
+  const fixture = makeFixture();
+  try {
+    const service = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
+
+    // A shallow clone holds only the target commit.
+    const shallow = path.join(fixture.root, 'shallow');
+    execFileSync('git', ['clone', '-q', '--depth', '1', pathToFileURL(fixture.repo).href, shallow], { encoding: 'utf8' });
+    const inShallow = definitionInClone(fixture, shallow, { base: fixture.base, target: fixture.target });
+    const fromShallow = await service.openDefinition(inShallow);
+    assert.equal(fromShallow.kind, 'failed');
+    const shallowError = fromShallow.kind === 'failed' ? fromShallow.error : '';
+    assert.match(shallowError, new RegExp(fixture.base));
+    assert.match(shallowError, /shallow clone/);
+    assert.match(shallowError, /full clone/);
+    // Git's own words are the detail, not the message.
+    assert.doesNotMatch(shallowError, /fatal|git log|`/);
+    assert.match(fromShallow.kind === 'failed' ? (fromShallow.detail ?? '') : '', /git log/);
+
+    // A copy of the files with no history at all.
+    const copy = path.join(fixture.root, 'copy');
+    fs.mkdirSync(copy);
+    const inCopy = definitionInClone(fixture, copy, { base: fixture.base, target: fixture.target });
+    const fromCopy = await service.openDefinition(inCopy);
+    assert.equal(fromCopy.kind, 'failed');
+    const copyError = fromCopy.kind === 'failed' ? fromCopy.error : '';
+    assert.match(copyError, /not a git repository/);
+    assert.match(copyError, /full clone/);
+    assert.match(fromCopy.kind === 'failed' ? (fromCopy.detail ?? '') : '', /not a git repository/i);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('git that cannot run, and git that cannot read the repository, are each said as such (DSP-129)', async () => {
+  const fixture = makeFixture();
+  const savedPath = process.env['PATH'];
+  try {
+    const service = new ReviewService({ recordsDir: fixture.records, log: () => undefined });
+
+    // No git on PATH: an empty folder is the whole PATH, on any platform.
+    const empty = path.join(fixture.root, 'no-git-here');
+    fs.mkdirSync(empty);
+    process.env['PATH'] = empty;
+    const noGit = await service.openDefinition(fixture.definitionPath);
+    process.env['PATH'] = savedPath;
+    assert.equal(noGit.kind, 'failed');
+    const noGitError = noGit.kind === 'failed' ? noGit.error : '';
+    assert.match(noGitError, /git was not found on PATH/);
+    assert.doesNotMatch(noGitError, /not a git repository|ENOENT/);
+    assert.match(noGit.kind === 'failed' ? (noGit.detail ?? '') : '', /ENOENT|not found|cannot find/i);
+
+    // Git runs but cannot read this repository (here a broken config file).
+    fs.writeFileSync(path.join(fixture.repo, '.git', 'config'), '[[[ not a config\n');
+    const unreadable = await service.openDefinition(fixture.definitionPath);
+    assert.equal(unreadable.kind, 'failed');
+    const unreadableError = unreadable.kind === 'failed' ? unreadable.error : '';
+    assert.match(unreadableError, /Git could not read the repository at/);
+    assert.match(unreadableError, /under Details/);
+    assert.doesNotMatch(unreadableError, /not a git repository|fatal/);
+    assert.match(unreadable.kind === 'failed' ? (unreadable.detail ?? '') : '', /config/);
+  } finally {
+    process.env['PATH'] = savedPath;
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });

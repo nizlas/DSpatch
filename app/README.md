@@ -1628,6 +1628,23 @@ editor is, and also usable with no chat at all (DSP-126).
   <definition>` (or `DSPATCH_REVIEW_DEFINITION`) opens review alone through the same call
   with no folder and that definition, and no chat window; closing it quits. The startup
   smoke test and other scripted runs ignore those variables and say so.
+- **The example review (DSP-129).** `examples/review/dsp-116.review.json` is the DSP-116
+  walk (5e445c3 → 73aaddc, three walks, 22 steps), bundled with `repository: "../.."` so
+  it reviews the clone it sits in; [examples/review/README.md](../examples/review/README.md)
+  has its origin and hashes. *Open example review*, beside *Open review*, and **File →
+  Open Example Review**, which needs no open project, resolve it from DSpatch's own clone
+  (`ownRepositoryRoot(app.getAppPath())`, `src/main/example-review.ts`) and open it through
+  the same `ReviewWindows.open` with `remember: false`, so it never becomes the last
+  review *Open review* reopens. No provider call is made. Outside a clone - a packaged copy
+  moved out of the tree - nothing opens and the note says a DSpatch clone is needed; a
+  packaged build still inside the tree (`app/release/win-unpacked`) is found by the same
+  upward search from `app.asar`. When the
+  clone lacks either revision (shallow, or no history), the review window says which
+  revision is missing and that a full clone is needed, and shows nothing in its place. When
+  git cannot be started (not found on PATH) it says that instead, and when git runs but
+  cannot read the repository (a broken config, `safe.directory`) it says so; git's own text
+  is under a closed *Details* in each case.
+  The reviewer's record is under `userData/reviews/` like any other review's.
 
 ### The discussion about the code in review (DSP-127)
 

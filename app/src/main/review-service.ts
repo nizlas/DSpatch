@@ -60,6 +60,35 @@ import {
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
+/**
+ * A git command that failed, with what is needed to say why: git's own text, and
+ * whether git ran at all. `execFile` gives a string `code` (`ENOENT`, `EACCES`) when
+ * the process could not be started, and the exit status as a number when it ran.
+ */
+class GitFailure extends Error {
+  readonly stderr: string;
+  readonly couldNotStart: boolean;
+
+  constructor(message: string, stderr: string, couldNotStart: boolean) {
+    super(message);
+    this.stderr = stderr;
+    this.couldNotStart = couldNotStart;
+  }
+}
+
+/**
+ * A review that could not be opened: a plain message for the window, and the
+ * technical text behind it (git's own words) kept apart for a closed Details.
+ */
+class ReviewOpenError extends Error {
+  readonly detail: string;
+
+  constructor(message: string, detail: string) {
+    super(message);
+    this.detail = detail;
+  }
+}
+
 function git(repository: string, args: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -68,7 +97,13 @@ function git(repository: string, args: readonly string[]): Promise<string> {
       { maxBuffer: MAX_BUFFER, windowsHide: true, encoding: 'utf8' },
       (error, stdout, stderr) => {
         if (error !== null) {
-          reject(new Error(`git ${args.join(' ')} failed: ${stderr.trim() || error.message}`));
+          reject(
+            new GitFailure(
+              `git ${args.join(' ')} failed: ${stderr.trim() || error.message}`,
+              stderr.trim(),
+              typeof (error as NodeJS.ErrnoException).code === 'string',
+            ),
+          );
           return;
         }
         resolve(stdout);
@@ -101,12 +136,84 @@ function gitBuffer(repository: string, args: readonly string[]): Promise<Buffer 
 }
 
 async function commit(repository: string, revision: string): Promise<ReviewCommit> {
-  const out = await git(repository, ['log', '-1', '--format=%H%x00%s', `${revision}^{commit}`]);
+  let out: string;
+  try {
+    out = await git(repository, ['log', '-1', '--format=%H%x00%s', `${revision}^{commit}`]);
+  } catch (error) {
+    throw await missingRevision(repository, revision, error);
+  }
   const [sha, subject] = out.trimEnd().split('\0');
   if (sha === undefined || !/^[0-9a-f]{40}$/.test(sha)) {
     throw new Error(`"${revision}" is not a commit in ${repository}.`);
   }
   return { sha, subject: subject ?? '' };
+}
+
+/**
+ * Why a revision the definition names could not be read, in plain words (DSP-129).
+ *
+ * A review is of its two named revisions or of nothing: nothing is offered in their
+ * place, neither another pair nor the working tree. The message says which cause it
+ * is - the folder is missing, git cannot run, the folder is not a repository, git
+ * cannot read it (for instance `safe.directory`), a shallow clone, or a history
+ * without the revision - and git's own text goes to the detail, never the message.
+ */
+async function missingRevision(repository: string, revision: string, error: unknown): Promise<ReviewOpenError> {
+  const raw = error instanceof Error ? error.message : String(error);
+  const nothingElse = 'nothing else is shown in their place.';
+  if (!fs.existsSync(repository)) {
+    return new ReviewOpenError(
+      `The review's repository, ${repository}, does not exist, so the revision "${revision}" it names cannot be read. ` +
+        `This review needs a full clone that contains both of its revisions; ${nothingElse}`,
+      raw,
+    );
+  }
+  const gitCannotRun = (): ReviewOpenError =>
+    new ReviewOpenError(
+      `Git could not be started (git was not found on PATH, or could not run), so the revision "${revision}" in ${repository} cannot be read. ` +
+        `Make git available and open the review again; ${nothingElse}`,
+      raw,
+    );
+  if (error instanceof GitFailure && error.couldNotStart) {
+    return gitCannotRun();
+  }
+  try {
+    await git(repository, ['rev-parse', '--git-dir']);
+  } catch (probe) {
+    if (probe instanceof GitFailure && probe.couldNotStart) {
+      return gitCannotRun();
+    }
+    const probeText = probe instanceof GitFailure ? probe.stderr : String(probe);
+    const detail = `${raw}\n${probe instanceof Error ? probe.message : String(probe)}`;
+    if (/not a git repository/i.test(probeText)) {
+      return new ReviewOpenError(
+        `The review's repository, ${repository}, is not a git repository, so the revision "${revision}" it names cannot be read. ` +
+          `This review needs a full clone that contains both of its revisions; ${nothingElse}`,
+        detail,
+      );
+    }
+    return new ReviewOpenError(
+      `Git could not read the repository at ${repository}, so the revision "${revision}" it names cannot be read; git's reason is under Details. ` +
+        'Nothing else is shown in their place.',
+      detail,
+    );
+  }
+  const shallow = await git(repository, ['rev-parse', '--is-shallow-repository']).then(
+    (answer) => answer.trim() === 'true',
+    () => false,
+  );
+  if (shallow) {
+    return new ReviewOpenError(
+      `The revision "${revision}" is not in ${repository}, which is a shallow clone holding only part of its history. ` +
+        `The review needs a full clone with both of its revisions (git fetch --unshallow completes this one); ${nothingElse}`,
+      raw,
+    );
+  }
+  return new ReviewOpenError(
+    `The revision "${revision}" that this review names is not in the repository at ${repository}. ` +
+      `The review needs a full clone that contains both of its revisions, not a shallow one or a copy without its history; ${nothingElse}`,
+    raw,
+  );
 }
 
 /**
@@ -345,6 +452,9 @@ export class ReviewService {
         } satisfies ReviewBundle,
       };
     } catch (error) {
+      if (error instanceof ReviewOpenError) {
+        return { kind: 'failed', error: error.message, detail: error.detail };
+      }
       return { kind: 'failed', error: error instanceof Error ? error.message : String(error) };
     }
   }

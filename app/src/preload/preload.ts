@@ -107,6 +107,7 @@ const RESOLVE_LOOP_ROLES: BridgeChannel = 'dspatch:resolve-loop-roles';
 const REVEAL_ROLE_SOURCE: BridgeChannel = 'dspatch:reveal-role-source';
 const OPEN_LOOP_EDITOR: BridgeChannel = 'dspatch:open-loop-editor';
 const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
+const OPEN_EXAMPLE_REVIEW: BridgeChannel = 'dspatch:open-example-review';
 const CHECK_REVIEW_WINDOWS: BridgeChannel = 'dspatch:check-review-windows';
 const START_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:start-editor-loop-run';
 const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
@@ -255,6 +256,7 @@ const bridge: DspatchBridge = {
   openLoopEditor: () =>
     ipcRenderer.invoke(OPEN_LOOP_EDITOR) as Promise<LoopEditorWindowOutcome>,
   openReview: () => ipcRenderer.invoke(OPEN_REVIEW) as Promise<LoopEditorWindowOutcome>,
+  openExampleReview: () => ipcRenderer.invoke(OPEN_EXAMPLE_REVIEW) as Promise<LoopEditorWindowOutcome>,
   reviewWindowCheck: (request: ReviewWindowCheckRequest) =>
     ipcRenderer.invoke(CHECK_REVIEW_WINDOWS, request) as Promise<ReviewWindowCheckAnswer>,
   onLoopRunEvent: (listener: (event: LoopRunEvent) => void) => {

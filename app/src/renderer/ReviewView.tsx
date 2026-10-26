@@ -277,6 +277,14 @@ export function ReviewView(): JSX.Element {
         <p className={outcome.kind === 'failed' ? 'rv-error' : ''}>
           {outcome.kind === 'failed' ? outcome.error : folder === null ? words.noDefinition : words.chooseFor(folder)}
         </p>
+        {outcome.kind === 'failed' && outcome.detail !== undefined && (
+          // Diagnostics behind a closed disclosure (DSP-129): the message above says what
+          // to do; git's own words are here for whoever needs them, never opened for you.
+          <details className="rv-sub" data-ev="review-failed-detail">
+            <summary>{words.details}</summary>
+            <pre>{outcome.detail}</pre>
+          </details>
+        )}
         {outcome.kind === 'none' && outcome.problem !== undefined && <p className="rv-error">{outcome.problem}</p>}
         <button type="button" data-ev="review-choose" onClick={choose}>
           {words.openDefinition}

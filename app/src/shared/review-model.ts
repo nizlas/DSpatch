@@ -1640,7 +1640,13 @@ export type ReviewOpenOutcome =
       /** Why the last review opened for that folder could not be opened again, if it could not. */
       readonly problem?: string;
     }
-  | { readonly kind: 'failed'; readonly error: string };
+  | {
+      readonly kind: 'failed';
+      /** The plain message the window shows. */
+      readonly error: string;
+      /** The technical text behind it (git's own words), shown in a closed Details. */
+      readonly detail?: string;
+    };
 
 /**
  * What the main application hands the review module, and all it hands it.
@@ -1653,6 +1659,13 @@ export type ReviewOpenOutcome =
 export interface ReviewWindowInput {
   readonly repository: string | null;
   readonly definitionPath: string | null;
+  /**
+   * Whether opening this definition makes it the last review for its repository.
+   * `true` when omitted. *Open example review* (DSP-129) passes `false`: the bundled
+   * example is not the person's own review, and must not become what *Open review*
+   * reopens for a project in the DSpatch clone.
+   */
+  readonly remember?: boolean;
 }
 
 /** How opening a review window went, for the note beside the button that asked. */

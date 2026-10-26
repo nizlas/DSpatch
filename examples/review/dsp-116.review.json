@@ -1,0 +1,3214 @@
+{
+  "format": "dspatch-review/2",
+  "title": {
+    "sv": "DSP-116: adapterns gräns för avbrott, och Claude-processen vid stängning",
+    "en": "DSP-116: the adapter’s cancellation bound, and the Claude process on close"
+  },
+  "repository": "../..",
+  "base": "5e445c3305b019f43f3a319cc74d802bc748eae9",
+  "target": "73aaddc1e7d69662159bab117feedfb92384f85c",
+  "teachingMode": "Concise",
+  "overviewSummary": {
+    "sv": "DSpatch ska inte påstå att en körning har stoppat när det inte är bevisat, och inte ge upp för tidigt. **W1** följer ett avbrott: chattjänsten väntar så länge adaptern säger att den behöver och skiljer på stoppat, framtvingat och obekräftat slut. **W2** följer stängningen: Claude-adaptern väntar begränsat, dödar processer som inte avslutas och registrerar vad som hände. **W3** följer en tur som väntar på föregående: den startar ingen ny process när adaptern stängs.",
+    "en": "DSpatch must not claim that a run has stopped when that is not proven, and must not give up too early. **W1** follows a cancellation: the chat service waits as long as the adapter says it needs and tells stopped, forced and unconfirmed ends apart. **W2** follows closing: the Claude adapter waits a bounded time, kills processes that do not exit and records what happened. **W3** follows a turn waiting for the previous one: it starts no new process when the adapter closes."
+  },
+  "overview": {
+    "sv": "Ändringen har ett gemensamt syfte: DSpatch ska inte påstå att en körning har stoppat när det inte är bevisat, och ska inte ge upp för tidigt.\n\n1. **Avbrott** (W1): chattjänsten väntar nu minst så länge som adaptern säger att den behöver för att avsluta en avbruten körning, och skiljer på stoppat, framtvingat och obekräftat slut.\n2. **Stängning** (W2): när Claude-adaptern stängs väntar den en begränsad tid, dödar processer som inte avslutas, och registrerar vad som hände med varje process.\n3. **En väntande tur** (W3): en tur som väntar på föregående tur startar ingen ny process när adaptern stängs.\n\nUtanför walkarna: adaptergränssnittet (`AgentAdapter`) får ett valfritt `cancelEndBoundMs`. Testerna täcker gränserna och kapplöpningarna med injicerade timers (`ManualTimers`), chattjänstens fönster och tolkning av `end`, och två fall där `dispose` måste se en riktig process avslutas: där används en lokal ersättningsprocess (`app/tests/support/claude-substitute-process.mjs`, startad med Node), aldrig Claude. Den testfilen är registrerad som tung i `scripts/run-tests.mjs`, så den snabba gruppen startar inga processer. Uppgiftsfilen DSP-116 ingår: status Review, kriterierna ikryssade, och en lista över vad som bara kan avgöras med en riktig Claude Code-process.\n\nPå den här revisionen använder appens chatt ännu inte Claude-adaptern. Ändringen märks i experimentkommandot och i testerna.",
+    "en": "The change has one purpose: DSpatch must not claim that a run has stopped when that is not proven, and must not give up too early.\n\n1. **Cancellation** (W1): the chat service now waits at least as long as the adapter says it needs to end a cancelled run, and tells stopped, forced and unconfirmed ends apart.\n2. **Closing** (W2): when the Claude adapter closes it waits a bounded time, kills processes that do not exit, and records what happened to each process.\n3. **A waiting turn** (W3): a turn waiting for the previous one starts no new process when the adapter closes.\n\nOutside the walks: the adapter interface (`AgentAdapter`) gains an optional `cancelEndBoundMs`. The tests cover the bounds and races with injected timers (`ManualTimers`), the chat service’s window and its reading of `end`, and two cases where `dispose` must see a real process exit: those use a local substitute process (`app/tests/support/claude-substitute-process.mjs`, started with Node), never Claude. That test file is registered as heavy in `scripts/run-tests.mjs`, so the fast group starts no processes. The DSP-116 task file is included: status Review, the criteria ticked, and a list of what only a real Claude Code process can settle.\n\nAt this revision the app’s chat does not use the Claude adapter yet. The change shows in the experiment command and in the tests."
+  },
+  "provenance": {
+    "sv": "Förberedda walks för första användningsprovet (DSP-15-beslut 2026-10-23). Version 2: omskrivna efter första användarobservationen, med precisa fokusställen. Version 4: innehållet kontrollerat steg för steg mot koden inför det andra användarprovet. Testuppgifterna bygger på förberedelsens körning på 73aaddc (provider 63/63, chat 300/300) utan live-anrop. Provider-gruppen innehåller två test som startar en lokal ersättningsprocess med Node; det är inte Claude. Ingen riktig Claude Code-process har körts. Kodbasen är bekant för granskaren, ändringen är redan godkänd av projektets Reviewer, och inga fel är planterade.",
+    "en": "Prepared walks for the first usage trial (DSP-15 decision, 23 October 2026). Version 2: rewritten after the first user observation, with precise focus places. Version 4: the content checked step by step against the code before the second user trial. The test information comes from the preparation’s run at 73aaddc (provider 63/63, chat 300/300) without live calls. The provider group includes two tests that start a local substitute process with Node; that is not Claude. No real Claude Code process was run. The codebase is familiar to the reviewer, the change was already accepted by the project’s Reviewer, and no defects are planted."
+  },
+  "walks": [
+    {
+      "id": "W1",
+      "title": {
+        "sv": "Användaren avbryter en körning",
+        "en": "The user cancels a run"
+      },
+      "purpose": {
+        "sv": "Visar hur ett avbrott går från begäran till ett registrerat utfall, och att DSpatch inte ger upp innan den tid adaptern säger sig behöva har gått ut. Den visar också hur de tre sorternas slut – stoppat, framtvingat och obekräftat – registreras. På den här revisionen anger Claude-adaptern en gräns på 15 s (W1.5), men appens chatt använder ännu inte Claude-adaptern: den skapar Cursor-adaptern, eller Presentation-adaptern i presentationsläge, och ingen av dem anger någon gräns. Den längre väntetiden gäller därför ännu inte i appen (W1.7).",
+        "en": "Shows how a cancellation goes from request to a recorded outcome, and that DSpatch does not give up before the time the adapter says it needs has passed. It also shows how the three kinds of end – stopped, forced and unconfirmed – are recorded. At this revision the Claude adapter declares a bound of 15 s (W1.5), but the app’s chat does not use the Claude adapter yet: it creates the Cursor adapter, or the Presentation adapter in presentation mode, and neither declares a bound. So the longer wait does not yet apply in the app (W1.7)."
+      },
+      "question": {
+        "sv": "Kan DSpatch ge upp och skriva ”outcome unknown” medan adaptern fortfarande är på väg att leverera ett slut? Och vad betyder de olika sluten när de kommer?",
+        "en": "Can DSpatch give up and record “outcome unknown” while the adapter is still on its way to delivering an end? And what do the different ends mean when they arrive?"
+      },
+      "steps": [
+        {
+          "id": "W1.1",
+          "title": {
+            "sv": "Avbrottet begärs",
+            "en": "The cancellation is requested"
+          },
+          "summary": {
+            "sv": "Två olika situationer slutar i en avbrottsbegäran till adaptern: du trycker på Cancel, eller du har slutat vänta och en körning dyker upp ändå. Ändringen är densamma i båda: adaptern skickas med till väntan på bekräftelse.",
+            "en": "Two different situations end in a cancellation request to the adapter: you press Cancel, or you stopped waiting and a run turns up anyway. The change is the same in both: the adapter is passed on to the wait for confirmation."
+          },
+          "body": {
+            "sv": "Båda vägarna gör samma tre saker: markerar försöket `cancel-requested`, ber adaptern avbryta med `adapter.cancel(...)` och startar väntan på bekräftelse med `armCancelConfirmation(...)`.\n\n**Varför adaptern måste med i båda:** `armCancelConfirmation` räknar nu ut hur länge den väntar med `cancelConfirmWindow(adapter)` – aldrig kortare än adapterns egen deklarerade gräns för att avsluta en avbruten körning (`cancelEndBoundMs`) plus en marginal (W1.3). Väntan måste därför få den adapter som fick avbrottsbegäran. Utan den i den ena vägen skulle den vägen ge upp efter standardtiden och kalla utfallet okänt, fast adaptern fortfarande är inom sin gräns.\n\nPå den här revisionen deklarerar Claude-adaptern en sådan gräns, 15 s (W1.5). Appens chatt använder ännu inte Claude-adaptern utan Cursor-adaptern, som inte deklarerar någon gräns (W1.7). I appen blir väntan därför ännu inte längre.",
+            "en": "Both paths do the same three things: mark the attempt `cancel-requested`, ask the adapter to cancel with `adapter.cancel(...)`, and start waiting for confirmation with `armCancelConfirmation(...)`.\n\n**Why both need the adapter:** `armCancelConfirmation` now works out how long to wait with `cancelConfirmWindow(adapter)` – never shorter than the adapter's own declared bound for ending a cancelled run (`cancelEndBoundMs`) plus a margin (W1.3). The wait must therefore get the adapter that received the cancellation. Without it in one path, that path would give up after the default time and call the outcome unknown while the adapter is still within its bound.\n\nAt this revision the Claude adapter declares such a bound, 15 s (W1.5). The app’s chat does not use the Claude adapter yet but the Cursor adapter, which declares no bound (W1.7). So in the app the wait does not get longer yet."
+          },
+          "why": {
+            "sv": "Här går gränsen mellan att *begära* ett avbrott och att *veta* att körningen har slutat. Hur länge DSpatch väntar på beviset avgörs i W1.2 och W1.3.",
+            "en": "This is the line between *requesting* a cancellation and *knowing* the run has ended. How long DSpatch waits for that evidence is decided in W1.2 and W1.3."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Du trycker på Cancel: `cancelRun()`",
+                "en": "You press Cancel: `cancelRun()`"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1759,
+                "end": 1759,
+                "anchor": "armCancelConfirmation(attempt.attemptId, adapter)",
+                "note": {
+                  "sv": "Du trycker på *Cancel* i chatten medan en körning pågår eller väntar på svar; fönstret anropar `cancelRun()`. Samma väg tas när du trycker på *Stop waiting* men leverantören redan har startat körningen: då anropar `abandonSend()` den här funktionen. Avbrottet begärs genast, och väntan på bekräftelse får den adapter som fick begäran.",
+                  "en": "You press *Cancel* in the chat while a run is going or waiting for a reply; the window calls `cancelRun()`. The same path is taken when you press *Stop waiting* but the provider has already started the run: `abandonSend()` then calls this function. The cancellation is requested at once, and the wait for confirmation gets the adapter that received the request."
+                }
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 1712,
+                  "end": 1770,
+                  "anchor": "async cancelRun()",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1712,
+                "end": 1779,
+                "kind": "method",
+                "name": "cancelRun",
+                "anchor": "cancelRun"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Du slutade vänta, men en körning startade ändå: `stopAbandonedRun()`",
+                "en": "You stopped waiting, but a run started anyway: `stopAbandonedRun()`"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1702,
+                "end": 1702,
+                "anchor": "armCancelConfirmation(attemptId, adapter)",
+                "note": {
+                  "sv": "Du tryckte på *Stop waiting* innan leverantören svarat på meddelandet, alltså innan det fanns någon körning att avbryta. Försöket blev `outcome-unknown` och sparades som övergivet. Svarar `adapter.send(...)` sedan ändå med en körning, avbryts den här direkt, så att ingen körning lämnas utan bevakning – med samma väntan på bekräftelse, och samma adapter, som när du trycker på *Cancel*.",
+                  "en": "You pressed *Stop waiting* before the provider had replied to the message, so before there was a run to cancel. The attempt became `outcome-unknown` and was kept as abandoned. If `adapter.send(...)` then replies with a run after all, it is cancelled right here, so no run is left unwatched – with the same wait for confirmation, and the same adapter, as when you press *Cancel*."
+                }
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 1688,
+                  "end": 1711,
+                  "anchor": "private async stopAbandonedRun",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1688,
+                "end": 1710,
+                "kind": "method",
+                "name": "stopAbandonedRun",
+                "anchor": "stopAbandonedRun"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Vägarna är lästa ur koden på målrevisionen: *Cancel* i chatten anropar `cancelRun()` via IPC (`main.ts`), `abandonSend()` anropar `cancelRun()` när en körning redan finns, och `send` anropar `stopAbandonedRun()` när en övergiven sändning ändå får en körning.",
+                "en": "The paths are read from the code at the target revision: *Cancel* in the chat calls `cancelRun()` over IPC (`main.ts`), `abandonSend()` calls `cancelRun()` when a run already exists, and `send` calls `stopAbandonedRun()` when an abandoned send gets a run after all."
+              }
+            },
+            {
+              "label": "test-simulated",
+              "text": {
+                "sv": "Automatiska tester med en ersatt adapter, körda på målrevisionen: att väntan följer en deklarerad gräns är visat genom `cancelRun()` (`tests/chat-service.test.ts:1285`, `:1312`). `stopAbandonedRun()` är visad att avbryta en körning som dyker upp efter att man slutat vänta (`:1140`), men det testet deklarerar ingen gräns. Att gränsen används även på den vägen visar koden, inte något test.",
+                "en": "Automated tests with a substituted adapter, run at the target revision: that the wait follows a declared bound is shown through `cancelRun()` (`tests/chat-service.test.ts:1285`, `:1312`). `stopAbandonedRun()` is shown to cancel a run that turns up after you stopped waiting (`:1140`), but that test declares no bound. That the bound is used on that path too is shown by the code, not by a test."
+              }
+            }
+          ],
+          "evidenceRefs": [
+            {
+              "path": "app/tests/chat-service.test.ts",
+              "start": 1140,
+              "end": 1171,
+              "anchor": "abandoned without a doomed cancel",
+              "role": "evidence",
+              "note": {
+                "sv": "övergiven sändning, utan deklarerad gräns",
+                "en": "abandoned send, no declared bound"
+              }
+            },
+            {
+              "path": "app/tests/chat-service.test.ts",
+              "start": 1285,
+              "end": 1311,
+              "anchor": "with a declared bound",
+              "role": "evidence",
+              "note": {
+                "sv": "Cancel, gräns 400 ms",
+                "en": "Cancel, bound 400 ms"
+              }
+            },
+            {
+              "path": "app/tests/chat-service.test.ts",
+              "start": 1312,
+              "end": 1324,
+              "anchor": "does not shorten it",
+              "role": "evidence",
+              "note": {
+                "sv": "Cancel, gräns 10 ms",
+                "en": "Cancel, bound 10 ms"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.2",
+          "title": {
+            "sv": "Timern som väntar på bekräftelse",
+            "en": "The timer that waits for confirmation"
+          },
+          "summary": {
+            "sv": "`armCancelConfirmation` startar en timer. Om ingen bekräftelse har kommit när den löper ut, registreras utfallet som okänt.",
+            "en": "`armCancelConfirmation` starts a timer. If no confirmation has arrived when it expires, the outcome is recorded as unknown."
+          },
+          "body": {
+            "sv": "`const window = this.cancelConfirmWindow(adapter)`\nRäknar ut hur länge timern ska vänta. **Ny rad.** Förut användes alltid samma värde.\n\nNär tiden går ut och försöket fortfarande är `cancel-requested`:\n1. Försöket markeras `outcome-unknown`.\n2. Texten skiljer nu på två fall: om adaptern har angett en gräns nämns adaptern, gränsen och respittiden; annars gäller den gamla texten.\n3. Loggraden anger samma tider (gräns och respittid i millisekunder), men inte adapterns namn.\n\n`formatSeconds(ms)`\nNy hjälpfunktion: hela sekunder skrivs som heltal, annars med en decimal.",
+            "en": "`const window = this.cancelConfirmWindow(adapter)`\nWorks out how long the timer waits. **New line.** Before, the same value was always used.\n\nWhen the time runs out and the attempt is still `cancel-requested`:\n1. The attempt is marked `outcome-unknown`.\n2. The text now distinguishes two cases: if the adapter has declared a bound, it names the adapter, the bound and the grace period; otherwise the old text applies.\n3. The log line gives the same times (bound and grace in milliseconds), but not the adapter’s name.\n\n`formatSeconds(ms)`\nNew helper: whole seconds are written as integers, otherwise with one decimal."
+          },
+          "why": {
+            "sv": "”Okänt” betyder inte ”stoppat”. Medan försöket är okänt startar DSpatch inte något nytt meddelande på egen hand.",
+            "en": "“Unknown” does not mean “stopped”. While the attempt is unknown, DSpatch does not start a new message on its own."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Väntetiden räknas ut",
+                "en": "The wait is worked out"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1797,
+                "end": 1798,
+                "anchor": "this.cancelConfirmWindow(adapter)"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 1786,
+                  "end": 1831,
+                  "anchor": "private armCancelConfirmation",
+                  "role": "walk"
+                }
+              ],
+              "from": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1759,
+                "end": 1759,
+                "anchor": "armCancelConfirmation(attempt.attemptId, adapter)",
+                "label": {
+                  "sv": "Anropas från `cancelRun()`",
+                  "en": "Called from `cancelRun()`"
+                }
+              },
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1781,
+                "end": 1831,
+                "kind": "method",
+                "name": "armCancelConfirmation",
+                "anchor": "armCancelConfirmation"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Två texter när tiden går ut",
+                "en": "Two texts when time runs out"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1804,
+                "end": 1828,
+                "anchor": "markOutcomeUnknown"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 1799,
+                  "end": 1830,
+                  "anchor": "setTimeout",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1781,
+                "end": 1831,
+                "kind": "method",
+                "name": "armCancelConfirmation",
+                "anchor": "armCancelConfirmation"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "`formatSeconds`",
+                "en": "`formatSeconds`"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 347,
+                "end": 351,
+                "anchor": "function formatSeconds"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 347,
+                  "end": 352,
+                  "anchor": "function formatSeconds",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 347,
+                "end": 351,
+                "kind": "function",
+                "name": "formatSeconds",
+                "anchor": "formatSeconds"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur koden på målrevisionen. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the code at the target revision. That alone does not show that it works when the program runs."
+              }
+            }
+          ],
+          "evidenceRefs": []
+        },
+        {
+          "id": "W1.3",
+          "title": {
+            "sv": "Hur lång väntetiden blir",
+            "en": "How long the wait is"
+          },
+          "summary": {
+            "sv": "Väntetiden är 10 sekunder, om inte adaptern anger att den själv kan behöva längre tid för att avsluta.",
+            "en": "The wait is 10 seconds, unless the adapter declares that it may itself need longer to finish."
+          },
+          "body": {
+            "sv": "`cancelConfirmWindow(adapter)`\n- Ingen gräns angiven, eller ett värde som inte är ett ändligt tal ≥ 0: väntetiden är `cancelConfirmMs` (10 s).\n- Annars: `max(cancelConfirmMs, gränsen + respittid)`.\n\n`CANCEL_CONFIRM_GRACE_MS = 1_000`\nRespittiden: en sekund extra för att slutet ska hinna levereras till chattjänsten.\n\nEn kortare angiven gräns kan alltså aldrig korta väntetiden under 10 s.\n\nTesterna kan ersätta både väntetiden och respittiden (`timings`), så att de inte behöver vänta i verklig tid.",
+            "en": "`cancelConfirmWindow(adapter)`\n- No bound declared, or a value that is not a finite number ≥ 0: the wait is `cancelConfirmMs` (10 s).\n- Otherwise: `max(cancelConfirmMs, bound + grace)`.\n\n`CANCEL_CONFIRM_GRACE_MS = 1_000`\nThe grace period: one extra second for the end to reach the chat service.\n\nSo a shorter declared bound can never make the wait shorter than 10 s.\n\nTests can replace both the wait and the grace (`timings`) so they need not wait in real time."
+          },
+          "why": {
+            "sv": "Det här är svaret på walkens fråga: DSpatch ger inte upp före den tid adaptern säger att den behöver.",
+            "en": "This answers the walk’s question: DSpatch does not give up before the time the adapter says it needs."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Regeln för väntetiden",
+                "en": "The rule for the wait"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1844,
+                "end": 1851,
+                "anchor": "const declared = adapter.cancelEndBoundMs"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 1833,
+                  "end": 1853,
+                  "anchor": "private cancelConfirmWindow",
+                  "role": "walk"
+                }
+              ],
+              "from": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1798,
+                "end": 1798,
+                "anchor": "this.cancelConfirmWindow(adapter)",
+                "label": {
+                  "sv": "Anropas från `armCancelConfirmation`",
+                  "en": "Called from `armCancelConfirmation`"
+                }
+              },
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1833,
+                "end": 1852,
+                "kind": "method",
+                "name": "cancelConfirmWindow",
+                "anchor": "cancelConfirmWindow"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Respittiden: 1 s",
+                "en": "The grace: 1 s"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 155,
+                "end": 155,
+                "anchor": "CANCEL_CONFIRM_GRACE_MS = 1_000"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 143,
+                  "end": 156,
+                  "anchor": "CANCEL_CONFIRM_MS = 10_000",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 145,
+                "end": 155,
+                "kind": "declaration",
+                "name": "CANCEL_CONFIRM_GRACE_MS",
+                "anchor": "CANCEL_CONFIRM_GRACE_MS"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "Testinställningar för respittiden",
+                "en": "Test settings for the grace"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 671,
+                "end": 672,
+                "anchor": "cancelConfirmGraceMs?: number"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 664,
+                  "end": 673,
+                  "anchor": "readonly timings?",
+                  "role": "walk"
+                },
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 750,
+                  "end": 754,
+                  "anchor": "private readonly cancelConfirmGraceMs",
+                  "role": "walk"
+                },
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 843,
+                  "end": 845,
+                  "anchor": "CANCEL_CONFIRM_GRACE_MS",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 592,
+                "end": 674,
+                "kind": "type",
+                "name": "ChatServiceOptions",
+                "anchor": "ChatServiceOptions"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "test-simulated",
+              "text": {
+                "sv": "Automatiska tester med en ersatt adapter och förkortade tider visar att en angiven gräns förlänger väntan (`tests/chat-service.test.ts:1285`, gräns 400 ms) och att en kortare gräns inte förkortar den (`:1312`, gräns 10 ms).",
+                "en": "Automated tests with a substituted adapter and shortened times show that a declared bound lengthens the wait (`tests/chat-service.test.ts:1285`, bound 400 ms) and that a shorter bound does not shorten it (`:1312`, bound 10 ms)."
+              }
+            },
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Att ett värde som inte är ett ändligt tal ≥ 0 räknas som ”ingen gräns” är bara läst ur koden; inget test pekar ut det.",
+                "en": "That a value that is not a finite number ≥ 0 counts as “no bound” is only read from the code; no test singles it out."
+              }
+            }
+          ],
+          "evidenceRefs": [
+            {
+              "path": "app/tests/chat-service.test.ts",
+              "start": 1285,
+              "end": 1311,
+              "anchor": "with a declared bound",
+              "role": "evidence",
+              "note": {
+                "sv": "gräns 400 ms",
+                "en": "bound 400 ms"
+              }
+            },
+            {
+              "path": "app/tests/chat-service.test.ts",
+              "start": 1312,
+              "end": 1324,
+              "anchor": "shorter than the default window",
+              "role": "evidence",
+              "note": {
+                "sv": "gräns 10 ms",
+                "en": "bound 10 ms"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.4",
+          "title": {
+            "sv": "Var gränsen kommer ifrån",
+            "en": "Where the bound comes from"
+          },
+          "summary": {
+            "sv": "Gränsen är ett nytt, valfritt fält i adapterkontraktet.",
+            "en": "The bound is a new, optional field in the adapter contract."
+          },
+          "body": {
+            "sv": "`AgentAdapter.cancelEndBoundMs?: number`\nLängsta tid från att löftet från `cancel()` har uppfyllts till körningens sista händelse, `run.finished`, som adaptern garanterar med sina egna timers.\n\n`ChatAdapter.cancelEndBoundMs?: number`\nSamma fält i den del av kontraktet som chattjänsten använder.\n\nSaknas fältet har adaptern inte lovat någon gräns, och väntetiden blir standardvärdet.",
+            "en": "`AgentAdapter.cancelEndBoundMs?: number`\nThe longest time from the promise returned by `cancel()` resolving to the run’s last event, `run.finished`, that the adapter guarantees with its own timers.\n\n`ChatAdapter.cancelEndBoundMs?: number`\nThe same field in the part of the contract the chat service uses.\n\nIf the field is absent the adapter has promised no bound, and the wait is the default."
+          },
+          "why": {
+            "sv": "Fältet är additivt: adaptrar som inte anger det beter sig som förut.",
+            "en": "The field is additive: adapters that do not declare it behave as before."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "I `AgentAdapter`",
+                "en": "In `AgentAdapter`"
+              },
+              "focus": {
+                "path": "app/src/adapter/agent-adapter.ts",
+                "start": 41,
+                "end": 41,
+                "anchor": "readonly cancelEndBoundMs?: number"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/agent-adapter.ts",
+                  "start": 33,
+                  "end": 42,
+                  "anchor": "export interface AgentAdapter",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/agent-adapter.ts",
+                "start": 15,
+                "end": 115,
+                "kind": "type",
+                "name": "AgentAdapter",
+                "anchor": "AgentAdapter"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "I `ChatAdapter`",
+                "en": "In `ChatAdapter`"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 558,
+                "end": 558,
+                "anchor": "readonly cancelEndBoundMs?: number"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 552,
+                  "end": 558,
+                  "anchor": "readonly cancelEndBoundMs?: number",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 508,
+                "end": 567,
+                "kind": "type",
+                "name": "ChatAdapter",
+                "anchor": "ChatAdapter"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur koden på målrevisionen. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the code at the target revision. That alone does not show that it works when the program runs."
+              }
+            }
+          ],
+          "evidenceRefs": []
+        },
+        {
+          "id": "W1.5",
+          "title": {
+            "sv": "Claude-adaptern anger sin gräns",
+            "en": "The Claude adapter declares its bound"
+          },
+          "summary": {
+            "sv": "Claude-adaptern anger 15 sekunder, härlett ur sina egna väntetider.",
+            "en": "The Claude adapter declares 15 seconds, derived from its own waits."
+          },
+          "body": {
+            "sv": "`readonly cancelEndBoundMs = CANCEL_END_BOUND_MS`\nClaude-adaptern anger gränsen.\n\n`CANCEL_END_BOUND_MS = Math.max(...)`\nDet största av två värden:\n1. Stoppsekvensens tre väntetider tillsammans: 3 + 10 + 2 = 15 s.\n2. Väntan på föregående tur i `send`: 15 s.\n\nResultatet blir 15 s. Om Claude-adaptern används i chatten väntar chattjänsten då 16 s (W1.3).",
+            "en": "`readonly cancelEndBoundMs = CANCEL_END_BOUND_MS`\nThe Claude adapter declares the bound.\n\n`CANCEL_END_BOUND_MS = Math.max(...)`\nThe larger of two values:\n1. The stop sequence’s three waits together: 3 + 10 + 2 = 15 s.\n2. The wait for the previous turn in `send`: 15 s.\n\nThe result is 15 s. If the Claude adapter is used in the chat, the chat service then waits 16 s (W1.3)."
+          },
+          "why": {
+            "sv": "Gränsen räknas fram ur de faktiska timrarna i stället för att skrivas in som ett eget tal, så den följer med om timrarna ändras.",
+            "en": "The bound is computed from the actual timers rather than written down as a separate number, so it follows if the timers change."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Adaptern anger gränsen",
+                "en": "The adapter declares the bound"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1170,
+                "end": 1170,
+                "anchor": "readonly cancelEndBoundMs = CANCEL_END_BOUND_MS"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1169,
+                  "end": 1171,
+                  "anchor": "cancelEndBoundMs",
+                  "role": "walk"
+                }
+              ],
+              "from": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 1844,
+                "end": 1844,
+                "anchor": "adapter.cancelEndBoundMs",
+                "label": {
+                  "sv": "Skulle läsas i `cancelConfirmWindow` om Claude-adaptern kopplades in i chatten",
+                  "en": "Would be read in `cancelConfirmWindow` if the Claude adapter were wired into the chat"
+                }
+              },
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1169,
+                "end": 1170,
+                "kind": "member",
+                "name": "cancelEndBoundMs",
+                "anchor": "cancelEndBoundMs"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Härledningen",
+                "en": "The derivation"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 877,
+                "end": 880,
+                "anchor": "export const CANCEL_END_BOUND_MS"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 858,
+                  "end": 881,
+                  "anchor": "PREVIOUS_TURN_EXIT_MS",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 860,
+                "end": 880,
+                "kind": "declaration",
+                "name": "CANCEL_END_BOUND_MS",
+                "anchor": "CANCEL_END_BOUND_MS"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "Vad gränsen inte täcker",
+                "en": "What the bound does not cover"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 873,
+                "end": 875,
+                "anchor": "Not covered by a timer"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 860,
+                  "end": 881,
+                  "anchor": "CANCEL_END_BOUND_MS",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 860,
+                "end": 880,
+                "kind": "declaration",
+                "name": "CANCEL_END_BOUND_MS",
+                "anchor": "CANCEL_END_BOUND_MS"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "test-simulated",
+              "text": {
+                "sv": "Ett automatiskt test med ersatt SDK och manuella timers kontrollerar härledningen och att slutet kommer inom gränsen (`tests/claude-agent-sdk-adapter.test.ts:1392`). Ingen riktig Claude Code-process har körts i underlaget.",
+                "en": "An automated test with a substituted SDK and manual timers checks the derivation and that the end arrives within the bound (`tests/claude-agent-sdk-adapter.test.ts:1392`). No real Claude Code process was run for this material."
+              }
+            }
+          ],
+          "evidenceRefs": [
+            {
+              "path": "app/tests/claude-agent-sdk-adapter.test.ts",
+              "start": 1392,
+              "end": 1429,
+              "anchor": "the declared cancellation bound is derived",
+              "role": "evidence"
+            }
+          ]
+        },
+        {
+          "id": "W1.6",
+          "title": {
+            "sv": "Oförändrad kod som gränsen bygger på",
+            "en": "Unchanged code the bound relies on"
+          },
+          "summary": {
+            "sv": "Gränsen i W1.5 bygger på stoppsekvensen och väntan på föregående tur. Den koden är inte ändrad. Hjälpfunktionen `settlesWithinBound`, som `send` väntar med, är ändrad (den avslutas också när `dispose` börjar, W3.2), men 15-sekundersgränsen är densamma.",
+            "en": "The bound in W1.5 relies on the stop sequence and the wait for the previous turn. That code has not changed. The helper `send` waits with, `settlesWithinBound`, did change (it now also ends when `dispose` begins, W3.2), but the 15 s bound is the same."
+          },
+          "body": {
+            "sv": "Stoppsekvensen trappar upp i tre steg:\n1. `interrupt()`, sedan vänta upp till 3 s (eller gå vidare direkt om `interrupt()` misslyckas).\n2. `abort()`, sedan vänta upp till 10 s.\n3. `kill('SIGKILL')` på processen om den lever, sedan vänta upp till 2 s.\n\nHar inget bekräftat slut kommit då, avslutas körningen som `unconfirmed`.\n\n`send` väntar upp till 15 s på att föregående tur blir klar innan en ny tur startar.\n\nDen nya kommentaren vid `CANCEL_END_BOUND_MS` (W1.5, kodställe 3) säger vad gränsen **inte** täcker: den första inläsningen av SDK-modulen.",
+            "en": "The stop sequence escalates in three steps:\n1. `interrupt()`, then wait up to 3 s (or move on at once if `interrupt()` fails).\n2. `abort()`, then wait up to 10 s.\n3. `kill('SIGKILL')` on the process if it is alive, then wait up to 2 s.\n\nIf no confirmed end has arrived by then, the run ends as `unconfirmed`.\n\n`send` waits up to 15 s for the previous turn to finish before starting a new one.\n\nThe new comment at `CANCEL_END_BOUND_MS` (W1.5, place 3) says what the bound does **not** cover: the first load of the SDK module."
+          },
+          "why": {
+            "sv": "Om de här väntetiderna ändras utan att gränsen följer med, kan chattjänsten ge upp för tidigt igen.",
+            "en": "If these waits were changed without the bound following them, the chat service could again give up too early."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Konstanterna 3 s, 10 s, 2 s",
+                "en": "The constants 3 s, 10 s, 2 s"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 520,
+                "end": 529,
+                "anchor": "CANCEL_INTERRUPT_WAIT_MS = 3_000"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 505,
+                  "end": 529,
+                  "anchor": "Bounded escalation",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 520,
+                "end": 529,
+                "kind": "declaration",
+                "name": "CANCEL_INTERRUPT_WAIT_MS",
+                "anchor": "CANCEL_INTERRUPT_WAIT_MS"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Steg 1: interrupt och vänta",
+                "en": "Step 1: interrupt and wait"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2133,
+                "end": 2138,
+                "anchor": "CANCEL_INTERRUPT_WAIT_MS"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 2119,
+                  "end": 2198,
+                  "anchor": "private async stopSequence",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2114,
+                "end": 2198,
+                "kind": "method",
+                "name": "stopSequence",
+                "anchor": "stopSequence"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "Steg 2: abort och vänta",
+                "en": "Step 2: abort and wait"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2151,
+                "end": 2161,
+                "anchor": "run.abortController.abort()"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 2119,
+                  "end": 2198,
+                  "anchor": "private async stopSequence",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2114,
+                "end": 2198,
+                "kind": "method",
+                "name": "stopSequence",
+                "anchor": "stopSequence"
+              }
+            },
+            {
+              "id": "p4",
+              "label": {
+                "sv": "Steg 3: `kill('SIGKILL')`, annars `unconfirmed`",
+                "en": "Step 3: `kill('SIGKILL')`, otherwise `unconfirmed`"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2171,
+                "end": 2197,
+                "anchor": "kill('SIGKILL')"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 2119,
+                  "end": 2198,
+                  "anchor": "private async stopSequence",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2114,
+                "end": 2198,
+                "kind": "method",
+                "name": "stopSequence",
+                "anchor": "stopSequence"
+              }
+            },
+            {
+              "id": "p5",
+              "label": {
+                "sv": "Väntan på föregående tur",
+                "en": "The wait for the previous turn"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1357,
+                "end": 1358,
+                "anchor": "settlesWithinBound(previous.pump"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1357,
+                  "end": 1382,
+                  "anchor": "settlesWithinBound(previous.pump",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1306,
+                "end": 1430,
+                "kind": "method",
+                "name": "send",
+                "anchor": "send"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur koden på målrevisionen. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the code at the target revision. That alone does not show that it works when the program runs."
+              }
+            }
+          ],
+          "evidenceRefs": []
+        },
+        {
+          "id": "W1.7",
+          "title": {
+            "sv": "Vilka adaptrar chatten använder i dag",
+            "en": "Which adapters the chat uses today"
+          },
+          "summary": {
+            "sv": "På den här revisionen använder chattjänsten Cursor- eller Presentation-adaptern, inte Claude-adaptern.",
+            "en": "At this revision the chat service uses the Cursor or Presentation adapter, not the Claude adapter."
+          },
+          "body": {
+            "sv": "`ensureAdapter()`\nSkapar adaptern via `createAdapter`, och annars `CursorSdkAdapter`.\n\n`main.ts`\nAnger `PresentationAdapter` i presentationsläge. Annars används standardvalet.\n\nIngen av dessa anger `cancelEndBoundMs`. Den här koden är oförändrad.",
+            "en": "`ensureAdapter()`\nCreates the adapter through `createAdapter`, otherwise `CursorSdkAdapter`.\n\n`main.ts`\nSupplies `PresentationAdapter` in presentation mode. Otherwise the default is used.\n\nNone of these declares `cancelEndBoundMs`. This code is unchanged."
+          },
+          "why": {
+            "sv": "Den längre väntetiden har alltså ingen effekt i appens chatt ännu. Den gäller först när en adapter som anger en gräns, som Claude-adaptern, kopplas in.",
+            "en": "So the longer wait has no effect in the app’s chat yet. It applies once an adapter that declares a bound, such as the Claude adapter, is wired in."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "`ensureAdapter()`",
+                "en": "`ensureAdapter()`"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 3119,
+                "end": 3122,
+                "anchor": "new CursorSdkAdapter"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 3116,
+                  "end": 3124,
+                  "anchor": "private ensureAdapter",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 3117,
+                "end": 3124,
+                "kind": "method",
+                "name": "ensureAdapter",
+                "anchor": "ensureAdapter"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Adaptervalet i `main.ts`",
+                "en": "The adapter choice in `main.ts`"
+              },
+              "focus": {
+                "path": "app/src/main/main.ts",
+                "start": 556,
+                "end": 559,
+                "anchor": "new PresentationAdapter"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/main.ts",
+                  "start": 544,
+                  "end": 561,
+                  "anchor": "const chatService = new ChatService",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/main.ts",
+                "start": 537,
+                "end": 562,
+                "kind": "declaration",
+                "name": "chatService",
+                "anchor": "chatService"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur koden på målrevisionen. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the code at the target revision. That alone does not show that it works when the program runs."
+              }
+            }
+          ],
+          "evidenceRefs": []
+        },
+        {
+          "id": "W1.8",
+          "title": {
+            "sv": "När slutet kommer",
+            "en": "When the end arrives"
+          },
+          "summary": {
+            "sv": "När stoppsekvensen är klar skickar adaptern ett avslutande `run.finished` med fältet `end`.",
+            "en": "When the stop sequence is done, the adapter sends a final `run.finished` with the field `end`."
+          },
+          "body": {
+            "sv": "`end?: RunEnd` i `types.ts`\nSaknas `end` betyder det ”inte rapporterat”, aldrig `stopped`. Typen är oförändrad.\n\n`finishCancelled(state, run, end, evidence)`\nSkickar `run.finished` med status `cancelled` och ett av tre värden i `end`:\n- `stopped`: körningen slutade efter `interrupt()`. (En körning som aldrig hann starta får också `stopped`, men via `finishNotStarted`.)\n- `forced`: det krävdes `abort()` eller `kill('SIGKILL')`.\n- `unconfirmed`: inget bevis för att den lokala processen slutat.",
+            "en": "`end?: RunEnd` in `types.ts`\nA missing `end` means “not reported”, never `stopped`. The type is unchanged.\n\n`finishCancelled(state, run, end, evidence)`\nSends `run.finished` with status `cancelled` and one of three values in `end`:\n- `stopped`: the run ended after `interrupt()`. (A run that never got started also gets `stopped`, but through `finishNotStarted`.)\n- `forced`: it took `abort()` or `kill('SIGKILL')`.\n- `unconfirmed`: no evidence that the local process ended."
+          },
+          "why": {
+            "sv": "`end` säger bara något om den lokala processen. Huruvida leverantören fortsatte arbeta med redan skickade förfrågningar är fortfarande okänt.",
+            "en": "`end` only tells us about the local process. Whether the provider kept working on requests already sent is still unknown."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "`RunEnd`",
+                "en": "`RunEnd`"
+              },
+              "focus": {
+                "path": "app/src/adapter/types.ts",
+                "start": 236,
+                "end": 236,
+                "anchor": "export type RunEnd"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/types.ts",
+                  "start": 230,
+                  "end": 237,
+                  "anchor": "export type RunEnd",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/types.ts",
+                "start": 220,
+                "end": 236,
+                "kind": "type",
+                "name": "RunEnd",
+                "anchor": "RunEnd"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "`end` i `run.finished`",
+                "en": "`end` in `run.finished`"
+              },
+              "focus": {
+                "path": "app/src/adapter/types.ts",
+                "start": 274,
+                "end": 274,
+                "anchor": "readonly end?: RunEnd"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/types.ts",
+                  "start": 270,
+                  "end": 275,
+                  "anchor": "readonly end?: RunEnd",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/types.ts",
+                "start": 238,
+                "end": 275,
+                "kind": "type",
+                "name": "AgentEvent",
+                "anchor": "AgentEvent"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "`finishCancelled` sätter `end`",
+                "en": "`finishCancelled` sets `end`"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2358,
+                "end": 2358,
+                "anchor": "this.finishRun(state, run"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 2340,
+                  "end": 2359,
+                  "anchor": "private finishCancelled",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2340,
+                "end": 2359,
+                "kind": "method",
+                "name": "finishCancelled",
+                "anchor": "finishCancelled"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur koden på målrevisionen. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the code at the target revision. That alone does not show that it works when the program runs."
+              }
+            }
+          ],
+          "evidenceRefs": []
+        },
+        {
+          "id": "W1.9",
+          "title": {
+            "sv": "Hur chattjänsten tolkar slutet",
+            "en": "How the chat service reads the end"
+          },
+          "summary": {
+            "sv": "Chattjänsten tolkar nu `end` och registrerar ett av tre utfall.",
+            "en": "The chat service now reads `end` and records one of three outcomes."
+          },
+          "body": {
+            "sv": "`cancelled` + `unconfirmed` → `markOutcomeUnknown`\n**Nytt.** Körningen räknas som slut, så att inget väntar för evigt, men inte som stoppad.\n\n`cancelled` + `stopped` eller `forced` → `markStopped`\n**Nytt.** Ett bekräftat *lokalt* slut. Texten säger att leverantörens fortsatta arbete är okänt.\n\n`cancelled` utan `end` → `markStopped`\nSom förut: leverantören rapporterade slutet. Grenen är oförändrad; bara villkorsraden blev ett `else if`.",
+            "en": "`cancelled` + `unconfirmed` → `markOutcomeUnknown`\n**New.** The run counts as ended, so nothing waits forever, but not as stopped.\n\n`cancelled` + `stopped` or `forced` → `markStopped`\n**New.** A confirmed *local* end. The text says the provider’s further work is unknown.\n\n`cancelled` without `end` → `markStopped`\nAs before: the provider reported the end. The branch is unchanged; only the condition line became an `else if`."
+          },
+          "why": {
+            "sv": "Före ändringen räknades varje `cancelled` som ett bekräftat stopp, även när adaptern inte hade bevis.",
+            "en": "Before the change every `cancelled` counted as a confirmed stop, even when the adapter had no evidence."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "`unconfirmed` → okänt",
+                "en": "`unconfirmed` → unknown"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 3239,
+                "end": 3250,
+                "anchor": "event.end === 'unconfirmed'"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 3233,
+                  "end": 3277,
+                  "anchor": "event.type === 'run.finished'",
+                  "role": "walk"
+                },
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 3179,
+                  "end": 3349,
+                  "anchor": "private onAgentEvent",
+                  "role": "context"
+                }
+              ],
+              "from": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2358,
+                "end": 2358,
+                "anchor": "this.finishRun(state, run",
+                "label": {
+                  "sv": "`run.finished` med `end` skickas här av Claude-adaptern (när den kopplas in i chatten)",
+                  "en": "`run.finished` with `end` is emitted here by the Claude adapter (once wired into the chat)"
+                }
+              },
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 3233,
+                "end": 3277,
+                "kind": "block",
+                "name": "run.finished in onAgentEvent",
+                "anchor": "event.type === 'run.finished'"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "`stopped`/`forced` → lokalt slut",
+                "en": "`stopped`/`forced` → local end"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 3251,
+                "end": 3264,
+                "anchor": "event.end === 'stopped'"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 3233,
+                  "end": 3277,
+                  "anchor": "event.type === 'run.finished'",
+                  "role": "walk"
+                },
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 3179,
+                  "end": 3349,
+                  "anchor": "private onAgentEvent",
+                  "role": "context"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 3233,
+                "end": 3277,
+                "kind": "block",
+                "name": "run.finished in onAgentEvent",
+                "anchor": "event.type === 'run.finished'"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "Utan `end`: som förut",
+                "en": "Without `end`: as before"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 3265,
+                "end": 3270,
+                "anchor": "This is a confirmed end"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 3233,
+                  "end": 3277,
+                  "anchor": "event.type === 'run.finished'",
+                  "role": "walk"
+                },
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 3179,
+                  "end": 3349,
+                  "anchor": "private onAgentEvent",
+                  "role": "context"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 3233,
+                "end": 3277,
+                "kind": "block",
+                "name": "run.finished in onAgentEvent",
+                "anchor": "event.type === 'run.finished'"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "test-simulated",
+              "text": {
+                "sv": "Automatiska tester med en ersatt adapter visar båda de nya grenarna (`tests/chat-service.test.ts:1325` och `:1342`).",
+                "en": "Automated tests with a substituted adapter show both new branches (`tests/chat-service.test.ts:1325` and `:1342`)."
+              }
+            }
+          ],
+          "evidenceRefs": [
+            {
+              "path": "app/tests/chat-service.test.ts",
+              "start": 1325,
+              "end": 1341,
+              "anchor": "end unconfirmed is outcome-unknown",
+              "role": "evidence"
+            },
+            {
+              "path": "app/tests/chat-service.test.ts",
+              "start": 1342,
+              "end": 1363,
+              "anchor": "end stopped or forced",
+              "role": "evidence"
+            }
+          ]
+        },
+        {
+          "id": "W1.10",
+          "title": {
+            "sv": "Vad försöksloggen (`AttemptLedger`) gör med utfallet",
+            "en": "What the attempt ledger (`AttemptLedger`) does with the outcome"
+          },
+          "summary": {
+            "sv": "Försöksloggen skriver aldrig om ett avgjort försök. `outcome-unknown` räknas inte som avgjort.",
+            "en": "The ledger never rewrites a settled attempt. `outcome-unknown` does not count as settled."
+          },
+          "body": {
+            "sv": "`SETTLED`\nAvgjorda tillstånd: `stopped-confirmed`, `completed`, `failed`.\n\n`transition(record, next, note)`\nVägrar ändra ett avgjort försök. Den vägrade ändringen sparas ändå i historiken.\n\n`markOutcomeUnknown(...)`\nSätter `outcome-unknown`, som inte är avgjort. Ett senare slut kan därför fortfarande registreras.\n\nAll den här koden är oförändrad.",
+            "en": "`SETTLED`\nSettled states: `stopped-confirmed`, `completed`, `failed`.\n\n`transition(record, next, note)`\nRefuses to change a settled attempt. The refused change is still kept in the history.\n\n`markOutcomeUnknown(...)`\nSets `outcome-unknown`, which is not settled. A later end can therefore still be recorded.\n\nAll of this code is unchanged."
+          },
+          "why": {
+            "sv": "Att ”okänt” inte är avgjort är det som gör att ett sent slut fortfarande kan rätta registreringen.",
+            "en": "That “unknown” is not settled is what lets a late end still correct the record."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "`SETTLED`",
+                "en": "`SETTLED`"
+              },
+              "focus": {
+                "path": "app/src/main/attempt-ledger.ts",
+                "start": 41,
+                "end": 45,
+                "anchor": "const SETTLED"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/attempt-ledger.ts",
+                  "start": 41,
+                  "end": 52,
+                  "anchor": "const SETTLED",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/attempt-ledger.ts",
+                "start": 41,
+                "end": 45,
+                "kind": "declaration",
+                "name": "SETTLED",
+                "anchor": "SETTLED"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Avgjort förblir avgjort",
+                "en": "Settled stays settled"
+              },
+              "focus": {
+                "path": "app/src/main/attempt-ledger.ts",
+                "start": 560,
+                "end": 569,
+                "anchor": "isSettled(record.state)"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/attempt-ledger.ts",
+                  "start": 547,
+                  "end": 576,
+                  "anchor": "private transition",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/attempt-ledger.ts",
+                "start": 547,
+                "end": 576,
+                "kind": "method",
+                "name": "transition",
+                "anchor": "transition"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "`markOutcomeUnknown`",
+                "en": "`markOutcomeUnknown`"
+              },
+              "focus": {
+                "path": "app/src/main/attempt-ledger.ts",
+                "start": 328,
+                "end": 334,
+                "anchor": "markOutcomeUnknown(attemptId"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/attempt-ledger.ts",
+                  "start": 308,
+                  "end": 334,
+                  "anchor": "markStopped(attemptId",
+                  "role": "walk"
+                }
+              ],
+              "from": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 3242,
+                "end": 3242,
+                "anchor": "this.ledger.markOutcomeUnknown(",
+                "label": {
+                  "sv": "Anropas från `onAgentEvent` (W1.9)",
+                  "en": "Called from `onAgentEvent` (W1.9)"
+                }
+              },
+              "unit": {
+                "path": "app/src/main/attempt-ledger.ts",
+                "start": 322,
+                "end": 334,
+                "kind": "method",
+                "name": "markOutcomeUnknown",
+                "anchor": "markOutcomeUnknown"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur koden på målrevisionen. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the code at the target revision. That alone does not show that it works when the program runs."
+              }
+            }
+          ],
+          "evidenceRefs": []
+        }
+      ]
+    },
+    {
+      "id": "W2",
+      "title": {
+        "sv": "Appen eller experimentet stängs medan en Claude Code-process lever",
+        "en": "The app or the experiment closes while a Claude Code process is alive"
+      },
+      "purpose": {
+        "sv": "Visar vad Claude-adaptern gör med sina Claude Code-processer när den stängs: hur länge den väntar, när den dödar en process, varför den aldrig dödar två gånger, och vad som registreras som okänt.",
+        "en": "Shows what the Claude adapter does with its Claude Code processes when it closes: how long it waits, when it kills a process, why it never kills twice, and what is recorded as unknown."
+      },
+      "question": {
+        "sv": "Hinner `dispose` ta hand om processen inom den tid anroparen ger den, och vad lämnas efter som okänt?",
+        "en": "Does `dispose` deal with the process within the time its caller allows, and what is left unknown?"
+      },
+      "steps": [
+        {
+          "id": "W2.1",
+          "title": {
+            "sv": "Var stängningen börjar i appen",
+            "en": "Where closing starts in the app"
+          },
+          "summary": {
+            "sv": "När appen stängs väntar `main.ts` högst 8 sekunder på att adaptern stängs. Den här koden är oförändrad.",
+            "en": "When the app closes, `main.ts` waits at most 8 seconds for the adapter to close. This code is unchanged."
+          },
+          "body": {
+            "sv": "`DISPOSE_TIMEOUT_MS = 8_000`\nLängsta väntan innan appen stänger ändå.\n\n`disposeThenEnd(end, path)`\nStartar en timer på 8 s och anropar `disposeAdapterOnce()`. Det som kommer först avslutar appen. `chatService.dispose()` stänger först sessionen och sedan adaptern; båda ryms i de 8 sekunderna.\n\n`disposeAdapterOnce()` → `chatService.dispose()` → `adapter.dispose()`\nVägen fram till adaptern.",
+            "en": "`DISPOSE_TIMEOUT_MS = 8_000`\nThe longest wait before the app closes anyway.\n\n`disposeThenEnd(end, path)`\nStarts an 8 s timer and calls `disposeAdapterOnce()`. Whichever finishes first ends the app. `chatService.dispose()` closes the session first and then the adapter; both must fit within the 8 seconds.\n\n`disposeAdapterOnce()` → `chatService.dispose()` → `adapter.dispose()`\nThe path down to the adapter."
+          },
+          "why": {
+            "sv": "Den här gränsen är anledningen till att Claude-adapterns `dispose` måste bli klar inom 7 s (W2.8).",
+            "en": "This limit is why the Claude adapter’s `dispose` must finish within 7 s (W2.8)."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "8 sekunder",
+                "en": "8 seconds"
+              },
+              "focus": {
+                "path": "app/src/main/main.ts",
+                "start": 1461,
+                "end": 1461,
+                "anchor": "const DISPOSE_TIMEOUT_MS = 8_000"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/main.ts",
+                  "start": 1455,
+                  "end": 1461,
+                  "anchor": "DISPOSE_TIMEOUT_MS",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/main.ts",
+                "start": 1453,
+                "end": 1461,
+                "kind": "declaration",
+                "name": "DISPOSE_TIMEOUT_MS",
+                "anchor": "DISPOSE_TIMEOUT_MS"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Timern i `disposeThenEnd`",
+                "en": "The timer in `disposeThenEnd`"
+              },
+              "focus": {
+                "path": "app/src/main/main.ts",
+                "start": 1490,
+                "end": 1499,
+                "anchor": "DISPOSE_TIMEOUT_MS"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/main.ts",
+                  "start": 1478,
+                  "end": 1506,
+                  "anchor": "function disposeThenEnd",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/main.ts",
+                "start": 1463,
+                "end": 1507,
+                "kind": "function",
+                "name": "disposeThenEnd",
+                "anchor": "disposeThenEnd"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "`disposeAdapterOnce`",
+                "en": "`disposeAdapterOnce`"
+              },
+              "focus": {
+                "path": "app/src/main/main.ts",
+                "start": 1352,
+                "end": 1352,
+                "anchor": "await chatService.dispose()"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/main.ts",
+                  "start": 1347,
+                  "end": 1353,
+                  "anchor": "async function disposeAdapterOnce",
+                  "role": "walk"
+                }
+              ],
+              "from": {
+                "path": "app/src/main/main.ts",
+                "start": 1499,
+                "end": 1499,
+                "anchor": "disposeAdapterOnce().then(",
+                "label": {
+                  "sv": "Anropas från `disposeThenEnd`",
+                  "en": "Called from `disposeThenEnd`"
+                }
+              },
+              "unit": {
+                "path": "app/src/main/main.ts",
+                "start": 1347,
+                "end": 1353,
+                "kind": "function",
+                "name": "disposeAdapterOnce",
+                "anchor": "disposeAdapterOnce"
+              }
+            },
+            {
+              "id": "p4",
+              "label": {
+                "sv": "`chatService.dispose()`",
+                "en": "`chatService.dispose()`"
+              },
+              "focus": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 3068,
+                "end": 3068,
+                "anchor": "await adapter.dispose()"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/chat-service.ts",
+                  "start": 3063,
+                  "end": 3069,
+                  "anchor": "async dispose()",
+                  "role": "walk"
+                }
+              ],
+              "from": {
+                "path": "app/src/main/main.ts",
+                "start": 1352,
+                "end": 1352,
+                "anchor": "await chatService.dispose()",
+                "label": {
+                  "sv": "Anropas från `disposeAdapterOnce`",
+                  "en": "Called from `disposeAdapterOnce`"
+                }
+              },
+              "unit": {
+                "path": "app/src/main/chat-service.ts",
+                "start": 3063,
+                "end": 3070,
+                "kind": "method",
+                "name": "dispose",
+                "anchor": "dispose"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur koden på målrevisionen. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the code at the target revision. That alone does not show that it works when the program runs."
+              }
+            }
+          ],
+          "evidenceRefs": []
+        },
+        {
+          "id": "W2.2",
+          "title": {
+            "sv": "Var stängningen börjar i experimentkommandot",
+            "en": "Where closing starts in the experiment command"
+          },
+          "summary": {
+            "sv": "Experimentkommandot stänger nu adaptern via `disposeAndRecord`, som också sparar vad som hände med Claude Code-processen.",
+            "en": "The experiment command now closes the adapter through `disposeAndRecord`, which also records what happened to the Claude Code process."
+          },
+          "body": {
+            "sv": "`disposeAndRecord(adapter, record)`\n**Ny funktion.**\n1. Anropar `adapter.dispose()`.\n2. För Claude-adaptern: skriver `claudeDisposal` i körposten med gränsen och en post per körning.\n3. Loggar varje körnings utfall.\n\nDen ersätter `adapter.dispose()` på tre ställen i experimentkommandot.",
+            "en": "`disposeAndRecord(adapter, record)`\n**New function.**\n1. Calls `adapter.dispose()`.\n2. For the Claude adapter: writes `claudeDisposal` into the run record, with the bound and one entry per run.\n3. Logs each run’s outcome.\n\nIt replaces `adapter.dispose()` in three places in the experiment command."
+          },
+          "why": {
+            "sv": "Experimentkommandot är i dag det som faktiskt kör Claude-adaptern. Därför sparas utfallet just där.",
+            "en": "The experiment command is what actually runs the Claude adapter today, which is why the outcome is recorded there."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "`disposeAndRecord`",
+                "en": "`disposeAndRecord`"
+              },
+              "focus": {
+                "path": "app/src/main/experiment-work.ts",
+                "start": 1654,
+                "end": 1676,
+                "anchor": "async function disposeAndRecord"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 889,
+                  "end": 894,
+                  "anchor": "DISPOSE_BOUND_MS",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/experiment-work.ts",
+                "start": 1654,
+                "end": 1676,
+                "kind": "function",
+                "name": "disposeAndRecord",
+                "anchor": "disposeAndRecord"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Anrop 1: `scenarioCodeChange`",
+                "en": "Call 1: `scenarioCodeChange`"
+              },
+              "focus": {
+                "path": "app/src/main/experiment-work.ts",
+                "start": 1646,
+                "end": 1646,
+                "anchor": "disposeAndRecord(adapter, record)"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/experiment-work.ts",
+                  "start": 1640,
+                  "end": 1650,
+                  "anchor": "disposeAndRecord",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/experiment-work.ts",
+                "start": 1545,
+                "end": 1652,
+                "kind": "function",
+                "name": "scenarioCodeChange",
+                "anchor": "scenarioCodeChange"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "Anrop 2: `cancelReply`",
+                "en": "Call 2: `cancelReply`"
+              },
+              "focus": {
+                "path": "app/src/main/experiment-work.ts",
+                "start": 2747,
+                "end": 2747,
+                "anchor": "disposeAndRecord(adapter, record)"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/experiment-work.ts",
+                  "start": 2742,
+                  "end": 2752,
+                  "anchor": "disposeAndRecord",
+                  "role": "walk"
+                },
+                {
+                  "path": "app/src/main/experiment-work.ts",
+                  "start": 2554,
+                  "end": 2756,
+                  "anchor": "async function cancelReply",
+                  "role": "context"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/experiment-work.ts",
+                "start": 2744,
+                "end": 2754,
+                "kind": "block",
+                "name": "finally in cancelReply",
+                "anchor": "finally"
+              }
+            },
+            {
+              "id": "p4",
+              "label": {
+                "sv": "Anrop 3: `scenarioTwoTurn`",
+                "en": "Call 3: `scenarioTwoTurn`"
+              },
+              "focus": {
+                "path": "app/src/main/experiment-work.ts",
+                "start": 2859,
+                "end": 2859,
+                "anchor": "disposeAndRecord(adapter, record)"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/experiment-work.ts",
+                  "start": 2854,
+                  "end": 2864,
+                  "anchor": "disposeAndRecord",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/experiment-work.ts",
+                "start": 2773,
+                "end": 2865,
+                "kind": "function",
+                "name": "scenarioTwoTurn",
+                "anchor": "scenarioTwoTurn"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "test-simulated",
+              "text": {
+                "sv": "Ett automatiskt test med ersatt SDK och manuella timers kontrollerar `claudeDisposal` i körposten (`tests/claude-agent-sdk-adapter.test.ts:2825`, kontroller på rad 2883–2891).",
+                "en": "An automated test with a substituted SDK and manual timers checks `claudeDisposal` in the run record (`tests/claude-agent-sdk-adapter.test.ts:2825`, checks at lines 2883–2891)."
+              }
+            },
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Att körposter för Cursor är oförändrade är bara läst ur koden; inget test kontrollerar det.",
+                "en": "That Cursor run records are unchanged is only read from the code; no test checks it."
+              }
+            }
+          ],
+          "evidenceRefs": [
+            {
+              "path": "app/tests/claude-agent-sdk-adapter.test.ts",
+              "start": 2883,
+              "end": 2891,
+              "anchor": "claudeDisposal",
+              "role": "evidence"
+            }
+          ]
+        },
+        {
+          "id": "W2.3",
+          "title": {
+            "sv": "Ett `dispose` i taget",
+            "en": "One `dispose` at a time"
+          },
+          "summary": {
+            "sv": "Ett andra anrop till `dispose()` väntar nu på samma pågående stängning.",
+            "en": "A second call to `dispose()` now waits for the same ongoing close."
+          },
+          "body": {
+            "sv": "`dispose()`\n`this.disposing ??= this.disposeOnce()` och returnerar samma löfte.\n\n**Förut:** `dispose()` returnerade direkt om `disposed` redan var satt, alltså även medan den första stängningen pågick.\n\n`private disposing`\nNytt fält som håller den pågående stängningen.",
+            "en": "`dispose()`\n`this.disposing ??= this.disposeOnce()` and returns the same promise.\n\n**Before:** `dispose()` returned at once if `disposed` was already set, even while the first close was still running.\n\n`private disposing`\nNew field holding the ongoing close."
+          },
+          "why": {
+            "sv": "Den som anropar `dispose()` en andra gång får nu veta när stängningen faktiskt är klar.",
+            "en": "A second caller of `dispose()` now learns when the close has actually finished."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Så såg det ut förut",
+                "en": "How it looked before"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1466,
+                "end": 1469,
+                "anchor": "if (this.disposed)",
+                "side": "base"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1462,
+                  "end": 1470,
+                  "anchor": "async dispose()",
+                  "side": "base",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "side": "base",
+                "start": 1461,
+                "end": 1504,
+                "kind": "method",
+                "name": "dispose",
+                "anchor": "dispose"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "`dispose()` nu",
+                "en": "`dispose()` now"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1565,
+                "end": 1568,
+                "anchor": "dispose(): Promise<void>"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1550,
+                  "end": 1570,
+                  "anchor": "dispose(): Promise<void>",
+                  "role": "walk"
+                }
+              ],
+              "from": {
+                "path": "app/src/main/experiment-work.ts",
+                "start": 1664,
+                "end": 1664,
+                "anchor": "await adapter.dispose()",
+                "label": {
+                  "sv": "Anropas från `disposeAndRecord`. `chatService.dispose()` når på den här revisionen Cursor-adaptern, inte Claude-adaptern (W2.8).",
+                  "en": "Called from `disposeAndRecord`. At this revision `chatService.dispose()` reaches the Cursor adapter, not the Claude adapter (W2.8)."
+                }
+              },
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1549,
+                "end": 1568,
+                "kind": "method",
+                "name": "dispose",
+                "anchor": "dispose",
+                "counterpart": {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "side": "base",
+                  "start": 1461,
+                  "end": 1504,
+                  "anchor": "dispose"
+                }
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "Fältet `disposing`",
+                "en": "The field `disposing`"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1193,
+                "end": 1193,
+                "anchor": "private disposing"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1192,
+                  "end": 1193,
+                  "anchor": "private disposing",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1192,
+                "end": 1193,
+                "kind": "member",
+                "name": "disposing",
+                "anchor": "disposing"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "test-simulated",
+              "text": {
+                "sv": "Ett automatiskt test med ersatt SDK och manuella timers anropar `dispose()` två gånger (`tests/claude-agent-sdk-adapter.test.ts:1501`).",
+                "en": "An automated test with a substituted SDK and manual timers calls `dispose()` twice (`tests/claude-agent-sdk-adapter.test.ts:1501`)."
+              }
+            }
+          ],
+          "evidenceRefs": [
+            {
+              "path": "app/tests/claude-agent-sdk-adapter.test.ts",
+              "start": 1501,
+              "end": 1540,
+              "anchor": "whose exit never comes",
+              "role": "evidence"
+            }
+          ]
+        },
+        {
+          "id": "W2.4",
+          "title": {
+            "sv": "Vad `dispose` tar hand om",
+            "en": "What `dispose` takes care of"
+          },
+          "summary": {
+            "sv": "`disposeOnce` bestämmer vilka körningar som ska bevakas och avbryter alla som fortfarande är öppna.",
+            "en": "`disposeOnce` decides which runs to watch and aborts every run that is still open."
+          },
+          "body": {
+            "sv": "`this.disposed = true` och `this.signalDisposeBegun()`\nMarkerar att stängningen har börjat och väcker väntande turer (se W3).\n\n`watched`\nKörningar där `run.handle` finns men processen inte har setts avslutas. Även körningar utan någon observerad process räknas, eftersom en saknad observation inte bevisar att inget körs.\n\n`abort()` och `close()`\nKörs för varje körning vars ström inte är klar. Ett misslyckat anrop hindrar inte resten.",
+            "en": "`this.disposed = true` and `this.signalDisposeBegun()`\nMark that closing has begun and wake turns that are waiting (see W3).\n\n`watched`\nRuns where `run.handle` exists but the process has not been seen to exit. Runs with no observed process count too, because a missing observation does not prove nothing is running.\n\n`abort()` and `close()`\nCalled for every run whose stream has not finished. A failed call does not stop the rest."
+          },
+          "why": {
+            "sv": "Det är `watched` som avgör vilka processer `dispose` sedan kan döda och redovisa.",
+            "en": "`watched` decides which processes `dispose` can later kill and report on."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Stängningen börjar",
+                "en": "Closing begins"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1570,
+                "end": 1572,
+                "anchor": "private async disposeOnce"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1570,
+                  "end": 1609,
+                  "anchor": "private async disposeOnce",
+                  "role": "walk"
+                }
+              ],
+              "from": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1566,
+                "end": 1566,
+                "anchor": "this.disposeOnce()",
+                "label": {
+                  "sv": "Anropas från `dispose()`",
+                  "en": "Called from `dispose()`"
+                }
+              },
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1570,
+                "end": 1671,
+                "kind": "method",
+                "name": "disposeOnce",
+                "anchor": "disposeOnce"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Vilka körningar som bevakas",
+                "en": "Which runs are watched"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1580,
+                "end": 1586,
+                "anchor": "watched.push"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1570,
+                  "end": 1609,
+                  "anchor": "private async disposeOnce",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1570,
+                "end": 1671,
+                "kind": "method",
+                "name": "disposeOnce",
+                "anchor": "disposeOnce"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "Abort och close",
+                "en": "Abort and close"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1590,
+                "end": 1608,
+                "anchor": "run.abortController.abort()"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1570,
+                  "end": 1609,
+                  "anchor": "private async disposeOnce",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1570,
+                "end": 1671,
+                "kind": "method",
+                "name": "disposeOnce",
+                "anchor": "disposeOnce"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur koden på målrevisionen. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the code at the target revision. That alone does not show that it works when the program runs."
+              }
+            }
+          ],
+          "evidenceRefs": []
+        },
+        {
+          "id": "W2.5",
+          "title": {
+            "sv": "Första väntan: högst 5 sekunder",
+            "en": "First wait: at most 5 seconds"
+          },
+          "summary": {
+            "sv": "`dispose` väntar högst 5 s på att strömmar och processer slutar av sig själva.",
+            "en": "`dispose` waits at most 5 s for streams and processes to end on their own."
+          },
+          "body": {
+            "sv": "`await this.waitForAll(involved, ..., DISPOSE_EXIT_WAIT_MS)`\nVäntar tills alla strömmar är klara och inga bevakade processer lever, men högst 5 s.\n\n`waitForAll(runs, condition, ms)`\n**Ny hjälpfunktion.** Prövar villkoret igen varje gång en körning väcks, och en sista gång när tiden gått ut.\n\n`this.wake(run)` i `markPumpFinished`\n**Ny rad.** Väcker väntare när en ström blir klar. Processens utgång väckte redan förut.",
+            "en": "`await this.waitForAll(involved, ..., DISPOSE_EXIT_WAIT_MS)`\nWaits until every stream has finished and no watched process is alive, for at most 5 s.\n\n`waitForAll(runs, condition, ms)`\n**New helper.** Checks the condition again whenever a run wakes, and a last time when time runs out.\n\n`this.wake(run)` in `markPumpFinished`\n**New line.** Wakes waiters when a stream finishes. A process exit already woke them before."
+          },
+          "why": {
+            "sv": "Utan väckningen i `markPumpFinished` kunde `dispose` vänta hela 5 s i onödan.",
+            "en": "Without the wake in `markPumpFinished`, `dispose` could wait the full 5 s for nothing."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Väntan",
+                "en": "The wait"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1616,
+                "end": 1620,
+                "anchor": "DISPOSE_EXIT_WAIT_MS"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1610,
+                  "end": 1620,
+                  "anchor": "const running",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1570,
+                "end": 1671,
+                "kind": "method",
+                "name": "disposeOnce",
+                "anchor": "disposeOnce"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "5 sekunder",
+                "en": "5 seconds"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 887,
+                "end": 887,
+                "anchor": "DISPOSE_EXIT_WAIT_MS = 5_000"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 882,
+                  "end": 894,
+                  "anchor": "DISPOSE_EXIT_WAIT_MS",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 882,
+                "end": 887,
+                "kind": "declaration",
+                "name": "DISPOSE_EXIT_WAIT_MS",
+                "anchor": "DISPOSE_EXIT_WAIT_MS"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "`waitForAll`",
+                "en": "`waitForAll`"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2314,
+                "end": 2324,
+                "anchor": "const check"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 2284,
+                  "end": 2327,
+                  "anchor": "private waitForAll",
+                  "role": "walk"
+                }
+              ],
+              "from": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1616,
+                "end": 1616,
+                "anchor": "this.waitForAll(",
+                "label": {
+                  "sv": "Anropas från `disposeOnce`",
+                  "en": "Called from `disposeOnce`"
+                }
+              },
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2284,
+                "end": 2326,
+                "kind": "method",
+                "name": "waitForAll",
+                "anchor": "waitForAll"
+              }
+            },
+            {
+              "id": "p4",
+              "label": {
+                "sv": "Väckning när strömmen är klar",
+                "en": "Wake when the stream finishes"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1892,
+                "end": 1893,
+                "anchor": "may be waiting for this pump"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1889,
+                  "end": 1894,
+                  "anchor": "private markPumpFinished",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1889,
+                "end": 1894,
+                "kind": "method",
+                "name": "markPumpFinished",
+                "anchor": "markPumpFinished"
+              }
+            },
+            {
+              "id": "p5",
+              "label": {
+                "sv": "Väckning vid utgång (oförändrad)",
+                "en": "Wake on exit (unchanged)"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2480,
+                "end": 2482,
+                "anchor": "observed.exit = {"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 2478,
+                  "end": 2490,
+                  "anchor": "observed.exit = {",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2415,
+                "end": 2498,
+                "kind": "method",
+                "name": "spawnObserved",
+                "anchor": "spawnObserved"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "test-simulated",
+              "text": {
+                "sv": "Automatiska tester med ersatt SDK och manuella timers visar att en process som avslutas inte dödas (`tests/claude-agent-sdk-adapter.test.ts:1430`, `:1541`).",
+                "en": "Automated tests with a substituted SDK and manual timers show that a process that exits is not killed (`tests/claude-agent-sdk-adapter.test.ts:1430`, `:1541`)."
+              }
+            },
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Att väckningen i `markPumpFinished` behövs är bara läst ur koden; inget test pekar ut den raden.",
+                "en": "That the wake in `markPumpFinished` is needed is only read from the code; no test singles out that line."
+              }
+            }
+          ],
+          "evidenceRefs": [
+            {
+              "path": "app/tests/claude-agent-sdk-adapter.test.ts",
+              "start": 1430,
+              "end": 1459,
+              "anchor": "exits on the abort is not killed",
+              "role": "evidence"
+            },
+            {
+              "path": "app/tests/claude-agent-sdk-adapter.test.ts",
+              "start": 1541,
+              "end": 1578,
+              "anchor": "dispose after a normal end",
+              "role": "evidence"
+            }
+          ]
+        },
+        {
+          "id": "W2.6",
+          "title": {
+            "sv": "Processen dödas, men aldrig två gånger",
+            "en": "The process is killed, but never twice"
+          },
+          "summary": {
+            "sv": "Processer som fortfarande lever efter 5 s dödas. En process som stoppsekvensen redan har dödat får inget andra `kill('SIGKILL')`.",
+            "en": "Processes still alive after 5 s are killed. A process the stop sequence already killed gets no second kill."
+          },
+          "body": {
+            "sv": "`run.process.child.kill('SIGKILL')`\nSkickas till varje bevakad process som fortfarande lever, **utom** om `cancellation.killRequestedAt` redan är satt.\n\n`killRequestedAt`\nSätts av stoppsekvensen när den skickar sitt `kill('SIGKILL')` (oförändrad kod).\n\nDärefter väntar `dispose` högst 2 s till på att processerna avslutas.",
+            "en": "`run.process.child.kill('SIGKILL')`\nSent to every watched process that is still alive, **except** when `cancellation.killRequestedAt` is already set.\n\n`killRequestedAt`\nSet by the stop sequence when it sends its kill (unchanged code).\n\nAfter that, `dispose` waits at most 2 s more for the processes to exit."
+          },
+          "why": {
+            "sv": "Det här är den del som faktiskt kan avsluta en Claude Code-process som inte lyssnar.",
+            "en": "This is the part that can actually end a Claude Code process that does not listen."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Där processerna dödas",
+                "en": "Where the processes are killed"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1622,
+                "end": 1635,
+                "anchor": "kill('SIGKILL')"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1621,
+                  "end": 1640,
+                  "anchor": "killedByDispose",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1570,
+                "end": 1671,
+                "kind": "method",
+                "name": "disposeOnce",
+                "anchor": "disposeOnce"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Väntan efter `kill('SIGKILL')`",
+                "en": "The wait after `kill('SIGKILL')`"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1636,
+                "end": 1639,
+                "anchor": "CANCEL_KILL_WAIT_MS"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1621,
+                  "end": 1640,
+                  "anchor": "killedByDispose",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1570,
+                "end": 1671,
+                "kind": "method",
+                "name": "disposeOnce",
+                "anchor": "disposeOnce"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "Stoppsekvensens `kill('SIGKILL')` (oförändrad)",
+                "en": "The stop sequence’s `kill('SIGKILL')` (unchanged)"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2173,
+                "end": 2173,
+                "anchor": "cancellation.killRequestedAt = nowIso()"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 2170,
+                  "end": 2178,
+                  "anchor": "killRequestedAt",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2114,
+                "end": 2198,
+                "kind": "method",
+                "name": "stopSequence",
+                "anchor": "stopSequence"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "test-simulated",
+              "text": {
+                "sv": "Automatiska tester med ersatt SDK och manuella timers: en process som ignorerar abort dödas efter gränsen (`tests/claude-agent-sdk-adapter.test.ts:1460`), och inget andra `kill('SIGKILL')` skickas (`:921`, `:2883`).",
+                "en": "Automated tests with a substituted SDK and manual timers: a process that ignores abort is killed after the bound (`tests/claude-agent-sdk-adapter.test.ts:1460`), and no second kill is sent (`:921`, `:2883`)."
+              }
+            },
+            {
+              "label": "test-real-substitute",
+              "text": {
+                "sv": "Två tester med en riktig lokal Node-process som står i för Claude Code: den som ignorerar stdin och abort dödas och försvinner; den som avslutas när stdin stängs dödas inte (`tests/claude-agent-sdk-adapter-process.test.ts:144`, `:183`). SDK:n och timers är fortfarande simulerade. Ingen riktig Claude Code-process har körts i underlaget.",
+                "en": "Two tests with a real local Node process standing in for Claude Code: the one that ignores stdin and abort is killed and gone; the one that exits when stdin closes is not killed (`tests/claude-agent-sdk-adapter-process.test.ts:144`, `:183`). The SDK and timers are still simulated. No real Claude Code process was run for this material."
+              }
+            }
+          ],
+          "evidenceRefs": [
+            {
+              "path": "app/tests/claude-agent-sdk-adapter.test.ts",
+              "start": 1460,
+              "end": 1500,
+              "anchor": "ignores the abort is killed",
+              "role": "evidence"
+            },
+            {
+              "path": "app/tests/claude-agent-sdk-adapter-process.test.ts",
+              "start": 144,
+              "end": 182,
+              "anchor": "REAL PROCESS: dispose kills",
+              "role": "evidence"
+            },
+            {
+              "path": "app/tests/claude-agent-sdk-adapter-process.test.ts",
+              "start": 183,
+              "end": 208,
+              "anchor": "REAL PROCESS: a substitute process",
+              "role": "evidence"
+            },
+            {
+              "path": "app/tests/support/claude-substitute-process.mjs",
+              "start": 1,
+              "end": 44,
+              "anchor": "ignore-everything",
+              "role": "evidence",
+              "note": {
+                "sv": "ersättningsprocessen",
+                "en": "the stand-in process"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.7",
+          "title": {
+            "sv": "Vad som registreras",
+            "en": "What is recorded"
+          },
+          "summary": {
+            "sv": "`dispose` sparar en post per bevakad körning: vem som dödade processen och om utgången sågs.",
+            "en": "`dispose` keeps one entry per watched run: who killed the process and whether its exit was seen."
+          },
+          "body": {
+            "sv": "`killedBy`\n`dispose`, `stop-sequence` eller ingen.\n\n`outcome`\n- `exited`: processen avslutades utan `kill('SIGKILL')`.\n- `killed-and-exited`: den avslutades efter `kill('SIGKILL')`.\n- `unconfirmed`: ingen utgång sågs, eller ingen process observerades.\n\n`providerWorkAfterEnd: 'unknown'`\nAlltid okänt: att processen avslutats säger inget om leverantörens arbete.\n\n`disposals()`\nLäser posterna när `dispose` är klar. `dispose` kastar aldrig.",
+            "en": "`killedBy`\n`dispose`, `stop-sequence` or nobody.\n\n`outcome`\n- `exited`: the process exited without a kill.\n- `killed-and-exited`: it exited after a kill.\n- `unconfirmed`: no exit was seen, or no process was observed.\n\n`providerWorkAfterEnd: 'unknown'`\nAlways unknown: the process exiting says nothing about the provider’s work.\n\n`disposals()`\nReads the entries once `dispose` is done. `dispose` never throws."
+          },
+          "why": {
+            "sv": "Posten säger ärligt vad som är bekräftat och vad som är okänt, i stället för att anta att allt stoppade.",
+            "en": "The entry says honestly what is confirmed and what is unknown, instead of assuming everything stopped."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Vem som dödade",
+                "en": "Who killed it"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1644,
+                "end": 1649,
+                "anchor": "const killedBy"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1641,
+                  "end": 1680,
+                  "anchor": "this.disposalRecords = watched.map",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1570,
+                "end": 1671,
+                "kind": "method",
+                "name": "disposeOnce",
+                "anchor": "disposeOnce"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Utfallet",
+                "en": "The outcome"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1662,
+                "end": 1665,
+                "anchor": "providerWorkAfterEnd: 'unknown'"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1641,
+                  "end": 1680,
+                  "anchor": "this.disposalRecords = watched.map",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1570,
+                "end": 1671,
+                "kind": "method",
+                "name": "disposeOnce",
+                "anchor": "disposeOnce"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "Typen `DisposalRecord`",
+                "en": "The type `DisposalRecord`"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 920,
+                "end": 928,
+                "anchor": "readonly outcome: 'exited'"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 895,
+                  "end": 929,
+                  "anchor": "export interface DisposalRecord",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 896,
+                "end": 929,
+                "kind": "type",
+                "name": "DisposalRecord",
+                "anchor": "DisposalRecord"
+              }
+            },
+            {
+              "id": "p4",
+              "label": {
+                "sv": "`disposals()`",
+                "en": "`disposals()`"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1678,
+                "end": 1680,
+                "anchor": "disposals(): readonly DisposalRecord[]"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1673,
+                  "end": 1680,
+                  "anchor": "disposals()",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1673,
+                "end": 1680,
+                "kind": "method",
+                "name": "disposals",
+                "anchor": "disposals"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "test-simulated",
+              "text": {
+                "sv": "Ett automatiskt test med ersatt SDK och manuella timers visar `unconfirmed` för en process vars utgång aldrig kommer (`tests/claude-agent-sdk-adapter.test.ts:1501`).",
+                "en": "An automated test with a substituted SDK and manual timers shows `unconfirmed` for a process whose exit never comes (`tests/claude-agent-sdk-adapter.test.ts:1501`)."
+              }
+            }
+          ],
+          "evidenceRefs": [
+            {
+              "path": "app/tests/claude-agent-sdk-adapter.test.ts",
+              "start": 1501,
+              "end": 1540,
+              "anchor": "whose exit never comes",
+              "role": "evidence"
+            }
+          ]
+        },
+        {
+          "id": "W2.8",
+          "title": {
+            "sv": "Tidsbudgeten",
+            "en": "The time budget"
+          },
+          "summary": {
+            "sv": "`dispose` tar som mest 5 + 2 = 7 sekunder, under de 8 sekunder appen ger den.",
+            "en": "`dispose` takes at most 5 + 2 = 7 seconds, under the 8 seconds the app allows it."
+          },
+          "body": {
+            "sv": "`DISPOSE_BOUND_MS = DISPOSE_EXIT_WAIT_MS + CANCEL_KILL_WAIT_MS`\n5 s väntan plus 2 s efter `kill('SIGKILL')`.\n\n`DISPOSE_TIMEOUT_MS = 8_000` i `main.ts`\nAppens gräns (W2.1).",
+            "en": "`DISPOSE_BOUND_MS = DISPOSE_EXIT_WAIT_MS + CANCEL_KILL_WAIT_MS`\n5 s of waiting plus 2 s after kill.\n\n`DISPOSE_TIMEOUT_MS = 8_000` in `main.ts`\nThe app’s limit (W2.1)."
+          },
+          "why": {
+            "sv": "Jämför med W1.7: chattjänsten använder ännu inte Claude-adaptern, så relationen 7 s < 8 s påverkar inte appens stängning på den här revisionen.",
+            "en": "Compare with W1.7: the chat service does not use the Claude adapter yet, so the 7 s < 8 s relation does not affect the app’s closing at this revision."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "7 sekunder",
+                "en": "7 seconds"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 894,
+                "end": 894,
+                "anchor": "DISPOSE_BOUND_MS = DISPOSE_EXIT_WAIT_MS + CANCEL_KILL_WAIT_MS"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 889,
+                  "end": 894,
+                  "anchor": "DISPOSE_BOUND_MS",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 889,
+                "end": 894,
+                "kind": "declaration",
+                "name": "DISPOSE_BOUND_MS",
+                "anchor": "DISPOSE_BOUND_MS"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Appens 8 sekunder",
+                "en": "The app’s 8 seconds"
+              },
+              "focus": {
+                "path": "app/src/main/main.ts",
+                "start": 1461,
+                "end": 1461,
+                "anchor": "DISPOSE_TIMEOUT_MS = 8_000"
+              },
+              "context": [
+                {
+                  "path": "app/src/main/main.ts",
+                  "start": 1455,
+                  "end": 1461,
+                  "anchor": "DISPOSE_TIMEOUT_MS",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/main/main.ts",
+                "start": 1453,
+                "end": 1461,
+                "kind": "declaration",
+                "name": "DISPOSE_TIMEOUT_MS",
+                "anchor": "DISPOSE_TIMEOUT_MS"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur koden på målrevisionen. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the code at the target revision. That alone does not show that it works when the program runs."
+              }
+            }
+          ],
+          "evidenceRefs": []
+        }
+      ]
+    },
+    {
+      "id": "W3",
+      "title": {
+        "sv": "En ny tur väntar på föregående tur när `dispose` börjar",
+        "en": "A new turn is waiting for the previous one when `dispose` begins"
+      },
+      "purpose": {
+        "sv": "Visar att en ny tur som fortfarande väntar på föregående tur varken startar en ny Claude-process eller lämnar en timer efter sig när instansen stängs.",
+        "en": "Shows that a new turn still waiting for the previous one neither starts a new Claude process nor leaves a timer behind when the instance closes."
+      },
+      "question": {
+        "sv": "Kan en väntande tur starta en ny Claude-process efter att instansen stängts, eller lämna en timer efter sig?",
+        "en": "Can a waiting turn start a new Claude process after the instance has closed, or leave a timer behind?"
+      },
+      "steps": [
+        {
+          "id": "W3.1",
+          "title": {
+            "sv": "Väntan i `send`",
+            "en": "The wait in `send`"
+          },
+          "summary": {
+            "sv": "En ny tur väntar på att föregående tur blir klar. Väntan kan sluta på två sätt. Hela väntan i `send` är oförändrad; det som ändrats är `settlesWithinBound` (W3.2) och exporten.",
+            "en": "A new turn waits for the previous one to finish. The wait can end in two ways. The whole wait in `send` is unchanged; what changed is `settlesWithinBound` (W3.2) and the export."
+          },
+          "body": {
+            "sv": "`await this.settlesWithinBound(previous.pump, PREVIOUS_TURN_EXIT_MS)`\nVäntar högst 15 s. Den här raden är oförändrad.\n\nOm instansen stängdes under väntan:\nTuren avslutas som `cancelled` och `send` kastar ett fel. Inget når lyssnarna, eftersom de redan är bortkopplade.\n\nOm väntan tog slut:\nTuren tas bort och `send` kastar ett fel. Ingen `run.finished` skickas för turen.\n\n`PREVIOUS_TURN_EXIT_MS`\nNu exporterad, så att testet kan kontrollera hur `CANCEL_END_BOUND_MS` härleds (`app/tests/claude-agent-sdk-adapter.test.ts:1395`).",
+            "en": "`await this.settlesWithinBound(previous.pump, PREVIOUS_TURN_EXIT_MS)`\nWaits at most 15 s. This line is unchanged.\n\nIf the instance was closed during the wait:\nThe turn ends as `cancelled` and `send` throws. Nothing reaches listeners, because they are already removed.\n\nIf the wait timed out:\nThe turn is removed and `send` throws. No `run.finished` is sent for the turn.\n\n`PREVIOUS_TURN_EXIT_MS`\nNow exported, so that the test can check how `CANCEL_END_BOUND_MS` is derived (`app/tests/claude-agent-sdk-adapter.test.ts:1395`)."
+          },
+          "why": {
+            "sv": "Ingen ny Claude-process startas efter att instansen stängts.",
+            "en": "No new Claude process is started after the instance has closed."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Väntan",
+                "en": "The wait"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1357,
+                "end": 1358,
+                "anchor": "settlesWithinBound(previous.pump"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1357,
+                  "end": 1382,
+                  "anchor": "settlesWithinBound(previous.pump",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1306,
+                "end": 1430,
+                "kind": "method",
+                "name": "send",
+                "anchor": "send"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Stängd under väntan",
+                "en": "Closed during the wait"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1359,
+                "end": 1369,
+                "anchor": "if (this.disposed)"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1357,
+                  "end": 1382,
+                  "anchor": "settlesWithinBound(previous.pump",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1306,
+                "end": 1430,
+                "kind": "method",
+                "name": "send",
+                "anchor": "send"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "Väntan tog slut",
+                "en": "The wait timed out"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1370,
+                "end": 1381,
+                "anchor": "if (!ended)"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1357,
+                  "end": 1382,
+                  "anchor": "settlesWithinBound(previous.pump",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1306,
+                "end": 1430,
+                "kind": "method",
+                "name": "send",
+                "anchor": "send"
+              }
+            },
+            {
+              "id": "p4",
+              "label": {
+                "sv": "Exporten",
+                "en": "The export"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 858,
+                "end": 858,
+                "anchor": "export const PREVIOUS_TURN_EXIT_MS"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 856,
+                  "end": 858,
+                  "anchor": "PREVIOUS_TURN_EXIT_MS",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 857,
+                "end": 858,
+                "kind": "declaration",
+                "name": "PREVIOUS_TURN_EXIT_MS",
+                "anchor": "PREVIOUS_TURN_EXIT_MS"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur koden på målrevisionen. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the code at the target revision. That alone does not show that it works when the program runs."
+              }
+            },
+            {
+              "label": "test-simulated",
+              "text": {
+                "sv": "Att inget når lyssnarna kontrolleras i ett automatiskt test med ersatt SDK (`tests/claude-agent-sdk-adapter.test.ts:1603`).",
+                "en": "That nothing reaches listeners is checked in an automated test with a substituted SDK (`tests/claude-agent-sdk-adapter.test.ts:1603`)."
+              }
+            }
+          ],
+          "evidenceRefs": [
+            {
+              "path": "app/tests/claude-agent-sdk-adapter.test.ts",
+              "start": 1579,
+              "end": 1606,
+              "anchor": "dispose during the wait for the previous turn",
+              "role": "evidence"
+            }
+          ]
+        },
+        {
+          "id": "W3.2",
+          "title": {
+            "sv": "Väntan avbryts när `dispose` börjar",
+            "en": "The wait ends when `dispose` begins"
+          },
+          "summary": {
+            "sv": "`settlesWithinBound` svarar nu direkt när `dispose` börjar, i stället för att vänta ut sin tid.",
+            "en": "`settlesWithinBound` now answers at once when `dispose` begins, instead of waiting out its time."
+          },
+          "body": {
+            "sv": "`this.disposeBegun.then(() => settled)`\n**Ny rad i `Promise.race`.** När `dispose` börjar svarar väntan direkt, med om löftet redan hann bli klart. Raden ovanför, `promise.then(markSettled, markSettled)`, ersätter basens två `() => true`.\n\n`markSettled`\nHåller reda på om löftet blev klart (uppfyllt eller avvisat) före `dispose`.\n\n`disposeBegun`\nEtt löfte som skapas i konstruktorn och avgörs av `signalDisposeBegun()` (W2.4).",
+            "en": "`this.disposeBegun.then(() => settled)`\n**New line in the race.** When `dispose` begins, the wait answers whether the promise had already settled.\n\n`markSettled`\nKeeps track of whether the promise settled before `dispose`.\n\n`disposeBegun`\nA promise created in the constructor and resolved by `signalDisposeBegun()` (W2.4)."
+          },
+          "why": {
+            "sv": "Så blir ingen timer kvar efter instansen, och den väntande turen startar aldrig.",
+            "en": "So no timer outlives the instance, and the waiting turn never starts."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "`Promise.race`",
+                "en": "`Promise.race`"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2529,
+                "end": 2530,
+                "anchor": "this.disposeBegun.then(() => settled)"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 2515,
+                  "end": 2542,
+                  "anchor": "private async settlesWithinBound",
+                  "role": "walk"
+                }
+              ],
+              "from": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1358,
+                "end": 1358,
+                "anchor": "settlesWithinBound(previous.pump",
+                "label": {
+                  "sv": "Anropas från `send` (W3.1)",
+                  "en": "Called from `send` (W3.1)"
+                }
+              },
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2515,
+                "end": 2542,
+                "kind": "method",
+                "name": "settlesWithinBound",
+                "anchor": "settlesWithinBound"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "`markSettled`",
+                "en": "`markSettled`"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2522,
+                "end": 2526,
+                "anchor": "const markSettled"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 2515,
+                  "end": 2542,
+                  "anchor": "private async settlesWithinBound",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2515,
+                "end": 2542,
+                "kind": "method",
+                "name": "settlesWithinBound",
+                "anchor": "settlesWithinBound"
+              }
+            },
+            {
+              "id": "p3",
+              "label": {
+                "sv": "Fältet `disposeBegun`",
+                "en": "The field `disposeBegun`"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1195,
+                "end": 1198,
+                "anchor": "disposeBegun"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1194,
+                  "end": 1202,
+                  "anchor": "disposeBegun",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1195,
+                "end": 1198,
+                "kind": "member",
+                "name": "disposeBegun",
+                "anchor": "disposeBegun"
+              }
+            },
+            {
+              "id": "p4",
+              "label": {
+                "sv": "Konstruktorn",
+                "en": "The constructor"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1204,
+                "end": 1206,
+                "anchor": "this.disposeBegun = new Promise"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1203,
+                  "end": 1206,
+                  "anchor": "constructor",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1203,
+                "end": 1241,
+                "kind": "constructor",
+                "name": "constructor",
+                "anchor": "constructor"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "test-simulated",
+              "text": {
+                "sv": "Ett automatiskt test med ersatt SDK och manuella timers: ingen timer blir kvar och den väntande turen startar aldrig (`tests/claude-agent-sdk-adapter.test.ts:1579`).",
+                "en": "An automated test with a substituted SDK and manual timers: no timer is left and the waiting turn never starts (`tests/claude-agent-sdk-adapter.test.ts:1579`)."
+              }
+            }
+          ],
+          "evidenceRefs": [
+            {
+              "path": "app/tests/claude-agent-sdk-adapter.test.ts",
+              "start": 1579,
+              "end": 1606,
+              "anchor": "dispose during the wait for the previous turn",
+              "role": "evidence"
+            }
+          ]
+        },
+        {
+          "id": "W3.3",
+          "title": {
+            "sv": "Borttaget: `settlesWithin`",
+            "en": "Removed: `settlesWithin`"
+          },
+          "summary": {
+            "sv": "Den fristående `settlesWithin` är borttagen. Den använde Nodes riktiga `setTimeout` i stället för instansens timers. Metoden `settlesWithinBound` med det snarlika namnet finns kvar (W3.2).",
+            "en": "The free-standing `settlesWithin` has been removed. It used Node’s real `setTimeout` instead of the instance’s timers. The method `settlesWithinBound`, with the similar name, remains (W3.2)."
+          },
+          "body": {
+            "sv": "`async function settlesWithin(promise, ms)`\nBorttagen funktion.\n\n`await settlesWithin(Promise.allSettled(pumps).then(() => undefined), 5_000)`\nI basen användes den bara av `dispose` för väntan på strömmarna. Nu sköts den väntan av `waitForAll` (W2.5).",
+            "en": "`async function settlesWithin(promise, ms)`\nRemoved function.\n\n`await settlesWithin(Promise.allSettled(pumps).then(() => undefined), 5_000)`\nIn the base it was used only by `dispose` to wait for the streams. That wait is now done by `waitForAll` (W2.5)."
+          },
+          "why": {
+            "sv": "`waitForAll` använder instansens egna timers, så testerna kan styra tiden. Den prövar också villkoret igen varje gång en körning väcks.",
+            "en": "`waitForAll` uses the instance’s own timers, so tests can control time. It also checks its condition again whenever a run wakes."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Den borttagna funktionen",
+                "en": "The removed function"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 2402,
+                "end": 2422,
+                "anchor": "async function settlesWithin(",
+                "side": "base"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 2401,
+                  "end": 2422,
+                  "anchor": "settlesWithin",
+                  "side": "base",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "side": "base",
+                "start": 2402,
+                "end": 2422,
+                "kind": "function",
+                "name": "settlesWithin",
+                "anchor": "settlesWithin"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Där den användes",
+                "en": "Where it was used"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1502,
+                "end": 1502,
+                "anchor": "settlesWithin(Promise.allSettled(pumps)",
+                "side": "base"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1500,
+                  "end": 1504,
+                  "anchor": "settlesWithin",
+                  "side": "base",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "side": "base",
+                "start": 1461,
+                "end": 1504,
+                "kind": "method",
+                "name": "dispose",
+                "anchor": "dispose"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur basens kod. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the base revision’s code. That alone does not show that it works when the program runs."
+              }
+            }
+          ],
+          "evidenceRefs": []
+        },
+        {
+          "id": "W3.4",
+          "title": {
+            "sv": "Kopplingen till W1",
+            "en": "The link to W1"
+          },
+          "summary": {
+            "sv": "Väntan i W3.1 är den andra termen i gränsen från W1.5.",
+            "en": "The wait in W3.1 is the second term of the bound from W1.5."
+          },
+          "body": {
+            "sv": "`CANCEL_END_BOUND_MS = Math.max(..., PREVIOUS_TURN_EXIT_MS)`\nGränsen täcker också en tur som väntar på föregående tur.\n\n`if (!ended)`\nOm väntan tar slut skickas ingen `run.finished` för turen.",
+            "en": "`CANCEL_END_BOUND_MS = Math.max(..., PREVIOUS_TURN_EXIT_MS)`\nThe bound also covers a turn that waits for the previous one.\n\n`if (!ended)`\nIf the wait times out, no `run.finished` is sent for the turn."
+          },
+          "why": {
+            "sv": "En tur som aldrig startade får alltså inget slut att bekräfta. Medan en tur fortfarande väntar i `send` avbryter chattjänsten den inte via adaptern: den som slutar vänta får utfallet okänt (`chat-service.ts:1669–1677`), och ett avvisat `send` registreras som misslyckat (`1534–1539`). Först om en körning ändå startar för det övergivna försöket avbryts den via adaptern (`stopAbandonedRun`), och då gäller W1.3. Chatten använder dessutom inte Claude-adaptern ännu.",
+            "en": "A turn that never started has no end to confirm. While a turn is still waiting in `send`, the chat service does not cancel it through the adapter: stopping the wait records the outcome as unknown (`chat-service.ts:1669–1677`), and a rejected `send` is recorded as failed (`1534–1539`). Only if a run starts after all for the abandoned attempt is it cancelled through the adapter (`stopAbandonedRun`), and then W1.3 applies. The chat does not use the Claude adapter yet, either."
+          },
+          "places": [
+            {
+              "id": "p1",
+              "label": {
+                "sv": "Gränsen",
+                "en": "The bound"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 877,
+                "end": 880,
+                "anchor": "export const CANCEL_END_BOUND_MS"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 860,
+                  "end": 881,
+                  "anchor": "CANCEL_END_BOUND_MS",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 860,
+                "end": 880,
+                "kind": "declaration",
+                "name": "CANCEL_END_BOUND_MS",
+                "anchor": "CANCEL_END_BOUND_MS"
+              }
+            },
+            {
+              "id": "p2",
+              "label": {
+                "sv": "Ingen `run.finished`",
+                "en": "No `run.finished`"
+              },
+              "focus": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1370,
+                "end": 1381,
+                "anchor": "if (!ended)"
+              },
+              "context": [
+                {
+                  "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                  "start": 1357,
+                  "end": 1382,
+                  "anchor": "settlesWithinBound(previous.pump",
+                  "role": "walk"
+                }
+              ],
+              "unit": {
+                "path": "app/src/adapter/claude-agent-sdk-adapter.ts",
+                "start": 1306,
+                "end": 1430,
+                "kind": "method",
+                "name": "send",
+                "anchor": "send"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "label": "analysis",
+              "text": {
+                "sv": "Läst ur koden på målrevisionen. Det visar inte i sig att det fungerar när programmet körs.",
+                "en": "Read from the code at the target revision. That alone does not show that it works when the program runs."
+              }
+            }
+          ],
+          "evidenceRefs": []
+        }
+      ]
+    }
+  ]
+}

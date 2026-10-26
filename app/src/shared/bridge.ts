@@ -2108,6 +2108,13 @@ export interface DspatchBridge {
    */
   openReview(): Promise<LoopEditorWindowOutcome>;
   /**
+   * Open the bundled example review (DSP-129) from DSpatch's own clone, in a review
+   * window of its own. Needs no project and makes no provider call; it does not become
+   * the last review *Open review* reopens. Outside a clone it opens nothing and the
+   * outcome's note says why.
+   */
+  openExampleReview(): Promise<LoopEditorWindowOutcome>;
+  /**
    * Read or drive the review windows for the `review-window` scenario. Registered only
    * during a scripted run; an ordinary launch has no such channel.
    */
@@ -2787,6 +2794,7 @@ export type BridgeChannel =
   | 'dspatch:reveal-role-source'
   | 'dspatch:open-loop-editor'
   | 'dspatch:open-review'
+  | 'dspatch:open-example-review'
   | 'dspatch:check-review-windows'
   | 'dspatch:start-editor-loop-run'
   | 'dspatch:cancel-editor-loop-run'

@@ -190,7 +190,9 @@ export class ReviewWindows {
               this.focus(existing);
               return { kind: 'focused', note: `This review is already open in its own window (${this.labelOf(existing)}). It has been brought to the front.` };
             }
-            await this.rememberRecent(identity);
+            if (input.remember !== false) {
+              await this.rememberRecent(identity);
+            }
           }
           const entry = this.create({ service, startFolder: input.repository, initial: outcome, identity, chooserKey: null });
           return {
