@@ -4,6 +4,7 @@ import type {
   AbandonOutcome,
   AttemptAcknowledgement,
   BridgeChannel,
+  StoredSessionProvider,
   CancelObservations,
   CancelOutcome,
   ChatSessionInfo,
@@ -70,6 +71,7 @@ const GET_ENVIRONMENT: BridgeChannel = 'dspatch:get-environment';
 const RENDERER_READY: BridgeChannel = 'dspatch:renderer-ready';
 const GET_CONNECTION: BridgeChannel = 'dspatch:get-connection';
 const SET_MODEL: BridgeChannel = 'dspatch:set-model';
+const CHOOSE_AGENT: BridgeChannel = 'dspatch:choose-agent';
 const MENU_COMMAND: BridgeChannel = 'dspatch:menu-command';
 const PICK_PROJECT: BridgeChannel = 'dspatch:pick-project';
 const LIST_PROJECTS: BridgeChannel = 'dspatch:list-projects';
@@ -153,6 +155,8 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(GET_CONNECTION) as Promise<ConnectionStatus>,
   setRequestedModel: (modelId: string) =>
     ipcRenderer.invoke(SET_MODEL, modelId) as Promise<string>,
+  chooseAgent: (provider: StoredSessionProvider) =>
+    ipcRenderer.invoke(CHOOSE_AGENT, provider) as Promise<StoredSessionProvider | null>,
   onMenuCommand: (listener: (command: MenuCommand) => void) => {
     const handler = (_event: unknown, payload: MenuCommand): void => {
       listener(payload);

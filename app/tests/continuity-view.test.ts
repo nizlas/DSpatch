@@ -21,6 +21,7 @@ import type {
   SessionContinuityKind,
 } from '../src/shared/bridge';
 import {
+  AGENT_CHOICE_HEADING,
   CONTINUITY_HEADING,
   EARLIER_SENDS_NOTE,
   NEW_CLAUDE_SESSION_NOTE,
@@ -577,4 +578,56 @@ test('Start new session names the agent it opens (DSP-117, review R3)', () => {
   const claude = continuityPanel(notOpen('resume-refused', MISSING, RETRY_AND_NEW), false, 'claude');
   assert.deepEqual(claude?.choices.map((choice) => choice.label), ['Try again', 'Start new Claude session']);
   assert.match(claude?.choices[1]?.note ?? '', /^Opens a new Claude session\./);
+});
+
+// --- DSP-136: the agent is a choice, never assumed ---------------------------
+
+test('no agent chosen: the panel asks for one, offers only what is usable, and holds Enter back', () => {
+  const failure: ResumeFailure = { kind: 'agent-choice', detail: 'no agent is chosen', providerCode: null };
+  const fresh: SessionContinuity = { ...notOpen('resume-unavailable', failure, []), agentNeeded: true };
+  assert.equal(continuityClause(fresh), 'No agent is chosen, so no session was opened.');
+  const panel = continuityPanel(fresh, false, null);
+  assert.equal(panel?.heading, AGENT_CHOICE_HEADING);
+  assert.equal(panel?.body, 'No agent is chosen, so no session was opened. Your saved conversation is still available. Choose an agent under Agent to start a session.');
+  assert.deepEqual(panel?.choices, []);
+  assert.equal(noSessionRouteNote(fresh), 'Choose an agent to send.');
+
+  const recorded: SessionContinuity = {
+    ...notOpen('resume-refused', failure, ['resume-recorded']),
+    agentNeeded: true,
+    recordedProvider: 'cursor',
+  };
+  const withResume = continuityPanel(recorded, false, null);
+  assert.deepEqual(withResume?.choices.map((choice) => choice.label), ['Resume with Cursor']);
+  assert.equal(withResume?.choices[0]?.testId, 'continuity-choice-resume-recorded');
+  assert.match(withResume?.body ?? '', /Choose an agent under Agent, or resume with the recorded agent\.$/);
+});
+
+test('another agent chosen than the recorded one: Start new <chosen> and Resume with <recorded>, by name', () => {
+  const failure: ResumeFailure = { kind: 'provider-differs', detail: 'differs', providerCode: null };
+  const differs: SessionContinuity = {
+    ...notOpen('resume-refused', failure, ['new-session', 'resume-recorded']),
+    recordedProvider: 'cursor',
+  };
+  const panel = continuityPanel(differs, false, 'claude');
+  assert.equal(panel?.heading, AGENT_CHOICE_HEADING);
+  assert.deepEqual(panel?.choices.map((choice) => choice.label), ['Start new Claude session', 'Resume with Cursor']);
+  assert.equal(actionSentence(differs.choices), 'Start a new session, or resume with the recorded agent.');
+  assert.equal(noSessionRouteNote(differs), 'Start a new session to send.');
+  // A failure that is not about the agent keeps its own heading.
+  assert.equal(continuityPanel(notOpen('resume-refused', { kind: 'provider-missing', detail: 'x', providerCode: null }), false)?.heading, CONTINUITY_HEADING);
+});
+
+test('a stored choice that cannot be used is named in the panel, with why (R-1 R1)', () => {
+  const failure: ResumeFailure = { kind: 'agent-choice', detail: 'x', providerCode: null };
+  const unusable: SessionContinuity = {
+    ...notOpen('resume-unavailable', failure, []),
+    agentNeeded: true,
+    unusableChoice: { provider: 'claude', reason: 'Claude support is not installed' },
+  };
+  assert.equal(
+    continuityClause(unusable),
+    'Claude was chosen, but it cannot be used in this launch: Claude support is not installed.',
+  );
+  assert.doesNotMatch(continuityPanel(unusable, false, null)?.body ?? '', /No agent is chosen/);
 });

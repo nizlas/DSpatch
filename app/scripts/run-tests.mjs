@@ -116,6 +116,7 @@ const AREAS = {
     what: 'the review surface: the real diff, prepared walks, coverage and the reviewer record',
     files: ['review-model.test.ts', 'review-discussion.test.ts', 'example-review.test.ts', { file: 'review-service.test.ts', heavy: true },
       { file: 'review-discussion-service.test.ts', heavy: true },
+      { file: 'review-discussion-provider.test.ts', heavy: true },
     ],
   },
   provider: {

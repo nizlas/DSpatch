@@ -61,11 +61,14 @@ import { describeLiveBinding } from '../shared/loop-editor-run';
 import { formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
 import type { LoopNode, RoleReference, RoleResolver } from '../shared/loop-graph';
 import type { RunResult, RunStatus } from '../shared/loop-run';
-import { CHAT_PERMISSIONS, ClaudeAgentSdkAdapter } from '../adapter/claude-agent-sdk-adapter';
-import { claudeSupportStatus, claudeUnavailableReason } from '../adapter/claude-support';
-import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
+import {
+  REVIEW_DENY_REASON,
+  REVIEW_PERMISSIONS,
+  describePermissionPolicy,
+} from '../adapter/claude-agent-sdk-adapter';
+import { claudeSupportStatus } from '../adapter/claude-support';
 import type { StoredSessionProvider } from '../shared/bridge';
-import { ChatService, type ChatAdapter } from './chat-service';
+import { CLAUDE_CHAT_MODEL, ChatService, type ChatAdapter } from './chat-service';
 import { DISPOSE_TIMEOUT_MS } from './dispose-timeout';
 import { ConversationStore } from './conversation-store';
 import {
@@ -105,7 +108,9 @@ import { ownRepositoryRoot } from './own-repository';
 import { PROBE_EXIT, runCursorProbe } from './probe-cursor';
 import { ProjectStore } from './project-store';
 import { readDirectoryPage, readFileForViewing } from './workspace-tree';
-import { ReviewDiscussions, reviewAdapterFactory } from './review-discussion-service';
+import { REVIEW_DISCUSSION_DEFAULT_MODEL, ReviewDiscussions } from './review-discussion-service';
+import { providerAdapters } from './provider-adapters';
+import { providerAvailability } from './provider-availability';
 import { registerReviewIpc, reviewSenderRefusal } from './review-ipc';
 import { ReviewWindows } from './review-windows';
 import {
@@ -149,6 +154,7 @@ const GET_ENVIRONMENT: BridgeChannel = 'dspatch:get-environment';
 const RENDERER_READY: BridgeChannel = 'dspatch:renderer-ready';
 const GET_CONNECTION: BridgeChannel = 'dspatch:get-connection';
 const SET_MODEL: BridgeChannel = 'dspatch:set-model';
+const CHOOSE_AGENT: BridgeChannel = 'dspatch:choose-agent';
 const MENU_COMMAND: BridgeChannel = 'dspatch:menu-command';
 const PICK_PROJECT: BridgeChannel = 'dspatch:pick-project';
 const LIST_PROJECTS: BridgeChannel = 'dspatch:list-projects';
@@ -730,28 +736,35 @@ const CLAUDE_AUTHORIZATION_REFERENCE: string | null =
  */
 const CLAUDE_SUPPORT = claudeSupportStatus();
 
-/** The main chat's adapter per provider. Claude only with the launch's reference. */
+/**
+ * DSP-132: every provider adapter - the chat's and the review discussion's - comes from
+ * this one factory (`provider-adapters.ts`), which picks the policy for the purpose and
+ * refuses an unavailable provider, naming what is missing, before construction.
+ *
+ * In presentation mode every adapter is SIMULATED: the chat's echoes the provider it
+ * was opened for; the review's keep a presentation record of their own, with the
+ * simulated send failures of `DSPATCH_REVIEW_PRESENTATION_SEND` read here and nowhere
+ * else, so the main chat's adapter never meets them.
+ */
+const adapterFactory = providerAdapters({
+  presentation: presentationMode,
+  presentationChat: () => new PresentationAdapter(presentationAdapterOptions()),
+  reviewPresentation: {
+    sendMode: presentationMode
+      ? (presentationSendMode(process.env['DSPATCH_REVIEW_PRESENTATION_SEND']) ?? 'ok')
+      : 'ok',
+    ...((): { deltaMs?: number } => {
+      const parsed = Number.parseInt(process.env['DSPATCH_PRESENTATION_DELTA_MS'] ?? '', 10);
+      return Number.isFinite(parsed) && parsed > 0 ? { deltaMs: parsed } : {};
+    })(),
+  },
+  claudeAuthorizationReference: CLAUDE_AUTHORIZATION_REFERENCE,
+  claudeInstalled: CLAUDE_SUPPORT.installed,
+});
+
+/** The main chat's adapter per provider, from the shared factory. */
 function createChatAdapter(provider: StoredSessionProvider): ChatAdapter {
-  if (presentationMode) {
-    // SIMULATED for either provider: the presentation adapter echoes the provider it
-    // was opened for, and nothing reaches Cursor or Claude.
-    return new PresentationAdapter(presentationAdapterOptions());
-  }
-  if (provider === 'claude') {
-    // Refused before construction, naming what is missing (DSP-133).
-    const unavailable = claudeUnavailableReason({
-      authorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,
-      installed: CLAUDE_SUPPORT.installed,
-    });
-    if (unavailable !== null || CLAUDE_AUTHORIZATION_REFERENCE === null) {
-      throw new Error(unavailable ?? 'Claude is not enabled for this launch.');
-    }
-    return new ClaudeAgentSdkAdapter({
-      authorization: { kind: 'subscription', authorization: CLAUDE_AUTHORIZATION_REFERENCE },
-      permissions: CHAT_PERMISSIONS,
-    });
-  }
-  return new CursorSdkAdapter({ toolPolicy: 'provider-default' });
+  return adapterFactory.createAdapter({ provider, purpose: 'chat' });
 }
 
 /**
@@ -774,9 +787,15 @@ const chatService = new ChatService({
   conversations: () => requireConversationStore(),
   conversationForProject: (projectPath) =>
     requireProjectStore().conversationFor(projectPath),
-  createAdapter: createChatAdapter,
+  // DSP-136: every chat adapter construction is logged, so a run record can show that
+  // none was built where no agent was chosen.
+  createAdapter: (provider) => {
+    log(`[chat] building a ${provider} chat adapter${presentationMode ? ' (presentation, simulated)' : ''}`);
+    return createChatAdapter(provider);
+  },
   claudeAuthorizationReference: CLAUDE_AUTHORIZATION_REFERENCE,
   claudeSupport: { installed: CLAUDE_SUPPORT.installed, reason: CLAUDE_SUPPORT.reason },
+  agentChoiceStore: { read: () => agentChoiceStore.read(), write: (provider) => agentChoiceStore.write(provider) },
   ...(presentationMode ? { readAuthStatus: presentationAuthStatus } : {}),
 });
 
@@ -791,6 +810,42 @@ let probeStarted = false;
  * ends up in the user's git history.
  */
 let projectStore: ProjectStore | null = null;
+
+/**
+ * DSP-136: the agent chosen explicitly in *Open a project*, kept in one small file
+ * under `userData`. No file, or anything unreadable in it, means none chosen: a
+ * fresh installation has no default agent. Written only by an explicit choice.
+ */
+const agentChoiceStore = {
+  file(): string {
+    return path.join(app.getPath('userData'), 'dspatch-agent-choice.json');
+  },
+  read(): StoredSessionProvider | null {
+    let text: string;
+    try {
+      text = fs.readFileSync(agentChoiceStore.file(), 'utf8');
+    } catch {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(text) as { agent?: unknown };
+      return parsed.agent === 'cursor' || parsed.agent === 'claude' ? parsed.agent : null;
+    } catch {
+      return null;
+    }
+  },
+  write(provider: StoredSessionProvider): void {
+    const file = agentChoiceStore.file();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temporary = `${file}.tmp`;
+    fs.writeFileSync(
+      temporary,
+      `${JSON.stringify({ formatVersion: 1, agent: provider, chosenAtUtc: new Date().toISOString() }, null, 2)}\n`,
+      'utf8',
+    );
+    fs.renameSync(temporary, file);
+  },
+};
 
 function requireProjectStore(): ProjectStore {
   projectStore ??= new ProjectStore(
@@ -1547,11 +1602,11 @@ function environmentInfo(): EnvironmentInfo {
       node: process.versions.node,
       v8: process.versions.v8,
     },
-    adapter: {
-      id: chatService.adapterId(),
-      capabilities: chatService.capabilities(),
-    },
-    agentChoice: chatService.agentChoice('cursor'),
+    // DSP-136: a reading of the open session's adapter, never a construction. At
+    // startup no session is open, so this is null and no adapter exists.
+    adapter: chatService.adapterInfo(),
+    agentChoice: chatService.agentChoice(chatService.chosenAgent()),
+    chosenAgent: chatService.chosenAgent(),
   };
 }
 
@@ -1609,17 +1664,6 @@ let reviewWindows: ReviewWindows | null = null;
  * presentation mode the adapters are presentation adapters with their own record,
  * never the chat's `presentationResume`.
  */
-const reviewPresentationSend = presentationSendMode(process.env['DSPATCH_REVIEW_PRESENTATION_SEND']);
-const reviewAdapters = reviewAdapterFactory({
-  presentation: presentationMode,
-  // SIMULATED send failures and slow starts, for the review discussion's adapters only:
-  // read here and nowhere else, so the main chat's adapter never meets them.
-  sendMode: presentationMode ? (reviewPresentationSend ?? 'ok') : 'ok',
-  ...((): { deltaMs?: number } => {
-    const parsed = Number.parseInt(process.env['DSPATCH_PRESENTATION_DELTA_MS'] ?? '', 10);
-    return Number.isFinite(parsed) && parsed > 0 ? { deltaMs: parsed } : {};
-  })(),
-});
 let reviewDiscussions: ReviewDiscussions | null = null;
 
 function requireReviewWindows(): ReviewWindows {
@@ -3509,7 +3553,7 @@ async function reviewScenarioReading(): Promise<Record<string, unknown>> {
     // Each presentation behaviour's own record: the chat's and the review adapters'.
     adapterSent: {
       chat: presentationMode ? presentationResume.record().sent : null,
-      review: reviewAdapters.presentationBehaviour?.record().sent ?? null,
+      review: adapterFactory.reviewPresentationBehaviour?.record().sent ?? null,
     },
   };
 }
@@ -3767,6 +3811,17 @@ function registerIpc(): void {
     const inForce = chatService.setRequestedModel(modelId);
     log(`model requested for the next message: ${inForce}`);
     return inForce;
+  });
+
+  // DSP-136: an explicit agent choice in *Open a project*. Recorded only; nothing is
+  // built and no provider is asked.
+  ipcMain.handle(CHOOSE_AGENT, (_event, provider: unknown): StoredSessionProvider | null => {
+    if (provider !== 'cursor' && provider !== 'claude') {
+      throw new Error('Unknown agent.');
+    }
+    const chosen = chatService.chooseAgent(provider);
+    log(`agent chosen: ${provider}`);
+    return chosen;
   });
 
   /**
@@ -4712,7 +4767,12 @@ function registerLoopGraphIpc(): void {
    */
   ipcMain.handle(OPEN_REVIEW, (): Promise<LoopEditorWindowOutcome> => {
     const session = chatService.openSession();
-    return requireReviewWindows().open({ repository: session?.workspacePath ?? null, definitionPath: null });
+    return requireReviewWindows().open({
+      repository: session?.workspacePath ?? null,
+      definitionPath: null,
+      // DSP-132: the main window's agent is the default for a new review discussion.
+      defaultProvider: session?.provider ?? chatService.chosenAgent(),
+    });
   });
   ipcMain.handle(OPEN_EXAMPLE_REVIEW, (): Promise<LoopEditorWindowOutcome> => openExampleReview());
 
@@ -5885,8 +5945,23 @@ function main(): void {
     });
     reviewDiscussions = new ReviewDiscussions({
       recordsDir: path.join(app.getPath('userData'), 'reviews'),
-      createAdapter: reviewAdapters.create,
+      // DSP-132: the shared factory; ReviewDiscussions binds the review purpose itself.
+      createAdapter: (request) => {
+        log(`[review] building a ${request.provider} review adapter${presentationMode ? ' (presentation, simulated)' : ''}`);
+        return adapterFactory.createAdapter(request);
+      },
       model: process.env['DSPATCH_CHAT_MODEL'] ?? undefined,
+      modelFor: (provider) =>
+        provider === 'claude' ? CLAUDE_CHAT_MODEL : (process.env['DSPATCH_CHAT_MODEL'] ?? REVIEW_DISCUSSION_DEFAULT_MODEL),
+      availability: (provider) =>
+        providerAvailability(provider, {
+          claudeAuthorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,
+          claudeInstalled: CLAUDE_SUPPORT.installed,
+        }),
+      policyFor: (provider) =>
+        provider === 'claude'
+          ? `${describePermissionPolicy(REVIEW_PERMISSIONS)}. Deny reason: ${REVIEW_DENY_REASON}`
+          : 'text-only (tools: [])',
       log: (message) => {
         log(`[review] ${message}`);
       },

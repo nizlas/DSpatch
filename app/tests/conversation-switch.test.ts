@@ -232,6 +232,8 @@ function serviceOver(
   const adapter = new FakeAdapter();
   const logs: string[] = [];
   const service = new ChatService({
+    // DSP-136: Cursor chosen explicitly, as the person would in Open a project.
+    agentChoiceStore: { read: () => 'cursor', write: () => undefined },
     repoRoot: makeDir(`${name}-repo-root`),
     send: () => {
       // No renderer here.

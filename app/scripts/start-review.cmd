@@ -44,6 +44,11 @@ if not exist "%KIT%\userData" (
   popd
 )
 
+rem DSP-136: the kit names its agent, Cursor (simulated here). A kit seeded before
+rem DSP-136 has no choice recorded, so it is added once.
+if not exist "%KIT%\userData\dspatch-agent-choice.json" (
+  >"%KIT%\userData\dspatch-agent-choice.json" echo {"formatVersion": 1, "agent": "cursor"}
+)
 set "DSPATCH_CHAT_RUN=review-hold"
 set "DSPATCH_CHAT_SWITCH_PROJECTS=%KIT%\p1\repo;%KIT%\p2\other"
 set "DSPATCH_CHAT_EXPECT_USERDATA=%KIT%\userData"

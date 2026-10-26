@@ -107,7 +107,31 @@ export interface ClaudePermissionPolicy {
   readonly settingSources: readonly [];
   /** Always `true` (see above). A policy without it is refused. */
   readonly strictMcpConfig: true;
+  /**
+   * DSP-132: tools removed from the model's context even if they would otherwise be
+   * allowed (sdk.d.ts 0.3.306 `Options.disallowedTools`); `mcp__*` removes every MCP
+   * tool (documented for agent definitions; `strictMcpConfig` already passes none).
+   * Omitted, never `undefined`, where unused, so a policy without it keeps its digest.
+   */
+  readonly disallowedTools?: readonly string[];
+  /**
+   * DSP-132: a second PreToolUse hook, with no matcher, that denies **every** tool
+   * call on every turn with {@link REVIEW_DENY_REASON}, independent of cancellation.
+   * It does not set `continue: false`: the turn goes on, so the model can still answer
+   * in text. Hooks run before allow rules and the permission mode (hooks and
+   * permissions documentation), so this holds whatever else is configured. Omitted
+   * where unused.
+   */
+  readonly denyEveryTool?: true;
 }
+
+/**
+ * Why the review discussion's deny-all hook refused a tool (DSP-132). Sent to the
+ * model as the deny reason; visible in the discussion's Context and in run records.
+ */
+export const REVIEW_DENY_REASON =
+  "DSpatch's review discussion is text-only: no tool may be used here, and this " +
+  'call was not run. Answer in text from the code and context in the message.';
 
 /** The DSP-109 fixture configuration. Recorded in every run record. */
 export const FIXTURE_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
@@ -141,12 +165,56 @@ export const CHAT_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
   strictMcpConfig: true,
 }) as ClaudePermissionPolicy;
 
-/** A permission policy as one line a person can read, for Session details. */
+/**
+ * The review discussion's policy (DSP-132): no tools at all, by four controls that do
+ * not depend on the prompt. `tools: []` makes no built-in tool available;
+ * `allowedTools: []` pre-approves nothing; `disallowedTools` removes the tools that
+ * could change code, run commands, reach the web, start agents or use MCP even if
+ * something made them available; and the deny-all hook refuses any tool call that
+ * still happens, without ending the turn. `dontAsk`, no settings from disk and no MCP
+ * servers, as for the chat. The session runs in an empty folder DSpatch owns.
+ *
+ * Names checked against `BUILTIN_TOOL_NAMES` in the SDK's sdk.d.ts 0.3.306 (read from
+ * a scratch install): `Agent` is the sub-agent tool there (no tool is named `Task`),
+ * and `PowerShell` is the Windows shell beside `Bash`. Configured and checked offline
+ * with a substituted SDK; what a live session's init `tools` and `mcp_servers` show is
+ * the home probe's to observe (DSP-132 AC#1).
+ */
+export const REVIEW_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
+  tools: Object.freeze([]) as readonly string[],
+  allowedTools: Object.freeze([]) as readonly string[],
+  disallowedTools: Object.freeze([
+    'Bash',
+    'PowerShell',
+    'Edit',
+    'Write',
+    'NotebookEdit',
+    'Agent',
+    'WebFetch',
+    'WebSearch',
+    'Skill',
+    'mcp__*',
+  ]),
+  permissionMode: 'dontAsk',
+  settingSources: Object.freeze([]) as readonly [],
+  strictMcpConfig: true,
+  denyEveryTool: true,
+}) as ClaudePermissionPolicy;
+
+/** A permission policy as one line a person can read, for Session details and review Context. */
 export function describePermissionPolicy(policy: ClaudePermissionPolicy): string {
+  const tools = policy.tools.length === 0 ? 'no tools' : `tools ${policy.tools.join(', ')}`;
+  const allowed =
+    policy.allowedTools.length === 0 ? 'nothing pre-approved' : `allowed ${policy.allowedTools.join(', ')}`;
+  const disallowed =
+    policy.disallowedTools === undefined || policy.disallowedTools.length === 0
+      ? ''
+      : `; disallowed ${policy.disallowedTools.join(', ')}`;
+  const denyAll = policy.denyEveryTool === true ? '; every tool call denied by a hook (the turn continues)' : '';
   return (
-    `tools ${policy.tools.join(', ')}; allowed ${policy.allowedTools.join(', ')}; ` +
+    `${tools}; ${allowed}${disallowed}; ` +
     `permission mode ${policy.permissionMode}; no settings read from disk; ` +
-    `${policy.strictMcpConfig ? 'no MCP servers' : 'MCP servers from configuration'}`
+    `${policy.strictMcpConfig ? 'no MCP servers' : 'MCP servers from configuration'}${denyAll}`
   );
 }
 
@@ -590,8 +658,10 @@ export interface HookFiring {
   readonly atUtc: Timestamp;
   readonly toolName: string;
   readonly toolUseId: string | null;
-  /** `pass` leaves the decision to the normal permission rules; `deny` is the cancellation. */
+  /** `pass` leaves the decision to the normal permission rules; `deny` refuses the call. */
   readonly decision: 'pass' | 'deny';
+  /** Which hook: the cancellation hook (absent, as before) or DSP-132's deny-all hook. */
+  readonly hook?: 'deny-every-tool';
 }
 
 /** What happened to the one `interrupt()` call. */
@@ -2133,6 +2203,9 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       ...(config.modelRequested === '' ? {} : { model: config.modelRequested }),
       tools: [...this.permissions.tools],
       allowedTools: [...this.permissions.allowedTools],
+      ...(this.permissions.disallowedTools === undefined
+        ? {}
+        : { disallowedTools: [...this.permissions.disallowedTools] }),
       permissionMode: this.permissions.permissionMode,
       settingSources: [],
       // Only the MCP servers passed here (none) — not project `.mcp.json`, user
@@ -2157,7 +2230,17 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       // `hasBidirectionalNeeds` / `streamInput`; code, not contract) a registered
       // hook keeps the CLI's stdin open after the one-message prompt is consumed,
       // and without one stdin would close and no control request could reach it.
-      hooks: { PreToolUse: [{ hooks: [this.cancelHook(run)] }] },
+      // DSP-132: with `denyEveryTool`, a second unmatched hook refuses every call.
+      hooks: {
+        PreToolUse: [
+          {
+            hooks:
+              this.permissions.denyEveryTool === true
+                ? [this.cancelHook(run), this.denyEveryToolHook(run)]
+                : [this.cancelHook(run)],
+          },
+        ],
+      },
       // The SDK's own spawn, wrapped only to observe the process exit (see
       // `spawnObserved`); same command, arguments and environment.
       spawnClaudeCodeProcess: (spawnOptions) => this.spawnObserved(run, spawnOptions),
@@ -2778,6 +2861,38 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           hookEventName: 'PreToolUse',
           permissionDecision: 'deny',
           permissionDecisionReason: CANCEL_DENY_REASON,
+        },
+      };
+      return Promise.resolve(output);
+    };
+  }
+
+  /**
+   * DSP-132: the deny-all PreToolUse callback. Records every call and denies it with
+   * {@link REVIEW_DENY_REASON}. No `continue: false` and no `stopReason`: the turn is
+   * not ended, so the model can answer in text. Independent of cancellation, which
+   * the cancellation hook beside it still handles.
+   */
+  private denyEveryToolHook(run: ClaudeRun): HookCallback {
+    return (input, toolUseID) => {
+      const fields = asRecord(input);
+      const toolName = typeof fields['tool_name'] === 'string' ? fields['tool_name'] : 'unknown';
+      const reported = fields['tool_use_id'];
+      const toolUseId =
+        typeof reported === 'string' && reported !== '' ? reported : (toolUseID ?? null);
+      run.hookFirings.push({
+        dspatchRunId: run.dspatchRunId,
+        atUtc: nowIso(),
+        toolName,
+        toolUseId,
+        decision: 'deny',
+        hook: 'deny-every-tool',
+      });
+      const output: HookJSONOutput = {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: REVIEW_DENY_REASON,
         },
       };
       return Promise.resolve(output);

@@ -1666,6 +1666,12 @@ export interface ReviewWindowInput {
    * reopens for a project in the DSpatch clone.
    */
   readonly remember?: boolean;
+  /**
+   * DSP-132: the agent of the main window that opened review, the default for a **new**
+   * review discussion. Absent (standalone, example, direct) means none: the discussion
+   * then asks for an explicit choice. A discussion's stored agent always wins.
+   */
+  readonly defaultProvider?: 'cursor' | 'claude' | null;
 }
 
 /** How opening a review window went, for the note beside the button that asked. */

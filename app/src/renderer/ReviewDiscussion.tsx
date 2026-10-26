@@ -11,6 +11,7 @@ import {
   withoutErrorClass,
   type ContextEnvelope,
   type DiscussionMessage,
+  type DiscussionProvider,
   type DiscussionRequest,
   type DiscussionStatusView,
   type EnvelopeRange,
@@ -71,6 +72,20 @@ declare global {
 
 function short(sha: string): string {
   return sha.slice(0, 7);
+}
+
+function agentName(provider: DiscussionProvider): string {
+  return provider === 'claude' ? 'Claude' : 'Cursor';
+}
+
+/** DSP-132: which agent one question went to, and with what - or that it predates the record. */
+function agentOf(message: DiscussionMessage, words: DiscussionWords): string {
+  if (message.provider === undefined) {
+    return words.recordedBeforeProvider;
+  }
+  const name = agentName(message.provider);
+  const session = message.dspatchSessionId === undefined ? '' : ` · ${message.dspatchSessionId}`;
+  return `${message.toolPolicy === undefined ? name : words.agentPolicy(name, message.toolPolicy)}${session}`;
 }
 
 /**
@@ -199,7 +214,7 @@ function ContextDisclosure({
         <dt>{labels.providerContext}</dt>
         <dd>{envelope?.providerContext ?? PROVIDER_ADDED_CONTEXT_LINE}</dd>
         <dt>{labels.agent}</dt>
-        <dd data-ev={`discussion-agent-${String(index)}`}>{words.agentLine}</dd>
+        <dd data-ev={`discussion-agent-${String(index)}`}>{agentOf(message, words)}</dd>
         {message.model !== undefined && (
           <>
             <dt>{labels.model}</dt>
@@ -263,6 +278,8 @@ export function ReviewDiscussion({
   const [note, setNote] = useState<string | null>(null);
   const [gate, setGate] = useState<readonly string[]>([]);
   const [goneNote, setGoneNote] = useState(false);
+  /** DSP-132: the recap behind the switch notice is shown on request. */
+  const [recapShown, setRecapShown] = useState(false);
   const sending = useRef(false);
   const loaded = useRef(false);
 
@@ -328,6 +345,10 @@ export function ReviewDiscussion({
       if (question === '' && acknowledge.length === 0) {
         return;
       }
+      // DSP-132: no agent, no question. The line above the box already says so.
+      if (status?.agent.provider == null) {
+        return;
+      }
       sending.current = true;
       setError(null);
       try {
@@ -358,7 +379,42 @@ export function ReviewDiscussion({
         sending.current = false;
       }
     },
-    [bridge, text, flush, request, lang],
+    [bridge, text, flush, request, lang, status],
+  );
+
+  /** DSP-132: choose the agent. Builds nothing; the next question starts its session. */
+  const choose = useCallback(
+    (provider: DiscussionProvider) => {
+      if (bridge === undefined) {
+        return;
+      }
+      setRecapShown(false);
+      void bridge.chooseAgent(provider).then(
+        (outcome) => {
+          if (outcome.kind === 'chosen') {
+            setStatus(outcome.status);
+            setError(null);
+          } else {
+            setError(outcome.error);
+          }
+        },
+        (failure: unknown) => {
+          setError(String(failure));
+        },
+      );
+    },
+    [bridge],
+  );
+
+  const setLeftOut = useCallback(
+    (leftOut: boolean) => {
+      if (bridge !== undefined) {
+        void bridge.setRecapLeftOut(leftOut).then(setStatus, (failure: unknown) => {
+          setError(String(failure));
+        });
+      }
+    },
+    [bridge],
   );
 
   const onKeyDown = useCallback(
@@ -523,6 +579,12 @@ export function ReviewDiscussion({
     statusLine = <span>{note}</span>;
   }
 
+  // DSP-132: the agent, its limits, and what a switch carries.
+  const agent = status?.agent ?? null;
+  const agentLocked = turn !== null || status?.readOnly != null;
+  const noAgent = agent !== null && agent.provider === null;
+  const notice = agent?.switchNotice ?? null;
+
   return (
     <section className="rv-discussion" hidden={!shown} data-ev="discussion">
       <div className="rv-discussion-thread" data-ev="discussion-thread">
@@ -566,6 +628,74 @@ export function ReviewDiscussion({
           </div>
         )}
         {error !== null && <PlainProblem text={error} words={words} />}
+        {agent !== null && (
+          <div className="rv-discussion-agent" data-ev="discussion-agent">
+            <label>
+              {words.agentLabel}{' '}
+              <select
+                data-ev="discussion-agent-select"
+                value={agent.provider ?? ''}
+                disabled={agentLocked}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === 'cursor' || value === 'claude') {
+                    choose(value);
+                  }
+                }}
+              >
+                {agent.provider === null && (
+                  <option value="" disabled>
+                    {words.chooseAgent}
+                  </option>
+                )}
+                {agent.options.map((option) => (
+                  <option
+                    key={option.provider}
+                    value={option.provider}
+                    disabled={!option.choosable && option.provider !== agent.provider}
+                    title={option.reason ?? undefined}
+                  >
+                    {option.choosable ? agentName(option.provider) : `${agentName(option.provider)} (${words.notAvailable})`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {noAgent && (
+              <div className="rv-sub" data-ev="discussion-choose-agent">
+                {words.chooseAgent}
+              </div>
+            )}
+            {agent.provider !== null && agent.unavailable !== null && (
+              <div className="rv-error" data-ev="discussion-agent-unavailable">
+                {words.agentUnavailable(agentName(agent.provider), agent.unavailable)}
+              </div>
+            )}
+            {agent.provider !== null && agent.unavailable === null && agent.policy !== null && (
+              <details className="rv-discussion-agent-policy">
+                <summary>{words.agentLimits}</summary>
+                <div data-ev="discussion-agent-policy">{agent.policy}</div>
+              </details>
+            )}
+            {notice !== null && (
+              <div className="rv-discussion-switch" data-ev="discussion-switch-notice">
+                <span>
+                  {notice.leftOut
+                    ? words.recapLeftOut(agentName(notice.provider))
+                    : words.switchNotice(agentName(notice.provider), notice.exchanges)}
+                </span>{' '}
+                {!notice.leftOut && (
+                  <button type="button" className="rv-link" data-ev="discussion-recap-show" aria-expanded={recapShown} onClick={() => setRecapShown(!recapShown)}>
+                    {recapShown ? words.hideRecap : words.showRecap}
+                  </button>
+                )}{' '}
+                <button type="button" className="rv-link" data-ev="discussion-recap-leave-out" onClick={() => setLeftOut(!notice.leftOut)}>
+                  {notice.leftOut ? words.includeAgain : words.leaveOut}
+                </button>
+                {recapShown && !notice.leftOut && <pre className="rv-discussion-prompt">{notice.recap}</pre>}
+              </div>
+            )}
+          </div>
+        )}
         <div className="rv-discussion-about" data-ev="discussion-subject" title={line}>
           {words.about}: {line}
         </div>

@@ -9,6 +9,7 @@ import type {
 
 import type { Capability, CapabilitySupport } from '../adapter/types';
 import type {
+  AdapterInfo,
   AgentChoiceInfo,
   AttemptInfo,
   AttemptReconciliation,
@@ -55,6 +56,7 @@ import {
 import {
   connectionRecheckNote,
   connectionRetryPlan,
+  shouldCheckCursorConnection,
   describeBridgeFailure,
   describeReconciledRepeat,
   describeSavedConversationUnresolved,
@@ -307,8 +309,9 @@ function Workbench({
 }: {
   readonly environment: EnvironmentInfo;
 }): JSX.Element {
+  // DSP-136: nothing is checked until Cursor is the agent in play (or asked for).
   const [connection, setConnection] = useState<ConnectionStatus>({
-    kind: 'checking',
+    kind: 'not-checked',
   });
   const [connectionAttempts, setConnectionAttempts] = useState(0);
   const [projects, setProjects] = useState<ProjectListing | null>(null);
@@ -320,7 +323,11 @@ function Workbench({
    * DSP-117: the agent a *new* conversation starts with, chosen in the *Open a
    * project* panel. An existing conversation opens with its recorded agent.
    */
-  const [openProvider, setOpenProvider] = useState<StoredSessionProvider>('cursor');
+  // DSP-136: the agent last chosen explicitly, kept under userData; `null` (a fresh
+  // installation) until the person picks one. Never Cursor by default.
+  const [openProvider, setOpenProvider] = useState<StoredSessionProvider | null>(
+    environment.chosenAgent,
+  );
   const [actionError, setActionError] = useState<BridgeFailure | null>(null);
   /**
    * Whether the user removed the summary of a new provider session (DSP-121). The
@@ -764,7 +771,10 @@ function Workbench({
           toolCallsByAgent: context.toolCallsByAgent,
           toolNames: context.toolNames,
         },
-        adapterNote: `Provider calls go through the ${environment.adapter.id} adapter in the main process; the window sees run events over IPC and never calls the provider itself.`,
+        adapterNote:
+          session?.adapter === null || session?.adapter === undefined
+            ? 'No agent session is open, so no adapter exists. Provider calls, when there are any, go through an adapter in the main process; the window sees run events over IPC and never calls the provider itself.'
+            : `Provider calls go through the ${session.adapter.id} adapter in the main process; the window sees run events over IPC and never calls the provider itself.`,
       }),
     [
       session,
@@ -774,7 +784,6 @@ function Workbench({
       runState,
       conversations,
       context,
-      environment.adapter.id,
     ],
   );
 
@@ -813,9 +822,40 @@ function Workbench({
     }
   }, []);
 
+  /**
+   * DSP-136: Cursor's connection is checked on its own only while Cursor is the agent
+   * in play - the open conversation's, or the one chosen in *Open a project*. With
+   * Claude or no agent chosen nothing asks Cursor anything, and an earlier reading is
+   * put away rather than shown for an agent that is not in use.
+   */
+  const cursorInPlay = shouldCheckCursorConnection({
+    projectOpen: session !== null,
+    sessionProvider: session?.provider ?? null,
+    chosenAgent: openProvider,
+  });
   useEffect(() => {
+    if (cursorInPlay) {
+      setConnectionAttempts(0);
+      void checkConnection();
+    } else {
+      setConnection({ kind: 'not-checked' });
+      setConnectionAttempts(0);
+    }
+  }, [cursorInPlay, checkConnection]);
+
+  /** DSP-136: the explicit check, from Session details, whatever the agent. */
+  const checkCursorNow = useCallback((): void => {
+    setConnectionAttempts(0);
     void checkConnection();
   }, [checkConnection]);
+
+  /** DSP-136: an explicit agent choice in *Open a project*, recorded in the main process. */
+  const chooseOpenAgent = useCallback((provider: StoredSessionProvider): void => {
+    setOpenProvider(provider);
+    void window.dspatch.chooseAgent(provider).catch((error: unknown) => {
+      setSessionError(describeBridgeFailure(error));
+    });
+  }, []);
 
   /**
    * The bounded automatic retry.
@@ -825,7 +865,12 @@ function Workbench({
    * nothing and changes nothing. A message or a command is never retried this way.
    */
   useEffect(() => {
-    if (connection.kind === 'connected' || connection.kind === 'checking') {
+    if (
+      !cursorInPlay ||
+      connection.kind === 'connected' ||
+      connection.kind === 'checking' ||
+      connection.kind === 'not-checked'
+    ) {
       return;
     }
     const plan = connectionRetryPlan(connectionAttempts - 1);
@@ -838,7 +883,7 @@ function Workbench({
     return () => {
       clearTimeout(timer);
     };
-  }, [connection.kind, connectionAttempts, checkConnection]);
+  }, [cursorInPlay, connection.kind, connectionAttempts, checkConnection]);
 
   /** The attempt ledger from the main process. Nothing is hashed for this. */
   const refreshRunState = useCallback(async (): Promise<void> => {
@@ -2362,7 +2407,7 @@ function Workbench({
           connection={connection}
           agentChoice={environment.agentChoice}
           openProvider={openProvider}
-          onOpenProvider={setOpenProvider}
+          onOpenProvider={chooseOpenAgent}
           busy={busy}
           sessionError={sessionError}
           resumeError={resumeError}
@@ -2400,7 +2445,8 @@ function Workbench({
           busy={busy}
           hasSession={session !== null}
           onContinue={() => {
-            void startSession({ kind: 'folder', path: restored.project.path });
+            // DSP-136: the panel's agent goes with it, as with every other opening.
+            void startSession({ kind: 'folder', path: restored.project.path, provider: openProvider });
           }}
           onClose={() => {
             setRestored(null);
@@ -3062,8 +3108,9 @@ function Workbench({
                   scriptedPlan={scriptedPlan}
                   onChoose={(choice) => {
                     void startSession(
-                      choice === 'try-again'
-                        ? { kind: 'retry-resume' }
+                      choice === 'try-again' || choice === 'resume-recorded'
+                        ? // DSP-136: *Resume with <recorded>* resumes with the recorded provider.
+                          { kind: 'retry-resume' }
                         : choice === 'switch-to-cursor'
                           ? // DSP-117: an explicit switch, never a silent one.
                             { kind: 'new-provider-session', provider: 'cursor' }
@@ -3160,13 +3207,18 @@ function Workbench({
             Back to the conversation
           </button>
         </div>
-        <SessionFacts header={header} connection={connection} session={session} />
+        <SessionFacts
+          header={header}
+          connection={connection}
+          session={session}
+          onCheckCursor={checkCursorNow}
+        />
 
         {session !== null && (
           <>
             <ConversationDiagnostics
               session={session}
-              adapterId={environment.adapter.id}
+              adapterId={session.adapter?.id ?? 'none (no agent session open)'}
               scriptedPlan={scriptedPlan}
               expanded={diagnosticsExpanded}
               onToggle={setDiagnosticsExpanded}
@@ -3264,7 +3316,11 @@ function Workbench({
           }}
         />
 
-        <Environment environment={environment} connection={connection} />
+        <Environment
+          environment={environment}
+          adapter={session?.adapter ?? null}
+          connection={connection}
+        />
       </div>
       </div>
       </div>
@@ -3406,15 +3462,20 @@ function AgentChooser({
         <select
           className="model__select"
           data-ev="agent-select"
-          value={session.provider}
+          value={session.provider ?? ''}
           disabled={busy}
           onChange={(event) => {
-            const provider = event.target.value === 'claude' ? 'claude' : 'cursor';
-            if (provider !== session.provider) {
-              onSwitch(provider);
+            const value = event.target.value;
+            if ((value === 'cursor' || value === 'claude') && value !== session.provider) {
+              onSwitch(value);
             }
           }}
         >
+          {session.provider === null && (
+            <option value="" disabled>
+              Choose an agent
+            </option>
+          )}
           <option value="cursor">Cursor</option>
           <option value="claude" disabled={!session.agent.claudeEnabled}>
             {/* Short, so the control row does not wrap; the reason is in the tooltip. */}
@@ -3448,7 +3509,10 @@ function AppBarProblems({
   readonly onReconnect: () => void;
 }): JSX.Element | null {
   const retry = connectionRetryPlan(Math.max(connectionAttempts - 1, 0));
-  const showRetry = connection.kind !== 'connected' && connection.kind !== 'checking';
+  const showRetry =
+    connection.kind !== 'connected' &&
+    connection.kind !== 'checking' &&
+    connection.kind !== 'not-checked';
   if (header.problems.length === 0 && !showRetry) {
     return null;
   }
@@ -3495,10 +3559,13 @@ function SessionFacts({
   header,
   connection,
   session,
+  onCheckCursor,
 }: {
   readonly header: ChatHeaderView;
   readonly connection: ConnectionStatus;
   readonly session: ChatSessionInfo | null;
+  /** DSP-136: the explicit check of Cursor's connection. */
+  readonly onCheckCursor: () => void;
 }): JSX.Element {
   return (
     <Section title="Session details">
@@ -3511,7 +3578,7 @@ function SessionFacts({
         */}
         {/* R4: with Claude chosen, Cursor's facts say they are Cursor's. */}
         <Fact
-          label={session?.provider === 'claude' ? 'Cursor connection' : 'Connection'}
+          label={session?.provider === 'cursor' ? 'Connection' : 'Cursor connection'}
           value={header.connection}
           testId="connection-kind"
         />
@@ -3520,7 +3587,11 @@ function SessionFacts({
             {/* DSP-117: the agent, its connection line and the policy it is given. */}
             <Fact
               label="Agent"
-              value={`${session.provider === 'claude' ? 'Claude' : 'Cursor'} · ${session.agent.connectionText}`}
+              value={
+                session.provider === null
+                  ? 'No agent chosen'
+                  : `${session.provider === 'claude' ? 'Claude' : 'Cursor'} · ${session.agent.connectionText}`
+              }
               testId="session-agent"
             />
             <Fact label="Tool policy sent" value={session.agent.toolPolicyText} testId="session-tool-policy" />
@@ -3530,14 +3601,14 @@ function SessionFacts({
         {header.details.map((fact) => (
           <Fact
             key={fact.label}
-            label={session?.provider === 'claude' && fact.label === 'Account' ? 'Cursor account' : fact.label}
+            label={session?.provider !== 'cursor' && fact.label === 'Account' ? 'Cursor account' : fact.label}
             value={fact.value}
             testId={DETAIL_TEST_ID[fact.label]}
           />
         ))}
         {connection.kind === 'connected' && (
           <Fact
-            label={session?.provider === 'claude' ? 'Cursor models available' : 'Models available'}
+            label={session?.provider === 'cursor' ? 'Models available' : 'Cursor models available'}
             value={
               connection.modelsAvailable === null
                 ? 'unknown — the list was not read'
@@ -3547,6 +3618,22 @@ function SessionFacts({
           />
         )}
       </dl>
+      {connection.kind === 'not-checked' && (
+        <p className="app__note" data-ev="cursor-not-checked">
+          Cursor&apos;s connection is not checked: Cursor is not the agent in use.
+        </p>
+      )}
+      <p>
+        <button
+          type="button"
+          className="button button--quiet"
+          data-ev="check-cursor-connection"
+          disabled={connection.kind === 'checking'}
+          onClick={onCheckCursor}
+        >
+          Check Cursor connection
+        </button>
+      </p>
       <p className="app__note">
         Every provider call happens in the main process behind the adapter; this
         window reaches it only over IPC.
@@ -3601,7 +3688,7 @@ function ProjectChooser({
   readonly conversations: ConversationListing | null;
   readonly connection: ConnectionStatus;
   readonly agentChoice: AgentChoiceInfo;
-  readonly openProvider: StoredSessionProvider;
+  readonly openProvider: StoredSessionProvider | null;
   readonly onOpenProvider: (provider: StoredSessionProvider) => void;
   readonly busy: Busy;
   readonly sessionError: BridgeFailure | null;
@@ -3617,12 +3704,15 @@ function ProjectChooser({
   readonly onRefreshConversations: () => void;
   readonly onDismiss: () => void;
 }): JSX.Element {
-  const connected = connection.kind === 'connected';
-  // DSP-117: Cursor's connection gates opening only when Cursor is the agent. With
-  // Claude chosen, Claude's own credential rule decides when the session starts.
-  const claudeChosen = openProvider === 'claude' && agentChoice.claudeEnabled;
-  const needsCursor = !claudeChosen;
-  const disabled = busy !== null || (needsCursor && !connected);
+  // DSP-136: no Cursor gate. Opening never waits for Cursor's connection: a Cursor
+  // session without a usable login fails at start with Cursor's own message and
+  // sends nothing; with no agent chosen the project opens with no session and asks.
+  const shownProvider: StoredSessionProvider | null =
+    openProvider === 'claude' && !agentChoice.claudeEnabled ? null : openProvider;
+  const cursorProblem =
+    shownProvider === 'cursor' &&
+    (connection.kind === 'not-connected' || connection.kind === 'error');
+  const disabled = busy !== null;
   // `recent` only: a project named by the environment is not in the store, so
   // there would be nothing to remove for it.
   const missingRemembered = (projects?.entries ?? []).filter(
@@ -3660,12 +3750,20 @@ function ProjectChooser({
             <select
               className="model__select"
               data-ev="open-agent-select"
-              value={claudeChosen ? 'claude' : 'cursor'}
+              value={shownProvider ?? ''}
               disabled={busy !== null}
               onChange={(event) => {
-                onOpenProvider(event.target.value === 'claude' ? 'claude' : 'cursor');
+                const value = event.target.value;
+                if (value === 'cursor' || value === 'claude') {
+                  onOpenProvider(value);
+                }
               }}
             >
+              {shownProvider === null && (
+                <option value="" disabled>
+                  Choose an agent
+                </option>
+              )}
               <option value="cursor">Cursor</option>
               <option value="claude" disabled={!agentChoice.claudeEnabled}>
                 {claudeOptionLabel(agentChoice)}
@@ -3698,9 +3796,23 @@ function ProjectChooser({
         )}
       </div>
 
-      {needsCursor && !connected && (
-        <p className="app__note">
-          A Cursor session needs a connected Cursor account. Nothing is sent until then.
+      {shownProvider === null && openProvider !== null && (
+        // R1: a stored choice that cannot be used in this launch is named, with why.
+        <p className="app__note" data-ev="open-agent-unusable">
+          {openProvider === 'claude' ? 'Claude' : 'Cursor'} was chosen, but it cannot be used in this
+          launch: {agentChoice.claudeNote} Choose another agent, or start DSpatch so that it can be used.
+        </p>
+      )}
+      {shownProvider === null && openProvider === null && (
+        <p className="app__note" data-ev="open-agent-needed">
+          No agent is chosen. A project opens with its history and no agent session
+          until you choose one.
+        </p>
+      )}
+      {cursorProblem && (
+        <p className="app__note" data-ev="open-cursor-problem">
+          Cursor has no usable login right now, so a Cursor session will fail when it
+          starts. Nothing is sent.
         </p>
       )}
       {agentChoice.claudeNotInstalledText !== null && (
@@ -3712,8 +3824,9 @@ function ProjectChooser({
         </p>
       )}
       <p className="app__note" data-ev="open-agent-note">
-        The agent applies to a new conversation. A project whose conversation already
-        has a session opens with that session&apos;s agent.
+        Opening a project uses this agent. A conversation recorded with another agent
+        opens with its history and asks first: a new session with this agent, or
+        resume with the recorded one.
       </p>
 
       {sessionError !== null && (
@@ -6968,12 +7081,15 @@ function Turn({
 
 function Environment({
   environment,
+  adapter,
   connection,
 }: {
   readonly environment: EnvironmentInfo;
+  /** DSP-136 (S4): the open session's adapter, or `null` while none is open. */
+  readonly adapter: AdapterInfo | null;
   readonly connection: ConnectionStatus;
 }): JSX.Element {
-  const { versions, adapter } = environment;
+  const { versions } = environment;
 
   return (
     <>
@@ -7032,6 +7148,14 @@ function Environment({
         </dl>
       </Section>
 
+      {adapter === null ? (
+        <Section title="Adapter — no agent session open">
+          <p className="app__note" data-ev="no-adapter">
+            No agent session is open, so no adapter exists. One is built when a
+            session with the chosen agent opens.
+          </p>
+        </Section>
+      ) : (
       <Section title={`Adapter — ${adapter.id}`}>
         <p className="app__note">
           The seven capabilities in the integration contract. These values apply to
@@ -7071,6 +7195,7 @@ function Environment({
             ' The model list could not be read this time, so that field is unknown too.'}
         </p>
       </Section>
+      )}
     </>
   );
 }

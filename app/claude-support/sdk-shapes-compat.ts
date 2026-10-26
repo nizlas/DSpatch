@@ -44,3 +44,14 @@ fits<Sdk.HookJSONOutput>(oursHookOutput);
 fits<Sdk.SpawnedProcess>(oursSpawned);
 fits<Sdk.Options>(oursOptions);
 fits<Parameters<typeof Sdk.query>[0]>(oursQueryParams);
+
+// Key checks (R-0 A1). The `fits` lines above assign declared values, which TypeScript
+// does not check for excess properties, so a key the SDK dropped or renamed would still
+// pass them. These fail when DSpatch's view names a key the SDK's type does not have.
+type MustBeNever<T extends never> = T;
+export type OptionsKeysTheSdkLacks = MustBeNever<Exclude<keyof Ours.Options, keyof Sdk.Options>>;
+export type HookOutputKeysTheSdkLacks = MustBeNever<Exclude<keyof Ours.HookJSONOutput, keyof Sdk.SyncHookJSONOutput>>;
+export type PreToolUseKeysTheSdkLacks = MustBeNever<
+  Exclude<keyof NonNullable<Ours.HookJSONOutput['hookSpecificOutput']>, keyof Sdk.PreToolUseHookSpecificOutput>
+>;
+export type SpawnOptionsKeysTheSdkLacks = MustBeNever<Exclude<keyof Ours.SpawnOptions, keyof Sdk.SpawnOptions>>;

@@ -1,7 +1,8 @@
 /**
- * Choosing the agent in the main chat (DSP-117): Cursor by default, Claude only in
- * a launch that enabled it, never a resume across providers, and a switch that is a
- * new session with the recap disclosed.
+ * Choosing the agent in the main chat (DSP-117, DSP-136): no agent assumed - the one
+ * chosen explicitly, Claude only in a launch that enabled it, no adapter built until
+ * a session needs one, never a resume across providers, and a switch that is a new
+ * session with the recap disclosed.
  *
  * SIMULATED: Cursor is a fake adapter here, and Claude is the real
  * `ClaudeAgentSdkAdapter` with its SDK substituted (`queryFn`, `spawnProcess` and
@@ -39,7 +40,7 @@ import type {
 import { ChatService, CLAUDE_CHAT_MODEL, type ChatAdapter } from '../src/main/chat-service.ts';
 import { ConversationStore } from '../src/main/conversation-store.ts';
 import { DISPOSE_MARGIN_MS, DISPOSE_TIMEOUT_MS } from '../src/main/dispose-timeout.ts';
-import { reviewAdapterFactory } from '../src/main/review-discussion-service.ts';
+import { providerAdapters } from '../src/main/provider-adapters.ts';
 import type { StoredSessionProvider } from '../src/shared/bridge.ts';
 import { claudeSubstitute, type ClaudeSubstitute } from './support/claude-chat-substitute.ts';
 import { tempRoot } from './support/fixtures.ts';
@@ -156,6 +157,8 @@ interface Harness {
   readonly store: ConversationStore;
   /** Every provider the factory was asked for, in order. */
   readonly asked: StoredSessionProvider[];
+  /** Every explicit agent choice recorded. */
+  readonly writes: StoredSessionProvider[];
   readonly cursors: FakeCursor[];
   readonly claudes: ClaudeAgentSdkAdapter[];
   readonly sdk: ClaudeSubstitute;
@@ -167,6 +170,8 @@ function harness(
     readonly claudeEnabled: boolean;
     /** DSP-133: Claude support as read at launch. Defaults to installed. */
     readonly claudeInstalled?: boolean;
+    /** DSP-136: the agent chosen in this installation; `null` is a fresh one. Default Cursor. */
+    readonly chosen?: StoredSessionProvider | null;
     readonly workspace?: string;
     readonly store?: ConversationStore;
     readonly conversationId?: string;
@@ -179,6 +184,7 @@ function harness(
   fs.writeFileSync(path.join(workspace, 'readme.txt'), 'a project\n', 'utf8');
   const store = options.store ?? new ConversationStore(path.join(root, 'userdata', 'conversations'));
   const asked: StoredSessionProvider[] = [];
+  const writes: StoredSessionProvider[] = [];
   const cursors: FakeCursor[] = [];
   const claudes: ClaudeAgentSdkAdapter[] = [];
   const sdk = claudeSubstitute();
@@ -192,6 +198,13 @@ function harness(
     ...(conversationId === undefined ? {} : { conversationForProject: () => conversationId }),
     readAuthStatus: () => Promise.resolve({ status: 'logged-in', backendUrl: 'https://example.invalid' }),
     claudeAuthorizationReference: options.claudeEnabled ? 'test-only reference' : null,
+    // DSP-136: the agent chosen in this installation; Cursor unless a test says otherwise.
+    agentChoiceStore: {
+      read: () => (options.chosen === undefined ? 'cursor' : options.chosen),
+      write: (provider) => {
+        writes.push(provider);
+      },
+    },
     claudeSupport:
       options.claudeInstalled === false
         ? { installed: false, reason: 'test: no claude-support folder' }
@@ -215,7 +228,7 @@ function harness(
     },
     timings: { cancelConfirmMs: 40, cancelWatchMs: 60 },
   });
-  return { service, workspace, store, asked, cursors, claudes, sdk };
+  return { service, workspace, store, asked, writes, cursors, claudes, sdk };
 }
 
 async function settled(service: ChatService): Promise<void> {
@@ -239,7 +252,7 @@ async function cursorConversation(name: string): Promise<{ workspace: string; st
   return { workspace: first.workspace, store: first.store, conversationId: opened.conversationId };
 }
 
-test('a new conversation is Cursor by default, and Claude cannot be chosen in a launch that did not enable it', async () => {
+test('with Cursor chosen a new conversation is Cursor, and Claude cannot be chosen in a launch that did not enable it', async () => {
   const h = harness('default', { claudeEnabled: false });
   const session = await h.service.startChatSession({ kind: 'folder', path: h.workspace });
   assert.deepEqual(h.asked, ['cursor']);
@@ -312,30 +325,54 @@ test('a Claude-recorded conversation in a launch without Claude is not resumed t
 
   const h = harness('claude-without', { claudeEnabled: false, workspace, store, conversationId });
   const session = await h.service.startChatSession({ kind: 'folder', path: workspace });
-  assert.equal(session.continuity.resumeFailure?.kind, 'provider-differs');
+  // DSP-136: no silent fallback and no adapter at all - not Cursor, not Claude.
+  assert.equal(session.continuity.resumeFailure?.kind, 'agent-choice');
   assert.equal(session.continuity.providerSessionOpen, false);
-  assert.deepEqual(h.cursors[0]?.resumes, []);
-  assert.deepEqual(h.cursors[0]?.sent, []);
-  assert.deepEqual(h.cursors[0]?.configs, []);
+  assert.deepEqual(h.asked, [], 'no adapter was built');
+  assert.equal(h.cursors.length, 0);
   assert.equal(h.claudes.length, 0);
-  assert.match(session.continuity.statement, /it is a Claude session, and Cursor is selected/);
+  assert.match(session.continuity.statement, /it is a Claude session, and Claude cannot be used in this launch/);
+  // Cursor is chosen and usable: a new Cursor session is offered; Claude cannot be resumed.
   assert.deepEqual(session.continuity.choices, ['new-session']);
+  assert.equal(session.provider, 'cursor');
   await h.service.dispose();
 });
 
-test("an existing conversation opens with its recorded agent whatever the panel's choice, and is never resumed through Claude", async () => {
+test('a Cursor-recorded conversation with Claude chosen builds nothing until Resume with Cursor is picked (DSP-136 Q-A)', async () => {
   const { workspace, store, conversationId } = await cursorConversation('cursor-with-claude');
   const h = harness('cursor-with-claude', { claudeEnabled: true, workspace, store, conversationId });
-  // The *Open a project* panel had Claude chosen: that choice is for a new conversation.
   const session = await h.service.startChatSession({ kind: 'folder', path: workspace, provider: 'claude' });
-  assert.equal(session.provider, 'cursor');
-  assert.equal(session.continuity.kind, 'provider-session-resumed');
+  assert.equal(session.provider, 'claude');
+  assert.equal(session.continuity.providerSessionOpen, false);
+  assert.equal(session.continuity.resumeFailure?.kind, 'provider-differs');
+  assert.deepEqual(session.continuity.choices, ['new-session', 'resume-recorded']);
+  assert.equal(session.continuity.recordedProvider, 'cursor');
+  assert.equal(session.adapter, null);
+  assert.ok(session.restoredHistory.messages.length > 0, 'the history is readable');
+  assert.deepEqual(h.asked, [], 'nothing was built');
+  assert.deepEqual(h.sdk.lookups, []);
+  assert.equal(h.sdk.calls.length, 0);
+
+  // *Resume with Cursor*: the recorded provider, explicitly.
+  const resumed = await h.service.startChatSession({ kind: 'retry-resume' });
+  assert.equal(resumed.provider, 'cursor');
+  assert.equal(resumed.continuity.kind, 'provider-session-resumed');
   assert.deepEqual(h.asked, ['cursor']);
   assert.equal(h.cursors[0]?.resumes.length, 1);
   assert.equal(h.claudes.length, 0, 'no Claude adapter was built');
-  assert.deepEqual(h.sdk.lookups, []);
-  assert.equal(h.sdk.calls.length, 0);
+  assert.equal(resumed.adapter?.id, 'fake-cursor');
   await h.service.dispose();
+
+  // Or *Start new Claude session*, from the same state: Claude only, with the recap.
+  const again = harness('cursor-with-claude-new', { claudeEnabled: true, workspace, store, conversationId });
+  await again.service.startChatSession({ kind: 'folder', path: workspace, provider: 'claude' });
+  assert.deepEqual(again.asked, []);
+  const started = await again.service.startChatSession({ kind: 'new-provider-session', provider: 'claude' });
+  assert.equal(started.provider, 'claude');
+  assert.equal(started.continuity.kind, 'new-provider-session');
+  assert.ok((started.continuity.contextToResend ?? '').length > 0, 'the recap is disclosed');
+  assert.deepEqual(again.asked, ['claude'], 'never Cursor');
+  await again.service.dispose();
 });
 
 test('opening a new project or the sample with Claude chosen builds no Cursor adapter and makes no Cursor call (R1)', async () => {
@@ -372,7 +409,7 @@ test('a Claude session is resumed only under the tool policy it was recorded wit
   await first.service.dispose();
 
   // Same policy: the resume reaches the (substituted) lookup.
-  const same = harness('policy-same', { claudeEnabled: true, workspace, store, conversationId });
+  const same = harness('policy-same', { claudeEnabled: true, workspace, store, conversationId, chosen: 'claude' });
   await same.service.startChatSession({ kind: 'folder', path: workspace });
   assert.equal(same.sdk.lookups.length, 1);
   await same.service.dispose();
@@ -382,7 +419,7 @@ test('a Claude session is resumed only under the tool policy it was recorded wit
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { session: { toolPolicy: string } };
   raw.session.toolPolicy = 'claude-agent-sdk:not-this-policy';
   fs.writeFileSync(file, JSON.stringify(raw), 'utf8');
-  const other = harness('policy-other', { claudeEnabled: true, workspace, store, conversationId });
+  const other = harness('policy-other', { claudeEnabled: true, workspace, store, conversationId, chosen: 'claude' });
   const refused = await other.service.startChatSession({ kind: 'folder', path: workspace });
   assert.equal(refused.continuity.resumeFailure?.providerCode, 'config_mismatch');
   assert.deepEqual(other.sdk.lookups, []);
@@ -419,7 +456,7 @@ test("after DSpatch's credential rule refuses Claude, a new session is Claude ag
 
   // A launch whose environment carries Claude Code's own sign-in: the rule refuses.
   const env = { ...CLEAN_ENV, CLAUDE_CODE_OAUTH_TOKEN: 'synthetic' };
-  const h = harness('refused', { claudeEnabled: true, workspace, store, conversationId, claudeEnv: env });
+  const h = harness('refused', { claudeEnabled: true, workspace, store, conversationId, claudeEnv: env, chosen: 'claude' });
   const refused = await h.service.startChatSession({ kind: 'folder', path: workspace });
   assert.equal(refused.continuity.resumeFailure?.providerCode, 'authentication_refused');
   assert.deepEqual(refused.continuity.choices, ['new-session', 'switch-to-cursor']);
@@ -433,7 +470,7 @@ test("after DSpatch's credential rule refuses Claude, a new session is Claude ag
   await h.service.dispose();
 
   // Start new session without naming a provider stays Claude, and is refused again.
-  const again = harness('refused-again', { claudeEnabled: true, workspace, store, conversationId, claudeEnv: env });
+  const again = harness('refused-again', { claudeEnabled: true, workspace, store, conversationId, claudeEnv: env, chosen: 'claude' });
   // The conversation is Cursor now; make it Claude-recorded again for this case.
   const file = store.filePathFor(conversationId);
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { session: { provider: string; toolPolicy: string } };
@@ -484,11 +521,14 @@ test('a new Claude session refused by the credential rule after leaving Cursor k
   await h.service.dispose();
 });
 
-test('the review discussion stays Cursor text-only whatever the chat has selected', async () => {
+test('the review discussion gets its own adapter from the shared factory, text-only, whatever the chat has selected (DSP-132)', async () => {
   const h = harness('review', { claudeEnabled: true });
   await h.service.startChatSession({ kind: 'folder', path: h.workspace, provider: 'claude' });
   assert.equal(h.service.openSession()?.provider, 'claude');
-  const review = reviewAdapterFactory({ presentation: false }).create();
+  const review = providerAdapters({ presentation: false, claudeAuthorizationReference: null, claudeInstalled: false }).createAdapter({
+    provider: 'cursor',
+    purpose: 'review',
+  });
   try {
     assert.ok(review instanceof CursorSdkAdapter);
     assert.equal((review as unknown as { toolPolicy: string }).toolPolicy, 'text-only');
@@ -534,6 +574,112 @@ test('without Claude support installed, Claude is not choosable, says how to ins
   await both.service.dispose();
 });
 
+/** A factory spy for DSP-136: fails the test the moment a Cursor adapter is built. */
+function noCursorHarness(name: string, options: Parameters<typeof harness>[1]): Harness {
+  const h = harness(name, options);
+  const original = (h.service as unknown as { options: { createAdapter?: (p: StoredSessionProvider) => ChatAdapter } }).options;
+  const inner = original.createAdapter;
+  (original as { createAdapter?: (p: StoredSessionProvider) => ChatAdapter }).createAdapter = (provider) => {
+    if (provider === 'cursor') {
+      throw new Error(`DSP-136: a Cursor adapter was built in ${name}`);
+    }
+    if (inner === undefined) {
+      throw new Error('no factory');
+    }
+    return inner(provider);
+  };
+  return h;
+}
+
+test('reading identity, capabilities and the agent choice builds no adapter (DSP-136)', () => {
+  const h = noCursorHarness('identity', { claudeEnabled: true, chosen: null });
+  assert.equal(h.service.adapterId(), null);
+  assert.equal(h.service.capabilities(), null);
+  assert.equal(h.service.adapterInfo(), null);
+  const choice = h.service.agentChoice(h.service.chosenAgent());
+  assert.equal(choice.connectionText, 'No agent chosen');
+  assert.equal(h.service.chosenAgent(), null);
+  assert.deepEqual(h.asked, []);
+});
+
+test('a fresh installation has no agent chosen: opening a project creates no adapter and asks for one (B1)', async () => {
+  const h = noCursorHarness('fresh', { claudeEnabled: true, chosen: null });
+  for (const request of [
+    { kind: 'folder', path: h.workspace },
+    { kind: 'sample' },
+  ] as const) {
+    const session = await h.service.startChatSession(request);
+    assert.equal(session.provider, null, request.kind);
+    assert.equal(session.adapter, null, request.kind);
+    assert.equal(session.continuity.providerSessionOpen, false, request.kind);
+    assert.equal(session.continuity.agentNeeded, true, request.kind);
+    assert.equal(session.continuity.resumeFailure?.kind, 'agent-choice', request.kind);
+    assert.deepEqual(session.continuity.choices, [], request.kind);
+    assert.match(session.continuity.statement, /No agent is chosen/, request.kind);
+    assert.equal(h.service.adapterId(), null, request.kind);
+  }
+  await assert.rejects(h.service.sendPrompt('hello'), /No provider session is open/);
+  assert.deepEqual(h.asked, [], 'no adapter was built');
+
+  // Choosing is recorded, builds nothing, and the next open uses it.
+  assert.equal(h.service.chooseAgent('claude'), 'claude');
+  assert.deepEqual(h.writes, ['claude']);
+  assert.deepEqual(h.asked, []);
+  // From the no-session state, choosing an agent for the conversation opens it.
+  const opened = await h.service.startChatSession({ kind: 'new-provider-session', provider: 'claude' });
+  assert.equal(opened.provider, 'claude');
+  assert.equal(opened.adapter?.id, 'claude-agent-sdk');
+  assert.deepEqual(h.asked, ['claude']);
+  await h.service.dispose();
+});
+
+test('an agent that cannot be chosen is refused and not recorded (DSP-136)', async () => {
+  const h = noCursorHarness('choose-refused', { claudeEnabled: false, chosen: null });
+  assert.throws(() => h.service.chooseAgent('claude'), /Claude is not enabled for this launch/);
+  assert.deepEqual(h.writes, []);
+  assert.equal(h.service.chosenAgent(), null);
+  await h.service.dispose();
+});
+
+test('a Claude-recorded project with Claude unavailable builds no Cursor adapter, even with nothing chosen (DSP-136)', async () => {
+  const { workspace, store, conversationId } = await cursorConversation('claude-unavailable-none');
+  const enabled = harness('claude-unavailable-enable', { claudeEnabled: true, workspace, store, conversationId });
+  await enabled.service.startChatSession({ kind: 'folder', path: workspace });
+  await enabled.service.startChatSession({ kind: 'new-provider-session', provider: 'claude' });
+  await enabled.service.dispose();
+
+  const h = noCursorHarness('claude-unavailable', {
+    claudeEnabled: true,
+    claudeInstalled: false,
+    workspace,
+    store,
+    conversationId,
+    chosen: null,
+  });
+  const session = await h.service.startChatSession({ kind: 'folder', path: workspace });
+  assert.equal(session.continuity.providerSessionOpen, false);
+  assert.deepEqual(session.continuity.choices, [], 'nothing usable is offered');
+  assert.equal(session.continuity.agentNeeded, true);
+  assert.match(session.continuity.statement, /Claude support is not installed/);
+  assert.deepEqual(h.asked, []);
+  // Its history is still readable.
+  assert.ok(session.restoredHistory.messages.length > 0);
+  await h.service.dispose();
+});
+
+test('the restore path carries the provider: a request naming none uses the installation choice, one naming null uses none (DSP-136)', async () => {
+  const chosenCursor = harness('restore-carries', { claudeEnabled: true, chosen: 'cursor' });
+  const opened = await chosenCursor.service.startChatSession({ kind: 'folder', path: chosenCursor.workspace });
+  assert.equal(opened.provider, 'cursor');
+  await chosenCursor.service.dispose();
+
+  const named = harness('restore-null', { claudeEnabled: true, chosen: 'cursor' });
+  const none = await named.service.startChatSession({ kind: 'folder', path: named.workspace, provider: null });
+  assert.equal(none.provider, null);
+  assert.deepEqual(named.asked, []);
+  await named.service.dispose();
+});
+
 test('the real Claude SDK cannot be loaded by a test (the offline guard), so every Claude test runs on substitutes', async () => {
   // The guard is this test process's own `--import`; marking the refusal as expected
   // keeps it from failing the file at exit, and proves the guard is active.
@@ -568,4 +714,21 @@ test('the guard refuses a port given as a string, and still treats a pipe name a
     socket.connect(pipe);
   });
   assert.notEqual(local.code, 'EOFFLINEGUARD');
+});
+
+test('a stored choice that cannot be used in this launch is named with its reason, not shown as no choice (R-1 R1)', async () => {
+  const h = noCursorHarness('unusable-choice', { claudeEnabled: false, chosen: 'claude' });
+  const session = await h.service.startChatSession({ kind: 'folder', path: h.workspace });
+  assert.equal(session.continuity.providerSessionOpen, false);
+  assert.equal(session.continuity.agentNeeded, true);
+  assert.equal(session.continuity.unusableChoice?.provider, 'claude');
+  assert.match(session.continuity.unusableChoice?.reason ?? '', /^Claude is not enabled for this launch/);
+  assert.match(
+    session.continuity.statement,
+    /^Claude was chosen, but it cannot be used in this launch: Claude is not enabled for this launch\. Start DSpatch with DSPATCH_CLAUDE_AUTHORIZATION set to enable it\. DSpatch opened no session/,
+  );
+  assert.doesNotMatch(session.continuity.statement, /No agent is chosen/);
+  assert.match(session.continuity.statement, /Choose another agent to start a session\.$/);
+  assert.deepEqual(h.asked, [], 'nothing was built');
+  await h.service.dispose();
 });

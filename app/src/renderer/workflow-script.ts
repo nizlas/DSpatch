@@ -701,9 +701,38 @@ function newNonce(): string {
   return [...bytes].map((byte) => alphabet[byte % alphabet.length] ?? 'X').join('');
 }
 
+/**
+ * DSP-136: the agent every scripted scenario runs as, named here rather than assumed.
+ * The replies come from the presentation adapter whichever agent is named; Cursor is
+ * named because the scenarios were written against its behaviour (resume, model list).
+ */
+const SCENARIO_AGENT = 'cursor';
+
+/**
+ * Choose the scenario's agent in *Open a project* when nothing is chosen yet (a fresh
+ * user-data folder; the seeded kits name it themselves). Done through the real control,
+ * as a person would. Scenarios with no chat window, or that start elsewhere, skip it.
+ */
+async function nameScenarioAgent(): Promise<void> {
+  const startedAt = performance.now();
+  while (performance.now() - startedAt < 10_000) {
+    const list = element('open-agent-select');
+    if (list instanceof HTMLSelectElement) {
+      if (list.value === '') {
+        await chooseInSelect('open-agent-select', SCENARIO_AGENT);
+      }
+      return;
+    }
+    await sleep(50);
+  }
+}
+
 export async function runScriptedWorkflow(
   plan: ScriptedRunPlan,
 ): Promise<ScriptedRunReport> {
+  if (plan.scenario !== 'review-direct') {
+    await nameScenarioAgent();
+  }
   switch (plan.scenario) {
     case 'interactive-chat':
       return runInteractiveChatScenario(plan);

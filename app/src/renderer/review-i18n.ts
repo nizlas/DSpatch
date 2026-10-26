@@ -39,8 +39,27 @@ export interface DiscussionWords {
     readonly model: string;
     readonly sent: string;
   };
-  /** DSP-117: the review discussion's agent, said once in each question's Context. */
-  readonly agentLine: string;
+  /** DSP-132: the agent picker in the discussion's header. */
+  readonly agentLabel: string;
+  /** DSP-132: the picker's placeholder, and the line while no agent is chosen (Send held). */
+  readonly chooseAgent: string;
+  /** DSP-132: an agent that cannot be chosen, in the picker. */
+  readonly notAvailable: string;
+  /** DSP-132: the chosen agent cannot be used in this launch. */
+  readonly agentUnavailable: (agent: string, reason: string) => string;
+  /** DSP-132: what the chosen agent is given here. */
+  readonly agentPolicy: (agent: string, policy: string) => string;
+  /** DSP-132: after a switch, before the next question. */
+  readonly switchNotice: (agent: string, exchanges: number) => string;
+  readonly showRecap: string;
+  readonly hideRecap: string;
+  readonly leaveOut: string;
+  readonly includeAgain: string;
+  readonly recapLeftOut: (agent: string) => string;
+  /** DSP-132: a question from before the agent was stored (format 1). */
+  readonly recordedBeforeProvider: string;
+  /** DSP-132: the disclosure with what the chosen agent may use here. */
+  readonly agentLimits: string;
   readonly noCode: string;
   readonly noNotes: string;
   readonly notSent: string;
@@ -307,8 +326,20 @@ const sv: ReviewWords = {
     readOnly: (reason) => `Diskussionen kan bara läsas: ${reason}`,
     details: 'Detaljer',
     hideDetails: 'Dölj detaljer',
-    agentLine:
-      'Körs på Cursor, endast text. Claude erbjuds inte här: dess gränser för endast text är ännu inte verifierade.',
+    agentLabel: 'Agent',
+    chooseAgent: 'Välj en agent för diskussionen',
+    notAvailable: 'inte tillgänglig',
+    agentUnavailable: (agent, reason) => `${agent} kan inte användas här: ${reason}`,
+    agentPolicy: (agent, policy) => `${agent} · ${policy}`,
+    switchNotice: (agent, exchanges) =>
+      `Nästa fråga startar en ny ${agent}-session; den får kodkontexten som visas under Kontext och en sammanfattning av ${String(exchanges)} tidigare ${exchanges === 1 ? 'utbyte' : 'utbyten'}`,
+    showRecap: 'Visa',
+    hideRecap: 'Dölj',
+    leaveOut: 'Utelämna',
+    includeAgain: 'Ta med igen',
+    recapLeftOut: (agent) => `Nästa fråga startar en ny ${agent}-session med bara kodkontexten; sammanfattningen utelämnas.`,
+    recordedBeforeProvider: 'Cursor (registrerat innan leverantören sparades)',
+    agentLimits: 'Vad den får använda här',
     contextLabels: {
       subject: 'Gäller',
       revisions: 'Revisioner',
@@ -569,7 +600,20 @@ const en: ReviewWords = {
     readOnly: (reason) => `This discussion is read-only: ${reason}`,
     details: 'Details',
     hideDetails: 'Hide details',
-    agentLine: 'Runs on Cursor, text-only. Claude is not offered here: its text-only limits are not yet verified.',
+    agentLabel: 'Agent',
+    chooseAgent: 'Choose an agent for this discussion',
+    notAvailable: 'not available',
+    agentUnavailable: (agent, reason) => `${agent} cannot be used here: ${reason}`,
+    agentPolicy: (agent, policy) => `${agent} · ${policy}`,
+    switchNotice: (agent, exchanges) =>
+      `Next question starts a new ${agent} session; it carries the code context shown under Context and a recap of ${String(exchanges)} earlier exchange${exchanges === 1 ? '' : 's'}`,
+    showRecap: 'Show',
+    hideRecap: 'Hide',
+    leaveOut: 'Leave out',
+    includeAgain: 'Include again',
+    recapLeftOut: (agent) => `Next question starts a new ${agent} session with the code context only; the recap is left out.`,
+    recordedBeforeProvider: 'Cursor (recorded before the provider was stored)',
+    agentLimits: 'What it may use here',
     contextLabels: {
       subject: 'About',
       revisions: 'Revisions',

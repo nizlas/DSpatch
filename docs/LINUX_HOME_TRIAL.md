@@ -54,7 +54,7 @@ Part A needs no provider. Part B is the live Claude trial and needs the decision
 - **Scope (open question Q3):** does the subscription authorization accepted on 22 October 2026 for personal Max use (worded as "Niclas's home computer") cover the home Linux machine? Decide before step 7.
 - **Login:** sign in with Claude Code's own login on the Linux machine, and confirm that extra usage is off. DSpatch reads, copies and stores no credential, and has no API-key fallback: any API credential, OAuth or auth-token variable in the environment makes it refuse.
 - **Reference text:** choose the text recorded as this launch's authorization reference, for example `Niclas, personal Max subscription, home Linux, <date>`.
-- **Cursor:** the review discussion runs on Cursor (text-only) and needs a Cursor login; without one, leave it unused. The window may report Cursor's connection as a problem; that does not block Claude.
+- **Cursor:** the review discussion uses the agent chosen for it (DSP-132; from the main window, or chosen in the review window); Cursor there needs a Cursor login. Claude there runs with no tools under `REVIEW_PERMISSIONS`, configured but not yet observed live. With Claude chosen the window does not check Cursor's connection at all (DSP-136).
 
 ## Part B - Claude in the main chat (live, with authorization)
 
@@ -82,7 +82,7 @@ Expected: it prints the SDK version it installs (`@anthropic-ai/claude-agent-sdk
 
 10. **Stop during a turn.** Start a longer request and press Stop. Expected: the turn reads *stopped · provider work unknown* (or *Stop not confirmed · provider work unknown* if the end could not be confirmed) - never a plain "cancelled".
 
-11. **Reopen.** Quit and start again with the same variable. Expected: the conversation opens as Claude. If you reopen it from *Open a project* and *Open* is disabled because Cursor is not connected, choose *Claude* under *Agent* first (the panel's choice currently decides that gate even for an existing conversation, which still opens with its recorded agent). Whether the provider session itself resumes is not established (DSP-122 is offline-verified only); DSpatch says which it did.
+11. **Reopen.** Quit and start again with the same variable. Expected: the conversation opens as Claude. *Agent* keeps *Claude* from the last start (DSP-136); if another agent is chosen, the conversation opens with its history and offers *Resume with Claude*. Whether the provider session itself resumes is not established (DSP-122 is offline-verified only); DSpatch says which it did.
 
 12. **Without the variable.** Start once with plain `npm run dev`. Expected: the Claude conversation is not resumed through Cursor; the window says the session belongs to another agent and offers *Start new Cursor session*.
 

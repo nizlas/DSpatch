@@ -88,6 +88,7 @@ export interface Options {
   model?: string;
   tools?: string[];
   allowedTools?: string[];
+  disallowedTools?: string[];
   permissionMode?: 'dontAsk';
   settingSources?: ('user' | 'project' | 'local')[];
   strictMcpConfig?: boolean;

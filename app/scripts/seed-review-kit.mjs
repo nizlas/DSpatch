@@ -53,6 +53,14 @@ const definition = writeWalkDefinition(one);
 // A second review over P1 (DSP-127): another definition, so another identity and window.
 const secondDefinition = writeWalkDefinition(one, 'walk-second.review.json');
 
+// DSP-136: the kit names its agent. A fresh installation has none chosen; this kit's
+// person chose Cursor (answered by the presentation adapter, never by Cursor).
+fs.writeFileSync(
+  path.join(USERDATA, 'dspatch-agent-choice.json'),
+  `${JSON.stringify({ formatVersion: 1, agent: 'cursor', chosenAtUtc: new Date().toISOString() }, null, 2)}\n`,
+  'utf8',
+);
+
 const projects = new ProjectStore(path.join(USERDATA, 'dspatch-projects.json'));
 const base = Date.now() - 60 * 60 * 1000;
 // Oldest first, so P1 ends up at the top of Recent.

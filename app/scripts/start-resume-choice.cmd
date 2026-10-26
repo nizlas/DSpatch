@@ -58,6 +58,11 @@ if not exist "%KIT%\userData" (
 set "DSPATCH_CHAT_RUN=resume-choice"
 set "DSPATCH_CHAT_RESUME=%MODE%"
 set "DSPATCH_CHAT_HOLD=1"
+rem DSP-136: the kit names its agent, Cursor (simulated here). A kit seeded before
+rem DSP-136 has no choice recorded, so it is added once.
+if not exist "%KIT%\userData\dspatch-agent-choice.json" (
+  >"%KIT%\userData\dspatch-agent-choice.json" echo {"formatVersion": 1, "agent": "cursor"}
+)
 set "DSPATCH_CHAT_SWITCH_PROJECTS=%KIT%\projects\A"
 set "DSPATCH_CHAT_EXPECT_USERDATA=%KIT%\userData"
 set "DSPATCH_CHAT_LOG=%KIT%\hold.json"

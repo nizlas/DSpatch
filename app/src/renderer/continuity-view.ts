@@ -69,6 +69,12 @@ export function simulationLabel(
 /** The heading of the panel, the same in every state without an open session. */
 export const CONTINUITY_HEADING = 'Could not resume the agent session.';
 
+/**
+ * DSP-136: the heading when nothing failed - no agent is chosen, or another agent is
+ * chosen than the one the session was recorded with - and the person decides.
+ */
+export const AGENT_CHOICE_HEADING = 'Choose how to continue.';
+
 /** The sentence every body carries: reading needs no choice. */
 export const STILL_AVAILABLE = 'Your saved conversation is still available.';
 
@@ -123,15 +129,26 @@ export function sentWithSummaryLine(characters: number): string {
  * their own clause.
  */
 export function continuityClause(
-  continuity: Pick<SessionContinuity, 'kind' | 'providerSessionOpen' | 'resumeFailure'>,
+  continuity: Pick<SessionContinuity, 'kind' | 'providerSessionOpen' | 'resumeFailure'> &
+    Partial<Pick<SessionContinuity, 'agentNeeded' | 'unusableChoice'>>,
 ): string | null {
   if (continuity.providerSessionOpen) {
     return null;
   }
+  const failure = continuity.resumeFailure;
+  if (failure?.kind === 'agent-choice') {
+    // DSP-136: nothing was built or asked; the clause says why no session is open.
+    if (continuity.agentNeeded === true && continuity.unusableChoice !== undefined) {
+      // R1: the chosen agent is named, with why it cannot be used.
+      return `${providerWord(continuity.unusableChoice.provider)} was chosen, but it cannot be used in this launch: ${continuity.unusableChoice.reason}.`;
+    }
+    return continuity.agentNeeded === true
+      ? 'No agent is chosen, so no session was opened.'
+      : 'The agent this session was recorded with cannot be used in this launch.';
+  }
   if (continuity.kind === 'resume-unavailable') {
     return 'This adapter cannot resume sessions.';
   }
-  const failure = continuity.resumeFailure;
   switch (failure?.kind) {
     case 'provider-missing':
       return 'The session was not found.';
@@ -161,11 +178,26 @@ export function continuityClause(
 }
 
 /** What the user can do, from the choices the main process listed and no others. */
-export function actionSentence(choices: readonly ContinuityChoice[]): string | null {
+export function actionSentence(
+  choices: readonly ContinuityChoice[],
+  agentNeeded = false,
+): string | null {
   if (choices.includes('try-again')) {
     return 'Try again, or start a new session.';
   }
-  return choices.includes('new-session') ? 'Start a new session to continue.' : null;
+  const resume = choices.includes('resume-recorded');
+  if (choices.includes('new-session')) {
+    return resume
+      ? 'Start a new session, or resume with the recorded agent.'
+      : 'Start a new session to continue.';
+  }
+  if (agentNeeded) {
+    // DSP-136: the Agent choice beside the model is how one is chosen.
+    return resume
+      ? 'Choose an agent under Agent, or resume with the recorded agent.'
+      : 'Choose an agent under Agent to start a session.';
+  }
+  return resume ? 'Resume with the recorded agent to continue.' : null;
 }
 
 /**
@@ -181,13 +213,14 @@ export function continuityBody(
   continuity: Pick<
     SessionContinuity,
     'kind' | 'providerSessionOpen' | 'resumeFailure' | 'choices' | 'savedMessageCount'
-  >,
+  > &
+    Partial<Pick<SessionContinuity, 'agentNeeded' | 'unusableChoice'>>,
 ): string | null {
   const clause = continuityClause(continuity);
   if (clause === null) {
     return null;
   }
-  const action = actionSentence(continuity.choices);
+  const action = actionSentence(continuity.choices, continuity.agentNeeded === true);
   const stillAvailable = continuity.savedMessageCount > 0 ? STILL_AVAILABLE : null;
   return [clause, stillAvailable, action].filter((part) => part !== null).join(' ');
 }
@@ -215,13 +248,25 @@ export function runningCommandNote(
  * refused. `null` while a session is open.
  */
 export function noSessionRouteNote(
-  continuity: Pick<SessionContinuity, 'providerSessionOpen' | 'choices'> | null,
+  continuity:
+    | (Pick<SessionContinuity, 'providerSessionOpen' | 'choices'> &
+        Partial<Pick<SessionContinuity, 'agentNeeded'>>)
+    | null,
 ): string | null {
   if (continuity === null || continuity.providerSessionOpen) {
     return null;
   }
-  return continuity.choices.includes('try-again')
-    ? 'Try again or start a new session to send.'
+  if (continuity.choices.includes('try-again')) {
+    return 'Try again or start a new session to send.';
+  }
+  if (continuity.choices.includes('new-session')) {
+    return 'Start a new session to send.';
+  }
+  if (continuity.agentNeeded === true) {
+    return 'Choose an agent to send.';
+  }
+  return continuity.choices.includes('resume-recorded')
+    ? 'Resume with the recorded agent to send.'
     : 'Start a new session to send.';
 }
 
@@ -271,6 +316,12 @@ const CHOICE_LABELS: Record<ContinuityChoice, { readonly label: string; readonly
         'Opens a new Cursor session for this conversation instead. DSpatch shows the ' +
         'summary it would send first; you can remove it. No message is sent until you send.',
     },
+    'resume-recorded': {
+      label: 'Resume with the recorded agent',
+      note:
+        'Asks to resume the recorded session with the agent it was recorded with. No ' +
+        'message is sent.',
+    },
   };
 
 /**
@@ -315,14 +366,19 @@ export function continuityPanel(
    * When given, *Start new session* names it, so the choice cannot open another
    * provider than the one it says. Absent keeps the generic words.
    */
-  provider?: StoredSessionProvider,
+  provider?: StoredSessionProvider | null,
 ): ContinuityPanelView | null {
   const body = continuityBody(continuity);
   if (body === null) {
     return null;
   }
+  const recorded = continuity.recordedProvider;
   return {
-    heading: CONTINUITY_HEADING,
+    heading:
+      continuity.resumeFailure?.kind === 'agent-choice' ||
+      continuity.choices.includes('resume-recorded')
+        ? AGENT_CHOICE_HEADING
+        : CONTINUITY_HEADING,
     body,
     earlierSendsNote:
       continuity.earlierSendsMayHaveReached.length > 0 ? EARLIER_SENDS_NOTE : null,
@@ -330,14 +386,16 @@ export function continuityPanel(
     choices: continuity.choices.map((choice) => ({
       choice,
       label:
-        choice === 'new-session' && provider !== undefined
+        choice === 'new-session' && provider !== undefined && provider !== null
           ? `Start new ${providerWord(provider)} session`
-          : CHOICE_LABELS[choice].label,
+          : choice === 'resume-recorded' && recorded !== undefined
+            ? `Resume with ${providerWord(recorded)}`
+            : CHOICE_LABELS[choice].label,
       testId: `continuity-choice-${choice}`,
       note:
         choice === 'new-session' && refusedByCredentialRule(continuity)
           ? NEW_CLAUDE_SESSION_NOTE
-          : choice === 'new-session' && provider !== undefined
+          : choice === 'new-session' && provider !== undefined && provider !== null
             ? `Opens a new ${providerWord(provider)} session. DSpatch shows the summary ` +
               'it would send first; you can remove it. No message is sent until you send.'
             : CHOICE_LABELS[choice].note,

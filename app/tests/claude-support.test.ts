@@ -80,7 +80,7 @@ test('the SDK without its binary package for this platform is not installed', ()
 test('the SDK and its binary package are installed', () => {
   const dir = path.join(tempRoot('support-both'), 'support');
   fakePackage(dir, '@anthropic-ai/claude-agent-sdk');
-  fakePackage(dir, '@anthropic-ai/claude-agent-sdk-win32-x64');
+  fakePackage(dir, '@anthropic-ai/claude-agent-sdk-win32-x64', { 'claude.exe': 'not a real binary' });
   const status = claudeSupportStatus(dir, WINDOWS);
   assert.deepEqual(status, {
     installed: true,
@@ -107,7 +107,7 @@ test('Linux: the matching libc is preferred and the other accepted, as the SDK d
   assert.equal(claudeSupportStatus(dir, MUSL).binaryPackage, '@anthropic-ai/claude-agent-sdk-linux-x64-musl');
   assert.equal(claudeSupportStatus(dir, GLIBC).installed, false);
 
-  fakePackage(dir, '@anthropic-ai/claude-agent-sdk-linux-x64-musl');
+  fakePackage(dir, '@anthropic-ai/claude-agent-sdk-linux-x64-musl', { claude: 'not a real binary' });
   const onGlibc = claudeSupportStatus(dir, GLIBC);
   assert.equal(onGlibc.installed, true);
   assert.equal(onGlibc.binaryPackage, '@anthropic-ai/claude-agent-sdk-linux-x64-musl');
@@ -132,13 +132,52 @@ test('the loader refuses plainly and imports nothing when support is not install
 test('the offline guard refuses the loader path into a claude-support folder', async () => {
   const dir = path.join(tempRoot('support-guard'), 'claude-support');
   const root = fakePackage(dir, '@anthropic-ai/claude-agent-sdk', { 'sdk.mjs': LOUD_ENTRY });
-  fakePackage(dir, '@anthropic-ai/claude-agent-sdk-win32-x64');
+  fakePackage(dir, '@anthropic-ai/claude-agent-sdk-win32-x64', { 'claude.exe': 'not a real binary' });
   const guard = (await import('../scripts/test-offline-guard.mjs')) as {
     expectRefusal(specifier: string): void;
   };
   guard.expectRefusal(pathToFileURL(path.join(root, 'sdk.mjs')).href);
   await assert.rejects(loadClaudeSdk(dir, WINDOWS), /offline-guard/);
   assert.equal(evaluated(), false, 'the SDK entry was never evaluated');
+});
+
+test('a platform package without its executable (an interrupted install) is not installed (review S2)', () => {
+  const dir = path.join(tempRoot('support-partial'), 'support');
+  fakePackage(dir, '@anthropic-ai/claude-agent-sdk');
+  fakePackage(dir, '@anthropic-ai/claude-agent-sdk-win32-x64');
+  const partial = claudeSupportStatus(dir, WINDOWS);
+  assert.equal(partial.installed, false);
+  assert.match(partial.reason ?? '', /not its Claude Code binary/);
+  // A Linux package needs `claude`, not `claude.exe`.
+  fakePackage(dir, '@anthropic-ai/claude-agent-sdk-linux-x64', { 'claude.exe': 'wrong name' });
+  assert.equal(claudeSupportStatus(dir, GLIBC).installed, false);
+});
+
+test('the libc reading happens only once the SDK is found (review S1)', () => {
+  const report = process.report as { getReport: () => unknown };
+  const originalGetReport = report.getReport;
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  let readings = 0;
+  report.getReport = () => {
+    readings += 1;
+    return { header: { glibcVersionRuntime: '2.39' } };
+  };
+  Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+  try {
+    const absent = path.join(tempRoot('support-libc-absent'), 'support');
+    assert.equal(claudeSupportStatus(absent).installed, false);
+    assert.equal(readings, 0, 'no SDK, no process.report reading');
+
+    const present = path.join(tempRoot('support-libc-present'), 'support');
+    fakePackage(present, '@anthropic-ai/claude-agent-sdk');
+    claudeSupportStatus(present);
+    assert.equal(readings, 1, 'read once the SDK was found');
+  } finally {
+    report.getReport = originalGetReport;
+    if (originalPlatform !== undefined) {
+      Object.defineProperty(process, 'platform', originalPlatform);
+    }
+  }
 });
 
 test('availability names each missing part', () => {

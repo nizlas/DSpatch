@@ -69,15 +69,28 @@ export interface EnvironmentInfo {
   readonly packaged: boolean;
   readonly versions: RuntimeVersions;
   readonly build: BuildIdentity | null;
-  readonly adapter: {
-    readonly id: string;
-    readonly capabilities: CapabilityReport;
-  };
+  /**
+   * The adapter of the session open at startup, or `null` - always `null` since
+   * DSP-136: no adapter is built at startup. The window's "How this is wired"
+   * follows the open session (`ChatSessionInfo.adapter`) instead.
+   */
+  readonly adapter: AdapterInfo | null;
   /**
    * DSP-117: whether Claude can be chosen in this launch, for the agent choice in
    * the *Open a project* panel, before any session exists.
    */
   readonly agentChoice: AgentChoiceInfo;
+  /**
+   * DSP-136: the agent the person last chose explicitly, kept under `userData`, or
+   * `null` when none has been chosen (a fresh installation). Never a default.
+   */
+  readonly chosenAgent: StoredSessionProvider | null;
+}
+
+/** An adapter's identity and capabilities: provider plus transport. */
+export interface AdapterInfo {
+  readonly id: string;
+  readonly capabilities: CapabilityReport;
 }
 
 /** Renderer acknowledgement of mounting and painting. Evidence for the smoke test. */
@@ -140,6 +153,11 @@ export interface ModelChoice {
  * The same rule as cost: a missing value is never presented as an answer.
  */
 export type ConnectionStatus =
+  /**
+   * DSP-136: Cursor's connection was not checked, because Cursor is not the chosen
+   * agent (or nobody asked). Not a problem and not a verdict about the login.
+   */
+  | { readonly kind: 'not-checked' }
   | { readonly kind: 'checking' }
   | {
       readonly kind: 'connected';
@@ -408,19 +426,29 @@ export type ConversationExportResult =
  */
 export type StartSessionRequest =
   /**
-   * `provider` (DSP-117) is the agent a **new** conversation starts with, as chosen
-   * in the *Open a project* panel. A folder whose conversation already has a
-   * recorded session opens with that session's provider and ignores it; a session
-   * is never resumed across providers. Absent means Cursor for a new conversation.
+   * `provider` (DSP-117, DSP-136) is the agent chosen in the *Open a project* panel,
+   * or `null` when none is chosen. A recorded session is resumed only when its
+   * provider is the chosen one and available; otherwise the conversation opens with
+   * no session and the named choices, and nothing is built or sent. Absent means
+   * the agent last chosen in this installation, which may be none.
    */
-  | { readonly kind: 'folder'; readonly path: string; readonly provider?: StoredSessionProvider }
-  | { readonly kind: 'sample'; readonly provider?: StoredSessionProvider }
+  | {
+      readonly kind: 'folder';
+      readonly path: string;
+      readonly provider?: StoredSessionProvider | null;
+    }
+  | { readonly kind: 'sample'; readonly provider?: StoredSessionProvider | null }
   /**
    * `provider` switches the conversation's agent: a new provider session with that
    * provider, never a resume, with the recap disclosed and removable before the next
    * Send. Absent means the provider already selected for this conversation.
    */
   | { readonly kind: 'new-provider-session'; readonly provider?: StoredSessionProvider }
+  /**
+   * Resume the recorded session again, with the provider it was recorded with. Also
+   * what *Resume with <recorded>* sends (DSP-136): an explicit choice of that provider
+   * for this conversation.
+   */
   | { readonly kind: 'retry-resume'; readonly acknowledgedAttemptIds?: readonly string[] };
 
 export type SessionOrigin = 'chosen-folder' | 'generated-sample';
@@ -567,7 +595,12 @@ export type ResumeFailureKind =
    * for this conversation. Never resumed across providers: no adapter call is made
    * and nothing is sent.
    */
-  | 'provider-differs';
+  | 'provider-differs'
+  /**
+   * DSP-136: no session was opened because no agent is chosen, or because the
+   * recorded provider cannot be used in this launch. No adapter was built.
+   */
+  | 'agent-choice';
 
 export interface ResumeFailure {
   readonly kind: ResumeFailureKind;
@@ -592,7 +625,13 @@ export type ContinuityChoice =
    * DSP-117: after Claude was refused by DSpatch's own credential rule, an explicit
    * new **Cursor** session, with the recap disclosed. Never taken silently.
    */
-  | 'switch-to-cursor';
+  | 'switch-to-cursor'
+  /**
+   * DSP-136: resume the recorded session with the provider it was recorded with,
+   * offered when that provider is available but is not the chosen one (or none is
+   * chosen). Sends `retry-resume`.
+   */
+  | 'resume-recorded';
 
 /**
  * An earlier message of this conversation that may have reached the provider and
@@ -628,6 +667,21 @@ export interface SessionContinuity {
   readonly earlierSendsMayHaveReached: readonly EarlierSendMayHaveReached[];
   /** Empty while a provider session is open; never offers a retry that cannot work. */
   readonly choices: readonly ContinuityChoice[];
+  /**
+   * DSP-136: the provider of the recorded session, when the no-session state is
+   * about a recorded session; for *Resume with <recorded>*. Absent otherwise.
+   */
+  readonly recordedProvider?: StoredSessionProvider;
+  /**
+   * DSP-136: `true` when no session is open because no agent is chosen. The window
+   * then asks the person to choose one; nothing was built or sent.
+   */
+  readonly agentNeeded?: boolean;
+  /**
+   * R1: the agent that was chosen but cannot be used in this launch, and why. Present
+   * only with `agentNeeded`, so the window names it rather than saying none is chosen.
+   */
+  readonly unusableChoice?: { readonly provider: StoredSessionProvider; readonly reason: string };
   /**
    * The exact text DSpatch will put before the next message, or `null`.
    *
@@ -685,9 +739,16 @@ export interface ChatSessionInfo {
   readonly restoredHistory: RestoredHistory;
   /**
    * DSP-117: the agent selected for this conversation. For an open session, the
-   * provider holding it; while none is open, the provider a new session would use.
+   * provider holding it; while none is open, the provider a new session would use,
+   * or `null` when no agent is chosen (DSP-136).
    */
-  readonly provider: StoredSessionProvider;
+  readonly provider: StoredSessionProvider | null;
+  /**
+   * DSP-136: the adapter built for this session - holding the open provider session,
+   * or asked to resume one - or `null` when none was built (no agent chosen, or
+   * another agent chosen than the recorded one). What "How this is wired" shows.
+   */
+  readonly adapter: AdapterInfo | null;
   /** What the window needs to offer the agent choice. */
   readonly agent: AgentChoiceInfo;
 }
@@ -1933,8 +1994,18 @@ export interface DspatchBridge {
   getEnvironment(): Promise<EnvironmentInfo>;
   reportReady(ready: RendererReady): void;
 
-  /** Connection status for the provider account. Never returns a credential. */
+  /**
+   * Cursor's connection status. Never returns a credential. Asked only when Cursor
+   * is the chosen agent or the person asks for the check (DSP-136).
+   */
   getConnection(): Promise<ConnectionStatus>;
+
+  /**
+   * DSP-136: record the agent the person chose explicitly in *Open a project*, so a
+   * later start offers it again. Refused for a provider that cannot be chosen.
+   * Builds no adapter and asks no provider. Returns the choice now recorded.
+   */
+  chooseAgent(provider: StoredSessionProvider): Promise<StoredSessionProvider | null>;
 
   /**
    * Choose the model DSpatch requests for ordinary messages in this conversation.
@@ -2838,6 +2909,7 @@ export type BridgeChannel =
   | 'dspatch:renderer-ready'
   | 'dspatch:get-connection'
   | 'dspatch:set-model'
+  | 'dspatch:choose-agent'
   | 'dspatch:menu-command'
   | 'dspatch:pick-project'
   | 'dspatch:list-projects'

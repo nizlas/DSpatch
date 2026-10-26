@@ -30,11 +30,11 @@ import type {
 import { CursorSdkAdapter } from '../src/adapter/cursor-sdk-adapter.ts';
 import type { ChatAdapter } from '../src/main/chat-service.ts';
 import { PresentationResumeBehaviour } from '../src/main/presentation-adapter.ts';
+import { providerAdapters } from '../src/main/provider-adapters.ts';
 import {
   ReviewDiscussions,
   discussionRecordPath,
   discussionWorkingFolder,
-  reviewAdapterFactory,
 } from '../src/main/review-discussion-service.ts';
 import { ReviewService } from '../src/main/review-service.ts';
 import type { DiscussionIdentity, DiscussionMessage, ReviewDiscussionEvent } from '../src/shared/review-discussion.ts';
@@ -229,7 +229,7 @@ test('an answer that arrives after the window has moved stays on its question, a
   try {
     const discussions = s.discussions();
     const window = recorder();
-    const service = discussions.attach(1, s.identity, window.send);
+    const service = discussions.attach(1, s.identity, window.send, 'cursor');
 
     const loaded = await service.load({ subject: POINT, selection: null }, s.review);
     assert.equal(loaded.kind, 'loaded');
@@ -263,7 +263,7 @@ test('an answer that arrives after the window has moved stays on its question, a
     // Reopened by a new process: the thread is back, and no adapter exists until a question is asked.
     discussions.detach(1);
     const reopened = s.discussions();
-    const again = reopened.attach(2, s.identity, () => undefined);
+    const again = reopened.attach(2, s.identity, () => undefined, 'cursor');
     const back = await again.load(null, s.review);
     assert.equal(back.kind === 'loaded' ? back.messages.length : 0, 2);
     assert.equal(s.adapters.length, 1, 'reopening and loading created no adapter');
@@ -278,7 +278,7 @@ test('an answer that arrives after the window has moved stays on its question, a
 test('one answer at a time: a second question while one runs is refused, and quick repeats send once', async () => {
   const s = await setup();
   try {
-    const service = s.discussions().attach(1, s.identity, () => undefined);
+    const service = s.discussions().attach(1, s.identity, () => undefined, 'cursor');
     const [first, second] = await Promise.all([
       service.send({ question: 'One', subject: POINT, selection: null }, s.review),
       service.send({ question: 'Two', subject: POINT, selection: null }, s.review),
@@ -303,7 +303,7 @@ test('one answer at a time: a second question while one runs is refused, and qui
 test('Stop before the provider has answered the send: the outcome is unknown, and the run is cancelled when it appears', async () => {
   const s = await setup();
   try {
-    const service = s.discussions({ cancelConfirmMs: 2_000 }).attach(1, s.identity, () => undefined);
+    const service = s.discussions({ cancelConfirmMs: 2_000 }).attach(1, s.identity, () => undefined, 'cursor');
     s.sendMode = 'hold';
     const held = service.send({ question: 'Held', subject: POINT, selection: null }, s.review);
     await until(() => s.adapters[0]?.sent.length === 1, 'the held send');
@@ -334,7 +334,7 @@ test('Stop before the provider has answered the send: the outcome is unknown, an
 test('a cancel with no end inside the confirmation window becomes unknown, not cancelled, and the next question needs an acknowledgement', async () => {
   const s = await setup();
   try {
-    const service = s.discussions({ cancelConfirmMs: 40 }).attach(1, s.identity, () => undefined);
+    const service = s.discussions({ cancelConfirmMs: 40 }).attach(1, s.identity, () => undefined, 'cursor');
     assert.equal((await service.send({ question: 'Q', subject: POINT, selection: null }, s.review)).kind, 'sent');
     const adapter = s.adapters[0];
     assert.ok(adapter !== undefined);
@@ -371,7 +371,7 @@ test('the review\'s cancel and errors never touch a chat adapter held beside it,
     void chat.send(chatSession.dspatchSessionId, 'a chat message');
     const chatEventsBefore = chatEvents.length;
 
-    const service = s.discussions({ cancelConfirmMs: 2_000 }).attach(1, s.identity, () => undefined);
+    const service = s.discussions({ cancelConfirmMs: 2_000 }).attach(1, s.identity, () => undefined, 'cursor');
     assert.equal((await service.send({ question: 'Q', subject: POINT, selection: null }, s.review)).kind, 'sent');
     const review = s.adapters[0];
     assert.ok(review !== undefined && review !== chat);
@@ -405,7 +405,7 @@ test('a quit while an answer arrives leaves it unknown, and after a restart the 
   const s = await setup();
   try {
     const discussions = s.discussions();
-    const service = discussions.attach(1, s.identity, () => undefined);
+    const service = discussions.attach(1, s.identity, () => undefined, 'cursor');
     assert.equal((await service.send({ question: 'Q', subject: POINT, selection: null }, s.review)).kind, 'sent');
     s.adapters[0]?.delta('half');
     await discussions.dispose();
@@ -413,7 +413,7 @@ test('a quit while an answer arrives leaves it unknown, and after a restart the 
     assert.equal(storedMessages(s).find((message) => message.role === 'answer')?.status, 'unknown');
     assert.equal((await service.send({ question: 'After quit', subject: POINT, selection: null }, s.review)).kind, 'refused');
 
-    const restarted = s.discussions().attach(1, s.identity, () => undefined);
+    const restarted = s.discussions().attach(1, s.identity, () => undefined, 'cursor');
     const loaded = await restarted.load(null, s.review);
     assert.equal(loaded.kind, 'loaded');
     if (loaded.kind !== 'loaded') {
@@ -436,7 +436,7 @@ test('a window closed mid-answer lets it finish and saves it; a reopened window 
   try {
     const discussions = s.discussions();
     const first = recorder();
-    const service = discussions.attach(1, s.identity, first.send);
+    const service = discussions.attach(1, s.identity, first.send, 'cursor');
     assert.equal((await service.send({ question: 'Q', subject: POINT, selection: null }, s.review)).kind, 'sent');
     const adapter = s.adapters[0];
     assert.ok(adapter !== undefined);
@@ -445,7 +445,7 @@ test('a window closed mid-answer lets it finish and saves it; a reopened window 
     assert.equal(adapter.disposed, false, 'a running turn keeps its adapter');
 
     const second = recorder();
-    discussions.attach(2, s.identity, second.send);
+    discussions.attach(2, s.identity, second.send, 'cursor');
     const loaded = await service.load(null, s.review);
     assert.ok(loaded.kind === 'loaded' && loaded.status.turn !== null);
     assert.equal(loaded.kind === 'loaded' ? loaded.messages.find((message) => message.role === 'answer')?.text : '', 'one ');
@@ -469,7 +469,7 @@ test('a window closed mid-answer lets it finish and saves it; a reopened window 
 test('the session runs in an empty DSpatch-owned folder, and production adapters are text-only', async () => {
   const s = await setup();
   try {
-    const service = s.discussions().attach(1, s.identity, () => undefined);
+    const service = s.discussions().attach(1, s.identity, () => undefined, 'cursor');
     await service.send({ question: 'Q', subject: POINT, selection: null }, s.review);
     const config = s.adapters[0]?.started[0];
     const folder = discussionWorkingFolder(s.fixture.records, s.identity.key);
@@ -478,11 +478,13 @@ test('the session runs in an empty DSpatch-owned folder, and production adapters
     assert.notEqual(config?.workspacePath, s.fixture.repo);
     assert.deepEqual(fs.readdirSync(folder), []);
 
-    const production = reviewAdapterFactory({ presentation: false });
-    const adapter = production.create();
+    // The shared factory (DSP-132): Cursor for review is text-only; building one
+    // contacts nothing (the offline guard would fail the file).
+    const production = providerAdapters({ presentation: false, claudeAuthorizationReference: null, claudeInstalled: false });
+    const adapter = production.createAdapter({ provider: 'cursor', purpose: 'review' });
     assert.ok(adapter instanceof CursorSdkAdapter);
     assert.equal((adapter as unknown as { toolPolicy: string }).toolPolicy, 'text-only');
-    assert.equal(production.presentationBehaviour, null);
+    assert.equal(production.reviewPresentationBehaviour, null);
     await adapter.dispose();
   } finally {
     fs.rmSync(s.fixture.root, { recursive: true, force: true });
@@ -493,13 +495,18 @@ test('in presentation mode the review adapters keep a record of their own, apart
   const s = await setup();
   try {
     const chatBehaviour = new PresentationResumeBehaviour('ok');
-    const factory = reviewAdapterFactory({ presentation: true, deltaMs: 1 });
-    assert.ok(factory.presentationBehaviour !== null && factory.presentationBehaviour !== chatBehaviour);
-    const discussions = new ReviewDiscussions({ recordsDir: s.fixture.records, log: () => undefined, createAdapter: factory.create });
-    const service = discussions.attach(1, s.identity, () => undefined);
+    const factory = providerAdapters({
+      presentation: true,
+      reviewPresentation: { deltaMs: 1 },
+      claudeAuthorizationReference: null,
+      claudeInstalled: false,
+    });
+    assert.ok(factory.reviewPresentationBehaviour !== null && factory.reviewPresentationBehaviour !== chatBehaviour);
+    const discussions = new ReviewDiscussions({ recordsDir: s.fixture.records, log: () => undefined, createAdapter: factory.createAdapter });
+    const service = discussions.attach(1, s.identity, () => undefined, 'cursor');
     assert.equal((await service.send({ question: 'Q', subject: POINT, selection: null }, s.review)).kind, 'sent');
     await until(() => storedMessages(s).some((message) => message.role === 'answer' && message.status === 'done'), 'the presentation answer');
-    assert.equal(factory.presentationBehaviour?.record().sent.length, 1);
+    assert.equal(factory.reviewPresentationBehaviour?.record().sent.length, 1);
     assert.equal(chatBehaviour.record().sent.length, 0);
     await discussions.dispose();
   } finally {
@@ -511,7 +518,7 @@ test('a quit while a send reads its envelope creates no adapter and sends nothin
   const s = await setup();
   try {
     const discussions = s.discussions();
-    const service = discussions.attach(1, s.identity, () => undefined);
+    const service = discussions.attach(1, s.identity, () => undefined, 'cursor');
     let release: (() => void) | null = null;
     const slowEnvelopes = {
       envelopeFor: async (request: unknown) => {

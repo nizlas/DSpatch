@@ -32,9 +32,14 @@ the packaged artifact, and what a first connected run needs.
 - Git.
 - Internet access for initial installation and packaging, when the Electron
   binary and distribution archive are downloaded.
-- **A Cursor login**, for anything that talks to the provider. See
+- **No agent is assumed (DSP-136).** Cursor and Claude are both optional, and each is
+  used only when you choose it under *Agent* in *Open a project*. A fresh installation
+  has no agent chosen: a project then opens with its history and no agent session
+  until you pick one. Nothing at startup, on opening a project or on opening review
+  checks Cursor's login or builds a Cursor agent. **A Cursor login** is needed only
+  for Cursor sessions; see
   [Signing in without a secret in the repository](#signing-in-without-a-secret-in-the-repository).
-  Building, packaging and the startup smoke test need no account.
+  Building, packaging, the startup smoke test, review and Claude need no Cursor account.
 - **Claude is optional and not installed by default.** A plain `npm ci` installs no
   Claude SDK and no Claude Code binary; see
   [Claude support (optional)](#claude-support-optional).
@@ -100,8 +105,9 @@ normally `/tmp`).
 
 **Not on Linux.** `scripts/start-review.cmd` and `scripts/start-resume-choice.cmd`
 are Windows-only; there are no `.sh` equivalents. The discussion in the review
-window runs on Cursor (text-only) and needs Cursor's own login on that machine;
-DSpatch reads no credential to provide one.
+window uses the agent chosen for it (DSP-132): Cursor needs Cursor's own login on that
+machine, Claude needs Claude support, `DSPATCH_CLAUDE_AUTHORIZATION` and Claude Code's
+own login; DSpatch reads no credential to provide either.
 
 **Stopping a command.** The chat's build or test command and the loop gate's
 command are started through `/bin/sh` as the leader of their own process group,
@@ -123,9 +129,8 @@ command, then `ps -o pid,pgid,cmd` to see that nothing of it survives; closing a
 reopening DSpatch to see the conversation come back. For a trial with Claude, read
 [Claude in the main chat](#claude-in-the-main-chat-offline-prepared-not-yet-run-live)
 first: it needs Claude support (`npm run claude:install`),
-`DSPATCH_CLAUDE_AUTHORIZATION` and Claude Code's own login on that machine. Choose Claude under *Agent* in *Open a project*. Opening is then not held
-back by Cursor's connection, although the window still reports Cursor's connection
-as a problem when there is no usable Cursor login.
+`DSPATCH_CLAUDE_AUTHORIZATION` and Claude Code's own login on that machine. Choose Claude under *Agent* in *Open a project*. With Claude chosen, Cursor's
+connection is not checked and Cursor is not mentioned as a problem.
 
 ## Fetch and install
 
@@ -267,8 +272,9 @@ renderer from its own `resources\app.asar` and requires `@cursor/sdk` from the
 The directory is approximately 415 MB, mostly Electron's runtime. It is
 Git-ignored and must not be committed.
 
-It does need a Cursor login and a `node` executable to reach its own connected
-workflow. Without a login the window opens and reports the connection as
+A Cursor session needs a Cursor login, and running the project's commands needs a
+`node` executable. Without a Cursor login the window opens as usual; Cursor's
+connection is checked only when Cursor is the chosen agent, and then reads
 `not-connected` rather than failing.
 
 ### Starting it, and what to expect
@@ -550,8 +556,8 @@ Start-Process .\release\win-unpacked\DSpatch.exe -Wait -PassThru `
 
 ## Signing in without a secret in the repository
 
-A first connected run needs a Cursor login. **DSpatch never performs it, never
-reads the credential and never stores one.**
+A first Cursor session needs a Cursor login (only when Cursor is the chosen agent;
+DSP-136). **DSpatch never performs it, never reads the credential and never stores one.**
 
 The SDK resolves the credential from its own store, outside this repository:
 
@@ -717,7 +723,8 @@ a process DSpatch started — and carries the one action that applies to it.
   connection, choose another folder, open the project again, or continue with an
   earlier attempt left unresolved.
 - **The connection check retries twice and then stops** — after 2 s and 6 s — and
-  says how many times it has failed. Only the check is ever repeated; a message
+  says how many times it has failed. It runs on its own only while Cursor is the agent
+  in use (DSP-136); *Check Cursor connection* in Session details runs it on request. Only the check is ever repeated; a message
   or a command is never retried on its own. Everything else waits for you.
 
 Cost is shown as **unknown**, never as 0. Per-turn token counts arrive on the run
@@ -1034,23 +1041,37 @@ with the Claude SDK substituted; **no Claude turn has run through the window**.
   as sent. That Edit covers Write and Read covers Glob and Grep is Anthropic's
   documentation, not yet observed. The model is `claude-haiku-4-5`, named rather
   than chosen.
-- **Chosen when a project is opened, kept per conversation.** *Open a project* has
-  an *Agent* choice beside *Choose a folder …*: Cursor by default, Claude when this
-  launch enables it. It applies to a **new** conversation; a project whose
-  conversation already has a session opens with that session's agent. With Claude
-  chosen, opening is not held back by Cursor's connection and creates no Cursor
-  agent: Cursor is not called to open the project. (The connection check DSpatch
-  makes at startup still reads Cursor's login, as before.)
+- **Chosen explicitly, never assumed (DSP-136).** *Open a project* has an *Agent*
+  choice beside *Choose a folder …*: *Choose an agent* until you pick Cursor or
+  Claude (when this launch enables it); the pick is kept under `userData`
+  (`dspatch-agent-choice.json`) for the next start. A project whose recorded session
+  belongs to the chosen agent resumes it. Otherwise - nothing chosen, another agent
+  chosen, or the recorded agent unusable in this launch - the conversation opens with
+  its history and no session, and offers *Start new <chosen> session* (the recap shown
+  first and removable) and *Resume with <recorded>* (when that agent is usable).
+  Nothing is built or sent until you pick; there is no fallback to another agent.
+  Opening is never held back by Cursor's connection, which is checked only while
+  Cursor is the agent in use.
 - **Switching later.** *Agent: Cursor / Claude* also sits beside the model in an open
   conversation, disabled while a message or command runs. Switching opens a **new**
   session with the other provider: the summary DSpatch would send is shown first
   and can be removed, and nothing is sent until you send.
 - **Never resumed through another provider.** A Claude-recorded session is not
   resumed through Cursor, nor the other way round. In a launch without Claude, a
-  Claude-recorded conversation opens with nothing called and nothing sent, and the
-  window offers *Start new Cursor session*.
-- **The review discussion stays on Cursor, text-only.** Claude is not offered there
-  until its text-only limits are verified.
+  Claude-recorded conversation opens with nothing built, called or sent, and the
+  window offers *Start new Cursor session* only if Cursor is the chosen agent.
+- **Loops run on Cursor only**, as the graph editor says; it no longer checks Cursor's
+  connection in the background.
+- **The review discussion has its own, explicit agent (DSP-132).** Opened from the main
+  window, a new discussion takes that window's agent; opened standalone (`npm run review`,
+  *Open Example Review*) it has none, and asks *Choose an agent for this discussion*
+  before a question can go. A stored discussion keeps its agent on reopen, also when it
+  cannot be used in this launch (then shown with its reason - never replaced). Claude
+  there runs under `REVIEW_PERMISSIONS`: no tools, nothing pre-approved, a
+  `disallowedTools` list, and a hook that denies every tool call without ending the
+  turn. **Configured and checked offline with a substituted SDK, not observed live**; the
+  init `tools` and `mcp_servers` of a real session are the home probe's to read
+  (DSP-132 AC#1).
 
 ### Environment variables
 
@@ -1848,10 +1869,23 @@ The code column keeps its width either way.
   instruction verbatim, "provider-added context (user-level rules and hooks): unknown",
   the model asked for and the exact text sent. An answer stays on the question it
   answers, whatever the window shows when it arrives.
+- **The agent (DSP-132).** An *Agent* choice sits above the question box, locked while
+  an answer is on its way, with *What it may use here* behind it. Choosing builds
+  nothing; the next question starts a new session with that agent, and until it goes the
+  line *Next question starts a new <Agent> session; it carries the code context shown
+  under Context and a recap of N earlier exchanges* offers *Show* and *Leave out*. History
+  is kept, and each question's Context names its own agent, session and tool policy - a
+  question from before DSP-132 reads *Cursor (recorded before the provider was stored)*.
+  A discussion is never resumed and never falls back to another agent. The record is
+  format 2 (`provider` on the record and on each question); a format 1 file is read as
+  it is and only rewritten, as format 2, by the next real write.
 - **Read-only, as far as DSpatch can make it.** Each review's discussion has its own
-  `CursorSdkAdapter({ toolPolicy: 'text-only' })` (`tools: []`), created on the first
-  question and closed with the review's last window or at quit, and its session runs in
-  an empty DSpatch-owned folder (`userData/reviews/discussion-cwd/<key>/`). Five limits:
+  adapter from the shared factory (`provider-adapters.ts`, purpose `review`): Cursor as
+  `CursorSdkAdapter({ toolPolicy: 'text-only' })` (`tools: []`), Claude under
+  `REVIEW_PERMISSIONS` (checked on every adapter the review path builds), created on the
+  first question and closed with the review's last window or at quit, and its session runs in
+  an empty DSpatch-owned folder (`userData/reviews/discussion-cwd/<key>/`). Five limits
+  (stated for Cursor; for Claude the same hold as configured, not observed):
   (1) whether `tools: []` also removes user-level MCP tools is undocumented and
   unobserved; (2) Cursor's user-level hooks and rules may still apply; (3) that text-only
   yields no tool events has not been observed live; (4) the presentation adapter has no

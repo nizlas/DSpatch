@@ -1575,6 +1575,24 @@
   color: var(--no);
 }
 
+/* DSP-132: the discussion's agent, its limits and what a switch carries. */
+.rv-discussion-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.25rem 0 0.5rem;
+  font-size: 0.8rem;
+}
+
+.rv-discussion-agent select {
+  margin-left: 0.25rem;
+}
+
+.rv-discussion-switch {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .rv-discussion-about {
   color: var(--muted);
   font-size: 0.75rem;

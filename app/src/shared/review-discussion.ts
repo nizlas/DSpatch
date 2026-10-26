@@ -412,7 +412,25 @@ export interface DiscussionMessage {
   readonly error?: string;
   /** For a question: the model DSpatch asked for. The model actually used may differ. */
   readonly model?: string;
+  /**
+   * DSP-132 (format 2): the agent the question went to, and the DSpatch session it was
+   * sent in. Absent on a question from format 1, which was always Cursor.
+   */
+  readonly provider?: DiscussionProvider;
+  readonly dspatchSessionId?: string;
+  /** DSP-132: the tool policy the agent was given for this question, as one line. */
+  readonly toolPolicy?: string;
 }
+
+/**
+ * The agents a review discussion can use (DSP-132). The same values as the main
+ * chat's `StoredSessionProvider`, spelt here so the review module needs nothing of the
+ * chat's.
+ */
+export type DiscussionProvider = 'cursor' | 'claude';
+
+/** How a question from format 1, which stored no agent, is named in its Context. */
+export const RECORDED_BEFORE_PROVIDER_LINE = 'Cursor (recorded before the provider was stored)';
 
 export interface RecapLimits {
   /** Characters for the whole recap. */
@@ -467,7 +485,13 @@ export function recapFor(messages: readonly DiscussionMessage[], limits: RecapLi
 
 // --- The stored discussion -------------------------------------------------------
 
-export const REVIEW_DISCUSSION_FORMAT_VERSION = 1;
+/**
+ * 2 (DSP-132): the record names the discussion's agent (`provider`), and each question
+ * its agent and session. A format 1 file is read as it is and not rewritten on read; it
+ * becomes format 2 at the next real write (a changed draft, a choice of agent or a
+ * question). A DSpatch that knows only format 1 then reads it as newer and leaves it.
+ */
+export const REVIEW_DISCUSSION_FORMAT_VERSION = 2;
 
 /** Which review a discussion belongs to: the same identity as the reviewer's record. */
 export interface DiscussionIdentity {
@@ -490,6 +514,8 @@ export interface DiscussionRecord {
   readonly attempts: readonly StoredAttempt[];
   readonly draft: string;
   readonly savedAt: string;
+  /** DSP-132: the agent chosen for this discussion; absent until one is chosen. */
+  readonly provider?: DiscussionProvider;
 }
 
 export function emptyDiscussionRecord(identity: DiscussionIdentity): DiscussionRecord {
@@ -502,7 +528,8 @@ export function emptyDiscussionRecord(identity: DiscussionIdentity): DiscussionR
  * discussion.
  */
 export type DiscussionAdoption =
-  | { readonly kind: 'adopted'; readonly record: DiscussionRecord }
+  /** `fromVersion`: the format the file was in (1 or 2), so a format 1 file is named as such. */
+  | { readonly kind: 'adopted'; readonly record: DiscussionRecord; readonly fromVersion: number }
   | { readonly kind: 'newer'; readonly version: number; readonly problem: string }
   | { readonly kind: 'unusable'; readonly problem: string };
 
@@ -608,6 +635,15 @@ function adoptMessages(value: unknown): DiscussionMessage[] {
     if (typeof entry['model'] === 'string') {
       message.model = entry['model'];
     }
+    if (entry['provider'] === 'cursor' || entry['provider'] === 'claude') {
+      message.provider = entry['provider'];
+    }
+    if (typeof entry['dspatchSessionId'] === 'string') {
+      message.dspatchSessionId = entry['dspatchSessionId'];
+    }
+    if (typeof entry['toolPolicy'] === 'string') {
+      message.toolPolicy = entry['toolPolicy'];
+    }
     messages.push(message);
   }
   return messages;
@@ -644,8 +680,10 @@ export function adoptDiscussionRecord(raw: unknown, expected: DiscussionIdentity
   ) {
     return { kind: 'unusable', problem: 'The stored discussion belongs to another review.' };
   }
+  const provider = raw['provider'];
   return {
     kind: 'adopted',
+    fromVersion: version,
     record: {
       version: REVIEW_DISCUSSION_FORMAT_VERSION,
       identity: expected,
@@ -653,6 +691,7 @@ export function adoptDiscussionRecord(raw: unknown, expected: DiscussionIdentity
       attempts: adoptAttempts(raw['attempts']),
       draft: stringOr(raw['draft'], ''),
       savedAt: stringOr(raw['savedAt'], ''),
+      ...(provider === 'cursor' || provider === 'claude' ? { provider } : {}),
     },
   };
 }
@@ -678,7 +717,47 @@ export const REVIEW_DISCUSSION_CHANNELS = {
   acknowledge: 'dspatch:review-discussion-acknowledge',
   draft: 'dspatch:review-discussion-draft',
   event: 'dspatch:review-discussion-event',
+  /** DSP-132: choose the discussion's agent. Records the choice; builds nothing. */
+  chooseAgent: 'dspatch:review-discussion-choose-agent',
+  /** DSP-132: leave the recap out of (or back in) the next new session's first question. */
+  recap: 'dspatch:review-discussion-recap',
 } as const;
+
+/** One agent as the discussion offers it (DSP-132). */
+export interface DiscussionAgentOption {
+  readonly provider: DiscussionProvider;
+  readonly choosable: boolean;
+  /** Why it cannot be chosen; `null` when it can. */
+  readonly reason: string | null;
+}
+
+/**
+ * The discussion's agent (DSP-132): which one is chosen, whether it can be used, what
+ * it is given, and what the next question carries after a switch.
+ */
+export interface DiscussionAgentView {
+  /** The chosen agent, or `null` when none is (a standalone review with nothing stored). */
+  readonly provider: DiscussionProvider | null;
+  /** Why the chosen agent cannot be used in this launch; `null` when it can (or none is chosen). */
+  readonly unavailable: string | null;
+  readonly options: readonly DiscussionAgentOption[];
+  /** The tool policy the chosen agent is given here, as one line; `null` with none chosen. */
+  readonly policy: string | null;
+  /**
+   * After a switch, until the next question goes: the next question starts a new
+   * session with this agent and carries the code context and this recap, unless left out.
+   */
+  readonly switchNotice: {
+    readonly provider: DiscussionProvider;
+    readonly exchanges: number;
+    readonly recap: string;
+    readonly leftOut: boolean;
+  } | null;
+}
+
+export type DiscussionChooseOutcome =
+  | { readonly kind: 'chosen'; readonly status: DiscussionStatusView }
+  | { readonly kind: 'refused'; readonly error: string };
 
 /** The answer being waited for, if any. One at a time per review discussion. */
 export interface DiscussionTurnView {
@@ -708,6 +787,8 @@ export interface DiscussionStatusView {
   readonly needsAcknowledgement: readonly string[];
   /** Why the discussion cannot be written, when it cannot (a newer format on disk). */
   readonly readOnly: string | null;
+  /** DSP-132: the discussion's agent. */
+  readonly agent: DiscussionAgentView;
 }
 
 /** What the service tells the window(s) showing its review, on {@link REVIEW_DISCUSSION_CHANNELS.event}. */
@@ -758,6 +839,10 @@ export interface ReviewDiscussionBridge {
   cancel(): Promise<DiscussionCancelOutcome>;
   acknowledge(attemptIds: readonly string[]): Promise<DiscussionStatusView>;
   saveDraft(text: string): Promise<{ readonly saved: boolean; readonly error?: string }>;
+  /** DSP-132: choose the agent. Creates no adapter and no session. */
+  chooseAgent(provider: DiscussionProvider): Promise<DiscussionChooseOutcome>;
+  /** DSP-132: leave the recap out of the next new session's first question, or put it back. */
+  setRecapLeftOut(leftOut: boolean): Promise<DiscussionStatusView>;
   onEvent(listener: (event: ReviewDiscussionEvent) => void): () => void;
 }
 

@@ -3,6 +3,7 @@ import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import {
   REVIEW_DISCUSSION_CHANNELS,
   type DiscussionCancelOutcome,
+  type DiscussionChooseOutcome,
   type DiscussionIdentity,
   type DiscussionLoadOutcome,
   type DiscussionSendOutcome,
@@ -83,11 +84,17 @@ export function registerReviewIpc(windows: ReviewWindows, discussions: ReviewDis
     }
     const contents = entry.contents;
     const id = contents.id;
-    const service = discussions.attach(id, identity, (payload) => {
-      if (!contents.isDestroyed()) {
-        contents.send(REVIEW_DISCUSSION_CHANNELS.event, payload);
-      }
-    });
+    const service = discussions.attach(
+      id,
+      identity,
+      (payload) => {
+        if (!contents.isDestroyed()) {
+          contents.send(REVIEW_DISCUSSION_CHANNELS.event, payload);
+        }
+      },
+      // DSP-132: the main window's agent when it opened this review; none when standalone.
+      entry.defaultProvider,
+    );
     if (!watched.has(id)) {
       watched.add(id);
       contents.once('destroyed', () => {
@@ -126,5 +133,14 @@ export function registerReviewIpc(windows: ReviewWindows, discussions: ReviewDis
   ipcMain.handle(REVIEW_DISCUSSION_CHANNELS.draft, (event, text: unknown) => {
     const service = discussionOf(entryOf(event));
     return service === null ? { saved: false, error: noReview } : service.saveDraft(text);
+  });
+  // DSP-132: choosing the agent records it and builds nothing.
+  ipcMain.handle(REVIEW_DISCUSSION_CHANNELS.chooseAgent, async (event, provider: unknown): Promise<DiscussionChooseOutcome> => {
+    const service = discussionOf(entryOf(event));
+    return service === null ? { kind: 'refused', error: noReview } : service.chooseAgent(provider);
+  });
+  ipcMain.handle(REVIEW_DISCUSSION_CHANNELS.recap, (event, leftOut: unknown): DiscussionStatusView | { readonly error: string } => {
+    const service = discussionOf(entryOf(event));
+    return service === null ? { error: noReview } : service.setRecapLeftOut(leftOut);
   });
 }

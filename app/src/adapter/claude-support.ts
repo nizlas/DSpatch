@@ -105,6 +105,21 @@ export interface ClaudeSupportStatus {
   readonly reason: string | null;
 }
 
+/** The Claude Code executable's file name inside its platform package (SDK 0.3.306). */
+export function binaryFileName(platform: string): string {
+  return platform === 'win32' ? 'claude.exe' : 'claude';
+}
+
+/** Whether the platform package holds its executable file (existence only; never run). */
+function binaryPresent(directory: string, name: string, platform: string): boolean {
+  const file = path.join(directory, 'node_modules', ...name.split('/'), binaryFileName(platform));
+  try {
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /** A package's version from its `package.json`, `''` without one, `null` when absent. */
 function packageVersion(directory: string, name: string): string | null {
   const file = path.join(directory, 'node_modules', ...name.split('/'), 'package.json');
@@ -117,26 +132,41 @@ function packageVersion(directory: string, name: string): string | null {
 }
 
 /**
- * Whether Claude support is installed in `directory` for `host`. Reads only
- * `package.json` files; loads nothing and starts nothing.
+ * Whether Claude support is installed in `directory` for `host`. Reads
+ * `package.json` files and checks that the platform package's executable exists;
+ * loads nothing and starts nothing.
+ *
+ * Without an explicit `host`, the host is read only once the SDK's `package.json`
+ * is found (DSP-133 review S1): on Linux that reading is `process.report`, which is
+ * not worth making at every launch of a computer without Claude support.
  */
 export function claudeSupportStatus(
   directory: string = claudeSupportDir(),
-  host: ClaudeSupportPlatform = hostPlatform(),
+  host?: ClaudeSupportPlatform,
 ): ClaudeSupportStatus {
-  const candidates = binaryPackageCandidates(host);
-  const expected = candidates[0] ?? `${CLAUDE_SDK_PACKAGE}-${host.platform}-${host.arch}`;
   const sdkVersion = packageVersion(directory, CLAUDE_SDK_PACKAGE);
   if (sdkVersion === null) {
+    const platform = host?.platform ?? process.platform;
+    const arch = host?.arch ?? process.arch;
     return {
       installed: false,
       directory,
       sdkVersion: null,
-      binaryPackage: expected,
+      binaryPackage: `${CLAUDE_SDK_PACKAGE}-${platform}-${arch}`,
       reason: `${CLAUDE_NOT_INSTALLED_TEXT} (No ${CLAUDE_SDK_PACKAGE} under ${directory}.)`,
     };
   }
-  const found = candidates.find((name) => packageVersion(directory, name) !== null);
+  const resolvedHost = host ?? hostPlatform();
+  const candidates = binaryPackageCandidates(resolvedHost);
+  const expected =
+    candidates[0] ?? `${CLAUDE_SDK_PACKAGE}-${resolvedHost.platform}-${resolvedHost.arch}`;
+  // DSP-133 review S2: a platform package without its executable (an interrupted
+  // install) is not support.
+  const found = candidates.find(
+    (name) =>
+      packageVersion(directory, name) !== null &&
+      binaryPresent(directory, name, resolvedHost.platform),
+  );
   if (found === undefined) {
     return {
       installed: false,
@@ -193,7 +223,7 @@ function sdkEntry(directory: string): string {
  */
 export async function loadClaudeSdk(
   directory: string = claudeSupportDir(),
-  host: ClaudeSupportPlatform = hostPlatform(),
+  host?: ClaudeSupportPlatform,
 ): Promise<ClaudeSdkModule> {
   const status = claudeSupportStatus(directory, host);
   if (!status.installed) {

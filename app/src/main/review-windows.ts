@@ -59,6 +59,8 @@ export interface ReviewWindowEntry {
   readonly service: ReviewService;
   /** The folder the window was opened for, if any: the chooser's start folder. */
   readonly startFolder: string | null;
+  /** DSP-132: the main window's agent when it opened this review, else `null`. */
+  readonly defaultProvider: 'cursor' | 'claude' | null;
   /** What `initial` answers: the review opened for it, or the chooser's note. */
   initial: ReviewOpenOutcome;
   /** The review on screen, once a definition has opened; `null` while choosing. */
@@ -194,7 +196,7 @@ export class ReviewWindows {
               await this.rememberRecent(identity);
             }
           }
-          const entry = this.create({ service, startFolder: input.repository, initial: outcome, identity, chooserKey: null });
+          const entry = this.create({ service, startFolder: input.repository, defaultProvider: input.defaultProvider ?? null, initial: outcome, identity, chooserKey: null });
           return {
             kind: 'opened',
             note: `Review opened in its own window: ${this.labelOf(entry)}${fromRecent ? ' (the last review opened for this project)' : ''}. The chat is unaffected.`,
@@ -205,6 +207,7 @@ export class ReviewWindows {
           const entry = this.create({
             service,
             startFolder: input.repository,
+            defaultProvider: input.defaultProvider ?? null,
             initial: outcome,
             identity: null,
             chooserKey: null,
@@ -238,6 +241,7 @@ export class ReviewWindows {
       this.create({
         service: this.newService(),
         startFolder: input.repository,
+        defaultProvider: input.defaultProvider ?? null,
         initial: { kind: 'none', note, repository: input.repository, ...(problem === null ? {} : { problem }) },
         identity: null,
         chooserKey,
@@ -409,6 +413,7 @@ export class ReviewWindows {
   private create(init: {
     readonly service: ReviewService;
     readonly startFolder: string | null;
+    readonly defaultProvider: 'cursor' | 'claude' | null;
     readonly initial: ReviewOpenOutcome;
     readonly identity: ReviewIdentity | null;
     readonly chooserKey: string | null;
@@ -434,6 +439,7 @@ export class ReviewWindows {
       contents: window.webContents,
       service: init.service,
       startFolder: init.startFolder,
+      defaultProvider: init.defaultProvider,
       initial: init.initial,
       identity: init.identity,
       chooserKey: init.chooserKey,

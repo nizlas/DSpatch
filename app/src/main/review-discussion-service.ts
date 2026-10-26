@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
+import { REVIEW_PERMISSIONS } from '../adapter/claude-agent-sdk-adapter';
 import type { AgentEvent, Unsubscribe } from '../adapter/types';
-import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
 import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
 import {
   REVIEW_DISCUSSION_INSTRUCTION,
@@ -11,8 +12,11 @@ import {
   emptyDiscussionRecord,
   recapFor,
   subjectLine,
+  type DiscussionAgentView,
   type DiscussionCancelOutcome,
+  type DiscussionChooseOutcome,
   type DiscussionIdentity,
+  type DiscussionProvider,
   type DiscussionLoadOutcome,
   type DiscussionMessage,
   type DiscussionRecord,
@@ -25,8 +29,9 @@ import {
   type ReviewDiscussionEvent,
 } from '../shared/review-discussion';
 import { AttemptLedger } from './attempt-ledger';
+// DSP-132: the only thing taken from the chat - its adapter interface, as a type. No route
+// to the chat service or the loop runner exists from here (an import scan pins it).
 import type { ChatAdapter } from './chat-service';
-import { PresentationAdapter, PresentationResumeBehaviour, type PresentationSendMode } from './presentation-adapter';
 
 /*
  * A discussion about the code under review (DSP-127): one per review, with its own
@@ -97,33 +102,34 @@ export function discussionWorkingFolder(recordsDir: string, key: string): string
 }
 
 /**
- * How review discussions get their adapters.
- *
- * Production: a `CursorSdkAdapter` with `toolPolicy: 'text-only'`. Presentation mode:
- * a `PresentationAdapter` with **its own** `PresentationResumeBehaviour`, created
- * here, so what the review sends is never in the main chat's record and a simulated
- * failure meant for one can never reach the other (plan addendum 15).
+ * The one purpose the review path asks adapters for (DSP-132, plan review A2). Bound
+ * once, when {@link ReviewDiscussions} is constructed: no call site here can ask for the
+ * chat's policy, and every adapter built is checked against the review's.
  */
-export interface ReviewAdapterFactory {
-  readonly create: () => ChatAdapter;
-  /** The review adapters' own presentation record, in presentation mode; `null` otherwise. */
-  readonly presentationBehaviour: PresentationResumeBehaviour | null;
+export const REVIEW_ADAPTER_PURPOSE = 'review' as const;
+
+/** What the review asks the shared factory (`provider-adapters.ts`) for. */
+export interface ReviewAdapterRequest {
+  readonly provider: DiscussionProvider;
+  readonly purpose: typeof REVIEW_ADAPTER_PURPOSE;
 }
 
-export function reviewAdapterFactory(options: {
-  readonly presentation: boolean;
-  readonly deltaMs?: number;
-  /** `DSPATCH_REVIEW_PRESENTATION_SEND`: simulated send failures for the review adapters only. */
-  readonly sendMode?: PresentationSendMode;
-}): ReviewAdapterFactory {
-  if (options.presentation) {
-    const behaviour = new PresentationResumeBehaviour('ok', options.sendMode ?? 'ok');
-    return {
-      create: () => new PresentationAdapter({ resume: behaviour, ...(options.deltaMs === undefined ? {} : { deltaMs: options.deltaMs }) }),
-      presentationBehaviour: behaviour,
-    };
-  }
-  return { create: () => new CursorSdkAdapter({ toolPolicy: 'text-only' }), presentationBehaviour: null };
+/** Whether an agent can be chosen in this launch, and why not (`provider-availability.ts`). */
+export type DiscussionAvailability = (provider: DiscussionProvider) => {
+  readonly choosable: boolean;
+  readonly reason: string | null;
+};
+
+/** The agents offered, in this order. */
+const DISCUSSION_PROVIDERS: readonly DiscussionProvider[] = ['cursor', 'claude'];
+
+function providerName(provider: DiscussionProvider): string {
+  return provider === 'claude' ? 'Claude' : 'Cursor';
+}
+
+/** What each agent is given here when nothing else is said (tests); main passes the real lines. */
+function defaultPolicyLine(provider: DiscussionProvider): string {
+  return provider === 'claude' ? 'the review policy (no tools)' : 'text-only (tools: [])';
 }
 
 /** What builds the envelope: the asking window's own `ReviewService`. */
@@ -138,10 +144,17 @@ export interface ReviewDiscussionServiceOptions {
   readonly identity: DiscussionIdentity;
   /** `userData/reviews`. */
   readonly recordsDir: string;
-  readonly createAdapter: () => ChatAdapter;
+  /** Bound to the review purpose by {@link ReviewDiscussions}; never asked for another. */
+  readonly createAdapter: (provider: DiscussionProvider) => ChatAdapter;
   readonly log: (message: string) => void;
-  /** The model asked for. {@link REVIEW_DISCUSSION_DEFAULT_MODEL} when absent. */
+  /** The model asked for of Cursor. {@link REVIEW_DISCUSSION_DEFAULT_MODEL} when absent. */
   readonly model?: string;
+  /** DSP-132: the model asked for, per agent. Overrides `model` when given. */
+  readonly modelFor?: (provider: DiscussionProvider) => string;
+  /** DSP-132: which agents can be chosen in this launch. Every one, when absent (tests). */
+  readonly availability?: DiscussionAvailability;
+  /** DSP-132: the tool policy each agent is given here, as one line, for the window. */
+  readonly policyFor?: (provider: DiscussionProvider) => string;
   /** Test overrides for the confirmation window. Production passes nothing. */
   readonly timings?: { readonly cancelConfirmMs?: number; readonly cancelConfirmGraceMs?: number };
 }
@@ -160,6 +173,7 @@ interface Turn {
 
 interface Session {
   readonly adapter: ChatAdapter;
+  readonly provider: DiscussionProvider;
   readonly sessionId: string;
   readonly unsubscribe: Unsubscribe;
   /** Questions sent in this session; the first of a new session carries the recap. */
@@ -182,6 +196,16 @@ export class ReviewDiscussionService {
 
   /** Something to tell the window once about the stored file. */
   private loadNote: string | null = null;
+
+  /**
+   * DSP-132: the agent this discussion uses, or `null` when none is chosen. A stored
+   * choice wins on reopen; a default (from the main window) applies only to a new,
+   * empty discussion; nothing ever replaces a choice that cannot be used.
+   */
+  private provider: DiscussionProvider | null = null;
+
+  /** DSP-132: after a switch, until the next question goes; `leftOut` drops the recap. */
+  private switchNotice: { provider: DiscussionProvider; leftOut: boolean } | null = null;
 
   private session: Session | null = null;
 
@@ -257,6 +281,10 @@ export class ReviewDiscussionService {
       return;
     }
     const record = adopted.record;
+    // DSP-132: the stored agent; a format 1 file with questions was always Cursor's. Read
+    // only - nothing is written here, so the file stays as it was until a real write.
+    this.provider =
+      record.provider ?? (adopted.fromVersion === 1 && record.messages.length > 0 ? 'cursor' : null);
     this.messages = record.messages.map((message) => ({ ...message }));
     this.draft = record.draft;
     const restored = this.ledger.restore(record.attempts);
@@ -275,6 +303,7 @@ export class ReviewDiscussionService {
       attempts: this.ledger.persistable(),
       draft: this.draft,
       savedAt: nowIso(),
+      ...(this.provider === null ? {} : { provider: this.provider }),
     };
   }
 
@@ -359,7 +388,107 @@ export class ReviewDiscussionService {
       })),
       needsAcknowledgement: decision.allowed ? [] : decision.acknowledgeableAttemptIds,
       readOnly: this.readOnly,
+      agent: this.agentView(),
     };
+  }
+
+  // --- The agent (DSP-132) ------------------------------------------------------------
+
+  private availabilityOf(provider: DiscussionProvider): { choosable: boolean; reason: string | null } {
+    return this.options.availability?.(provider) ?? { choosable: true, reason: null };
+  }
+
+  private policyLine(provider: DiscussionProvider): string {
+    return this.options.policyFor?.(provider) ?? defaultPolicyLine(provider);
+  }
+
+  private agentView(): DiscussionAgentView {
+    const provider = this.provider;
+    const notice = this.switchNotice;
+    const recap = notice === null ? '' : recapFor(this.messages);
+    return {
+      provider,
+      unavailable: provider === null ? null : this.availabilityOf(provider).reason,
+      options: DISCUSSION_PROVIDERS.map((option) => ({ provider: option, ...this.availabilityOf(option) })),
+      policy: provider === null ? null : this.policyLine(provider),
+      switchNotice:
+        notice === null || recap === ''
+          ? null
+          : {
+              provider: notice.provider,
+              // The exchanges the recap actually carries (it is bounded), not every question.
+              exchanges: (recap.match(/^Q \(/gm) ?? []).length,
+              recap,
+              leftOut: notice.leftOut,
+            },
+    };
+  }
+
+  /**
+   * The main window's agent, offered as the default when this window opened review
+   * (DSP-132). Taken only by a new discussion - nothing stored, no agent chosen - and
+   * only in memory: nothing is written until a real write. A default that cannot be
+   * used in this launch is not taken (R-1): the discussion then asks for a choice.
+   */
+  offerDefault(provider: DiscussionProvider | null | undefined): void {
+    if (provider === undefined || provider === null || this.provider !== null || this.messages.length > 0) {
+      return;
+    }
+    if (!this.availabilityOf(provider).choosable) {
+      return;
+    }
+    this.provider = provider;
+  }
+
+  /**
+   * Choose the discussion's agent (DSP-132). Creates no adapter and no session; an open
+   * session of the previous agent is closed, so the next question starts a new one,
+   * with the recap disclosed beforehand. Refused while an answer is on its way, and for
+   * an agent that cannot be chosen (its reason is the answer).
+   */
+  async chooseAgent(provider: unknown): Promise<DiscussionChooseOutcome> {
+    if (provider !== 'cursor' && provider !== 'claude') {
+      return { kind: 'refused', error: 'Unknown agent.' };
+    }
+    if (this.readOnly !== null) {
+      return { kind: 'refused', error: `This discussion cannot be written: ${this.readOnly}` };
+    }
+    if (this.turn !== null || this.preparing || this.starting !== null) {
+      return { kind: 'refused', error: 'An answer is on its way. The agent can be changed when it has ended.' };
+    }
+    const availability = this.availabilityOf(provider);
+    if (!availability.choosable) {
+      return { kind: 'refused', error: availability.reason ?? `${providerName(provider)} cannot be used here.` };
+    }
+    if (provider !== this.provider) {
+      const previous = this.provider;
+      this.provider = provider;
+      // Never resumed, never carried over: the next question starts a new session.
+      const session = this.session;
+      this.session = null;
+      if (session !== null) {
+        session.unsubscribe();
+        await session.adapter.dispose().catch((error: unknown) => {
+          this.options.log(`review discussion ${this.identity.key}: the previous adapter did not close cleanly (${describeError(error)})`);
+        });
+      }
+      this.switchNotice = this.messages.some((message) => message.role === 'question') ? { provider, leftOut: false } : null;
+      this.save();
+      this.options.log(
+        `review discussion ${this.identity.key}: agent ${previous === null ? 'chosen' : `changed from ${previous}`} -> ${provider}; no adapter built, nothing sent`,
+      );
+    }
+    this.emitStatus();
+    return { kind: 'chosen', status: this.status() };
+  }
+
+  /** Leave the recap out of the next new session's first question (or put it back). */
+  setRecapLeftOut(leftOut: unknown): DiscussionStatusView {
+    if (this.switchNotice !== null) {
+      this.switchNotice = { ...this.switchNotice, leftOut: leftOut === true };
+      this.emitStatus();
+    }
+    return this.status();
   }
 
   /** What the window shows on open. Reads the record and, for a subject, git. Never the adapter. */
@@ -383,6 +512,11 @@ export class ReviewDiscussionService {
   saveDraft(text: unknown): { saved: boolean; error?: string } {
     if (typeof text !== 'string') {
       return { saved: false, error: 'A draft is text.' };
+    }
+    if (text === this.draft) {
+      // Nothing changed: the file is not rewritten (DSP-132 S3 - a format 1 file stays
+      // format 1 when a window only opens and shows it).
+      return { saved: true };
     }
     this.draft = text;
     return this.save();
@@ -422,8 +556,8 @@ export class ReviewDiscussionService {
     this.emitMessage(message);
   }
 
-  private ensureSession(): Promise<Session> {
-    if (this.session !== null) {
+  private ensureSession(provider: DiscussionProvider): Promise<Session> {
+    if (this.session !== null && this.session.provider === provider) {
       return Promise.resolve(this.session);
     }
     if (this.starting !== null) {
@@ -432,18 +566,28 @@ export class ReviewDiscussionService {
     const starting = (async (): Promise<Session> => {
       const workspacePath = discussionWorkingFolder(this.options.recordsDir, this.identity.key);
       fs.mkdirSync(workspacePath, { recursive: true });
-      const adapter = this.options.createAdapter();
+      const adapter = this.options.createAdapter(provider);
       try {
+        // Plan review A2: a Claude adapter on the review path holds exactly the review's
+        // policy - never the chat's, never the adapter's fixture fallback. A Claude
+        // adapter that reports no policy at all is refused too (fails closed, R-1 3b).
+        const policy = adapter.permissionPolicy?.();
+        const claudeWithoutPolicy = adapter.id === 'claude-agent-sdk' && policy === undefined;
+        if (claudeWithoutPolicy || (policy !== undefined && !isDeepStrictEqual(policy, REVIEW_PERMISSIONS))) {
+          throw new Error(
+            'The adapter built for the review discussion does not hold the review policy, so it was not used. Nothing was sent.',
+          );
+        }
         const handle = await adapter.startSession({
-          provider: 'cursor',
-          modelRequested: this.model(),
+          provider,
+          modelRequested: this.model(provider),
           workspacePath,
         });
         const unsubscribe = adapter.subscribe(handle.dspatchSessionId, (event) => {
           this.onAgentEvent(event);
         });
         this.options.log(`review discussion ${this.identity.key}: session ${handle.dspatchSessionId} started in ${workspacePath} (adapter ${adapter.id})`);
-        return { adapter, sessionId: handle.dspatchSessionId, unsubscribe, sends: 0 };
+        return { adapter, provider, sessionId: handle.dspatchSessionId, unsubscribe, sends: 0 };
       } catch (error) {
         await adapter.dispose().catch(() => undefined);
         throw error;
@@ -463,8 +607,8 @@ export class ReviewDiscussionService {
     );
   }
 
-  private model(): string {
-    return this.options.model ?? REVIEW_DISCUSSION_DEFAULT_MODEL;
+  private model(provider: DiscussionProvider): string {
+    return this.options.modelFor?.(provider) ?? this.options.model ?? REVIEW_DISCUSSION_DEFAULT_MODEL;
   }
 
   /**
@@ -486,6 +630,18 @@ export class ReviewDiscussionService {
     const question = typeof raw.question === 'string' ? raw.question.trim() : '';
     if (question === '') {
       return { kind: 'refused', error: 'An empty question is not sent.' };
+    }
+    // DSP-132: an explicit agent, usable in this launch. No fallback to another.
+    const provider = this.provider;
+    if (provider === null) {
+      return { kind: 'refused', error: 'Choose an agent for this discussion. Nothing was sent.' };
+    }
+    const availability = this.availabilityOf(provider);
+    if (!availability.choosable) {
+      return {
+        kind: 'refused',
+        error: `${availability.reason ?? `${providerName(provider)} cannot be used here.`} Nothing was sent; choose another agent to ask here.`,
+      };
     }
     const decision = this.ledger.mayRepeat('agent-turn');
     if (!decision.allowed) {
@@ -513,7 +669,7 @@ export class ReviewDiscussionService {
         return { kind: 'refused', error: 'The window is showing another review than this discussion belongs to; nothing was sent.' };
       }
       try {
-        session = await this.ensureSession();
+        session = await this.ensureSession(provider);
       } catch (error) {
         return { kind: 'refused', error: `The review discussion could not start a session with the provider: ${describeError(error)}` };
       }
@@ -527,7 +683,8 @@ export class ReviewDiscussionService {
         return closing;
       }
       // A new session has been told nothing: earlier questions and answers go in front, bounded and shown.
-      const recap = session.sends === 0 ? recapFor(this.messages) : '';
+      // DSP-132: after a switch the person may have left it out.
+      const recap = session.sends === 0 && this.switchNotice?.leftOut !== true ? recapFor(this.messages) : '';
       prompt = buildEnvelopePrompt(envelope, question, recap === '' ? null : recap);
       const questionId = this.nextId('q');
       const attempt = this.ledger.open('agent-turn', `Review question: ${question.split('\n')[0]?.slice(0, 70) ?? ''}`);
@@ -540,9 +697,13 @@ export class ReviewDiscussionService {
         envelope,
         sentPrompt: prompt,
         status: 'sending',
-        model: this.model(),
+        model: this.model(provider),
+        provider,
+        dspatchSessionId: session.sessionId,
+        toolPolicy: this.policyLine(provider),
       };
       this.messages.push(message);
+      this.switchNotice = null;
       turn = { questionId, answerId: null, attemptId: attempt.attemptId, runId: null, sendPending: true, stopping: false };
       this.turn = turn;
       // Before the send, not after it: a question that never reached the disk cannot be
@@ -884,8 +1045,20 @@ export class ReviewDiscussions {
 
   private readonly options: Omit<ReviewDiscussionServiceOptions, 'identity'>;
 
-  constructor(options: Omit<ReviewDiscussionServiceOptions, 'identity'>) {
-    this.options = options;
+  /**
+   * `createAdapter` is the shared factory's (`provider-adapters.ts`); the review purpose
+   * is bound here, once, so no discussion can ask it for anything else (plan review A2).
+   */
+  constructor(
+    options: Omit<ReviewDiscussionServiceOptions, 'identity' | 'createAdapter'> & {
+      readonly createAdapter: (request: ReviewAdapterRequest) => ChatAdapter;
+    },
+  ) {
+    const factory = options.createAdapter;
+    this.options = {
+      ...options,
+      createAdapter: (provider) => factory({ provider, purpose: REVIEW_ADAPTER_PURPOSE }),
+    };
   }
 
   serviceFor(identity: DiscussionIdentity): ReviewDiscussionService {
@@ -897,9 +1070,19 @@ export class ReviewDiscussions {
     return service;
   }
 
-  /** Bind a window to the discussion of the review it shows, and to no other. */
-  attach(targetId: number, identity: DiscussionIdentity, send: DiscussionTargetSend): ReviewDiscussionService {
+  /**
+   * Bind a window to the discussion of the review it shows, and to no other.
+   * `defaultProvider` is the agent of the main window that opened review, if any
+   * (DSP-132); a new discussion takes it, a stored one keeps its own.
+   */
+  attach(
+    targetId: number,
+    identity: DiscussionIdentity,
+    send: DiscussionTargetSend,
+    defaultProvider?: DiscussionProvider | null,
+  ): ReviewDiscussionService {
     const service = this.serviceFor(identity);
+    service.offerDefault(defaultProvider);
     for (const other of this.services.values()) {
       if (other !== service) {
         other.detach(targetId);

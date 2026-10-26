@@ -86,6 +86,8 @@ function harness(repoRoot: string): Harness {
   const logs: string[] = [];
   const events: unknown[] = [];
   const service = new ChatService({
+    // DSP-136: Cursor chosen explicitly, as the person would in Open a project.
+    agentChoiceStore: { read: () => 'cursor', write: () => undefined },
     repoRoot,
     send: (event) => {
       events.push(event);
@@ -272,6 +274,8 @@ test('a legitimate project of the same shape opens, root and subfolder alike', a
   );
   const adapter = new FakeAdapter();
   const service = new ChatService({
+    // DSP-136: Cursor chosen explicitly, as the person would in Open a project.
+    agentChoiceStore: { read: () => 'cursor', write: () => undefined },
     repoRoot: makeDir('legitimate-repo-root'),
     send: () => {
       // No renderer in this test.
@@ -305,6 +309,8 @@ function serviceKnowingOwnRoot(name: string, ownRepoRoot: string | null): Harnes
   const logs: string[] = [];
   const events: unknown[] = [];
   const service = new ChatService({
+    // DSP-136: Cursor chosen explicitly, as the person would in Open a project.
+    agentChoiceStore: { read: () => 'cursor', write: () => undefined },
     repoRoot: makeDir(`${name}-repo-root`),
     ownRepoRoot,
     send: (event) => {
@@ -365,6 +371,8 @@ test('AC#5, must not refuse: a legitimate project beside DSpatch opens', async (
 
   const adapter = new FakeAdapter();
   const service = new ChatService({
+    // DSP-136: Cursor chosen explicitly, as the person would in Open a project.
+    agentChoiceStore: { read: () => 'cursor', write: () => undefined },
     repoRoot: makeDir('contains-sibling-repo-root'),
     ownRepoRoot: path.join(parent, 'DSpatch'),
     send: () => {
@@ -481,6 +489,8 @@ test('AC#4: a project inside the configured repoRoot opens — the measured fail
 
   const adapter = new FakeAdapter();
   const service = new ChatService({
+    // DSP-136: Cursor chosen explicitly, as the person would in Open a project.
+    agentChoiceStore: { read: () => 'cursor', write: () => undefined },
     repoRoot: outside,
     ownRepoRoot: makeDspatchLookalike('ac4-real-own-root', 'dspatch'),
     send: () => {
@@ -536,6 +546,8 @@ test('AC#4: which folders are refused does not depend on repoRoot at all', async
       own,
     ]) {
       const service = new ChatService({
+        // DSP-136: Cursor chosen explicitly, as the person would in Open a project.
+        agentChoiceStore: { read: () => 'cursor', write: () => undefined },
         repoRoot,
         // Set, so both content tests are live; it is never an ancestor of these
         // folders, so the containing refusal cannot be what answers.
@@ -644,6 +656,8 @@ function plantLeftover(sampleRoot: string): string {
 
 function sampleService(name: string, sampleProjectsRoot: string): ChatService {
   return new ChatService({
+    // DSP-136: Cursor chosen explicitly, as the person would in Open a project.
+    agentChoiceStore: { read: () => 'cursor', write: () => undefined },
     repoRoot: makeDir(`${name}-repo-root`),
     sampleProjectsRoot,
     send: () => {
@@ -1090,6 +1104,8 @@ async function openFakeSession(
   const adapter = new FakeAdapter();
   const logs: string[] = [];
   const service = new ChatService({
+    // DSP-136: Cursor chosen explicitly, as the person would in Open a project.
+    agentChoiceStore: { read: () => 'cursor', write: () => undefined },
     repoRoot: makeDir(`${name}-repo-root`),
     send: () => {
       // The renderer is not part of this test.
@@ -1584,6 +1600,8 @@ function connectionHarness(
       Promise.reject(new Error('Cursor adapter operation "listModels" failed: fetch failed'));
   }
   return new ChatService({
+    // DSP-136: Cursor chosen explicitly, as the person would in Open a project.
+    agentChoiceStore: { read: () => 'cursor', write: () => undefined },
     repoRoot: makeDir(`${name}-repo-root`),
     send: () => {
       // No renderer in this test.
@@ -1697,10 +1715,14 @@ function serviceOver(
   workspace: string,
   store: ConversationStore,
   conversationForProject?: (projectPath: string) => string | null,
+  /** DSP-136: the agent chosen in this installation. */
+  chosen: 'cursor' | 'claude' = 'cursor',
 ): RestartHarness {
   const adapter = new FakeAdapter();
   const logs: string[] = [];
   const service = new ChatService({
+    // DSP-136: the agent chosen explicitly, as the person would in Open a project.
+    agentChoiceStore: { read: () => chosen, write: () => undefined },
     repoRoot: makeDir(`${name}-repo-root`),
     send: () => {
       // No renderer in this test.
@@ -2368,9 +2390,17 @@ async function restartIntoRewritten(
     first.adapter.emit({ type: 'run.finished', status: 'finished' });
   }
   await first.service.dispose();
-  rewriteSavedFile(store, session.conversationId, mutate);
+  // DSP-136: the second launch has the recorded agent chosen, as a person reopening
+  // that conversation would; the Q-A cases with another agent chosen are their own tests.
+  let recorded: 'cursor' | 'claude' = 'cursor';
+  rewriteSavedFile(store, session.conversationId, (raw) => {
+    mutate(raw);
+    if (raw['session']?.provider === 'claude') {
+      recorded = 'claude';
+    }
+  });
 
-  const second = serviceOver(`${name}-2`, workspace, store);
+  const second = serviceOver(`${name}-2`, workspace, store, undefined, recorded);
   await second.service.resumeConversation(session.conversationId);
   return { workspace, conversationId: session.conversationId, second };
 }
@@ -2533,18 +2563,29 @@ test("SIMULATED: a local record missing under an unaligned profile is reported a
   await claude.second.service.dispose();
 });
 
-test('SIMULATED: a file recorded as Claude opens as Claude even when the open-project choice was Cursor (DSP-117)', async () => {
+test('SIMULATED: a file recorded as Claude with Cursor chosen opens with no session and both named choices; Resume with Claude resumes it (DSP-136 Q-A)', async () => {
   // Until DSP-117 this case resumed the Claude-recorded session through Cursor's
-  // `Agent.resume`. Now the recorded provider decides; the panel's choice is for a
-  // new conversation. (The back-stop, for a launch without Claude, is in
-  // provider-selection.test.ts.)
+  // `Agent.resume`; DSP-117 let the recorded provider override the panel's choice.
+  // DSP-136 (Q-A): neither - the person chooses, and nothing is built until then.
   const { workspace, second } = await restartIntoRewritten('continuity-claude-file-cursor-adapter', (raw) => {
     raw.session.provider = 'claude';
   });
   second.adapter.resumeBehaviour = 'ok';
   const session = await second.service.startChatSession({ kind: 'folder', path: workspace, provider: 'cursor' });
-  assert.equal(session.provider, 'claude');
-  assert.notEqual(session.continuity.resumeFailure?.kind, 'provider-differs');
+  assert.equal(session.provider, 'cursor');
+  assert.equal(session.continuity.providerSessionOpen, false);
+  assert.deepEqual(session.continuity.choices, ['new-session', 'resume-recorded']);
+  assert.equal(session.continuity.recordedProvider, 'claude');
+  assert.equal(session.adapter, null);
+  assert.deepEqual(second.adapter.resumeAttempts, [], 'nothing was asked');
+  assert.deepEqual(second.adapter.sent, []);
+  assert.match(session.continuity.statement, /it is a Claude session, and Cursor is the chosen agent/);
+  assert.match(session.continuity.statement, /No agent was built/);
+
+  // Resume with Claude: the recorded provider, explicitly.
+  const resumed = await second.service.startChatSession({ kind: 'retry-resume' });
+  assert.equal(resumed.provider, 'claude');
+  assert.equal(resumed.continuity.providerSessionOpen, true);
   assert.deepEqual(second.adapter.resumeAttempts, ['dsp-session-fake']);
   assert.deepEqual(second.adapter.sent, []);
   await second.service.dispose();

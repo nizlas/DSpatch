@@ -624,3 +624,23 @@ export function connectionRetryPlan(automaticAttemptsSoFar: number): RetryPlan {
       'no message or command is ever retried on its own.',
   };
 }
+
+/**
+ * Whether the window checks Cursor's connection on its own (DSP-136).
+ *
+ * Only when Cursor is the agent in play: the open conversation's agent when a
+ * project is open, otherwise the agent chosen in *Open a project*. With Claude, or
+ * with no agent chosen, nothing asks Cursor anything; a person can still ask for the
+ * check explicitly. The bounded retries follow the same rule.
+ */
+export function shouldCheckCursorConnection(input: {
+  /** Whether a project (and so a conversation) is open in the window. */
+  readonly projectOpen: boolean;
+  /** The open conversation's agent, `null` when none is chosen for it. */
+  readonly sessionProvider: 'cursor' | 'claude' | null;
+  /** The agent chosen in *Open a project*, `null` when none is. */
+  readonly chosenAgent: 'cursor' | 'claude' | null;
+}): boolean {
+  const agent = input.projectOpen ? input.sessionProvider : input.chosenAgent;
+  return agent === 'cursor';
+}

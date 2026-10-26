@@ -51,6 +51,11 @@ const discussionBridge: ReviewDiscussionBridge = {
   acknowledge: (attemptIds) =>
     ipcRenderer.invoke('dspatch:review-discussion-acknowledge', attemptIds) as ReturnType<ReviewDiscussionBridge['acknowledge']>,
   saveDraft: (text) => ipcRenderer.invoke('dspatch:review-discussion-draft', text) as ReturnType<ReviewDiscussionBridge['saveDraft']>,
+  // DSP-132: the discussion's agent, and leaving the recap out after a switch.
+  chooseAgent: (provider) =>
+    ipcRenderer.invoke('dspatch:review-discussion-choose-agent', provider) as ReturnType<ReviewDiscussionBridge['chooseAgent']>,
+  setRecapLeftOut: (leftOut) =>
+    ipcRenderer.invoke('dspatch:review-discussion-recap', leftOut) as ReturnType<ReviewDiscussionBridge['setRecapLeftOut']>,
   onEvent: (listener) => {
     const handler = (_event: unknown, payload: ReviewDiscussionEvent): void => {
       listener(payload);

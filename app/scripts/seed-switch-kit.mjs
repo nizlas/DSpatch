@@ -209,6 +209,8 @@ class SeedAdapter {
 function serviceOver(store) {
   const adapter = new SeedAdapter();
   const service = new ChatService({
+    // DSP-136: Cursor chosen explicitly, as the person would in Open a project.
+    agentChoiceStore: { read: () => 'cursor', write: () => undefined },
     repoRoot: fs.mkdtempSync(path.join(SCRATCH, 'repo-root-')),
     send: () => {
       // No renderer here.
@@ -332,6 +334,14 @@ async function runningCommandIn(project, label) {
 }
 ids['X'] = await runningCommandIn(X, 'X');
 ids['XSUB'] = await runningCommandIn(XSUB, 'XSUB');
+
+// DSP-136: the kit names its agent. A fresh installation has none chosen; this kit's
+// person chose Cursor (answered by the presentation adapter, never by Cursor).
+fs.writeFileSync(
+  path.join(USERDATA, 'dspatch-agent-choice.json'),
+  `${JSON.stringify({ formatVersion: 1, agent: 'cursor', chosenAtUtc: new Date().toISOString() }, null, 2)}\n`,
+  'utf8',
+);
 
 // --- Recent, newest first, each with its conversation ------------------------------
 const projects = new ProjectStore(path.join(USERDATA, 'dspatch-projects.json'));

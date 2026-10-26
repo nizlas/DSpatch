@@ -28,6 +28,7 @@ import {
   restoreComposerAfterRunFailure,
   runEndingNeedsConnectionRecheck,
   SEND_WAIT_NOTICE_MS,
+  shouldCheckCursorConnection,
 } from '../src/renderer/recovery.ts';
 
 // --- The message a person reads ---------------------------------------------
@@ -499,4 +500,17 @@ test('with no recorded text, nothing is claimed', () => {
   const outcome = restoreComposerAfterRunFailure('', '');
   assert.equal(outcome.restore, false);
   assert.match(outcome.note, /no record of the text/);
+});
+
+// --- DSP-136: Cursor is checked only when it is the agent in play ------------
+
+test('the window checks Cursor on its own only when Cursor is the agent in play', () => {
+  // No project open: the agent chosen in Open a project decides.
+  assert.equal(shouldCheckCursorConnection({ projectOpen: false, sessionProvider: null, chosenAgent: null }), false);
+  assert.equal(shouldCheckCursorConnection({ projectOpen: false, sessionProvider: null, chosenAgent: 'claude' }), false);
+  assert.equal(shouldCheckCursorConnection({ projectOpen: false, sessionProvider: null, chosenAgent: 'cursor' }), true);
+  // A project open: its conversation's agent decides, whatever the panel says.
+  assert.equal(shouldCheckCursorConnection({ projectOpen: true, sessionProvider: 'claude', chosenAgent: 'cursor' }), false);
+  assert.equal(shouldCheckCursorConnection({ projectOpen: true, sessionProvider: null, chosenAgent: 'cursor' }), false);
+  assert.equal(shouldCheckCursorConnection({ projectOpen: true, sessionProvider: 'cursor', chosenAgent: 'claude' }), true);
 });

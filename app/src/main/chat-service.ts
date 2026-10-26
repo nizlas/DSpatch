@@ -30,6 +30,7 @@ import type {
 } from '../adapter/types';
 import type {
   AbandonOutcome,
+  AdapterInfo,
   AgentChoiceInfo,
   AttemptAcknowledgement,
   AttemptInfo,
@@ -73,6 +74,11 @@ import type {
   WorkspaceReport,
 } from '../shared/bridge';
 import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
+import {
+  providerAvailability,
+  providerDisplayName,
+  type ProviderAvailability,
+} from './provider-availability';
 import { AttemptLedger, attemptOrdinal, type AttemptSequence } from './attempt-ledger';
 import {
   CONVERSATION_FORMAT_VERSION,
@@ -423,9 +429,22 @@ function choicesSentence(
 }
 
 /** The guard's closing sentence, naming only the choices offered. */
-function choicesInstruction(choices: readonly ContinuityChoice[]): string {
-  return choices.includes('try-again')
-    ? 'Choose: try again, or start a new provider session.'
+function choicesInstruction(choices: readonly ContinuityChoice[], agentNeeded = false): string {
+  if (choices.includes('try-again')) {
+    return 'Choose: try again, or start a new provider session.';
+  }
+  if (choices.includes('new-session')) {
+    return choices.includes('resume-recorded')
+      ? 'Choose: start a new provider session, or resume with the recorded agent.'
+      : 'Start a new provider session to continue.';
+  }
+  if (agentNeeded) {
+    return choices.includes('resume-recorded')
+      ? 'Choose an agent, or resume with the recorded agent.'
+      : 'Choose an agent to continue.';
+  }
+  return choices.includes('resume-recorded')
+    ? 'Resume with the recorded agent to continue.'
     : 'Start a new provider session to continue.';
 }
 
@@ -919,6 +938,15 @@ export type AuthStatusReading =
       readonly apiKeyExpiresAtMs?: number | undefined;
     };
 
+/**
+ * DSP-136: where the agent chosen explicitly in *Open a project* is kept. `read`
+ * returns `null` for an installation where nobody has chosen one.
+ */
+export interface AgentChoiceStore {
+  read(): StoredSessionProvider | null;
+  write(provider: StoredSessionProvider): void;
+}
+
 export interface ChatServiceOptions {
   /**
    * The boundary the generated sample project and the DSP-1 probe stay outside of.
@@ -971,6 +999,12 @@ export interface ChatServiceOptions {
    * with both this and the authorization reference. Nothing here installs anything.
    */
   readonly claudeSupport?: { readonly installed: boolean; readonly reason: string | null };
+  /**
+   * DSP-136: where the agent the person chose explicitly is kept (main.ts: a small
+   * file under `userData`). Absent, or reading `null`, means no agent is chosen:
+   * a project then opens with no session and asks for one. There is no default.
+   */
+  readonly agentChoiceStore?: AgentChoiceStore;
   /**
    * How the stored login is read. Defaults to `Cursor.auth.status()`.
    *
@@ -1200,10 +1234,18 @@ export class ChatService {
 
   /**
    * The agent selected for the conversation on screen (DSP-117): the open session's
-   * provider, or, while none is open, the one a new session would use. A new
-   * provider session without a named provider uses this one.
+   * provider, or, while none is open, the one a new session would use, or `null`
+   * when no agent is chosen (DSP-136). A new provider session without a named
+   * provider uses this one.
    */
-  private selectedProvider: StoredSessionProvider = 'cursor';
+  private selectedProvider: StoredSessionProvider | null = null;
+
+  /**
+   * DSP-136: the agent the person last chose explicitly, from the store, or `null`.
+   * Opening a project without naming a provider uses it; it is never Cursor by
+   * default.
+   */
+  private chosenProvider: StoredSessionProvider | null | undefined = undefined;
 
   /**
    * Which provider the open session's handle belongs to, written to the
@@ -1415,8 +1457,9 @@ export class ChatService {
     });
   }
 
+  /** The model a session would ask for; `''` while no agent is chosen. */
   modelRequested(): string {
-    return this.modelFor(this.selectedProvider);
+    return this.selectedProvider === null ? '' : this.modelFor(this.selectedProvider);
   }
 
   /** The model a session with this provider asks for. Claude's is fixed (DSP-117). */
@@ -1435,7 +1478,7 @@ export class ChatService {
    * launch was started with, and DSpatch's own credential rule is applied by the
    * adapter when a session starts.
    */
-  agentChoice(provider: StoredSessionProvider = this.selectedProvider): AgentChoiceInfo {
+  agentChoice(provider: StoredSessionProvider | null = this.selectedProvider): AgentChoiceInfo {
     const reference = this.claudeReference();
     const claudeInstalled = this.claudeInstalled();
     const unavailable = this.claudeUnavailable();
@@ -1450,9 +1493,11 @@ export class ChatService {
           : !claudeInstalled
             ? 'Claude Agent SDK · Claude support not installed'
             : 'Claude Agent SDK · not enabled for this launch'
-        : 'Cursor SDK · see the connection above';
+        : provider === 'cursor'
+          ? 'Cursor SDK · login checked only when a Cursor session is used'
+          : 'No agent chosen';
     const policy =
-      this.adapter !== null && this.adapterProvider === provider
+      this.adapter !== null && provider !== null && this.adapterProvider === provider
         ? this.adapter.permissionPolicy?.()
         : undefined;
     return {
@@ -1466,13 +1511,61 @@ export class ChatService {
           ? describePermissionPolicy(policy)
           : provider === 'claude'
             ? 'the Claude chat policy (shown once a session is open)'
-            : 'provider-default',
+            : provider === 'cursor'
+              ? 'provider-default'
+              : 'none (no agent chosen)',
     };
   }
 
   private claudeReference(): string | null {
     const reference = this.options.claudeAuthorizationReference?.trim() ?? '';
     return reference === '' ? null : reference;
+  }
+
+  /** DSP-136: whether this provider can be chosen in this launch (one rule, provider-availability). */
+  private available(provider: StoredSessionProvider): boolean {
+    return this.availabilityOf(provider).choosable;
+  }
+
+  private availabilityOf(provider: StoredSessionProvider): ProviderAvailability {
+    return providerAvailability(provider, {
+      claudeAuthorized: this.claudeReference() !== null,
+      claudeInstalled: this.claudeInstalled(),
+    });
+  }
+
+  /** DSP-136: the agent last chosen explicitly, or `null`. */
+  chosenAgent(): StoredSessionProvider | null {
+    // Read on first use, not at construction: the store lives under `userData`,
+    // which main.ts settles after this service is constructed.
+    if (this.chosenProvider === undefined) {
+      try {
+        this.chosenProvider = this.options.agentChoiceStore?.read() ?? null;
+      } catch (error) {
+        this.options.log(`the agent choice could not be read: ${describeError(error)}`);
+        this.chosenProvider = null;
+      }
+    }
+    return this.chosenProvider;
+  }
+
+  /**
+   * DSP-136: record an explicit choice of agent from *Open a project*. Refused, with
+   * the reason, for a provider that cannot be chosen. Builds no adapter and asks no
+   * provider anything; it only changes what the next opened project uses.
+   */
+  chooseAgent(provider: StoredSessionProvider): StoredSessionProvider | null {
+    const availability = this.availabilityOf(provider);
+    if (!availability.choosable) {
+      throw new Error(availability.reason ?? `${providerDisplayName(provider)} cannot be chosen.`);
+    }
+    this.chosenProvider = provider;
+    try {
+      this.options.agentChoiceStore?.write(provider);
+    } catch (error) {
+      this.options.log(`the agent choice could not be saved: ${describeError(error)}`);
+    }
+    return provider;
   }
 
   /** DSP-133: Claude support as read at launch; absent counts as not installed. */
@@ -1494,7 +1587,7 @@ export class ChatService {
    * installed).
    */
   private requireProviderAvailable(provider: StoredSessionProvider): void {
-    const unavailable = provider === 'claude' ? this.claudeUnavailable() : null;
+    const unavailable = this.availabilityOf(provider).reason;
     if (unavailable !== null) {
       throw new Error(
         `${unavailable} A Claude session cannot be opened. Nothing was closed and nothing was sent.`,
@@ -1528,13 +1621,26 @@ export class ChatService {
     return this.session;
   }
 
-  /** The adapter identity the window displays: provider plus transport. */
-  adapterId(): string {
-    return this.ensureAdapter(this.selectedProvider).id;
+  /**
+   * The adapter holding the open provider session: provider plus transport, or
+   * `null` while none is open. Never builds one (DSP-136): nothing at startup or
+   * in a reading of identity creates an adapter.
+   */
+  adapterInfo(): AdapterInfo | null {
+    if (this.adapter === null || this.session === null || !this.continuity.providerSessionOpen) {
+      return null;
+    }
+    return { id: this.adapter.id, capabilities: this.adapter.capabilities() };
   }
 
-  capabilities(): CapabilityReport {
-    return this.ensureAdapter(this.selectedProvider).capabilities();
+  /** The open session's adapter ID, or `null`. Builds nothing. */
+  adapterId(): string | null {
+    return this.adapterInfo()?.id ?? null;
+  }
+
+  /** The open session's adapter capabilities, or `null`. Builds nothing. */
+  capabilities(): CapabilityReport | null {
+    return this.adapterInfo()?.capabilities ?? null;
   }
 
   /**
@@ -1547,6 +1653,9 @@ export class ChatService {
    */
   async getConnection(): Promise<ConnectionStatus> {
     const checkedAtUtc = nowIso();
+    // DSP-136: asked only when Cursor is the agent in play or the person asks; logged
+    // so that a run record shows every reading of Cursor's login.
+    this.options.log("checking Cursor's connection");
     const credentialStorePath = path.join(
       os.homedir(),
       '.cursor',
@@ -1571,17 +1680,19 @@ export class ChatService {
       let modelListFailure: string | null = null;
       try {
         // Always Cursor's list (review B2): never a Claude adapter, which has no
-        // list, and never one a Claude session would then reuse. While a Claude
-        // session holds the cached adapter, a separate Cursor adapter is used and
-        // disposed again.
-        const borrowed = this.adapterProvider === 'claude' ? this.createAdapterFor('cursor') : null;
-        const adapter = borrowed ?? this.ensureAdapter('cursor');
+        // list. The open Cursor session's adapter when there is one; otherwise a
+        // Cursor adapter built for this reading alone and disposed again, so the
+        // check never leaves an adapter behind (DSP-136). Only ever asked when
+        // Cursor is the chosen agent or the person asks for the check.
+        const own =
+          this.adapter !== null && this.adapterProvider === 'cursor' ? this.adapter : null;
+        const adapter = own ?? this.createAdapterFor('cursor');
         let listed: readonly ModelInfo[];
         try {
           listed = await adapter.listModels();
         } finally {
-          if (borrowed !== null && borrowed !== this.adapter) {
-            await borrowed.dispose();
+          if (own === null) {
+            await adapter.dispose();
           }
         }
         modelsAvailable = listed.length;
@@ -1659,14 +1770,33 @@ export class ChatService {
     // DSP-117: an explicitly named provider, or for a new provider session the one
     // already selected. Refused before anything is closed when it cannot be used.
     const selectedBeforeClose = this.selectedProvider;
-    const namedProvider =
+    // DSP-136: `null` is "no agent chosen", `undefined` "not named here".
+    const namedProvider: StoredSessionProvider | null | undefined =
       request.kind === 'retry-resume'
         ? undefined
         : request.kind === 'new-provider-session'
           ? (request.provider ?? selectedBeforeClose)
           : request.provider;
-    if (namedProvider !== undefined) {
+    if (
+      request.kind === 'new-provider-session' &&
+      openBeforeClose !== null &&
+      (namedProvider ?? null) === null
+    ) {
+      throw new Error(
+        'No agent is chosen, so no new session can be opened. Choose an agent first. ' +
+          'Nothing was closed and nothing was sent.',
+      );
+    }
+    if (namedProvider !== undefined && namedProvider !== null) {
       this.requireProviderAvailable(namedProvider);
+    }
+    if (request.kind === 'retry-resume' && openBeforeClose !== null) {
+      // *Resume with <recorded>* and *Try again* resume with the recorded provider,
+      // which must be usable in this launch; refused before anything is closed.
+      const recordedBeforeClose = this.savedSessionFor(openBeforeClose.conversationId);
+      if (recordedBeforeClose !== null) {
+        this.requireProviderAvailable(storedSessionProvider(recordedBeforeClose));
+      }
     }
     await this.closeSession();
 
@@ -1739,27 +1869,55 @@ export class ChatService {
     this.runner = resolveNodeRunner();
     const suggestion = suggestBuildCommand(workspacePath, this.runner?.path ?? null);
 
-    // DSP-117: which provider this session uses.
+    // DSP-117 and DSP-136: which provider this session uses, and whether one is
+    // opened at all. Cursor is never assumed and nothing falls back silently.
     // - A new provider session uses the provider it names (a switch), or the one
     //   already selected.
-    // - Opening a project or the sample: an existing conversation opens with its
-    //   recorded provider whatever the window's choice was, because that choice is
-    //   the agent for a *new* conversation; a new conversation uses the named one,
-    //   or Cursor.
-    // - A recorded Claude session in a launch without Claude falls back to Cursor as
-    //   the *selection* only: `openProviderSession` then sees the recorded and
-    //   selected providers differ and resumes nothing (the back-stop).
+    // - Trying again, or *Resume with <recorded>*, uses the recorded provider.
+    // - Opening a project or the sample uses the chosen agent: the one named by the
+    //   request (the panel's), else the one last chosen in this installation, which
+    //   may be none. A recorded session is resumed only when its provider is that
+    //   chosen one and is available. Otherwise - nothing chosen, another agent
+    //   chosen, or the recorded provider unusable in this launch - the conversation
+    //   opens with no session and the named choices, and no adapter is built.
     const savedForSelection = this.savedSessionFor(conversationId);
     const recordedProviderForSelection =
       savedForSelection === null ? null : storedSessionProvider(savedForSelection);
-    const recordedOrFallback: StoredSessionProvider | null =
-      recordedProviderForSelection === 'claude' && this.claudeUnavailable() !== null
-        ? 'cursor'
-        : recordedProviderForSelection;
-    const selected: StoredSessionProvider =
+    const chosen: StoredSessionProvider | null =
       request.kind === 'new-provider-session'
-        ? (namedProvider ?? selectedBeforeClose)
-        : (recordedOrFallback ?? namedProvider ?? 'cursor');
+        ? (namedProvider ?? null)
+        : request.kind === 'retry-resume'
+          ? (recordedProviderForSelection ?? selectedBeforeClose)
+          : namedProvider === undefined
+            ? this.chosenAgent()
+            : namedProvider;
+    const chosenUsable = chosen !== null && this.available(chosen);
+    const opensSession =
+      request.kind === 'new-provider-session'
+        ? chosenUsable
+        : recordedProviderForSelection === null
+          ? chosenUsable
+          : chosenUsable && chosen === recordedProviderForSelection;
+    if (!opensSession) {
+      return this.openWithoutSession({
+        request,
+        conversationId,
+        workspacePath,
+        workspaceOrigin,
+        origin,
+        gitInfo,
+        baseline,
+        suggestion,
+        recorded: savedForSelection,
+        chosen: chosenUsable ? chosen : null,
+        // R1: the stored choice itself, so an unusable one is named, not hidden.
+        storedChoice: chosen,
+      });
+    }
+    if (chosen === null) {
+      throw new Error('unreachable: a session is opened only with a chosen agent');
+    }
+    const selected: StoredSessionProvider = chosen;
     this.selectedProvider = selected;
     const adapter = await this.adapterFor(selected);
     const config: SessionConfig = {
@@ -1957,6 +2115,8 @@ export class ChatService {
         error: null,
       },
       provider: selected,
+      // DSP-136: the adapter built for this session - holding it, or asked to resume it.
+      adapter: { id: adapter.id, capabilities: adapter.capabilities() },
       agent: this.agentChoice(selected),
     };
     this.session = session;
@@ -1975,6 +2135,191 @@ export class ChatService {
           continued.continuity.contextToResend?.length ?? 0,
         )} chars`,
     );
+    return session;
+  }
+
+  /**
+   * DSP-136: open the conversation with no provider session and no adapter.
+   *
+   * Reached when no agent is chosen, when another agent is chosen than the one the
+   * session was recorded with, or when the recorded provider cannot be used in this
+   * launch. The history is on screen, the choices are named - *Start new <chosen>
+   * session* when an agent is chosen and usable, *Resume with <recorded>* when the
+   * recorded provider is usable - and nothing is built, asked or sent until one is
+   * picked. There is no fallback to another provider.
+   */
+  private openWithoutSession(input: {
+    readonly request: StartSessionRequest;
+    readonly conversationId: string;
+    readonly workspacePath: string;
+    readonly workspaceOrigin: string;
+    readonly origin: SessionOrigin;
+    readonly gitInfo: GitBaselineInfo;
+    readonly baseline: WorkspaceSnapshot;
+    readonly suggestion: ReturnType<typeof suggestBuildCommand>;
+    readonly recorded: StoredSession | null;
+    /** The chosen agent, only when it is usable in this launch. */
+    readonly chosen: StoredSessionProvider | null;
+    /** The chosen agent whether or not it is usable (R1): named when it cannot be used. */
+    readonly storedChoice: StoredSessionProvider | null;
+  }): ChatSessionInfo {
+    const { conversationId, workspacePath, recorded, chosen } = input;
+    // R1: a choice that cannot be used in this launch (Claude without its authorization
+    // or support, say) is said as such - never as "no agent is chosen".
+    const unusableChoice =
+      chosen === null && input.storedChoice !== null
+        ? {
+            provider: input.storedChoice,
+            // Without its closing full stop, so it reads inside a sentence.
+            reason: (this.availabilityOf(input.storedChoice).reason ?? 'it is unavailable').replace(/[.\s]+$/, ''),
+          }
+        : null;
+    const noChoiceWords =
+      unusableChoice === null
+        ? 'no agent is chosen'
+        : `${providerDisplayName(unusableChoice.provider)} was chosen, but it cannot be used in this launch: ${unusableChoice.reason}`;
+    const savedMessageCount = this.mergedMessages(conversationId).length;
+    const earlierSends = this.earlierSendsMayHaveReached(conversationId);
+    const recordedProvider = recorded === null ? null : storedSessionProvider(recorded);
+    const recordedAvailability =
+      recordedProvider === null ? null : this.availabilityOf(recordedProvider);
+    const choices: ContinuityChoice[] = [];
+    if (chosen !== null) {
+      choices.push('new-session');
+    }
+    if (recordedProvider !== null && recordedAvailability?.choosable === true) {
+      choices.push('resume-recorded');
+    }
+    const agentNeeded = chosen === null;
+
+    const sentences: string[] = [];
+    let detail: string;
+    if (recorded !== null && recordedProvider !== null) {
+      const recordedName = providerDisplayName(recordedProvider);
+      const why =
+        recordedAvailability?.choosable !== true
+          ? `${recordedName} cannot be used in this launch: ${recordedAvailability?.reason ?? 'unavailable'}`
+          : chosen === null
+            ? noChoiceWords
+            : `${providerDisplayName(chosen)} is the chosen agent`;
+      detail =
+        `the recorded session ${recorded.dspatchSessionId} is a ${recordedName} session, ` +
+        `and ${why}`;
+      sentences.push(
+        `DSpatch did not resume ${recorded.dspatchSessionId}: it is a ${recordedName} ` +
+          `session, and ${why}. No agent was built, neither provider was asked, no new ` +
+          'session was opened and nothing was sent. The session ID stays on record.',
+      );
+    } else {
+      detail = noChoiceWords;
+      sentences.push(
+        unusableChoice === null
+          ? 'No agent is chosen, so DSpatch opened no session: no agent was built, no ' +
+              'provider was asked and nothing was sent.'
+          : `${noChoiceWords}. DSpatch opened no session: no agent was built, ` +
+              'no provider was asked and nothing was sent.',
+      );
+    }
+    if (choices.includes('new-session') && chosen !== null) {
+      sentences.push(
+        `You can start a new ${providerDisplayName(chosen)} session` +
+          (savedMessageCount > 0
+            ? ', with a recap of this conversation that is shown first and can be removed.'
+            : ', which begins from your next message alone.'),
+      );
+    }
+    if (choices.includes('resume-recorded') && recordedProvider !== null) {
+      sentences.push(
+        `You can resume with ${providerDisplayName(recordedProvider)}, which asks to ` +
+          'resume the recorded session.',
+      );
+    }
+    if (agentNeeded) {
+      sentences.push(
+        unusableChoice === null
+          ? 'Choose an agent to start a session.'
+          : 'Choose another agent to start a session.',
+      );
+    }
+    this.options.log(
+      `no session opened for ${conversationId} (${detail}); no adapter built, nothing sent; ` +
+        `choices=${choices.join(',') || 'choose an agent'}`,
+    );
+
+    const failure: ResumeFailure = {
+      kind: recordedProvider !== null && chosen !== null && recordedAvailability?.choosable === true
+        ? 'provider-differs'
+        : 'agent-choice',
+      detail,
+      providerCode: null,
+    };
+    const previousId = recorded?.dspatchSessionId ?? null;
+    const continuity: SessionContinuity = {
+      kind: recorded === null ? 'resume-unavailable' : 'resume-refused',
+      providerSessionOpen: false,
+      attemptedDspatchSessionId: previousId,
+      resumedProviderSessionId: null,
+      resumeError: detail,
+      resumeFailure: failure,
+      earlierSendsMayHaveReached: earlierSends,
+      choices,
+      ...(recordedProvider === null ? {} : { recordedProvider }),
+      ...(agentNeeded ? { agentNeeded: true } : {}),
+      ...(unusableChoice === null ? {} : { unusableChoice }),
+      contextToResend: null,
+      contextNote: noSessionOpenNote(savedMessageCount),
+      savedMessageCount,
+      statement: sentences.join(' ') + earlierSendsSentence(earlierSends),
+    };
+    this.selectedProvider = chosen;
+    this.continuity = continuity;
+    this.pendingResendContext = null;
+
+    const session: ChatSessionInfo = {
+      conversationId,
+      dspatchSessionId: recorded?.dspatchSessionId ?? '',
+      providerSessionId: recorded?.providerSessionId ?? '',
+      modelRequested: this.modelRequested(),
+      workspacePath,
+      createdAt: recorded?.createdAt ?? nowIso(),
+      toolPolicy: recorded?.toolPolicy ?? 'none',
+      origin: input.origin,
+      workspaceOrigin: input.workspaceOrigin,
+      git: input.gitInfo,
+      baseline: toBaselineInfo(input.baseline),
+      context: {
+        workingDirectorySent: workspacePath,
+        modelSent: this.modelRequested(),
+        toolPolicySent: this.agentChoice(chosen).toolPolicyText,
+        fileContentsSentByDspatch: 0,
+        statement:
+          'No provider session is open for this conversation, and no agent was built: ' +
+          'DSpatch has sent nothing - not this working directory path, not a model ' +
+          'name, no prompt text and no file content - and asked no provider anything. ' +
+          'The values here are what DSpatch would send once you choose how to continue.',
+      },
+      continuity,
+      suggestedTestCommand: input.suggestion.command,
+      suggestedTestCwd: input.suggestion.cwd,
+      testCommandNote: input.suggestion.note,
+      testRunnerPath: this.runner?.path ?? null,
+      testRunnerSource: this.runner?.source ?? null,
+      restoredHistory: this.openedHistory ?? {
+        conversationId,
+        messages: [],
+        filePath: null,
+        savedAtUtc: null,
+        error: null,
+      },
+      provider: chosen,
+      adapter: null,
+      agent: this.agentChoice(chosen),
+    };
+    this.session = session;
+    this.sessionProvider = recordedProvider ?? chosen ?? 'cursor';
+    // The recorded session, if any, stays on disk exactly as it was (saveConversation
+    // keeps it while no provider session is open).
+    this.saveConversation();
     return session;
   }
 
@@ -2413,6 +2758,10 @@ export class ChatService {
     const continuity = this.continuity;
     const id = continuity.attemptedDspatchSessionId ?? 'the recorded session';
     const detail = continuity.resumeFailure?.detail ?? 'no detail';
+    if (continuity.resumeFailure?.kind === 'agent-choice' || continuity.resumeFailure?.kind === 'provider-differs') {
+      // DSP-136: nothing was attempted; the detail says why.
+      return `no session was opened, because ${detail}`;
+    }
     switch (continuity.kind) {
       case 'resume-refused':
         return continuity.resumeFailure?.kind === 'provider-missing'
@@ -4528,6 +4877,13 @@ export class ChatService {
   } {
     const adapter = this.adapter;
     const session = this.session;
+    if (session !== null && !this.continuity.providerSessionOpen) {
+      // DSP-136: with no agent chosen there is no adapter either; the same refusal.
+      throw new Error(
+        `No provider session is open for this conversation: ${this.noProviderSessionHeadline()}. ` +
+          choicesInstruction(this.continuity.choices, this.continuity.agentNeeded === true),
+      );
+    }
     if (adapter === null || session === null) {
       throw new Error('No session is open. Start one first.');
     }
@@ -4537,12 +4893,6 @@ export class ChatService {
     // is this refusal staying in force. The window's composer already holds a message
     // back in this state, so this is the back-stop; it names only the choices offered,
     // and its prefix is what `recovery.ts` recognises.
-    if (!this.continuity.providerSessionOpen) {
-      throw new Error(
-        `No provider session is open for this conversation: ${this.noProviderSessionHeadline()}. ` +
-          choicesInstruction(this.continuity.choices),
-      );
-    }
     return { adapter, session };
   }
 

@@ -234,7 +234,6 @@ export function LoopEditor(): React.JSX.Element {
   const [selection, setSelection] = useState<Selection>(null);
   const [tool, setTool] = useState<Tool>(null);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
-  const [connectedTargets, setConnectedTargets] = useState<readonly LoopTarget[] | null>(null);
   const [showLabels, setShowLabels] = useState(false);
   const [showHelp, setShowHelp] = useState(readEditorHelp);
   const [zoom, setZoom] = useState(0.85);
@@ -376,6 +375,12 @@ export function LoopEditor(): React.JSX.Element {
 
   const resolveRole = useMemo(() => resolverFromEntries(roles), [roles]);
 
+  // Which frameworks this machine is connected to. DSP-136: no longer asked in the
+  // background - opening the editor never contacts Cursor - so this stays `null`,
+  // "not established", which is a different answer from "none". The inspector says
+  // so beside "Loops run on Cursor only".
+  const [connectedTargets] = useState<readonly LoopTarget[] | null>(null);
+
   const findings = useMemo<readonly Finding[]>(
     () => (graph === null ? [] : checkLoopGraph(graph, { resolveRole, connectedTargets })),
     [graph, resolveRole, connectedTargets],
@@ -428,31 +433,6 @@ export function LoopEditor(): React.JSX.Element {
    * resolves. So this cannot drift from what would run.
    */
   const chosenLoop = useMemo(() => nextMandateLoopFrom(loopChoices), [loopChoices]);
-
-  // Which frameworks this machine is connected to, asked in the background because a
-  // provider check is a network call and a graph opens without one. `null` stays
-  // "not established", which is a different answer from "none".
-  useEffect(() => {
-    let cancelled = false;
-    void window.dspatch.getConnection().then(
-      (status) => {
-        if (cancelled) {
-          return;
-        }
-        if (status.kind === 'connected') {
-          setConnectedTargets(['cursor']);
-        } else if (status.kind === 'not-connected') {
-          setConnectedTargets([]);
-        }
-      },
-      () => {
-        /* Unknown stays unknown. */
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   /*
    * DSP-84's `openedByHand` is gone, and its problem with it.
@@ -4352,6 +4332,9 @@ function GraphInspector({
       </label>
       <p className="muted">
         Target <strong>{graph.target}</strong>, stored in the file. {here.reason}
+      </p>
+      <p className="muted" data-ev="loops-cursor-only">
+        Loops run on Cursor only. Cursor&apos;s connection is not checked here.
       </p>
       <p className="muted">
         On a runtime fault: <strong>{graph.onRuntimeFault}</strong> <Unhonoured attribute="onRuntimeFault" />
