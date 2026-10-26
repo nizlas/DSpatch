@@ -4,7 +4,7 @@ title: 'Ask about code in review through Claude, text-only'
 status: Review
 assignee: []
 created_date: '2026-10-26 13:04'
-updated_date: '2026-10-26 22:27'
+updated_date: '2026-10-26 22:54'
 labels: []
 dependencies:
   - DSP-117
@@ -30,4 +30,6 @@ Niclas, 26 Oct 2026: widened - the review discussion's provider becomes explicit
 I-2b (run 20261026-230000-host-review, call 7): the review discussion's provider is explicit (default from the main window for a new discussion, a choice when standalone, kept on reopen, no fallback, switch with a disclosed recap; record format 2). Claude in review runs under REVIEW_PERMISSIONS: tools [], allowedTools [], disallowedTools [Bash, PowerShell, Edit, Write, NotebookEdit, Agent, WebFetch, WebSearch, Skill, mcp__*] (names checked against BUILTIN_TOOL_NAMES in sdk.d.ts 0.3.306), dontAsk, settingSources [], strictMcpConfig, and a deny-every-tool PreToolUse hook without continue:false. Configured and offline-verified with a substituted SDK only, not observed live; the init tools/mcp_servers probe (AC#1) stays for the home trial.
 
 Result (run 20261026-230000-host-review; I-2b calls 7 and 10; Verifier 008 PASS; Reviewer 009 ACCEPT): the review discussion has its own explicit agent (default from the main window's session or chosen agent for a new discussion only; standalone/example/direct require a choice; stored provider wins on reopen; unusable kept with its reason; never resumed; switching disposes the session and discloses a removable recap; each question records provider, session id and tool policy; format 2, a v1 file read as is and not rewritten on read). Claude in review uses REVIEW_PERMISSIONS - tools [], allowedTools [], disallowedTools [Bash, PowerShell, Edit, Write, NotebookEdit, Agent, WebFetch, WebSearch, Skill, mcp__*], dontAsk, no settings, strictMcpConfig, and a PreToolUse hook denying every tool without ending the turn; the review path refuses any adapter without exactly that policy; CHAT_PERMISSIONS digest unchanged. OFFLINE-VERIFIED ONLY (mocked SDK, presentation adapters); AC#1 live probe at home still needed (whether tools [] / disallowedTools / mcp__* hold and the SDK merges the hooks' decisions into deny).
+
+AC#2 note (coordinator, 26 Oct 2026): Niclas's instruction of 26 Oct makes Claude usable in the review discussion now, with technically enforced limits (REVIEW_PERMISSIONS + deny-all hook), ahead of the live probe; the probe (AC#1) confirms this or revokes it - if the init tools or mcp_servers are not empty, Claude is blocked in review again with the stated reason.
 <!-- SECTION:NOTES:END -->
