@@ -106,8 +106,10 @@ const AREAS = {
       'test-command.test.ts',
       'own-repository.test.ts',
       'working-copy-overlap.test.ts',
+      'process-tree.test.ts',
       { file: 'chat-service.test.ts', heavy: true },
       { file: 'conversation-switch.test.ts', heavy: true },
+      { file: 'provider-selection.test.ts', heavy: true },
     ],
   },
   review: {
@@ -363,6 +365,10 @@ async function main() {
   const args = [
     '--import',
     './scripts/ts-resolve.mjs',
+    // No test reaches the network or loads the real Claude SDK; one that tries
+    // fails loudly (see the file).
+    '--import',
+    './scripts/test-offline-guard.mjs',
     '--test',
     `--test-timeout=${String(testTimeoutMs)}`,
     `--test-reporter=${options.tap ? 'tap' : 'spec'}`,

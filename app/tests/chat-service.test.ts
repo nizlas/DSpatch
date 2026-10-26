@@ -37,7 +37,7 @@ import type {
   Unsubscribe,
   UsageReading,
 } from '../src/adapter/types.ts';
-import { ChatService, type ChatAdapter } from '../src/main/chat-service.ts';
+import { ChatService, toUiEvent, type ChatAdapter } from '../src/main/chat-service.ts';
 import { ConversationStore, storedSessionProvider } from '../src/main/conversation-store.ts';
 import {
   holdDirectory,
@@ -93,6 +93,8 @@ function harness(repoRoot: string): Harness {
     log: (message) => {
       logs.push(message);
     },
+    // Substituted: without it a folder that opens would reach the real Cursor SDK.
+    createAdapter: () => new FakeAdapter(),
   });
   return { service, logs, events };
 }
@@ -311,6 +313,10 @@ function serviceKnowingOwnRoot(name: string, ownRepoRoot: string | null): Harnes
     log: (message) => {
       logs.push(message);
     },
+    // Substituted. Until 26 Oct 2026 this had none, and the AC#5 test whose folder
+    // opens reached Cursor's API through the real adapter (run
+    // 20261026-200000-linux-claude, call 3).
+    createAdapter: () => new FakeAdapter(),
   });
   return { service, logs, events };
 }
@@ -809,6 +815,9 @@ class FakeAdapter implements ChatAdapter {
    */
   cancelEndBoundMs?: number;
 
+  /** Set to model the Claude adapter, which runs each turn in a local process (DSP-117). */
+  runsLocalProcess?: boolean;
+
   /**
    * What `resume` does. The first two were measured against Cursor by a probe: an
    * agent the provider still holds is returned in a brand new process, and one it
@@ -826,7 +835,13 @@ class FakeAdapter implements ChatAdapter {
    * `'config-mismatch'` is that adapter's `config_mismatch`: a refusal where trying
    * again with the same inputs gives the same answer.
    */
-  resumeBehaviour: 'ok' | 'not-found' | 'error' | 'unaligned' | 'config-mismatch' = 'not-found';
+  resumeBehaviour:
+    | 'ok'
+    | 'not-found'
+    | 'error'
+    | 'unaligned'
+    | 'config-mismatch'
+    | 'auth-refused' = 'not-found';
 
   /**
    * What a successful `resume` reports it checked. `'provider-answered'` by default,
@@ -884,10 +899,20 @@ class FakeAdapter implements ChatAdapter {
           { name: 'ClaudeAdapterError', providerCode: 'config_mismatch' },
         );
       }
+      if (this.resumeBehaviour === 'auth-refused') {
+        // The Claude adapter's own refusal (DSP-117), before any lookup or process.
+        throw Object.assign(
+          new Error(
+            "DSpatch does not reuse Claude Code's own sign-in: CLAUDE_CODE_OAUTH_TOKEN " +
+              'is set in the environment DSpatch was started from (synthetic).',
+          ),
+          { name: 'ClaudeAdapterError', providerCode: 'authentication_refused' },
+        );
+      }
       this.sessionId = dspatchSessionId;
       return {
         dspatchSessionId,
-        provider: 'cursor',
+        provider: config.provider === 'claude' ? 'claude' : 'cursor',
         providerSessionId: 'agent-resumed',
         createdAt: new Date().toISOString(),
         workspacePath: config.workspacePath,
@@ -931,7 +956,8 @@ class FakeAdapter implements ChatAdapter {
     this.sessionId = 'dsp-session-fake';
     return Promise.resolve({
       dspatchSessionId: this.sessionId,
-      provider: 'cursor',
+      // The provider it was asked for (DSP-117), as the real adapters do.
+      provider: config.provider === 'claude' ? 'claude' : 'cursor',
       providerSessionId: 'agent-fake',
       createdAt: new Date().toISOString(),
       workspacePath: config.workspacePath,
@@ -1421,6 +1447,45 @@ test('SIMULATED: a cancelled run.finished with end stopped or forced is a confir
   }
 });
 
+test('SIMULATED: a turn of an adapter with a local process says so, and its confirmed end leaves only the provider unknown (DSP-117)', async () => {
+  for (const end of ['stopped', 'forced'] as const) {
+    const { service, adapter } = await openFakeSession(`local-process-${end}`, 5_000);
+    adapter.runsLocalProcess = true;
+    adapter.cancelBehaviour = 'silent';
+    await service.sendPrompt('a job');
+    const running = service.getRunState().attempts[0];
+    assert.equal(running?.state, 'running');
+    assert.equal(running?.adapterProcess, true);
+    assert.equal(running?.stillRunning.dspatchProcess, true, 'the adapter started a local process');
+
+    await service.cancelRun();
+    adapter.emit({ type: 'run.finished', status: 'cancelled', end });
+    const attempt = service.getRunState().attempts[0];
+    assert.equal(attempt?.state, 'stopped-confirmed');
+    assert.equal(attempt?.runEnd, end);
+    assert.equal(attempt?.stillRunning.provider, null, 'provider work unknown, not false');
+    assert.equal(attempt?.stillRunning.dspatchProcess, false);
+    assert.match(attempt?.stillRunning.note ?? '', /saw its process exit/);
+    await service.dispose();
+  }
+});
+
+test('SIMULATED: a Cursor turn records no end and no local process, exactly as before (DSP-117)', async () => {
+  const { service, adapter } = await openFakeSession('cursor-unchanged', 5_000);
+  adapter.cancelBehaviour = 'silent';
+  await service.sendPrompt('a job');
+  assert.equal(service.getRunState().attempts[0]?.stillRunning.dspatchProcess, false);
+  await service.cancelRun();
+  adapter.emit({ type: 'run.finished', status: 'cancelled' });
+  const attempt = service.getRunState().attempts[0];
+  assert.equal(attempt?.state, 'stopped-confirmed');
+  assert.equal(attempt?.runEnd, undefined);
+  assert.equal(attempt?.adapterProcess, undefined);
+  assert.equal(attempt?.stillRunning.provider, false);
+  assert.equal(attempt?.stillRunning.dspatchProcess, false);
+  await service.dispose();
+});
+
 test('SIMULATED: closing a session records what became unknown', async () => {
   const { service, adapter } = await openFakeSession('session-close');
   adapter.cancelBehaviour = 'silent';
@@ -1644,6 +1709,9 @@ function serviceOver(
       logs.push(message);
     },
     createAdapter: () => adapter,
+    // A launch with Claude enabled (DSP-117), so a conversation recorded as Claude
+    // opens as Claude; this one fake stands in for both providers' adapters.
+    claudeAuthorizationReference: 'test-only reference',
     conversations: () => store,
     ...(conversationForProject === undefined ? {} : { conversationForProject }),
     timings: { cancelConfirmMs: 40, cancelWatchMs: 60 },
@@ -2464,21 +2532,20 @@ test("SIMULATED: a local record missing under an unaligned profile is reported a
   await claude.second.service.dispose();
 });
 
-test('SIMULATED: a file recorded as Claude met by the Cursor adapter gets the Cursor wording, because that is the call that was made', async () => {
-  // This build's chat adapter is Cursor's whatever the file says (DSP-117 selects by
-  // the record). `Agent.resume` does get the model name, so the statement must say so.
+test('SIMULATED: a file recorded as Claude opens as Claude even when the open-project choice was Cursor (DSP-117)', async () => {
+  // Until DSP-117 this case resumed the Claude-recorded session through Cursor's
+  // `Agent.resume`. Now the recorded provider decides; the panel's choice is for a
+  // new conversation. (The back-stop, for a launch without Claude, is in
+  // provider-selection.test.ts.)
   const { workspace, second } = await restartIntoRewritten('continuity-claude-file-cursor-adapter', (raw) => {
     raw.session.provider = 'claude';
   });
-  assert.equal(second.adapter.id, 'fake-adapter');
-  second.adapter.resumeBehaviour = 'not-found';
-  const session = await second.service.startChatSession({ kind: 'folder', path: workspace });
-  assert.equal(session.continuity.kind, 'resume-refused');
-  assert.equal(session.continuity.resumeFailure?.kind, 'provider-missing');
+  second.adapter.resumeBehaviour = 'ok';
+  const session = await second.service.startChatSession({ kind: 'folder', path: workspace, provider: 'cursor' });
+  assert.equal(session.provider, 'claude');
+  assert.notEqual(session.continuity.resumeFailure?.kind, 'provider-differs');
   assert.deepEqual(second.adapter.resumeAttempts, ['dsp-session-fake']);
-  assert.match(session.continuity.statement, /the provider answered that it does not have that session/);
-  assert.match(session.context.statement, /gave the provider's SDK/);
-  assert.doesNotMatch(session.context.statement, /received no model name/);
+  assert.deepEqual(second.adapter.sent, []);
   await second.service.dispose();
 });
 
@@ -2550,6 +2617,23 @@ test('SIMULATED: an adapter that cannot resume at all says that, not that it fai
     () => second.service.sendPrompt('carry on'),
     /No provider session is open for this conversation: this build cannot resume a session.*\. Start a new provider session to continue\.$/,
   );
+  await second.service.dispose();
+});
+
+test("SIMULATED: Claude's authentication_refused does not offer Try again: it is DSpatch's own rule, and a retry gives the same answer (DSP-117)", async () => {
+  const { workspace, second } = await restartIntoRewritten('continuity-auth-refused', (raw) => {
+    raw.session.provider = 'claude';
+  });
+  second.adapter.resumeBehaviour = 'auth-refused';
+  const session = await second.service.startChatSession({ kind: 'folder', path: workspace });
+  assert.equal(session.continuity.providerSessionOpen, false);
+  assert.equal(session.continuity.resumeFailure?.providerCode, 'authentication_refused');
+  // Start new session stays Claude; switching to Cursor is its own, explicit choice.
+  assert.deepEqual(session.continuity.choices, ['new-session', 'switch-to-cursor']);
+  assert.equal(session.provider, 'claude');
+  assert.match(session.continuity.statement, /switch this conversation to Cursor/);
+  assert.doesNotMatch(session.continuity.statement, /You can try again/);
+  assert.deepEqual(second.adapter.sent, []);
   await second.service.dispose();
 });
 
@@ -2976,4 +3060,13 @@ test('SIMULATED: a conversation that is not there is refused without changing an
   );
   assert.deepEqual(store.list().entries, []);
   await harness.service.dispose();
+});
+
+test('a run.finished crosses the bridge with the end its adapter reported, and without one when none was (DSP-117)', () => {
+  const base = { dspatchSessionId: 'dsp-session-1', dspatchRunId: 'dsp-run-1', at: '2026-10-26T00:00:00.000Z' };
+  for (const end of ['stopped', 'forced', 'unconfirmed'] as const) {
+    assert.equal(toUiEvent({ ...base, type: 'run.finished', status: 'cancelled', end }).end, end);
+  }
+  const cursor = toUiEvent({ ...base, type: 'run.finished', status: 'cancelled' });
+  assert.ok(!('end' in cursor));
 });

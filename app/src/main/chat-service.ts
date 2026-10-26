@@ -6,6 +6,10 @@ import path from 'node:path';
 
 import { Cursor } from '@cursor/sdk';
 
+import {
+  describePermissionPolicy,
+  type ClaudePermissionPolicy,
+} from '../adapter/claude-agent-sdk-adapter';
 import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
 import type {
   AgentEvent,
@@ -22,6 +26,7 @@ import type {
 } from '../adapter/types';
 import type {
   AbandonOutcome,
+  AgentChoiceInfo,
   AttemptAcknowledgement,
   AttemptInfo,
   AttemptKind,
@@ -91,6 +96,12 @@ import {
 } from './own-repository';
 import { samePath } from './project-store';
 import {
+  stopPosixProcessGroup,
+  treeSpawnOptions,
+  type KillFunction,
+  type StoppableChild,
+} from './process-tree';
+import {
   checkRunRequest,
   describeShell,
   evaluateFreshness,
@@ -122,6 +133,12 @@ import {
  */
 
 const DEFAULT_MODEL = 'claude-haiku-4-5';
+
+/**
+ * The model a Claude chat session asks for (DSP-117). By name: the Claude adapter
+ * has no model list, so the window names the model rather than offering a choice.
+ */
+export const CLAUDE_CHAT_MODEL = 'claude-haiku-4-5';
 
 /**
  * How long DSpatch keeps looking for provider work after a cancellation.
@@ -214,7 +231,10 @@ const FIRST_SESSION_CONTINUITY: SessionContinuity = {
  * - the refusal is `unconfirmed-end`: it is lifted only by trying again with the
  *   attempt acknowledged, and this window cannot send that acknowledgement yet
  *   (DSP-117);
- * - the adapter refused on `config_mismatch`: the same inputs give the same answer.
+ * - the adapter refused on `config_mismatch`: the same inputs give the same answer;
+ * - the Claude adapter refused on `authentication_refused` (DSP-117): that is
+ *   DSpatch's own credential rule applied to the environment DSpatch was started
+ *   from, which a retry in the same process cannot change.
  *
  * `retry-resume` itself stays accepted by `startChatSession` - DSP-117 needs it with
  * `acknowledgedAttemptIds` - it is only not offered. Reading the history is not a
@@ -227,8 +247,17 @@ function noSessionChoices(
   const retryCannotWork =
     kind === 'resume-unavailable' ||
     failure?.kind === 'unconfirmed-end' ||
-    failure?.providerCode === 'config_mismatch';
-  return retryCannotWork ? ['new-session'] : ['try-again', 'new-session'];
+    failure?.kind === 'provider-differs' ||
+    failure?.providerCode === 'config_mismatch' ||
+    failure?.providerCode === 'authentication_refused';
+  const base: readonly ContinuityChoice[] = retryCannotWork
+    ? ['new-session']
+    : ['try-again', 'new-session'];
+  // DSP-117: after Claude was refused by DSpatch's own rule, *Start new session*
+  // stays a Claude session, and switching to Cursor is a choice of its own.
+  return failure?.providerCode === 'authentication_refused'
+    ? [...base, 'switch-to-cursor']
+    : base;
 }
 
 /**
@@ -246,6 +275,11 @@ type OpenedProviderSession =
       readonly handle: null;
       readonly recorded: StoredSession;
       readonly continuity: SessionContinuity;
+      /**
+       * DSP-117: no resume was attempted; the adapter refused to start the new
+       * session that was asked for, before starting anything.
+       */
+      readonly newSessionRefused?: true;
     };
 
 /** The provider's own code on a thrown error, read from the field only — never from prose. */
@@ -372,12 +406,16 @@ function choicesSentence(
         '(this conversation has no saved messages, so there is no recap)';
   const readable =
     savedMessageCount > 0 ? ' The saved conversation stays readable either way.' : '';
+  const switchToCursor = choices.includes('switch-to-cursor')
+    ? ' Or switch this conversation to Cursor, which opens a new Cursor session the ' +
+      'same way.'
+    : '';
   return choices.includes('try-again')
     ? ' You can try again, which closes this view\'s session first (a build or test ' +
         'command still running is stopped) and asks to resume the same ID once more; ' +
-        `or ${newSession}.${readable}`
+        `or ${newSession}.${switchToCursor}${readable}`
     : ` You can ${newSession}; it closes this view's session first (a build or test ` +
-        `command still running is stopped).${readable}`;
+        `command still running is stopped).${switchToCursor}${readable}`;
 }
 
 /** The guard's closing sentence, naming only the choices offered. */
@@ -830,6 +868,20 @@ export interface ChatAdapter {
    * confirmation window then stays at its default. See {@link CANCEL_CONFIRM_GRACE_MS}.
    */
   readonly cancelEndBoundMs?: number;
+  /**
+   * `true` when the adapter runs the provider as a local process DSpatch started
+   * (the Claude adapter, DSP-117). The attempt ledger then says that process is
+   * running while a turn runs, and reads a confirmed local end (`stopped`,
+   * `forced`) as that process gone and the provider's work unknown. Absent means
+   * not (Cursor, presentation and test adapters), and their attempts are unchanged.
+   */
+  readonly runsLocalProcess?: boolean;
+  /**
+   * The permission policy the adapter gives every turn, where it has one (the
+   * Claude adapter). Shown as the session's `toolPolicySent` (DSP-117). Absent for
+   * Cursor, whose sessions use the provider's default and say so.
+   */
+  permissionPolicy?(): ClaudePermissionPolicy;
   subscribe(sessionId: string, listener: AgentEventListener): Unsubscribe;
   send(sessionId: string, prompt: string): Promise<RunReference>;
   cancel(sessionId: string): Promise<void>;
@@ -901,7 +953,14 @@ export interface ChatServiceOptions {
    * Present so the failure paths can be constructed in a test. Production passes
    * nothing and gets {@link CursorSdkAdapter}.
    */
-  readonly createAdapter?: () => ChatAdapter;
+  readonly createAdapter?: (provider: StoredSessionProvider) => ChatAdapter;
+  /**
+   * DSP-117: the authorization reference this launch was started with
+   * (`DSPATCH_CLAUDE_AUTHORIZATION`), or `null`/absent when Claude is not enabled.
+   * Only whether it exists and its text are read here; the adapter is built by
+   * `createAdapter`. Without it Claude cannot be chosen.
+   */
+  readonly claudeAuthorizationReference?: string | null;
   /**
    * How the stored login is read. Defaults to `Cursor.auth.status()`.
    *
@@ -1032,6 +1091,68 @@ function wellFormedAcknowledgements(
 }
 
 /**
+ * How the chat's build or test command is spawned: through the shell, and on
+ * POSIX as the leader of its own process group so that a stop reaches what the
+ * shell started (`process-tree.ts`). Process group on POSIX; not measured on
+ * Linux. On Windows the options are exactly what they were before.
+ */
+export function chatCommandSpawnOptions(
+  cwd: string,
+  platform: NodeJS.Platform = process.platform,
+): { cwd: string; shell: true; windowsHide: true; detached?: true } {
+  return { cwd, shell: true, windowsHide: true, ...treeSpawnOptions(platform) };
+}
+
+/** What {@link stopChatCommandTree} needs from the world, injected so it can be tested. */
+export interface ChatCommandStopDeps {
+  readonly platform: NodeJS.Platform;
+  /** The chat waits for `taskkill` and logs a failure, so this is synchronous. */
+  readonly spawnSync: (
+    command: string,
+    args: string[],
+    options: { windowsHide: boolean; encoding: 'utf8' },
+  ) => { status: number | null; stderr?: string | null };
+  /** Defaults to `process.kill`. */
+  readonly kill?: KillFunction;
+  readonly log: (message: string) => void;
+}
+
+/**
+ * Stop the chat's command and what it started.
+ *
+ * Windows: the same synchronous `taskkill /PID <pid> /T /F` as always, with its
+ * exit status and stderr logged when it fails. Elsewhere: SIGKILL to the
+ * command's process group, falling back to the shell alone if the group cannot
+ * be signalled. Process group on POSIX; not measured on Linux. A DSpatch crash or
+ * Ctrl+C in the dev terminal does not reach the detached group, and a descendant
+ * that calls `setsid` escapes it.
+ *
+ * Throws what the platform call throws; the caller treats the stop as best effort.
+ */
+export function stopChatCommandTree(
+  child: StoppableChild & { readonly pid: number },
+  deps: ChatCommandStopDeps,
+): void {
+  if (deps.platform === 'win32') {
+    const killed = deps.spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+      windowsHide: true,
+      encoding: 'utf8',
+    });
+    if (killed.status !== 0) {
+      deps.log(`taskkill exit=${String(killed.status)} ${killed.stderr?.trim() ?? ''}`);
+    }
+  } else {
+    const stopped = stopPosixProcessGroup(child, deps.kill);
+    if (stopped.kind === 'child-only') {
+      deps.log(
+        `process group ${String(stopped.pid)} could not be signalled ` +
+          `(${stopped.groupError}); killed the shell alone`,
+      );
+    }
+  }
+}
+
+/**
  * Whether two working copies are the same folder or one is inside the other.
  *
  * The repeat block's unit (WS-1 #11, plan section 7): one writing run per working
@@ -1063,6 +1184,16 @@ export class ChatService {
   private readonly options: ChatServiceOptions;
 
   private adapter: ChatAdapter | null = null;
+
+  /** The provider `adapter` was created for (DSP-117, review B2). */
+  private adapterProvider: StoredSessionProvider | null = null;
+
+  /**
+   * The agent selected for the conversation on screen (DSP-117): the open session's
+   * provider, or, while none is open, the one a new session would use. A new
+   * provider session without a named provider uses this one.
+   */
+  private selectedProvider: StoredSessionProvider = 'cursor';
 
   /**
    * Which provider the open session's handle belongs to, written to the
@@ -1275,7 +1406,70 @@ export class ChatService {
   }
 
   modelRequested(): string {
+    return this.modelFor(this.selectedProvider);
+  }
+
+  /** The model a session with this provider asks for. Claude's is fixed (DSP-117). */
+  private modelFor(provider: StoredSessionProvider): string {
+    return provider === 'claude' ? CLAUDE_CHAT_MODEL : this.cursorModelRequested();
+  }
+
+  private cursorModelRequested(): string {
     return this.modelChosen ?? process.env['DSPATCH_CHAT_MODEL'] ?? DEFAULT_MODEL;
+  }
+
+  /**
+   * Whether Claude can be chosen, and the words the window shows for the agent.
+   *
+   * Nothing here reads a credential or checks a login: the reference is the text the
+   * launch was started with, and DSpatch's own credential rule is applied by the
+   * adapter when a session starts.
+   */
+  agentChoice(provider: StoredSessionProvider = this.selectedProvider): AgentChoiceInfo {
+    const reference = this.claudeReference();
+    const claudeEnabled = reference !== null;
+    const claudeNote = claudeEnabled
+      ? `Enabled for this launch by DSPATCH_CLAUDE_AUTHORIZATION ("${reference}").`
+      : 'Claude is not enabled for this launch. Start DSpatch with ' +
+        'DSPATCH_CLAUDE_AUTHORIZATION set to enable it.';
+    const connectionText =
+      provider === 'claude'
+        ? claudeEnabled
+          ? 'Claude Agent SDK · authorization reference recorded for this launch ' +
+            '(login not checked by DSpatch)'
+          : 'Claude Agent SDK · not enabled for this launch'
+        : 'Cursor SDK · see the connection above';
+    const policy =
+      this.adapter !== null && this.adapterProvider === provider
+        ? this.adapter.permissionPolicy?.()
+        : undefined;
+    return {
+      claudeEnabled,
+      claudeNote,
+      connectionText,
+      toolPolicyText:
+        policy !== undefined
+          ? describePermissionPolicy(policy)
+          : provider === 'claude'
+            ? 'the Claude chat policy (shown once a session is open)'
+            : 'provider-default',
+    };
+  }
+
+  private claudeReference(): string | null {
+    const reference = this.options.claudeAuthorizationReference?.trim() ?? '';
+    return reference === '' ? null : reference;
+  }
+
+  /** Refuse Claude before anything is closed, when this launch has not enabled it. */
+  private requireProviderAvailable(provider: StoredSessionProvider): void {
+    if (provider === 'claude' && this.claudeReference() === null) {
+      throw new Error(
+        'Claude is not enabled for this launch, so a Claude session cannot be ' +
+          'opened. Start DSpatch with DSPATCH_CLAUDE_AUTHORIZATION set to enable it. ' +
+          'Nothing was closed and nothing was sent.',
+      );
+    }
   }
 
   /**
@@ -1306,11 +1500,11 @@ export class ChatService {
 
   /** The adapter identity the window displays: provider plus transport. */
   adapterId(): string {
-    return this.ensureAdapter().id;
+    return this.ensureAdapter(this.selectedProvider).id;
   }
 
   capabilities(): CapabilityReport {
-    return this.ensureAdapter().capabilities();
+    return this.ensureAdapter(this.selectedProvider).capabilities();
   }
 
   /**
@@ -1346,8 +1540,20 @@ export class ChatService {
       let models: readonly ModelChoice[] = [];
       let modelListFailure: string | null = null;
       try {
-        const adapter = this.ensureAdapter();
-        const listed = await adapter.listModels();
+        // Always Cursor's list (review B2): never a Claude adapter, which has no
+        // list, and never one a Claude session would then reuse. While a Claude
+        // session holds the cached adapter, a separate Cursor adapter is used and
+        // disposed again.
+        const borrowed = this.adapterProvider === 'claude' ? this.createAdapterFor('cursor') : null;
+        const adapter = borrowed ?? this.ensureAdapter('cursor');
+        let listed: readonly ModelInfo[];
+        try {
+          listed = await adapter.listModels();
+        } finally {
+          if (borrowed !== null && borrowed !== this.adapter) {
+            await borrowed.dispose();
+          }
+        }
         modelsAvailable = listed.length;
         // Kept by name as well as counted, for the chooser beside the composer.
         // A count answers "is the login usable"; a name is what a person picks.
@@ -1392,7 +1598,7 @@ export class ChatService {
             : new Date(status.apiKeyExpiresAtMs).toISOString(),
         modelsAvailable,
         models,
-        modelRequested: this.modelRequested(),
+        modelRequested: this.cursorModelRequested(),
         checkedAtUtc,
       };
     } catch (error) {
@@ -1420,6 +1626,18 @@ export class ChatService {
     // provider session is over whatever is open now; asking the caller to name a
     // path again would make it a way of opening something else.
     const openBeforeClose = this.session;
+    // DSP-117: an explicitly named provider, or for a new provider session the one
+    // already selected. Refused before anything is closed when it cannot be used.
+    const selectedBeforeClose = this.selectedProvider;
+    const namedProvider =
+      request.kind === 'retry-resume'
+        ? undefined
+        : request.kind === 'new-provider-session'
+          ? (request.provider ?? selectedBeforeClose)
+          : request.provider;
+    if (namedProvider !== undefined) {
+      this.requireProviderAvailable(namedProvider);
+    }
     await this.closeSession();
 
     let workspacePath: string;
@@ -1491,11 +1709,41 @@ export class ChatService {
     this.runner = resolveNodeRunner();
     const suggestion = suggestBuildCommand(workspacePath, this.runner?.path ?? null);
 
-    const adapter = this.ensureAdapter();
+    // DSP-117: which provider this session uses.
+    // - A new provider session uses the provider it names (a switch), or the one
+    //   already selected.
+    // - Opening a project or the sample: an existing conversation opens with its
+    //   recorded provider whatever the window's choice was, because that choice is
+    //   the agent for a *new* conversation; a new conversation uses the named one,
+    //   or Cursor.
+    // - A recorded Claude session in a launch without Claude falls back to Cursor as
+    //   the *selection* only: `openProviderSession` then sees the recorded and
+    //   selected providers differ and resumes nothing (the back-stop).
+    const savedForSelection = this.savedSessionFor(conversationId);
+    const recordedProviderForSelection =
+      savedForSelection === null ? null : storedSessionProvider(savedForSelection);
+    const recordedOrFallback: StoredSessionProvider | null =
+      recordedProviderForSelection === 'claude' && this.claudeReference() === null
+        ? 'cursor'
+        : recordedProviderForSelection;
+    const selected: StoredSessionProvider =
+      request.kind === 'new-provider-session'
+        ? (namedProvider ?? selectedBeforeClose)
+        : (recordedOrFallback ?? namedProvider ?? 'cursor');
+    this.selectedProvider = selected;
+    const adapter = await this.adapterFor(selected);
     const config: SessionConfig = {
-      provider: 'cursor',
-      modelRequested: this.modelRequested(),
+      provider: selected,
+      modelRequested: this.modelFor(selected),
       workspacePath,
+      // Review B3: a Claude-recorded session is resumed only under the tool policy
+      // it was recorded with; the adapter refuses a mismatch before any lookup.
+      ...(request.kind !== 'new-provider-session' &&
+      selected === 'claude' &&
+      recordedProviderForSelection === 'claude' &&
+      savedForSelection !== null
+        ? { expectedToolPolicy: savedForSelection.toolPolicy }
+        : {}),
     };
     if (request.kind === 'retry-resume') {
       // The same path as opening the folder: the resume is simply attempted again.
@@ -1567,7 +1815,7 @@ export class ChatService {
         createdAt: handle.createdAt,
         // What the file records as the session's tool policy (DSP-122): the
         // adapter's own digest where it has one (Claude), `provider-default` where
-        // it has none (Cursor). Today every chat session is a Cursor session.
+        // it has none (Cursor).
         toolPolicy: adapter.policyDigest?.() ?? 'provider-default',
         provider: handle.provider === 'claude' ? 'claude' : 'cursor',
       };
@@ -1579,7 +1827,9 @@ export class ChatService {
     const context: SessionContextInfo = {
       workingDirectorySent: workspacePath,
       modelSent: this.modelRequested(),
-      toolPolicySent: 'provider-default',
+      // DSP-117: the policy actually given, where the adapter has one (Claude);
+      // Cursor's sessions use the provider's default and say so.
+      toolPolicySent: this.agentChoice(selected).toolPolicyText,
       fileContentsSentByDspatch: 0,
       statement: providerSessionOpen
         ? 'DSpatch sent the agent this working directory path, the model name and ' +
@@ -1596,6 +1846,13 @@ export class ChatService {
             'the history started no agent and no model turn. The values here are what ' +
             'DSpatch would send if you chose to try again or to start a new provider ' +
             'session.'
+          : continued.handle === null && continued.newSessionRefused === true
+            ? // DSP-117: the adapter refused the new session before starting anything.
+              'No provider session is open for this conversation. DSpatch asked the ' +
+              'adapter to start a new session, and it refused before starting any ' +
+              'process or model turn; no prompt text and no file content went anywhere. ' +
+              'The values here are what DSpatch would send if you chose to start a new ' +
+              'provider session.'
           : continued.continuity.resumeFailure?.kind === 'unconfirmed-end'
             ? // DSP-122 AC#4: the rule refused before any adapter call was made.
               'No provider session is open for this conversation. DSpatch made no call ' +
@@ -1603,13 +1860,21 @@ export class ChatService {
               'last message has no confirmed end. Nothing was sent anywhere. The values ' +
               'here are what DSpatch would send if you chose to try again or to start a ' +
               'new provider session.'
+            : continued.continuity.resumeFailure?.kind === 'provider-differs'
+              ? // DSP-117 back-stop: refused before any adapter call was made.
+                'No provider session is open for this conversation. DSpatch made no call ' +
+                'to the adapter or the provider: the recorded session belongs to another ' +
+                'provider than the one selected, and a session is never resumed across ' +
+                'providers. Nothing was sent anywhere. The values here are what DSpatch ' +
+                'would send if you chose to start a new provider session.'
             : adapter.id === 'claude-agent-sdk' &&
                 storedSessionProvider(continued.recorded) === 'claude'
-              ? // Keyed on the adapter that was called (its `id`, `ClaudeAgentSdkAdapter`
-                // :1311) and on the recorded provider, not on the file alone (review 006
-                // B1): this build's chat adapter is Cursor's, and a Claude-recorded file
-                // met by it is resumed through `Agent.resume`, which does get the model
-                // name. The Claude adapter's `resume()` starts no process: its lookup
+              ? // Keyed on the adapter that was called (its `id`, `ClaudeAgentSdkAdapter`)
+                // and on the recorded provider, not on the file alone (review 006 B1).
+                // Since DSP-117 a Claude-recorded file is only ever met by the Claude
+                // adapter: the back-stop in `openProviderSession` refuses it before any
+                // call when another provider is selected, so it is never resumed through
+                // Cursor's `Agent.resume`. The Claude adapter's `resume()` starts no process: its lookup
                 // passes the derived UUID and the folder to the SDK's `getSessionInfo`,
                 // and its policy refusal passes nothing. `config.modelRequested` is read
                 // only at a send (`optionsFor`), so no model name reached the SDK.
@@ -1661,6 +1926,8 @@ export class ChatService {
         savedAtUtc: null,
         error: null,
       },
+      provider: selected,
+      agent: this.agentChoice(selected),
     };
     this.session = session;
     this.sessionProvider = identity.provider;
@@ -1727,7 +1994,55 @@ export class ChatService {
     const earlierSends = this.earlierSendsMayHaveReached(conversationId);
 
     if (newProviderSessionRequested) {
-      const handle = await adapter.startSession(config);
+      let handle: SessionHandle;
+      try {
+        handle = await adapter.startSession(config);
+      } catch (error) {
+        // DSP-117: the old session is already closed by now, so a refusal here must
+        // not leave the window without its conversation. With a recorded session to
+        // stand on, the conversation stays on screen in the no-session state with
+        // its choices (for Claude's credential rule: *Start new session* and
+        // *Switch to Cursor*). Without one there is nothing to show, and the error
+        // is thrown as before.
+        if (saved === null || previousId === null) {
+          throw error;
+        }
+        const classified = classifyResumeFailure(error);
+        const { detail } = classified.failure;
+        const provider: StoredSessionProvider = config.provider === 'claude' ? 'claude' : 'cursor';
+        this.options.log(
+          `new ${providerName(provider)} session refused (code ` +
+            `${classified.failure.providerCode ?? 'none'}): ${detail}; nothing sent, ` +
+            `${previousId} stays on record`,
+        );
+        const choices = noSessionChoices(classified.kind, classified.failure);
+        return {
+          handle: null,
+          recorded: saved,
+          newSessionRefused: true,
+          continuity: {
+            kind: classified.kind,
+            providerSessionOpen: false,
+            attemptedDspatchSessionId: previousId,
+            resumedProviderSessionId: null,
+            resumeError: detail,
+            resumeFailure: classified.failure,
+            earlierSendsMayHaveReached: earlierSends,
+            choices,
+            contextToResend: null,
+            contextNote: noSessionOpenNote(savedMessageCount),
+            savedMessageCount,
+            statement:
+              `DSpatch asked for a new ${providerName(provider)} session and the adapter ` +
+              `refused it: ${detail}` +
+              (classified.note === '' ? '' : ` ${classified.note}`) +
+              ` Nothing was sent. The earlier session ${previousId} stays on record and ` +
+              'was not resumed.' +
+              earlierSendsSentence(earlierSends) +
+              choicesSentence(choices, savedMessageCount),
+          },
+        };
+      }
       const reason =
         previousId === null
           ? 'you asked for a new provider session'
@@ -1764,6 +2079,47 @@ export class ChatService {
     }
 
     if (saved !== null && previousId !== null) {
+      // DSP-117 back-stop: never resume a session through another provider. Before
+      // any adapter call, so nothing is asked of either provider and nothing is sent.
+      const recordedProvider = storedSessionProvider(saved);
+      const selectedProvider: StoredSessionProvider =
+        config.provider === 'claude' ? 'claude' : 'cursor';
+      if (recordedProvider !== selectedProvider) {
+        const detail =
+          `the recorded session ${previousId} is a ${providerName(recordedProvider)} ` +
+          `session, and ${providerName(selectedProvider)} is selected for this conversation`;
+        this.options.log(
+          `resume of ${previousId} not attempted (provider-differs): ${detail}; no ` +
+            'adapter call, no new session, nothing sent',
+        );
+        const failure: ResumeFailure = { kind: 'provider-differs', detail, providerCode: null };
+        const choices = noSessionChoices('resume-refused', failure);
+        return {
+          handle: null,
+          recorded: saved,
+          continuity: {
+            kind: 'resume-refused',
+            providerSessionOpen: false,
+            attemptedDspatchSessionId: previousId,
+            resumedProviderSessionId: null,
+            resumeError: detail,
+            resumeFailure: failure,
+            earlierSendsMayHaveReached: earlierSends,
+            choices,
+            contextToResend: null,
+            contextNote: noSessionOpenNote(savedMessageCount),
+            savedMessageCount,
+            statement:
+              `DSpatch did not try to resume ${previousId}: it is a ` +
+              `${providerName(recordedProvider)} session, and ` +
+              `${providerName(selectedProvider)} is selected. A session is never ` +
+              'resumed through another provider. Neither provider was asked, no new ' +
+              'session was opened and nothing was sent. The session ID stays on record.' +
+              earlierSendsSentence(earlierSends) +
+              choicesSentence(choices, savedMessageCount),
+          },
+        };
+      }
       if (adapter.resume === undefined) {
         // Treated like a refusal (DSP-121 default (a)): no automatic new session.
         // Unreachable in the product today, where the Cursor adapter has `resume`.
@@ -2182,7 +2538,9 @@ export class ChatService {
     const resent = this.pendingResendContext;
     this.pendingResentContext = resent;
     const sentText = resent === null ? prompt : `${resent}\n\n${prompt}`;
-    const attempt = ledger.open('agent-turn', promptLabel(prompt));
+    const attempt = ledger.open('agent-turn', promptLabel(prompt), {
+      adapterProcess: adapter.runsLocalProcess === true,
+    });
     this.pendingAttemptId = attempt.attemptId;
     // Before the send, not after it. An attempt that never reached the disk cannot be
     // reconciled as an unknown outcome after a restart, and a send that is interrupted
@@ -2648,7 +3006,9 @@ export class ChatService {
     const ownerId = this.conversationId;
 
     const attempt = ledger.open('command', command);
-    const child = spawn(command, { cwd, shell: true, windowsHide: true });
+    // A process group of its own on POSIX, so that Stop reaches what the shell
+    // started; unchanged on Windows. Not measured on Linux.
+    const child = spawn(command, chatCommandSpawnOptions(cwd));
     const run: ActiveCommand = {
       child,
       attemptId: attempt.attemptId,
@@ -3934,7 +4294,12 @@ export class ChatService {
     this.activeCommand = null;
     if (run === null) return;
     const child = run.child;
-    if (child.exitCode !== null || child.pid === undefined) return;
+    if (child.pid === undefined) return;
+    // On Windows as before: a shell that has exited is not stopped again. On
+    // POSIX `sh` can have exited while what it started still runs in its group
+    // and holds the pipes (`close` has not come), which is the case the group
+    // stop exists for, so an exit code alone does not end the stop there.
+    if (process.platform === 'win32' && child.exitCode !== null) return;
     if (killedByDspatch) {
       run.killedByDspatch = true;
     }
@@ -3964,17 +4329,17 @@ export class ChatService {
 
     this.options.log(`stopping test runner pid=${String(child.pid)}`);
     try {
-      if (process.platform === 'win32') {
-        const killed = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-          windowsHide: true,
-          encoding: 'utf8',
-        });
-        if (killed.status !== 0) {
-          this.options.log(`taskkill exit=${String(killed.status)} ${killed.stderr?.trim() ?? ''}`);
-        }
-      } else {
-        child.kill('SIGKILL');
-      }
+      // `taskkill /T /F` on Windows as before; the process group elsewhere.
+      stopChatCommandTree(
+        { pid: child.pid, kill: (signal) => child.kill(signal) },
+        {
+          platform: process.platform,
+          spawnSync,
+          log: (message) => {
+            this.options.log(message);
+          },
+        },
+      );
     } catch (err) {
       this.options.log(`could not stop the test runner: ${String(err)}`);
     }
@@ -3985,6 +4350,7 @@ export class ChatService {
     this.saveHeldAtClose();
     const adapter = this.adapter;
     this.adapter = null;
+    this.adapterProvider = null;
     if (adapter !== null) {
       await adapter.dispose();
     }
@@ -4070,18 +4436,60 @@ export class ChatService {
     // provider agent ID, so the adapter is replaced with the session.
     const adapter = this.adapter;
     this.adapter = null;
+    this.adapterProvider = null;
     if (adapter !== null) {
       await adapter.dispose();
     }
   }
 
-  private ensureAdapter(): ChatAdapter {
+  /**
+   * The cached adapter for this provider, created when there is none (synchronous,
+   * for the identity and capability readings). An adapter cached for another
+   * provider is not reused: it is detached and disposed in the background, and one
+   * for this provider takes its place (review B2). Opening a session goes through
+   * {@link adapterFor}, which waits for that disposal.
+   */
+  private ensureAdapter(provider: StoredSessionProvider): ChatAdapter {
+    if (this.adapter !== null && this.adapterProvider !== provider) {
+      const stale = this.adapter;
+      this.adapter = null;
+      this.adapterProvider = null;
+      void stale.dispose().catch((error: unknown) => {
+        this.options.log(`could not dispose the ${stale.id} adapter: ${describeError(error)}`);
+      });
+    }
     if (this.adapter === null) {
-      this.adapter =
-        this.options.createAdapter?.() ??
-        new CursorSdkAdapter({ toolPolicy: 'provider-default' });
+      this.adapter = this.createAdapterFor(provider);
+      this.adapterProvider = provider;
     }
     return this.adapter;
+  }
+
+  /** {@link ensureAdapter}, waiting for a replaced adapter's disposal first. */
+  private async adapterFor(provider: StoredSessionProvider): Promise<ChatAdapter> {
+    if (this.adapter !== null && this.adapterProvider !== provider) {
+      const stale = this.adapter;
+      this.adapter = null;
+      this.adapterProvider = null;
+      await stale.dispose();
+    }
+    return this.ensureAdapter(provider);
+  }
+
+  /**
+   * A new adapter for this provider. Production passes a factory (main.ts); without
+   * one, Cursor's real adapter, and no Claude adapter at all: this service holds no
+   * authorization to build one with.
+   */
+  private createAdapterFor(provider: StoredSessionProvider): ChatAdapter {
+    const created = this.options.createAdapter?.(provider);
+    if (created !== undefined) {
+      return created;
+    }
+    if (provider === 'claude') {
+      throw new Error('Claude is not enabled for this launch.');
+    }
+    return new CursorSdkAdapter({ toolPolicy: 'provider-default' });
   }
 
   private requireSession(): {
@@ -4236,6 +4644,7 @@ export class ChatService {
               'has evidence that its local work ended, such as its process having ' +
               'been seen to exit. Whether the provider kept working on requests ' +
               'already sent is unknown.',
+            event.end,
           );
         } else if (event.status === 'cancelled') {
           ledger.markStopped(
@@ -4684,7 +5093,7 @@ function restoreStatement(
  * `rawProviderEvent` is not forwarded. It is not reliably structured-cloneable,
  * the renderer cannot do anything with it, and the main process keeps it.
  */
-function toUiEvent(event: AgentEvent): UiAgentEvent {
+export function toUiEvent(event: AgentEvent): UiAgentEvent {
   const base = {
     type: event.type,
     dspatchSessionId: event.dspatchSessionId,
@@ -4708,9 +5117,17 @@ function toUiEvent(event: AgentEvent): UiAgentEvent {
       return {
         ...base,
         status: event.status,
+        // DSP-117: how a cancelled run ended locally. Without it the window could
+        // not tell an unconfirmed end from an ordinary cancel.
+        ...(event.end === undefined ? {} : { end: event.end }),
         ...(event.error === undefined ? {} : { errorMessage: event.error.message }),
       };
     default:
       return base;
   }
+}
+
+/** A provider's name as the window says it. */
+function providerName(provider: StoredSessionProvider): string {
+  return provider === 'claude' ? 'Claude' : 'Cursor';
 }

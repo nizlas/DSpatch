@@ -23,6 +23,7 @@
 
 import type {
   ContinuityChoice,
+  StoredSessionProvider,
   EarlierSendMayHaveReached,
   RestoredHistory,
   ScriptedRunPlan,
@@ -138,13 +139,17 @@ export function continuityClause(
       return 'No local record of the session was found.';
     case 'unconfirmed-end':
       return 'The last message has no confirmed end, so the session was not resumed.';
+    case 'provider-differs':
+      // DSP-117: the detail names both providers; the clause says only the rule.
+      return 'The session belongs to another agent, so it was not resumed.';
     case 'error':
       if (failure.providerCode === 'config_mismatch') {
         return 'The session was recorded with other settings.';
       }
       if (failure.providerCode === 'authentication_refused') {
-        // The service adds nothing to this rule's own words; neither does the clause.
-        return 'Authentication was refused.';
+        // Only the Claude adapter uses this code, and it refuses before Claude is
+        // started. The rule's own words stay in Session details (DSP-117).
+        return "DSpatch's own credential rule refused Claude; Claude was not asked.";
       }
       return continuity.kind === 'resume-failed'
         ? 'This may be temporary.'
@@ -260,7 +265,31 @@ const CHOICE_LABELS: Record<ContinuityChoice, { readonly label: string; readonly
         'Opens a new agent session. DSpatch shows the summary it would send first; ' +
         'you can remove it. No message is sent until you send.',
     },
+    'switch-to-cursor': {
+      label: 'Switch to Cursor',
+      note:
+        'Opens a new Cursor session for this conversation instead. DSpatch shows the ' +
+        'summary it would send first; you can remove it. No message is sent until you send.',
+    },
   };
+
+/**
+ * Whether the Claude adapter refused on DSpatch's own credential rule.
+ *
+ * Only the Claude adapter uses `authentication_refused`, so this also says which
+ * provider the session was: a new session after it is a new **Claude** session,
+ * never silently a Cursor one (DSP-117). Switching to Cursor is a separate,
+ * explicit choice (`switch-to-cursor`), offered beside it.
+ */
+function refusedByCredentialRule(continuity: Pick<SessionContinuity, 'resumeFailure'>): boolean {
+  return continuity.resumeFailure?.providerCode === 'authentication_refused';
+}
+
+/** *Start new session* after Claude was refused by DSpatch's credential rule. */
+export const NEW_CLAUDE_SESSION_NOTE =
+  'Opens a new Claude session. DSpatch applies the same credential rule first, so ' +
+  'it is refused the same way until DSpatch is started from an environment the ' +
+  'rule accepts. No message is sent until you send.';
 
 /** The panel while no provider session is open: everything it says, in order. */
 export interface ContinuityPanelView {
@@ -281,6 +310,12 @@ export interface ContinuityPanelView {
 export function continuityPanel(
   continuity: SessionContinuity,
   commandRunning: boolean,
+  /**
+   * DSP-117 (review R3): the agent a new session would use, `session.provider`.
+   * When given, *Start new session* names it, so the choice cannot open another
+   * provider than the one it says. Absent keeps the generic words.
+   */
+  provider?: StoredSessionProvider,
 ): ContinuityPanelView | null {
   const body = continuityBody(continuity);
   if (body === null) {
@@ -294,9 +329,18 @@ export function continuityPanel(
     runningCommandNote: runningCommandNote(commandRunning, continuity.choices),
     choices: continuity.choices.map((choice) => ({
       choice,
-      label: CHOICE_LABELS[choice].label,
+      label:
+        choice === 'new-session' && provider !== undefined
+          ? `Start new ${providerWord(provider)} session`
+          : CHOICE_LABELS[choice].label,
       testId: `continuity-choice-${choice}`,
-      note: CHOICE_LABELS[choice].note,
+      note:
+        choice === 'new-session' && refusedByCredentialRule(continuity)
+          ? NEW_CLAUDE_SESSION_NOTE
+          : choice === 'new-session' && provider !== undefined
+            ? `Opens a new ${providerWord(provider)} session. DSpatch shows the summary ` +
+              'it would send first; you can remove it. No message is sent until you send.'
+            : CHOICE_LABELS[choice].note,
     })),
     // Only when there is something to summarise: with no saved messages a new session
     // gets no summary (the service builds none), so the line would promise one that
@@ -306,6 +350,10 @@ export function continuityPanel(
         ? NEW_SESSION_AT_CHOICE
         : null,
   };
+}
+
+function providerWord(provider: StoredSessionProvider): string {
+  return provider === 'claude' ? 'Claude' : 'Cursor';
 }
 
 /** What the window has done with a new session, which the main process does not know. */

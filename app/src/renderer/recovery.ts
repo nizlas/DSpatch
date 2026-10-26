@@ -481,6 +481,11 @@ export function runEndingNeedsConnectionRecheck(
   status: string | undefined,
   errorMessage: string | undefined,
 ): boolean {
+  // Every cancellation, including one whose `end` is `unconfirmed` (DSP-117). That
+  // one is not a confirmed cancellation, but what is unconfirmed is the adapter's
+  // own local process, which the connection card does not read, so re-reading the
+  // card would answer nothing. The turn says "Stop not confirmed" instead
+  // (`turnStatusLabel` in turn-routing.ts).
   if (status === 'finished' || status === 'cancelled') {
     return false;
   }

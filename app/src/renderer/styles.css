@@ -399,10 +399,13 @@ body {
 /* The summary, word for word: wrapped rather than scrolled sideways, and bounded so
    opening it cannot squeeze the conversation away. Bounded by the window's height as
    well (DSP-121 review S4): at 700 px wide and the default height a 12rem summary
-   squeezed the thread past its minimum, and the thread was drawn over the composer. */
+   squeezed the thread past its minimum, and the thread was drawn over the composer.
+   12vh rather than 15vh since run 20261026-200000-linux-claude: the third project
+   button (DSP-129) and the Agent select each took a line at that width, and the
+   summary's own Remove button was pushed below the window. */
 .continuity__summary-text {
   margin: 0.5rem 0 0;
-  max-height: min(12rem, 15vh);
+  max-height: min(12rem, 12vh);
   overflow-y: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -704,17 +707,25 @@ body {
    its own height and stays reachable without the page scrolling. */
 .panel--conversation {
   flex: 1 1 auto;
-  min-height: 0;
+  /* Room for the project row, the thread's minimum and the box (run
+     20261026-200000-linux-claude): with *Open a project* above it, the panel was
+     squeezed until the thread was drawn over the composer. The lead above scrolls
+     instead. */
+  min-height: min(20rem, 60vh);
   display: flex;
   flex-direction: column;
   margin-bottom: 0;
   position: relative;
 }
 
-/* The scroller's own box, so the way back can be placed against its foot. */
+/* The scroller's own box, so the way back can be placed against its foot.
+   Never below the thread's own minimum (its 4rem plus its 0.75rem margin): below
+   that the thread overflowed this box and was drawn over the composer. It gives up
+   its height first (shrink 1000 against the composer's 1); only once it is at its
+   minimum does the composer shrink, and then it scrolls rather than overlapping. */
 .conversation {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1 1000 auto;
+  min-height: 4.75rem;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -1180,6 +1191,9 @@ body {
 
 .composer {
   margin-top: 1rem;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .composer__input {

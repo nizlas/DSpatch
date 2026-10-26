@@ -49,6 +49,12 @@ import {
   type TreeSnapshot,
 } from './experiment-repo';
 import { snapshotIdFor } from './workspace-baseline';
+import {
+  stopPosixProcessGroup,
+  treeSpawnOptions,
+  type KillFunction,
+  type StoppableChild,
+} from './process-tree';
 import type { LoopNode, StepLimits } from '../shared/loop-graph';
 import {
   carriesRunChange,
@@ -896,13 +902,35 @@ export function runConfiguredProjectTest(
   }
   const resolvedCwd = path.resolve(cwd.trim());
   const startedAt = Date.now();
-  const child = spawn(line, {
-    cwd: resolvedCwd,
-    shell: true,
-    windowsHide: true,
-    env: process.env,
-  });
+  const child = spawn(line, gateCommandSpawnOptions(resolvedCwd));
   return finishCommand(child, `${describeShell()} ${line}`, resolvedCwd, startedAt, line, timeoutMs);
+}
+
+/**
+ * How the gate's command is spawned: through the shell, with this process's
+ * environment, and on POSIX as the leader of its own process group so that the
+ * timeout's stop reaches what the shell started (`process-tree.ts`). Process
+ * group on POSIX; not measured on Linux. On Windows the options are exactly what
+ * they were before.
+ */
+export function gateCommandSpawnOptions(
+  cwd: string,
+  platform: NodeJS.Platform = process.platform,
+): { cwd: string; shell: true; windowsHide: true; env: NodeJS.ProcessEnv; detached?: true } {
+  return { cwd, shell: true, windowsHide: true, env: process.env, ...treeSpawnOptions(platform) };
+}
+
+/** What {@link killCommandTree} needs from the world, injected so it can be tested. */
+export interface GateCommandKillDeps {
+  readonly platform: NodeJS.Platform;
+  /** The gate does not wait for `taskkill`: it fires it and listens only for `error`. */
+  readonly spawn: (
+    command: string,
+    args: string[],
+    options: { windowsHide: boolean; stdio: 'ignore' },
+  ) => { on(event: 'error', listener: (err: Error) => void): unknown };
+  /** Defaults to `process.kill`. */
+  readonly kill?: KillFunction;
 }
 
 /**
@@ -914,24 +942,29 @@ export function runConfiguredProjectTest(
  * to something else. Best effort â€” a kill that fails must not stop the run from
  * reporting that the command did not finish, which is the fact the person needs.
  */
-function killCommandTree(child: ReturnType<typeof spawn>): void {
+export function killCommandTree(
+  child: StoppableChild,
+  deps: GateCommandKillDeps = { platform: process.platform, spawn },
+): void {
   const pid = child.pid;
   if (pid === undefined) {
     return;
   }
   try {
-    if (process.platform === 'win32') {
-      spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+    if (deps.platform === 'win32') {
+      deps.spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
         windowsHide: true,
         stdio: 'ignore',
       }).on('error', () => {
         // Nothing to do: the record already says the command did not finish.
       });
     } else {
-      // Not a process group: the child was not spawned detached, so this reaches
-      // `sh` and may leave what `sh` started. Named rather than implied, and
-      // unmeasured â€” nothing here has been run on Linux.
-      child.kill('SIGKILL');
+      // The process group the command leads (`gateCommandSpawnOptions`), so this
+      // reaches what `sh` started, not `sh` alone; the shell by itself only if the
+      // group cannot be signalled. Process group on POSIX; not measured on Linux.
+      // A DSpatch crash or Ctrl+C in the dev terminal does not reach the detached
+      // group, and a descendant that calls `setsid` escapes it.
+      stopPosixProcessGroup(child, deps.kill);
     }
   } catch {
     // Same. A process that could not be killed is reported, not hidden.

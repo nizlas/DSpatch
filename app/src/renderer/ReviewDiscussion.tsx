@@ -198,6 +198,8 @@ function ContextDisclosure({
         <dd className="rv-discussion-instruction">{REVIEW_DISCUSSION_INSTRUCTION}</dd>
         <dt>{labels.providerContext}</dt>
         <dd>{envelope?.providerContext ?? PROVIDER_ADDED_CONTEXT_LINE}</dd>
+        <dt>{labels.agent}</dt>
+        <dd data-ev={`discussion-agent-${String(index)}`}>{words.agentLine}</dd>
         {message.model !== undefined && (
           <>
             <dt>{labels.model}</dt>

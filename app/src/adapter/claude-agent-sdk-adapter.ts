@@ -129,6 +129,38 @@ export const FIXTURE_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
   strictMcpConfig: true,
 }) as ClaudePermissionPolicy;
 
+/**
+ * The main chat's policy (DSP-117): read and edit the working copy, nothing else.
+ *
+ * **No Bash.** Builds and tests run through DSpatch's own command runner, where
+ * they are visible, stoppable and tied to a snapshot; an agent shell would be none
+ * of those. No web tools, no MCP (`strictMcpConfig`), no settings from disk
+ * (`settingSources: []`), and `dontAsk`, so anything outside `allowedTools` is
+ * refused rather than prompted for.
+ *
+ * Documented by Anthropic, not observed here: that an `Edit(...)` rule also
+ * covers `Write`, and that a `Read(...)` rule also covers `Glob` and `Grep`. If a
+ * live run shows otherwise, the agent is refused those tools, which fails closed.
+ * `/**` is relative to the session's working directory (the project), not the
+ * file system root. Not containment either (see above).
+ */
+export const CHAT_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
+  tools: Object.freeze(['Read', 'Glob', 'Grep', 'Edit', 'Write']),
+  allowedTools: Object.freeze(['Read(/**)', 'Edit(/**)']),
+  permissionMode: 'dontAsk',
+  settingSources: Object.freeze([]) as readonly [],
+  strictMcpConfig: true,
+}) as ClaudePermissionPolicy;
+
+/** A permission policy as one line a person can read, for Session details. */
+export function describePermissionPolicy(policy: ClaudePermissionPolicy): string {
+  return (
+    `tools ${policy.tools.join(', ')}; allowed ${policy.allowedTools.join(', ')}; ` +
+    `permission mode ${policy.permissionMode}; no settings read from disk; ` +
+    `${policy.strictMcpConfig ? 'no MCP servers' : 'MCP servers from configuration'}`
+  );
+}
+
 // --- Authentication guard ------------------------------------------------------
 
 /*
@@ -1312,6 +1344,12 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
 
   /** See {@link AgentAdapter.cancelEndBoundMs} and {@link CANCEL_END_BOUND_MS}. */
   readonly cancelEndBoundMs = CANCEL_END_BOUND_MS;
+
+  /**
+   * Every turn runs in a local Claude Code process this adapter starts. Read by the
+   * chat's attempt ledger (DSP-117), which says so while a turn runs.
+   */
+  readonly runsLocalProcess = true;
 
   private readonly substitutedQuery: ClaudeQueryFunction | null;
 

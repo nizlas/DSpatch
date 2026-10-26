@@ -351,7 +351,7 @@ if (options.live) {
     );
     process.stdout.write(`${delivery.journalText}\n`);
     if (options.out !== null && options.out !== '') {
-      process.stdout.write(`journal written to ${path.relative(repoRoot, path.resolve(process.cwd(), options.out))}\\run-live.{txt,jsonl} and live-inspect.json\n`);
+      process.stdout.write(`journal written to ${path.join(path.relative(repoRoot, path.resolve(process.cwd(), options.out)), 'run-live.{txt,jsonl}')} and live-inspect.json\n`);
     }
     process.exit(delivery.result.status === 'completed' ? 0 : 1);
   } catch (error) {
@@ -440,7 +440,7 @@ if (options.out !== null && options.out !== '') {
   const base = `run-${options.scenario}${options.label === '' ? '' : `-${options.label}`}`;
   fs.writeFileSync(path.join(outDir, `${base}.txt`), journal, 'utf8');
   fs.writeFileSync(path.join(outDir, `${base}.jsonl`), journalToJsonl(result), 'utf8');
-  process.stdout.write(`journal written to ${path.relative(repoRoot, outDir)}\\${base}.{txt,jsonl}\n`);
+  process.stdout.write(`journal written to ${path.join(path.relative(repoRoot, outDir), `${base}.{txt,jsonl}`)}\n`);
 }
 
 // A run that reached a bound, a fault or a person is not a successful run, and the

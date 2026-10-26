@@ -67,6 +67,15 @@ Niclas approved this order on 21 October 2026, from the reviewed plan of loop ru
 3. **Copilot stays a separate workplace track.** The Copilot SDK probe and integration (P3) and the content-exclusion integration (P4A) proceed on the work computer under that environment's security and content-exclusion policies. Claude and personal Anthropic credentials are not used there, and a home Copilot account is not a prerequisite for the Claude track.
 4. P1 (persistent workspaces) and P2 (local Linux) are unchanged and reuse their existing cards.
 
+**Order of the next deliveries (Niclas, 26 October 2026).** This refines the order above for the coming work; where it differs, it governs:
+
+1. Local Linux at home, with Claude as the provider (P2 now runs first with Claude rather than Cursor; DSP-131, DSP-117).
+2. Provider-independent host-client separation, developed and tried at home: a local client on the laptop, a host with the repository, git and agent execution on the home Linux machine (DSP-111).
+3. Copilot SDK integration at work, developed with approved Copilot tools and the work account's credits (P3).
+4. A second reviewer's test with Copilot and the bundled DSP-116 walk (DSP-129). The Copilot integration must be done before that test.
+
+Claude must not run on the work computer, neither as a development agent nor as a provider in DSpatch.
+
 ### Remote development
 
 DSpatch must support, relatively early, an arrangement like VS Code Remote: the Electron/React UI runs and renders locally on a laptop, while the repository, agents, scripts, Git operations, builds and tests run on a remote development machine. This matters for moving an existing autonomous orchestration project from VS Code to DSpatch.
@@ -77,6 +86,45 @@ DSpatch must support, relatively early, an arrangement like VS Code Remote: the 
 - Content exclusion and authorization boundaries stay explicit. A person viewing a file or an image locally does not grant an agent or external model access to it.
 
 The first remote milestone demonstrates local rendering, remote repository access and execution, and shared durable conversation context (DSP-111). Until then, runtime work preserves the separation it needs, keeping provider and execution code in the main process behind `AgentAdapter` without assuming that the renderer and the execution share a machine or filesystem, but builds no remote infrastructure.
+
+### Where the current code draws the host-client boundary (map, 26 Oct 2026)
+
+**A map and a proposal, not an implementation.** It records where the code at the time of loop run 20261026-200000-linux-claude already separates a host (where the repository, agents and history live) from a client (where a person sees and acts), and it proposes a first step for DSP-111. Nothing here has been built, no transport has been chosen and no API has been decided. Paths are relative to `app/src/`.
+
+**Electron-bound or bound to the local file system today.** Electron is imported only by `main/main.ts`, `main/review-ipc.ts`, `main/review-windows.ts` and the two preloads (`preload/preload.ts`, `preload/review-preload.ts`). The services and adapters import none of it. What is bound to the machine Electron runs on:
+
+- Native dialogs (`dialog.showOpenDialog` and `showSaveDialog` in `main/main.ts` and `main/review-windows.ts`) return paths on the machine where the window is. For a remote host they would have to browse the host, not the client.
+- `app.getPath('userData')` (`main/main.ts`) is the root of durable history: conversations, the project store, run records and `reviews/`.
+- `BrowserWindow`, `Menu`, `clipboard` and `shell` (`main/main.ts`, `main/review-windows.ts`) are the client's: windows, menus, copying and *show in folder*.
+
+**What belongs on the host.** These services hold no Electron object and read the local file system:
+
+- the chat service (`main/chat-service.ts`);
+- review and the review discussion (`main/review-service.ts`, `main/review-discussion-service.ts`);
+- the project and conversation stores (`main/project-store.ts`, `main/conversation-store.ts`) and the run records (`main/run-record-store.ts`);
+- the loop runner (`main/loop-live*.ts`, `main/loop-*`);
+- the command runner (`main/test-command.ts`, `main/process-tree.ts`) and git (`main/git-state.ts`, `main/workspace-baseline.ts`);
+- both adapters (`adapter/cursor-sdk-adapter.ts`, `adapter/claude-agent-sdk-adapter.ts`).
+
+**How the client gets code, diffs, review data and events.** The client gets them only over the typed bridge (`shared/bridge.ts`, `BridgeChannel`): about 60 `ipcMain.handle` channels in `main/main.ts` and 13 in `main/review-ipc.ts`, plus pushed events such as `UiAgentEvent`. Everything crossing the bridge is structured data: file text, diff text, review definitions and coverage, and run events with the provider's raw events left out. The renderer reads no file and renders locally. That is the property remote use needs: local rendering of data sent by the host, not a remote desktop or graphical forwarding over SSH.
+
+**Who owns durable history and review state.** The host's `userData` owns it. The client reaches it only through bridge calls (conversation list, read and export; review records), never through a path of its own. One writer per conversation: the host process that holds it.
+
+**Disconnect and reconnect.**
+
+- A dropped client is treated like DSpatch stopping listening. This is what `ChatService.closeSession` does today: attempts that are still going become *outcome unknown* and are never restarted on DSpatch's own initiative.
+- A reconnect re-reads host state (the run state, the conversation and the continuity) and resends nothing.
+- Whether a host keeps a run going with no client attached is a separate, later capability (Maestro without a client), as section 1.2 already keeps apart.
+
+**Provider-independent.** Adapters sit behind `AgentAdapter` / `ChatAdapter` on the host. Since DSP-117 a conversation records which provider holds its session, and a session is never resumed through another provider. The boundary is the same for Cursor, Claude and a later Copilot adapter.
+
+**Viewing is not agent access.** Viewing alone never adds anything to an agent's context: a workspace file, a review revision or an image sent to the client for viewing goes nowhere else. Sending code to a model is a separate act that is explicit and displayed. An example is a question in the review discussion, which sends the code under review to the model and whose *Context* shows exactly what was sent. Viewing and agent context take separate paths: the workspace and review readers on one side; on the other, the adapter's own tools under its permission policy, and the discussion's displayed envelope (DSP-111 AC#3; content-exclusion contract).
+
+**Proposed first step for DSP-111, at home (a proposal, not a decided API).**
+
+- (a) A test that classifies every bridge channel as *host* or *client*. A new channel then has to say which side it belongs to.
+- (b) Move one bounded group of `ipcMain.handle` bodies (for example the workspace-folder channels, or the conversation list, read and export) into a transport-neutral host module: plain functions keyed by bridge channel name, with no Electron import. Electron IPC then binds that module thinly.
+- No transport is chosen in this step, and nothing is exposed over a network.
 
 <!-- pagebreak -->
 

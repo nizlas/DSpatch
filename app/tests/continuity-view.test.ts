@@ -23,6 +23,7 @@ import type {
 import {
   CONTINUITY_HEADING,
   EARLIER_SENDS_NOTE,
+  NEW_CLAUDE_SESSION_NOTE,
   NEW_SESSION_AT_CHOICE,
   NEW_SESSION_HEADING,
   NO_SESSION_STATUS,
@@ -200,11 +201,12 @@ test('the clause is keyed on what the failure established, and never claims exis
     clause('resume-failed', { kind: 'error', detail: 'x', providerCode: 'local_lookup_failed' }),
     'This may be temporary.',
   );
-  // The service adds nothing to an authentication rule's own words; neither does
-  // the clause, so it is not called temporary.
+  // DSP-117: only the Claude adapter refuses with this code, before Claude is
+  // started, so the clause says whose rule it is and that Claude was not asked. It
+  // is not called temporary.
   assert.equal(
     clause('resume-failed', { kind: 'error', detail: 'x', providerCode: 'authentication_refused' }),
-    'Authentication was refused.',
+    "DSpatch's own credential rule refused Claude; Claude was not asked.",
   );
   assert.equal(
     clause('resume-refused', { kind: 'error', detail: 'x', providerCode: 'config_mismatch' }),
@@ -535,4 +537,44 @@ test('the heading is the same in every state without an open session', () => {
   for (const kind of ['resume-refused', 'resume-failed', 'resume-unavailable'] as const) {
     assert.equal(continuityPanel(notOpen(kind, FAILED), false)?.heading, CONTINUITY_HEADING);
   }
+});
+
+test("after Claude was refused by DSpatch's credential rule, Start new session says it is a new Claude session (DSP-117)", () => {
+  const refused: ResumeFailure = { kind: 'error', detail: 'the rule', providerCode: 'authentication_refused' };
+  const panel = continuityPanel(notOpen('resume-failed', refused, NEW_ONLY), false);
+  assert.ok(panel !== null);
+  assert.deepEqual(panel.choices.map((choice) => choice.label), ['Start new session']);
+  const note = panel.choices[0]?.note ?? '';
+  assert.equal(note, NEW_CLAUDE_SESSION_NOTE);
+  assert.match(note, /new Claude session/);
+  assert.doesNotMatch(note, /Cursor/);
+  assert.match(panel.body, /DSpatch's own credential rule refused Claude/);
+  assert.doesNotMatch(panel.body, /Try again/);
+
+  // Any other refusal keeps the ordinary note.
+  const other = continuityPanel(notOpen('resume-refused', MISSING, NEW_ONLY), false);
+  assert.notEqual(other?.choices[0]?.note, NEW_CLAUDE_SESSION_NOTE);
+});
+
+test('a session of another agent is not resumed, and switching to Cursor is a choice of its own (DSP-117)', () => {
+  const differs: ResumeFailure = { kind: 'provider-differs', detail: 'x', providerCode: null };
+  assert.equal(
+    continuityClause({ kind: 'resume-refused', providerSessionOpen: false, resumeFailure: differs }),
+    'The session belongs to another agent, so it was not resumed.',
+  );
+  const refused: ResumeFailure = { kind: 'error', detail: 'the rule', providerCode: 'authentication_refused' };
+  const panel = continuityPanel(notOpen('resume-failed', refused, ['new-session', 'switch-to-cursor']), false);
+  assert.deepEqual(panel?.choices.map((choice) => choice.label), ['Start new session', 'Switch to Cursor']);
+  assert.match(panel?.choices[1]?.note ?? '', /new Cursor session/);
+  assert.match(panel?.choices[1]?.note ?? '', /No message is sent until you send/);
+});
+
+test('Start new session names the agent it opens (DSP-117, review R3)', () => {
+  const differs: ResumeFailure = { kind: 'provider-differs', detail: 'x', providerCode: null };
+  const cursor = continuityPanel(notOpen('resume-refused', differs, NEW_ONLY), false, 'cursor');
+  assert.deepEqual(cursor?.choices.map((choice) => choice.label), ['Start new Cursor session']);
+  assert.match(cursor?.choices[0]?.note ?? '', /^Opens a new Cursor session\./);
+  const claude = continuityPanel(notOpen('resume-refused', MISSING, RETRY_AND_NEW), false, 'claude');
+  assert.deepEqual(claude?.choices.map((choice) => choice.label), ['Try again', 'Start new Claude session']);
+  assert.match(claude?.choices[1]?.note ?? '', /^Opens a new Claude session\./);
 });

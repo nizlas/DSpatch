@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-10-21 15:09'
+updated_date: '2026-10-26 13:04'
 labels:
   - integration
 dependencies: []
@@ -39,3 +40,9 @@ Reuse, do not duplicate: workspace and root records (DSP-71, DSP-72), conversati
 - [ ] #3 Transferring a file for local viewing grants no agent or external model access to it; the access path for agents and the viewing path for the person are stated and checked separately
 - [ ] #4 The transport and its measured behaviour (including file transfer over SSH) are recorded on the tested machines; unattended execution without an attached client is stated as not covered
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+26 Oct 2026 (run 20261026-200000-linux-claude): map of the current host-client boundary in docs/RUNTIME_PLATFORM_ROADMAP.md section 1.2, 'Where the current code draws the host-client boundary (map, 26 Oct 2026)' - a map and proposal, not an implementation. Proposed first implementation step at home (step 2 of Niclas's 26 Oct order): (a) a test that classifies every bridge channel (62 ipcMain.handle in main.ts, 13 in review-ipc.ts, plus UiAgentEvent) as host or client; (b) move one bounded group of handler bodies into a transport-neutral host module that the Electron IPC binds thinly. No transport chosen. Known coupling to undo: native dialogs return client-local paths; startup constructs a Cursor adapter for environment info.
+<!-- SECTION:NOTES:END -->

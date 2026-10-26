@@ -28,6 +28,7 @@ import {
   markCancelRequested,
   routeEvent,
   summariseContext,
+  turnStatusLabel,
   unfinishedSupersededTurns,
 } from '../src/renderer/turn-routing.ts';
 
@@ -304,4 +305,43 @@ test('the context summary counts what was sent, never what is on disk', () => {
   assert.equal(summary.fileContentsSentByDspatch, 0);
   assert.equal(summary.toolCallsByAgent, 3);
   assert.deepEqual(summary.toolNames, ['Read', 'Write']);
+});
+
+// --- DSP-117: how a cancelled run ended locally -------------------------------
+
+test('a cancelled run keeps the end its adapter reported, and each end reads differently', () => {
+  const ended = (end: 'stopped' | 'forced' | 'unconfirmed' | undefined) => {
+    let state = emptyChatState(SESSION);
+    state = routeEvent(state, event('run.started', RUN_A), 'a job');
+    state = routeEvent(
+      state,
+      event('run.finished', RUN_A, { status: 'cancelled', ...(end === undefined ? {} : { end }) }),
+      'a job',
+    );
+    const turn = state.turns[0];
+    assert.ok(turn !== undefined);
+    return turn;
+  };
+
+  const unconfirmed = ended('unconfirmed');
+  assert.equal(unconfirmed.status, 'cancelled');
+  assert.equal(unconfirmed.end, 'unconfirmed');
+  // Never an ordinary cancel: the work may still be going.
+  assert.match(turnStatusLabel(unconfirmed), /^Stop not confirmed/);
+  assert.notEqual(turnStatusLabel(unconfirmed), 'cancelled');
+
+  const stopped = turnStatusLabel(ended('stopped'));
+  const forced = turnStatusLabel(ended('forced'));
+  assert.notEqual(stopped, forced, 'a forced stop is told apart from a stop');
+  assert.match(forced, /forced/);
+  for (const label of [turnStatusLabel(unconfirmed), stopped, forced]) {
+    assert.match(label, /provider work unknown/);
+  }
+
+  // A cancel without an end - every Cursor run - reads exactly as before.
+  const cursor = ended(undefined);
+  assert.equal(cursor.end, undefined);
+  assert.equal(turnStatusLabel(cursor), 'cancelled');
+  assert.equal(turnStatusLabel({ status: 'error' }), 'error');
+  assert.equal(turnStatusLabel({ status: 'streaming' }), 'streaming …');
 });

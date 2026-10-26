@@ -4,6 +4,7 @@ title: 'Make a stopped command actually stop, including its descendants'
 status: To Do
 assignee: []
 created_date: '2026-09-18 06:09'
+updated_date: '2026-10-26 13:04'
 labels: []
 dependencies:
   - DSP-26
@@ -38,3 +39,9 @@ Also unmeasured and worth settling here: `killCommandTree` never reads the resul
 - [ ] #2 DSpatch can tell whether the stop succeeded, and says so rather than claiming an outcome it did not observe.
 - [ ] #3 The Linux path is either given the equivalent containment or is documented as unmeasured, rather than being assumed to behave like the Windows one.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+26 Oct 2026 (DSP-131): the chat command and the loop gate command now start as a detached POSIX process group and Stop sends SIGKILL to the group (process-tree.ts); unmeasured on Linux; the Windows Job Object and this card's Windows criteria stay open.
+<!-- SECTION:NOTES:END -->

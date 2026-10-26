@@ -693,3 +693,82 @@ test('an acknowledgement counts only for the kind of work it gates (WS-1 follow-
   assert.equal(commands.get('dsp-attempt-0007')?.acknowledgedAtUtc, null);
   assert.equal(AttemptLedger.mayRepeatAcross([messages, commands], 'command').allowed, false);
 });
+
+// --- DSP-117: an adapter that runs a local process (Claude) -------------------
+
+test('a Cursor turn is unchanged: no end, no local process, and nothing new saved', () => {
+  const book = ledger();
+  const { attemptId } = book.open('agent-turn', 'a job');
+  book.markRunning(attemptId, { providerRunId: 'run-1' }, 'started');
+  assert.equal(book.get(attemptId)?.stillRunning.dspatchProcess, false);
+  book.markStopped(attemptId, 'confirmed');
+  const stopped = book.get(attemptId);
+  assert.equal(stopped?.stillRunning.provider, false);
+  assert.equal(stopped?.stillRunning.dspatchProcess, false);
+  assert.equal(stopped?.runEnd, undefined);
+  assert.equal(stopped?.adapterProcess, undefined);
+  const [saved] = book.persistable();
+  assert.ok(saved !== undefined && !('runEnd' in saved) && !('adapterProcess' in saved));
+});
+
+test('a Claude turn: running means its process is running; stopped or forced leaves the provider unknown', () => {
+  for (const end of ['stopped', 'forced'] as const) {
+    const book = ledger();
+    const { attemptId } = book.open('agent-turn', 'a job', { adapterProcess: true });
+    book.markRunning(attemptId, { providerRunId: 'run-1' }, 'started');
+    const running = book.get(attemptId);
+    assert.equal(running?.stillRunning.provider, true);
+    assert.equal(running?.stillRunning.dspatchProcess, true);
+
+    book.markCancelRequested(attemptId, 'asked');
+    assert.equal(book.get(attemptId)?.stillRunning.dspatchProcess, null, 'not known to be gone yet');
+
+    book.markStopped(attemptId, 'confirmed local end', end);
+    const stopped = book.get(attemptId);
+    assert.equal(stopped?.state, 'stopped-confirmed');
+    assert.equal(stopped?.runEnd, end);
+    assert.equal(stopped?.stillRunning.provider, null, 'unknown, not false');
+    assert.equal(stopped?.stillRunning.dspatchProcess, false);
+    assert.match(stopped?.stillRunning.note ?? '', /saw its process exit/);
+    assert.match(stopped?.stillRunning.note ?? '', /provider kept working .* unknown/);
+  }
+});
+
+test('a Claude turn whose end is unconfirmed stays unknown in both channels', () => {
+  const book = ledger();
+  const { attemptId } = book.open('agent-turn', 'a job', { adapterProcess: true });
+  book.markRunning(attemptId, { providerRunId: 'run-1' }, 'started');
+  book.markOutcomeUnknown(attemptId, 'the adapter reported the end as unconfirmed');
+  const unknown = book.get(attemptId);
+  assert.equal(unknown?.state, 'outcome-unknown');
+  assert.equal(unknown?.runEnd, undefined, 'unconfirmed is not recorded as a stop');
+  assert.equal(unknown?.stillRunning.provider, null);
+  assert.equal(unknown?.stillRunning.dspatchProcess, null);
+});
+
+test('a late end cannot change what a settled attempt says', () => {
+  const book = ledger();
+  const { attemptId } = book.open('agent-turn', 'a job', { adapterProcess: true });
+  book.markRunning(attemptId, { providerRunId: 'run-1' }, 'started');
+  book.markCompleted(attemptId, 'finished');
+  book.markStopped(attemptId, 'a late claim', 'forced');
+  assert.equal(book.get(attemptId)?.state, 'completed');
+  assert.equal(book.get(attemptId)?.runEnd, undefined);
+});
+
+test('the end and the local process survive a save and a restore', () => {
+  const book = ledger();
+  const { attemptId } = book.open('agent-turn', 'a job', { adapterProcess: true });
+  book.markRunning(attemptId, { providerRunId: 'run-1' }, 'started');
+  book.markStopped(attemptId, 'confirmed local end', 'forced');
+  const saved = book.persistable();
+  assert.equal(saved[0]?.runEnd, 'forced');
+  assert.equal(saved[0]?.adapterProcess, true);
+
+  const restored = new AttemptLedger(tick);
+  restored.restore(JSON.parse(JSON.stringify(saved)) as StoredAttempt[]);
+  const back = restored.get(attemptId);
+  assert.equal(back?.runEnd, 'forced');
+  assert.equal(back?.adapterProcess, true);
+  assert.deepEqual(back?.stillRunning, book.get(attemptId)?.stillRunning);
+});

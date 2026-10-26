@@ -1,3 +1,4 @@
+import type { RunEnd } from '../adapter/types';
 import type {
   AttemptAcknowledgement,
   AttemptInfo,
@@ -70,6 +71,10 @@ interface AttemptRecord {
   cancelRequestedAtUtc: string | null;
   acknowledgedAtUtc: string | null;
   readonly history: AttemptStep[];
+  /** How the adapter said a cancelled run ended locally, when it said so (DSP-117). */
+  runEnd: RunEnd | null;
+  /** Whether the adapter runs the provider as a local process DSpatch started. */
+  readonly adapterProcess: boolean;
 }
 
 /** What adopting a saved conversation's attempts did, including what it could not. */
@@ -183,7 +188,17 @@ export class AttemptLedger {
    * Before, not after: an attempt that fails on its first instruction still
    * happened, and an attempt whose request never returns is the whole point.
    */
-  open(kind: AttemptKind, label: string): AttemptInfo {
+  open(
+    kind: AttemptKind,
+    label: string,
+    options: {
+      /**
+       * DSP-117: the adapter runs the provider as a local process DSpatch started
+       * (the Claude adapter). Omitted for Cursor, whose attempts stay as they were.
+       */
+      readonly adapterProcess?: boolean;
+    } = {},
+  ): AttemptInfo {
     this.counter = Math.max(this.counter, this.sequence.last) + 1;
     this.sequence.last = this.counter;
     const attemptId = `dsp-attempt-${String(this.counter).padStart(4, '0')}`;
@@ -203,6 +218,8 @@ export class AttemptLedger {
       cancelRequestedAtUtc: null,
       acknowledgedAtUtc: null,
       history: [],
+      runEnd: null,
+      adapterProcess: options.adapterProcess === true,
     };
     this.attempts.push(record);
     this.record(record, 'waiting', 'Attempt opened.', true);
@@ -260,6 +277,8 @@ export class AttemptLedger {
         cancelRequestedAtUtc: stored.cancelRequestedAtUtc,
         acknowledgedAtUtc: stored.acknowledgedAtUtc,
         history: [...stored.history],
+        runEnd: stored.runEnd ?? null,
+        adapterProcess: stored.adapterProcess === true,
       };
       this.attempts.push(record);
       this.counter = Math.max(this.counter, attemptOrdinal(stored.attemptId));
@@ -350,9 +369,23 @@ export class AttemptLedger {
     this.transition(record, 'cancel-requested', note);
   }
 
-  /** An end that was observed. Never used for an end that was merely expected. */
-  markStopped(attemptId: string, note: string): void {
-    this.settle(attemptId, 'stopped-confirmed', note);
+  /**
+   * An end that was observed. Never used for an end that was merely expected.
+   *
+   * `end` is the adapter's own report of a confirmed local end (DSP-116): `stopped`
+   * or `forced`. It is kept on the attempt only when the stop is applied, so a late
+   * claim about an already settled attempt cannot change what it says.
+   */
+  markStopped(attemptId: string, note: string, end?: 'stopped' | 'forced'): void {
+    const record = this.attempts.find((entry) => entry.attemptId === attemptId);
+    if (record === undefined) {
+      return;
+    }
+    const wasSettled = isSettled(record.state);
+    this.transition(record, 'stopped-confirmed', note);
+    if (!wasSettled && end !== undefined) {
+      record.runEnd = end;
+    }
   }
 
   markCompleted(attemptId: string, note: string): void {
@@ -418,6 +451,10 @@ export class AttemptLedger {
       cancelRequestedAtUtc: record.cancelRequestedAtUtc,
       acknowledgedAtUtc: record.acknowledgedAtUtc,
       history: [...record.history],
+      // Written only when set, so an attempt without them (every Cursor turn) is
+      // saved exactly as before.
+      ...(record.runEnd === null ? {} : { runEnd: record.runEnd }),
+      ...(record.adapterProcess ? { adapterProcess: true as const } : {}),
     }));
   }
 
@@ -789,6 +826,9 @@ export class AttemptLedger {
  * observed to be gone; a provider run can only be asked to stop.
  */
 function stillRunning(record: AttemptRecord): StillRunning {
+  if (record.kind === 'agent-turn' && record.adapterProcess) {
+    return adapterProcessStillRunning(record);
+  }
   const agentNote =
     'DSpatch started no process of its own for a message. The agent runs its own ' +
     'tools, and those are outside what DSpatch can see or stop.';
@@ -860,6 +900,75 @@ function stillRunning(record: AttemptRecord): StillRunning {
         provider: false,
         dspatchProcess: false,
         note: 'The process is gone: DSpatch saw it close.',
+      };
+  }
+}
+
+/**
+ * {@link stillRunning} for a turn whose adapter runs the provider as a local
+ * process DSpatch started (DSP-117: the Claude adapter). Cursor turns never come
+ * here, so what they say is unchanged.
+ *
+ * The process is known to the adapter, not to the ledger: `dspatchProcess` says
+ * what the adapter reported about it. Work the provider had already been sent is
+ * never known to have stopped, whatever the local end.
+ */
+function adapterProcessStillRunning(record: AttemptRecord): StillRunning {
+  const providerNote =
+    'Whether the provider kept working on requests already sent is unknown.';
+  switch (record.state) {
+    case 'waiting':
+      return {
+        provider: null,
+        dspatchProcess: null,
+        note:
+          'Unknown: the message was handed to the adapter, which starts a local ' +
+          'process for it, and nothing has come back yet.',
+      };
+    case 'running':
+      return {
+        provider: true,
+        dspatchProcess: true,
+        note:
+          "The run is going, in a local process the adapter started for it. The " +
+          "agent's own tools run inside that process.",
+      };
+    case 'cancel-requested':
+    case 'outcome-unknown':
+      return {
+        provider: null,
+        dspatchProcess: null,
+        note:
+          'Unknown: no end of the local process has been confirmed, so it may ' +
+          `still be running. ${providerNote}`,
+      };
+    case 'stopped-confirmed':
+      if (record.runEnd === 'stopped' || record.runEnd === 'forced') {
+        return {
+          provider: null,
+          dspatchProcess: false,
+          note:
+            `Stopped (${record.runEnd}): the adapter saw its process exit` +
+            (record.runEnd === 'forced' ? ' after it had to force the stop' : '') +
+            `. ${providerNote}`,
+        };
+      }
+      return {
+        provider: false,
+        dspatchProcess: null,
+        note:
+          'The run reported a stop without saying how its local process ended, so ' +
+          'whether that process has exited is not established here.',
+      };
+    default:
+      // Completed or failed: the run ended. Whether the adapter's local process has
+      // exited with it is the adapter's to report, and this record does not hold it.
+      return {
+        provider: false,
+        dspatchProcess: null,
+        note:
+          'The run reported an end. Whether the local process the adapter started ' +
+          'has exited is not recorded on this attempt.',
       };
   }
 }
@@ -975,6 +1084,8 @@ function describe(record: AttemptRecord, owner: string | null): AttemptInfo {
     localPid: record.localPid,
     cancelRequestedAtUtc: record.cancelRequestedAtUtc,
     acknowledgedAtUtc: record.acknowledgedAtUtc,
+    ...(record.runEnd === null ? {} : { runEnd: record.runEnd }),
+    ...(record.adapterProcess ? { adapterProcess: true as const } : {}),
     stillRunning: stillRunning(record),
     nextAction: nextAction(record),
     history: [...record.history],

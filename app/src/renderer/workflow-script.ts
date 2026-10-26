@@ -8326,7 +8326,7 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
       !/no longer|missing|disappeared|existed/i.test(String(reading['panelBody'])),
       `the body claims the session existed or disappeared: "${String(reading['panelBody'])}"`,
     );
-    is(labels.join('|') === 'Try again|Start new session', `the buttons read "${labels.join('|')}"`);
+    is(labels.join('|') === 'Try again|Start new Cursor session', `the buttons read "${labels.join('|')}"`);
     is(reading['readHistoryAnywhere'] === false, '"Read history" is still somewhere in the window');
     is(
       reading['newSessionNote'] ===
@@ -8383,7 +8383,7 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     };
     const atRest =
       reading.panelShown &&
-      reading.actions.join('|') === 'Try again|Start new session' &&
+      reading.actions.join('|') === 'Try again|Start new Cursor session' &&
       reading.detailsEntry === 'Details' &&
       reading.detailsViewOpen === 'false' &&
       !reading.diagnosticsVisible &&
@@ -8409,6 +8409,17 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
    * recorded and not judged - it is the transcript's layout, not this panel's. The
    * width is put back afterwards.
    */
+  /** Each child's class and rendered height, in order: where a column's height goes. */
+  const heightsOf = (
+    parent: Element | null,
+  ): readonly { readonly part: string; readonly heightPx: number }[] | null =>
+    parent === null
+      ? null
+      : Array.from(parent.children).map((child) => ({
+          part: child.getAttribute('data-ev') ?? (child.className === '' ? child.tagName : String(child.className)),
+          heightPx: Math.round(child.getBoundingClientRect().height),
+        }));
+
   const narrowCheck = async (label: string, names: readonly string[]): Promise<void> => {
     const widthBefore = window.outerWidth;
     const contentWidthPx = await window.dspatch.setWindowWidth(700);
@@ -8442,6 +8453,10 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
       threadOverlapsComposerPx,
       visible,
       bottomsPx,
+      // Where the conversation panel's height goes, so an overlap can be traced to
+      // the part that took the space rather than guessed at (run 20261026-200000).
+      panelPartsPx: heightsOf(thread?.closest('.panel--conversation') ?? null),
+      composerPartsPx: heightsOf(composerBox?.closest('.composer') ?? null),
     };
     record(`narrow window: ${label}`, reading);
     expect(

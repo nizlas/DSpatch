@@ -22,6 +22,7 @@
  * user has to be able to see.
  */
 
+import type { RunEnd } from '../adapter/types';
 import type { TurnUsage, UiAgentEvent } from '../shared/bridge';
 
 /** A turn's state as the window shows it. Never inferred from silence. */
@@ -68,6 +69,12 @@ export interface TurnState {
   /** Distinct tool names, in the order first seen. Names only: no arguments. */
   readonly toolNames: readonly string[];
   readonly status: TurnStatus;
+  /**
+   * How a cancelled run ended locally, as the adapter reported it (DSP-116,
+   * DSP-117). Absent when not reported, which is every Cursor run; see
+   * {@link turnStatusLabel} for what each one says.
+   */
+  readonly end?: RunEnd;
   readonly errorMessage: string | null;
   readonly approvalSummary: string | null;
   readonly usage: TurnUsage | null;
@@ -255,6 +262,7 @@ function applyToTurn(turn: TurnState, event: UiAgentEvent): TurnState {
             : event.status === 'cancelled'
               ? 'cancelled'
               : 'error',
+        ...(event.end === undefined ? {} : { end: event.end }),
         errorMessage: event.errorMessage ?? null,
         finishedAtUtc: event.at,
       };
@@ -271,6 +279,45 @@ function addToolName(
     return names;
   }
   return [...names, name];
+}
+
+/**
+ * The words on a turn that has ended or is going, short enough for its badge.
+ *
+ * A cancelled run with an `end` is the adapter speaking about its own local
+ * process (DSP-117):
+ * - `unconfirmed`: the adapter stopped waiting without evidence the process
+ *   ended. **Never an ordinary cancel**: the work may still be going.
+ * - `stopped` and `forced`: the process was seen to end; `forced` means the
+ *   adapter had to escalate. Kept apart because a forced stop is worth knowing.
+ *
+ * In all three the provider's work on requests already sent is unknown, and the
+ * label says so. A cancel without `end` (every Cursor run) reads as before.
+ * Details belong in Session details, not here.
+ */
+export function turnStatusLabel(turn: Pick<TurnState, 'status' | 'end'>): string {
+  if (turn.status === 'cancelled') {
+    switch (turn.end) {
+      case 'unconfirmed':
+        return 'Stop not confirmed · provider work unknown';
+      case 'forced':
+        return 'stopped (forced) · provider work unknown';
+      case 'stopped':
+        return 'stopped · provider work unknown';
+      default:
+        return 'cancelled';
+    }
+  }
+  switch (turn.status) {
+    case 'streaming':
+      return 'streaming …';
+    case 'awaiting-approval':
+      return 'waiting for an approval DSpatch cannot answer';
+    case 'finished':
+      return 'finished';
+    default:
+      return 'error';
+  }
 }
 
 /** Record that Cancel was pressed. The run has not ended because we asked. */

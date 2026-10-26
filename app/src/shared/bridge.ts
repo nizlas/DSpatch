@@ -13,6 +13,7 @@ import type {
   AgentEventType,
   CapabilityReport,
   ProviderId,
+  RunEnd,
   TerminalRunStatus,
   UsageReading,
 } from '../adapter/types';
@@ -72,6 +73,11 @@ export interface EnvironmentInfo {
     readonly id: string;
     readonly capabilities: CapabilityReport;
   };
+  /**
+   * DSP-117: whether Claude can be chosen in this launch, for the agent choice in
+   * the *Open a project* panel, before any session exists.
+   */
+  readonly agentChoice: AgentChoiceInfo;
 }
 
 /** Renderer acknowledgement of mounting and painting. Evidence for the smoke test. */
@@ -401,9 +407,20 @@ export type ConversationExportResult =
  * reads them (DSP-4's order, resume then the send gate, is unchanged).
  */
 export type StartSessionRequest =
-  | { readonly kind: 'folder'; readonly path: string }
-  | { readonly kind: 'sample' }
-  | { readonly kind: 'new-provider-session' }
+  /**
+   * `provider` (DSP-117) is the agent a **new** conversation starts with, as chosen
+   * in the *Open a project* panel. A folder whose conversation already has a
+   * recorded session opens with that session's provider and ignores it; a session
+   * is never resumed across providers. Absent means Cursor for a new conversation.
+   */
+  | { readonly kind: 'folder'; readonly path: string; readonly provider?: StoredSessionProvider }
+  | { readonly kind: 'sample'; readonly provider?: StoredSessionProvider }
+  /**
+   * `provider` switches the conversation's agent: a new provider session with that
+   * provider, never a resume, with the recap disclosed and removable before the next
+   * Send. Absent means the provider already selected for this conversation.
+   */
+  | { readonly kind: 'new-provider-session'; readonly provider?: StoredSessionProvider }
   | { readonly kind: 'retry-resume'; readonly acknowledgedAttemptIds?: readonly string[] };
 
 export type SessionOrigin = 'chosen-folder' | 'generated-sample';
@@ -544,7 +561,13 @@ export type ResumeFailureKind =
   | 'local-record-missing'
   | 'error'
   | 'unknown'
-  | 'unconfirmed-end';
+  | 'unconfirmed-end'
+  /**
+   * DSP-117: the recorded session belongs to another provider than the one selected
+   * for this conversation. Never resumed across providers: no adapter call is made
+   * and nothing is sent.
+   */
+  | 'provider-differs';
 
 export interface ResumeFailure {
   readonly kind: ResumeFailureKind;
@@ -562,7 +585,14 @@ export interface ResumeFailure {
  * (see `ChatService`'s `noSessionChoices`). Reading the history is not a choice: it
  * is on screen in every state and needs no call to the main process.
  */
-export type ContinuityChoice = 'try-again' | 'new-session';
+export type ContinuityChoice =
+  | 'try-again'
+  | 'new-session'
+  /**
+   * DSP-117: after Claude was refused by DSpatch's own credential rule, an explicit
+   * new **Cursor** session, with the recap disclosed. Never taken silently.
+   */
+  | 'switch-to-cursor';
 
 /**
  * An earlier message of this conversation that may have reached the provider and
@@ -653,6 +683,25 @@ export interface ChatSessionInfo {
   readonly testRunnerSource: string | null;
   /** The conversation's earlier messages, read from disk as this session opened. */
   readonly restoredHistory: RestoredHistory;
+  /**
+   * DSP-117: the agent selected for this conversation. For an open session, the
+   * provider holding it; while none is open, the provider a new session would use.
+   */
+  readonly provider: StoredSessionProvider;
+  /** What the window needs to offer the agent choice. */
+  readonly agent: AgentChoiceInfo;
+}
+
+/** DSP-117: whether Claude can be chosen in this launch, and how that is shown. */
+export interface AgentChoiceInfo {
+  /** `true` only when this launch was started with a recorded authorization reference. */
+  readonly claudeEnabled: boolean;
+  /** Why Claude cannot be chosen, or what enabled it. Short; for the control's tooltip. */
+  readonly claudeNote: string;
+  /** The connection line for the selected agent, for Session details. */
+  readonly connectionText: string;
+  /** The tool policy the selected agent is given, as DSpatch sends it. */
+  readonly toolPolicyText: string;
 }
 
 /**
@@ -940,6 +989,18 @@ export interface StoredAttempt {
   readonly cancelRequestedAtUtc: string | null;
   readonly acknowledgedAtUtc: string | null;
   readonly history: readonly AttemptStep[];
+  /**
+   * DSP-117: how the adapter said a cancelled run ended (`stopped` or `forced`),
+   * when it said so. Absent for every attempt before DSP-117 and for every Cursor
+   * turn, which reports no `end`; absent means not reported. Optional so files
+   * written before it read back unchanged, without a format bump.
+   */
+  readonly runEnd?: RunEnd;
+  /**
+   * DSP-117: `true` when the adapter that ran this turn runs the provider as a
+   * local process DSpatch started (the Claude adapter). Absent means not (Cursor).
+   */
+  readonly adapterProcess?: true;
 }
 
 /**
@@ -997,6 +1058,10 @@ export interface AttemptInfo {
   readonly cancelRequestedAtUtc: string | null;
   /** When the user accepted the unknown outcome so a repeat could proceed. */
   readonly acknowledgedAtUtc: string | null;
+  /** See {@link StoredAttempt.runEnd}. */
+  readonly runEnd?: RunEnd;
+  /** See {@link StoredAttempt.adapterProcess}. */
+  readonly adapterProcess?: true;
   readonly stillRunning: StillRunning;
   readonly nextAction: NextAction;
   readonly history: readonly AttemptStep[];
@@ -1430,6 +1495,12 @@ export interface UiAgentEvent {
   readonly approvalSummary?: string;
   readonly readings?: readonly UsageReading[];
   readonly status?: TerminalRunStatus;
+  /**
+   * On `run.finished`: how the adapter says a cancelled run ended locally
+   * (DSP-116, DSP-117). `unconfirmed` is not a stop: the adapter gave up waiting
+   * without evidence. Absent means not reported, which is every Cursor run.
+   */
+  readonly end?: RunEnd;
   readonly errorMessage?: string;
   /**
    * On `run.started`: the recap DSpatch put in front of this prompt, verbatim.

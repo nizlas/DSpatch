@@ -34,9 +34,13 @@ export interface DiscussionWords {
     readonly notes: string;
     readonly instruction: string;
     readonly providerContext: string;
+    /** DSP-117: which agent answers here, and why not Claude. */
+    readonly agent: string;
     readonly model: string;
     readonly sent: string;
   };
+  /** DSP-117: the review discussion's agent, said once in each question's Context. */
+  readonly agentLine: string;
   readonly noCode: string;
   readonly noNotes: string;
   readonly notSent: string;
@@ -303,6 +307,8 @@ const sv: ReviewWords = {
     readOnly: (reason) => `Diskussionen kan bara läsas: ${reason}`,
     details: 'Detaljer',
     hideDetails: 'Dölj detaljer',
+    agentLine:
+      'Körs på Cursor, endast text. Claude erbjuds inte här: dess gränser för endast text är ännu inte verifierade.',
     contextLabels: {
       subject: 'Gäller',
       revisions: 'Revisioner',
@@ -310,6 +316,7 @@ const sv: ReviewWords = {
       notes: 'Dina anteckningar som skickades',
       instruction: 'DSpatchs instruktion',
       providerContext: 'Tillagt av leverantören',
+      agent: 'Agent',
       model: 'Modell som begärdes',
       sent: 'Exakt text som skickades',
     },
@@ -562,6 +569,7 @@ const en: ReviewWords = {
     readOnly: (reason) => `This discussion is read-only: ${reason}`,
     details: 'Details',
     hideDetails: 'Hide details',
+    agentLine: 'Runs on Cursor, text-only. Claude is not offered here: its text-only limits are not yet verified.',
     contextLabels: {
       subject: 'About',
       revisions: 'Revisions',
@@ -569,6 +577,7 @@ const en: ReviewWords = {
       notes: 'Your notes sent',
       instruction: "DSpatch's instruction",
       providerContext: 'Added by the provider',
+      agent: 'Agent',
       model: 'Model asked for',
       sent: 'Exact text sent',
     },

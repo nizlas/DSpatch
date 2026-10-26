@@ -61,7 +61,11 @@ import { describeLiveBinding } from '../shared/loop-editor-run';
 import { formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
 import type { LoopNode, RoleReference, RoleResolver } from '../shared/loop-graph';
 import type { RunResult, RunStatus } from '../shared/loop-run';
+import { CHAT_PERMISSIONS, ClaudeAgentSdkAdapter } from '../adapter/claude-agent-sdk-adapter';
+import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
+import type { StoredSessionProvider } from '../shared/bridge';
 import { ChatService, type ChatAdapter } from './chat-service';
+import { DISPOSE_TIMEOUT_MS } from './dispose-timeout';
 import { ConversationStore } from './conversation-store';
 import {
   PresentationAdapter,
@@ -705,7 +709,40 @@ function probeRepoRoot(): string {
 }
 
 /**
- * The chat service owns the Cursor adapter, in the main process.
+ * DSP-117: the reference that enables Claude in the main chat for this launch.
+ *
+ * Read once, here. `DSPATCH_CLAUDE_AUTHORIZATION=<reference text>` maps to the
+ * adapter's existing subscription authorization; absent (the default), Claude
+ * cannot be chosen and the window says so. No credential is read, copied or
+ * stored: the text is a reference to an approval, shown in Session details, and
+ * the adapter's own credential rule still decides whether a session may start.
+ * There is no API-key path.
+ */
+const CLAUDE_AUTHORIZATION_REFERENCE: string | null =
+  (process.env['DSPATCH_CLAUDE_AUTHORIZATION'] ?? '').trim() || null;
+
+/** The main chat's adapter per provider. Claude only with the launch's reference. */
+function createChatAdapter(provider: StoredSessionProvider): ChatAdapter {
+  if (presentationMode) {
+    // SIMULATED for either provider: the presentation adapter echoes the provider it
+    // was opened for, and nothing reaches Cursor or Claude.
+    return new PresentationAdapter(presentationAdapterOptions());
+  }
+  if (provider === 'claude') {
+    if (CLAUDE_AUTHORIZATION_REFERENCE === null) {
+      throw new Error('Claude is not enabled for this launch.');
+    }
+    return new ClaudeAgentSdkAdapter({
+      authorization: { kind: 'subscription', authorization: CLAUDE_AUTHORIZATION_REFERENCE },
+      permissions: CHAT_PERMISSIONS,
+    });
+  }
+  return new CursorSdkAdapter({ toolPolicy: 'provider-default' });
+}
+
+/**
+ * The chat service owns the chat's adapter (Cursor, or Claude when this launch
+ * enables it), in the main process.
  *
  * The renderer reaches it only through the channels registered below. Nothing
  * about the window changes that: `contextIsolation` stays on, `nodeIntegration`
@@ -723,12 +760,9 @@ const chatService = new ChatService({
   conversations: () => requireConversationStore(),
   conversationForProject: (projectPath) =>
     requireProjectStore().conversationFor(projectPath),
-  ...(presentationMode
-    ? {
-        createAdapter: (): ChatAdapter => new PresentationAdapter(presentationAdapterOptions()),
-        readAuthStatus: presentationAuthStatus,
-      }
-    : {}),
+  createAdapter: createChatAdapter,
+  claudeAuthorizationReference: CLAUDE_AUTHORIZATION_REFERENCE,
+  ...(presentationMode ? { readAuthStatus: presentationAuthStatus } : {}),
 });
 
 let serviceDisposed = false;
@@ -1502,6 +1536,7 @@ function environmentInfo(): EnvironmentInfo {
       id: chatService.adapterId(),
       capabilities: chatService.capabilities(),
     },
+    agentChoice: chatService.agentChoice('cursor'),
   };
 }
 
@@ -1666,16 +1701,6 @@ function sendToEveryWindow(channel: BridgeChannel, payload: unknown): void {
     }
   }
 }
-
-/**
- * How long shutdown waits for the adapter to let go before leaving anyway.
- *
- * The provider path owns a local agent runtime and an on-disk store, and closing
- * those is worth waiting for — but only waiting. Eight seconds is longer than a
- * healthy close takes and short enough that a person who clicked the X does not
- * conclude the application is broken.
- */
-const DISPOSE_TIMEOUT_MS = 8_000;
 
 /**
  * Dispose, then end the process — and end it even if disposal never comes back.

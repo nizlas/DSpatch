@@ -55,6 +55,12 @@ import type {
  * the deliberate consequence of the bump: a version 1 build would otherwise
  * rewrite the session without `provider` on its next save, after which the file
  * would read as a Cursor session.
+ *
+ * DSP-117 added two optional attempt fields within version 2, `runEnd` and
+ * `adapterProcess`, written only for turns of an adapter that reports them (Claude)
+ * and absent otherwise, so every existing file reads back unchanged. Not a bump: a
+ * version 2 build without them reads such a file and, on its next save, drops
+ * them; the attempt then reads as a Cursor turn's. Stated rather than prevented.
  */
 export const CONVERSATION_FORMAT_VERSION = 2;
 
@@ -864,6 +870,12 @@ function parseAttempts(value: unknown, filePath: string): readonly StoredAttempt
       acknowledgedAtUtc:
         typeof entry['acknowledgedAtUtc'] === 'string' ? entry['acknowledgedAtUtc'] : null,
       history: parseHistory(entry['history'], state as AttemptState),
+      // DSP-117, optional and absent from every older file: read only when well
+      // formed, so a malformed value is dropped rather than trusted.
+      ...(entry['runEnd'] === 'stopped' || entry['runEnd'] === 'forced' || entry['runEnd'] === 'unconfirmed'
+        ? { runEnd: entry['runEnd'] }
+        : {}),
+      ...(entry['adapterProcess'] === true ? { adapterProcess: true as const } : {}),
     });
   }
   return attempts;

@@ -9,11 +9,14 @@ import type {
 
 import type { Capability, CapabilitySupport } from '../adapter/types';
 import type {
+  AgentChoiceInfo,
   AttemptInfo,
   AttemptReconciliation,
   AttemptRef,
   AttemptState,
   CancelObservations,
+  ContinuityChoice,
+  StoredSessionProvider,
   ChatLoopCancelOutcome,
   ChatSessionInfo,
   ConnectionStatus,
@@ -88,6 +91,7 @@ import {
   markCancelRequested,
   routeEvent,
   summariseContext,
+  turnStatusLabel,
   type ChatState,
   type TurnState,
 } from './turn-routing';
@@ -312,6 +316,11 @@ function Workbench({
   const [sessionError, setSessionError] = useState<BridgeFailure | null>(null);
   const [chat, setChat] = useState<ChatState>(emptyChatState(null));
   const [busy, setBusy] = useState<Busy>(null);
+  /**
+   * DSP-117: the agent a *new* conversation starts with, chosen in the *Open a
+   * project* panel. An existing conversation opens with its recorded agent.
+   */
+  const [openProvider, setOpenProvider] = useState<StoredSessionProvider>('cursor');
   const [actionError, setActionError] = useState<BridgeFailure | null>(null);
   /**
    * Whether the user removed the summary of a new provider session (DSP-121). The
@@ -1836,9 +1845,9 @@ function Workbench({
       setBusy(null);
     }
     if (chosen !== null) {
-      await startSession({ kind: 'folder', path: chosen });
+      await startSession({ kind: 'folder', path: chosen, provider: openProvider });
     }
-  }, [startSession]);
+  }, [startSession, openProvider]);
 
   /**
    * Send the composer's text.
@@ -2351,6 +2360,9 @@ function Workbench({
           projects={projects}
           conversations={conversations}
           connection={connection}
+          agentChoice={environment.agentChoice}
+          openProvider={openProvider}
+          onOpenProvider={setOpenProvider}
           busy={busy}
           sessionError={sessionError}
           resumeError={resumeError}
@@ -2359,7 +2371,7 @@ function Workbench({
             void pickFolder();
           }}
           onOpen={(projectPath) => {
-            void startSession({ kind: 'folder', path: projectPath });
+            void startSession({ kind: 'folder', path: projectPath, provider: openProvider });
           }}
           forgetting={forgetting}
           forgetNote={forgetNote}
@@ -2367,7 +2379,7 @@ function Workbench({
             void forgetProjects(projectPaths);
           }}
           onSample={() => {
-            void startSession({ kind: 'sample' });
+            void startSession({ kind: 'sample', provider: openProvider });
           }}
           onResume={(conversationId) => {
             void resume(conversationId);
@@ -2864,8 +2876,22 @@ function Workbench({
                   affects. Not a card and not in the header — it belongs next to
                   the box whose next message it changes.
                 */}
+                {/*
+                  DSP-117: which agent this conversation talks to, beside the model it
+                  asks for. Changing it opens a new session with the other provider -
+                  never a resume across providers - and the summary it would send is
+                  shown, removable, before anything is sent.
+                */}
+                <AgentChooser
+                  session={session}
+                  busy={busy !== null || activeTurn !== null || loopBusy}
+                  onSwitch={(provider) => {
+                    void startSession({ kind: 'new-provider-session', provider });
+                  }}
+                />
                 <ModelChooser
                   connection={connection}
+                  session={session}
                   chosen={modelChoice}
                   onChoose={(modelId) => {
                     void window.dspatch.setRequestedModel(modelId).then(
@@ -3036,7 +3062,12 @@ function Workbench({
                   scriptedPlan={scriptedPlan}
                   onChoose={(choice) => {
                     void startSession(
-                      choice === 'try-again' ? { kind: 'retry-resume' } : { kind: 'new-provider-session' },
+                      choice === 'try-again'
+                        ? { kind: 'retry-resume' }
+                        : choice === 'switch-to-cursor'
+                          ? // DSP-117: an explicit switch, never a silent one.
+                            { kind: 'new-provider-session', provider: 'cursor' }
+                          : { kind: 'new-provider-session' },
                     );
                   }}
                   onShowDetails={showDiagnostics}
@@ -3129,7 +3160,7 @@ function Workbench({
             Back to the conversation
           </button>
         </div>
-        <SessionFacts header={header} connection={connection} />
+        <SessionFacts header={header} connection={connection} session={session} />
 
         {session !== null && (
           <>
@@ -3257,13 +3288,25 @@ function Workbench({
  */
 function ModelChooser({
   connection,
+  session,
   chosen,
   onChoose,
 }: {
   readonly connection: ConnectionStatus;
+  readonly session: ChatSessionInfo | null;
   readonly chosen: string | null;
   readonly onChoose: (modelId: string) => void;
 }): JSX.Element | null {
+  if (session !== null && session.provider === 'claude') {
+    // DSP-117: Claude has no model list here; the model is named, not chosen.
+    return (
+      <div className="model">
+        <span className="model__fixed" data-ev="model-name">
+          Model {session.modelRequested}
+        </span>
+      </div>
+    );
+  }
   if (connection.kind !== 'connected') {
     return null;
   }
@@ -3313,6 +3356,61 @@ function ModelChooser({
           for your next message here. A loop run uses the model it was started with.
         </span>
       </details>
+    </div>
+  );
+}
+
+/**
+ * Which agent the conversation talks to (DSP-117).
+ *
+ * A select rather than a toggle, so the choice reads as "Agent: Cursor" and the
+ * unavailable option can say why. Claude is disabled, with its reason in the option
+ * itself, unless this launch was started with an authorization reference. Choosing
+ * the other agent asks for a new provider session with it; nothing is resumed
+ * across providers and nothing is sent until Send.
+ */
+function AgentChooser({
+  session,
+  busy,
+  onSwitch,
+}: {
+  readonly session: ChatSessionInfo | null;
+  readonly busy: boolean;
+  readonly onSwitch: (provider: StoredSessionProvider) => void;
+}): JSX.Element | null {
+  if (session === null) {
+    return null;
+  }
+  return (
+    <div className="model">
+      <label
+        className="model__label"
+        title={
+          busy
+            ? 'The agent can be changed when nothing is running: changing it opens a new session.'
+            : session.agent.claudeNote
+        }
+      >
+        <span>Agent</span>
+        <select
+          className="model__select"
+          data-ev="agent-select"
+          value={session.provider}
+          disabled={busy}
+          onChange={(event) => {
+            const provider = event.target.value === 'claude' ? 'claude' : 'cursor';
+            if (provider !== session.provider) {
+              onSwitch(provider);
+            }
+          }}
+        >
+          <option value="cursor">Cursor</option>
+          <option value="claude" disabled={!session.agent.claudeEnabled}>
+            {/* Short, so the control row does not wrap; the reason is in the tooltip. */}
+            {session.agent.claudeEnabled ? 'Claude' : 'Claude (off)'}
+          </option>
+        </select>
+      </label>
     </div>
   );
 }
@@ -3385,9 +3483,11 @@ function AppBarProblems({
 function SessionFacts({
   header,
   connection,
+  session,
 }: {
   readonly header: ChatHeaderView;
   readonly connection: ConnectionStatus;
+  readonly session: ChatSessionInfo | null;
 }): JSX.Element {
   return (
     <Section title="Session details">
@@ -3398,18 +3498,35 @@ function SessionFacts({
           and the fact is here. A connection that is *not* working is a different
           thing and stays above the conversation, in `AppBarProblems`.
         */}
-        <Fact label="Connection" value={header.connection} testId="connection-kind" />
+        {/* R4: with Claude chosen, Cursor's facts say they are Cursor's. */}
+        <Fact
+          label={session?.provider === 'claude' ? 'Cursor connection' : 'Connection'}
+          value={header.connection}
+          testId="connection-kind"
+        />
+        {session !== null && (
+          <>
+            {/* DSP-117: the agent, its connection line and the policy it is given. */}
+            <Fact
+              label="Agent"
+              value={`${session.provider === 'claude' ? 'Claude' : 'Cursor'} · ${session.agent.connectionText}`}
+              testId="session-agent"
+            />
+            <Fact label="Tool policy sent" value={session.agent.toolPolicyText} testId="session-tool-policy" />
+            <Fact label="Claude" value={session.agent.claudeNote} testId="session-claude-enabled" />
+          </>
+        )}
         {header.details.map((fact) => (
           <Fact
             key={fact.label}
-            label={fact.label}
+            label={session?.provider === 'claude' && fact.label === 'Account' ? 'Cursor account' : fact.label}
             value={fact.value}
             testId={DETAIL_TEST_ID[fact.label]}
           />
         ))}
         {connection.kind === 'connected' && (
           <Fact
-            label="Models available"
+            label={session?.provider === 'claude' ? 'Cursor models available' : 'Models available'}
             value={
               connection.modelsAvailable === null
                 ? 'unknown — the list was not read'
@@ -3452,6 +3569,9 @@ function ProjectChooser({
   projects,
   conversations,
   connection,
+  agentChoice,
+  openProvider,
+  onOpenProvider,
   busy,
   sessionError,
   resumeError,
@@ -3469,6 +3589,9 @@ function ProjectChooser({
   readonly projects: ProjectListing | null;
   readonly conversations: ConversationListing | null;
   readonly connection: ConnectionStatus;
+  readonly agentChoice: AgentChoiceInfo;
+  readonly openProvider: StoredSessionProvider;
+  readonly onOpenProvider: (provider: StoredSessionProvider) => void;
   readonly busy: Busy;
   readonly sessionError: BridgeFailure | null;
   readonly resumeError: BridgeFailure | null;
@@ -3484,7 +3607,11 @@ function ProjectChooser({
   readonly onDismiss: () => void;
 }): JSX.Element {
   const connected = connection.kind === 'connected';
-  const disabled = busy !== null || !connected;
+  // DSP-117: Cursor's connection gates opening only when Cursor is the agent. With
+  // Claude chosen, Claude's own credential rule decides when the session starts.
+  const claudeChosen = openProvider === 'claude' && agentChoice.claudeEnabled;
+  const needsCursor = !claudeChosen;
+  const disabled = busy !== null || (needsCursor && !connected);
   // `recent` only: a project named by the environment is not in the store, so
   // there would be nothing to remove for it.
   const missingRemembered = (projects?.entries ?? []).filter(
@@ -3512,6 +3639,29 @@ function ProjectChooser({
       </p>
 
       <div className="row">
+        {/*
+          DSP-117: the agent a new conversation starts with. A project whose
+          conversation already has a session opens with that session's agent.
+        */}
+        <div className="model">
+          <label className="model__label" title={agentChoice.claudeNote}>
+            <span>Agent</span>
+            <select
+              className="model__select"
+              data-ev="open-agent-select"
+              value={claudeChosen ? 'claude' : 'cursor'}
+              disabled={busy !== null}
+              onChange={(event) => {
+                onOpenProvider(event.target.value === 'claude' ? 'claude' : 'cursor');
+              }}
+            >
+              <option value="cursor">Cursor</option>
+              <option value="claude" disabled={!agentChoice.claudeEnabled}>
+                {agentChoice.claudeEnabled ? 'Claude' : 'Claude (off)'}
+              </option>
+            </select>
+          </label>
+        </div>
         <button
           type="button"
           className="button button--primary"
@@ -3537,11 +3687,15 @@ function ProjectChooser({
         )}
       </div>
 
-      {!connected && (
+      {needsCursor && !connected && (
         <p className="app__note">
-          A session needs a connected account. Nothing is sent until then.
+          A Cursor session needs a connected Cursor account. Nothing is sent until then.
         </p>
       )}
+      <p className="app__note" data-ev="open-agent-note">
+        The agent applies to a new conversation. A project whose conversation already
+        has a session opens with that session&apos;s agent.
+      </p>
 
       {sessionError !== null && (
         <Failure
@@ -4511,11 +4665,11 @@ function ContinuityChoices({
   readonly commandRunning: boolean;
   /** The scripted plan of a presentation run, for the test-mode label; `null` otherwise. */
   readonly scriptedPlan: ScriptedRunPlan | null;
-  readonly onChoose: (choice: 'try-again' | 'new-session') => void;
+  readonly onChoose: (choice: ContinuityChoice) => void;
   /** The *Details* entry: the session details, at the diagnostics. */
   readonly onShowDetails: () => void;
 }): JSX.Element | null {
-  const panel = continuityPanel(session.continuity, commandRunning);
+  const panel = continuityPanel(session.continuity, commandRunning, session.provider);
   if (panel === null) {
     return null;
   }
@@ -5953,14 +6107,6 @@ function basename(fullPath: string): string {
   return parts[parts.length - 1] ?? fullPath;
 }
 
-const TURN_STATUS_LABEL: Record<TurnState['status'], string> = {
-  streaming: 'streaming …',
-  'awaiting-approval': 'waiting for an approval DSpatch cannot answer',
-  finished: 'finished',
-  cancelled: 'cancelled',
-  error: 'error',
-};
-
 /**
  * One loop run in the conversation.
  *
@@ -6638,6 +6784,8 @@ function Turn({
         first place: a fact about the turn, not a mark on the conversation.
       */
       data-status={turn.status}
+      /* How a cancelled run ended locally (DSP-117); absent when not reported. */
+      data-end={turn.end}
     >
       {/*
         AC#2's honesty requirement, attached to the message it is about. The old
@@ -6727,9 +6875,7 @@ function Turn({
             className={`badge badge--${badge}`}
             data-ev={active ? 'active-turn-status' : `turn-${String(index)}-status`}
           >
-            {turn.status === 'finished'
-              ? 'finished with no text'
-              : TURN_STATUS_LABEL[turn.status]}
+            {turn.status === 'finished' ? 'finished with no text' : turnStatusLabel(turn)}
           </span>
         </p>
       )}

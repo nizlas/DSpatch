@@ -20,11 +20,15 @@ the packaged artifact, and what a first connected run needs.
 
 ## Prerequisites
 
-- Windows. Linux is a target but remains untested; none of these instructions
-  have been tested there.
-- Node 22.12 or later, with npm. Tested with Node 24.21.0 and npm 11.19.0.
-  A real `node` executable is also what runs the working copy's test; see
-  [Running the test](#the-connected-workflow).
+- Windows. Linux is prepared but has not been run; see
+  [Linux (prepared, not yet run)](#linux-prepared-not-yet-run). The rest of this
+  document is written and tested for Windows.
+- Node 24 with npm (tested with Node 24.21.0 and npm 11.19.0). `engines` says
+  `^22.18.0 || >=23.6.0`: the floor Node's own documentation gives for what the
+  test and loop scripts use (`module.registerHooks`, added in 22.15.0 and 23.5.0;
+  TypeScript type stripping on by default from 22.18.0 and 23.6.0). Nothing below
+  Node 24 has been run. A real `node` executable is also what runs the working
+  copy's test; see [Running the test](#the-connected-workflow).
 - Git.
 - Internet access for initial installation and packaging, when the Electron
   binary and distribution archive are downloaded.
@@ -34,6 +38,89 @@ the packaged artifact, and what a first connected run needs.
 
 No key or secret environment variable is ever set by DSpatch, and none belongs
 in this repository.
+
+## Linux (prepared, not yet run)
+
+DSpatch has been prepared to start from a clone on Linux in development mode
+(DSP-131). **None of this has been run on Linux yet**; it is what the code and the
+tool documentation lead us to expect, not an observation. Packaging, installers
+and the `.cmd` hand-over kits are out of scope.
+
+**Requirements**
+
+- `git`.
+- Node 24 with npm, as above.
+- Electron's runtime libraries. They are distribution-specific; commonly needed
+  are GTK 3, NSS, `libasound2`, `libgbm`, `libxss`/`libxshmfence` and the X11 or
+  Wayland client libraries a desktop install normally already has. A missing one
+  shows up as Electron failing to start with the library's name in the error.
+- The Chromium sandbox stays on. DSpatch's windows use `sandbox: true`, and on
+  distributions that restrict unprivileged user namespaces (recent Ubuntu, for
+  example) Electron then needs either its `chrome-sandbox` helper owned by root
+  with mode 4755, or an AppArmor profile that allows it. Do **not** start DSpatch
+  with `--no-sandbox`.
+
+**From a fresh clone**
+
+```sh
+git clone <repository URL> DSpatch
+cd DSpatch/app
+npm ci
+# Fetch Electron's binary now, so the sandbox helper exists before the first start
+# (electron 44.3.0's index.js otherwise downloads it on first use; read, not observed on Linux):
+node node_modules/electron/install.js
+# Only where unprivileged user namespaces are restricted (see above):
+sudo chown root:root node_modules/electron/dist/chrome-sandbox
+sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+npm run typecheck
+npm run build
+npm run dev
+```
+
+`npm ci` must run on the Linux machine itself: it installs the Linux builds of the
+Cursor and Claude SDKs from the lockfile. A `node_modules` copied from Windows will
+not work. Re-running `npm ci` replaces `node_modules/electron`, so the sandbox step
+has to be repeated after it.
+
+**Launch from a plain terminal.** A terminal inherited from a Claude Code session
+carries Claude Code's own variables (OAuth and auth-token variables among them),
+and DSpatch's Claude adapter refuses to start with those present rather than
+reuse them. Start `npm run dev` from a new login shell.
+
+**Where things go.** Electron's `userData` is expected at `~/.config/DSpatch`
+(from `productName`; unobserved on Linux), holding `conversations/`,
+`dspatch-projects.json`, `reviews/` and `loop-runs/`. The `%TEMP%` locations named
+elsewhere in this document are the system temporary directory (`os.tmpdir()`,
+normally `/tmp`).
+
+**Not on Linux.** `scripts/start-review.cmd` and `scripts/start-resume-choice.cmd`
+are Windows-only; there are no `.sh` equivalents. The discussion in the review
+window runs on Cursor (text-only) and needs Cursor's own login on that machine;
+DSpatch reads no credential to provide one.
+
+**Stopping a command.** The chat's build or test command and the loop gate's
+command are started through `/bin/sh` as the leader of their own process group,
+and Stop (or the gate's timeout) sends SIGKILL to the whole group, falling back to
+the shell alone if the group cannot be signalled. Windows still uses
+`taskkill /T /F`, unchanged. Two residual risks: because the group is detached
+from the terminal, a DSpatch crash or Ctrl+C in the `npm run dev` terminal does
+not reach a command that is still running (stop it in DSpatch first, or with
+`kill -- -<pid>`); and a descendant that calls `setsid` leaves the group and
+escapes the stop. The group stop is covered by simulated-platform tests on
+Windows only.
+
+**A first trial, to record.** Distribution and version, kernel, desktop session
+(X11 or Wayland), `node --version`, `npm --version`, Electron's version and
+`git --version`; whether the window opens; whether **Open example review** and
+**File → Open Example Review** open the bundled DSP-116 walk; one small agent
+change in a sample project with its diff and a test run; Stop on a long-running
+command, then `ps -o pid,pgid,cmd` to see that nothing of it survives; closing and
+reopening DSpatch to see the conversation come back. For a trial with Claude, read
+[Claude in the main chat](#claude-in-the-main-chat-offline-prepared-not-yet-run-live)
+first: it needs `DSPATCH_CLAUDE_AUTHORIZATION` and Claude Code's own login on that
+machine. Choose Claude under *Agent* in *Open a project*. Opening is then not held
+back by Cursor's connection, although the window still reports Cursor's connection
+as a problem when there is no usable Cursor login.
 
 ## Fetch and install
 
@@ -47,8 +134,9 @@ npm install
 ```
 
 Electron 44 does not download its binary during installation: the package has
-no `postinstall`. The download happens on first use, during the first
-`npm run dev`, and takes a little time. This is expected.
+no `postinstall`, and its `index.js` downloads the binary when it is missing. So
+the download happens on first use, during the first `npm run dev`, and takes a
+little time. This is expected.
 
 If `node` or `npm` cannot be found in an already open terminal, its PATH may be
 stale. Open a new terminal or update the session:
@@ -831,8 +919,9 @@ and the window says so beside the count rather than leaving it to be discovered.
 
 The Claude adapter (`claude-agent-sdk-adapter.ts`) can register a session it did
 not start, so that its first send passes `resume` with the same provider session
-UUID DSpatch derived for it. Nothing in the window uses this yet: every chat
-session is still a Cursor session until Claude is wired into the chat (DSP-117).
+UUID DSpatch derived for it. Since DSP-117 a conversation can use Claude (see
+[Claude in the main chat](#claude-in-the-main-chat-offline-prepared-not-yet-run-live)),
+and a Claude-recorded conversation is resumed through this path.
 What exists, and what it is not:
 
 - **A local check, not the provider's answer.** `resume()` looks the session up
@@ -882,6 +971,47 @@ built — except `local-lookup`, which asks no provider and has no guard; it rea
 this user's Claude profile. Each writes one JSON record beside its log path; a
 refusal is a finding and is never retried.
 
+#### Claude in the main chat (offline-prepared, not yet run live)
+
+DSP-117 lets a conversation use Claude instead of Cursor. It is tested offline only,
+with the Claude SDK substituted; **no Claude turn has run through the window**.
+
+- **Enabled per launch, off by default.** Start DSpatch with
+  `DSPATCH_CLAUDE_AUTHORIZATION=<reference>`, where the reference is the text of the
+  approval Claude runs under. Without it, Claude cannot be chosen and the *Agent*
+  control offers *Claude (off)*, with the reason in its tooltip. Set it only on a machine where
+  Claude may run; **never on the work computer**.
+- **Launch from a plain terminal.** The variable maps to the adapter's subscription
+  rule: Claude runs on Claude Code's own login on that machine, made with Claude
+  Code itself. Any API credential variable in the environment is refused, Claude
+  Code's own OAuth and auth-token variables are refused, and there is no API-key
+  fallback. A terminal inherited from a Claude Code session carries those variables,
+  so the session is refused with DSpatch's rule; the conversation stays on screen
+  with *Start new Claude session* and *Switch to Cursor*.
+- **What the agent may do** (`CHAT_PERMISSIONS`): Read, Glob, Grep, Edit and Write
+  in the project; **no Bash**, so builds and tests go through DSpatch's own runner;
+  no MCP servers and no settings read from disk. Session details shows the policy
+  as sent. That Edit covers Write and Read covers Glob and Grep is Anthropic's
+  documentation, not yet observed. The model is `claude-haiku-4-5`, named rather
+  than chosen.
+- **Chosen when a project is opened, kept per conversation.** *Open a project* has
+  an *Agent* choice beside *Choose a folder …*: Cursor by default, Claude when this
+  launch enables it. It applies to a **new** conversation; a project whose
+  conversation already has a session opens with that session's agent. With Claude
+  chosen, opening is not held back by Cursor's connection and creates no Cursor
+  agent: Cursor is not called to open the project. (The connection check DSpatch
+  makes at startup still reads Cursor's login, as before.)
+- **Switching later.** *Agent: Cursor / Claude* also sits beside the model in an open
+  conversation, disabled while a message or command runs. Switching opens a **new**
+  session with the other provider: the summary DSpatch would send is shown first
+  and can be removed, and nothing is sent until you send.
+- **Never resumed through another provider.** A Claude-recorded session is not
+  resumed through Cursor, nor the other way round. In a launch without Claude, a
+  Claude-recorded conversation opens with nothing called and nothing sent, and the
+  window offers *Start new Cursor session*.
+- **The review discussion stays on Cursor, text-only.** Claude is not offered there
+  until its text-only limits are verified.
+
 ### Environment variables
 
 | Variable | Purpose |
@@ -890,7 +1020,8 @@ refusal is a finding and is never retried.
 | `DSPATCH_ALLOW_OWN_REPO` | Set to `1` to lift the refusal to open DSpatch's own working copy. Read the warning in step 2 first. |
 | `DSPATCH_CHAT_WORKSPACE` | Where the generated sample working copy goes. Must be outside this repository. |
 | `DSPATCH_NODE_PATH` | The `node` executable DSpatch offers when it suggests a command, and the one it reports in the session details. Otherwise the first `node.exe` on `PATH` is used. The command you actually run is whatever is in the field. |
-| `DSPATCH_CHAT_MODEL` | Model requested. Default `claude-haiku-4-5`. |
+| `DSPATCH_CHAT_MODEL` | Model requested from Cursor. Default `claude-haiku-4-5`. |
+| `DSPATCH_CLAUDE_AUTHORIZATION` | Enables Claude in the main chat for this launch; the value is the authorization reference shown in Session details. Absent by default. See [Claude in the main chat](#claude-in-the-main-chat-offline-prepared-not-yet-run-live). |
 | `DSPATCH_PROBE_REPO_ROOT` | The boundary the **generated sample project** and the DSP-1 connection probe stay outside of. Not needed normally: DSpatch finds its own repository by walking up from the application path, from source and from the packaged artifact alike. Set it only for a copy of the artifact that has been moved out of the tree it was built in, where that walk finds nothing. **It is not what contains the agent** — the refusal to open DSpatch's own working copy does not read it, and setting it cannot widen or weaken that refusal. |
 | `DSPATCH_EXPORT_DIR` | Where *Export a copy* writes, instead of opening the save dialog. For automated runs. |
 | `DSPATCH_CHAT_SHOT` | Where a scripted run photographs the window. The file named here is written when the run reports; a scenario that asks for pictures of its own gets them beside it, as `<name>-<label>.png`. What a layout looks like is not a number, and this is how the window itself reaches whoever asked for the change. Unset means no pictures; a failure to write one never changes the run's exit code. |

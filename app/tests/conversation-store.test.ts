@@ -641,3 +641,34 @@ test('a save failure is reported rather than thrown', () => {
   assert.match(String(written.error), /saved earlier is still on disk unchanged/);
   assert.notEqual(written.readOnly, true);
 });
+
+test('an attempt keeps its reported end and local process across a save, and a file without them reads as before (DSP-117)', () => {
+  const { store, directory } = storeIn('runend');
+  const original = conversation();
+  store.write(original);
+  const filePath = path.join(directory, `${original.conversationId}.json`);
+  const onDisk = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
+  const formatBefore = onDisk['formatVersion'];
+  onDisk['attempts'] = [
+    { attemptId: 'dsp-attempt-0001', kind: 'agent-turn', state: 'stopped-confirmed', runEnd: 'forced', adapterProcess: true },
+    { attemptId: 'dsp-attempt-0002', kind: 'agent-turn', state: 'stopped-confirmed' },
+    { attemptId: 'dsp-attempt-0003', kind: 'agent-turn', state: 'completed', runEnd: 'sideways', adapterProcess: 'yes' },
+  ];
+  fs.writeFileSync(filePath, JSON.stringify(onDisk), 'utf8');
+
+  const read = store.read(original.conversationId).conversation;
+  assert.ok(read !== null);
+  assert.equal(read.formatVersion, formatBefore, 'no format bump');
+  assert.equal(read.attempts[0]?.runEnd, 'forced');
+  assert.equal(read.attempts[0]?.adapterProcess, true);
+  // Absent stays absent; a malformed value is dropped rather than trusted.
+  for (const attempt of read.attempts.slice(1)) {
+    assert.ok(!('runEnd' in attempt) && !('adapterProcess' in attempt), JSON.stringify(attempt));
+  }
+
+  // And a write of what was read keeps them.
+  store.write(read);
+  const again = store.read(original.conversationId).conversation;
+  assert.equal(again?.attempts[0]?.runEnd, 'forced');
+  assert.equal(again?.attempts[0]?.adapterProcess, true);
+});
