@@ -35,6 +35,9 @@ the packaged artifact, and what a first connected run needs.
 - **A Cursor login**, for anything that talks to the provider. See
   [Signing in without a secret in the repository](#signing-in-without-a-secret-in-the-repository).
   Building, packaging and the startup smoke test need no account.
+- **Claude is optional and not installed by default.** A plain `npm ci` installs no
+  Claude SDK and no Claude Code binary; see
+  [Claude support (optional)](#claude-support-optional).
 
 No key or secret environment variable is ever set by DSpatch, and none belongs
 in this repository.
@@ -77,9 +80,11 @@ npm run build
 npm run dev
 ```
 
-`npm ci` must run on the Linux machine itself: it installs the Linux builds of the
-Cursor and Claude SDKs from the lockfile. A `node_modules` copied from Windows will
-not work. Re-running `npm ci` replaces `node_modules/electron`, so the sandbox step
+`npm ci` must run on the Linux machine itself: it installs the Linux build of the
+Cursor SDK from the lockfile. A `node_modules` copied from Windows will not work.
+Claude is not part of it: for a trial with Claude, run `npm run claude:install` on
+that machine too (see [Claude support (optional)](#claude-support-optional)); it
+installs the Linux Claude Code binary for that machine's libc. Re-running `npm ci` replaces `node_modules/electron`, so the sandbox step
 has to be repeated after it.
 
 **Launch from a plain terminal.** A terminal inherited from a Claude Code session
@@ -117,8 +122,8 @@ change in a sample project with its diff and a test run; Stop on a long-running
 command, then `ps -o pid,pgid,cmd` to see that nothing of it survives; closing and
 reopening DSpatch to see the conversation come back. For a trial with Claude, read
 [Claude in the main chat](#claude-in-the-main-chat-offline-prepared-not-yet-run-live)
-first: it needs `DSPATCH_CLAUDE_AUTHORIZATION` and Claude Code's own login on that
-machine. Choose Claude under *Agent* in *Open a project*. Opening is then not held
+first: it needs Claude support (`npm run claude:install`),
+`DSPATCH_CLAUDE_AUTHORIZATION` and Claude Code's own login on that machine. Choose Claude under *Agent* in *Open a project*. Opening is then not held
 back by Cursor's connection, although the window still reports Cursor's connection
 as a problem when there is no usable Cursor login.
 
@@ -144,6 +149,39 @@ stale. Open a new terminal or update the session:
 ```powershell
 $env:PATH = "C:\Program Files\nodejs;$env:APPDATA\npm;$env:PATH"
 ```
+
+### Claude support (optional)
+
+Claude is not a dependency of DSpatch (DSP-133). The Claude Agent SDK, and through
+it the Claude Code binary for the computer (roughly 270-290 MB on Windows), lives in
+`app/claude-support/` with its own pinned `package.json` and lockfile, and is
+installed **only** when you ask for it:
+
+```sh
+npm run claude:install      # from app/; prints what it installs and where
+```
+
+It runs `npm ci` in `app/claude-support/` and nothing else: no login and no model
+run. Restart DSpatch afterwards; whether support is installed is read once, at
+launch. Nothing installs it implicitly - not `npm ci` or `npm install` in `app/`,
+not starting or reopening DSpatch, not showing or choosing an agent.
+
+- **The work computer: plain `npm ci` only, never `npm run claude:install`.**
+  Without support, the *Agent* choice offers *Claude (not installed)*, disabled,
+  with the line *Claude support is not installed. To install it, run
+  `npm run claude:install` in `app/`, then restart DSpatch.* Cursor and review
+  work as before.
+- **Using Claude needs both** support installed and
+  `DSPATCH_CLAUDE_AUTHORIZATION` for the launch (see
+  [Claude in the main chat](#claude-in-the-main-chat-offline-prepared-not-yet-run-live)).
+  A missing part is named and the session is refused before anything is built.
+- **Removing support** is deleting `app/claude-support/node_modules`.
+- **A packaged build has no Claude.** Packaging takes only `dist/` and
+  `package.json`; there is no `claude-support` beside the packaged app.
+- **Checking DSpatch's view of the SDK.** The adapter uses its own structural types
+  (`src/adapter/claude-sdk-shapes.ts`) so that `npm run typecheck` passes without
+  the SDK. After `npm run claude:install`, `npm run typecheck:claude` checks them
+  against the installed SDK's own types.
 
 ## Run in development mode
 
@@ -979,7 +1017,9 @@ with the Claude SDK substituted; **no Claude turn has run through the window**.
 - **Enabled per launch, off by default.** Start DSpatch with
   `DSPATCH_CLAUDE_AUTHORIZATION=<reference>`, where the reference is the text of the
   approval Claude runs under. Without it, Claude cannot be chosen and the *Agent*
-  control offers *Claude (off)*, with the reason in its tooltip. Set it only on a machine where
+  control offers *Claude (off)*, with the reason in its tooltip. Claude support
+  must be installed as well ([Claude support (optional)](#claude-support-optional));
+  without it the control offers *Claude (not installed)* and says how to install it. Set it only on a machine where
   Claude may run; **never on the work computer**.
 - **Launch from a plain terminal.** The variable maps to the adapter's subscription
   rule: Claude runs on Claude Code's own login on that machine, made with Claude
@@ -1483,6 +1523,8 @@ every launch.
 | `npm run test:fast` | The 35 files that do not spawn a process, run git or wait on a clock. This is the one to run while working. |
 | `npm run test:list` | The groups, what each covers, and how many files it has. |
 | `npm run clean` | Remove `dist/`. |
+| `npm run claude:install` | Install optional Claude support into `claude-support/node_modules`. Never on the work computer. See [Claude support (optional)](#claude-support-optional). |
+| `npm run typecheck:claude` | After `claude:install` only: check DSpatch's types for the Claude SDK against the installed SDK. |
 | `npm run review -- <definition.review.json>` | Review alone, in a review window with no chat (development mode). Without a file the window offers to choose one. |
 | `npm run test:review` | The review module's tests: the model and the discussion's prompt and record, and the review and discussion services against a real git fixture with a scripted adapter. |
 

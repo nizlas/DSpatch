@@ -20,7 +20,10 @@
  * - **Loading `@anthropic-ai/claude-agent-sdk`.** The real SDK would start the
  *   Claude Code binary, a separate process the connection guard cannot see, and its
  *   session lookup reads the user's Claude profile. Every test substitutes `queryFn`
- *   and `localLookup`; one that does not now fails at the import.
+ *   and `localLookup`; one that does not now fails at the import. Since DSP-133 the
+ *   SDK is loaded from optional Claude support (`app/claude-support/`) by file URL,
+ *   so any specifier or URL naming the SDK or a path inside a `claude-support` folder
+ *   is refused too.
  *
  * Not covered: a test run outside `run-tests.mjs` (plain `node --test`), and network
  * use by a child process a test starts. Nothing here changes the product.
@@ -104,7 +107,9 @@ export function expectRefusal(specifier) {
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (specifier === '@anthropic-ai/claude-agent-sdk' || specifier.startsWith('@anthropic-ai/claude-agent-sdk/')) {
+    // `claude-support` as a folder (`claude-support/…`), not the loader module
+    // `./claude-support` itself, which every Claude test imports.
+    if (specifier.includes('@anthropic-ai/claude-agent-sdk') || /claude-support[\\/]/.test(specifier)) {
       if (!expected.delete(specifier)) {
         refused.push(specifier);
       }

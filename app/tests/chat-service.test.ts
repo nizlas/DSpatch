@@ -1712,6 +1712,7 @@ function serviceOver(
     // A launch with Claude enabled (DSP-117), so a conversation recorded as Claude
     // opens as Claude; this one fake stands in for both providers' adapters.
     claudeAuthorizationReference: 'test-only reference',
+    claudeSupport: { installed: true, reason: null },
     conversations: () => store,
     ...(conversationForProject === undefined ? {} : { conversationForProject }),
     timings: { cancelConfirmMs: 40, cancelWatchMs: 60 },

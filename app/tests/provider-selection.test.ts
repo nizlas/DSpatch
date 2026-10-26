@@ -165,6 +165,8 @@ function harness(
   name: string,
   options: {
     readonly claudeEnabled: boolean;
+    /** DSP-133: Claude support as read at launch. Defaults to installed. */
+    readonly claudeInstalled?: boolean;
     readonly workspace?: string;
     readonly store?: ConversationStore;
     readonly conversationId?: string;
@@ -190,6 +192,10 @@ function harness(
     ...(conversationId === undefined ? {} : { conversationForProject: () => conversationId }),
     readAuthStatus: () => Promise.resolve({ status: 'logged-in', backendUrl: 'https://example.invalid' }),
     claudeAuthorizationReference: options.claudeEnabled ? 'test-only reference' : null,
+    claudeSupport:
+      options.claudeInstalled === false
+        ? { installed: false, reason: 'test: no claude-support folder' }
+        : { installed: true, reason: null },
     createAdapter: (provider) => {
       asked.push(provider);
       if (provider === 'claude') {
@@ -491,6 +497,41 @@ test('the review discussion stays Cursor text-only whatever the chat has selecte
     await review.dispose();
     await h.service.dispose();
   }
+});
+
+test('without Claude support installed, Claude is not choosable, says how to install it, and is refused before any adapter is built (DSP-133)', async () => {
+  const h = harness('not-installed', { claudeEnabled: true, claudeInstalled: false });
+  const session = await h.service.startChatSession({ kind: 'folder', path: h.workspace });
+  assert.equal(session.provider, 'cursor');
+  assert.equal(session.agent.claudeEnabled, false, 'authorized but not installed is not available');
+  assert.equal(session.agent.claudeInstalled, false);
+  assert.match(session.agent.claudeNotInstalledText ?? '', /npm run claude:install.*in `app\/`.*restart DSpatch/);
+  assert.match(session.agent.claudeNote, /Claude support is not installed/);
+  assert.match(h.service.agentChoice('claude').connectionText, /Claude support not installed/);
+
+  await assert.rejects(
+    h.service.startChatSession({ kind: 'new-provider-session', provider: 'claude' }),
+    /Claude support is not installed.*Nothing was closed and nothing was sent/,
+  );
+  assert.equal(h.service.openSession()?.dspatchSessionId, session.dspatchSessionId);
+  assert.deepEqual(h.asked, ['cursor'], 'the factory was never asked for Claude');
+  assert.equal(h.claudes.length, 0);
+  await h.service.dispose();
+
+  // Neither part: both are named.
+  const neither = harness('not-installed-not-enabled', { claudeEnabled: false, claudeInstalled: false });
+  await assert.rejects(
+    neither.service.startChatSession({ kind: 'folder', path: neither.workspace, provider: 'claude' }),
+    /not installed, and Claude is not enabled for this launch/,
+  );
+  assert.deepEqual(neither.asked, []);
+  await neither.service.dispose();
+
+  // Installed and authorized: available, no install line.
+  const both = harness('installed-enabled', { claudeEnabled: true });
+  assert.equal(both.service.agentChoice('claude').claudeEnabled, true);
+  assert.equal(both.service.agentChoice('claude').claudeNotInstalledText, null);
+  await both.service.dispose();
 });
 
 test('the real Claude SDK cannot be loaded by a test (the offline guard), so every Claude test runs on substitutes', async () => {

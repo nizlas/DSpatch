@@ -1,0 +1,10 @@
+{
+  "name": "dspatch-claude-support",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Optional Claude support for DSpatch: the Claude Agent SDK and, through it, the Claude Code binary for this platform. Installed only by `npm run claude:install` in app/; a plain `npm ci` in app/ never installs it. Not a workspace.",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.306"
+  }
+}

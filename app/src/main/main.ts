@@ -62,6 +62,7 @@ import { formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
 import type { LoopNode, RoleReference, RoleResolver } from '../shared/loop-graph';
 import type { RunResult, RunStatus } from '../shared/loop-run';
 import { CHAT_PERMISSIONS, ClaudeAgentSdkAdapter } from '../adapter/claude-agent-sdk-adapter';
+import { claudeSupportStatus, claudeUnavailableReason } from '../adapter/claude-support';
 import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
 import type { StoredSessionProvider } from '../shared/bridge';
 import { ChatService, type ChatAdapter } from './chat-service';
@@ -721,6 +722,14 @@ function probeRepoRoot(): string {
 const CLAUDE_AUTHORIZATION_REFERENCE: string | null =
   (process.env['DSPATCH_CLAUDE_AUTHORIZATION'] ?? '').trim() || null;
 
+/**
+ * DSP-133: whether Claude support (`app/claude-support/`) is installed, read once
+ * at launch from `package.json` files only. Nothing installs it here, at reopen
+ * or when the agent choice renders: `npm run claude:install` in `app/` does, and
+ * a restart picks it up. A packaged build has none.
+ */
+const CLAUDE_SUPPORT = claudeSupportStatus();
+
 /** The main chat's adapter per provider. Claude only with the launch's reference. */
 function createChatAdapter(provider: StoredSessionProvider): ChatAdapter {
   if (presentationMode) {
@@ -729,8 +738,13 @@ function createChatAdapter(provider: StoredSessionProvider): ChatAdapter {
     return new PresentationAdapter(presentationAdapterOptions());
   }
   if (provider === 'claude') {
-    if (CLAUDE_AUTHORIZATION_REFERENCE === null) {
-      throw new Error('Claude is not enabled for this launch.');
+    // Refused before construction, naming what is missing (DSP-133).
+    const unavailable = claudeUnavailableReason({
+      authorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,
+      installed: CLAUDE_SUPPORT.installed,
+    });
+    if (unavailable !== null || CLAUDE_AUTHORIZATION_REFERENCE === null) {
+      throw new Error(unavailable ?? 'Claude is not enabled for this launch.');
     }
     return new ClaudeAgentSdkAdapter({
       authorization: { kind: 'subscription', authorization: CLAUDE_AUTHORIZATION_REFERENCE },
@@ -762,6 +776,7 @@ const chatService = new ChatService({
     requireProjectStore().conversationFor(projectPath),
   createAdapter: createChatAdapter,
   claudeAuthorizationReference: CLAUDE_AUTHORIZATION_REFERENCE,
+  claudeSupport: { installed: CLAUDE_SUPPORT.installed, reason: CLAUDE_SUPPORT.reason },
   ...(presentationMode ? { readAuthStatus: presentationAuthStatus } : {}),
 });
 

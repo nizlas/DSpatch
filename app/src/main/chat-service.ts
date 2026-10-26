@@ -10,6 +10,10 @@ import {
   describePermissionPolicy,
   type ClaudePermissionPolicy,
 } from '../adapter/claude-agent-sdk-adapter';
+import {
+  CLAUDE_NOT_INSTALLED_TEXT,
+  claudeUnavailableReason,
+} from '../adapter/claude-support';
 import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
 import type {
   AgentEvent,
@@ -962,6 +966,12 @@ export interface ChatServiceOptions {
    */
   readonly claudeAuthorizationReference?: string | null;
   /**
+   * DSP-133: whether Claude support (`app/claude-support/`) is installed, read once
+   * at launch by the main process. Absent means not installed: Claude is chosen only
+   * with both this and the authorization reference. Nothing here installs anything.
+   */
+  readonly claudeSupport?: { readonly installed: boolean; readonly reason: string | null };
+  /**
    * How the stored login is read. Defaults to `Cursor.auth.status()`.
    *
    * Never returns the credential, by the SDK's own documentation and by this type:
@@ -1427,17 +1437,19 @@ export class ChatService {
    */
   agentChoice(provider: StoredSessionProvider = this.selectedProvider): AgentChoiceInfo {
     const reference = this.claudeReference();
-    const claudeEnabled = reference !== null;
-    const claudeNote = claudeEnabled
-      ? `Enabled for this launch by DSPATCH_CLAUDE_AUTHORIZATION ("${reference}").`
-      : 'Claude is not enabled for this launch. Start DSpatch with ' +
-        'DSPATCH_CLAUDE_AUTHORIZATION set to enable it.';
+    const claudeInstalled = this.claudeInstalled();
+    const unavailable = this.claudeUnavailable();
+    const claudeEnabled = unavailable === null;
+    const claudeNote =
+      unavailable ?? `Enabled for this launch by DSPATCH_CLAUDE_AUTHORIZATION ("${reference}").`;
     const connectionText =
       provider === 'claude'
         ? claudeEnabled
           ? 'Claude Agent SDK · authorization reference recorded for this launch ' +
             '(login not checked by DSpatch)'
-          : 'Claude Agent SDK · not enabled for this launch'
+          : !claudeInstalled
+            ? 'Claude Agent SDK · Claude support not installed'
+            : 'Claude Agent SDK · not enabled for this launch'
         : 'Cursor SDK · see the connection above';
     const policy =
       this.adapter !== null && this.adapterProvider === provider
@@ -1445,6 +1457,8 @@ export class ChatService {
         : undefined;
     return {
       claudeEnabled,
+      claudeInstalled,
+      claudeNotInstalledText: claudeInstalled ? null : CLAUDE_NOT_INSTALLED_TEXT,
       claudeNote,
       connectionText,
       toolPolicyText:
@@ -1461,13 +1475,29 @@ export class ChatService {
     return reference === '' ? null : reference;
   }
 
-  /** Refuse Claude before anything is closed, when this launch has not enabled it. */
+  /** DSP-133: Claude support as read at launch; absent counts as not installed. */
+  private claudeInstalled(): boolean {
+    return this.options.claudeSupport?.installed === true;
+  }
+
+  /** Why Claude cannot be chosen (each missing part named), or `null` when it can. */
+  private claudeUnavailable(): string | null {
+    return claudeUnavailableReason({
+      authorized: this.claudeReference() !== null,
+      installed: this.claudeInstalled(),
+    });
+  }
+
+  /**
+   * Refuse Claude before anything is closed or built, when this launch has not
+   * enabled it or Claude support is not installed (DSP-133: authorization AND
+   * installed).
+   */
   private requireProviderAvailable(provider: StoredSessionProvider): void {
-    if (provider === 'claude' && this.claudeReference() === null) {
+    const unavailable = provider === 'claude' ? this.claudeUnavailable() : null;
+    if (unavailable !== null) {
       throw new Error(
-        'Claude is not enabled for this launch, so a Claude session cannot be ' +
-          'opened. Start DSpatch with DSPATCH_CLAUDE_AUTHORIZATION set to enable it. ' +
-          'Nothing was closed and nothing was sent.',
+        `${unavailable} A Claude session cannot be opened. Nothing was closed and nothing was sent.`,
       );
     }
   }
@@ -1723,7 +1753,7 @@ export class ChatService {
     const recordedProviderForSelection =
       savedForSelection === null ? null : storedSessionProvider(savedForSelection);
     const recordedOrFallback: StoredSessionProvider | null =
-      recordedProviderForSelection === 'claude' && this.claudeReference() === null
+      recordedProviderForSelection === 'claude' && this.claudeUnavailable() !== null
         ? 'cursor'
         : recordedProviderForSelection;
     const selected: StoredSessionProvider =

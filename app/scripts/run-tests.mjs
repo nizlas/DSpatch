@@ -122,6 +122,7 @@ const AREAS = {
     what: 'provider adapters and their experiment scenarios, with a substituted provider',
     files: [
       'claude-agent-sdk-adapter.test.ts',
+      'claude-support.test.ts',
       { file: 'claude-agent-sdk-adapter-process.test.ts', heavy: true },
     ],
   },

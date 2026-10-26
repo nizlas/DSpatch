@@ -13,5 +13,10 @@
   // Main-process adapters require a provider SDK and Node built-ins. The renderer
   // must never import them; excluding them here turns a mistake into a failed
   // typecheck instead of a failure inside the packaged artifact.
-  "exclude": ["src/adapter/cursor-sdk-adapter.ts", "src/adapter/claude-agent-sdk-adapter.ts"]
+  "exclude": [
+    "src/adapter/cursor-sdk-adapter.ts",
+    "src/adapter/claude-agent-sdk-adapter.ts",
+    "src/adapter/claude-support.ts",
+    "src/adapter/claude-sdk-shapes.ts"
+  ]
 }

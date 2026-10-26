@@ -694,8 +694,18 @@ export interface ChatSessionInfo {
 
 /** DSP-117: whether Claude can be chosen in this launch, and how that is shown. */
 export interface AgentChoiceInfo {
-  /** `true` only when this launch was started with a recorded authorization reference. */
+  /**
+   * `true` only when this launch was started with a recorded authorization reference
+   * **and** Claude support is installed (DSP-133).
+   */
   readonly claudeEnabled: boolean;
+  /** DSP-133: whether Claude support (`app/claude-support/`) was installed at launch. */
+  readonly claudeInstalled: boolean;
+  /**
+   * DSP-133: the visible line under the agent choice when Claude support is not
+   * installed (how to install it), or `null` when it is. Never a tooltip only.
+   */
+  readonly claudeNotInstalledText: string | null;
   /** Why Claude cannot be chosen, or what enabled it. Short; for the control's tooltip. */
   readonly claudeNote: string;
   /** The connection line for the selected agent, for Session details. */

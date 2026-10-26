@@ -1,0 +1,13 @@
+{
+  // DSP-133: checks src/adapter/claude-sdk-shapes.ts against the installed Claude
+  // Agent SDK. Run `npm run claude:install` first; without Claude support this
+  // check cannot run and nothing else depends on it.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "module": "node18",
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["claude-support/sdk-shapes-compat.ts"]
+}

@@ -10,7 +10,8 @@ import type {
   SDKUserMessage,
   SpawnedProcess,
   SpawnOptions as ClaudeSpawnOptions,
-} from '@anthropic-ai/claude-agent-sdk' with { 'resolution-mode': 'import' };
+} from './claude-sdk-shapes';
+import { ClaudeAdapterError, loadClaudeSdk } from './claude-support';
 
 import type { AgentAdapter } from './agent-adapter';
 import type {
@@ -61,20 +62,8 @@ import type {
  */
 
 /** Error thrown by adapter operations. Satisfies {@link AdapterError}. */
-export class ClaudeAdapterError extends Error implements AdapterError {
-  readonly providerCode?: string;
-
-  constructor(message: string, providerCode?: string, cause?: unknown) {
-    super(message);
-    this.name = 'ClaudeAdapterError';
-    if (providerCode !== undefined) {
-      this.providerCode = providerCode;
-    }
-    if (cause !== undefined) {
-      this.cause = cause;
-    }
-  }
-}
+// Defined beside the SDK loader (DSP-133), which raises it too; re-exported here.
+export { ClaudeAdapterError };
 
 // --- Permissions -------------------------------------------------------------
 
@@ -836,9 +825,10 @@ export type ClaudeQueryFunction = (params: {
   readonly options: ClaudeQueryOptions;
 }) => ClaudeQueryHandle;
 
+/** The SDK's `query()`, from Claude support (DSP-133). Refuses plainly when it is not installed. */
 async function loadSdkQuery(): Promise<ClaudeQueryFunction> {
-  const sdk = await import('@anthropic-ai/claude-agent-sdk');
-  return sdk.query as unknown as ClaudeQueryFunction;
+  const sdk = await loadClaudeSdk();
+  return sdk.query as ClaudeQueryFunction;
 }
 
 /**
@@ -860,7 +850,7 @@ export type ClaudeLocalLookup = (
 ) => Promise<SDKSessionInfo | undefined>;
 
 async function loadSdkLocalLookup(): Promise<ClaudeLocalLookup> {
-  const sdk = await import('@anthropic-ai/claude-agent-sdk');
+  const sdk = await loadClaudeSdk();
   return (uuid, dir) => sdk.getSessionInfo(uuid, { dir });
 }
 

@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import tls from 'node:tls';
 
-import type { SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk' with { 'resolution-mode': 'import' };
+import type { SDKSessionInfo } from '../adapter/claude-sdk-shapes';
+import { claudeSupportStatus, loadClaudeSdk } from '../adapter/claude-support';
 
 import type { AgentAdapter } from '../adapter/agent-adapter';
 import {
@@ -751,34 +752,9 @@ function refuseUnauthorized(
   return EXIT_REFUSED;
 }
 
+/** The SDK version in Claude support (DSP-133), or `null` when it is not installed. */
 function sdkPackageVersion(): string | null {
-  const starts = [typeof __dirname === 'string' ? __dirname : null, process.cwd()].filter(
-    (start): start is string => start !== null,
-  );
-  for (const start of starts) {
-    let dir = path.resolve(start);
-    for (;;) {
-      const candidate = path.join(
-        dir,
-        'node_modules',
-        '@anthropic-ai',
-        'claude-agent-sdk',
-        'package.json',
-      );
-      try {
-        const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8')) as { version?: unknown };
-        return typeof parsed.version === 'string' ? parsed.version : null;
-      } catch {
-        // Not here; go up.
-      }
-      const parent = path.dirname(dir);
-      if (parent === dir) {
-        break;
-      }
-      dir = parent;
-    }
-  }
-  return null;
+  return claudeSupportStatus().sdkVersion;
 }
 
 /**
@@ -3074,7 +3050,7 @@ async function localLookupProbe(options: ScenarioOptions): Promise<LocalLookupPr
   if (options.claudeLocalLookup !== undefined) {
     return options.claudeLocalLookup;
   }
-  const sdk = await import('@anthropic-ai/claude-agent-sdk');
+  const sdk = await loadClaudeSdk();
   return (uuid, dir) => sdk.getSessionInfo(uuid, dir === undefined ? {} : { dir });
 }
 

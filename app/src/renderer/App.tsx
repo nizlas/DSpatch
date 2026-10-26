@@ -3369,6 +3369,17 @@ function ModelChooser({
  * the other agent asks for a new provider session with it; nothing is resumed
  * across providers and nothing is sent until Send.
  */
+/**
+ * The Claude option's label (DSP-133): what is missing, shortest first. "not
+ * installed" outranks "off", because enabling a launch does not help without support.
+ */
+function claudeOptionLabel(agent: AgentChoiceInfo): string {
+  if (agent.claudeEnabled) {
+    return 'Claude';
+  }
+  return agent.claudeInstalled ? 'Claude (off)' : 'Claude (not installed)';
+}
+
 function AgentChooser({
   session,
   busy,
@@ -3407,7 +3418,7 @@ function AgentChooser({
           <option value="cursor">Cursor</option>
           <option value="claude" disabled={!session.agent.claudeEnabled}>
             {/* Short, so the control row does not wrap; the reason is in the tooltip. */}
-            {session.agent.claudeEnabled ? 'Claude' : 'Claude (off)'}
+            {claudeOptionLabel(session.agent)}
           </option>
         </select>
       </label>
@@ -3657,7 +3668,7 @@ function ProjectChooser({
             >
               <option value="cursor">Cursor</option>
               <option value="claude" disabled={!agentChoice.claudeEnabled}>
-                {agentChoice.claudeEnabled ? 'Claude' : 'Claude (off)'}
+                {claudeOptionLabel(agentChoice)}
               </option>
             </select>
           </label>
@@ -3690,6 +3701,14 @@ function ProjectChooser({
       {needsCursor && !connected && (
         <p className="app__note">
           A Cursor session needs a connected Cursor account. Nothing is sent until then.
+        </p>
+      )}
+      {agentChoice.claudeNotInstalledText !== null && (
+        // DSP-133: visible, not only in the tooltip. Nothing here installs anything.
+        <p className="app__note" data-ev="claude-not-installed">
+          {agentChoice.claudeNotInstalledText
+            .split('`')
+            .map((part, index) => (index % 2 === 1 ? <code key={index}>{part}</code> : part))}
         </p>
       )}
       <p className="app__note" data-ev="open-agent-note">

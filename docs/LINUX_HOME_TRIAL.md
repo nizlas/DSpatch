@@ -15,7 +15,7 @@ Part A needs no provider. Part B is the live Claude trial and needs the decision
    node node_modules/electron/install.js
    ```
 
-   Expected: `npm ci` ends without errors and installs the Linux builds of both SDKs.
+   Expected: `npm ci` ends without errors and installs the Linux build of the Cursor SDK. It installs no Claude SDK and no Claude Code binary: `node_modules/@anthropic-ai` does not exist (DSP-133). Part A needs none.
 
 2. **Sandbox step, only if the distribution restricts unprivileged user namespaces** (for example recent Ubuntu; if unsure, try step 3 first - Electron then says the sandbox is not configured):
 
@@ -58,6 +58,15 @@ Part A needs no provider. Part B is the live Claude trial and needs the decision
 
 ## Part B - Claude in the main chat (live, with authorization)
 
+**Before step 7 - install Claude support** (DSP-133), once, on the Linux machine itself:
+
+```sh
+cd DSpatch/app
+npm run claude:install
+```
+
+Expected: it prints the SDK version it installs (`@anthropic-ai/claude-agent-sdk 0.3.306`) and the folder (`app/claude-support/node_modules`), runs `npm ci` there, and ends with *Claude support installed*. No login and no model run. Without it, step 7's *Agent* select reads *Claude (not installed)* and says how to install it. To remove support afterwards, delete `app/claude-support/node_modules`.
+
 7. **Start with Claude enabled**, from a new login shell:
 
    ```sh
@@ -65,7 +74,7 @@ Part A needs no provider. Part B is the live Claude trial and needs the decision
    DSPATCH_CLAUDE_AUTHORIZATION="<reference text>" npm run dev
    ```
 
-   Expected: in *Open a project*, the *Agent* select offers *Claude* (without the variable it reads *Claude (off)*).
+   Expected: in *Open a project*, the *Agent* select offers *Claude* (without the variable it reads *Claude (off)*; without Claude support, *Claude (not installed)*).
 
 8. **Open the sample as Claude.** Choose *Claude* under *Agent*, then *Use a generated sample project*. Expected: the composer shows Agent Claude and Model claude-haiku-4-5; Session details show the tool policy (Read, Glob, Grep, Edit, Write; no Bash) and the authorization note; no Cursor agent is created.
 
