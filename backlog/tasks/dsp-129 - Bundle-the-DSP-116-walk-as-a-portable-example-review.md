@@ -4,7 +4,7 @@ title: Bundle the DSP-116 walk as a portable example review
 status: Review
 assignee: []
 created_date: '2026-10-26 10:11'
-updated_date: '2026-10-26 10:51'
+updated_date: '2026-10-27 16:10'
 labels: []
 dependencies:
   - DSP-126
@@ -40,4 +40,6 @@ Implemented: examples/review/dsp-116.review.json - the DSP-116 definition with o
 Technically verified (Windows, presentation mode, clean clone under %TEMP% with isolated userData and no access to the original Temp material): the button opens 5e445c3 -> 73aaddc with W1/W2/W3 10/8/4 steps, all 22 steps' corrected explanations in English and Swedish, code panes with function context, all 11 files of the diff; position, step mark and note kept across a full app restart; recent.json unchanged; no provider send through open, navigation and reopen; shallow clone and git-missing explanations with Details closed; test:review 68/68, test:fast 1225/1225, review-window and review-discussion exit 0.
 
 Not run: a click on File > Open Example Review itself (its handler exercised through the same IPC; an agent's UI Automation attempt was denied), the packaged or moved copy, Linux, an ordinary non-presentation launch. HUMAN_PENDING: the second reviewer's assessment of whether the code view is useful - not performed; agent checks do not stand in for it. Follow-ups in DSP-130 (pre-existing sideways scroll of the code pane and narrow diff column at ~1000 px; Details wrapping; fallback Details).
+
+27 Oct 2026: the first external user trial with this bundled example needs Copilot working at work first (DSP-148; roadmap §1.2 step 4). General walk generation is not required. This card's own scope is unchanged and not reopened.
 <!-- SECTION:NOTES:END -->

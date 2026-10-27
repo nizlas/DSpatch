@@ -6,8 +6,10 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-10-27 14:09'
+updated_date: '2026-10-27 16:10'
 labels: []
-dependencies: []
+dependencies:
+  - DSP-148
 priority: low
 type: feature
 ordinal: 84000
@@ -71,4 +73,6 @@ Conflicts with older rules (resolved by the decision, recorded in INTERACTION_MO
 1. INTERACTION_MODEL §4.3 says a question during work "does not automatically pause, steer or restart the work" and is answered from available context. Under the decision, every message sent during agent work goes to that work. Reading adopted: the agent receiving it interprets intent (§3). A question is still answered, and it changes the direction only if the agent takes it as an instruction. DSpatch does not answer it separately on the agent's behalf. If Niclas wants a separate answer path for questions during work, that is a new decision.
 2. DSP-32 AC #1 and INTERACTION_MODEL §4.4 assume delivery at a handover or on continuation. The decision adds delivery into the running work where the runtime supports it. Handover delivery remains the fallback where it does not.
 3. The DSP-145/146 per-command, one-directional lock is narrower than the decided symmetric lock between agent work and manual commands.
+
+27 Oct 2026: the priority "after the Copilot integration" means after DSP-148. DSP-147 also needs DSP-148 to establish what the Copilot runtime offers for steering (AC #7). It does not block the first external user trial.
 <!-- SECTION:NOTES:END -->

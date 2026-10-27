@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-10-21 15:08'
+updated_date: '2026-10-27 16:10'
 labels:
   - integration
 dependencies: []
@@ -38,4 +39,6 @@ Dependencies: none on DSP-109. Needs the approved work VS Code/Copilot environme
 
 <!-- SECTION:NOTES:BEGIN -->
 Follow-up proposal, not a card yet (PROP-B1, adjusted 21 Oct 2026): if this probe finds a usable Copilot harness, repeat DSP-109's code-change fixture through the Agent Host on the work computer with a freshly generated synthetic fixture (no work material), from a standalone script calling generateExperimentRepo, under the environment's mandatory controls; test client disconnect/reconnect, cancel and host-loss reporting; record per combination the same verdict fields as DSP-109 #4 plus host and protocol versions; end in a short recommendation (direct only, AHP for Copilot only, or a broader AHP direction), comparing against DSP-109's baseline only where the provider difference allows. Claude over AHP is not required. Depends on this card and DSP-109's result. Create it after this probe reports.
+
+27 Oct 2026, relation to the Copilot integration (Niclas's direction): the decided path is the direct Copilot SDK integration, DSP-148 (roadmap §1.2 step 3, §4 P3). This investigation stays bounded and independent. It is not a dependency of DSP-148, DSP-111 or the first external user trial. Its result, and the PROP-B1 comparison if it is created, feed the roadmap's P4B decision gate (direct SDK, AHP for Copilot only, or broader AHP), which comes after the direct baseline. A negative result leaves the direct path intact.
 <!-- SECTION:NOTES:END -->
