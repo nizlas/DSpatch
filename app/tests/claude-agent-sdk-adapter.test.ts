@@ -3530,3 +3530,60 @@ test('the cancel-then-follow-up command line reaches the new path and runs the c
     /applies only to code-change, cancel-reply, two-turn, cancel-then-follow-up/,
   );
 });
+
+test('models come from the SDK\'s supportedModels(), with no message sent (DSP-149)', async () => {
+  let promptYielded = false;
+  const seenOptions: Record<string, unknown>[] = [];
+  const queryFn = ((params: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
+    seenOptions.push(params.options);
+    void (async () => {
+      for await (const message of params.prompt) {
+        promptYielded = message !== undefined;
+      }
+    })();
+    return {
+      async *[Symbol.asyncIterator]() {},
+      supportedModels: async () => [
+        { value: 'default', displayName: 'Default (recommended)', description: 'Use the default model' },
+        { value: 'opus', displayName: 'Opus', resolvedModel: 'claude-opus-5-5' },
+      ],
+      close: () => undefined,
+    };
+  }) as unknown as ConstructorParameters<typeof ClaudeAgentSdkAdapter>[0]['queryFn'];
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, env: CLEAN_ENV });
+  try {
+    const models = await adapter.listModels();
+    assert.deepEqual(models.map((model) => [model.id, model.displayName, model.resolvedId]), [
+      ['default', 'Default (recommended)', undefined],
+      ['opus', 'Opus', 'claude-opus-5-5'],
+    ]);
+    assert.equal(promptYielded, false, 'no user message went to Claude');
+    assert.deepEqual(seenOptions[0]?.['tools'], []);
+    assert.equal(seenOptions[0]?.['strictMcpConfig'], true);
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('a chosen model reaches the next turn and not the one before (DSP-149)', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield result(call);
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, permissions: CHAT_PERMISSIONS });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('model-change'), { modelRequested: '' }));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    let finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'first');
+    await finished;
+    assert.equal(calls[0]?.options['model'], undefined, 'no model named: the provider default');
+    adapter.setSessionModel(handle.dspatchSessionId, 'claude-opus-5-5');
+    finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'second');
+    await finished;
+    assert.equal(calls[1]?.options['model'], 'claude-opus-5-5');
+  } finally {
+    await adapter.dispose();
+  }
+});

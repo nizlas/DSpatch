@@ -20,6 +20,7 @@ import {
   PROJECT_STORE_FORMAT_VERSION,
   ProjectStore,
   defaultWorkspaceName,
+  inRecent,
 } from '../src/main/project-store.ts';
 import type { RecentWorkspaceEntry } from '../src/shared/bridge.ts';
 import { matchesSearch, moreFoldersLabel, startPageSelection } from '../src/shared/recent-workspaces.ts';
@@ -217,4 +218,24 @@ test('search matches a name or any folder, and a workspace of several folders sa
   assert.equal(matchesSearch(multi, 'nothing'), false);
   assert.equal(moreFoldersLabel(multi.folders), '+1 folder');
   assert.equal(moreFoldersLabel(['C:/one']), '');
+});
+
+test('Recent is what was opened: a workspace made but not opened is not in it until it opens', () => {
+  const { store } = storeIn('opened');
+  const made = store.createWorkspace({ name: 'Made by the chat', folders: ['C:/dev/a', 'C:/dev/b'], opened: false });
+  const id = made.workspace?.id ?? '';
+  assert.equal(made.workspace?.openCount, 0);
+  assert.equal(inRecent(store.workspace(id) ?? made.workspace!), false);
+  store.recordOpened(id);
+  assert.equal(inRecent(store.workspace(id)!), true);
+});
+
+test('a removed entry stays removed: changing the workspace does not bring it back, opening it does', () => {
+  const { store, filePath } = storeIn('stays-removed');
+  const id = store.openFolder('C:/dev/kept').workspace?.id ?? '';
+  store.removeFromRecent([id]);
+  store.updateWorkspace(id, { lastConversationId: 'conv-read-back', loopDefinitionKey: 'k' });
+  assert.equal(inRecent(new ProjectStore(filePath).workspace(id)!), false, 'not back after a background change or a new read');
+  store.openFolder('C:/dev/kept');
+  assert.equal(inRecent(store.workspace(id)!), true, 'an explicit opening brings it back');
 });

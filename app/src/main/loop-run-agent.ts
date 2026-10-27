@@ -31,7 +31,7 @@ import {
 } from '../shared/loop-run-agent-text';
 import type { ChatAdapter } from './chat-service';
 import type { AdapterRequest } from './provider-adapters';
-import { CLAUDE_CHAT_MODEL } from './provider-availability';
+import { modelForChatNode } from '../shared/loop-chat';
 
 export const NOTHING_WAS_STARTED = 'Nothing was started.';
 
@@ -55,6 +55,14 @@ export interface LoopRunAgentRequest {
   readonly entryNode?: Pick<LoopNode, 'id' | 'label' | 'model'>;
   /** The model a Cursor run asks for, as the handler worked it out before DSP-138. */
   readonly cursorModel: string;
+  /** DSP-149: the model chosen for Claude; `''` is the provider's own default. */
+  readonly claudeModel: string;
+  /**
+   * DSP-149: the model ids Claude listed for this account in this launch, or absent
+   * when no list has been read. Used only to make a conflict with a step's fixed model
+   * understandable before anything starts.
+   */
+  readonly claudeModels?: readonly string[] | null;
   readonly adapters: LoopRunAdapterSource;
 }
 
@@ -104,25 +112,28 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
   if (unavailable !== null) {
     return refused(unavailable);
   }
-  if (provider === 'claude') {
-    // DSP-149: no folder-count refusal. A run's other folders reach Claude as
-    // `additionalDirectories`, with the policy's read and edit rules restated for each.
-    const model = request.entryNode?.model;
-    if (
-      model?.policy === 'fixed' &&
-      model.model !== undefined &&
-      model.model !== '' &&
-      model.model !== CLAUDE_CHAT_MODEL
-    ) {
-      const step = request.entryNode?.label ?? request.entryNode?.id ?? 'the first step';
-      return refused(
-        `The loop's first step, "${step}", fixes the model ${model.model}, and a loop run ` +
-          `with Claude uses ${CLAUDE_CHAT_MODEL}. Set that step's model to inherit to run ` +
-          'this loop with Claude.',
-      );
-    }
+  // DSP-149: no folder-count refusal for Claude, and no model refusal either. A step
+  // that fixes its model keeps it, whichever agent runs the loop; otherwise the run
+  // asks for the person's choice for that agent. A fixed model the agent does not
+  // offer is refused by the agent, with its own reason, before anything is done.
+  const fixed = request.entryNode?.model;
+  if (
+    provider === 'claude' &&
+    fixed?.policy === 'fixed' &&
+    fixed.model !== undefined &&
+    fixed.model !== '' &&
+    request.claudeModels != null &&
+    !request.claudeModels.includes(fixed.model)
+  ) {
+    const step = request.entryNode?.label ?? request.entryNode?.id ?? 'the first step';
+    return refused(
+      `The loop's first step, "${step}", fixes the model ${fixed.model}, which Claude does not offer ` +
+        "this account. Set that step's model to inherit to use the model chosen for Claude, or run " +
+        'the loop with the agent that offers it.',
+    );
   }
-  const modelRequested = provider === 'claude' ? CLAUDE_CHAT_MODEL : request.cursorModel;
+  const modelRequested =
+    provider === 'claude' ? modelForChatNode(request.entryNode, request.claudeModel) : request.cursorModel;
   return {
     ok: true,
     provider,

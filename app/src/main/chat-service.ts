@@ -47,6 +47,7 @@ import type {
   ConnectionStatus,
   ContinuityChoice,
   ModelChoice,
+  ModelListing,
   ConversationListing,
   ConversationSaveStatus,
   DirtyFileInfo,
@@ -212,12 +213,29 @@ function nowIso(): string {
  * that has since changed. `MAX_RESEND_MESSAGES` bounds how far back it goes, and
  * the per-message limits keep one long answer from filling the whole budget.
  */
-const RESEND_LIMITS = {
+const RESEND_LIMITS: {
+  readonly maxMessages: number;
+  readonly maxPromptChars: number;
+  readonly maxAnswerChars: number;
+  readonly maxTotalChars: number;
+} = {
   maxMessages: 6,
   maxPromptChars: 400,
   maxAnswerChars: 700,
   maxTotalChars: 8_000,
-} as const;
+};
+
+/**
+ * DSP-149: a conversation moving into a workspace carries all of itself. Every message,
+ * in full, up to a bound far beyond an ordinary conversation; if even that cuts, the
+ * continuity says so and the window shows it, rather than the cut being silent.
+ */
+const CARRY_LIMITS: typeof RESEND_LIMITS = {
+  maxMessages: Number.MAX_SAFE_INTEGER,
+  maxPromptChars: Number.MAX_SAFE_INTEGER,
+  maxAnswerChars: Number.MAX_SAFE_INTEGER,
+  maxTotalChars: 400_000,
+};
 
 const FIRST_SESSION_CONTINUITY: SessionContinuity = {
   kind: 'first-session',
@@ -925,6 +943,8 @@ export interface ChatAdapter {
   send(sessionId: string, prompt: string): Promise<RunReference>;
   /** DSP-149: see {@link AgentAdapter.setWorkspaceRoots}. */
   setWorkspaceRoots?(sessionId: string, roots: readonly string[]): void;
+  /** DSP-149: see {@link AgentAdapter.setSessionModel}. */
+  setSessionModel?(sessionId: string, modelId: string): void;
   cancel(sessionId: string): Promise<void>;
   readUsage(scope: UsageQuery): Promise<readonly UsageReading[]>;
   providerMessageTypes(sessionId: string): Record<string, number>;
@@ -1060,6 +1080,14 @@ export interface ChatServiceOptions {
    * discussion never get them.
    */
   readonly appTools?: () => readonly AppTool[];
+  /**
+   * DSP-149: the model chosen for each provider, kept across restarts. `null` is no
+   * choice: the provider's own default (Claude), or the configured default (Cursor).
+   */
+  readonly modelChoice?: {
+    read(provider: StoredSessionProvider): string | null;
+    write(provider: StoredSessionProvider, modelId: string | null): void;
+  };
   /** DSP-149: called whenever a turn has ended, so the host can act on what it asked for. */
   readonly onTurnSettled?: () => void;
   /**
@@ -1521,13 +1549,79 @@ export class ChatService {
     return this.selectedProvider === null ? '' : this.modelFor(this.selectedProvider);
   }
 
-  /** The model a session with this provider asks for. Claude's is fixed (DSP-117). */
-  private modelFor(provider: StoredSessionProvider): string {
-    return provider === 'claude' ? CLAUDE_CHAT_MODEL : this.cursorModelRequested();
+  /**
+   * The model a session with this provider asks for (DSP-149): the person's choice for
+   * that provider. With no choice, Claude is asked for no model, so the provider's own
+   * default applies; DSpatch no longer picks one for it.
+   */
+  modelFor(provider: StoredSessionProvider): string {
+    const chosen = this.options.modelChoice?.read(provider) ?? null;
+    if (provider === 'claude') {
+      return chosen ?? process.env['DSPATCH_CLAUDE_MODEL'] ?? '';
+    }
+    return chosen ?? this.cursorModelRequested();
   }
 
   private cursorModelRequested(): string {
     return this.modelChosen ?? process.env['DSPATCH_CHAT_MODEL'] ?? DEFAULT_MODEL;
+  }
+
+  /** DSP-149: the model ids a provider listed in this launch, or `null` if none was read. */
+  knownModelIds(provider: StoredSessionProvider): readonly string[] | null {
+    const listed = this.modelLists.get(provider);
+    return listed === undefined ? null : listed.flatMap((model) => (model.resolvedId === undefined ? [model.id] : [model.id, model.resolvedId]));
+  }
+
+  /** The models each provider listed in this launch, by its SDK's own discovery. */
+  private readonly modelLists = new Map<StoredSessionProvider, readonly ModelInfo[]>();
+
+  /**
+   * DSP-149: the models this provider offers the account, from its adapter's own
+   * discovery (Claude: the SDK's `supportedModels()`, no model turn; Cursor:
+   * `Cursor.models.list()`). The open session's adapter when it is that provider's;
+   * otherwise one built for the reading and disposed again. Read once per launch.
+   */
+  async listModels(provider: StoredSessionProvider): Promise<ModelListing> {
+    const chosen = this.modelFor(provider);
+    const source =
+      provider === 'claude'
+        ? "the Claude Agent SDK's supportedModels(), read without a model turn"
+        : "Cursor's SDK, Cursor.models.list()";
+    const cached = this.modelLists.get(provider);
+    const toListing = (models: readonly ModelInfo[]): ModelListing => ({
+      provider,
+      chosen,
+      error: null,
+      source,
+      models: models.map((model) => ({
+        id: model.id,
+        displayName: model.displayName === '' ? model.id : model.displayName,
+        ...(model.description === undefined ? {} : { description: model.description }),
+      })),
+    });
+    if (cached !== undefined) {
+      return toListing(cached);
+    }
+    try {
+      this.requireProviderAvailable(provider);
+      const own = this.adapter !== null && this.adapterProvider === provider ? this.adapter : null;
+      const adapter = own ?? this.createAdapterFor(provider);
+      try {
+        const listed = await adapter.listModels();
+        this.modelLists.set(provider, listed);
+        const listing = toListing(listed);
+        // Said plainly when the list is a stand-in: presentation mode answers for both agents.
+        return adapter.id === 'presentation-local'
+          ? { ...listing, source: "SIMULATED: the presentation adapter's fixed list" }
+          : listing;
+      } finally {
+        if (own === null) {
+          await adapter.dispose();
+        }
+      }
+    } catch (error) {
+      return { provider, chosen, models: [], error: describeError(error), source };
+    }
   }
 
   /**
@@ -1665,9 +1759,30 @@ export class ChatService {
    *
    * An empty or blank id clears the choice and returns to the environment's.
    */
+  /**
+   * The person chose a model for the selected agent (DSP-149). Kept for that provider
+   * across restarts, and given to the open session from its next turn; a turn already
+   * running keeps the model it started with. The conversation and its session stay.
+   */
   setRequestedModel(modelId: string): string {
-    this.modelChosen = modelId.trim() === '' ? null : modelId.trim();
-    return this.modelRequested();
+    const chosen = modelId.trim() === '' ? null : modelId.trim();
+    const provider = this.selectedProvider ?? this.chosenAgent();
+    if (provider === null) {
+      this.modelChosen = chosen;
+      return this.modelRequested();
+    }
+    if (provider === 'cursor') {
+      this.modelChosen = chosen;
+    }
+    this.options.modelChoice?.write(provider, chosen);
+    const session = this.session;
+    const effective = this.modelFor(provider);
+    if (session !== null && this.adapter !== null && this.adapterProvider === provider) {
+      this.adapter.setSessionModel?.(session.dspatchSessionId, effective);
+      this.session = { ...session, modelRequested: effective };
+    }
+    this.options.log(`model for ${provider}: ${effective === '' ? "the provider's default" : effective}`);
+    return effective;
   }
 
   /** The node executable found for running commands, or `null` if there is none. */
@@ -2120,7 +2235,7 @@ export class ChatService {
       modelSent: this.modelRequested(),
       // DSP-117: the policy actually given, where the adapter has one (Claude);
       // Cursor's sessions use the provider's default and say so.
-      toolPolicySent: this.agentChoice(selected).toolPolicyText,
+      toolPolicySent: this.policyTextWithAppTools(this.agentChoice(selected).toolPolicyText, origin),
       ...this.contextExtras(origin),
       fileContentsSentByDspatch: 0,
       statement: providerSessionOpen
@@ -2534,7 +2649,12 @@ export class ChatService {
           : previousId === null
             ? 'you asked for a new provider session'
             : `you asked for a new provider session rather than continuing ${previousId}`;
-      const recap = this.recapFor(conversationId, workspacePath, reason);
+      const recap = this.recapFor(
+        conversationId,
+        workspacePath,
+        reason,
+        movedIntoWorkspace === null ? RESEND_LIMITS : CARRY_LIMITS,
+      );
       this.options.log(
         `new provider session requested; not resuming ${previousId ?? 'anything'}`,
       );
@@ -2543,6 +2663,12 @@ export class ChatService {
         recorded: saved,
         continuity: {
           kind: 'new-provider-session',
+          ...(movedIntoWorkspace === null
+            ? {}
+            : {
+                contextTransfer: 'automatic' as const,
+                ...(recap !== null && recap.length >= CARRY_LIMITS.maxTotalChars ? { contextCut: true } : {}),
+              }),
           providerSessionOpen: true,
           attemptedDspatchSessionId: previousId,
           resumedProviderSessionId: null,
@@ -2825,7 +2951,12 @@ export class ChatService {
   }
 
   /** DSpatch's record of a conversation for a model that was told nothing. */
-  private recapFor(conversationId: string, workspacePath: string, reason: string): string | null {
+  private recapFor(
+    conversationId: string,
+    workspacePath: string,
+    reason: string,
+    limits: typeof RESEND_LIMITS = RESEND_LIMITS,
+  ): string | null {
     const held = this.held.get(conversationId) ?? null;
     return buildResendContext({
       workspacePath,
@@ -2833,6 +2964,7 @@ export class ChatService {
       reviewedDiff: held?.reviewedDiff ?? null,
       test: held?.lastTest ?? null,
       reason,
+      limits,
     });
   }
 
@@ -2997,6 +3129,21 @@ export class ChatService {
     const { adapter, session } = this.requireSession();
     if (prompt.trim() === '') {
       throw new Error('An empty prompt is not sent.');
+    }
+    // DSP-149: a model the provider does not list for this account is refused here,
+    // never replaced by another one.
+    const provider = this.adapterProvider;
+    const listed = provider === null ? undefined : this.modelLists.get(provider);
+    const requested = provider === null ? '' : this.modelFor(provider);
+    if (
+      listed !== undefined &&
+      requested !== '' &&
+      !listed.some((model) => model.id === requested || model.resolvedId === requested)
+    ) {
+      throw new Error(
+        `The model "${requested}" is not one ${providerName(provider ?? 'cursor')} offers this account. ` +
+          'Choose another model; nothing was sent.',
+      );
     }
     const acknowledged = wellFormedAcknowledgements(acknowledgedAttemptIds);
     // The block belongs to the working copy (WS-1 #11): this conversation's attempts
@@ -5052,6 +5199,16 @@ export class ChatService {
       ...(appTools.length === 0 ? {} : { appTools }),
       ...(this.workspaceFolders.length > 1 ? { workspacePaths: [...this.workspaceFolders] } : {}),
     };
+  }
+
+  /** DSP-149: the policy text, plus DSpatch's own tools when the session is given them. */
+  private policyTextWithAppTools(text: string, origin: SessionOrigin): string {
+    const scope = this.sessionScope(origin);
+    const names = (scope.appTools ?? []).map((tool) => tool.name);
+    const base = scope.toolScope === 'conversation' ? 'No built-in tools (a conversation with no workspace yet).' : text;
+    return names.length === 0
+      ? base
+      : `${base} Plus DSpatch's own workspace tools (${names.join(', ')}), given through the SDK's tool mechanism and run in the host.`;
   }
 
   /** DSP-149: what the session details show of the folders and tools given to the agent. */

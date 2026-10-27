@@ -37,7 +37,7 @@ import type {
   Unsubscribe,
   UsageReading,
 } from '../src/adapter/types.ts';
-import { ChatService, CLAUDE_CHAT_MODEL, type ChatAdapter } from '../src/main/chat-service.ts';
+import { ChatService, type ChatAdapter } from '../src/main/chat-service.ts';
 import { ConversationStore } from '../src/main/conversation-store.ts';
 import { DISPOSE_MARGIN_MS, DISPOSE_TIMEOUT_MS } from '../src/main/dispose-timeout.ts';
 import { providerAdapters } from '../src/main/provider-adapters.ts';
@@ -297,7 +297,8 @@ test('switching to Claude is a new session with the recap disclosed and removabl
   // DSP-146: Claude Code's own shell tools, recorded through DSpatch's hooks; no MCP server.
   assert.match(switched.context.toolPolicySent, /Write, Bash, PowerShell;/);
   assert.match(switched.context.toolPolicySent, /no MCP servers/);
-  assert.equal(switched.modelRequested, CLAUDE_CHAT_MODEL);
+  // DSP-149: with no model chosen, Claude is asked for its own default, not one DSpatch picks.
+  assert.equal(switched.modelRequested, '');
   assert.match(switched.agent.connectionText, /authorization reference recorded for this launch \(login not checked by DSpatch\)/);
 
   await h.service.sendPrompt('hello Claude');
@@ -305,7 +306,7 @@ test('switching to Claude is a new session with the recap disclosed and removabl
   assert.equal(h.sdk.calls.length, 1);
   const options = h.sdk.calls[0]?.options ?? {};
   assert.equal(h.sdk.calls[0]?.prompt, 'hello Claude', 'the removed recap was not sent');
-  assert.equal(options['model'], CLAUDE_CHAT_MODEL);
+  assert.equal(options['model'], undefined, 'no model chosen: none is named, so the provider default applies');
   assert.deepEqual(options['tools'], [...CHAT_PERMISSIONS.tools]);
   assert.deepEqual(options['allowedTools'], [...CHAT_PERMISSIONS.allowedTools]);
   assert.ok((options['tools'] as string[]).includes('Bash'), "DSP-146: Claude Code's own shell");

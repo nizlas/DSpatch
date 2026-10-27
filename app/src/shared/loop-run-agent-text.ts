@@ -45,7 +45,7 @@ export function describeLoopRunAgent(input: {
       : ` Drawn for ${input.drawnFor}, which is a label of the drawing and not used to run it.`;
   if (input.provider === 'claude') {
     return (
-      `Runs with Claude (${input.modelRequested}): its agent steps read and edit files and run ` +
+      `Runs with Claude (${input.modelRequested === "" ? "its default model" : input.modelRequested}): its agent steps read and edit files and run ` +
       "builds and tests with Claude Code's own shell tools, which DSpatch records. A gate " +
       "step's command is run by DSpatch itself." +
       drawn

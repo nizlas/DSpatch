@@ -76,6 +76,7 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'chat.environment': () => HostEnvironmentFacts;
   readonly 'chat.getConnection': () => BridgeAnswer<'getConnection'>;
   readonly 'chat.setModel': (modelId: string) => string;
+  readonly 'chat.listModels': (provider: StoredSessionProvider) => BridgeAnswer<'listModels'>;
   readonly 'chat.chooseAgent': (provider: unknown) => StoredSessionProvider | null;
   readonly 'chat.conversationSaveStatus': () => BridgeAnswer<'conversationSaveStatus'>;
   readonly 'chat.resumeConversation': (conversationId: string) => BridgeAnswer<'resumeConversation'>;
@@ -224,6 +225,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'chat.environment': true,
   'chat.getConnection': true,
   'chat.setModel': true,
+  'chat.listModels': true,
   'chat.chooseAgent': true,
   'chat.conversationSaveStatus': true,
   'chat.resumeConversation': true,

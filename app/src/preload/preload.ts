@@ -35,6 +35,7 @@ import type {
   GraphSavedElsewhere,
   UnsavedDrawing,
   MenuCommand,
+  ModelListing,
   RecentWorkspaces,
   WorkspaceOpenOutcome,
   WorkspaceOpenRequest,
@@ -74,6 +75,7 @@ const GET_ENVIRONMENT: BridgeChannel = 'dspatch:get-environment';
 const RENDERER_READY: BridgeChannel = 'dspatch:renderer-ready';
 const GET_CONNECTION: BridgeChannel = 'dspatch:get-connection';
 const SET_MODEL: BridgeChannel = 'dspatch:set-model';
+const LIST_MODELS: BridgeChannel = 'dspatch:list-models';
 const CHOOSE_AGENT: BridgeChannel = 'dspatch:choose-agent';
 const MENU_COMMAND: BridgeChannel = 'dspatch:menu-command';
 const PICK_PROJECT: BridgeChannel = 'dspatch:pick-project';
@@ -162,6 +164,8 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(GET_CONNECTION) as Promise<ConnectionStatus>,
   setRequestedModel: (modelId: string) =>
     ipcRenderer.invoke(SET_MODEL, modelId) as Promise<string>,
+  listModels: (provider: StoredSessionProvider) =>
+    ipcRenderer.invoke(LIST_MODELS, provider) as Promise<ModelListing>,
   chooseAgent: (provider: StoredSessionProvider) =>
     ipcRenderer.invoke(CHOOSE_AGENT, provider) as Promise<StoredSessionProvider | null>,
   readLoopRunAgent: (query: LoopRunAgentQuery) =>

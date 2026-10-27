@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import type {
   HookCallback,
@@ -619,6 +622,19 @@ export interface ClaudeQueryHandle extends AsyncIterable<SDKMessage> {
    * Optional so a substitute may leave it out; then cancellation escalates at once.
    */
   interrupt?(): Promise<unknown>;
+  /**
+   * DSP-149: the SDK's `Query.supportedModels()`, the models the account can use.
+   * Optional so a substitute may leave it out.
+   */
+  supportedModels?(): Promise<readonly ClaudeModelInfo[]>;
+}
+
+/** The fields of the SDK's `ModelInfo` DSpatch reads (sdk.d.ts 0.3.306). */
+export interface ClaudeModelInfo {
+  readonly value: string;
+  readonly displayName: string;
+  readonly description?: string;
+  readonly resolvedModel?: string;
 }
 
 // --- Cancellation (DSP-115) --------------------------------------------------------
@@ -1979,14 +1995,81 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     await Promise.resolve();
   }
 
-  /** The SDK lists models only on a live query, so this instance cannot. */
-  listModels(): Promise<readonly ModelInfo[]> {
-    return Promise.reject(
-      new ClaudeAdapterError(
-        'The Claude Agent SDK lists models only from a running session. Request a ' +
-          'model by name instead.',
-      ),
-    );
+  /**
+   * The models this account can use, from the SDK's own `Query.supportedModels()`
+   * (DSP-149; sdk.d.ts 0.3.306: "Get the list of available models", answered from Claude
+   * Code's initialize exchange). The SDK offers no list outside a query, so a query is
+   * started whose prompt never yields a message: **no user message is sent and no model
+   * turn runs**. It has no tools, no settings from disk and no MCP servers, runs in an
+   * empty folder of its own, and is closed as soon as the list has come back. Starting
+   * Claude Code does authenticate with the account, which is the point of the list.
+   */
+  async listModels(): Promise<readonly ModelInfo[]> {
+    this.assertUsable();
+    if (this.assessment.refusal !== null) {
+      throw new ClaudeAdapterError(this.assessment.refusal, 'authentication_refused');
+    }
+    const queryFn = await this.queryFunction();
+    const folder = mkdtempSync(path.join(tmpdir(), 'dspatch-claude-models-'));
+    const abortController = new AbortController();
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const prompt = (async function* (): AsyncIterable<SDKUserMessage> {
+      await held;
+    })();
+    const handle = queryFn({
+      prompt,
+      options: {
+        cwd: folder,
+        tools: [],
+        allowedTools: [],
+        permissionMode: 'dontAsk',
+        settingSources: [],
+        strictMcpConfig: true,
+        abortController,
+        env: { ...this.subprocessEnv },
+      },
+    });
+    try {
+      if (handle.supportedModels === undefined) {
+        throw new ClaudeAdapterError('This Claude SDK does not list models.');
+      }
+      let timer: NodeJS.Timeout | undefined;
+      const listed = await Promise.race([
+        handle.supportedModels(),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            reject(new ClaudeAdapterError('Claude did not list its models within 30 seconds.'));
+          }, 30_000);
+        }),
+      ]).finally(() => {
+        clearTimeout(timer);
+      });
+      return listed.map((model) => ({
+        id: model.value,
+        displayName: model.displayName === '' ? model.value : model.displayName,
+        provider: 'claude' as const,
+        ...(model.description === undefined || model.description === '' ? {} : { description: model.description }),
+        ...(model.resolvedModel === undefined ? {} : { resolvedId: model.resolvedModel }),
+      }));
+    } catch (error) {
+      throw toAdapterError('listModels', error);
+    } finally {
+      release();
+      abortController.abort();
+      handle.close?.();
+      rmSync(folder, { recursive: true, force: true });
+    }
+  }
+
+  /** DSP-149: the model the next turn asks for. Never changes a turn already running. */
+  setSessionModel(sessionId: DspatchSessionId, modelId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (state !== undefined) {
+      state.config = { ...state.config, modelRequested: modelId };
+    }
   }
 
   /**

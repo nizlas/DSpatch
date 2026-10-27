@@ -107,6 +107,8 @@ function request(factory: LoopRunAgentRequest['adapters'], provider: 'claude' | 
     rootCount: 1,
     ...(entryNode === undefined ? {} : { entryNode }),
     cursorModel: 'composer-2',
+    claudeModel: 'claude-haiku-4-5',
+    claudeModels: ['claude-haiku-4-5'],
     adapters: factory,
   };
 }

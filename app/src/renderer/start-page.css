@@ -667,3 +667,62 @@
   gap: 0.5rem;
   align-items: center;
 }
+
+/* DSP-149: the agent and its model side by side, top left. */
+.start__top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.provider--model .provider__select {
+  max-width: 16rem;
+  text-overflow: ellipsis;
+}
+
+.provider--compact {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.88rem;
+  border-color: var(--line);
+}
+
+.provider__error {
+  margin-left: 0.35rem;
+  color: #f0b4ba;
+  font-size: 0.8rem;
+}
+
+/* DSP-149: the working indicator beside the composer while the agent works. */
+.working {
+  display: inline-flex;
+  align-items: center;
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.working__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #38bdf8;
+  animation: working-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes working-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working__dot {
+    animation: none;
+    opacity: 0.8;
+  }
+}

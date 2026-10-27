@@ -156,6 +156,23 @@ export type MenuCommand =
 export interface ModelChoice {
   readonly id: string;
   readonly displayName: string;
+  /** What the provider says about the model, when it says anything (DSP-149). */
+  readonly description?: string;
+}
+
+/**
+ * The models one provider offers this account, from the provider SDK's own discovery
+ * (DSP-149), and the one chosen. `chosen` `''` means no choice: the provider's own
+ * default model is used, not a model DSpatch picked.
+ */
+export interface ModelListing {
+  readonly provider: StoredSessionProvider;
+  readonly models: readonly ModelChoice[];
+  readonly chosen: string;
+  /** Why the list could not be read, in a sentence; `null` when it was. */
+  readonly error: string | null;
+  /** Where the list came from, for Session details. */
+  readonly source: string;
 }
 
 /**
@@ -699,6 +716,15 @@ export interface EarlierSendMayHaveReached {
 
 export interface SessionContinuity {
   readonly kind: SessionContinuityKind;
+  /**
+   * DSP-149 (Niclas's decision, 27 Oct 2026): `automatic` when the conversation moved
+   * into a workspace and its context goes to the new provider session in the background,
+   * with no panel, confirmation or extra message. The recap is still sent and recorded,
+   * and shown under Session details. `contextCut` is set only if the conversation was
+   * longer than DSpatch can carry; the window then says so in one line.
+   */
+  readonly contextTransfer?: 'automatic';
+  readonly contextCut?: boolean;
   /**
    * Whether a provider session is open behind this `ChatSessionInfo`. Stated, so the
    * window never infers it from the kind. `false` in the three DSP-121 kinds: the
@@ -2144,6 +2170,11 @@ export interface DspatchBridge {
    * retargeted, and a loop run uses the model the loop was started with.
    */
   setRequestedModel(modelId: string): Promise<string>;
+  /**
+   * DSP-149: the models this agent offers the account, from its SDK's own discovery, and
+   * the one chosen. Read once per launch; a failure is in `error`, never a short list.
+   */
+  listModels(provider: StoredSessionProvider): Promise<ModelListing>;
 
   /**
    * Whatever the top application menu asked the window to show.
@@ -3057,6 +3088,7 @@ export type BridgeChannel =
   | 'dspatch:renderer-ready'
   | 'dspatch:get-connection'
   | 'dspatch:set-model'
+  | 'dspatch:list-models'
   | 'dspatch:choose-agent'
   | 'dspatch:menu-command'
   | 'dspatch:pick-project'

@@ -107,6 +107,8 @@ function editorRequest(factory: LoopRunAgentRequest['adapters'], graph: LoopGrap
     rootCount: 1,
     ...(entryNode === undefined ? {} : { entryNode }),
     cursorModel: defaultLiveModel(),
+    claudeModel: 'claude-haiku-4-5',
+    claudeModels: ['claude-haiku-4-5'],
     adapters: factory,
   };
 }

@@ -1637,6 +1637,12 @@ npm run package
   none of the agent's file or command tools, only DSpatch's workspace tools; it is
   saved and reopened after a restart. Opening a workspace moves it there and opens a
   new provider session with DSpatch's recap in front of the next message.
+- **Models** (DSP-149): a choice per agent beside the agent choice and the composer,
+  kept in `dspatch-model-choice.json` under `userData`. The list is the SDK's own:
+  Claude's `Query.supportedModels()` on a query that is sent no message (no model
+  turn, but Claude Code starts and authenticates), Cursor's `Cursor.models.list()`.
+  No choice means the provider's default; a model the account is not offered is
+  refused before sending.
 - **Workspaces** (the store, `project-store.ts`, format 3): an identity, a name and one
   or more folders. *Remove from recent* hides the entry only. The chat's workspace
   tools (`host/workspace-tools.ts`) are the same host functions as the menus, offered

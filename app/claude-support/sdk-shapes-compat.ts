@@ -10,7 +10,7 @@
 
 import type * as Sdk from '@anthropic-ai/claude-agent-sdk' with { 'resolution-mode': 'import' };
 
-import type { ClaudeQueryFunction, ClaudeQueryHandle } from '../src/adapter/claude-agent-sdk-adapter';
+import type { ClaudeModelInfo, ClaudeQueryFunction, ClaudeQueryHandle } from '../src/adapter/claude-agent-sdk-adapter';
 import type * as Ours from '../src/adapter/claude-sdk-shapes';
 import type { ClaudeSdkModule, ClaudeToolKit } from '../src/adapter/claude-support';
 
@@ -19,6 +19,7 @@ function fits<T>(value: T): T {
 }
 
 declare const sdkMessage: Sdk.SDKMessage;
+declare const sdkModelInfo: Sdk.ModelInfo;
 declare const sdkSessionInfo: Sdk.SDKSessionInfo;
 declare const sdkSpawnOptions: Sdk.SpawnOptions;
 declare const sdkQuery: Sdk.Query;
@@ -37,6 +38,8 @@ fits<Ours.SDKSessionInfo>(sdkSessionInfo);
 fits<Ours.SpawnOptions>(sdkSpawnOptions);
 fits<ClaudeQueryHandle>(sdkQuery);
 fits<ClaudeSdkModule['getSessionInfo']>(sdkGetSessionInfo);
+// DSP-149: the model list DSpatch reads from `Query.supportedModels()`.
+fits<ClaudeModelInfo>(sdkModelInfo);
 
 // DSpatch -> SDK.
 fits<Sdk.SDKUserMessage>(oursUserMessage);

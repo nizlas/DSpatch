@@ -88,6 +88,7 @@ const GET_ENVIRONMENT: BridgeChannel = 'dspatch:get-environment';
 const RENDERER_READY: BridgeChannel = 'dspatch:renderer-ready';
 const GET_CONNECTION: BridgeChannel = 'dspatch:get-connection';
 const SET_MODEL: BridgeChannel = 'dspatch:set-model';
+const LIST_MODELS: BridgeChannel = 'dspatch:list-models';
 const CHOOSE_AGENT: BridgeChannel = 'dspatch:choose-agent';
 const MENU_COMMAND: BridgeChannel = 'dspatch:menu-command';
 const PICK_PROJECT: BridgeChannel = 'dspatch:pick-project';
@@ -2848,6 +2849,7 @@ function registerIpc(): void {
    * window states a fact instead of echoing its own request.
    */
   ipcMain.handle(SET_MODEL, (_event, modelId: string): Promise<string> => hostCall('chat.setModel', NO_SENDER, modelId));
+  ipcMain.handle(LIST_MODELS, (_event, provider: StoredSessionProvider) => hostCall('chat.listModels', NO_SENDER, provider));
 
   // DSP-136: an explicit agent choice in *Open a project*. Recorded only; nothing is
   // built and no provider is asked.

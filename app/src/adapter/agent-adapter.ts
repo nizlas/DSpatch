@@ -95,6 +95,12 @@ export interface AgentAdapter {
    */
   setWorkspaceRoots?(sessionId: DspatchSessionId, roots: readonly string[]): void;
 
+  /**
+   * DSP-149: the model the session's next turn asks for. Never changes a turn already
+   * running. Optional: an adapter without it keeps the model it was started with.
+   */
+  setSessionModel?(sessionId: DspatchSessionId, modelId: string): void;
+
   /** Models this adapter instance can request. */
   listModels(): Promise<readonly ModelInfo[]>;
 

@@ -256,6 +256,10 @@ export interface ModelInfo {
   readonly id: string;
   readonly displayName: string;
   readonly provider: ProviderId;
+  /** What the provider says about the model, when it says anything. */
+  readonly description?: string;
+  /** The provider's wire id an alias such as "sonnet" resolves to, when it says. */
+  readonly resolvedId?: string;
 }
 
 /**

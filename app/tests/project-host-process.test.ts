@@ -161,6 +161,11 @@ describe('the project host process', () => {
       const removed = await two.connection.call<RecentWorkspaces>('workspaces.removeFromRecent', NO_SENDER, [workspaceId]);
       assert.equal(removed.entries.length, 0);
       assert.ok(fs.existsSync(first) && fs.existsSync(second));
+      // Nothing in the background brings it back (DSP-149): a conversation started, the
+      // list read again.
+      await two.connection.call<ChatSessionInfo>('chat.startSession', NO_SENDER, { kind: 'loose' });
+      const stillRemoved = await two.connection.call<RecentWorkspaces>('workspaces.recent', NO_SENDER);
+      assert.equal(stillRemoved.entries.length, 0, 'a removed entry did not come back on its own');
       const back = await two.connection.call<WorkspaceOpenOutcome>('workspaces.open', NO_SENDER, { folder: first });
       assert.equal(back.kind === 'opened' ? back.workspace.id : null, workspaceId);
       assert.equal(back.kind === 'opened' ? back.workspace.folders.length : 0, 2);

@@ -4,7 +4,7 @@ title: Start from a conversation and work in workspaces of several folders
 status: Review
 assignee: []
 created_date: '2026-10-27 20:04'
-updated_date: '2026-10-27 21:09'
+updated_date: '2026-10-27 21:47'
 labels: []
 dependencies:
   - DSP-111
@@ -70,4 +70,38 @@ Remaining departures and limits:
 - the wordmark is real text in Segoe UI Variable Display or Segoe UI, not a drawn logo;
 - an added folder's change baseline is in memory and starts afresh after a restart; the primary's is kept as before;
 - the primary folder cannot be removed from a workspace (existing rule).
+
+27 Oct 2026, rework after Niclas's manual trial: context carried automatically with no recap panel (his decision, replacing the visible recap at workspace transitions), turn diagnostics out of the conversation into Session details, a model choice per provider from SDK model discovery, Recent as a history of workspaces actually opened, and a one-off cleanup of the confirmed test entries in the real Recent list (approved by Niclas).
+
+Rework result, 27 Oct 2026 (after Niclas's trial; local commit, not pushed). Status back to Review.
+
+Fixed:
+- Context follows automatically. A conversation moving into a workspace gets a new provider session with DSpatch's complete record of it in front of the next message: every message, in full, up to 400 000 characters, and the conversation says so in one line if even that cuts. There is no new-session panel, no "summary will be sent", no Remove summary, and no per-turn summary disclosure. Added folders stay in the same provider session. The recap and its statement are under Session details (Turns). The recovery rules after an uncertain ending (DSP-121) are unchanged.
+- Technical noise is out of the conversation. No "streaming..." badge, and "How this turn arrived" is moved to Session details > Turns; the facts are still recorded. A working dot and a Stop button show while the agent works.
+- Model choice per agent, beside the agent choice on the start page and by the composer:
+  - the list is the SDK's own: Claude's Query.supportedModels() on a query that is sent no message, Cursor's Cursor.models.list();
+  - the choice is kept in dspatch-model-choice.json and given to the open session from its next turn (setSessionModel in both adapters);
+  - no choice means the provider's default, and the fixed claude-haiku-4-5 is gone;
+  - a model the account is not offered is refused before sending;
+  - the review discussion and loops use the same choice;
+  - a loop step's fixed model is kept, and refused with a reason only when Claude's list is known and lacks it.
+- Recent is the history of what was opened. A workspace is recorded only after a successful opening; one the chat creates is unopened until it opens; Remove from recent stays removed until an explicit opening.
+- Cleanup, approved by Niclas: the eleven confirmed test entries were removed from the real Recent list (format 3, both lists). They are the ten dspatch-loop-choice-* entries of 20 Sep (run 20260920-104500-folders) and dspatch-repro-packaged-fixed of 19 Sep (run 20260919-194000-upkeep). The backup is dspatch-projects.backup-before-test-cleanup-20261027.json beside the file. MiniDAWLab-spike01 and every folder, conversation and run record were kept.
+
+Verified (isolated user data, no provider call):
+- typecheck, the SDK shape check (SDK ModelInfo and Query.supportedModels fit), build;
+- the suite: 1624 pass, 1 skipped (the opt-in real-SDK check);
+- the host process: a removed entry stays removed through a background start;
+- workspace-flow in two processes:
+  - the context arrived with 2 earlier messages and no panel or summary text on screen;
+  - the working dot and Stop showed, with no streaming label;
+  - the turn facts are in Session details;
+  - the chosen model id reached the adapter;
+  - an unoffered model was refused with its reason and nothing was sent;
+  - the model choice and the workspace survived a restart;
+  - Remove from recent worked;
+- regressions: presentation, loop-result, stop-asked, errors, switch first and again, resume-choice x3, review-window and review-discussion, all exit 0;
+- the real profile was untouched by every run since the cleanup.
+
+Simulated: every provider answer and the model list (the presentation adapter's fixed list, labelled SIMULATED in its source). Not run: Claude's live model discovery (it starts Claude Code and authenticates; earlier constraints forbid live probes here); Cursor's list (the account is closed). Both are items for Niclas's manual trial.
 <!-- SECTION:NOTES:END -->

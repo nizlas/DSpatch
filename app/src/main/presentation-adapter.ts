@@ -375,6 +375,14 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     return Promise.resolve({ ...handle, resumeEvidence: 'none' });
   }
 
+  /** DSP-149: the model the next simulated turn asks for. */
+  setSessionModel(sessionId: string, modelId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (state !== undefined) {
+      state.config = { ...state.config, modelRequested: modelId };
+    }
+  }
+
   /** DSP-149: the folders changed; the next simulated turn reports the new list. */
   setWorkspaceRoots(sessionId: string, roots: readonly string[]): void {
     const state = this.sessions.get(sessionId);
@@ -402,6 +410,21 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     const marker = '=== end of the record. The message below is the new one, from the person. ===';
     const at = prompt.lastIndexOf(marker);
     const own = at === -1 ? prompt : prompt.slice(at + marker.length);
+    if (own.includes('[[context]]')) {
+      // DSP-149: whether DSpatch's record of the earlier conversation came in front of
+      // this message, and how many earlier messages it held.
+      const record = at === -1 ? '' : prompt.slice(0, at);
+      const messages = record.split('\n--- message ').length - 1;
+      lines.push(
+        at === -1
+          ? 'Earlier conversation received: no'
+          : `Earlier conversation received: yes, ${String(messages)} earlier messages`,
+      );
+    }
+    if (own.includes('[[model]]')) {
+      // DSP-149: the model id this turn reached the adapter with, as it arrived.
+      lines.push(`Model requested by this turn: ${state.config.modelRequested === '' ? '(provider default)' : state.config.modelRequested}`);
+    }
     if (own.includes('[[folders]]')) {
       const roots = [state.config.workspacePath, ...(state.config.workspacePaths ?? []).slice(1)];
       lines.push(`Working folders given to this session: ${roots.join(' | ')}`);

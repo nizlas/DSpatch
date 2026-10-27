@@ -72,7 +72,7 @@ import {
   type BridgeFailure,
 } from './recovery';
 import { describePlainly } from './plain-error';
-import { StartPage, RecentDialog, NoWorkspaceBar } from './StartPage';
+import { StartPage, RecentDialog, NoWorkspaceBar, ModelSelect } from './StartPage';
 import {
   COPIED_NOTE,
   COPY_DIAGNOSTICS_LABEL,
@@ -482,8 +482,6 @@ function Workbench({
   /** What had focus when the details opened, so closing them gives it back. */
   const detailsReturnFocus = useRef<HTMLElement | null>(null);
   const detailsWereOpen = useRef(false);
-  /** The model this conversation's next ordinary message will be sent to. */
-  const [modelChoice, setModelChoice] = useState<string | null>(null);
 
   const pendingPrompt = useRef('');
   const scriptStarted = useRef(false);
@@ -2908,6 +2906,7 @@ function Workbench({
                     turn={item.turn}
                     index={item.index}
                     active={item.turn.dspatchRunId === activeTurn?.dspatchRunId}
+                    contextCarriedAutomatically={session.continuity.contextTransfer === 'automatic'}
                   />
                 ) : item.kind === 'loop' ? (
                   <LoopTurnEntry
@@ -3165,24 +3164,21 @@ function Workbench({
                     void startSession({ kind: 'new-provider-session', provider });
                   }}
                 />
-                <ModelChooser
-                  connection={connection}
-                  session={session}
-                  chosen={modelChoice}
-                  onChoose={(modelId) => {
-                    void window.dspatch.setRequestedModel(modelId).then(
-                      (inForce) => {
-                        setModelChoice(inForce);
-                      },
-                      () => {
-                        setComposerNote(
-                          'DSpatch could not change the model. The next message ' +
-                            'goes to the one named beside the composer.',
-                        );
-                      },
-                    );
-                  }}
+                {/* DSP-149: the models the agent offers, chosen here as on the start page. */}
+                <ModelSelect
+                  provider={session.provider}
+                  disabled={busy !== null || activeTurn !== null || loopBusy}
+                  compact
                 />
+                {/* What the choice applies to, one click away (DSP-121 UX), kept for the composer's choice. */}
+                <details className="model__help">
+                  <summary className="model__help-summary" data-ev="model-affects-summary">
+                    What this applies to
+                  </summary>
+                  <span className="model__note" data-ev="model-affects">
+                    for your next message here. A loop run uses the model it was started with.
+                  </span>
+                </details>
                 {/*
                   Shown when there is something to stop, rather than always. A
                   dead Cancel and a dead Stop waiting beside every idle composer
@@ -3199,7 +3195,7 @@ function Workbench({
                     }}
                     disabled={busy === 'cancelling'}
                   >
-                    {busy === 'cancelling' ? 'Cancelling …' : 'Cancel'}
+                    {busy === 'cancelling' ? 'Stopping …' : 'Stop'}
                   </button>
                 )}
                 {/*
@@ -3220,6 +3216,12 @@ function Workbench({
                   >
                     Stop waiting
                   </button>
+                )}
+                {/* DSP-149: a quiet sign that the agent is working, gone when it is done. */}
+                {(activeTurn !== null || loopBusy) && (
+                  <span className="working" role="status" aria-label="The agent is working" data-ev="working-indicator">
+                    <span className="working__dot" aria-hidden="true" />
+                  </span>
                 )}
                 <span className="pending" data-ev="active-status">
                   {activityText}
@@ -3350,7 +3352,13 @@ function Workbench({
                   onShowDetails={showDiagnostics}
                 />
               )}
-              {session !== null && (
+              {session !== null && session.continuity.contextCut === true && (
+                <p className="app__note" data-ev="context-cut">
+                  This conversation is longer than DSpatch can pass on, so its earliest part
+                  did not reach the agent in this workspace.
+                </p>
+              )}
+              {session !== null && session.continuity.contextTransfer !== 'automatic' && (
                 <NewSessionBlock
                   session={session}
                   sentAnything={chat.turns.length > 0}
@@ -3444,6 +3452,7 @@ function Workbench({
           onCheckCursor={checkCursorNow}
         />
         {session !== null && <AgentCommandsSection report={agentCommands} />}
+        {session !== null && <TurnFactsSection turns={chat.turns} />}
 
         {session !== null && (
           <>
@@ -3556,94 +3565,6 @@ function Workbench({
       </div>
       </div>
     </>
-  );
-}
-
-/**
- * Which model the next message goes to (DSP-60 #3).
- *
- * Three states, and the difference between them is the point. With a model list,
- * it is a chooser. Without one — the list is read when the connection is checked
- * and that read can fail — it names the model in force and offers no choice,
- * because an empty chooser is worse than an honest sentence. With no connection at
- * all it says so.
- *
- * The note underneath is not decoration: §9 requires a selection to say which work
- * it affects, and here that is narrow and worth stating. It changes the next
- * ordinary message. It does not reach a turn already in flight, and it does not
- * reach a loop run, which carries the model the loop was started with.
- */
-function ModelChooser({
-  connection,
-  session,
-  chosen,
-  onChoose,
-}: {
-  readonly connection: ConnectionStatus;
-  readonly session: ChatSessionInfo | null;
-  readonly chosen: string | null;
-  readonly onChoose: (modelId: string) => void;
-}): JSX.Element | null {
-  if (session !== null && session.provider === 'claude') {
-    // DSP-117: Claude has no model list here; the model is named, not chosen.
-    return (
-      <div className="model">
-        <span className="model__fixed" data-ev="model-name">
-          Model {session.modelRequested}
-        </span>
-      </div>
-    );
-  }
-  if (connection.kind !== 'connected') {
-    return null;
-  }
-  const inForce = chosen ?? connection.modelRequested;
-  const listed = connection.models.some((model) => model.id === inForce);
-  return (
-    // A div, not a span: the help is a <details>, which is flow content and may not
-    // sit inside a span. `.model` is inline-flex, so the row reads the same.
-    <div className="model">
-      {connection.models.length === 0 ? (
-        <span className="model__fixed" data-ev="model-name">
-          Model {inForce}
-        </span>
-      ) : (
-        <label className="model__label">
-          <span>Model</span>
-          <select
-            className="model__select"
-            data-ev="model-select"
-            value={inForce}
-            onChange={(event) => {
-              onChoose(event.target.value);
-            }}
-          >
-            {/* The model in force is always an option, even when the provider's
-                list does not contain it — otherwise the control would silently
-                show a different model from the one that will be used. */}
-            {!listed && <option value={inForce}>{inForce}</option>}
-            {connection.models.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.displayName}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {/*
-        What the choice applies to, one click away (DSP-121 UX): the sentence is true
-        and worth keeping, but beside the control on every screen it was a line of
-        help nobody had asked for. The text is unchanged inside the disclosure.
-      */}
-      <details className="model__help">
-        <summary className="model__help-summary" data-ev="model-affects-summary">
-          What this applies to
-        </summary>
-        <span className="model__note" data-ev="model-affects">
-          for your next message here. A loop run uses the model it was started with.
-        </span>
-      </details>
-    </div>
   );
 }
 
@@ -3786,6 +3707,50 @@ function AppBarProblems({
  * reaches into a hidden element, so the scripted runs that measure these facts read
  * what they always read.
  */
+/**
+ * DSP-149: how each turn of this session arrived, and what DSpatch sent in front of a
+ * message: the technical side of the conversation, kept out of it and shown here.
+ */
+function TurnFactsSection({ turns }: { readonly turns: readonly TurnState[] }): JSX.Element {
+  return (
+    <Section title="Turns">
+      {turns.length === 0 ? (
+        <p className="app__note">Nothing has been sent in this session yet.</p>
+      ) : (
+        <ul className="files" data-ev="turn-facts">
+          {turns.map((turn, index) => (
+            <li className="files__row" key={turn.dspatchRunId}>
+              <div>
+                <p className="files__path">
+                  {String(index + 1)}. {turn.prompt.length > 80 ? `${turn.prompt.slice(0, 80)}…` : turn.prompt}
+                </p>
+                <p className="files__meta">
+                  {turn.status} · {String(turn.deltaCount)} text fragments · {String(turn.toolsFinished)} of{' '}
+                  {String(turn.toolsStarted)} tool calls finished
+                  {turn.lastTool === null ? '' : ` · last tool ${turn.lastTool}`} ·{' '}
+                  {turn.usage === null || turn.usage.totalTokens === null
+                    ? 'tokens unknown'
+                    : `${String(turn.usage.totalTokens)} tokens`}{' '}
+                  · cost unknown · {turn.dspatchRunId}
+                </p>
+                {turn.resentContext !== null && (
+                  <details>
+                    <summary>
+                      Sent in front of this message: DSpatch&apos;s record of the earlier conversation (
+                      {String(turn.resentContext.length)} characters)
+                    </summary>
+                    <pre className="turn__answer">{turn.resentContext}</pre>
+                  </details>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
 function SessionFacts({
   header,
   connection,
@@ -6909,10 +6874,16 @@ function Turn({
   turn,
   index,
   active,
+  contextCarriedAutomatically,
 }: {
   readonly turn: TurnState;
   readonly index: number;
   readonly active: boolean;
+  /**
+   * DSP-149: the recap in front of this message was the automatic carrying of the
+   * conversation into a workspace. It is shown under Session details, not here.
+   */
+  readonly contextCarriedAutomatically: boolean;
 }): JSX.Element {
   const badge =
     turn.status === 'finished'
@@ -6946,7 +6917,7 @@ function Turn({
         the new-session block's vocabulary, and the same on a read-back turn
         (`sentWithSummaryLine`, DSP-121).
       */}
-      {turn.resentContext !== null && (
+      {turn.resentContext !== null && !contextCarriedAutomatically && (
         <details className="turn__resent" data-ev={`turn-${String(index)}-resent`}>
           <summary>{sentWithSummaryLine(turn.resentContext.length)}</summary>
           <pre
@@ -7026,7 +6997,9 @@ function Turn({
         thread shows a prompt and a blank — so it is marked, which is the whole of why
         marking every reply was not needed to achieve it.
       */}
-      {(turn.status !== 'finished' || turn.answer === '') && (
+      {/* DSP-149: no "streaming…" badge; the working indicator by the composer says it. */}
+      {((turn.status !== 'finished' && turn.status !== 'streaming') ||
+        (turn.status === 'finished' && turn.answer === '')) && (
         <p className="turn__meta">
           <span
             className={`badge badge--${badge}`}
@@ -7042,10 +7015,12 @@ function Turn({
         would not — and `turn__counts-summary--quiet` is what makes it read as furniture
         a reader can ignore.
       */}
-      <details className="turn__counts">
-        <summary className="turn__counts-summary turn__counts-summary--quiet">
-          How this turn arrived
-        </summary>
+      {/*
+        DSP-149: "How this turn arrived" is not in the conversation any more. The same
+        facts are under Session details (Turns); they stay here, not drawn, for the
+        scripted trials that read them by name.
+      */}
+      <div className="turn__counts" hidden>
         <p className="turn__meta">
           <span data-ev={`turn-${String(index)}-deltas`}>
             {String(turn.deltaCount)} text fragments
@@ -7067,7 +7042,7 @@ function Turn({
           </span>{' '}
           · cost unknown
         </p>
-      </details>
+      </div>
       {turn.cancelRequested && turn.status === 'streaming' && (
         <p className="pending">
           Cancellation requested. The run has not reported a terminal state yet.

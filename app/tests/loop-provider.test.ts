@@ -68,6 +68,8 @@ function request(
     rootCount: 1,
     ...(entryNode === undefined ? {} : { entryNode }),
     cursorModel: 'composer-2',
+    claudeModel: 'claude-haiku-4-5',
+    claudeModels: ['claude-haiku-4-5'],
     adapters: factory,
     ...overrides,
   };
@@ -294,6 +296,8 @@ describe('a loop run that cannot start says why, and constructs nothing', () => 
         sessionProvider,
         ...(entryNode === undefined ? {} : { entryNode }),
         cursorModel: 'composer-2',
+        claudeModel: 'claude-haiku-4-5',
+        claudeModels: ['claude-haiku-4-5'],
       });
     assert.match(refusal(prepareLoopRun(editor('claude'))), /fixes the model composer-2/);
     assert.match(loopRunAgentInfo(editor('claude'), duration.graph.target).line, /^No loop run can start: .*fixes the model/);

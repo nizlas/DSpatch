@@ -10175,17 +10175,57 @@ async function runWorkspaceFlowScenario(plan: ScriptedRunPlan): Promise<Scripted
       });
       await window.dspatch.captureWindow('workspace-opened');
 
-      // 3. The same conversation continues, with both folders given to the agent.
-      await sendAndSettle(0, 'Go on with what I asked. [[folders]]', 60_000);
+      // The context goes with it in the background: no panel, no summary, no extra message.
+      const visible = document.body.innerText;
+      for (const word of ['The agent does not have the earlier conversation', 'This summary will be sent', 'Remove summary']) {
+        expect(!visible.includes(word), `the conversation still shows "${word}"`);
+      }
+      expect(element('new-session-block') === null || element('new-session-block')?.offsetParent === null, 'the new-session panel is on screen');
+
+      // 3. The same conversation continues, with both folders and its earlier context;
+      // the working indicator and Stop are there while the agent works.
+      await typeInto('prompt', 'Go on with what I asked. [[context]] [[folders]]');
+      await sendFromComposer();
+      await waitFor('the working indicator', () => element('working-indicator') !== null, 10_000);
+      expect(element('cancel') !== null, 'there is no Stop button while the agent works');
+      expect(!document.body.innerText.includes('streaming…'), 'a "streaming…" label is in the conversation');
+      await window.dspatch.captureWindow('working');
+      await waitFor('turn 0 to finish', () => element('active-answer') === null && element('turn-0-answer') !== null, 60_000);
+      expect(element('working-indicator') === null, 'the working indicator stayed after the turn');
+      const carriedMessages = Number(/Earlier conversation received: yes, (\d+) earlier messages/.exec(answerOf(0))?.[1] ?? '0');
+      expect(carriedMessages >= 2, `the earlier conversation did not reach the agent (${String(carriedMessages)} messages)`);
       expect(lower(answerOf(0)).includes(lower(alpha)) && lower(answerOf(0)).includes(lower(beta)), 'the session was not given both folders');
-      record('both folders given', { answer: answerOf(0) });
+      expect(!document.body.innerText.includes('How this turn arrived'), '"How this turn arrived" is in the conversation');
+      record('both folders and the context given', { answer: answerOf(0), carriedMessages });
+
+      // Session details hold the turn facts and the carried context instead.
+      await window.dspatch.pressMenuItem('show-session-details');
+      await waitFor('the turn facts in Session details', () => element('turn-facts') !== null, 10_000);
+      await window.dspatch.captureWindow('session-details-turns');
+      await window.dspatch.pressMenuItem('hide-session-details');
+
+      // The model: chosen in the window, it is the id the next turn reaches the adapter with.
+      await chooseInSelect('model-select', 'claude-sonnet-4-5');
+      await sleep(300);
+      await sendAndSettle(1, 'Which model? [[model]]', 60_000);
+      expect(answerOf(1).includes('Model requested by this turn: claude-sonnet-4-5'), 'the chosen model did not reach the adapter');
+      // A model this account is not offered is refused, with a reason, and nothing is replaced.
+      await window.dspatch.setRequestedModel('model-that-is-not-offered');
+      await typeInto('prompt', 'This must not go. [[model]]');
+      await sendFromComposer();
+      await waitFor('the refusal', () => textOf('action-error').length > 0, 15_000);
+      expect(/is not one .* offers this account/.test(textOf('action-error')), `the refusal does not explain itself: ${textOf('action-error')}`);
+      expect(element('turn-2-answer') === null, 'a message went with an unoffered model');
+      record('unoffered model refused', { refusal: textOf('action-error') });
+      await window.dspatch.setRequestedModel('claude-sonnet-4-5');
+      await typeInto('prompt', '');
 
       // 4. A third folder, through the same function as File > Add Folder to Workspace.
       await window.dspatch.addFolderToWorkspace(gamma);
       await waitFor('three folders in the sidebar', () => document.querySelectorAll('.tree-row--root').length === 3, 20_000);
-      await sendAndSettle(1, 'And now? [[folders]]', 60_000);
-      expect(lower(answerOf(1)).includes(lower(gamma)), 'the added folder did not reach the session');
-      record('third folder given', { answer: answerOf(1) });
+      await sendAndSettle(2, 'And now? [[folders]]', 60_000);
+      expect(lower(answerOf(2)).includes(lower(gamma)), 'the added folder did not reach the session');
+      record('third folder given', { answer: answerOf(2) });
       await window.dspatch.captureWindow('workspace-three-folders');
       observations['conversations'] = (await window.dspatch.listConversations()).entries.map((entry) => ({
         id: entry.conversationId,
@@ -10193,7 +10233,10 @@ async function runWorkspaceFlowScenario(plan: ScriptedRunPlan): Promise<Scripted
         messages: entry.messageCount,
       }));
     } else {
-      // 1. After the restart: the workspace in Recent, one entry, with its folders.
+      // 1. After the restart: the workspace in Recent, one entry, with its folders; the
+      // model chosen before the restart is still chosen.
+      const models = await window.dspatch.listModels('cursor');
+      expect(models.chosen === 'claude-sonnet-4-5', `the model choice did not survive the restart (${models.chosen})`);
       const names = [...document.querySelectorAll('[data-ev^="open-project-"]')].map((node) => node.textContent ?? '');
       expect(names.includes('Agentintegration'), 'the workspace is not in Recent after a restart');
       const before = (await window.dspatch.listConversations()).entries.map((entry) => entry.conversationId);

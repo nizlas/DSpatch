@@ -269,6 +269,11 @@ function byRecency(records: readonly WorkspaceRecord[]): WorkspaceRecord[] {
   );
 }
 
+/** DSP-149: Recent projects is what was opened and not removed from the list. */
+export function inRecent(record: WorkspaceRecord): boolean {
+  return !record.hiddenFromRecent && record.openCount > 0;
+}
+
 export class ProjectStore {
   private readonly filePath: string;
 
@@ -381,9 +386,19 @@ export class ProjectStore {
    * Recent. The folders are recorded as given (resolved); none is created or moved.
    */
   createWorkspace(
-    request: { readonly name: string; readonly folders: readonly string[] },
+    request: {
+      readonly name: string;
+      readonly folders: readonly string[];
+      /**
+       * DSP-149: whether this is an opening. A workspace the chat creates is recorded
+       * unopened and enters Recent when it is actually opened; Recent is the history of
+       * what was opened, not of what was made.
+       */
+      readonly opened?: boolean;
+    },
     atUtc: string = new Date().toISOString(),
   ): StoreOutcome {
+    const opened = request.opened !== false;
     const folders = parseFolders(request.folders.map((folder) => path.resolve(folder)));
     const primary = folders[0];
     if (primary === undefined) {
@@ -396,8 +411,8 @@ export class ProjectStore {
       folders,
       filePath: null,
       loopDefinitionKey: null,
-      lastOpenedAtUtc: atUtc,
-      openCount: 1,
+      lastOpenedAtUtc: opened ? atUtc : '',
+      openCount: opened ? 1 : 0,
       lastConversationId: null,
       hiddenFromRecent: false,
     };
@@ -492,7 +507,7 @@ export class ProjectStore {
       workspaces,
       looseConversationId: loose,
       recentProjects: workspaces
-        .filter((record) => !record.hiddenFromRecent)
+        .filter((record) => !record.hiddenFromRecent && record.openCount > 0)
         .map((record) => ({
           path: record.folders[0] ?? '',
           lastOpenedAtUtc: record.lastOpenedAtUtc,

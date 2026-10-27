@@ -23,6 +23,7 @@ import type {
   LoopGraphSaveOutcome,
   LoopGraphSaveRequest,
   LoopInstructionEventPayload,
+  ModelListing,
   RecentWorkspaceEntry,
   RecentWorkspaces,
   ResolvedRoleEntry,
@@ -90,9 +91,9 @@ import {
   describePermissionPolicy,
 } from '../adapter/claude-agent-sdk-adapter';
 import { claudeSupportStatus } from '../adapter/claude-support';
-import { CLAUDE_CHAT_MODEL, ChatService, type ChatAdapter } from '../main/chat-service';
+import { ChatService, type ChatAdapter } from '../main/chat-service';
 import { ConversationStore } from '../main/conversation-store';
-import { ProjectStore, type WorkspaceRecord } from '../main/project-store';
+import { inRecent, ProjectStore, type WorkspaceRecord } from '../main/project-store';
 import { workspaceTools } from './workspace-tools';
 import { locateExampleReview } from '../main/example-review';
 import { InstructionQueue } from '../main/instruction-queue';
@@ -404,6 +405,9 @@ function loopRunRequest(input: {
 }): LoopRunAgentRequest {
   return {
     ...input,
+    // DSP-149: Claude's model is the person's choice, as in the chat.
+    claudeModel: chatService.modelFor('claude'),
+    claudeModels: chatService.knownModelIds('claude'),
     sessionProvider: chatService.openSession()?.provider ?? null,
     chosenAgent: chatService.chosenAgent(),
     adapters: {
@@ -530,6 +534,7 @@ function createChatService(): ChatService {
   claudeAuthorizationReference: CLAUDE_AUTHORIZATION_REFERENCE,
   claudeSupport: { installed: CLAUDE_SUPPORT.installed, reason: CLAUDE_SUPPORT.reason },
   agentChoiceStore: { read: () => agentChoiceStore.read(), write: (provider) => agentChoiceStore.write(provider) },
+  modelChoice: modelChoiceStore,
   ...(presentationMode ? { readAuthStatus: presentationAuthStatus } : {}),
   });
 }
@@ -544,6 +549,51 @@ let serviceDisposed = false;
  * ends up in the user's git history.
  */
 let projectStore: ProjectStore | null = null;
+
+/**
+ * DSP-149: the model chosen for each agent, in one small file under `userData`. No
+ * file, an unreadable one or no entry means no choice for that agent. Written only by
+ * an explicit choice; a write that fails is logged and costs the memory, not the turn.
+ */
+const modelChoiceStore = {
+  file(): string {
+    return path.join(userDataDir(), 'dspatch-model-choice.json');
+  },
+  readAll(): Partial<Record<StoredSessionProvider, string>> {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(modelChoiceStore.file(), 'utf8')) as { models?: Record<string, unknown> };
+      const models: Partial<Record<StoredSessionProvider, string>> = {};
+      for (const provider of ['cursor', 'claude'] as const) {
+        const value = parsed.models?.[provider];
+        if (typeof value === 'string' && value !== '') {
+          models[provider] = value;
+        }
+      }
+      return models;
+    } catch {
+      return {};
+    }
+  },
+  read(provider: StoredSessionProvider): string | null {
+    return modelChoiceStore.readAll()[provider] ?? null;
+  },
+  write(provider: StoredSessionProvider, modelId: string | null): void {
+    const models = { ...modelChoiceStore.readAll() };
+    if (modelId === null) {
+      delete models[provider];
+    } else {
+      models[provider] = modelId;
+    }
+    try {
+      const file = modelChoiceStore.file();
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${JSON.stringify({ formatVersion: 1, models }, null, 2)}
+`, 'utf8');
+    } catch (error) {
+      log(`[model] the choice could not be remembered: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  },
+};
 
 /**
  * DSP-136: the agent chosen explicitly in *Open a project*, kept in one small file
@@ -819,16 +869,9 @@ async function openWorkspaceFor(request: WorkspaceOpenRequest): Promise<Workspac
       missing.push(folder);
     }
   }
-  if (record === null) {
-    const created = store.openFolder(primary);
-    if (created.problem !== null) {
-      log(`[workspace] ${created.problem}`);
-    }
-    record = created.workspace;
-    if (record === null) {
-      return { kind: 'refused', problem: created.problem ?? 'The workspace could not be recorded.' };
-    }
-  }
+  // DSP-149: a folder with no workspace yet gets one only once it has opened, so a
+  // refused or failed opening leaves nothing in Recent.
+  const name = record?.name ?? folderDisplayName(primary);
   const carried = chatService.looseConversationWithMessages();
   const startRequest: StartSessionRequest =
     carried === null
@@ -836,12 +879,12 @@ async function openWorkspaceFor(request: WorkspaceOpenRequest): Promise<Workspac
           kind: 'folder',
           path: primary,
           folders: usable.slice(1),
-          conversationId: request.newChat === true ? null : record.lastConversationId,
+          conversationId: request.newChat === true || record === null ? null : record.lastConversationId,
           ...(request.provider === undefined ? {} : { provider: request.provider }),
         }
-      : { kind: 'carry', path: primary, folders: usable.slice(1), conversationId: carried, workspaceName: record.name };
+      : { kind: 'carry', path: primary, folders: usable.slice(1), conversationId: carried, workspaceName: name };
   const previousWorkspace = openWorkspaceId;
-  openWorkspaceId = record.id;
+  openWorkspaceId = record?.id ?? null;
   let session: ChatSessionInfo;
   try {
     session = await chatService.startChatSession(startRequest);
@@ -852,10 +895,24 @@ async function openWorkspaceFor(request: WorkspaceOpenRequest): Promise<Workspac
     announceWorkspace();
     return {
       kind: 'refused',
-      problem: `"${record.name}" could not be opened: ${error instanceof Error ? error.message : String(error)}`,
+      problem: `"${name}" could not be opened: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-  store.recordOpened(record.id);
+  // The opening succeeded: this is what Recent records (DSP-149).
+  if (record === null) {
+    const created = store.openFolder(primary);
+    if (created.problem !== null) {
+      log(`[workspace] ${created.problem}`);
+    }
+    record = created.workspace;
+    if (record === null) {
+      announceWorkspace(created.problem);
+      return { kind: 'refused', problem: created.problem ?? 'The workspace could not be recorded.' };
+    }
+    openWorkspaceId = record.id;
+  } else {
+    store.recordOpened(record.id);
+  }
   updateOpenWorkspace({ lastConversationId: session.conversationId });
   if (carried !== null) {
     const outcome = store.setLooseConversation(null);
@@ -924,7 +981,7 @@ function chatWorkspaceTools(): readonly AppTool[] {
     recent: () =>
       requireProjectStore()
         .read()
-        .workspaces.filter((record) => !record.hiddenFromRecent)
+        .workspaces.filter(inRecent)
         .map((record) => ({ id: record.id, name: record.name, folders: record.folders })),
     openWorkspace: () => {
       const record = openWorkspaceRecord();
@@ -932,7 +989,7 @@ function chatWorkspaceTools(): readonly AppTool[] {
     },
     checkFolder: (folder) => chatService.checkFolder(folder),
     createWorkspace: (name, folders) => {
-      const outcome = requireProjectStore().createWorkspace({ name, folders });
+      const outcome = requireProjectStore().createWorkspace({ name, folders, opened: false });
       if (outcome.workspace === null) {
         return { problem: outcome.problem ?? 'The workspace could not be recorded.' };
       }
@@ -1126,7 +1183,7 @@ function recentWorkspaces(problem: string | null = null): RecentWorkspaces {
     }
   };
   const entries: RecentWorkspaceEntry[] = state.workspaces
-    .filter((record) => !record.hiddenFromRecent)
+    .filter(inRecent)
     .map((record) => ({
       id: record.id,
       name: record.name,
@@ -3373,6 +3430,12 @@ function registerCoreMethods(): void {
    * Returns what is actually in force rather than what was asked for, so the
    * window states a fact instead of echoing its own request.
    */
+  handle('chat.listModels', (_event, provider: unknown): Promise<ModelListing> => {
+    if (provider !== 'cursor' && provider !== 'claude') {
+      throw new Error('Unknown agent.');
+    }
+    return chatService.listModels(provider);
+  });
   handle('chat.setModel', (_event, modelId: string): string => {
     const inForce = chatService.setRequestedModel(modelId);
     log(`model requested for the next message: ${inForce}`);
@@ -3776,8 +3839,11 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
       return adapterFactory.createAdapter(request);
     },
     model: process.env['DSPATCH_CHAT_MODEL'] ?? undefined,
+    // DSP-149: the same choice as the chat, in the discussion's own session.
     modelFor: (provider) =>
-      provider === 'claude' ? CLAUDE_CHAT_MODEL : (process.env['DSPATCH_CHAT_MODEL'] ?? REVIEW_DISCUSSION_DEFAULT_MODEL),
+      provider === 'claude'
+        ? chatService.modelFor('claude')
+        : (modelChoiceStore.read('cursor') ?? process.env['DSPATCH_CHAT_MODEL'] ?? REVIEW_DISCUSSION_DEFAULT_MODEL),
     availability: (provider) =>
       providerAvailability(provider, {
         claudeAuthorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,

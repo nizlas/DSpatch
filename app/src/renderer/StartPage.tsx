@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type JSX, type KeyboardEve
 
 import type {
   AgentChoiceInfo,
+  ModelListing,
   RecentWorkspaceEntry,
   RecentWorkspaces,
   StoredSessionProvider,
@@ -420,6 +421,7 @@ export function StartPage({
       <StartBackdrop />
       <header className="start__top">
         <ProviderSelect agentChoice={agentChoice} provider={provider} disabled={busy} onChoose={onChooseProvider} />
+        <ModelSelect provider={provider === 'claude' && !agentChoice.claudeEnabled ? null : provider} disabled={busy} />
       </header>
       <main className="start__content">
         <Wordmark />
@@ -590,5 +592,94 @@ export function NoWorkspaceBar({
         New conversation
       </button>
     </div>
+  );
+}
+
+/**
+ * The model for the chosen agent (DSP-149): every model the agent's SDK lists for this
+ * account, by name, and *Default* for the provider's own choice. The technical id is in
+ * the tooltip. A model that is chosen but not listed stays visible and says so; nothing
+ * is replaced by another model.
+ */
+export function ModelSelect({
+  provider,
+  disabled,
+  compact = false,
+}: {
+  readonly provider: StoredSessionProvider | null;
+  readonly disabled: boolean;
+  readonly compact?: boolean;
+}): JSX.Element | null {
+  const [listing, setListing] = useState<ModelListing | null>(null);
+  const [chosen, setChosen] = useState<string>('');
+  useEffect(() => {
+    let live = true;
+    setListing(null);
+    if (provider !== null) {
+      void window.dspatch.listModels(provider).then(
+        (answer) => {
+          if (live) {
+            setListing(answer);
+            setChosen(answer.chosen);
+          }
+        },
+        () => undefined,
+      );
+    }
+    return () => {
+      live = false;
+    };
+  }, [provider]);
+  if (provider === null) {
+    return null;
+  }
+  const models = listing?.models ?? [];
+  const offered = chosen === '' || models.some((model) => model.id === chosen);
+  const current = models.find((model) => model.id === chosen);
+  return (
+    <label
+      className={`provider provider--model${compact ? ' provider--compact' : ''}`}
+      title={
+        listing === null
+          ? 'Reading the models this agent offers…'
+          : listing.error !== null
+            ? `The models could not be read: ${listing.error}`
+            : `${current === undefined ? (chosen === '' ? 'The provider chooses' : chosen) : `${current.displayName} (${current.id})`} · from ${listing.source}`
+      }
+    >
+      <span className="sr-only">Model</span>
+      <select
+        className="provider__select"
+        data-ev="model-select"
+        value={chosen}
+        disabled={disabled || listing === null}
+        onChange={(event) => {
+          const next = event.target.value;
+          setChosen(next);
+          void window.dspatch.setRequestedModel(next).then(
+            (inForce) => {
+              setChosen(inForce);
+            },
+            () => undefined,
+          );
+        }}
+      >
+        <option value="">Default model</option>
+        {!offered && <option value={chosen}>{`${chosen} (not offered to this account)`}</option>}
+        {models.map((model) => (
+          <option key={model.id} value={model.id} title={model.description ?? model.id}>
+            {model.displayName}
+          </option>
+        ))}
+      </select>
+      <svg className="provider__chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M7 10l5 5 5-5" />
+      </svg>
+      {listing?.error != null && (
+        <span className="provider__error" data-ev="model-list-error">
+          Models unavailable
+        </span>
+      )}
+    </label>
   );
 }

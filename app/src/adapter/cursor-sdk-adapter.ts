@@ -699,6 +699,14 @@ export class CursorSdkAdapter implements AgentAdapter {
    * DSP-149: the folders changed. Applied before the next send by resuming the agent
    * with the new `local.dirs`; the primary (`cwd`) is never changed here.
    */
+  /** DSP-149: the model the next send asks for (`send` passes it on every call). */
+  setSessionModel(sessionId: DspatchSessionId, modelId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (state !== undefined) {
+      state.config = { ...state.config, modelRequested: modelId };
+    }
+  }
+
   setWorkspaceRoots(sessionId: DspatchSessionId, roots: readonly string[]): void {
     const state = this.sessions.get(sessionId);
     if (state === undefined) {
