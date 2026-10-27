@@ -39,7 +39,22 @@ A task can touch several of these; read each one that applies. A task that touch
 
 Keep their status apart. The roadmap and the content-exclusion contract are drafts proposing a direction and a contract; the parallelism document records an agreed product direction, not a verified implementation; the review-coverage document records proposed concepts, not implemented features. A reference to one of them grants no new implementation mandate and is not evidence that a runtime supports anything.
 
-Niclas's explicit decisions govern the vision. Distinguish agreed principles from technical proposals and open questions in VISION.md. Do not change the vision to fit an implementation; document a proposed departure and its rationale. Routine, reversible choices within the agreed task need no new approval. Record durable decisions and changes of direction in the repository.
+<a id="follow-the-decided-design"></a>
+
+## Follow the decided design
+
+Niclas's explicit decisions govern the vision and the architecture. Passing tests show that code does what it was written to do, not that the right product or architecture was built, so conformance to decided design is checked in its own right.
+
+- **Before an implementation assignment, identify the governing decisions.** Read the current repository versions of the documents above and those the [relevance index](#relevance-index) points to, and name in the task or plan the decisions that govern the work. Word copies, older reports and earlier prompts do not replace current documents. Keep agreed decisions apart from drafts, proposals and open questions, and check a decision's stated scope before relying on it: a requirement written for one provider, runtime or host is not evidence about another.
+- **Reuse what is decided and what exists.** Keep the decided division of responsibility, and use the runtime's or SDK's own functions — its tools, permission rules, hooks and sessions — with DSpatch's controls at the boundaries the documents name, before building a DSpatch mechanism for the same job.
+- **Architecture is not a routine implementation detail.** A change to the architecture, a control boundary, the permission model or the division of responsibility needs Niclas's decision. An ambiguous task, or a prompt written or rewritten by an assistant, is not his explicit approval to depart from a documented decision, whatever its wording emphasises.
+- **On a conflict, ask before implementing the departure.** State the decisions affected, the proposed departure and its consequences, and get Niclas's decision. Continue independent work meanwhile; do not build an interim mechanism to avoid the decision.
+- **Within decided bounds, decide.** Ordinary implementation choices inside the decided boundaries, and routine reversible choices within the agreed task, need no new approval.
+- **Do not rewrite documents to fit what was built.** Do not change the vision or a decision record afterwards to legitimise an unintended departure; correct the departure or report it. Document a proposed departure with its rationale, and record durable decisions and changes of direction in the repository once Niclas has made them.
+- **Review checks design conformance.** A reviewer judges the result against the governing decisions as well as code quality and test evidence, and reports a departure as a finding.
+- **Final reports name remaining departures.** State any departure from decided design that remains, approved or not, and do not present passing tests as evidence that the right product or architecture was built.
+
+This binds the coordinator and every specialist of the development loop. The coordinator carries the governing decisions, with their sections, into each affected handoff ([COORDINATOR.md](docs/loop/COORDINATOR.md), step 4), because specialists do not see the conversation they came from.
 
 <a id="bevara-produktens-riktning"></a>
 

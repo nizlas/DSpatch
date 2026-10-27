@@ -1,15 +1,17 @@
 /**
- * The main chat with Claude running its own tests through DSpatch's command tool
- * (DSP-145): the chat service's real send path, the real `ClaudeAgentSdkAdapter` on a
- * substituted SDK, DSpatch's real command runner, and a small repository this file
- * generates with a real failing test.
+ * The main chat with Claude running its own tests with Claude Code's Bash tool
+ * (DSP-145, DSP-146): the chat service's real send path, the real
+ * `ClaudeAgentSdkAdapter` on a substituted SDK whose Bash runs real commands and calls
+ * the hooks as Claude Code documents (`support/claude-loop-sdk.ts`), and a small
+ * repository this file generates with a real failing test.
  *
- * SIMULATED model: the turn is scripted - read, run the tests, edit, run them again,
- * report - and the scripted Read and Edit are this file acting on the folder. What is
- * real is everything DSpatch does: the commands run (`npm test`, which is `node --test`
- * here), their exit codes, the records, the snapshots, the freshness, the saved
- * conversation and the refusal of a second command. Whether Claude itself would choose
- * these steps is for a live trial.
+ * SIMULATED model and SIMULATED Claude Code: the turn is scripted - read, run the tests,
+ * edit, run them again, report - and the scripted Read and Edit are this file acting on
+ * the folder. What is real is the commands (`npm test`, which is `node --test` here),
+ * their exit codes, and everything DSpatch does with what the hooks report: the records,
+ * the snapshots, the freshness, the saved conversation and the refusal of the Run button
+ * beside a running command. Whether Claude itself would choose these steps, and whether
+ * real Claude Code reports them exactly so, is for a live trial.
  *
  *     node scripts/run-tests.mjs chat        (from app/)
  */
@@ -19,10 +21,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { CHAT_PERMISSIONS, ClaudeAgentSdkAdapter, COMMAND_TOOL_ID } from '../src/adapter/claude-agent-sdk-adapter.ts';
+import { CHAT_PERMISSIONS, ClaudeAgentSdkAdapter } from '../src/adapter/claude-agent-sdk-adapter.ts';
 import { ChatService, storedCommandRecord } from '../src/main/chat-service.ts';
 import { ConversationStore } from '../src/main/conversation-store.ts';
-import { createAgentCommandRunner, WorkspaceCommandSlots } from '../src/main/workspace-command.ts';
+import { WorkspaceCommandSlots } from '../src/main/workspace-command.ts';
 import type { UiAgentEvent } from '../src/shared/bridge.ts';
 import { claudeSdk, CLEAN_ENV, type ScriptStep } from './support/claude-loop-sdk.ts';
 import { setEnvironment, tempRoot } from './support/fixtures.ts';
@@ -85,8 +87,6 @@ function harness(
         spawnProcess: sdk.spawnProcess,
         env: CLEAN_ENV,
         permissions: CHAT_PERMISSIONS,
-        commandRunner: createAgentCommandRunner({ slots, timeoutMs: 120_000 }),
-        mcpTools: sdk.mcpTools,
       });
     },
     timings: { cancelConfirmMs: 40, cancelWatchMs: 60 },
@@ -119,31 +119,31 @@ test('SIMULATED model, real commands: read, a failing test, a fix, a passing tes
           assert.match(fs.readFileSync(path.join(workspace, 'test', 'sum.test.js'), 'utf8'), /sum\(2, 3\), 5/);
         },
       },
-      { tool: COMMAND_TOOL_ID, input: { command: 'npm test' } },
+      { tool: 'Bash', input: { command: 'npm test' } },
       {
         // The scripted model's Edit: the fix.
         act: () => {
           fs.writeFileSync(path.join(workspace, 'src', 'sum.js'), 'exports.sum = (a, b) => a + b;\n', 'utf8');
         },
       },
-      { tool: COMMAND_TOOL_ID, input: { command: 'npm test' } },
+      { tool: 'Bash', input: { command: 'npm test' } },
     ],
     'Fixed `sum` to add; `npm test` now passes (it failed before the fix).',
   );
   const session = await h.service.startChatSession({ kind: 'folder', path: h.workspace });
   assert.equal(session.provider, 'claude');
-  assert.match(session.context.toolPolicySent, /mcp__dspatch__run_command/);
+  assert.match(session.context.toolPolicySent, /Claude Code's own Bash and PowerShell tools/);
 
   await h.service.sendPrompt('The sum test fails. Fix it and check that the tests pass.');
   await settled(h.service);
 
-  // What the model got back: a failure it can read, then a pass.
+  // What the same agent got back in the same turn: a failure it can read, then a pass.
   const outcomes = h.sdk.queries[0]?.toolOutcomes ?? [];
   assert.equal(outcomes.length, 2);
-  assert.equal(outcomes[0]?.isError, false, 'a failing test is an ordinary result');
-  assert.match(outcomes[0]?.text ?? '', /Exit code 1/);
+  assert.equal(outcomes[0]?.isError, true, "Claude Code's tool error for a failing command");
+  assert.match(outcomes[0]?.text ?? '', /^Exit code 1\n/);
   assert.match(outcomes[0]?.text ?? '', /fail 1|not ok/);
-  assert.match(outcomes[1]?.text ?? '', /Exit code 0/);
+  assert.equal(outcomes[1]?.isError, false);
 
   // What DSpatch recorded, and whether each still describes the code on disk.
   const report = h.service.getAgentCommands();
@@ -151,7 +151,10 @@ test('SIMULATED model, real commands: read, a failing test, a fix, a passing tes
   const [first, second] = report.commands;
   assert.equal(first?.record.exitCode, 1);
   assert.equal(second?.record.exitCode, 0);
+  assert.equal(first?.record.requestedBy, 'provider-reported', 'Claude ran it; DSpatch recorded it');
   assert.equal(first?.record.cwd, h.workspace);
+  assert.ok(first?.record.testedSnapshotId !== null, 'DSpatch snapshotted the code at the hook');
+  assert.equal(first?.record.testedSnapshotId, first?.record.afterRunSnapshotId, 'the failing run changed nothing');
   assert.notEqual(first?.record.afterRunSnapshotId, second?.record.testedSnapshotId, 'the fix is between them');
   assert.equal(first?.standing, 'stale', 'the failure describes code that has since changed');
   assert.equal(second?.standing, 'current', 'the pass describes the code on disk now');
@@ -181,7 +184,7 @@ test('the Run button is refused with a plain sentence while the agent\'s command
   let refusal: unknown = null;
   const h = harness(
     'busy',
-    () => [{ tool: COMMAND_TOOL_ID, input: { command: `"${process.execPath}" -e "setTimeout(() => {}, 1500)"` } }],
+    () => [{ tool: 'Bash', input: { command: `"${process.execPath}" -e "setTimeout(() => {}, 1500)"` } }],
     'Ran it.',
   );
   await h.service.startChatSession({ kind: 'folder', path: h.workspace });
@@ -202,11 +205,11 @@ test('the Run button is refused with a plain sentence while the agent\'s command
   await h.service.dispose();
 });
 
-test('R2: a Run that throws after taking the working copy gives it back, so the agent can still run', async () => {
+test('R2: a Run that throws after taking the working copy gives it back, and the slot is free for the next command', async () => {
   // A log that throws once the command has started: the step after the slot is taken.
   const h = harness(
     'run-throws',
-    () => [{ tool: COMMAND_TOOL_ID, input: { command: `"${process.execPath}" -e "0"` } }],
+    () => [{ tool: 'Bash', input: { command: `"${process.execPath}" -e "0"` } }],
     'Ran it.',
     (message) => {
       if (/: running `/.test(message)) {
@@ -220,18 +223,12 @@ test('R2: a Run that throws after taking the working copy gives it back, so the 
     /a stub that fails after the slot was taken/,
   );
   assert.equal(h.slots.holderOf(h.workspace), null, 'the slot was given back');
-  // The agent's runner, on the same slots, is not refused.
-  const record = await createAgentCommandRunner({ slots: h.slots, timeoutMs: 60_000 }).run({
-    line: `"${process.execPath}" -e "0"`,
-    cwd: h.workspace,
-    workspacePaths: [h.workspace],
-    signal: new AbortController().signal,
-    dspatchSessionId: 's',
-    dspatchRunId: 'r',
-    commandId: 'c',
-  });
-  assert.equal(record.ending, 'exited', record.endingMessage ?? '');
-  assert.equal(record.exitCode, 0);
+  // The next command - the agent's, recorded as it starts - can take the slot again.
+  const again = h.slots.claim(h.workspace, { by: 'agent', line: 'npm test' });
+  assert.equal(again.ok, true);
+  if (again.ok) {
+    again.release();
+  }
   await h.service.dispose();
 });
 
@@ -239,7 +236,7 @@ test('I1: a conversation keeps the end of a long output, within the run record b
   const long = `${'x'.repeat(20_000)}THE-END`;
   const kept = storedCommandRecord({
     commandId: 'c',
-    requestedBy: 'agent-tool',
+    requestedBy: 'provider-reported',
     line: 'npm test',
     shell: 'sh -c',
     cwd: '/p',

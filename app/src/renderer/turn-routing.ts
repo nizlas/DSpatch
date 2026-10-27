@@ -69,8 +69,7 @@ export interface TurnState {
   /** Distinct tool names, in the order first seen. Names only: no arguments. */
   readonly toolNames: readonly string[];
   /**
-   * DSP-145: the commands DSpatch's command tool ran for the agent in this turn, in
-   * order, for the transcript's short action lines. Absent until the first one.
+   * DSP-145, DSP-146: the commands the agent ran in this turn, in order, for the transcript's short action lines. Absent until the first one.
    */
   readonly commands?: readonly UiCommandLine[];
   readonly status: TurnStatus;
@@ -502,11 +501,15 @@ export function describeCommandLine(command: UiCommandLine): {
     case 'timed-out':
       return { verb: 'Stopped', after: ` at its time bound${took}` };
     case 'stopped':
-      return { verb: 'Stopped', after: took };
+      return command.stopConfirmed === false
+        ? { verb: 'Cancelled', after: ` (end not confirmed)${took}` }
+        : { verb: 'Stopped', after: took };
     case 'could-not-start':
       return { verb: 'Could not start', after: '' };
     case 'refused':
       return { verb: 'Did not run', after: '' };
+    case 'not-reported':
+      return { verb: 'Requested', after: `: how it ended was not reported${took}` };
     default:
       return { verb: 'Ran', after: '' };
   }

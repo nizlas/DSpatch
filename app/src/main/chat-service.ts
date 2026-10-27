@@ -812,8 +812,8 @@ interface TurnRecord {
   /** Kept verbatim in the main process; never sent to the renderer. */
   readonly rawEventTypes: Record<string, number>;
   /**
-   * DSP-145: the commands DSpatch's command tool ran for the agent in this turn, from
-   * the adapter's `command.finished` - DSpatch's own record, not the provider's account.
+   * DSP-145, DSP-146: the commands the agent ran in this turn, from the adapter's
+   * `command.finished`, with the snapshots DSpatch took when it saw the start and the end.
    */
   readonly commands: AgentCommandRecord[];
 }
@@ -1052,10 +1052,10 @@ export interface ChatServiceOptions {
    */
   readonly sampleProjectsRoot?: string;
   /**
-   * DSP-145: which working copies have a command running that DSpatch started, shared
-   * with the agent's command runner so the Run button and the agent's command tool never
-   * run two commands in one working copy at once. Defaults to the process-wide slots the
-   * provider factory's runners use; a test passes its own to both.
+   * DSP-145, DSP-146: which working copies have a command running - one the Run button
+   * started, or a shell command the agent's runtime reported starting - so the Run button
+   * does not start a second one beside it. Defaults to the process-wide slots; a test
+   * passes its own.
    */
   readonly commandSlots?: WorkspaceCommandSlots;
   /**
@@ -1310,6 +1310,16 @@ export class ChatService {
    * from starting at all.
    */
   private activeCommand: ActiveCommand | null = null;
+
+  /**
+   * DSP-146: shell commands the agent's runtime reported starting and not yet ending, by
+   * command id: the working copy's snapshot when the start was seen, and the Run slot held
+   * for it so the Run button does not start a second command beside it.
+   */
+  private readonly agentCommandStarts = new Map<
+    string,
+    { readonly beforeSnapshotId: string | null; readonly workspacePath: string | null; release(): void }
+  >();
 
   /** The result the window is showing, and the snapshots it is bound to. */
   private lastTest: TestOutcome | null = null;
@@ -3406,7 +3416,7 @@ export class ChatService {
       throw new Error(describeRunRefused(slot.holder));
     }
     // R2: whatever happens from here on, the working copy's command slot is given back,
-    // or the agent's command tool would be refused until DSpatch restarted.
+    // or the Run button would be refused until DSpatch restarted.
     try {
       const shell = describeShell();
       const beforeSnapshotId = this.safeSnapshotId();
@@ -3620,8 +3630,8 @@ export class ChatService {
   }
 
   /**
-   * DSP-145: every command the agent ran through DSpatch's command tool in the open
-   * conversation, oldest first, each with whether its result still describes the code
+   * DSP-145, DSP-146: every command the agent ran in the open conversation (with its own
+   * shell tool, or earlier through DSpatch's former command tool), oldest first, each with whether its result still describes the code
    * on disk - the same freshness rule as the Run button's result, against the snapshot
    * taken after the command ended. Re-hashes the working copy once.
    */
@@ -4865,6 +4875,12 @@ export class ChatService {
     this.saveConversation();
     this.unsubscribe?.();
     this.unsubscribe = null;
+    // DSP-146: no more ends will be heard for this session's commands, so their Run
+    // slots are given back rather than held until DSpatch restarts.
+    for (const started of this.agentCommandStarts.values()) {
+      started.release();
+    }
+    this.agentCommandStarts.clear();
     this.session = null;
     this.baseline = null;
     this.dirtyAtStart = new Set<string>();
@@ -5108,13 +5124,47 @@ export class ChatService {
       }
     }
 
+    if (event.type === 'command.started') {
+      // DSP-146: the adapter raises this from inside the runtime's PreToolUse hook, which
+      // the runtime awaits before the command runs, so this snapshot is the code the
+      // command starts on. The Run slot is held until its end is recorded.
+      const workspacePath = this.session?.workspacePath ?? null;
+      const slots = this.options.commandSlots ?? WORKSPACE_COMMAND_SLOTS;
+      const claim =
+        workspacePath === null ? null : slots.claim(workspacePath, { by: 'agent', line: event.line });
+      this.agentCommandStarts.set(event.commandId, {
+        beforeSnapshotId: this.safeSnapshotId(),
+        workspacePath,
+        release: () => {
+          if (claim?.ok === true) {
+            claim.release();
+          }
+        },
+      });
+    }
+
     if (event.type === 'command.finished') {
       // DSP-145: kept on the turn whose run it belongs to, by run ID, even if a newer
       // turn is on screen by now, and saved at once: a command's record is evidence
       // the next window must still have if this one is closed mid-turn.
+      const started = this.agentCommandStarts.get(event.command.commandId);
+      this.agentCommandStarts.delete(event.command.commandId);
+      started?.release();
+      // DSP-146: a provider-reported record carries no snapshots of its own; DSpatch's
+      // are added here, the after-run one taken as the end is seen (from inside the
+      // runtime's PostToolUse hook, before the agent goes on). `null` is not observed.
+      const record: AgentCommandRecord =
+        event.command.testedSnapshotId === null && event.command.afterRunSnapshotId === null
+          ? {
+              ...event.command,
+              testedSnapshotId: started?.beforeSnapshotId ?? null,
+              afterRunSnapshotId: this.safeSnapshotId(),
+              snapshotRoots:
+                started?.workspacePath === null || started === undefined ? [] : [started.workspacePath],
+            }
+          : event.command;
       const owner = this.turns.find((candidate) => candidate.dspatchRunId === event.dspatchRunId);
-      owner?.commands.push(storedCommandRecord(event.command));
-      const record = event.command;
+      owner?.commands.push(storedCommandRecord(record));
       this.options.log(
         `agent command ${record.commandId}: \`${record.line}\` in ${record.cwd} ended ` +
           `${record.ending} (exit ${record.exitCode === null ? 'none' : String(record.exitCode)}) ` +
@@ -5590,6 +5640,9 @@ export function toUiEvent(event: AgentEvent): UiAgentEvent {
           ending: event.command.ending,
           exitCode: event.command.exitCode,
           durationMs: event.command.durationMs,
+          ...(event.command.ending === 'stopped' && !event.command.killedByDspatch
+            ? { stopConfirmed: false }
+            : {}),
         },
       };
     case 'approval.requested':

@@ -1,6 +1,6 @@
 /**
  * A substituted Claude SDK and the shared adapter factory with both constructions
- * observed, for tests that walk a loop run with Claude (DSP-138, DSP-139).
+ * observed, for tests that walk a loop run with Claude (DSP-138, DSP-139, DSP-146).
  *
  * The Claude adapter built here is the real `ClaudeAgentSdkAdapter` with `queryFn` and
  * `spawnProcess` substituted, so nothing loads `@anthropic-ai/claude-agent-sdk`, nothing
@@ -8,14 +8,15 @@
  * unless a test allows it, so a Claude run that reached it would fail.
  */
 
+import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
-import type { AgentCommandRunner } from '../../src/adapter/agent-adapter.ts';
 import { ClaudeAgentSdkAdapter, type ClaudePermissionPolicy } from '../../src/adapter/claude-agent-sdk-adapter.ts';
 import type { ToolPolicy } from '../../src/adapter/cursor-sdk-adapter.ts';
 import type { ChatAdapter } from '../../src/main/chat-service.ts';
 import { providerAdapters, type ProviderAdaptersOptions } from '../../src/main/provider-adapters.ts';
+import { gateCommandSpawnOptions, killCommandTree } from '../../src/main/workspace-command.ts';
 
 /** No credential variables at all. */
 export const CLEAN_ENV = Object.freeze({ PATH: process.env['PATH'] ?? '' });
@@ -33,11 +34,12 @@ export type Turn =
   | { readonly kind: 'fail'; readonly message: string }
   | { readonly kind: 'until-interrupted' }
   /**
-   * DSP-145: a scripted model that calls tools, in order, then answers with `text`. A
-   * tool call goes through what the SDK would do with the options it was given: every
-   * PreToolUse hook first, then the pre-approval in `allowedTools`, then the in-process
-   * MCP server's handler (from {@link fakeMcpTools}). `act` steps stand in for the
-   * agent's built-in Read and Edit. Not the SDK: its real behaviour is unobserved here.
+   * DSP-145, DSP-146: a scripted model that calls tools, in order, then answers with
+   * `text`. A tool call goes through what the SDK is documented to do with the options it
+   * was given: every PreToolUse hook first, then the pre-approval in `allowedTools`, then
+   * the tool. `Bash` and `PowerShell` are simulated after Claude Code's documented
+   * contract ({@link simulatedShell}); `act` steps stand in for Read and Edit. Not the SDK:
+   * its real behaviour is unobserved here.
    */
   | { readonly kind: 'script'; readonly steps: readonly ScriptStep[]; readonly text: string };
 
@@ -59,8 +61,8 @@ export type ScriptStep =
 export interface ToolOutcome {
   readonly tool: string;
   readonly toolUseId: string;
-  /** `denied` by a hook or by the permission rules; `missing` when no server had the tool. */
-  readonly how: 'ran' | 'denied' | 'missing';
+  /** `denied` by a hook or by the permission rules; `missing` when the tool is not simulated. */
+  readonly how: 'ran' | 'denied' | 'missing' | 'interrupted';
   readonly isError: boolean;
   readonly text: string;
 }
@@ -71,63 +73,92 @@ export interface Query {
   interrupts: number;
   /** DSP-145: every scripted tool call and what came back, in order. */
   readonly toolOutcomes: ToolOutcome[];
+  /** DSP-146: every hook call the simulated tools made, in order: event and tool. */
+  readonly hookCalls: Array<{ readonly event: string; readonly tool: string }>;
 }
 
-// --- A substituted in-process MCP (DSP-145) ------------------------------------------
-
-/** One tool as the substituted `tool()` built it. */
-export interface FakeTool {
-  readonly name: string;
-  readonly description: string;
-  readonly inputSchema: Record<string, unknown>;
-  readonly handler: (args: Record<string, unknown>, extra: unknown) => Promise<any>;
-  readonly extras: unknown;
-}
-
-/** One server as the substituted `createSdkMcpServer()` built it. */
-export interface FakeServer {
-  readonly type: 'sdk';
-  readonly name: string;
-  readonly options: Record<string, any>;
-  readonly instance: { readonly tools: readonly FakeTool[] };
-}
+// --- A simulated shell tool (DSP-146) ------------------------------------------------
 
 /**
- * Substitutes for the SDK's `tool()` and `createSdkMcpServer()` and for Zod: the
- * adapter's `mcpTools` seam. Every server built is kept, so a test can read its tool's
- * description, options and handler.
+ * Claude Code's Bash or PowerShell tool as its documentation describes it (hooks and
+ * tools reference, read 27 Oct 2026), with a real command: the line runs through the
+ * platform shell in the session's `cwd`; on exit 0 the PostToolUse hooks get
+ * `tool_response { stdout, stderr, interrupted }`; on another exit code the
+ * PostToolUseFailure hooks get `error` whose first line is `Exit code N`; an interrupt
+ * stops the command and fires neither ("cancelling a running tool does not fire this
+ * hook"). The simulation stops the whole process tree on interrupt so a test leaves
+ * nothing running; what real Claude Code does to a command's children is not documented
+ * and not claimed here. Not Claude Code.
  */
-export function fakeMcpTools() {
-  const servers: FakeServer[] = [];
-  const tools = {
-    tool: (
-      name: string,
-      description: string,
-      inputSchema: Record<string, unknown>,
-      handler: FakeTool['handler'],
-      extras?: unknown,
-    ): FakeTool => ({ name, description, inputSchema, handler, extras }),
-    createSdkMcpServer: (options: Record<string, any>): FakeServer => {
-      const server: FakeServer = {
-        type: 'sdk',
-        name: String(options['name']),
-        options,
-        instance: { tools: (options['tools'] ?? []) as FakeTool[] },
+async function simulatedShell(
+  options: Record<string, any>,
+  tool: string,
+  input: Record<string, unknown>,
+  toolUseId: string,
+  interrupt: AbortSignal,
+  hookCalls: Query['hookCalls'],
+): Promise<ToolOutcome> {
+  const line = typeof input['command'] === 'string' ? input['command'] : '';
+  const cwd = String(options['cwd'] ?? process.cwd());
+  const started = Date.now();
+  const ran = await new Promise<{ code: number | null; out: string; err: string; interrupted: boolean }>(
+    (resolve) => {
+      const child = spawn(line, gateCommandSpawnOptions(cwd));
+      let out = '';
+      let err = '';
+      let interrupted = false;
+      child.stdout?.on('data', (chunk: Buffer) => {
+        out += chunk.toString('utf8');
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        err += chunk.toString('utf8');
+      });
+      const onInterrupt = (): void => {
+        interrupted = true;
+        killCommandTree(child);
       };
-      servers.push(server);
-      return server;
+      if (interrupt.aborted) {
+        onInterrupt();
+      } else {
+        interrupt.addEventListener('abort', onInterrupt, { once: true });
+      }
+      child.on('error', (error) => {
+        interrupt.removeEventListener('abort', onInterrupt);
+        resolve({ code: 127, out, err: `${err}${error.message}`, interrupted });
+      });
+      child.on('close', (code) => {
+        interrupt.removeEventListener('abort', onInterrupt);
+        resolve({ code, out, err, interrupted });
+      });
     },
-    commandInputSchema: () => ({ command: 'a substituted Zod string' }),
+  );
+  const base = {
+    session_id: options['sessionId'] ?? options['resume'],
+    transcript_path: 'C:/synthetic/transcript.jsonl',
+    cwd,
+    tool_name: tool,
+    tool_input: input,
+    tool_use_id: toolUseId,
+    duration_ms: Date.now() - started,
   };
-  return { tools: tools as any, servers };
-}
-
-/** Text of an MCP tool result. */
-function resultText(result: any): string {
-  const content = Array.isArray(result?.content) ? result.content : [];
-  return content
-    .map((block: any) => (typeof block?.text === 'string' ? block.text : ''))
-    .join('\n');
+  if (ran.interrupted) {
+    return { tool, toolUseId, how: 'interrupted', isError: true, text: 'Interrupted by user' };
+  }
+  const post = async (event: 'PostToolUse' | 'PostToolUseFailure', fields: Record<string, unknown>) => {
+    for (const entry of (options['hooks']?.[event] ?? []) as any[]) {
+      for (const hook of entry.hooks ?? []) {
+        hookCalls.push({ event, tool });
+        await hook({ ...base, hook_event_name: event, ...fields }, toolUseId, { signal: new AbortController().signal });
+      }
+    }
+  };
+  if (ran.code === 0) {
+    await post('PostToolUse', { tool_response: { stdout: ran.out, stderr: ran.err, interrupted: false, isImage: false } });
+    return { tool, toolUseId, how: 'ran', isError: false, text: `${ran.out}${ran.err}` };
+  }
+  const error = `Exit code ${String(ran.code ?? 1)}\n${ran.out}${ran.err}`;
+  await post('PostToolUseFailure', { error });
+  return { tool, toolUseId, how: 'ran', isError: true, text: error };
 }
 
 /**
@@ -139,10 +170,13 @@ async function callTool(
   tool: string,
   input: Record<string, unknown>,
   toolUseId: string,
+  interrupt: AbortSignal,
+  hookCalls: Query['hookCalls'],
 ): Promise<ToolOutcome> {
   const entries: any[] = options['hooks']?.PreToolUse ?? [];
   for (const entry of entries) {
     for (const hook of entry.hooks ?? []) {
+      hookCalls.push({ event: 'PreToolUse', tool });
       const answer = await hook(
         { hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id: toolUseId },
         toolUseId,
@@ -167,14 +201,11 @@ async function callTool(
   ) {
     return { tool, toolUseId, how: 'denied', isError: true, text: `${tool} is not allowed (dontAsk).` };
   }
-  const match = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(tool);
-  const server: FakeServer | undefined = match === null ? undefined : options['mcpServers']?.[match[1] ?? ''];
-  const found = server?.instance.tools.find((candidate) => candidate.name === match?.[2]);
-  if (found === undefined) {
-    return { tool, toolUseId, how: 'missing', isError: true, text: `No such tool available: ${tool}` };
+  const tools: string[] = options['tools'] ?? [];
+  if ((tool === 'Bash' || tool === 'PowerShell') && tools.includes(tool)) {
+    return simulatedShell(options, tool, input, toolUseId, interrupt, hookCalls);
   }
-  const result = await found.handler(input, {});
-  return { tool, toolUseId, how: 'ran', isError: result?.isError === true, text: resultText(result) };
+  return { tool, toolUseId, how: 'missing', isError: true, text: `No such tool available: ${tool}` };
 }
 
 function fakeChild(): any {
@@ -206,7 +237,7 @@ function fakeChild(): any {
 export function claudeSdk(turns: readonly Turn[], onQuery?: (index: number) => void) {
   const queries: Query[] = [];
   const queryFn = (params: { prompt: AsyncIterable<unknown>; options: Record<string, any> }) => {
-    const query: Query = { options: params.options, prompt: '', interrupts: 0, toolOutcomes: [] };
+    const query: Query = { options: params.options, prompt: '', interrupts: 0, toolOutcomes: [], hookCalls: [] };
     queries.push(query);
     const index = queries.length - 1;
     const turn = turns[index] ?? { kind: 'fail', message: `no turn scripted for query ${String(index)}` };
@@ -214,6 +245,7 @@ export function claudeSdk(turns: readonly Turn[], onQuery?: (index: number) => v
     const wasInterrupted = new Promise<void>((resolve) => {
       interrupted = resolve;
     });
+    const interruptSignal = new AbortController();
     const child =
       typeof params.options['spawnClaudeCodeProcess'] === 'function'
         ? params.options['spawnClaudeCodeProcess']({
@@ -299,13 +331,21 @@ export function claudeSdk(turns: readonly Turn[], onQuery?: (index: number) => v
                 content: [{ type: 'tool_use', id: toolUseId, name: step.tool, input: step.input }],
               },
             };
-            const pending = callTool(params.options, step.tool, step.input, toolUseId);
+            const pending = callTool(
+              params.options,
+              step.tool,
+              step.input,
+              toolUseId,
+              interruptSignal.signal,
+              query.hookCalls,
+            );
             if (step.concurrentWithNext === true) {
               overlapping.push(pending);
               continue;
             }
             const outcomes = [...(await Promise.all(overlapping)), await pending];
             overlapping.length = 0;
+            const stopped = outcomes.some((outcome) => outcome.how === 'interrupted');
             for (const outcome of outcomes) {
               query.toolOutcomes.push(outcome);
               if (step.noToolResult === true && outcome.toolUseId === toolUseId) {
@@ -328,6 +368,10 @@ export function claudeSdk(turns: readonly Turn[], onQuery?: (index: number) => v
                   ],
                 },
               };
+            }
+            if (stopped) {
+              yield result('error_during_execution', '');
+              return;
             }
           }
           yield {
@@ -360,17 +404,15 @@ export function claudeSdk(turns: readonly Turn[], onQuery?: (index: number) => v
       interrupt: () => {
         query.interrupts += 1;
         interrupted();
+        interruptSignal.abort();
         return Promise.resolve({ still_queued: [] });
       },
     });
   };
-  const mcp = fakeMcpTools();
   return {
     queryFn: queryFn as any,
     spawnProcess: (() => fakeChild()) as any,
     queries,
-    mcpTools: mcp.tools,
-    mcpServers: mcp.servers,
   };
 }
 
@@ -378,8 +420,6 @@ export function claudeSdk(turns: readonly Turn[], onQuery?: (index: number) => v
 
 export interface Built {
   readonly claudePermissions: ClaudePermissionPolicy[];
-  /** DSP-145: the command runner each Claude construction was given (`undefined` for none). */
-  readonly commandRunners: Array<AgentCommandRunner | undefined>;
   readonly cursorPolicies: ToolPolicy[];
   disposals: number;
 }
@@ -389,16 +429,15 @@ export function adapters(
   overrides: Partial<ProviderAdaptersOptions> = {},
   options: { readonly cursorAllowed?: boolean; readonly handleProvider?: 'cursor' } = {},
 ) {
-  const built: Built = { claudePermissions: [], commandRunners: [], cursorPolicies: [], disposals: 0 };
+  const built: Built = { claudePermissions: [], cursorPolicies: [], disposals: 0 };
   const factory = providerAdapters({
     presentation: false,
     claudeAuthorizationReference: 'test-ref',
     claudeInstalled: true,
     env: CLEAN_ENV,
     construct: {
-      claude: (permissions, commandRunner) => {
+      claude: (permissions) => {
         built.claudePermissions.push(permissions);
-        built.commandRunners.push(commandRunner);
         if (sdk === null) {
           throw new Error('DSP-138: a Claude adapter was built where none should be');
         }
@@ -407,8 +446,6 @@ export function adapters(
           spawnProcess: sdk.spawnProcess,
           env: CLEAN_ENV,
           permissions,
-          mcpTools: sdk.mcpTools,
-          ...(commandRunner === undefined ? {} : { commandRunner }),
         });
         const dispose = adapter.dispose.bind(adapter);
         adapter.dispose = async () => {

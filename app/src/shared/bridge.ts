@@ -1333,9 +1333,9 @@ export interface StoredMessage {
    */
   readonly resentContext: string | null;
   /**
-   * DSP-145: the commands DSpatch's command tool ran for the agent in this turn, as
-   * DSpatch recorded them. Absent in files written before there was a command tool and
-   * in turns that ran none.
+   * DSP-145, DSP-146: the commands the agent ran in this turn, as DSpatch recorded them
+   * (`requestedBy` says whether DSpatch started them). Absent in files written before
+   * DSP-145 and in turns that ran none.
    */
   readonly commands?: readonly AgentCommandRecord[];
 }
@@ -1606,10 +1606,16 @@ export interface UiCommandLine {
   readonly ending: AgentCommandEnding | null;
   readonly exitCode: number | null;
   readonly durationMs: number | null;
+  /**
+   * DSP-146: for `stopped`, whether the stop is confirmed (DSpatch itself stopped the
+   * process). `false` for a provider-reported command whose end nobody reported. Absent
+   * means confirmed, as for records from before DSP-146.
+   */
+  readonly stopConfirmed?: boolean;
 }
 
 /**
- * DSP-145: one command the agent ran through DSpatch's command tool, with whether its
+ * DSP-145, DSP-146: one command the agent ran, with whether its
  * result still describes the code on disk - the chat's own freshness rule
  * (`evaluateFreshness`) against the snapshot taken after the command ended.
  */

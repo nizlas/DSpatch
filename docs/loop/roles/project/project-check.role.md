@@ -22,7 +22,7 @@ Where a project check is what the assignment needs, read the project for what it
 
 Prefer the check that says the most about the work that was just done, at a cost proportionate to it. A focused test suite is usually better evidence than a full release build, and much better than a build that takes a quarter of an hour.
 
-**If your tools can run commands, run the checks you choose** — through DSpatch's command tool, or the provider's own shell. You may run several commands, change approach as you learn, and stop when you have enough to declare a result. A reading assignment that needed no build is a real answer: say so, and say what you read that made that enough.
+**If your tools can run commands, run the checks you choose.** You may run several commands, change approach as you learn, and stop when you have enough to declare a result. A reading assignment that needed no build is a real answer: say so, and say what you read that made that enough.
 
 DSpatch lets a `met` stand only if a command recorded in this run completed on the code exactly as you leave it, or if the run changed no file. Run your checks on the code as it is, and do not change files.
 

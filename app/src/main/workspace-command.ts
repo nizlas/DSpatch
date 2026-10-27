@@ -1,11 +1,13 @@
 /**
- * DSpatch's one way of running a command in a working folder (DSP-145).
+ * DSpatch's one way of running a command it starts itself in a working folder (DSP-145):
+ * a loop's gate step and the chat's Run button. The agent's own commands are not run
+ * here: since DSP-146 the agent runs them with its runtime's own shell tool, and DSpatch
+ * records what the runtime reports (INTERACTION_MODEL.md sections 1 and 8).
  *
- * Moved out of `loop-live.ts`, where the loop's gate node grew it, because the agent's
- * own command tool needs exactly the same things: spawn through the platform shell in
- * a known folder, a time bound that DSpatch enforces, a stop that reaches the child
- * processes, an honest record when nothing could start, and no exception escaping into
- * the main process. One implementation, so the gate and the agent cannot drift apart.
+ * Moved out of `loop-live.ts`, where the loop's gate node grew it: spawn through the
+ * platform shell in a known folder, a time bound that DSpatch enforces, a stop that
+ * reaches the child processes, an honest record when nothing could start, and no
+ * exception escaping into the main process.
  *
  * What the move added, and only for callers that ask for it:
  *
@@ -28,13 +30,11 @@
  */
 
 import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
-import type { AgentCommandRequest, AgentCommandRunner } from '../adapter/agent-adapter';
 import type {
   AgentCommandEnding,
-  AgentCommandRecord,
   AgentCommandRequester,
 } from '../adapter/types';
 import type { TestVerdict } from '../shared/bridge';
@@ -779,10 +779,11 @@ export interface CommandSlotHolder {
 }
 
 /**
- * Which working copies have a command running that DSpatch started, so the chat's Run
- * button and the agent's command tool do not run two commands in one working copy at
- * once (their output and file writes would interleave). Keyed by folder, case-folded
- * on Windows. A process-wide instance is the default; tests make their own.
+ * Which working copies have a command running, so the chat's Run button does not start
+ * a second command while the person's earlier one, or a shell command the agent's
+ * runtime reported starting (DSP-146), is still running in the same working copy (their
+ * output and file writes would interleave). Keyed by folder, case-folded on Windows. A
+ * process-wide instance is the default; tests make their own.
  */
 export class WorkspaceCommandSlots {
   private readonly held = new Map<string, CommandSlotHolder>();
@@ -821,148 +822,5 @@ export class WorkspaceCommandSlots {
   }
 }
 
-/** The process-wide slots the chat and the agent runners share by default. */
+/** The process-wide slots the chat uses by default. */
 export const WORKSPACE_COMMAND_SLOTS = new WorkspaceCommandSlots();
-
-// --- The agent's command runner ----------------------------------------------------
-
-/**
- * How long one command the agent asks for may run (DSP-145). Ten minutes: longer than
- * the builds and suites DSpatch has been pointed at, shorter than the gate's fifteen,
- * because the agent waits for it inside a turn. A bound so that there is one.
- */
-export const AGENT_COMMAND_TIMEOUT_MS = 10 * 60_000;
-
-/**
- * How many characters of each stream a command record keeps: the end, where a test
- * runner's summary and the failing assertion are. The same size as the chat's Run.
- */
-export const AGENT_COMMAND_OUTPUT_CHARS = 200_000;
-
-export interface AgentCommandRunnerOptions {
-  readonly timeoutMs?: number;
-  readonly maxOutputChars?: number;
-  readonly slots?: WorkspaceCommandSlots;
-  readonly snapshotId?: FolderSnapshotId;
-  /**
-   * Whether the runner snapshots the working folders itself (default `true`). A loop's
-   * step executor takes its own snapshots around every command it observes, so a runner
-   * built for loop steps leaves this off rather than hash every folder twice more
-   * (review I2); its records then carry `null` snapshots, read as not observed.
-   */
-  readonly snapshots?: boolean;
-}
-
-/** What the agent's record says about how a command ended. */
-function endingOf(record: WorkspaceCommandRecord): AgentCommandEnding {
-  const notRun: CommandNotStarted | null = record.notRun;
-  if (notRun === null) {
-    return 'exited';
-  }
-  if (record.stoppedBy === 'cancel') {
-    return 'stopped';
-  }
-  if (record.stoppedBy === 'time-bound') {
-    return 'timed-out';
-  }
-  return notRun.kind === 'no-command-configured' ? 'refused' : 'could-not-start';
-}
-
-/** The record an adapter receives, from DSpatch's own. */
-export function toAgentCommandRecord(
-  commandId: string,
-  record: WorkspaceCommandRecord,
-): AgentCommandRecord {
-  return {
-    commandId,
-    requestedBy: record.requestedBy,
-    line: record.line ?? record.command,
-    shell: record.shell,
-    cwd: record.cwd,
-    pid: record.pid,
-    startedAtUtc: record.startedAtUtc,
-    finishedAtUtc: record.finishedAtUtc,
-    durationMs: record.durationMs,
-    timeoutMs: record.timeoutMs,
-    ending: endingOf(record),
-    endingMessage: record.notRun?.message ?? null,
-    exitCode: record.exitCode,
-    signal: record.signal,
-    killedByDspatch: record.killedByDspatch,
-    stdout: record.stdout,
-    stderr: record.stderr,
-    outputTruncated: record.outputTruncated,
-    outputNote: record.outputNote,
-    testedSnapshotId: record.testedSnapshotId,
-    afterRunSnapshotId: record.afterRunSnapshotId,
-    snapshotRoots: record.snapshotFolders,
-  };
-}
-
-/** The sentence an agent's command gets when the person's Run holds the working copy. */
-export function describeSlotTaken(holder: CommandSlotHolder): string {
-  return holder.by === 'person'
-    ? `DSpatch did not start the command: a command started from DSpatch's Run button ` +
-        `(${holder.line}) is still running in this working copy, and two at once would ` +
-        `interleave their output and file writes. Try again when it has finished.`
-    : `DSpatch did not start the command: another command the agent asked for ` +
-        `(${holder.line}) is still running in this working copy. One at a time.`;
-}
-
-/**
- * DSpatch's command runner for an agent's tool (DSP-145): the session's working folder,
- * {@link AGENT_COMMAND_TIMEOUT_MS}, the output bound, snapshots of every working folder,
- * stop on abort, and one command at a time per working copy - shared with the chat's
- * Run button through {@link WorkspaceCommandSlots}. Never rejects.
- */
-export function createAgentCommandRunner(options: AgentCommandRunnerOptions = {}): AgentCommandRunner {
-  const timeoutMs = options.timeoutMs ?? AGENT_COMMAND_TIMEOUT_MS;
-  const slots = options.slots ?? WORKSPACE_COMMAND_SLOTS;
-  const shell = describeShell();
-  return {
-    timeoutMs,
-    shell,
-    run: async (request: AgentCommandRequest): Promise<AgentCommandRecord> => {
-      const commandId = request.commandId === '' ? randomUUID() : request.commandId;
-      const folders = request.workspacePaths.length > 0 ? request.workspacePaths : [request.cwd];
-      const line = request.line.trim();
-      const claim = slots.claim(folders[0] ?? request.cwd, { by: 'agent', line });
-      if (!claim.ok) {
-        const refused = commandNotRun(request.line, request.cwd, describeSlotTaken(claim.holder));
-        const now = new Date().toISOString();
-        return toAgentCommandRecord(commandId, {
-          ...refused,
-          command: `${shell} ${line}`,
-          requestedBy: 'agent-tool',
-          shell,
-          pid: null,
-          timeoutMs,
-          finishedAtUtc: now,
-          killedByDspatch: false,
-          stoppedBy: null,
-          verdict: 'unknown',
-          outputTruncated: false,
-          outputNote: null,
-          testedSnapshotId: null,
-          afterRunSnapshotId: null,
-          snapshotFolders: [],
-        });
-      }
-      try {
-        const record = await runWorkspaceCommand({
-          line: request.line,
-          cwd: request.cwd,
-          requestedBy: 'agent-tool',
-          timeoutMs,
-          signal: request.signal,
-          snapshotFolders: options.snapshots === false ? [] : folders,
-          maxOutputChars: options.maxOutputChars ?? AGENT_COMMAND_OUTPUT_CHARS,
-          ...(options.snapshotId === undefined ? {} : { snapshotId: options.snapshotId }),
-        });
-        return toAgentCommandRecord(commandId, record);
-      } finally {
-        claim.release();
-      }
-    },
-  };
-}

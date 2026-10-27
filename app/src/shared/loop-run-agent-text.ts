@@ -46,8 +46,8 @@ export function describeLoopRunAgent(input: {
   if (input.provider === 'claude') {
     return (
       `Runs with Claude (${input.modelRequested}): its agent steps read and edit files and run ` +
-      "builds and tests through DSpatch's command tool, which DSpatch starts, records and can " +
-      "stop. A gate step's command is run by DSpatch itself." +
+      "builds and tests with Claude Code's own shell tools, which DSpatch records. A gate " +
+      "step's command is run by DSpatch itself." +
       drawn
     );
   }

@@ -688,7 +688,7 @@ export function describeApprovalRule(
     `Declaring ${declared}. DSpatch lets that stand only if a command recorded in this run ` +
     `completed on the code exactly as the working folders are when this step ends - in every ` +
     `working folder - or if this run has changed no file at all. A command counts whether an ` +
-    `agent ran it through DSpatch’s command tool, the provider reported running it, or a gate ` +
+    `agent ran it with its own tool and the provider reported it, or a gate ` +
     `ran it; one that could not start, was refused, or was stopped does not, and neither does ` +
     `a folder DSpatch could not observe. A completed command shows that it ran on this code, ` +
     `not that its result was good: judging the result is yours. ${otherwise} Changing a file ` +
@@ -738,12 +738,12 @@ function evidenceTail(label: string, text: string): string {
 }
 
 const ORIGIN: Record<CommandEvidenceEntry['requestedBy'], string> = {
-  'agent-tool': 'DSpatch ran it at an agent’s request, through its command tool',
+  'agent-tool': 'DSpatch ran it at an agent’s request, through the command tool it offered before DSP-146',
   gate: 'DSpatch ran it for a gate step',
   'provider-reported':
-    'the provider reported running it with its own tool; DSpatch did not start it, saw only ' +
-    'the provider’s report, and took its snapshots when it saw the start and finish events, so ' +
-    'they approximate the code the command saw',
+    'the agent ran it with the provider’s own tool; DSpatch did not start it, saw only what ' +
+    'the provider reported, and took its snapshots when it saw the start and the end (inside ' +
+    'Claude’s hooks, or at Cursor’s events, which only approximate the code the command saw)',
 };
 
 /**

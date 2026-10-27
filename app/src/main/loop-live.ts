@@ -617,6 +617,16 @@ export const PROVIDER_REPORTED_NOTE =
   'command saw. The provider does not report a working directory; the session\'s folder ' +
   'is shown.';
 
+/**
+ * DSP-146: the same for a command whose start and end the adapter observed at the
+ * provider's own hooks (Claude's PreToolUse, PostToolUse and PostToolUseFailure).
+ */
+export const HOOK_REPORTED_NOTE =
+  "Run by the agent with the provider's own shell tool, not by DSpatch: DSpatch did not " +
+  'start or stop it and records what the provider reported through its hooks. DSpatch took ' +
+  'its snapshots inside those hooks, which the provider runs just before the command starts ' +
+  'and as it reports the end.';
+
 function recordOf(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
@@ -628,7 +638,10 @@ function folderChange(
   return before === null || after === null ? null : differingRoots(before, after).length > 0;
 }
 
-/** An agent's command, from DSpatch's own record of it (`command.finished`). */
+/**
+ * An agent's command, from the adapter's record of it (`command.finished`): DSpatch's own
+ * for its former command tool, or (DSP-146) what the provider's hooks reported.
+ */
 function agentCommandEntry(
   record: AgentCommandRecord,
   nodeId: string,
@@ -650,7 +663,7 @@ function agentCommandEntry(
         };
   return {
     record: {
-      command: `${record.shell} ${record.line}`,
+      command: record.requestedBy === 'provider-reported' ? record.line : `${record.shell} ${record.line}`,
       line: record.line,
       cwd: record.cwd,
       exitCode: record.exitCode,
@@ -660,13 +673,14 @@ function agentCommandEntry(
       stdout: record.stdout,
       stderr: record.stderr,
       notRun,
-      requestedBy: 'agent-tool',
+      requestedBy: record.requestedBy,
       nodeId,
       occurrence,
       testedSnapshotId: combinedSnapshotId(before),
       afterRunSnapshotId: combinedSnapshotId(after),
       changedWhileRunning: folderChange(before, after),
       ending: record.ending,
+      ...(record.requestedBy === 'provider-reported' ? { originNote: HOOK_REPORTED_NOTE } : {}),
     },
     completed: record.ending === 'exited',
     after,
@@ -1410,8 +1424,8 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
   };
 
   /**
-   * Every command this run recorded, in order (DSP-145): gates', agents' through DSpatch's
-   * command tool, and the provider's own reported shell commands. Kept here because the
+   * Every command this run recorded, in order (DSP-145, DSP-146): gates', and the agents'
+   * own shell commands as the provider reported them. Kept here because the
    * approval rule and the check's evidence compare their after-run snapshots with the
    * working folders, and only the executor took those snapshots.
    */
@@ -1890,9 +1904,10 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       occurrence: context.occurrence,
     };
     const emit = options.onStepActivity;
-    // DSP-145: the commands this step's agent ran, as DSpatch observed them - its own
-    // record from DSpatch's command tool, or the provider's report of its own shell tool -
-    // with every folder's snapshot taken when the start and the end were observed.
+    // DSP-145, DSP-146: the commands this step's agent ran with the provider's own shell
+    // tool - from the adapter's `command.*` events (Claude's hooks) or the provider's
+    // `shell` tool events (Cursor) - with every folder's snapshot taken when the start and
+    // the end were observed.
     const commandStarts = new Map<
       string,
       { readonly ids: ReadonlyMap<string, string> | null; readonly atUtc: string }
@@ -2399,7 +2414,7 @@ export function formatLiveInspection(inspection: LiveInspection): string {
             // and one the provider merely reported are not read as the same thing.
             const origin =
               command.requestedBy === 'agent-tool'
-                ? '[agent via DSpatch] '
+                ? "[agent via DSpatch's former command tool] "
                 : command.requestedBy === 'provider-reported'
                   ? '[reported by provider] '
                   : command.requestedBy === 'gate'

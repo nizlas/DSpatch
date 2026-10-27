@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -185,9 +184,6 @@ export function claudeSupportStatus(
 /** The parts of the SDK module DSpatch calls. */
 export interface ClaudeSdkModule {
   readonly query: unknown;
-  /** DSP-145: the SDK's `tool()` and `createSdkMcpServer()`, for DSpatch's command tool. */
-  readonly tool?: unknown;
-  readonly createSdkMcpServer?: unknown;
   readonly getSessionInfo: (
     sessionId: string,
     options?: { dir?: string },
@@ -237,29 +233,6 @@ export async function loadClaudeSdk(
     );
   }
   return (await import(pathToFileURL(sdkEntry(directory)).href)) as ClaudeSdkModule;
-}
-
-/**
- * DSP-145: Zod from Claude support, for the input schema of DSpatch's command tool.
- * The SDK's `tool()` takes a Zod raw shape, and Zod is installed beside the SDK as its
- * peer (`claude-support/package-lock.json`: zod 4.6.7); the app itself does not depend
- * on it. Refuses, like {@link loadClaudeSdk}, when support is not installed. Not
- * observed: the SDK is not installed on the computer this was written on.
- */
-export async function loadClaudeZod(
-  directory: string = claudeSupportDir(),
-  host?: ClaudeSupportPlatform,
-): Promise<unknown> {
-  const status = claudeSupportStatus(directory, host);
-  if (!status.installed) {
-    throw new ClaudeAdapterError(
-      status.reason ?? CLAUDE_NOT_INSTALLED_TEXT,
-      'claude_support_missing',
-    );
-  }
-  const resolved = createRequire(path.join(directory, 'package.json')).resolve('zod');
-  const loaded = (await import(pathToFileURL(resolved).href)) as { z?: unknown; default?: unknown };
-  return loaded.z ?? loaded.default ?? loaded;
 }
 
 /** What decides whether Claude can be chosen in a launch: both parts, each stated. */

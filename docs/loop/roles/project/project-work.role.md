@@ -26,13 +26,13 @@ Say what you did in terms of the project: which files, and why each one. If the 
 
 Say what you could not establish. Something you did not check is unknown, and unknown is not the same as fine.
 
-Use your own tools for the work. You may read and edit, and where your tools can run commands — DSpatch's command tool, or the provider's own shell — find out how this project is built and tested and run the build and the tests your change needs. Choose them yourself from what the repository says; nobody will give you a command.
+Use your own tools for the work. You may read and edit, and where your tools can run commands, find out how this project is built and tested and run the build and the tests your change needs. Choose them yourself from what the repository says; nobody will give you a command.
 
 **A failing build or test is information, not the end of your step.** Read its output, fix the cause, and run it again. Keep going within this step until you judge the work done, or can say plainly why you cannot. A later step checks your work independently; that is not a reason to leave the testing to it.
 
 Run the last check after your last change. A result about the code before your final edit says nothing about the code you leave behind.
 
-If you use the provider's own shell tool, it defaults to a 30-second timeout. Raise it when a real build or test needs longer. DSpatch's command tool has its own time bound, which its description states.
+Your shell tool may stop a command at a default timeout shorter than a real build or test needs. Raise the timeout for that command when it does.
 
 If your tools cannot run commands, do not say you ran anything. Say which build or test you would have wanted and could not run; where the drawing has a step in which DSpatch runs the project's command itself, that step is where it runs.
 

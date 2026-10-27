@@ -43,11 +43,12 @@ const POINT = { kind: 'point', walkId: 'W1', stepId: 'W1.1', placeIndex: 0 } as 
 
 /**
  * The chat's policy digest, pinned: the review fields are omitted, not `undefined`. It was
- * `c5b4686f…` from DSP-117 to DSP-144; DSP-145 changed it on purpose by giving the chat
- * DSpatch's command tool (`commandTool`, `mcp__dspatch__run_command`), which is what
- * refuses an older Claude conversation's resume under the new rules.
+ * `c5b4686f…` from DSP-117 to DSP-144 and `d1a84fb3…` under DSP-145's command tool;
+ * DSP-146 changed it on purpose by giving the chat Claude Code's own Bash and PowerShell
+ * in place of that tool, which is what refuses an older Claude conversation's resume
+ * under the new rules.
  */
-const CHAT_DIGEST = 'claude-agent-sdk:d1a84fb3f00cd9769ce098a6572fc09977de075e144e45fb0884f60ae9c98ba0';
+const CHAT_DIGEST = 'claude-agent-sdk:b944785f4e15e9dc062b22d2ab9359b913fb3ba696da65636b569d9b1174c210';
 
 async function until(condition: () => boolean, what: string, ms = 3_000): Promise<void> {
   const started = Date.now();

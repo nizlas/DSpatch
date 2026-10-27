@@ -3,7 +3,7 @@
   "formatVersion": 1,
   "id": "dspatch-chat-loop",
   "name": "Chat loop",
-  "purpose": "One bounded loop started from ordinary chat: the composer's text is the mandate. The work step does the work and, where its tools can run commands, builds and tests it itself, fixing and re-running inside its own step until it judges the work done. A successful work step always goes to an independent checking agent, which runs the project's checks itself and either finds the assignment met, sends the work back with concrete findings, or finds that it cannot be met. DSpatch does not ask the user for a command and does not start the project's build itself; with Claude the agents run commands through DSpatch's command tool, which DSpatch starts, records and can stop. This is not the external DSpatch development loop and not the isolated duration increment.",
+  "purpose": "One bounded loop started from ordinary chat: the composer's text is the mandate. The work step does the work and, where its tools can run commands, builds and tests it itself, fixing and re-running inside its own step until it judges the work done. A successful work step always goes to an independent checking agent, which runs the project's checks itself and either finds the assignment met, sends the work back with concrete findings, or finds that it cannot be met. DSpatch does not ask the user for a command and does not start the project's build itself; with Claude the agents run commands with Claude Code's own shell tools, which DSpatch records through the SDK's hooks. This is not the external DSpatch development loop and not the isolated duration increment.",
   "target": "cursor",
   "entry": "work",
   "onRuntimeFault": "stop-and-reconcile",

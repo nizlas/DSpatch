@@ -40,7 +40,7 @@ export interface SDKSessionInfo {
   readonly cwd?: string;
 }
 
-/** A PreToolUse hook's answer: pass (`{}`) or deny, optionally ending the turn. */
+/** A hook's answer: pass (`{}`), or for PreToolUse deny, optionally ending the turn. */
 export interface HookJSONOutput {
   readonly continue?: boolean;
   readonly stopReason?: string;
@@ -95,66 +95,17 @@ export interface Options {
   title?: string;
   includePartialMessages?: boolean;
   abortController?: AbortController;
-  hooks?: { PreToolUse?: { matcher?: string; hooks: HookCallback[] }[] };
+  /**
+   * DSP-146: PreToolUse for cancellation, the review's deny-all and the start of a shell
+   * command; PostToolUse and PostToolUseFailure for how a shell command ended.
+   */
+  hooks?: {
+    PreToolUse?: { matcher?: string; hooks: HookCallback[] }[];
+    PostToolUse?: { matcher?: string; hooks: HookCallback[] }[];
+    PostToolUseFailure?: { matcher?: string; hooks: HookCallback[] }[];
+  };
   spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess;
   env?: { [name: string]: string | undefined };
   resume?: string;
   sessionId?: string;
-  /**
-   * DSP-145: in-process MCP servers. DSpatch passes only the one server the SDK's own
-   * `createSdkMcpServer` returned, unchanged, so its value is the SDK's object.
-   */
-  mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
-}
-
-// --- In-process MCP (DSP-145) -------------------------------------------------------
-//
-// SDK TypeScript reference, read 27 Oct 2026 (documentation, not observed: the SDK is
-// not installed on this computer): `tool(name, description, inputSchema, handler,
-// extras?)` with a Zod raw shape (Zod 3 or 4) and `extras { annotations?, searchHint?,
-// alwaysLoad? }`; `createSdkMcpServer({ name, version?, instructions?, tools?,
-// alwaysLoad?, timeout? })`, `timeout` a whole number of milliseconds of at least 1000
-// (SDK 0.3.248 or later). In-process servers need streaming input, which DSpatch's
-// one-message prompt already is.
-
-/** A tool result, as far as DSpatch writes one: text blocks and the error flag. */
-export interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
-
-/** MCP behaviour hints DSpatch sets on its tool. */
-export interface ToolAnnotations {
-  title?: string;
-  readOnlyHint?: boolean;
-  destructiveHint?: boolean;
-  idempotentHint?: boolean;
-  openWorldHint?: boolean;
-}
-
-/** What `tool()` returns. DSpatch only hands it back to `createSdkMcpServer`. */
-export interface SdkMcpToolDefinition {
-  readonly name: string;
-}
-
-/** What `createSdkMcpServer()` returns. DSpatch only hands it back in `mcpServers`. */
-export interface McpSdkServerConfigWithInstance {
-  readonly type: 'sdk';
-  readonly name: string;
-}
-
-/** The handler DSpatch gives `tool()`. Arguments are read as unknown data. */
-export type McpToolHandler = (
-  args: Record<string, unknown>,
-  extra: unknown,
-) => Promise<CallToolResult>;
-
-/** The options DSpatch passes to `createSdkMcpServer()`. */
-export interface SdkMcpServerOptions {
-  name: string;
-  version?: string;
-  instructions?: string;
-  tools?: SdkMcpToolDefinition[];
-  alwaysLoad?: boolean;
-  timeout?: number;
 }

@@ -1,5 +1,4 @@
 import type {
-  AgentCommandRecord,
   AgentEventListener,
   ApprovalDecision,
   CapabilityReport,
@@ -12,42 +11,6 @@ import type {
   UsageQuery,
   UsageReading,
 } from './types';
-
-/**
- * DSP-145: what an adapter asks DSpatch for when its agent wants a command run.
- *
- * DSpatch, not the provider, starts the process: in the session's working folder,
- * under a time bound, recorded with the code it ran against, and stopped with its
- * child processes when `signal` aborts. An adapter offers its agent a tool that calls
- * {@link AgentCommandRunner.run}; it never spawns the command itself.
- */
-export interface AgentCommandRequest {
-  /** The command line exactly as the agent gave it. */
-  readonly line: string;
-  /** The session's working folder; the process starts here. */
-  readonly cwd: string;
-  /** Every working folder of the session, the working folder first, for the snapshots. */
-  readonly workspacePaths: readonly string[];
-  /** Aborting stops the command and its child processes; the record says it was stopped. */
-  readonly signal: AbortSignal;
-  readonly dspatchSessionId: DspatchSessionId;
-  readonly dspatchRunId: string;
-  readonly commandId: string;
-}
-
-/**
- * DSP-145: DSpatch's command runner as an adapter sees it. Implemented in the main
- * process (`main/workspace-command.ts`) and given only to adapters for the main chat and
- * loop steps - never to the review discussion. Provider-neutral: nothing here names a
- * provider, and `run` never throws: every outcome, including a refusal, is a record.
- */
-export interface AgentCommandRunner {
-  /** The bound each command runs under, in milliseconds. */
-  readonly timeoutMs: number;
-  /** The shell that interprets the line, as DSpatch names it (e.g. `cmd.exe /d /s /c`). */
-  readonly shell: string;
-  run(request: AgentCommandRequest): Promise<AgentCommandRecord>;
-}
 
 /**
  * DSpatch's boundary to an agent provider.

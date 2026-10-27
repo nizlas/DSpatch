@@ -3670,8 +3670,7 @@ function SessionFacts({
 }
 
 /**
- * DSP-145: the commands the agent ran through DSpatch's command tool, in Session
- * details. Each says what ran where, how it ended, how long it took, its output (the
+ * DSP-145, DSP-146: the commands the agent ran, in Session details. Each says what ran where, how it ended, how long it took, its output (the
  * kept end of it) and whether its result still describes the code on disk.
  */
 function AgentCommandsSection({
@@ -3684,7 +3683,7 @@ function AgentCommandsSection({
     <Section title="Commands the agent ran">
       {commands.length === 0 ? (
         <p className="app__note" data-ev="agent-commands-none">
-          The agent has not run any command through DSpatch in this conversation.
+          The agent has not run any command in this conversation.
         </p>
       ) : (
         <ol className="agent-commands" data-ev="agent-commands">
@@ -3718,7 +3717,13 @@ function AgentCommandsSection({
               <details>
                 <summary>Output</summary>
                 {record.outputNote !== null && <p className="app__note">{record.outputNote}</p>}
-                <pre className="turn__answer">{record.stdout === '' ? '(no standard output)' : record.stdout}</pre>
+                <pre className="turn__answer">
+                  {record.stdout !== ''
+                    ? record.stdout
+                    : record.requestedBy === 'provider-reported'
+                      ? '(no output was reported)'
+                      : '(no standard output)'}
+                </pre>
                 {record.stderr !== '' && <pre className="turn__answer">{record.stderr}</pre>}
               </details>
             </li>
@@ -4775,6 +4780,7 @@ function RestoredMessage({
           ending: record.ending,
           exitCode: record.exitCode,
           durationMs: record.durationMs,
+          ...(record.ending === 'stopped' && !record.killedByDspatch ? { stopConfirmed: false } : {}),
         }))}
         testId={`${at}-commands`}
       />

@@ -2,8 +2,9 @@
  * DSpatch's one command runner (DSP-145): real commands, really spawned, in scratch
  * folders this file creates. What the gate already had is covered where it always was
  * (`loop-live.test.ts`, `gate-command-reality.test.ts`, `process-tree.test.ts`); this
- * covers what the move added - the stop on request, the output bound, the snapshots,
- * and one command at a time per working copy - and the agent's runner built on it.
+ * covers what the move added - the stop on request, the output bound and the snapshots.
+ * The agent's own commands are not run here since DSP-146 (Claude Code's shell tool runs
+ * them; `claude-shell-commands.test.ts`).
  *
  *     node scripts/run-tests.mjs live        (from app/)
  */
@@ -13,12 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
-import {
-  createAgentCommandRunner,
-  runWorkspaceCommand,
-  snapshotOfFolders,
-  WorkspaceCommandSlots,
-} from '../src/main/workspace-command.ts';
+import { runWorkspaceCommand, snapshotOfFolders } from '../src/main/workspace-command.ts';
 import { killLeftovers, sleepingTreeCommand, treePids, waitGone } from './support/command-tree.ts';
 import { tempRoot } from './support/fixtures.ts';
 
@@ -36,14 +32,14 @@ describe('runWorkspaceCommand', () => {
     const record = await runWorkspaceCommand({
       line: `${node} -e "console.log('out'); console.error('err'); process.exit(3)"`,
       cwd: root,
-      requestedBy: 'agent-tool',
+      requestedBy: 'gate',
       timeoutMs: 30_000,
       snapshotFolders: [root],
     });
     assert.equal(record.exitCode, 3);
     assert.equal(record.notRun, null, 'a command that ran and failed is not "could not start"');
     assert.equal(record.verdict, 'failed');
-    assert.equal(record.requestedBy, 'agent-tool');
+    assert.equal(record.requestedBy, 'gate');
     assert.match(record.stdout, /out/);
     assert.match(record.stderr, /err/);
     assert.equal(record.killedByDspatch, false);
@@ -57,7 +53,7 @@ describe('runWorkspaceCommand', () => {
     const record = await runWorkspaceCommand({
       line: `${node} -e "require('fs').writeFileSync('b.txt', 'b')"`,
       cwd: root,
-      requestedBy: 'agent-tool',
+      requestedBy: 'gate',
       timeoutMs: 30_000,
       snapshotFolders: [root],
     });
@@ -70,7 +66,7 @@ describe('runWorkspaceCommand', () => {
     const record = await runWorkspaceCommand({
       line: `${node} -e "process.stdout.write('x'.repeat(5000) + 'THE-END')"`,
       cwd: root,
-      requestedBy: 'agent-tool',
+      requestedBy: 'gate',
       timeoutMs: 30_000,
       maxOutputChars: 100,
     });
@@ -85,7 +81,7 @@ describe('runWorkspaceCommand', () => {
     const record = await runWorkspaceCommand({
       line: `${node} -e "0"`,
       cwd: root,
-      requestedBy: 'agent-tool',
+      requestedBy: 'gate',
       timeoutMs: 30_000,
       snapshotFolders: [root],
       snapshotId: () => {
@@ -106,7 +102,7 @@ describe('runWorkspaceCommand', () => {
     const running = runWorkspaceCommand({
       line: sleepingTreeCommand(root),
       cwd: root,
-      requestedBy: 'agent-tool',
+      requestedBy: 'gate',
       timeoutMs: 60_000,
       signal: controller.signal,
       snapshotFolders: [root],
@@ -128,78 +124,5 @@ describe('runWorkspaceCommand', () => {
     } finally {
       killLeftovers([pids.parent, pids.child]);
     }
-  });
-});
-
-describe('the agent command runner', () => {
-  it('refuses while the Run button holds the working copy, and runs once it is free', async () => {
-    const root = folder('slots');
-    const slots = new WorkspaceCommandSlots();
-    const runner = createAgentCommandRunner({ slots, timeoutMs: 30_000 });
-    const held = slots.claim(root, { by: 'person', line: 'npm test' });
-    assert.ok(held.ok);
-    const request = {
-      line: `${node} -e "0"`,
-      cwd: root,
-      workspacePaths: [root],
-      signal: new AbortController().signal,
-      dspatchSessionId: 's',
-      dspatchRunId: 'r',
-      commandId: 'c1',
-    };
-    const refused = await runner.run(request);
-    assert.equal(refused.ending, 'refused');
-    assert.match(refused.endingMessage ?? '', /Run button \(npm test\) is still running/);
-    held.release();
-    const ran = await runner.run({ ...request, commandId: 'c2' });
-    assert.equal(ran.ending, 'exited');
-    assert.equal(ran.exitCode, 0);
-    assert.equal(ran.requestedBy, 'agent-tool');
-    assert.equal(slots.holderOf(root), null, 'the runner gives the working copy back');
-  });
-
-  it('refuses an empty line without starting anything', async () => {
-    const root = folder('empty');
-    const runner = createAgentCommandRunner({ slots: new WorkspaceCommandSlots() });
-    const record = await runner.run({
-      line: '   ',
-      cwd: root,
-      workspacePaths: [root],
-      signal: new AbortController().signal,
-      dspatchSessionId: 's',
-      dspatchRunId: 'r',
-      commandId: 'c',
-    });
-    assert.equal(record.ending, 'refused');
-    assert.equal(record.pid, null);
-    assert.match(record.endingMessage ?? '', /There is no command to run/);
-  });
-});
-
-describe('a runner for loop steps (review I2)', () => {
-  it('takes no snapshots of its own when told the executor takes them', async () => {
-    const root = folder('no-snapshots');
-    const calls: string[] = [];
-    const runner = createAgentCommandRunner({
-      slots: new WorkspaceCommandSlots(),
-      snapshots: false,
-      snapshotId: (dir) => {
-        calls.push(dir);
-        return 'id';
-      },
-    });
-    const record = await runner.run({
-      line: `${node} -e "0"`,
-      cwd: root,
-      workspacePaths: [root],
-      signal: new AbortController().signal,
-      dspatchSessionId: 's',
-      dspatchRunId: 'r',
-      commandId: 'c',
-    });
-    assert.equal(record.exitCode, 0);
-    assert.deepEqual(calls, [], 'no folder was hashed');
-    assert.equal(record.testedSnapshotId, null);
-    assert.equal(record.afterRunSnapshotId, null);
   });
 });

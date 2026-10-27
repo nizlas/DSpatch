@@ -76,9 +76,9 @@ Expected: it prints the SDK version it installs (`@anthropic-ai/claude-agent-sdk
 
    Expected: in *Open a project*, the *Agent* select offers *Claude* (without the variable it reads *Claude (off)*; without Claude support, *Claude (not installed)*).
 
-8. **Open the sample as Claude.** Choose *Claude* under *Agent*, then *Use a generated sample project*. Expected: the composer shows Agent Claude and Model claude-haiku-4-5; Session details show the tool policy (Read, Glob, Grep, Edit, Write, and DSpatch's command tool `mcp__dspatch__run_command`; no Bash) and the authorization note; no Cursor agent is created.
+8. **Open the sample as Claude.** Choose *Claude* under *Agent*, then *Use a generated sample project*. Expected: the composer shows Agent Claude and Model claude-haiku-4-5; Session details show the tool policy (Read, Glob, Grep, Edit, Write, Bash, PowerShell; Claude Code's own shell tools in the foreground only, recorded through DSpatch's hooks; no MCP servers) and the authorization note; no Cursor agent is created.
 
-9. **One question, one change.** Ask a question about a file, then request one small change. Expected: an answer; the change appears in the diff; Claude may run the tests itself through DSpatch's command tool (Part C tries that properly); DSpatch's own Run button still works.
+9. **One question, one change.** Ask a question about a file, then request one small change. Expected: an answer; the change appears in the diff; Claude may run the tests itself with its own Bash tool (Part C tries that properly); DSpatch's own Run button still works.
 
 10. **Stop during a turn.** Start a longer request and press Stop. Expected: the turn reads *stopped · provider work unknown* (or *Stop not confirmed · provider work unknown* if the end could not be confirmed) - never a plain "cancelled".
 
@@ -88,10 +88,10 @@ Expected: it prints the SDK version it installs (`@anthropic-ai/claude-agent-sdk
 
 ## Part C - an ordinary development task with Claude (live, after Part B)
 
-Since DSP-145 Claude can run builds and tests itself, through a command tool DSpatch provides: DSpatch starts the command in the project's folder under a 10-minute bound, records it with the code it ran on, shows it, and stops it together with its child processes when you cancel. It is a record and a stop, not a sandbox: the command runs with your own rights. Nobody types a test command. Before this trial all of it has run only offline: the real Claude adapter on a substituted SDK with a scripted model, and real `npm test` / `node --test` commands. **Whether Claude itself chooses the right commands and keeps going after a failure is what this trial shows.** Run it in the same kind of launch as Part B: Claude support installed, `DSPATCH_CLAUDE_AUTHORIZATION` set, Claude chosen, **one** folder open.
+Claude runs builds and tests itself with Claude Code's own Bash tool (DSP-145, corrected in DSP-146): DSpatch pre-approves it, keeps every command in the foreground (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, so a command that reaches Claude Code's timeout - two minutes unless Claude asks for more, at most ten - stops instead of moving to the background), and records each command through the SDK's hooks with the code it ran on. DSpatch does not start the command and it is not a sandbox: the command runs with your own rights. On Cancel, DSpatch refuses further tool calls and asks Claude Code to stop; whether the command and anything it started actually end is up to Claude Code and is not documented, which is why step 14 checks for leftovers. Nobody types a test command. Before this trial all of it has run only offline: the real Claude adapter on a substituted SDK whose Bash is simulated after Claude Code's documentation, with a scripted model and real `npm test` / `node --test` commands; `npm run typecheck:claude` passed against the pinned SDK. **Whether Claude itself chooses the right commands and keeps going after a failure, and whether Claude Code's hooks report them as documented, is what this trial shows.** Run it in the same kind of launch as Part B: Claude support installed, `DSPATCH_CLAUDE_AUTHORIZATION` set, Claude chosen, **one** folder open.
 
 Two things to know first:
-- **Old Claude conversations** recorded with a DSpatch version from before DSP-145 cannot be resumed: the tools DSpatch gives Claude changed, and a session is not continued under other rules. The window reads *Could not resume the agent session*; its *Details* say the tool policy changed and to start a new session. Start a new session; the old conversation stays readable.
+- **Old Claude conversations** recorded with a DSpatch version from before DSP-146 cannot be resumed: the tools DSpatch gives Claude changed, and a session is not continued under other rules. The window reads *Could not resume the agent session*; its *Details* say the tool policy changed and to start a new session. Start a new session; the old conversation stays readable.
 - **Node:** the sample's tests are TypeScript run by `node --test`, so `node` must strip types without a flag: Node 23.6 or later, or 22.18 or later in the 22 line. Record `node --version` from the shell you start DSpatch in. If a command reports it *could not start* `npm`/`node`, they are not on DSpatch's PATH (for example nvm and a desktop-started DSpatch).
 
 13. **One ordinary task in the chat.** Open a **new** generated sample project as Claude (*Use a generated sample project*). Send, without naming any command: *"formatDuration in src/duration.ts only handles seconds. Make it handle minutes and hours as the project expects, and make sure it works."* Expected:
@@ -102,7 +102,7 @@ Two things to know first:
     - the diff shows the change; no Cursor line in the main log.
     Record what Claude ran, in which order, and whether it stopped too early or looped.
 
-14. **Cancel during a command.** Send *"Run `node -e \"setTimeout(() => {}, 120000)\"` and tell me when it finishes."* (a harmless two-minute wait, named here only to have something to stop) and press Stop while it runs. Expected: the turn ends as stopped; the command is listed as stopped by DSpatch; afterwards no `node` process from it is left:
+14. **Cancel during a command.** Send *"Run `node -e \"setTimeout(() => {}, 120000)\"` and tell me when it finishes."* (a harmless two-minute wait, named here only to have something to stop) and press Stop while it runs. Expected: the turn ends as stopped; under the reply the command reads *Cancelled (end not confirmed)*, and Session details carries the note that DSpatch did not establish whether it ended. Then check, and record, whether a `node` process from it is left - this is the one thing about Cancel that only a live run can show:
     ```sh
     ps -o pid,pgid,cmd -u "$USER" | grep -v grep | grep -e setTimeout -e "node --test"
     ```
@@ -112,9 +112,9 @@ Two things to know first:
     - *check* (an independent agent with its own session) runs the checks itself and is handed the commands DSpatch recorded, each marked current or stale; it declares *met*, or *rework* with concrete findings, which sends the work back (at most 2 correction rounds), then checks again;
     - the run ends at *done* (*Assignment met*), *Assignment not met* (including when the correction rounds are spent) or *Could not establish*;
     - a *met* is only accepted if a command completed on the code exactly as the run left it, or nothing changed; otherwise DSpatch records *could not check* (`verification-stale`) and the run does not end at *done*;
-    - the run record in `userData/loop-runs/` has `"provider":"claude"` and the commands per step, with `requestedBy: "agent-tool"`; the ending line says the agents' commands are their choice of check, not a verification by DSpatch.
+    - the run record in `userData/loop-runs/` has `"provider":"claude"` and the commands per step, with `requestedBy: "provider-reported"`; the ending line says the agents' commands are their choice of check, not a verification by DSpatch.
 
-16. **Cancel during a loop command.** Start the loop from step 15 again and press Cancel while *work* runs a command. Expected: the run stops on *work*, the command is recorded as stopped, *check* never starts, no process is left (the `ps` line above). Restarting DSpatch shows the run in history and does not start it again.
+16. **Cancel during a loop command.** Start the loop from step 15 again and press Cancel while *work* runs a command. Expected: the run stops on *work*, the command is recorded as stopped, *check* never starts; record whether any process is left (the `ps` line above). Restarting DSpatch shows the run in history and does not start it again.
 
 17. **The review discussion stays text-only.** Open the review discussion with Claude (Part B) and ask it to run the tests. Expected: it answers in text; no command runs and none is listed.
 

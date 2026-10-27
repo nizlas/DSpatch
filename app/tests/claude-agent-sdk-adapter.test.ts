@@ -1165,10 +1165,12 @@ test('the process wrapper starts what the SDK asks for, unchanged, and refuses a
     assert.equal(first?.command, 'C:/synthetic/claude-test.exe');
     assert.deepEqual(first?.args, ['--output-format', 'stream-json', '--input-format', 'stream-json']);
     assert.equal(first?.options['cwd'], dir);
-    // The approved key passes through; nothing is added beyond what the SDK gave.
+    // The approved key passes through; the wrapper adds nothing beyond what the SDK gave,
+    // which includes DSP-146's foreground-only switch from the adapter's `env` option.
     assert.deepEqual(first?.options['env'], {
       ...CLEAN_ENV,
       ANTHROPIC_API_KEY: 'sk-ant-synthetic-wrapper',
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
       CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
     });
     assert.ok(first?.options['signal'] instanceof AbortSignal);

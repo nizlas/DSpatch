@@ -824,6 +824,7 @@ const COMMAND_ENDINGS: readonly AgentCommandEnding[] = [
   'timed-out',
   'stopped',
   'refused',
+  'not-reported',
 ];
 
 const COMMAND_REQUESTERS: readonly AgentCommandRequester[] = ['agent-tool', 'gate', 'provider-reported'];

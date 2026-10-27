@@ -365,4 +365,14 @@ test('DSP-145: a command the agent ran becomes one readable line on its turn, up
     describeCommandLine({ ...command, ending: 'stopped', durationMs: 300 }),
     { verb: 'Stopped', after: ' (0.3 s)' },
   );
+  // DSP-146: a provider-reported command whose end nobody reported claims neither a stop
+  // nor a run.
+  assert.deepEqual(
+    describeCommandLine({ ...command, ending: 'stopped', durationMs: 300, stopConfirmed: false }),
+    { verb: 'Cancelled', after: ' (end not confirmed) (0.3 s)' },
+  );
+  assert.deepEqual(
+    describeCommandLine({ ...command, ending: 'not-reported', durationMs: 300 }),
+    { verb: 'Requested', after: ': how it ended was not reported (0.3 s)' },
+  );
 });

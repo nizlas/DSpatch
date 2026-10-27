@@ -2,24 +2,18 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 
 import type {
-  CallToolResult,
   HookCallback,
   HookJSONOutput,
-  McpSdkServerConfigWithInstance,
-  McpToolHandler,
   Options as ClaudeQueryOptions,
   SDKMessage,
   SDKSessionInfo,
   SDKUserMessage,
-  SdkMcpServerOptions,
-  SdkMcpToolDefinition,
   SpawnedProcess,
   SpawnOptions as ClaudeSpawnOptions,
-  ToolAnnotations,
 } from './claude-sdk-shapes';
-import { ClaudeAdapterError, loadClaudeSdk, loadClaudeZod } from './claude-support';
+import { ClaudeAdapterError, loadClaudeSdk } from './claude-support';
 
-import type { AgentAdapter, AgentCommandRunner } from './agent-adapter';
+import type { AgentAdapter } from './agent-adapter';
 import type {
   AdapterError,
   AgentCommandRecord,
@@ -130,116 +124,40 @@ export interface ClaudePermissionPolicy {
    * where unused.
    */
   readonly denyEveryTool?: true;
-  /**
-   * DSP-145: the agent is offered DSpatch's command tool ({@link COMMAND_TOOL_ID}), an
-   * in-process MCP server whose handler asks DSpatch's own command runner to run the
-   * line. Only the main chat's policy has it; an adapter refuses a command runner with
-   * a policy that lacks it or denies every tool, so the review discussion cannot be
-   * given one. Omitted where unused.
-   */
-  readonly commandTool?: true;
 }
 
-// --- DSpatch's command tool (DSP-145) -----------------------------------------
-
-/** The in-process MCP server's name. */
-export const COMMAND_TOOL_SERVER = 'dspatch';
-/** The tool's own name on that server. */
-export const COMMAND_TOOL_NAME = 'run_command';
-/** The name the model and the permission rules see: `mcp__<server>__<tool>`. */
-export const COMMAND_TOOL_ID = `mcp__${COMMAND_TOOL_SERVER}__${COMMAND_TOOL_NAME}`;
+// --- Claude's own shell tools (DSP-146) ---------------------------------------------
 
 /**
- * What the agent is told the command tool does, before the per-session facts (shell,
- * working folder, time bound) that {@link commandToolDescription} appends. Shown in the
- * policy text in Session details, because every instruction DSpatch adds is visible.
+ * The SDK's built-in shell tools: `Bash`, and on Windows `PowerShell`, which Claude Code
+ * uses when Git Bash is missing and offers beside Bash otherwise (tools reference, read
+ * 27 Oct 2026; both names in `BUILTIN_TOOL_NAMES`, sdk.d.ts 0.3.306). The agent runs its
+ * builds and tests with these, under the session's permission policy: the runtime owns
+ * its model-tool loop and DSpatch does not start the process (INTERACTION_MODEL.md
+ * sections 1, 5 and 8; RUNTIME_PLATFORM_ROADMAP.md section 1.2). DSpatch observes each
+ * command through the SDK's hooks and records it as provider-reported.
  */
-export const COMMAND_TOOL_DESCRIPTION =
-  "Run one command line in the project's working folder - a build, the project's tests, " +
-  'a linter - and get its exit code and output back. DSpatch starts the process itself, ' +
-  'records the command, how it ended, its output and the code it ran against, and stops ' +
-  'it together with its child processes if the run is cancelled or the time bound is ' +
-  'reached. One command at a time. A failing command is an ordinary result: read its ' +
-  'output, fix the cause and run it again. This is not a sandbox: the command runs with ' +
-  "the user's own rights.";
-
-/** The description of the tool's one argument. */
-export const COMMAND_TOOL_ARGUMENT_DESCRIPTION =
-  'The command line, exactly as you would type it in a terminal in the working folder.';
-
-/** A time bound as words, in the largest unit that does not round it away. */
-function boundInWords(ms: number): string {
-  if (ms < 60_000) {
-    const seconds = Math.max(1, Math.round(ms / 1000));
-    return `${String(seconds)} second${seconds === 1 ? '' : 's'}`;
-  }
-  const minutes = Math.round(ms / 60_000);
-  return `${String(minutes)} minute${minutes === 1 ? '' : 's'}`;
-}
-
-/** The whole description the model receives for one session. */
-export function commandToolDescription(input: {
-  readonly shell: string;
-  readonly cwd: string;
-  readonly timeoutMs: number;
-}): string {
-  return (
-    `${COMMAND_TOOL_DESCRIPTION} Shell: ${input.shell}. Working folder: ${input.cwd}. ` +
-    `Time bound: ${boundInWords(input.timeoutMs)} per command.`
-  );
-}
-
-/** How much command output one tool result carries back to the model, per stream. */
-export const COMMAND_TOOL_RESULT_CHARS = 12_000;
-
-/** How long the SDK may wait for the tool beyond the command's own bound. */
-export const COMMAND_TOOL_TIMEOUT_MARGIN_MS = 60_000;
-
-/** The end of a stream for the model, saying how much was left out before it. */
-function tailForModel(text: string, label: string): string {
-  if (text === '') {
-    return `${label}: (nothing)`;
-  }
-  if (text.length <= COMMAND_TOOL_RESULT_CHARS) {
-    return `${label}:\n${text}`;
-  }
-  const omitted = text.length - COMMAND_TOOL_RESULT_CHARS;
-  return (
-    `${label} (the first ${String(omitted)} characters are left out here):\n` +
-    text.slice(text.length - COMMAND_TOOL_RESULT_CHARS)
-  );
-}
+export const SHELL_TOOLS: readonly string[] = Object.freeze(['Bash', 'PowerShell']);
 
 /**
- * The tool result for a command record. `isError` only when the command did not run to
- * an end of its own (not started, refused, stopped, timed out): a failing test is an
- * ordinary result with its exit code and output, for the agent to read and act on.
+ * Set in every Claude Code process this adapter starts (DSP-146). Claude Code's
+ * documented switch (env-vars and tools reference, read 27 Oct 2026): it removes
+ * `run_in_background` from the shell tools and stops a command that reaches its timeout
+ * instead of moving it to the background. So every command the agent runs ends inside
+ * its turn, where DSpatch's hooks record it and a cancellation reaches it. Claude Code's
+ * own timeout applies to each command: two minutes unless the agent asks for more, at
+ * most ten.
  */
-export function commandToolResult(record: AgentCommandRecord): CallToolResult {
-  const seconds = (record.durationMs / 1000).toFixed(1);
-  const head =
-    record.ending === 'exited'
-      ? `Exit code ${record.exitCode === null ? 'none' : String(record.exitCode)}` +
-        `${record.signal === null ? '' : ` (signal ${record.signal})`} after ${seconds} s.`
-      : record.ending === 'timed-out'
-        ? `Stopped by DSpatch at the time bound after ${seconds} s. ${record.endingMessage ?? ''}`
-        : record.ending === 'stopped'
-          ? `Stopped by DSpatch after ${seconds} s. ${record.endingMessage ?? ''}`
-          : `Not run. ${record.endingMessage ?? ''}`;
-  const text = [
-    `$ ${record.line}`,
-    `(in ${record.cwd}, ${record.shell})`,
-    head.trim(),
-    ...(record.ending === 'refused'
-      ? []
-      : [tailForModel(record.stdout, 'Standard output'), tailForModel(record.stderr, 'Standard error')]),
-    ...(record.outputNote === null ? [] : [record.outputNote]),
-  ].join('\n');
-  return {
-    content: [{ type: 'text', text }],
-    ...(record.ending === 'exited' ? {} : { isError: true }),
-  };
-}
+export const FOREGROUND_ONLY_ENV: Readonly<Record<string, string>> = Object.freeze({
+  CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+});
+
+/** What Session details and the loop's tool text say about the shell tools. */
+export const SHELL_TOOLS_NOTE =
+  "shell commands through Claude Code's own Bash and PowerShell tools, in the " +
+  'foreground only (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1) under Claude Code\'s own ' +
+  'per-command timeout; DSpatch records each one through the SDK\'s hooks and does not ' +
+  'start or sandbox it';
 
 /**
  * Why the review discussion's deny-all hook refused a tool (DSP-132). Sent to the
@@ -259,15 +177,14 @@ export const FIXTURE_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
 }) as ClaudePermissionPolicy;
 
 /**
- * The main chat's policy (DSP-117, DSP-145): read and edit the working copy, and run
- * commands through DSpatch's command tool.
- *
- * **No Bash.** Builds and tests run through DSpatch's own command runner, where they
- * are visible, stoppable and tied to a snapshot; an agent shell would be none of
- * those. Since DSP-145 the agent reaches that runner itself, through the command tool
- * ({@link COMMAND_TOOL_ID}, pre-approved here, so a routine test needs no new
- * confirmation); the only MCP server is DSpatch's own in-process one. No web tools, no
- * other MCP (`strictMcpConfig`), no settings from disk (`settingSources: []`), and
+ * The main chat's policy (DSP-117, DSP-146), also used by loop steps: read and edit the
+ * working copy, and run builds and tests with Claude Code's own shell tools
+ * ({@link SHELL_TOOLS}), pre-approved so a routine test needs no new confirmation
+ * (INTERACTION_MODEL.md section 6). A bare `Bash` rule pre-approves every command: this
+ * is the user's own approval rule for ordinary agent work, not a filter, and no command
+ * filter is a security boundary. Commands run in the foreground only
+ * ({@link FOREGROUND_ONLY_ENV}) and are recorded through the SDK's hooks. No web tools,
+ * no MCP servers (`strictMcpConfig`), no settings from disk (`settingSources: []`), and
  * `dontAsk`, so anything outside `allowedTools` is refused rather than prompted for.
  *
  * Documented by Anthropic, not observed here: that an `Edit(...)` rule also
@@ -277,12 +194,11 @@ export const FIXTURE_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
  * file system root. Not containment either (see above).
  */
 export const CHAT_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
-  tools: Object.freeze(['Read', 'Glob', 'Grep', 'Edit', 'Write']),
-  allowedTools: Object.freeze(['Read(/**)', 'Edit(/**)', COMMAND_TOOL_ID]),
+  tools: Object.freeze(['Read', 'Glob', 'Grep', 'Edit', 'Write', ...SHELL_TOOLS]),
+  allowedTools: Object.freeze(['Read(/**)', 'Edit(/**)', ...SHELL_TOOLS]),
   permissionMode: 'dontAsk',
   settingSources: Object.freeze([]) as readonly [],
   strictMcpConfig: true,
-  commandTool: true,
 }) as ClaudePermissionPolicy;
 
 /**
@@ -331,17 +247,15 @@ export function describePermissionPolicy(policy: ClaudePermissionPolicy): string
       ? ''
       : `; disallowed ${policy.disallowedTools.join(', ')}`;
   const denyAll = policy.denyEveryTool === true ? '; every tool call denied by a hook (the turn continues)' : '';
-  const servers =
-    policy.commandTool === true
-      ? `no MCP servers other than DSpatch's own command tool, ${COMMAND_TOOL_ID}: ` +
-        `"${COMMAND_TOOL_DESCRIPTION}"`
-      : policy.strictMcpConfig
-        ? 'no MCP servers'
-        : 'MCP servers from configuration';
+  const servers = policy.strictMcpConfig ? 'no MCP servers' : 'MCP servers from configuration';
+  const shells =
+    policy.denyEveryTool !== true && policy.tools.some((tool) => SHELL_TOOLS.includes(tool))
+      ? `; ${SHELL_TOOLS_NOTE}`
+      : '';
   return (
     `${tools}; ${allowed}${disallowed}; ` +
     `permission mode ${policy.permissionMode}; no settings read from disk other than ` +
-    `managed policy settings; ${servers}${denyAll}`
+    `managed policy settings; ${servers}${shells}${denyAll}`
   );
 }
 
@@ -1046,54 +960,6 @@ export type ClaudeLocalLookup = (
   dir: string,
 ) => Promise<SDKSessionInfo | undefined>;
 
-/**
- * DSP-145: the SDK functions DSpatch's command tool is built with, or a substitute with
- * the same shape. Loaded from Claude support beside `query()`; a test substitutes them
- * ({@link ClaudeAgentSdkAdapterOptions.mcpTools}) together with `queryFn`.
- */
-export interface ClaudeMcpTools {
-  readonly tool: (
-    name: string,
-    description: string,
-    inputSchema: Record<string, unknown>,
-    handler: McpToolHandler,
-    extras?: { annotations?: ToolAnnotations; alwaysLoad?: boolean },
-  ) => SdkMcpToolDefinition;
-  readonly createSdkMcpServer: (options: SdkMcpServerOptions) => McpSdkServerConfigWithInstance;
-  /** The tool's input as a Zod raw shape: one non-empty string, `command`. */
-  readonly commandInputSchema: () => Record<string, unknown>;
-}
-
-interface ZodLike {
-  string(): { min(length: number): { describe(text: string): unknown } };
-}
-
-/** The SDK's `tool()` and `createSdkMcpServer()` and Zod's `string()`, from Claude support. */
-async function loadSdkMcpTools(): Promise<ClaudeMcpTools> {
-  const sdk = await loadClaudeSdk();
-  const z = (await loadClaudeZod()) as Partial<ZodLike> | null;
-  if (
-    typeof sdk.tool !== 'function' ||
-    typeof sdk.createSdkMcpServer !== 'function' ||
-    typeof z?.string !== 'function'
-  ) {
-    throw new ClaudeAdapterError(
-      'The installed Claude support does not offer the SDK\'s tool() and ' +
-        'createSdkMcpServer(), or Zod beside it, so DSpatch cannot give the agent its ' +
-        'command tool. Reinstall Claude support with `npm run claude:install` in `app/`.',
-      'claude_support_missing',
-    );
-  }
-  const zod = z as ZodLike;
-  return {
-    tool: sdk.tool as ClaudeMcpTools['tool'],
-    createSdkMcpServer: sdk.createSdkMcpServer as ClaudeMcpTools['createSdkMcpServer'],
-    commandInputSchema: () => ({
-      command: zod.string().min(1).describe(COMMAND_TOOL_ARGUMENT_DESCRIPTION),
-    }),
-  };
-}
-
 async function loadSdkLocalLookup(): Promise<ClaudeLocalLookup> {
   const sdk = await loadClaudeSdk();
   return (uuid, dir) => sdk.getSessionInfo(uuid, { dir });
@@ -1124,22 +990,7 @@ export interface ClaudeAgentSdkAdapterOptions {
   readonly spawnProcess?: ClaudeProcessSpawner;
   /** Substitute timers for the cancellation waits. Tests only. */
   readonly timers?: CancelTimers;
-  /**
-   * DSP-145: DSpatch's command runner. With a policy that has `commandTool`, every turn
-   * offers the agent DSpatch's command tool, whose handler calls this runner. Refused
-   * with a policy without `commandTool` or with `denyEveryTool` (the review discussion).
-   */
-  readonly commandRunner?: AgentCommandRunner;
-  /** Substitute for the SDK's `tool()`/`createSdkMcpServer()` and Zod. Tests only. */
-  readonly mcpTools?: ClaudeMcpTools;
 }
-
-/**
- * How long a run's end waits for an in-flight command to settle after DSpatch asked it
- * to stop (DSP-145), so its record is out before `run.finished`. The runner settles as
- * soon as the stop is requested; this bound only covers a runner that does not.
- */
-export const COMMAND_SETTLE_WAIT_MS = 5_000;
 
 // --- Capabilities --------------------------------------------------------------
 
@@ -1370,20 +1221,13 @@ interface ClaudeRun {
   stopAbandoned: boolean;
   /** True when `query()` itself threw: no stream was ever read for this run. */
   startFailed: boolean;
-  /** DSP-145: the command DSpatch's tool is running for this run, if any. One at a time. */
-  command: InFlightCommand | null;
-  /** Tool-use ids of command-tool calls the stream announced and no command has taken yet. */
-  readonly commandToolUseIds: string[];
+  /**
+   * DSP-146: shell commands whose start this run's PreToolUse hook saw and whose end is
+   * not yet recorded, by tool-use id (or a generated key when the SDK gave none).
+   */
+  readonly openCommands: Map<string, OpenShellCommand>;
   /** Every command record this run produced, in order. */
   readonly commands: AgentCommandRecord[];
-}
-
-/** A command DSpatch's tool started and has not finished recording. */
-interface InFlightCommand {
-  readonly commandId: string;
-  readonly controller: AbortController;
-  /** Resolves once its `command.finished` has been emitted. */
-  readonly settled: Promise<void>;
 }
 
 /** The mutable side of a {@link CancellationRecord}. */
@@ -1621,13 +1465,6 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
 
   private readonly substitutedLookup: ClaudeLocalLookup | null;
 
-  /** DSP-145: DSpatch's command runner, or `null` when this instance offers no command tool. */
-  private readonly commandRunner: AgentCommandRunner | null;
-
-  private readonly substitutedMcpTools: ClaudeMcpTools | null;
-
-  private loadedMcpTools: ClaudeMcpTools | null = null;
-
   private loadedLookup: ClaudeLocalLookup | null = null;
 
   private readonly permissions: ClaudePermissionPolicy;
@@ -1680,27 +1517,6 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           'Claude adapter: the subprocess would attach MCP servers from project ' +
           '.mcp.json, user settings, plugins and claude.ai connectors, none of which ' +
           'DSpatch configured.',
-      );
-    }
-    // DSP-145: the command tool goes only where the policy offers it. The review
-    // discussion's policy denies every tool and has no `commandTool`, so a runner given
-    // with it is refused here rather than quietly unused.
-    this.commandRunner = options.commandRunner ?? null;
-    this.substitutedMcpTools = options.mcpTools ?? null;
-    if (this.permissions.commandTool === true && this.permissions.denyEveryTool === true) {
-      throw new ClaudeAdapterError(
-        'A permission policy that offers DSpatch\'s command tool and denies every tool ' +
-          'contradicts itself, so it is not used.',
-      );
-    }
-    if (
-      this.commandRunner !== null &&
-      (this.permissions.commandTool !== true || this.permissions.denyEveryTool === true)
-    ) {
-      throw new ClaudeAdapterError(
-        "DSpatch's command runner was given with a permission policy that does not offer " +
-          'the command tool (commandTool) or that denies every tool, such as the review ' +
-          "discussion's. The command tool is only given where the policy offers it.",
       );
     }
     const env = { ...(options.env ?? process.env) };
@@ -1780,7 +1596,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         `DSpatch's record of session "${sessionId}" expects tool policy ` +
           `${config.expectedToolPolicy}, and this adapter's policy is ${this.policyDigest()} ` +
           '(toolPolicy). The tools DSpatch gives Claude have changed since this session ' +
-          'was recorded - for example, Claude can now run commands through DSpatch - and a ' +
+          'was recorded - for example, Claude now runs commands with its own shell tools - and a ' +
           'session is not continued under rules other than the ones it was started with. ' +
           'Start a new session to continue under the current tool policy; the earlier ' +
           'conversation stays readable. No local record was read and the provider was not asked.',
@@ -1898,8 +1714,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       waiters: new Set(),
       stopAbandoned: false,
       startFailed: false,
-      command: null,
-      commandToolUseIds: [],
+      openCommands: new Map(),
       commands: [],
     };
     const previous = state.lastRun;
@@ -1950,7 +1765,6 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
 
     try {
       const queryFn = await this.queryFunction();
-      const mcpTools = this.commandToolActive() ? await this.mcpToolsFunction() : null;
       if (run.cancelRequested || this.disposed) {
         // Cancelled (or disposed) while waiting for the previous turn or for the
         // SDK to load: the provider is never started, rather than started aborted.
@@ -1959,10 +1773,8 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         return { dspatchRunId: run.dspatchRunId };
       }
       run.handle = queryFn({
-        // Streaming input (an async iterable), which in-process MCP servers such as
-        // DSpatch's command tool need as well as `interrupt()`; already the case.
         prompt: oneMessagePrompt(prompt),
-        options: this.optionsFor(state, run, mcpTools),
+        options: this.optionsFor(state, run),
       });
       state.accountReads.push(readAccount(run.dspatchRunId, run.handle));
     } catch (error) {
@@ -2042,9 +1854,6 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       endAt: null,
       endEvidence: null,
     };
-    // DSP-145: a command DSpatch's tool is running stops now, with its children; its
-    // record follows from DSpatch's own handler, whatever the provider streams next.
-    run.command?.controller.abort('you cancelled the run in DSpatch');
     // A run still waiting for the previous turn has not emitted `run.started`; its
     // request is reported once it starts (N3), and never if it does not.
     if (run.status !== 'created') {
@@ -2139,7 +1948,6 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       for (const state of states) {
         state.listeners.clear();
         for (const run of state.runs) {
-          run.command?.controller.abort('DSpatch was closing');
           this.abandonStop(run);
           // A missing observation is not proof that nothing runs (see EndEvidence),
           // so a run with a handle and no observed process is recorded too.
@@ -2331,7 +2139,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     return this.sessions.get(sessionId)?.activeRun != null;
   }
 
-  /** DSP-145: every command DSpatch's tool ran in this session, in order. */
+  /** DSP-146: every shell command the agent ran in this session, as the hooks recorded it. */
   commandRecords(sessionId: DspatchSessionId): readonly AgentCommandRecord[] {
     return this.requireSession(sessionId).runs.flatMap((run) => run.commands);
   }
@@ -2396,17 +2204,15 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     return this.loadedQuery;
   }
 
-  /** Whether this instance offers its agent DSpatch's command tool (DSP-145). */
-  private commandToolActive(): boolean {
-    return this.commandRunner !== null && this.permissions.commandTool === true;
-  }
-
-  private async mcpToolsFunction(): Promise<ClaudeMcpTools> {
-    if (this.substitutedMcpTools !== null) {
-      return this.substitutedMcpTools;
-    }
-    this.loadedMcpTools ??= await loadSdkMcpTools();
-    return this.loadedMcpTools;
+  /**
+   * DSP-146: whether this instance records the agent's shell commands: its policy offers
+   * a shell tool and does not deny every tool.
+   */
+  private recordsShellCommands(): boolean {
+    return (
+      this.permissions.denyEveryTool !== true &&
+      this.permissions.tools.some((tool) => SHELL_TOOLS.includes(tool))
+    );
   }
 
   private async lookupFunction(): Promise<ClaudeLocalLookup> {
@@ -2459,11 +2265,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     return dspatchSessionId;
   }
 
-  private optionsFor(
-    state: SessionState,
-    run: ClaudeRun,
-    mcpTools: ClaudeMcpTools | null,
-  ): ClaudeQueryOptions {
+  private optionsFor(state: SessionState, run: ClaudeRun): ClaudeQueryOptions {
     const { config } = state;
     return {
       cwd: config.workspacePath,
@@ -2475,14 +2277,9 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         : { disallowedTools: [...this.permissions.disallowedTools] }),
       permissionMode: this.permissions.permissionMode,
       settingSources: [],
-      // Only the MCP servers passed here — not project `.mcp.json`, user settings,
-      // plugins or claude.ai connectors. See ClaudePermissionPolicy. DSP-145: the one
-      // server passed is DSpatch's own command tool, and only under a policy with
-      // `commandTool` and a runner; otherwise none.
+      // Only the MCP servers passed here (none) — not project `.mcp.json`, user
+      // settings, plugins or claude.ai connectors. See ClaudePermissionPolicy.
       strictMcpConfig: this.permissions.strictMcpConfig,
-      ...(mcpTools === null
-        ? {}
-        : { mcpServers: { [COMMAND_TOOL_SERVER]: this.commandServer(state, run, mcpTools) } }),
       // The title DSpatch chooses (sdk.d.ts 0.3.306 :2461-2469: the session uses
       // it instead of auto-generating one from the first user message; on
       // `resume` the persisted title — the same value — takes precedence). It makes
@@ -2503,20 +2300,33 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       // hook keeps the CLI's stdin open after the one-message prompt is consumed,
       // and without one stdin would close and no control request could reach it.
       // DSP-132: with `denyEveryTool`, a second unmatched hook refuses every call.
+      // DSP-146: under a policy with a shell tool, the same PreToolUse callback records
+      // the start of each shell command it lets through, and PostToolUse and
+      // PostToolUseFailure record how it ended, so DSpatch observes the agent's own
+      // commands at the SDK's boundary rather than running them itself.
       hooks: {
         PreToolUse: [
           {
             hooks:
               this.permissions.denyEveryTool === true
-                ? [this.cancelHook(run), this.denyEveryToolHook(run)]
-                : [this.cancelHook(run)],
+                ? [this.cancelHook(state, run), this.denyEveryToolHook(run)]
+                : [this.cancelHook(state, run)],
           },
         ],
+        ...(this.recordsShellCommands()
+          ? {
+              PostToolUse: [{ matcher: SHELL_TOOLS.join('|'), hooks: [this.commandEndHook(state, run, 'succeeded')] }],
+              PostToolUseFailure: [
+                { matcher: SHELL_TOOLS.join('|'), hooks: [this.commandEndHook(state, run, 'failed')] },
+              ],
+            }
+          : {}),
       },
       // The SDK's own spawn, wrapped only to observe the process exit (see
       // `spawnObserved`); same command, arguments and environment.
       spawnClaudeCodeProcess: (spawnOptions) => this.spawnObserved(run, spawnOptions),
-      env: { ...this.subprocessEnv },
+      // DSP-146: every command the agent runs stays in the foreground of its turn.
+      env: { ...this.subprocessEnv, ...FOREGROUND_ONLY_ENV },
       ...(state.established
         ? { resume: state.providerSessionId }
         : { sessionId: state.providerSessionId }),
@@ -2655,12 +2465,6 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           } else if (block['type'] === 'tool_use' && typeof block['id'] === 'string') {
             const name = typeof block['name'] === 'string' ? block['name'] : 'unknown';
             state.toolNames.set(block['id'], name);
-            if (name === COMMAND_TOOL_ID) {
-              // Matched to the next command the tool's handler starts (DSP-145): the
-              // handler is not told which tool call it answers, so the order the
-              // stream announced them in is the correlation, and it is approximate.
-              run.commandToolUseIds.push(block['id']);
-            }
             run.cancellation?.toolUseBlocks.push({ atUtc: base.at, toolUseId: block['id'], name });
             this.emitForRun(state, run, { ...base, type: 'tool.started', toolCallId: block['id'], name });
           }
@@ -2782,16 +2586,9 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     }
     run.status = status;
     this.recordFirstTurnEnd(state, run, status, error);
-    const inFlight = run.command;
-    if (inFlight !== null) {
-      // DSP-145: a command still running when the run ends is stopped, and the run's
-      // last events wait (bounded) for its record, so `command.finished` comes first.
-      inFlight.controller.abort('the run it belonged to ended');
-      void this.settlesWithinBound(inFlight.settled, COMMAND_SETTLE_WAIT_MS).then(() => {
-        this.emitRunEnd(state, run, status, error, rawProviderEvent, end);
-      });
-      return;
-    }
+    // DSP-146: a shell command whose end Claude Code never reported is recorded now, as
+    // not reported or stopped, so every `command.finished` comes before `run.finished`.
+    this.closeOpenCommands(state, run);
     this.emitRunEnd(state, run, status, error, rawProviderEvent, end);
   }
 
@@ -2864,129 +2661,95 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     };
   }
 
-  // --- DSpatch's command tool (DSP-145) --------------------------------------------
+  // --- The agent's shell commands, as the hooks report them (DSP-146) ---------------
 
-  /**
-   * This run's in-process MCP server with DSpatch's one command tool. Built per run, so
-   * the handler belongs to the run that can cancel it. `alwaysLoad`, so the tool is in
-   * the first prompt rather than behind tool search, and the SDK's own `timeout` for the
-   * call above the runner's bound, so the runner's stop is what ends a long command.
-   */
-  private commandServer(
+  /** Record the start of a shell command the PreToolUse hook let through. */
+  private commandStarted(
     state: SessionState,
     run: ClaudeRun,
-    mcpTools: ClaudeMcpTools,
-  ): McpSdkServerConfigWithInstance {
-    const runner = this.commandRunner as AgentCommandRunner;
-    const definition = mcpTools.tool(
-      COMMAND_TOOL_NAME,
-      commandToolDescription({
-        shell: runner.shell,
-        cwd: state.config.workspacePath,
-        timeoutMs: runner.timeoutMs,
-      }),
-      mcpTools.commandInputSchema(),
-      this.commandHandler(state, run),
-      {
-        annotations: {
-          title: 'Run a command',
-          readOnlyHint: false,
-          destructiveHint: true,
-          idempotentHint: false,
-          openWorldHint: true,
-        },
-        alwaysLoad: true,
-      },
-    );
-    return mcpTools.createSdkMcpServer({
-      name: COMMAND_TOOL_SERVER,
-      version: '1.0.0',
-      tools: [definition],
-      alwaysLoad: true,
-      timeout: runner.timeoutMs + COMMAND_TOOL_TIMEOUT_MARGIN_MS,
+    fields: Record<string, unknown>,
+    toolName: string,
+    toolUseId: string | null,
+  ): void {
+    const open = openShellCommand(fields, toolName, toolUseId, state.config.workspacePath, Date.now());
+    run.openCommands.set(toolUseId ?? open.commandId, open);
+    this.emit(state, {
+      type: 'command.started',
+      dspatchSessionId: state.dspatchSessionId,
+      dspatchRunId: run.dspatchRunId,
+      at: open.startedAtUtc,
+      rawProviderEvent: null,
+      toolCallId: toolUseId,
+      commandId: open.commandId,
+      line: open.line,
+      cwd: open.cwd,
     });
   }
 
   /**
-   * The command tool's handler: DSpatch's runner runs the line, and the record goes out
-   * as `command.finished` from here, when the runner settles - not from the provider's
-   * echo of the tool result, which a cancelled turn may never send (review B2).
+   * The PostToolUse (`succeeded`) or PostToolUseFailure (`failed`) callback: records how
+   * a shell command ended, from what Claude Code reported, and passes. Never changes the
+   * tool result the model receives. A command whose start this run did not see is
+   * recorded from the end alone.
    */
-  private commandHandler(state: SessionState, run: ClaudeRun): McpToolHandler {
-    return async (args) => {
-      const toolCallId = run.commandToolUseIds.shift() ?? null;
-      const line = typeof args['command'] === 'string' ? args['command'] : '';
-      if (run.cancellation !== null || run.cancelRequested || run.terminalEmitted || this.disposed) {
-        return refusedToolResult('DSpatch did not start the command: the run was cancelled or has ended.');
+  private commandEndHook(state: SessionState, run: ClaudeRun, outcome: 'succeeded' | 'failed'): HookCallback {
+    return (input, toolUseID) => {
+      const fields = asRecord(input);
+      const toolName = typeof fields['tool_name'] === 'string' ? fields['tool_name'] : '';
+      // A late end after the run's end was recorded would be a second record of the
+      // same command after `run.finished`; the first one stands.
+      if (!SHELL_TOOLS.includes(toolName) || run.terminalEmitted) {
+        return Promise.resolve({});
       }
-      if (run.command !== null) {
-        return refusedToolResult(
-          'DSpatch did not start the command: another command from this turn is still ' +
-            'running. Run one command at a time and wait for its result.',
-        );
+      const reported = fields['tool_use_id'];
+      const toolUseId =
+        typeof reported === 'string' && reported !== '' ? reported : (toolUseID ?? null);
+      const now = Date.now();
+      const key = toolUseId !== null && run.openCommands.has(toolUseId) ? toolUseId : null;
+      let open: OpenShellCommand;
+      if (key !== null) {
+        open = run.openCommands.get(key) as OpenShellCommand;
+        run.openCommands.delete(key);
+      } else {
+        const took = typeof fields['duration_ms'] === 'number' ? fields['duration_ms'] : 0;
+        open = openShellCommand(fields, toolName, toolUseId, state.config.workspacePath, now - took);
       }
-      const runner = this.commandRunner as AgentCommandRunner;
-      const controller = new AbortController();
-      const commandId = randomUUID();
-      let markSettled: () => void = () => undefined;
-      const settled = new Promise<void>((resolve) => {
-        markSettled = resolve;
-      });
-      run.command = { commandId, controller, settled };
-      const base = {
-        dspatchSessionId: state.dspatchSessionId,
-        dspatchRunId: run.dspatchRunId,
-        rawProviderEvent: null,
-      };
-      const cwd = state.config.workspacePath;
-      this.emit(state, { ...base, at: nowIso(), type: 'command.started', toolCallId, commandId, line, cwd });
-      const startedAt = Date.now();
-      let record: AgentCommandRecord;
-      try {
-        record = await runner.run({
-          line,
-          cwd,
-          workspacePaths: state.config.workspacePaths ?? [cwd],
-          signal: controller.signal,
-          dspatchSessionId: state.dspatchSessionId,
-          dspatchRunId: run.dspatchRunId,
-          commandId,
-        });
-      } catch (error) {
-        // The runner promises never to throw; if one does, that is recorded too.
-        const at = nowIso();
-        record = {
-          commandId,
-          requestedBy: 'agent-tool',
-          line,
-          shell: runner.shell,
-          cwd,
-          pid: null,
-          startedAtUtc: new Date(startedAt).toISOString(),
-          finishedAtUtc: at,
-          durationMs: Date.now() - startedAt,
-          timeoutMs: runner.timeoutMs,
-          ending: 'could-not-start',
-          endingMessage: `DSpatch's command runner failed: ${errorText(error)}`,
-          exitCode: null,
-          signal: null,
-          killedByDspatch: false,
-          stdout: '',
-          stderr: '',
-          outputTruncated: false,
-          outputNote: null,
-          testedSnapshotId: null,
-          afterRunSnapshotId: null,
-          snapshotRoots: [],
-        };
-      }
-      run.command = null;
-      run.commands.push(record);
-      this.emit(state, { ...base, at: nowIso(), type: 'command.finished', toolCallId, command: record });
-      markSettled();
-      this.wake(run);
-      return commandToolResult(record);
+      this.recordCommand(state, run, open, shellCommandEnd(fields, outcome), now);
+      return Promise.resolve({});
     };
+  }
+
+  /** Record every shell command still open when the run ends. */
+  private closeOpenCommands(state: SessionState, run: ClaudeRun): void {
+    const now = Date.now();
+    const end: ShellCommandEnd =
+      run.cancellation !== null
+        ? { ending: 'stopped', endingMessage: SHELL_COMMAND_CANCELLED_NOTE, exitCode: null, stdout: '', stderr: '', outputNote: null, durationMs: null }
+        : { ending: 'not-reported', endingMessage: SHELL_COMMAND_UNREPORTED_NOTE, exitCode: null, stdout: '', stderr: '', outputNote: null, durationMs: null };
+    for (const open of [...run.openCommands.values()]) {
+      this.recordCommand(state, run, open, end, now);
+    }
+    run.openCommands.clear();
+  }
+
+  private recordCommand(
+    state: SessionState,
+    run: ClaudeRun,
+    open: OpenShellCommand,
+    end: ShellCommandEnd,
+    finishedAt: number,
+  ): void {
+    const record = shellCommandRecord(open, end, finishedAt);
+    run.commands.push(record);
+    this.emit(state, {
+      type: 'command.finished',
+      dspatchSessionId: state.dspatchSessionId,
+      dspatchRunId: run.dspatchRunId,
+      at: record.finishedAtUtc,
+      rawProviderEvent: null,
+      toolCallId: open.toolCallId,
+      command: record,
+    });
   }
 
   // --- Cancellation internals (DSP-115) ------------------------------------------
@@ -3255,7 +3018,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
    * run, then denies with `continue: false`. Texts: {@link CANCEL_DENY_REASON},
    * {@link CANCEL_STOP_REASON}.
    */
-  private cancelHook(run: ClaudeRun): HookCallback {
+  private cancelHook(state: SessionState, run: ClaudeRun): HookCallback {
     return (input, toolUseID) => {
       const fields = asRecord(input);
       const toolName = typeof fields['tool_name'] === 'string' ? fields['tool_name'] : 'unknown';
@@ -3274,6 +3037,9 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         decision: deny ? 'deny' : 'pass',
       });
       if (!deny) {
+        if (SHELL_TOOLS.includes(toolName) && this.recordsShellCommands()) {
+          this.commandStarted(state, run, fields, toolName, toolUseId);
+        }
         return Promise.resolve({});
       }
       if (toolUseId !== null) {
@@ -3486,9 +3252,169 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
   }
 }
 
-/** A tool error for a command DSpatch declined to start: nothing ran and nothing is recorded. */
-function refusedToolResult(text: string): CallToolResult {
-  return { content: [{ type: 'text', text }], isError: true };
+// --- Shell command records (DSP-146) ---------------------------------------------------
+
+/** A shell command whose start was seen and whose end is not yet recorded. */
+export interface OpenShellCommand {
+  readonly commandId: string;
+  readonly toolCallId: string | null;
+  readonly toolName: string;
+  readonly line: string;
+  readonly cwd: string;
+  /** The timeout the agent asked for, or `null` for Claude Code's default. */
+  readonly timeoutMs: number | null;
+  readonly startedAt: number;
+  readonly startedAtUtc: Timestamp;
+}
+
+/** How a shell command ended, as Claude Code reported it. */
+export interface ShellCommandEnd {
+  readonly ending: AgentCommandRecord['ending'];
+  readonly endingMessage: string | null;
+  readonly exitCode: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly outputNote: string | null;
+  /** Claude Code's own measure of the run, when it gave one. */
+  readonly durationMs: number | null;
+}
+
+/** Recorded for a shell command still open when a cancelled run ended. */
+export const SHELL_COMMAND_CANCELLED_NOTE =
+  'The run was cancelled while this command ran. DSpatch denied further tool calls and ' +
+  'asked Claude Code to stop; Claude Code reported no end for the command. Whether the ' +
+  'command, and any process it started, has ended is not established by DSpatch.';
+
+/** Recorded for a shell command still open when a run ended without a cancellation. */
+export const SHELL_COMMAND_UNREPORTED_NOTE =
+  'Claude Code reported no end for this command before the turn ended - for example, a ' +
+  'permission rule refused it, or the turn ended with an error - so how it ended is not known.';
+
+/** Recorded with an exit code DSpatch reads from a successful result. */
+export const SHELL_SUCCESS_EXIT_NOTE =
+  'Claude Code reported a successful result; it states exit codes only for failures, so ' +
+  'exit code 0 is DSpatch\'s reading of that report.';
+
+/** Recorded with a failure, whose output Claude Code reports as one text. */
+export const SHELL_FAILURE_OUTPUT_NOTE =
+  'Claude Code reports a failing command\'s output as one text, so standard output and ' +
+  'standard error are not separated here.';
+
+/** The start of a shell command, from a hook's input. */
+export function openShellCommand(
+  fields: Record<string, unknown>,
+  toolName: string,
+  toolUseId: string | null,
+  sessionCwd: string,
+  startedAt: number,
+): OpenShellCommand {
+  const input = asRecord(fields['tool_input']);
+  const reportedCwd = fields['cwd'];
+  return {
+    commandId: randomUUID(),
+    toolCallId: toolUseId,
+    toolName,
+    line: typeof input['command'] === 'string' ? input['command'] : '',
+    cwd: typeof reportedCwd === 'string' && reportedCwd !== '' ? reportedCwd : sessionCwd,
+    timeoutMs: typeof input['timeout'] === 'number' ? input['timeout'] : null,
+    startedAt,
+    startedAtUtc: new Date(startedAt).toISOString(),
+  };
+}
+
+/**
+ * How a shell command ended, from a PostToolUse or PostToolUseFailure hook's input
+ * (hooks reference, read 27 Oct 2026): a success carries Bash's `stdout`, `stderr` and
+ * `interrupted`; a failure carries `error`, whose first line is `Exit code N` when the
+ * command ran and exited, and `is_interrupt` when it was aborted. Anything else is kept
+ * as reported and called not reported, never guessed.
+ */
+export function shellCommandEnd(fields: Record<string, unknown>, outcome: 'succeeded' | 'failed'): ShellCommandEnd {
+  const durationMs = typeof fields['duration_ms'] === 'number' ? fields['duration_ms'] : null;
+  if (outcome === 'succeeded') {
+    const response = asRecord(fields['tool_response']);
+    const stdout = typeof response['stdout'] === 'string' ? response['stdout'] : '';
+    const stderr = typeof response['stderr'] === 'string' ? response['stderr'] : '';
+    if (response['interrupted'] === true) {
+      return { ending: 'stopped', endingMessage: 'Claude Code reported the command as interrupted.', exitCode: null, stdout, stderr, outputNote: null, durationMs };
+    }
+    const interpretation = response['returnCodeInterpretation'];
+    const persisted = response['persistedOutputSize'] ?? response['persistedOutputPath'];
+    // Past Claude Code's inline limit the result carries a preview and the path of a
+    // file with the rest (sdk-tools.d.ts 0.3.306 `BashOutput.persistedOutput*`).
+    const preview =
+      persisted === undefined
+        ? ''
+        : ` The output here may be only Claude Code's preview: it saved the full output to a file` +
+          `${typeof response['persistedOutputSize'] === 'number' ? ` (${String(response['persistedOutputSize'])} bytes)` : ''}.`;
+    return typeof interpretation === 'string' && interpretation !== ''
+      ? {
+          ending: 'exited',
+          endingMessage: null,
+          exitCode: null,
+          stdout,
+          stderr,
+          outputNote: `Claude Code counted this as a successful result (${interpretation}) and did not report the exit code.${preview}`,
+          durationMs,
+        }
+      : { ending: 'exited', endingMessage: null, exitCode: 0, stdout, stderr, outputNote: `${SHELL_SUCCESS_EXIT_NOTE}${preview}`, durationMs };
+  }
+  const error = typeof fields['error'] === 'string' ? fields['error'] : '';
+  if (fields['is_interrupt'] === true) {
+    return { ending: 'stopped', endingMessage: 'Claude Code reported the command as aborted.', exitCode: null, stdout: error, stderr: '', outputNote: null, durationMs };
+  }
+  const newline = error.indexOf('\n');
+  const first = newline === -1 ? error : error.slice(0, newline);
+  const exited = /^Exit code (-?\d+)\s*$/.exec(first.trim());
+  if (exited !== null) {
+    return {
+      ending: 'exited',
+      endingMessage: null,
+      exitCode: Number(exited[1]),
+      stdout: newline === -1 ? '' : error.slice(newline + 1),
+      stderr: '',
+      outputNote: SHELL_FAILURE_OUTPUT_NOTE,
+      durationMs,
+    };
+  }
+  return {
+    ending: 'not-reported',
+    endingMessage:
+      `Claude Code reported a failure without an exit code: ${first.trim() === '' ? '(no message)' : first.trim()}`,
+    exitCode: null,
+    stdout: error,
+    stderr: '',
+    outputNote: null,
+    durationMs,
+  };
+}
+
+/** A provider-reported command record: DSpatch saw the hooks, it did not start the process. */
+export function shellCommandRecord(open: OpenShellCommand, end: ShellCommandEnd, finishedAt: number): AgentCommandRecord {
+  return {
+    commandId: open.commandId,
+    requestedBy: 'provider-reported',
+    line: open.line,
+    shell: `Claude Code ${open.toolName} tool`,
+    cwd: open.cwd,
+    pid: null,
+    startedAtUtc: open.startedAtUtc,
+    finishedAtUtc: new Date(finishedAt).toISOString(),
+    durationMs: end.durationMs ?? Math.max(0, finishedAt - open.startedAt),
+    timeoutMs: open.timeoutMs,
+    ending: end.ending,
+    endingMessage: end.endingMessage,
+    exitCode: end.exitCode,
+    signal: null,
+    killedByDspatch: false,
+    stdout: end.stdout,
+    stderr: end.stderr,
+    outputTruncated: false,
+    outputNote: end.outputNote,
+    testedSnapshotId: null,
+    afterRunSnapshotId: null,
+    snapshotRoots: [],
+  };
 }
 
 /** The session title passed to the provider: the DSpatch session id, so the transcript names it. */

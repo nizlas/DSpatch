@@ -1,15 +1,16 @@
 /**
- * The chat loop with agents that run their own builds and tests (DSP-145), through the
- * product's run path: `prepareLoopRun` then `runLiveGraph` on the shipped
+ * The chat loop with agents that run their own builds and tests (DSP-145, DSP-146),
+ * through the product's run path: `prepareLoopRun` then `runLiveGraph` on the shipped
  * `dspatch-chat-loop` drawing, in a repository this file generates with a real bug and a
  * real `node --test` suite.
  *
- * Claude is the real `ClaudeAgentSdkAdapter` on a substituted SDK with DSpatch's real
- * command runner: every `npm test` here really runs. Cursor, in its one test, is a
- * scripted stand-in that reports shell events the way Cursor's SDK was measured to. The
- * models are SIMULATED - the scripts choose the steps - so this shows what DSpatch does
- * with the steps (records, evidence, the approval rule, correction rounds, cancel), not
- * that a real model would choose them.
+ * Claude is the real `ClaudeAgentSdkAdapter` on a substituted SDK whose Bash tool runs
+ * real commands and calls the hooks as Claude Code documents (`support/claude-loop-sdk.ts`):
+ * every `npm test` here really runs. Cursor, in its one test, is a scripted stand-in that
+ * reports shell events the way Cursor's SDK was measured to. The models and Claude Code
+ * are SIMULATED - the scripts choose the steps - so this shows what DSpatch does with the
+ * steps (records, evidence, the approval rule, correction rounds, cancel), not that a
+ * real model would choose them.
  *
  *     node scripts/run-tests.mjs live        (from app/)
  */
@@ -21,7 +22,7 @@ import { after, before, describe, it } from 'node:test';
 
 import type { ChatAdapter } from '../src/main/chat-service.ts';
 import type { AgentEvent, AgentEventListener } from '../src/adapter/types.ts';
-import { COMMAND_TOOL_ID } from '../src/adapter/claude-agent-sdk-adapter.ts';
+import { SHELL_COMMAND_CANCELLED_NOTE } from '../src/adapter/claude-agent-sdk-adapter.ts';
 import { createFileRoleResolver } from '../src/main/loop-graph-roles.ts';
 import { createLiveExecutor, emptyInspection } from '../src/main/loop-live.ts';
 import { createFileResultStore } from '../src/main/loop-result-store.ts';
@@ -31,13 +32,12 @@ import { runLiveGraph } from '../src/main/loop-live-run.ts';
 import { prepareLoopRun, type LoopRunAgentRequest } from '../src/main/loop-run-agent.ts';
 import { providerAdapters } from '../src/main/provider-adapters.ts';
 import { recordedCommandsAtEnd } from '../src/main/run-record-store.ts';
-import { createAgentCommandRunner, WorkspaceCommandSlots } from '../src/main/workspace-command.ts';
 import type { LoopGraph } from '../src/shared/loop-graph.ts';
 import { loadLoopGraph } from '../src/shared/loop-graph-load.ts';
 import { describeRunOutcome, runOutcomeFrom } from '../src/shared/loop-record.ts';
 import { formatRunJournal } from '../src/shared/loop-run.ts';
 import { adapters, claudeSdk, CLEAN_ENV, type ScriptStep, type Turn } from './support/claude-loop-sdk.ts';
-import { killLeftovers, sleepingTreeCommand, treePids, waitGone } from './support/command-tree.ts';
+import { killLeftovers, sleepingTreeCommand, treePids } from './support/command-tree.ts';
 import { tempRoot } from './support/fixtures.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
@@ -91,7 +91,7 @@ function buggyProject(name: string): string {
   return project;
 }
 
-const runTests: ScriptStep = { tool: COMMAND_TOOL_ID, input: { command: 'npm test' } };
+const runTests: ScriptStep = { tool: 'Bash', input: { command: 'npm test' } };
 const fix = (workspace: string): ScriptStep => ({
   act: () => {
     fs.writeFileSync(path.join(workspace, 'src', 'sum.js'), 'exports.sum = (a, b) => a + b;\n', 'utf8');
@@ -138,15 +138,10 @@ async function walk(
   });
 }
 
-/** Claude through the shared factory, with DSpatch's real runner on slots of its own. */
+/** Claude through the shared factory, as the product builds it for a loop step. */
 function claude(turns: readonly Turn[]) {
   const sdk = claudeSdk(turns);
-  const { factory, built } = adapters(sdk, {
-    // As the product builds a loop's runner: no snapshots of its own, because the
-    // executor takes them around each command (review I2).
-    commandRunner: () =>
-      createAgentCommandRunner({ slots: new WorkspaceCommandSlots(), timeoutMs: 120_000, snapshots: false }),
-  });
+  const { factory, built } = adapters(sdk);
   return { sdk, factory, built };
 }
 
@@ -177,11 +172,12 @@ describe('the chat loop with Claude running its own tests through DSpatch', () =
     assert.deepEqual(delivery.result.path, ['work', 'check', 'done']);
     assert.deepEqual(built.cursorPolicies, [], 'Cursor was never constructed');
 
-    // Inside the work step a failure was a tool result, and the step went on.
+    // Inside the work step a failure went back to the same agent as its tool result,
+    // and the step went on: no outer rework round for it.
     const work = sdk.queries[0]?.toolOutcomes ?? [];
-    assert.deepEqual(work.map((outcome) => [outcome.isError, /Exit code (\d)/.exec(outcome.text)?.[1]]), [
-      [false, '1'],
-      [false, '0'],
+    assert.deepEqual(work.map((outcome) => [outcome.isError, /^Exit code (\d)/.exec(outcome.text)?.[1] ?? 'none']), [
+      [true, '1'],
+      [false, 'none'],
     ]);
 
     // Every command is recorded, per step, as the agent's, with snapshots.
@@ -189,9 +185,9 @@ describe('the chat loop with Claude running its own tests through DSpatch', () =
     assert.deepEqual(
       recorded.map((command) => [command.nodeId, command.requestedBy, command.exitCode]),
       [
-        ['work', 'agent-tool', 1],
-        ['work', 'agent-tool', 0],
-        ['check', 'agent-tool', 0],
+        ['work', 'provider-reported', 1],
+        ['work', 'provider-reported', 0],
+        ['check', 'provider-reported', 0],
       ],
     );
     assert.ok(recorded.every((command) => typeof command.afterRunSnapshotId === 'string'));
@@ -210,7 +206,7 @@ describe('the chat loop with Claude running its own tests through DSpatch', () =
     assert.notEqual(outcome, 'work-verified');
     assert.equal(commands[2]?.currentAtEnd, true);
     assert.equal(commands[0]?.currentAtEnd, false);
-    assert.match(text, /The agents’ own commands are not the outcome above: 3 DSpatch ran at an agent’s request/);
+    assert.match(text, /The agents’ own commands are not the outcome above: 3 the provider reported running with its own tool/);
     assert.match(text, /The last that completed on the code exactly as the run left it, npm test, exited 0/);
     assert.match(text, /not a verification by DSpatch/);
   });
@@ -315,15 +311,14 @@ describe('the chat loop with Claude running its own tests through DSpatch', () =
     assert.match(formatRunJournal(delivery.result), /rework round 3 of a permitted 2/);
   });
 
-  it('(e) cancel while work runs a real command stops it and its child, records it, and never starts check', async () => {
+  it('(e) cancel while work runs a real command interrupts it, records it as stopped without claiming its processes ended, and never starts check', async () => {
     const workspace = buggyProject('e');
     const abort = new AbortController();
     const { sdk, factory } = claude([
       {
         kind: 'script',
         steps: [
-          { tool: COMMAND_TOOL_ID, input: { command: sleepingTreeCommand(workspace) }, noToolResult: true },
-          { untilInterrupted: true },
+          { tool: 'Bash', input: { command: sleepingTreeCommand(workspace) } },
         ],
         text: 'unreachable',
       },
@@ -338,10 +333,11 @@ describe('the chat loop with Claude running its own tests through DSpatch', () =
       assert.equal(sdk.queries.length, 1, 'check never started');
       assert.notEqual(delivery.result.terminalNodeId, 'done');
       const command = delivery.inspection.commands[0];
-      assert.equal(command?.requestedBy, 'agent-tool');
+      assert.equal(command?.requestedBy, 'provider-reported');
       assert.equal(command?.ending, 'stopped');
       assert.equal(command?.notRun?.kind, 'did-not-finish');
-      assert.deepEqual(await waitGone([pids.parent, pids.child]), [], 'both processes are gone');
+      assert.equal(command?.notRun?.message, SHELL_COMMAND_CANCELLED_NOTE);
+      assert.equal(sdk.queries[0]?.interrupts, 1, 'the cancel reached Claude Code as an interrupt');
     } finally {
       if (pids !== null) {
         killLeftovers([pids.parent, pids.child]);

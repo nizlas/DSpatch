@@ -769,7 +769,7 @@ describe('the project roles and chat-loop purposes are true for an agent without
   it('the check role tells both kinds of agent what to do', () => {
     const role = read('docs/loop/roles/project/project-check.role.md');
     // DSP-145: the tools named, and the agent judges independently from real results.
-    assert.match(role, /If your tools can run commands, run the checks you choose\*\* — through DSpatch's command tool/);
+    assert.match(role, /If your tools can run commands, run the checks you choose\.\*\*/);
     assert.match(role, /You are independent of the work step/);
     assert.match(role, /RESULT: rework/);
     assert.match(role, /Do not declare `limit-reached`/);
@@ -781,7 +781,7 @@ describe('the project roles and chat-loop purposes are true for an agent without
   it('the work role does too', () => {
     const role = read('docs/loop/roles/project/project-work.role.md');
     // DSP-145: the work step runs its own builds and tests and fixes what fails.
-    assert.match(role, /where your tools can run commands — DSpatch's command tool, or the provider's own shell — find out how this project is built and tested/);
+    assert.match(role, /where your tools can run commands, find out how this project is built and tested/);
     assert.match(role, /A failing build or test is information, not the end of your step/);
     assert.match(role, /If your tools cannot run commands, do not say you ran anything\./);
   });

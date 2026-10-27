@@ -27,14 +27,8 @@ declare const oursUserMessage: Ours.SDKUserMessage;
 declare const oursHookCallback: Ours.HookCallback;
 declare const oursHookOutput: Ours.HookJSONOutput;
 declare const oursSpawned: Ours.SpawnedProcess;
-// DSP-145: `mcpServers` is left out of the DSpatch -> SDK direction on purpose. Its only
-// value is the object the SDK's own `createSdkMcpServer` returned, handed back unchanged,
-// so the direction that matters is SDK -> DSpatch (`sdkServer` below).
-declare const oursOptions: Omit<Ours.Options, 'mcpServers'>;
-declare const oursQueryParams: Omit<Parameters<ClaudeQueryFunction>[0], 'options'> & {
-  readonly options: Omit<Ours.Options, 'mcpServers'>;
-};
-declare const sdkServer: Sdk.McpSdkServerConfigWithInstance;
+declare const oursOptions: Ours.Options;
+declare const oursQueryParams: Parameters<ClaudeQueryFunction>[0];
 
 // SDK -> DSpatch.
 fits<Ours.SDKMessage>(sdkMessage);
@@ -42,7 +36,6 @@ fits<Ours.SDKSessionInfo>(sdkSessionInfo);
 fits<Ours.SpawnOptions>(sdkSpawnOptions);
 fits<ClaudeQueryHandle>(sdkQuery);
 fits<ClaudeSdkModule['getSessionInfo']>(sdkGetSessionInfo);
-fits<Ours.McpSdkServerConfigWithInstance>(sdkServer);
 
 // DSpatch -> SDK.
 fits<Sdk.SDKUserMessage>(oursUserMessage);

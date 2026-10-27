@@ -290,8 +290,9 @@ export type AgentEvent =
       readonly status: 'ok' | 'error';
     })
   /**
-   * DSP-145: DSpatch's own command tool started a process for the agent. Raised by the
-   * adapter when DSpatch's handler begins, not from anything the provider streamed.
+   * DSP-145, DSP-146: a command the agent runs started. Raised by the adapter where it
+   * observes the start at the provider's own boundary (for Claude, the SDK's PreToolUse
+   * hook letting a shell command through), not from DSpatch starting anything.
    */
   | (AgentEventBase & {
       readonly type: 'command.started';
@@ -302,10 +303,10 @@ export type AgentEvent =
       readonly cwd: string;
     })
   /**
-   * DSP-145: the authoritative record of a command DSpatch ran for the agent, raised
-   * when DSpatch's own handler settles - including a command stopped by Cancel, whether
-   * or not the provider ever streams a tool result for it (review B2). Always before the
-   * run's terminal `run.finished`, unless the runner ignored the stop request.
+   * DSP-145, DSP-146: the record of a command the agent ran, as the adapter observed it
+   * (for Claude, the SDK's PostToolUse or PostToolUseFailure hook). A command whose end
+   * the provider never reported is recorded when the run ends, as stopped (cancelled) or
+   * not reported. Always before the run's terminal `run.finished`.
    */
   | (AgentEventBase & {
       readonly type: 'command.finished';
@@ -328,15 +329,17 @@ export type AgentEvent =
       readonly end?: RunEnd;
     });
 
-// --- Commands DSpatch runs (DSP-145) -------------------------------------------
+// --- Commands DSpatch records (DSP-145, DSP-146) -----------------------------------
 
 /**
  * Who asked for a command.
  *
- * - `agent-tool`: the agent, through DSpatch's own command tool; DSpatch started it.
+ * - `agent-tool`: the agent, through the command tool DSpatch offered between DSP-145 and
+ *   DSP-146; DSpatch started it. No longer produced; kept so earlier records still read.
  * - `gate`: a gate node of a loop graph; DSpatch started it.
- * - `provider-reported`: the provider ran it with its own tool and reported it; DSpatch
- *   did not start it and observes only what the provider's events say.
+ * - `provider-reported`: the agent ran it with the provider's own tool (Claude's Bash or
+ *   PowerShell, Cursor's shell); DSpatch did not start it and records only what the
+ *   provider reported, through its hooks or its events.
  */
 export type AgentCommandRequester = 'agent-tool' | 'gate' | 'provider-reported';
 
@@ -346,13 +349,18 @@ export type AgentCommandRequester = 'agent-tool' | 'gate' | 'provider-reported';
  * - `exited`: the process ran and exited by itself; `exitCode` says how.
  * - `could-not-start`: there was a command and no process could run it.
  * - `timed-out`: still running at its time bound, so DSpatch stopped it.
- * - `stopped`: DSpatch stopped it because the run was cancelled or ended.
+ * - `stopped`: stopped because the run was cancelled or ended (`killedByDspatch` says
+ *   whether DSpatch itself stopped the process), or reported by the provider as interrupted.
  * - `refused`: DSpatch declined to start it (an empty line, another command running).
+ * - `not-reported`: the provider reported no end, or a failure that does not say how the
+ *   command ended (DSP-146); `endingMessage` keeps what it said.
  */
-export type AgentCommandEnding = 'exited' | 'could-not-start' | 'timed-out' | 'stopped' | 'refused';
+export type AgentCommandEnding = 'exited' | 'could-not-start' | 'timed-out' | 'stopped' | 'refused' | 'not-reported';
 
 /**
- * One command DSpatch ran, as DSpatch itself observed it (not the provider's account).
+ * One command, as DSpatch observed it: DSpatch's own record of a command it started, or
+ * (`requestedBy: 'provider-reported'`) DSpatch's record of what the provider reported
+ * about a command the agent ran with the provider's own tool.
  *
  * The snapshot identities are content hashes of every working folder: `testedSnapshotId`
  * just before the process started, `afterRunSnapshotId` just after it ended. `null` means

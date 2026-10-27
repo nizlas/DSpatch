@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
-import { CHAT_PERMISSIONS, COMMAND_TOOL_ID } from '../src/adapter/claude-agent-sdk-adapter.ts';
+import { CHAT_PERMISSIONS } from '../src/adapter/claude-agent-sdk-adapter.ts';
 import { CLAUDE_NOT_INSTALLED_TEXT } from '../src/adapter/claude-support.ts';
 import { createFileRoleResolver } from '../src/main/loop-graph-roles.ts';
 import { runLiveGraph } from '../src/main/loop-live-run.ts';
@@ -34,7 +34,6 @@ import {
 import { CLAUDE_CHAT_MODEL } from '../src/main/provider-availability.ts';
 import { RunRecordStore } from '../src/main/run-record-store.ts';
 import {
-  CLAUDE_LOOP_COMMAND_TOOL,
   CLAUDE_LOOP_STEP_TOOLS,
   describeRunToolPolicy,
   type LoopGraph,
@@ -321,7 +320,7 @@ describe('the agent line, the policy text and Cursor', () => {
     assert.equal(info.provider, 'claude');
     assert.match(
       info.line,
-      /^Runs with Claude \(claude-haiku-4-5\): its agent steps read and edit files and run builds and tests through DSpatch's command tool/,
+      /^Runs with Claude \(claude-haiku-4-5\): its agent steps read and edit files and run builds and tests with Claude Code's own shell tools, which DSpatch records/,
     );
     assert.match(info.line, /A gate step's command is run by DSpatch itself\./);
     assert.doesNotMatch(info.line, /cannot run commands/);
@@ -335,12 +334,11 @@ describe('the agent line, the policy text and Cursor', () => {
     for (const tool of CHAT_PERMISSIONS.tools) {
       assert.match(text, new RegExp(`\\b${tool}\\b`));
     }
-    assert.match(text, /no Bash/);
-    // DSP-145: the command tool is named, and is the same one the adapter offers.
-    assert.equal(CLAUDE_LOOP_COMMAND_TOOL, COMMAND_TOOL_ID);
-    assert.match(text, /mcp__dspatch__run_command/);
-    assert.match(text, /run builds and tests through DSpatch’s command tool/);
-    assert.match(text, /not a sandbox/);
+    // DSP-146: Claude Code's own shell tools, recorded through the hooks; no MCP server.
+    assert.match(text, /Claude Code’s own shell tools/);
+    assert.match(text, /no MCP servers/);
+    assert.doesNotMatch(text, /mcp__dspatch/);
+    assert.match(text, /does not start it; that is a record, not a sandbox/);
     assert.match(text, /no-file-writes/);
     assert.match(describeRunToolPolicy('cursor'), /provider-default/);
   });

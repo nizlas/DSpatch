@@ -1036,13 +1036,16 @@ with the Claude SDK substituted; **no Claude turn has run through the window**.
   so the session is refused with DSpatch's rule; the conversation stays on screen
   with *Start new Claude session* and *Switch to Cursor*.
 - **What the agent may do** (`CHAT_PERMISSIONS`): Read, Glob, Grep, Edit and Write
-  in the project, and **DSpatch's command tool** (`mcp__dspatch__run_command`,
-  DSP-145): the agent chooses and runs its own builds and tests, and DSpatch starts
-  each one in the working folder under a time bound, records it (line, folder, how it
-  ended, output, the snapshots before and after) and stops it with its child processes
-  on Cancel. That is control and a record, not a sandbox. **No Bash**; no MCP servers
-  other than DSpatch's own; no settings read from disk other than managed policy
-  settings. Session details shows the policy as sent and lists *Commands the agent
+  in the project, and **Claude Code's own shell tools** (Bash, and PowerShell on
+  Windows; DSP-145, corrected in DSP-146): the agent chooses and runs its own builds
+  and tests, pre-approved, in the foreground only (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`)
+  under Claude Code's own per-command timeout. DSpatch records each command through
+  the SDK's PreToolUse, PostToolUse and PostToolUseFailure hooks (line, folder, how it
+  ended as Claude Code reported it, output, DSpatch's snapshots before and after) and
+  does not start it. On Cancel DSpatch refuses further tool calls and interrupts Claude
+  Code; whether the command and its children ended is not established by DSpatch. That
+  is a record, not a sandbox. No MCP servers; no settings read from disk other than
+  managed policy settings. Session details shows the policy as sent and lists *Commands the agent
   ran*, each current or stale against the working copy. A conversation recorded under
   the earlier policy is not resumed: start a new session. That Edit covers Write and Read covers Glob and Grep is Anthropic's
   documentation, not yet observed. The model is `claude-haiku-4-5`, named rather
@@ -1074,8 +1077,8 @@ with the Claude SDK substituted; **no Claude turn has run through the window**.
   no agent chosen, the agent unavailable or Claude support not installed, Claude's
   authentication check, more than one folder under Claude, or an entry step that fixes a
   model Claude does not use. Claude's steps run with the main chat's permissions: read and
-  edit files, and run builds and tests through DSpatch's command tool (DSP-145); a
-  gate's command is run by DSpatch itself. In the chat loop the work step fixes and
+  edit files, and run builds and tests with Claude Code's own shell tools, which DSpatch
+  records (DSP-146); a gate's command is run by DSpatch itself. In the chat loop the work step fixes and
   re-runs within its own step; the check runs the checks itself and may send the work
   back with findings (*rework*, at most two rounds, then *not met*). A verdict that ends
   in success stands only if a command recorded in the run completed on the working

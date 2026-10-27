@@ -294,7 +294,9 @@ test('switching to Claude is a new session with the recap disclosed and removabl
 
   // The policy actually given, and the model by name.
   assert.match(switched.context.toolPolicySent, /tools Read, Glob, Grep, Edit, Write/);
-  assert.doesNotMatch(switched.context.toolPolicySent, /Bash/);
+  // DSP-146: Claude Code's own shell tools, recorded through DSpatch's hooks; no MCP server.
+  assert.match(switched.context.toolPolicySent, /Write, Bash, PowerShell;/);
+  assert.match(switched.context.toolPolicySent, /no MCP servers/);
   assert.equal(switched.modelRequested, CLAUDE_CHAT_MODEL);
   assert.match(switched.agent.connectionText, /authorization reference recorded for this launch \(login not checked by DSpatch\)/);
 
@@ -306,7 +308,8 @@ test('switching to Claude is a new session with the recap disclosed and removabl
   assert.equal(options['model'], CLAUDE_CHAT_MODEL);
   assert.deepEqual(options['tools'], [...CHAT_PERMISSIONS.tools]);
   assert.deepEqual(options['allowedTools'], [...CHAT_PERMISSIONS.allowedTools]);
-  assert.ok(!(options['tools'] as string[]).includes('Bash'));
+  assert.ok((options['tools'] as string[]).includes('Bash'), "DSP-146: Claude Code's own shell");
+  assert.equal(options['mcpServers'], undefined);
 
   const saved = store.read(switched.conversationId).conversation;
   assert.equal(saved?.session.provider, 'claude');

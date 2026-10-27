@@ -128,7 +128,7 @@ const AREAS = {
       'claude-agent-sdk-adapter.test.ts',
       'claude-support.test.ts',
       { file: 'claude-agent-sdk-adapter-process.test.ts', heavy: true },
-      { file: 'claude-command-tool.test.ts', heavy: true },
+      { file: 'claude-shell-commands.test.ts', heavy: true },
     ],
   },
   project: {
