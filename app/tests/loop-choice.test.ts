@@ -455,8 +455,18 @@ describe('the question asked before a drawing is lost', () => {
     assert.ok(!asked.answers.includes('discard'));
   });
 
-  it('makes Cancel the default in both shapes, because the other answers are the destructive ones', () => {
-    for (const occasion of ['run', 'switch'] as const) {
+  it('asks before a reload after the project host restarted, and keeping the editor is the default (DSP-111)', () => {
+    const asked = describeUnsavedDrawingQuestion({ ...drawing, occasion: 'reload' });
+    assert.deepEqual(asked.buttons, ['Save', 'Discard changes', 'Keep the editor as it is']);
+    assert.deepEqual(asked.answers, ['save', 'discard', 'cancel']);
+    assert.ok(asked.message.includes(drawing.graphName));
+    assert.ok(asked.detail.includes(drawing.path));
+    assert.match(asked.detail, /reloading it draws the file as it is on disk/);
+    assert.match(asked.detail, /leaves the editor and your drawing exactly as they are, not reloaded/);
+  });
+
+  it('makes Cancel the default in every shape, because the other answers are the destructive ones', () => {
+    for (const occasion of ['run', 'switch', 'reload'] as const) {
       const asked = describeUnsavedDrawingQuestion({ ...drawing, occasion });
       assert.equal(
         asked.cancelId,

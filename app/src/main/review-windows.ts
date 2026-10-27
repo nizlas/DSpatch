@@ -64,8 +64,11 @@ export interface ReviewWindowEntry {
   readonly window: BrowserWindow;
   /** Held while the window lives: `closed` must not ask a destroyed window for it. */
   readonly contents: WebContents;
-  /** This window's session on the review host; closed when the window is. */
-  readonly sessionId: string;
+  /**
+   * This window's session on the review host; closed when the window is. Replaced only
+   * when the project host was restarted and the old session went with it (`reattach`).
+   */
+  sessionId: string;
   /** The folder the window was opened for, if any: the chooser's start folder. */
   readonly startFolder: string | null;
   /** DSP-132: the main window's agent when it opened this review, else `null`. */
@@ -363,6 +366,40 @@ export class ReviewWindows {
       });
     }
     return readings;
+  }
+
+  /**
+   * Give every open window a session on a restarted host (DSP-111).
+   *
+   * The old sessions went with the host that stopped. A window that shows a review opens
+   * the same definition again in its new session, not remembered as the last review
+   * because nobody chose anything; a window still choosing just gets a session. What the
+   * window holds on screen is left as it is, and its next save goes to the new session,
+   * so a reviewer's unsaved work is kept rather than lost to an `unknown-session`.
+   */
+  async reattach(): Promise<void> {
+    for (const entry of this.list()) {
+      try {
+        const sessionId = await this.newSession();
+        entry.sessionId = sessionId;
+        if (entry.identity === null) {
+          continue;
+        }
+        const opened = await this.options.host.open({
+          sessionId,
+          definitionPath: entry.identity.definitionPath,
+          remember: false,
+        });
+        if (isReviewHostError(opened) || opened.outcome.kind !== 'opened') {
+          this.options.log(
+            `review window ${String(entry.contents.id)} could not reopen ${entry.identity.definitionPath} on the restarted host: ` +
+              (isReviewHostError(opened) ? opened.message : opened.outcome.kind),
+          );
+        }
+      } catch (error) {
+        this.options.log(`review window ${String(entry.contents.id)} got no session on the restarted host: ${String(error)}`);
+      }
+    }
   }
 
   /** The recent-review index as the host has it, for the scenario's record. */

@@ -385,11 +385,12 @@ describe("the editor's binding", () => {
 
   it("the editor handler passes neither a prompt builder nor a test command of its own", () => {
     const main = fs
-      .readFileSync(path.join(repoRoot, 'app', 'src', 'main', 'main.ts'), 'utf8')
+      .readFileSync(path.join(repoRoot, 'app', 'src', 'host', 'project-host.ts'), 'utf8')
       .replaceAll('\r\n', '\n');
-    const start = main.indexOf('    START_EDITOR_LOOP_RUN,\n    async (');
+    // The editor's Run is the project host's `loop.startEditorRun` since DSP-111.
+    const start = main.indexOf("    'loop.startEditorRun',\n    async (");
     assert.notEqual(start, -1);
-    const end = main.indexOf('\n  ipcMain.handle(', start + 1);
+    const end = main.indexOf('\n  handle(', start + 1);
     const body = main.slice(start, end === -1 ? undefined : end);
     const call = body.slice(body.indexOf('runLiveGraph('), body.indexOf('const workspaceNote'));
     assert.doesNotMatch(call, /promptFor|runProjectTest|workspacePath/);

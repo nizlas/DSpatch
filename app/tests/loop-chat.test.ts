@@ -409,7 +409,10 @@ describe('describeChosenLoopBinding', () => {
  */
 describe('the loop starts from a mandate, with no Command field', () => {
   const chatLoopSource = (): string => {
-    const source = fs.readFileSync(path.join(repoRoot, 'app', 'src', 'main', 'main.ts'), 'utf8');
+    // The handler's two halves since DSP-111: the client's forwarding and the host's run.
+    const source = ['main.ts', '../host/project-host.ts']
+      .map((file) => fs.readFileSync(path.join(repoRoot, 'app', 'src', 'main', file), 'utf8'))
+      .join('\n');
     return source
       .replaceAll('\r\n', '\n')
       .split('\n')

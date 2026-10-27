@@ -745,7 +745,10 @@ export function LoopEditor(): React.JSX.Element {
         saved.occasion === 'run'
           ? `Saved ${file.displayPath} before the run started, because you chose Save and run. ` +
               `The run is walking these changes.`
-          : // The switch's own status line replaces this a moment later, and it says what
+          : saved.occasion === 'reload'
+            ? // DSP-111: the editor is reloaded a moment later and draws what was just saved.
+              `Saved ${file.displayPath} before the editor was reloaded, because you chose Save.`
+            : // The switch's own status line replaces this a moment later, and it says what
             // was drawn as well. This is what stands if the switch then fails.
             `Saved ${file.displayPath}, because you chose Save before the canvas changed.`,
       );

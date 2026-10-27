@@ -3,9 +3,9 @@
  *
  * `loop-live.test.ts` measures the delivery itself: a real queue, a real
  * preamble, a real walk, and an assertion on the prompt the adapter actually
- * received. What it cannot reach is the `promptFor` closure inside `main.ts`,
- * because that is an Electron IPC handler with no test harness — the same gap
- * `loop-stop-means-stop.ts` names, and this follows its precedent of reading the
+ * received. What it cannot reach is the `promptFor` closure inside the project
+ * host's chat-run method (`host/project-host.ts`, DSP-111), which has no test
+ * harness — the same gap `loop-stop-means-stop.ts` names, and this follows its precedent of reading the
  * source rather than modelling it.
  *
  * These are shape assertions and they are worth what shape assertions are worth.
@@ -24,14 +24,14 @@ import { describe, it } from 'node:test';
 const repoRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 
 function mainSource(): string {
-  return fs.readFileSync(path.join(repoRoot, 'app', 'src', 'main', 'main.ts'), 'utf8');
+  return fs.readFileSync(path.join(repoRoot, 'app', 'src', 'host', 'project-host.ts'), 'utf8');
 }
 
 /** The body of the chat run handler, which is where all of this has to happen. */
 function chatRunHandler(source: string): string {
-  const at = source.indexOf('START_CHAT_LOOP_RUN,');
+  const at = source.indexOf("'loop.startChatRun',");
   assert.notEqual(at, -1, 'the chat run handler has to exist for any of this to mean anything');
-  const end = source.indexOf('ipcMain.handle(', at + 1);
+  const end = source.indexOf('\n  handle(', at + 1);
   return source.slice(at, end === -1 ? source.length : end);
 }
 
@@ -114,9 +114,9 @@ describe('the chat run handler carries a message to the next step', () => {
    */
   it('refuses a message for a run that is not the one walking', () => {
     const source = mainSource();
-    const at = source.indexOf('ADD_LOOP_INSTRUCTION,');
+    const at = source.indexOf("'loop.addInstruction',");
     assert.notEqual(at, -1, 'the handler the composer routes to during a run has to exist');
-    const handler = source.slice(at, source.indexOf('ipcMain.handle(', at + 1));
+    const handler = source.slice(at, source.indexOf('\n  handle(', at + 1));
     assert.match(handler, /chatLoopRunId === null/, 'no run walking is refused, not filed');
     assert.match(
       handler,
@@ -143,8 +143,8 @@ describe('the chat run handler carries a message to the next step', () => {
    */
   it('cannot start a run of any kind', () => {
     const source = mainSource();
-    const at = source.indexOf('ADD_LOOP_INSTRUCTION,');
-    const handler = source.slice(at, source.indexOf('ipcMain.handle(', at + 1));
+    const at = source.indexOf("'loop.addInstruction',");
+    const handler = source.slice(at, source.indexOf('\n  handle(', at + 1));
     for (const forbidden of ['runLiveGraph', 'beginRun', 'startSession', 'AbortController']) {
       assert.equal(
         handler.includes(forbidden),

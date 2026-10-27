@@ -503,6 +503,22 @@ export interface DiscussionIdentity {
 }
 
 /**
+ * The review window a discussion request comes from, as the client's window registry
+ * knows it (DSP-111). The discussion itself runs in the project host; the window is
+ * named by its renderer's id, which is where the discussion's events go back to.
+ */
+export interface DiscussionTarget {
+  /** The window's renderer, which hears the discussion's events. */
+  readonly targetId: number;
+  /** The review it shows. */
+  readonly identity: DiscussionIdentity;
+  /** DSP-132: the main window's agent when it opened this review; `null` when standalone. */
+  readonly defaultProvider: DiscussionProvider | null;
+  /** The window's session on the review host, for the discussion's context. */
+  readonly sessionId: string;
+}
+
+/**
  * The discussion as written to `<recordKey>.discussion.json` beside the reviewer's
  * record, by the main process only.
  */

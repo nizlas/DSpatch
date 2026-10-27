@@ -133,7 +133,26 @@ The first remote milestone demonstrates local rendering, remote repository acces
 - *Local binding* (`host/local-review-host.ts`): the same contract in-process, with `structuredClone` on arguments and answers, so client and host share no reference.
 - *Client* (`main/review-windows.ts`, `main/review-ipc.ts`): windows, the native file chooser, the menu, the close flush and the one-window-per-review registry. They reach the repository only through the contract and turn a `host-error` into the shapes the review preload already returned, so the preload and the view are unchanged.
 
-Still on the client side or not yet done, as next steps: a separate host process; a transport and its measured behaviour; authentication; reconnection; host-side browsing for review definitions (the native chooser still returns paths on the machine the window runs on, which is the same machine today); and a host-side refusal of a second session on a review another session has open (the one-window-per-review invariant is held by the client's window registry only, which is enough while one client exists and not once several can attach). The review discussion still runs in the main process, and the rest of the bridge is unchanged.
+Still on the client side or not yet done, as next steps: a separate host process; a transport and its measured behaviour; authentication; reconnection; host-side browsing for review definitions (the native chooser still returns paths on the machine the window runs on, which is the same machine today); and a host-side refusal of a second session on a review another session has open (the one-window-per-review invariant is held by the client's window registry only, which is enough while one client exists and not once several can attach). The review discussion still runs in the main process, and the rest of the bridge is unchanged. (Superseded on 27 Oct 2026 by the next paragraph.)
+
+**A separate local host process (27 Oct 2026, DSP-111; local, not remote operation).** Niclas approved a separate local host process that an ordinary start uses automatically, with no SSH and no separate sign-in. He did not approve remote authentication, SSH, a rule for work in progress when a client disconnects, several clients at once, or rules for caching remote history locally. Those remain open in DSP-111.
+
+- *Process and channel.* The Electron main process starts the host as a utility process (`host/host-process.ts`). The two exchange structured-clone messages over the local process channel (`shared/host-protocol.ts`); nothing is exposed on a network. The host is told where DSpatch's data is (`userData`) and which process is its client. When the client process is gone, the host closes its adapters and ends; it does not go on working.
+- *What moved.* All of the project's work moved to the host: the chat service and its adapter, projects, conversations, the workspace, loop definitions and runs with their control and records, the review host, and the review discussions with their adapters. Each window channel is forwarded to a host method of the same meaning (`host/project-host.ts`). The methods form a typed contract like `ReviewHostApi` (`shared/project-host-contract.ts`): both sides typecheck against it, and a host that does not serve exactly its methods refuses to start. The method's own answer, or its own error sentence, comes back. Events come back addressed to an audience: the chat window, every window, the windows following loop runs, or one renderer.
+- *What stayed on the client.* Windows, menus, native file choosers, message boxes, the clipboard and the file manager stayed on the client. So did the editor's unsaved drawing, and the scripted-run harness, which reads host evidence through methods that exist only during a scripted run.
+- *Failures.* A host that cannot start is said before any window opens. A host that stops answers every waiting call as unknown, never resends one, and is restarted only on the person's choice; the windows then reload and read what was saved.
+- *Reuse by a later remote transport.* The client's `HostConnection` takes any `HostProcess` (post, receive, exit) and the host serves any `HostPort`. A transport between two machines would supply one of each and leave the methods, the events and the failure meanings unchanged. It would need the open decisions above first, plus:
+  - host-side browsing, because the file choosers still return client paths;
+  - a way to bring files to the client for *Show in folder* and export;
+  - a measured transport.
+- *Verification (27 Oct 2026, Windows, home computer).* Run with real separate processes:
+  - the product's scripted window runs in presentation mode, covering the chat, loop runs and their cancel, history across a restart, resume, review, the review discussion, the unsaved drawing and the graph view, also once from a packaged build;
+  - a host ended in the middle of a loop run, and a host that could not start;
+  - Node tests of the real host process and of the channel's failure cases.
+
+  Two scripted runs fail in the same way on an unchanged build of the previous commit, so they predate this step: `says-less` objects to the words "mandate" and "walks", and in `folders` the large folder is not drawn within 120 s.
+
+  Not verified: Linux, two machines, a real provider, and the person-facing dialogs for a failed start and a lost host (unattended runs exit with a code instead).
 
 <!-- pagebreak -->
 

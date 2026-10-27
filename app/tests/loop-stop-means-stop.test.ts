@@ -266,7 +266,8 @@ function gapBetweenClaimAndTry(source: string, from: number): { readonly gap: st
 
 describe('the loop control is claimed inside the try that releases it', () => {
   it('has nothing between the claim and the try in either run handler', () => {
-    const source = fs.readFileSync(path.join(repoRoot, 'app', 'src', 'main', 'main.ts'), 'utf8');
+    // Both run handlers are the project host's methods since DSP-111.
+    const source = fs.readFileSync(path.join(repoRoot, 'app', 'src', 'host', 'project-host.ts'), 'utf8');
 
     let from = 0;
     const gaps: string[] = [];

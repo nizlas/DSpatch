@@ -35,9 +35,12 @@
  * half-finished experiment a person wants rid of is ordinary, and it is the only thing
  * this question has that the run's does not.
  */
-export type UnsavedDrawingOccasion = 'run' | 'switch';
+export type UnsavedDrawingOccasion = 'run' | 'switch' | 'reload';
 
-/** What the person answered. `discard` is only ever offered for a switch. */
+/**
+ * What the person answered. `discard` is only offered for a switch and a reload. For a
+ * reload, `cancel` means *keep the editor as it is*: it is not reloaded.
+ */
 export type UnsavedDrawingAnswer = 'save' | 'discard' | 'cancel';
 
 /**
@@ -86,6 +89,26 @@ export function describeUnsavedDrawingQuestion(input: {
       buttons: ['Save and run', 'Cancel'],
       answers: ['save', 'cancel'],
       cancelId: 1,
+    };
+  }
+  if (input.occasion === 'reload') {
+    // DSP-111: the project host was restarted after it stopped, and the windows are about
+    // to be reloaded so they read what was saved. Reloading the editor would draw the file
+    // on disk over the drawing, so the drawing is asked about first.
+    return {
+      title: 'Unsaved changes in the loop editor',
+      message: `Save your changes to "${input.graphName}" before the loop editor is reloaded?`,
+      detail:
+        `DSpatch's project host was restarted, and the windows are reloaded so that they ` +
+        `read what was saved. The loop editor is holding changes to ${input.path} that are ` +
+        `not in that file yet, and reloading it draws the file as it is on disk.\n\n` +
+        `Save writes your changes and then reloads the editor. Discard changes reloads it ` +
+        `without writing, and your edits are gone. Keep the editor as it is leaves the ` +
+        `editor and your drawing exactly as they are, not reloaded; save it there when you ` +
+        `are ready.`,
+      buttons: ['Save', 'Discard changes', 'Keep the editor as it is'],
+      answers: ['save', 'discard', 'cancel'],
+      cancelId: 2,
     };
   }
   return {

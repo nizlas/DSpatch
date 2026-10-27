@@ -131,6 +131,14 @@ const AREAS = {
       { file: 'claude-shell-commands.test.ts', heavy: true },
     ],
   },
+  host: {
+    what: 'the project host process, what each side of it can load, and the channel between them',
+    files: [
+      'project-host-boundary.test.ts',
+      { file: 'host-connection.test.ts', heavy: true },
+      { file: 'project-host-process.test.ts', heavy: true },
+    ],
+  },
   project: {
     what: 'what DSpatch does to real folders: git state, sample projects, the test repository',
     files: [

@@ -1597,7 +1597,8 @@ count of tests was never the cost.
 
 So the suite is grouped by the question someone is actually asking, and
 `npm run test:fast` skips the six. The areas are `presentation`, `loop`, `chat`,
-`project` and `live`; `npm run test:heavy` is the six on their own. A file that is
+`review`, `provider`, `host` (the project host process and its channel), `project`
+and `live`; `npm run test:heavy` is the six on their own. A file that is
 in no group fails the command rather than being silently skipped.
 
 ```powershell
@@ -1772,7 +1773,10 @@ Do not present these features as available before they are implemented.
 ## Structure
 
 ```text
-src/main/                Main process. Compiled by tsc, not bundled.
+src/main/                The Electron main process (the client) and the services the project host runs. Compiled by tsc, not bundled.
+  main.ts                The client: windows, menus, dialogs, the clipboard; every other channel is forwarded to the project host.
+  host-connection.ts     The client's end of the process channel: starts the host, answers every call once, says when it is lost.
+  launch-mode.ts         How this launch was asked to run (scripted run, presentation mode), read alike by both processes.
   chat-service.ts        Owns the adapter, the working copy, the diff and the command runner.
   own-repository.ts      Recognises DSpatch's own working copy from any folder inside or above it, and refuses when it cannot tell.
   git-state.ts           Revision, branch and the already-modified files, read before the agent exists.
@@ -1790,9 +1794,12 @@ src/main/                Main process. Compiled by tsc, not bundled.
   review-ipc.ts          The review channels, answered only for review windows, each in that window's own review-host session.
   review-service.ts      Read-only git at two fixed commits, the reviewer's record under userData/reviews, and a question's context envelope.
   review-discussion-service.ts  The discussion about the code (DSP-127): one per review, its own text-only adapter, ledger and file.
-src/host/                The review host (DSP-111): no Electron, no renderer; reached only through ReviewHostApi.
+src/host/                The project host (DSP-111): a process of its own, no Electron, no renderer.
+  host-process.ts        Its entry: the channel to the client, the ready message, shutdown, and ending when the client is gone.
+  host-server.ts         Answers each call once, by method name; events go to an audience the client delivers.
+  project-host.ts        The services and their methods: chat, projects, conversations, workspace, loops, review discussions.
   review-host.ts         Review sessions, definitions, the commits, records, preferences and the last review per repository.
-  local-review-host.ts   The in-process binding: structuredClone both ways, and a throw becomes a host-error.
+  local-review-host.ts   An in-process binding of ReviewHostApi (structuredClone both ways), used by tests.
 src/preload/             Sandboxed bridges, each exposing one interface via contextBridge.
   preload.ts             The chat and loop-editor windows: `window.dspatch`.
   review-preload.ts      Review windows only: `window.dspatchReview` and `window.dspatchReviewDiscussion`, and nothing else.
@@ -1803,7 +1810,7 @@ src/renderer/            React UI, bundled by Vite.
   workflow-script.ts     Drives the window's own controls (DSPATCH_CHAT_RUN).
   workflow-gates.ts      Those runs' pass/fail rules, kept out of the DOM so a counter-example can be fed to them.
   ReviewView.tsx         The review surface (with ReviewTimeline.tsx, review-code.tsx, ReviewDiscussion.tsx, review-i18n.ts, review.css).
-src/shared/              Renderer/main contract. Types only.
+src/shared/              Renderer/main contract, the client/host protocol (host-protocol.ts) and the project host's typed methods (project-host-contract.ts). Types and plain data only.
 src/adapter/             Provider adapter interface, Cursor implementation, placeholder.
 scripts/dev.mjs          Starts the development server and Electron.
 electron-builder.yml     Packaging configuration.
@@ -1811,12 +1818,34 @@ dist/                    Build output. Git-ignored.
 release/                 Packaging output. Git-ignored.
 ```
 
-**The adapter lives in the main process and only there.** The renderer never
-imports it and reaches it only over IPC. That is enforced rather than intended:
-`tsconfig.renderer.json` excludes `src/adapter/cursor-sdk-adapter.ts`, so a
-renderer-side import fails the typecheck instead of the packaged build. The window
+**The adapters live in the project host and only there** (DSP-111). An ordinary
+start of DSpatch starts the host itself, as an Electron utility process: a separate
+Node process with no window, reached over the local process channel and nothing on
+a network. It holds the project's work: repository access and git, the chat's,
+loops' and review discussions' adapters, loop runs, and the conversations, run
+records and review records under `userData`. The Electron main process is the
+client: windows, menus, file choosers, the clipboard and the file manager; every
+other channel a window calls is forwarded to the host by method name
+(`project-host.ts`), and the host's events come back addressed to the chat window,
+every window, the windows following loop runs, or one renderer. Neither the
+renderer nor the client imports an adapter, and `tests/project-host-boundary.test.ts`
+reads that from the source. `tsconfig.renderer.json` still excludes the adapters, so
+a renderer-side import fails the typecheck instead of the packaged build. The window
 uses `contextIsolation`, disables `nodeIntegration`, enables the sandbox and
 communicates through preload; the renderer has no Node access at all.
+
+If the host cannot be started, DSpatch says so before any window opens and offers
+*Try again* or *Quit*. If it stops while DSpatch runs, every request it had not
+answered is answered as *unknown* (nothing is sent again), and a message offers to
+restart it and reload the windows, which then read what was saved; opening the
+project again is left to the person. When DSpatch quits, the host closes its adapters
+within its own bound and ends; when the client process disappears without quitting,
+the host notices within seconds, closes its adapters and ends, so DSpatch starts no
+further work without the application (as when the main process held the adapters;
+whether a command or agent process that a stopped host had started is still running
+has not been established). This is a local process boundary, not remote operation:
+see DSP-111 and `docs/RUNTIME_PLATFORM_ROADMAP.md` section 1.2 for what a remote
+transport would still need.
 
 The main process is deliberately not bundled. Cursor's SDK lazily loads parts of
 itself that a single-file bundle cannot follow; its documentation describes such a

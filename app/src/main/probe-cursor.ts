@@ -24,20 +24,8 @@ import type { AgentEvent, SessionHandle, UsageReading } from '../adapter/types';
  *    unless the second answer contains it.
  */
 
-/** Exit codes. Distinct causes get distinct codes; 0–4 belong to the smoke test. */
-export const PROBE_EXIT = {
-  ok: 0,
-  misconfigured: 10,
-  notAuthenticated: 11,
-  startSessionFailed: 12,
-  firstTurnFailed: 13,
-  streamingNotDemonstrated: 14,
-  secondTurnFailed: 15,
-  continuityNotProven: 16,
-  usageReadFailed: 17,
-  timedOut: 18,
-  unexpectedError: 19,
-} as const;
+export { PROBE_EXIT } from './probe-exit';
+import { PROBE_EXIT } from './probe-exit';
 
 const DEFAULT_MODEL = 'claude-haiku-4-5';
 const TURN_TIMEOUT_MS = 120_000;

@@ -30,6 +30,7 @@
     "test:project": "node scripts/run-tests.mjs project",
     "test:review": "node scripts/run-tests.mjs review",
     "test:live": "node scripts/run-tests.mjs live",
+    "test:host": "node scripts/run-tests.mjs host",
     "test:list": "node scripts/run-tests.mjs --list",
     "package": "npm run typecheck && npm run test && npm run build && electron-builder --config electron-builder.yml",
     "typecheck": "npm run typecheck:node && npm run typecheck:renderer && npm run typecheck:tools",

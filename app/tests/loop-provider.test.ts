@@ -368,13 +368,19 @@ describe('the agent line, the policy text and Cursor', () => {
 
 describe('both run handlers decide the agent before anything is recorded or claimed', () => {
   const main = fs
-    .readFileSync(path.join(repoRoot, 'app', 'src', 'main', 'main.ts'), 'utf8')
+    .readFileSync(path.join(repoRoot, 'app', 'src', 'host', 'project-host.ts'), 'utf8')
     .replaceAll('\r\n', '\n');
 
+  /** The run handlers are the project host's methods since DSP-111, by these names. */
+  const METHOD: Readonly<Record<string, string>> = {
+    START_EDITOR_LOOP_RUN: 'loop.startEditorRun',
+    START_CHAT_LOOP_RUN: 'loop.startChatRun',
+  };
+
   function handler(channel: string): string {
-    const start = main.indexOf(`    ${channel},\n    async (`);
+    const start = main.indexOf(`    '${METHOD[channel] ?? channel}',\n    async (`);
     assert.notEqual(start, -1, `the ${channel} handler exists`);
-    const end = main.indexOf('\n  ipcMain.handle(', start + 1);
+    const end = main.indexOf('\n  handle(', start + 1);
     return main.slice(start, end === -1 ? undefined : end);
   }
 
