@@ -2,7 +2,7 @@
 
 Who does what, and how the conversation continues
 
-DSpatch · 19 September 2026 · Version 1.3 · Owner: Niclas Danielsson
+DSpatch · 27 October 2026 · Version 1.4 · Owner: Niclas Danielsson
 
 This is the governing description of how a person, the agents and Maestro share the work. It describes intended behaviour, not a claim that every feature is implemented or verified.
 
@@ -87,6 +87,22 @@ Discussion by itself is not approval of a pending decision. Make clear when the 
 For a new instruction, distinguish **received** from **delivered to the relevant agent**. Only claim it has been applied when that is established. Do not imply that an agent already working has received a message when it has not. An instruction must not silently start a second competing job in the same working copy.
 
 If the current agent cannot receive an instruction during its ongoing work, show it as pending. It can reach the next appropriate handover, or the same agent when its interrupted step is continued. Do not make “always the next agent” a product rule. Provider limitations should be established for the actual integration, not assumed to apply universally.
+
+### 3.1 Steering and separate command runs (decision, 27 October 2026)
+
+Niclas decided the following on 27 October 2026. It is a direction for [DSP-147](../backlog/tasks/dsp-147%20-%20Steer-the-running-work-from-the-chat-kept-apart-from-running-a-command-yourself.md), not a description of today's application.
+
+- A new chat message sent while an agent is working is **steering of that same work**, delivered through the runtime's own support for adding input to a running session. It does not start a competing run.
+- **Running a separate command manually** is clearly distinct from steering. It is not a way of talking to the agent, and a message is not a way of starting it.
+- In one working copy, agent work and a separate manual command **exclude each other symmetrically**: whichever starts later waits, or is refused with an understandable reason, until the earlier one has ended.
+- The agent's own tool calls and its internal parallelism remain the runtime's business.
+- The interface shows truthfully whether a steering message is **waiting for delivery** or **delivered**, and does not claim that the agent has read it without evidence.
+
+How this relates to the sections above, which are not rewritten:
+
+- §4.3 says a question during work does not automatically steer it. Under this decision a question sent during agent work also goes to that work. The receiving agent interprets the intent, as this section requires: it answers the question and changes direction only if it takes the message as an instruction. A separate answer path for questions during work would need a new decision.
+- §4.4 and the paragraph above expect delivery at a handover or when an interrupted step continues. This decision adds delivery into the running work where the runtime supports it; where it does not, the message stays pending as described above.
+- The working-copy rule for commands built in DSP-145 and DSP-146 locks only per command and in one direction. It is narrower than the symmetric rule decided here.
 
 ## 4 Seven situations
 

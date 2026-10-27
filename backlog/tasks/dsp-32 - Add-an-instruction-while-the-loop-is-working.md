@@ -4,6 +4,7 @@ title: Add an instruction while the loop is working
 status: To Do
 assignee: []
 created_date: '2026-09-17 19:44'
+updated_date: '2026-10-27 14:10'
 labels: []
 dependencies:
   - DSP-30
@@ -43,8 +44,9 @@ A message typed during a run must not start a competing run in the same working 
 
 <!-- SECTION:NOTES:BEGIN -->
 Blocked in practice by DSP-53: Send is disabled for the whole of a loop run, so this story cannot be tried until the composer stays usable. The interaction model (§3, §4.4) is the governing description of what the message means once it can be sent.
-<!-- SECTION:NOTES:END -->
 
+27 Oct 2026, Niclas's decision (INTERACTION_MODEL.md §3.1, DSP-147): a message sent while an agent works is steering of that same work, delivered through the runtime's own support where it exists. This widens AC #1's "next safe handover": handover or continuation delivery remains the fallback where a runtime cannot deliver into running work. DSP-147 holds the chat and running-step delivery and the symmetric lock with manual commands; this card keeps the loop's handover delivery. Overlap to be settled when either is planned; this card is not rewritten.
+<!-- SECTION:NOTES:END -->
 
 ## Revised against INTERACTION_MODEL v1.2
 

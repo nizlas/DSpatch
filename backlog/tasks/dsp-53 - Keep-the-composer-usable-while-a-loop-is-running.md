@@ -4,7 +4,7 @@ title: Keep the composer usable while a loop is running
 status: In Progress
 assignee: []
 created_date: '2026-09-19 08:48'
-updated_date: '2026-09-19 12:28'
+updated_date: '2026-10-27 14:10'
 labels: []
 dependencies:
   - DSP-27
@@ -34,6 +34,11 @@ The hazard stays: a message during a run must not start a competing run in the s
 - [ ] #5 No message-type switch is required of the user for ordinary conversation.
 <!-- AC:END -->
 
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+27 Oct 2026: DSP-147 records Niclas's decision that a message sent during agent work steers that same work and never starts a competing run (INTERACTION_MODEL.md §3.1). This card's #2 stays as written; DSP-147 builds on the composer being usable during a run.
+<!-- SECTION:NOTES:END -->
 
 ## Widened by INTERACTION_MODEL v1.3
 
