@@ -535,6 +535,7 @@ function createChatService(): ChatService {
   claudeSupport: { installed: CLAUDE_SUPPORT.installed, reason: CLAUDE_SUPPORT.reason },
   agentChoiceStore: { read: () => agentChoiceStore.read(), write: (provider) => agentChoiceStore.write(provider) },
   modelChoice: modelChoiceStore,
+  ...(chatRunMode && process.env['DSPATCH_FAIL_MODEL_LIST_ONCE'] === '1' ? { failFirstModelList: true } : {}),
   ...(presentationMode ? { readAuthStatus: presentationAuthStatus } : {}),
   });
 }
@@ -3435,6 +3436,12 @@ function registerCoreMethods(): void {
       throw new Error('Unknown agent.');
     }
     return chatService.listModels(provider);
+  });
+  handle('chat.chooseModel', (_event, provider: unknown, modelId: unknown): string => {
+    if ((provider !== 'cursor' && provider !== 'claude') || typeof modelId !== 'string') {
+      throw new Error('Unknown agent or model.');
+    }
+    return chatService.setModelFor(provider, modelId);
   });
   handle('chat.setModel', (_event, modelId: string): string => {
     const inForce = chatService.setRequestedModel(modelId);

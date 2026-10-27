@@ -61,10 +61,14 @@
   z-index: 1;
 }
 
+/* Above the content column: the column is transparent and starts at the top of the
+   window, and at an ordinary width it lies over the agent and model choices. Without
+   this, a real click on the model choice reached the column instead (DSP-149). */
 .start__top {
   position: fixed;
   top: 1.15rem;
   left: 1.25rem;
+  z-index: 2;
 }
 
 .start__content {

@@ -56,6 +56,10 @@ const discussionBridge: ReviewDiscussionBridge = {
     ipcRenderer.invoke('dspatch:review-discussion-choose-agent', provider) as ReturnType<ReviewDiscussionBridge['chooseAgent']>,
   setRecapLeftOut: (leftOut) =>
     ipcRenderer.invoke('dspatch:review-discussion-recap', leftOut) as ReturnType<ReviewDiscussionBridge['setRecapLeftOut']>,
+  listModels: (provider) =>
+    ipcRenderer.invoke('dspatch:review-discussion-list-models', provider) as ReturnType<ReviewDiscussionBridge['listModels']>,
+  chooseModel: (provider, modelId) =>
+    ipcRenderer.invoke('dspatch:review-discussion-choose-model', provider, modelId) as ReturnType<ReviewDiscussionBridge['chooseModel']>,
   onEvent: (listener) => {
     const handler = (_event: unknown, payload: ReviewDiscussionEvent): void => {
       listener(payload);

@@ -742,7 +742,7 @@ export async function runScriptedWorkflow(
   plan: ScriptedRunPlan,
 ): Promise<ScriptedRunReport> {
   // DSP-149: `model-list` chooses Claude itself and must never choose Cursor.
-  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list') {
+  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow') {
     await nameScenarioAgent();
   }
   switch (plan.scenario) {
@@ -794,6 +794,10 @@ export async function runScriptedWorkflow(
       return runWorkspaceFlowScenario(plan);
     case 'model-list':
       return runModelListScenario(plan);
+    case 'model-start':
+      return runModelStartScenario(plan);
+    case 'model-flow':
+      return runModelFlowScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -10358,6 +10362,168 @@ async function runModelListScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
   } catch (caught) {
     failures.push(caught instanceof Error ? caught.message : String(caught));
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/**
+ * DSP-149: the start page's model choice after an ordinary start with Claude saved as
+ * the agent. Touches nothing: it records what the dropdown shows, twice a second, until
+ * it settles or a minute has passed, and photographs it.
+ */
+async function runModelStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const startedAt = performance.now();
+  const readings: unknown[] = [];
+  const read = (): Record<string, unknown> => {
+    const select = element('model-select') as HTMLSelectElement | null;
+    return {
+      atMs: Math.round(performance.now() - startedAt),
+      present: select !== null,
+      disabled: select?.disabled ?? null,
+      value: select?.value ?? null,
+      shown: select === null ? null : (select.selectedOptions[0]?.textContent ?? ''),
+      options: select?.options.length ?? 0,
+      agent: (element('open-agent-select') as HTMLSelectElement | null)?.value ?? null,
+      error: textOf('model-list-error-detail'),
+      title: select?.closest('label')?.getAttribute('title') ?? null,
+    };
+  };
+  try {
+    await waitFor('the start page', () => element('start-page') !== null, 60_000);
+    for (let index = 0; index < 120; index += 1) {
+      const reading = read();
+      readings.push(reading);
+      if (reading['present'] === true && reading['disabled'] === false && Number(reading['options']) > 1) {
+        break;
+      }
+      await sleep(500);
+    }
+    await window.dspatch.captureWindow('model-start');
+    const last = read();
+    steps.push({ step: 'settled', ...last });
+    // What a real click on the dropdown reaches: the topmost element at points across it.
+    const select = element('model-select');
+    if (select !== null) {
+      const box = select.getBoundingClientRect();
+      const hits = [0.1, 0.5, 0.9].map((fraction) => {
+        const x = box.left + box.width * fraction;
+        const y = box.top + box.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        return {
+          fraction,
+          x: Math.round(x),
+          y: Math.round(y),
+          reachesTheSelect: hit !== null && (hit === select || select.contains(hit) || hit.contains(select) === false && hit.closest('label') === select.closest('label')),
+          hit: hit === null ? null : `${hit.tagName.toLowerCase()}.${hit.className}`,
+        };
+      });
+      steps.push({ step: 'hit test', windowWidth: window.innerWidth, hits });
+      if (hits.some((entry) => !entry.reachesTheSelect)) {
+        failures.push(`a click on part of the model dropdown reaches something else: ${JSON.stringify(hits)}`);
+      }
+    }
+    if (last['disabled'] !== false || Number(last['options']) <= 1) {
+      failures.push(`the model choice did not become usable: ${JSON.stringify(last)}`);
+    }
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, { plan, readings });
+  } catch (caught) {
+    failures.push(caught instanceof Error ? caught.message : String(caught));
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, { plan, readings });
+  }
+}
+
+/**
+ * DSP-149: the model choice through the real app, against the real Claude SDK, in four
+ * processes over one isolated user-data folder (`flowPhase`):
+ *
+ * - `first`: Claude saved as the agent, no model chosen. The start page shows the model
+ *   the provider's default resolves to, by name; a click reaches the dropdown; another
+ *   model is chosen.
+ * - `again`: after a restart the chosen model is shown and is what the host asks for.
+ * - `retry`: the first lookup fails (SIMULATED, DSPATCH_FAIL_MODEL_LIST_ONCE); the saved
+ *   choice stays shown, Try again reads the real list.
+ * - `switch`: no agent saved; Claude is chosen actively and its list arrives.
+ *
+ * No message is sent anywhere, so no model turn runs; Cursor is never chosen.
+ */
+async function runModelFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const phase = plan.flowPhase ?? 'first';
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const select = (): HTMLSelectElement | null => element('model-select') as HTMLSelectElement | null;
+  const state = (): Record<string, unknown> => ({
+    state: select()?.dataset['state'] ?? null,
+    disabled: select()?.disabled ?? null,
+    value: select()?.value ?? null,
+    shown: select()?.selectedOptions[0]?.textContent ?? null,
+    options: select()?.options.length ?? 0,
+  });
+  const ready = (): boolean => select()?.dataset['state'] === 'ready' && select()?.disabled === false;
+  const reachable = (): boolean => {
+    const target = select();
+    if (target === null) {
+      return false;
+    }
+    const box = target.getBoundingClientRect();
+    return [0.1, 0.5, 0.9].every((fraction) => {
+      const hit = document.elementFromPoint(box.left + box.width * fraction, box.top + box.height / 2);
+      return hit === target || (hit !== null && target.contains(hit));
+    });
+  };
+  const loadingSeen = (): boolean => select()?.selectedOptions[0]?.textContent === 'Loading models…';
+  try {
+    await waitFor('the start page', () => element('start-page') !== null, 60_000);
+    let sawLoading = loadingSeen();
+    if (phase === 'switch') {
+      await chooseInSelect('open-agent-select', 'claude');
+      sawLoading = sawLoading || loadingSeen();
+    }
+    if (phase === 'retry') {
+      await waitFor('the failed lookup', () => element('model-list-error') !== null, 60_000);
+      record('lookup failed', { ...state(), why: textOf('model-list-error-detail') });
+      expect(select()?.selectedOptions[0]?.textContent === 'sonnet', 'the saved choice is not shown while the list is missing');
+      await window.dspatch.captureWindow('model-retry-failed');
+      await click('model-list-retry');
+    }
+    const until = performance.now() + 90_000;
+    while (!ready() && performance.now() < until) {
+      sawLoading = sawLoading || loadingSeen();
+      await sleep(100);
+    }
+    record('dropdown', { ...state(), sawLoading, reachable: reachable(), shownNever: "Provider's default" });
+    expect(ready(), `the dropdown did not become usable: ${JSON.stringify(state())}`);
+    expect(reachable(), 'a click on the dropdown does not reach it');
+    expect(!(select()?.selectedOptions[0]?.textContent ?? '').includes("Provider's default"), 'it shows "Provider\'s default"');
+    expect((select()?.options.length ?? 0) > 3, 'the list is not the provider\'s');
+    if (phase === 'first' || phase === 'switch') {
+      expect(/ · default$/.test(select()?.selectedOptions[0]?.textContent ?? ''), 'with no choice, the default model is not shown by name');
+    }
+    if (phase === 'again' || phase === 'retry') {
+      expect(select()?.value === 'sonnet', `the choice made before was not kept (${select()?.value ?? 'none'})`);
+    }
+    await window.dspatch.captureWindow(`model-${phase}`);
+    if (phase === 'first') {
+      await chooseInSelect('model-select', 'sonnet');
+      await sleep(400);
+      const kept = await window.dspatch.listModels('claude');
+      record('chosen', { kept: kept.chosen });
+      expect(kept.chosen === 'sonnet', 'the choice did not reach the host');
+      await window.dspatch.captureWindow('model-first-chosen');
+    }
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, { plan, phase });
+  } catch (caught) {
+    failures.push(caught instanceof Error ? caught.message : String(caught));
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, { plan, phase });
   }
 }
 

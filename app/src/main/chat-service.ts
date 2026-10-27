@@ -1091,6 +1091,12 @@ export interface ChatServiceOptions {
   /** DSP-149: called whenever a turn has ended, so the host can act on what it asked for. */
   readonly onTurnSettled?: () => void;
   /**
+   * DSP-149, scripted trials only: the first model lookup fails with a SIMULATED error,
+   * so a trial can show the retry and that a saved choice survives it. Never set in an
+   * ordinary launch.
+   */
+  readonly failFirstModelList?: boolean;
+  /**
    * Where generated sample projects live. Defaults to `%TEMP%/dspatch-chat`.
    *
    * Present so a test can own the location it plants leftovers in rather than
@@ -1597,6 +1603,8 @@ export class ChatService {
 
   private readonly modelListsInFlight = new Map<StoredSessionProvider, Promise<ModelListing>>();
 
+  private modelListFailedOnce = false;
+
   private async readModelList(provider: StoredSessionProvider): Promise<ModelListing> {
     const chosen = this.modelFor(provider);
     const source =
@@ -1619,12 +1627,19 @@ export class ChatService {
     if (cached !== undefined) {
       return toListing(cached);
     }
+    const startedAt = Date.now();
+    this.options.log(`model list for ${provider}: reading`);
     try {
+      if (this.options.failFirstModelList === true && !this.modelListFailedOnce) {
+        this.modelListFailedOnce = true;
+        throw new Error('SIMULATED for a scripted trial (DSPATCH_FAIL_MODEL_LIST_ONCE): the model list could not be read.');
+      }
       this.requireProviderAvailable(provider);
       const own = this.adapter !== null && this.adapterProvider === provider ? this.adapter : null;
       const adapter = own ?? this.createAdapterFor(provider);
       try {
         const listed = await adapter.listModels();
+        this.options.log(`model list for ${provider}: ${String(listed.length)} models in ${String(Date.now() - startedAt)} ms`);
         this.modelLists.set(provider, listed);
         const listing = toListing(listed);
         // Said plainly when the list is a stand-in: presentation mode answers for both agents.
@@ -1637,6 +1652,7 @@ export class ChatService {
         }
       }
     } catch (error) {
+      this.options.log(`model list for ${provider}: failed after ${String(Date.now() - startedAt)} ms: ${describeError(error)}`);
       return { provider, chosen, models: [], error: describeError(error), source };
     }
   }
@@ -1782,12 +1798,21 @@ export class ChatService {
    * running keeps the model it started with. The conversation and its session stay.
    */
   setRequestedModel(modelId: string): string {
-    const chosen = modelId.trim() === '' ? null : modelId.trim();
     const provider = this.selectedProvider ?? this.chosenAgent();
     if (provider === null) {
-      this.modelChosen = chosen;
+      this.modelChosen = modelId.trim() === '' ? null : modelId.trim();
       return this.modelRequested();
     }
+    return this.setModelFor(provider, modelId);
+  }
+
+  /**
+   * DSP-149: the person chose a model for this agent, wherever they chose it (the chat,
+   * the start page or the review discussion). Kept per agent and given to the chat's
+   * open session from its next turn when that session is this agent's.
+   */
+  setModelFor(provider: StoredSessionProvider, modelId: string): string {
+    const chosen = modelId.trim() === '' ? null : modelId.trim();
     if (provider === 'cursor') {
       this.modelChosen = chosen;
     }

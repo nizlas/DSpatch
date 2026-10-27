@@ -274,6 +274,9 @@ test('the discussion channels are its own, and the review preload uses exactly t
     // DSP-132 (S5): the agent choice and the recap after a switch.
     'dspatch:review-discussion-choose-agent',
     'dspatch:review-discussion-recap',
+    // DSP-149: the agent's models, and choosing one.
+    'dspatch:review-discussion-list-models',
+    'dspatch:review-discussion-choose-model',
   ]);
   // The sandboxed preload cannot import the shared module, so it spells them out.
   const preload = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'preload', 'review-preload.ts'), 'utf8');

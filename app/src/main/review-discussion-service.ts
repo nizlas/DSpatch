@@ -719,6 +719,8 @@ export class ReviewDiscussionService {
     this.pendingSends += 1;
     this.options.log(`review discussion ${this.identity.key}: ${turn.attemptId} sending a question (${String(prompt.length)} characters, instruction ${String(REVIEW_DISCUSSION_INSTRUCTION.length)})`);
     try {
+      // DSP-149: the model chosen for this agent now, from this question on.
+      session.adapter.setSessionModel?.(session.sessionId, this.model(session.provider));
       const reference = await session.adapter.send(session.sessionId, prompt);
       session.sends += 1;
       turn.sendPending = false;

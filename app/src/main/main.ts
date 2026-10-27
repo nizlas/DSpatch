@@ -724,6 +724,10 @@ function remoteReviewHost(): ReviewHostApi {
 
 /** The review discussions, reached through the project host, for `review-ipc.ts`. */
 const reviewDiscussionClient: ReviewDiscussionClient = {
+  // DSP-149: the same host functions as the chat window's model choice.
+  listModels: (provider) => hostCall('chat.listModels', NO_SENDER, provider as StoredSessionProvider),
+  chooseModel: (provider, modelId) =>
+    hostCall('chat.chooseModel', NO_SENDER, provider as StoredSessionProvider, String(modelId)),
   call: (method, target: DiscussionTarget, argument) => hostCall(`discussion.${method}`, NO_SENDER, target, argument),
   detach: (targetId) => {
     logIfFailed('detaching a review window from its discussion', hostCall('discussion.detach', NO_SENDER, targetId));
@@ -3065,9 +3069,12 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
-      ...(chatRunScenario === 'workspace-flow'
+      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow'
         ? {
-            flowPhase: process.env['DSPATCH_FLOW_PHASE'] === 'again' ? ('again' as const) : ('first' as const),
+            flowPhase: ((): 'first' | 'again' | 'retry' | 'switch' => {
+              const named = process.env['DSPATCH_FLOW_PHASE'];
+              return named === 'again' || named === 'retry' || named === 'switch' ? named : 'first';
+            })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }
         : {}),

@@ -13,6 +13,7 @@ import {
   moreFoldersLabel,
   startPageSelection,
 } from '../shared/recent-workspaces';
+import { modelRows } from '../shared/model-rows';
 
 /**
  * The start page (DSP-149): the provider, the wordmark, Open Project and Remote Session,
@@ -595,28 +596,41 @@ export function NoWorkspaceBar({
   );
 }
 
+/** Where a model control reads the list and records a choice: the chat window, or a review window. */
+export interface ModelApi {
+  list(provider: StoredSessionProvider): Promise<ModelListing>;
+  choose(provider: StoredSessionProvider, modelId: string): Promise<string>;
+}
+
+/** The chat window's: the host's lookup, and the choice for the selected agent. */
+export const CHAT_WINDOW_MODELS: ModelApi = {
+  list: (provider) => window.dspatch.listModels(provider),
+  choose: (_provider, modelId) => window.dspatch.setRequestedModel(modelId),
+};
+
 /**
- * The model for the chosen agent (DSP-149): every model the agent's SDK lists for this
- * account, by name, and *Provider's default* for leaving the choice to the provider. The
- * technical id is in the tooltip.
+ * The model for the chosen agent (DSP-149), used on the start page, by the composer and
+ * in the review discussion. Every model the agent's SDK lists for this account, by name.
  *
- * - A failed lookup says so, offers *Try again*, and keeps its concrete reason under
- *   *Why*. A model chosen earlier stays chosen meanwhile; it is not called unavailable,
- *   because nothing has said so.
+ * - *Loading models…* while the list is read.
+ * - A failed lookup offers *Try again*, with its concrete reason under *Why*; a model
+ *   chosen earlier stays shown and chosen meanwhile.
  * - *Last reply* is the model the provider **reported** for the last reply, never the
- *   requested id presented as confirmed. Nothing is shown when nothing was reported.
+ *   requested id presented as confirmed.
  */
 export function ModelSelect({
   provider,
   disabled,
   compact = false,
   reportedModel = null,
+  api = CHAT_WINDOW_MODELS,
 }: {
   readonly provider: StoredSessionProvider | null;
   readonly disabled: boolean;
   readonly compact?: boolean;
   /** What the provider reported for the last reply, or `null`. */
   readonly reportedModel?: string | null;
+  readonly api?: ModelApi;
 }): JSX.Element | null {
   const [listing, setListing] = useState<ModelListing | null>(null);
   const [chosen, setChosen] = useState<string>('');
@@ -625,7 +639,7 @@ export function ModelSelect({
     let live = true;
     setListing(null);
     if (provider !== null) {
-      void window.dspatch.listModels(provider).then(
+      void api.list(provider).then(
         (answer) => {
           if (live) {
             setListing(answer);
@@ -637,7 +651,7 @@ export function ModelSelect({
             setListing({
               provider,
               models: [],
-              chosen,
+              chosen: '',
               error: error instanceof Error ? error.message : String(error),
               source: 'the request to DSpatch',
             });
@@ -648,46 +662,47 @@ export function ModelSelect({
     return () => {
       live = false;
     };
-    // `chosen` is deliberately not a dependency: the lookup runs per agent and per retry.
-  }, [provider, attempt]);
+  }, [provider, attempt, api]);
   if (provider === null) {
     return null;
   }
-  const models = listing?.models ?? [];
   const failed = listing?.error != null;
-  const listedChosen = models.find((model) => model.id === chosen);
-  const unknownChosen = chosen !== '' && listedChosen === undefined;
-  // The model's own name for a reported id: an exact entry first, then an alias that
-  // resolves to it, the provider's "default" alias last, so a reply from claude-opus-5-5
-  // reads as Opus 5.5 rather than as "Default".
+  const loading = listing === null;
+  const shown = loading || failed ? null : modelRows(listing, chosen);
   const nameOf = (id: string): string => {
-    const exact = models.find((model) => model.id === id);
-    const aliases = models.filter((model) => model.resolvedId === id);
-    const named = exact ?? aliases.find((model) => model.id !== 'default') ?? aliases[0];
-    return named?.displayName ?? id;
+    const models = listing?.models ?? [];
+    const exact = models.find((model) => model.id === id && model.id !== 'default');
+    const aliases = models.filter((model) => model.resolvedId === id && model.id !== 'default');
+    return (exact ?? aliases[0])?.displayName ?? id;
   };
+  const fallbackLabel = loading
+    ? 'Loading models…'
+    : chosen !== '' && chosen !== 'default'
+      ? chosen
+      : 'Model list unavailable';
   return (
     <span className={`model-pick${compact ? ' model-pick--compact' : ''}`}>
       <label
         className={`provider provider--model${compact ? ' provider--compact' : ''}`}
         title={
-          listing === null
+          loading
             ? 'Reading the models this agent offers…'
-            : chosen === ''
-              ? `No model chosen here: the provider uses its own default. List from ${listing.source}.`
-              : `${listedChosen === undefined ? chosen : `${listedChosen.displayName} (${listedChosen.id}${listedChosen.resolvedId !== undefined && listedChosen.resolvedId !== listedChosen.id ? ` → ${listedChosen.resolvedId}` : ''})`} · requested for the next message · list from ${listing.source}`
+            : failed
+              ? 'The model list could not be read. Try again, or see Why.'
+              : `Requested for the next message · list from ${listing.source}`
         }
       >
         <span className="sr-only">Model</span>
         <select
           className="provider__select"
           data-ev="model-select"
-          value={chosen}
-          disabled={disabled || listing === null}
+          data-state={loading ? 'loading' : failed ? 'failed' : 'ready'}
+          value={shown?.value ?? '__fallback'}
+          disabled={disabled || shown === null}
           onChange={(event) => {
             const next = event.target.value;
             setChosen(next);
-            void window.dspatch.setRequestedModel(next).then(
+            void api.choose(provider, next).then(
               (inForce) => {
                 setChosen(inForce);
               },
@@ -695,17 +710,15 @@ export function ModelSelect({
             );
           }}
         >
-          <option value="">Provider&apos;s default</option>
-          {unknownChosen && (
-            <option value={chosen}>
-              {failed ? chosen : `${chosen} (not offered to this account)`}
-            </option>
+          {shown === null ? (
+            <option value="__fallback">{fallbackLabel}</option>
+          ) : (
+            shown.rows.map((row) => (
+              <option key={row.value} value={row.value} title={row.title}>
+                {row.label}
+              </option>
+            ))
           )}
-          {models.map((model) => (
-            <option key={model.id} value={model.id} title={model.description ?? model.id}>
-              {model.displayName}
-            </option>
-          ))}
         </select>
         <svg className="provider__chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M7 10l5 5 5-5" />

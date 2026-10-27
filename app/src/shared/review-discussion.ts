@@ -1,4 +1,4 @@
-import type { AttemptKind, AttemptState, AttemptStep, StoredAttempt } from './bridge';
+import type { AttemptKind, AttemptState, AttemptStep, ModelListing, StoredAttempt } from './bridge';
 import type { CodeLocation, EvidenceLabel, FileChangeStatus, Lang, ReviewNote, RevisionSide } from './review-model';
 
 /**
@@ -737,6 +737,9 @@ export const REVIEW_DISCUSSION_CHANNELS = {
   chooseAgent: 'dspatch:review-discussion-choose-agent',
   /** DSP-132: leave the recap out of (or back in) the next new session's first question. */
   recap: 'dspatch:review-discussion-recap',
+  /** DSP-149: the agent's models, and choosing one; the same choice as the chat's. */
+  listModels: 'dspatch:review-discussion-list-models',
+  chooseModel: 'dspatch:review-discussion-choose-model',
 } as const;
 
 /** One agent as the discussion offers it (DSP-132). */
@@ -859,6 +862,10 @@ export interface ReviewDiscussionBridge {
   chooseAgent(provider: DiscussionProvider): Promise<DiscussionChooseOutcome>;
   /** DSP-132: leave the recap out of the next new session's first question, or put it back. */
   setRecapLeftOut(leftOut: boolean): Promise<DiscussionStatusView>;
+  /** DSP-149: the models this agent offers, from its SDK, and the one chosen. */
+  listModels(provider: DiscussionProvider): Promise<ModelListing>;
+  /** DSP-149: choose this agent's model; the chat and the discussion share the choice. */
+  chooseModel(provider: DiscussionProvider, modelId: string): Promise<string>;
   onEvent(listener: (event: ReviewDiscussionEvent) => void): () => void;
 }
 

@@ -4,7 +4,7 @@ title: Start from a conversation and work in workspaces of several folders
 status: Review
 assignee: []
 created_date: '2026-10-27 20:04'
-updated_date: '2026-10-27 22:08'
+updated_date: '2026-10-27 22:29'
 labels: []
 dependencies:
   - DSP-111
@@ -123,4 +123,26 @@ Verified with the real SDK (home computer, existing Claude login, no message sen
 - existing turn information: Claude Code's transcript of the trial session (model fields only) shows all 18 replies came from claude-opus-5-5, which is what Default resolves to.
 
 Not observed live: 'Last reply' in a new turn (that would need a model turn); it is covered by the adapter's recorded init model and unit tests.
+
+27 Oct 2026, the model choice in Niclas's ordinary start (npm start, Claude saved as the agent).
+
+Root cause: the start page's content column (main.start__content) is transparent and starts at the top of the window, and it came later in the page at the same stacking level as the top bar. At the window's ordinary width (about 1026 px) it covered the whole model dropdown, so a real click never reached it. The scripted trials chose models programmatically and the screenshots were taken at 1440 px, so neither saw it. The dropdown also showed 'Provider's default' because no explicit choice had been saved yet; Niclas's later choice of 'opus' (23:13:07) was made by the composer inside a workspace, where nothing covers the control.
+
+Not the cause, checked: the build (identity and git sha logged), the host's lookup at an ordinary start with Claude restored (13 models in about 0.8 s), the CLAUDE_AGENT_SDK_VERSION variable the Terminal panel passes on, and a copy of the whole DSpatch profile.
+
+Fixed:
+- the top bar sits above the content column (z-index), checked with elementFromPoint at the dropdown's real coordinates;
+- the dropdown shows 'Loading models…' while it reads;
+- with no explicit choice it shows the model the provider's default resolves to, by name, marked '· default' (the 'default' alias is not a row of its own); it never shows 'Provider's default';
+- a failed lookup keeps a saved choice shown and offers Try again with the reason under Why;
+- the same dropdown is in the review discussion (new channels list-models and choose-model; the discussion session takes the current choice before each question);
+- the host logs each lookup.
+
+Verified through the real app with the real Claude SDK (isolated user data, existing login, no message sent) in four phases:
+- first: Claude restored, 'Opus 5.5 · default', reachable by click, Sonnet 5.5 chosen;
+- again: after a restart Sonnet 5.5 is shown;
+- retry: the first lookup failed (SIMULATED by DSPATCH_FAIL_MODEL_LIST_ONCE, scripted runs only), the saved choice stayed shown, Try again brought the real list;
+- switch: no agent saved, Claude chosen actively, its list and default shown.
+
+Also passing: the chat and review test groups, and the presentation, review-window and review-discussion scenarios. Not done: switching to Cursor (the account is closed and must not be contacted).
 <!-- SECTION:NOTES:END -->

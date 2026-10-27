@@ -1760,6 +1760,10 @@ export type ScriptedScenario =
   | 'workspace-flow'
   /** DSP-149: the real model list through the host and the dropdown; no message is sent. */
   | 'model-list'
+  /** DSP-149: the model choice after an ordinary start with Claude saved; observes only. */
+  | 'model-start'
+  /** DSP-149: the model choice through the real app and SDK, in phases; no message is sent. */
+  | 'model-flow'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2141,7 +2145,7 @@ export interface ScriptedRunPlan {
    */
   readonly resumeHold?: boolean;
   /** DSP-149 `workspace-flow`: which process this is, and the folder its projects are in. */
-  readonly flowPhase?: 'first' | 'again';
+  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch';
   readonly flowRoot?: string;
 }
 

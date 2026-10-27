@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 import { Markdown } from './Markdown';
+import { ModelSelect, type ModelApi } from './StartPage';
 import { firstSentence } from './plain-error';
 import type { DiscussionWords } from './review-i18n';
 import {
@@ -271,6 +272,16 @@ export function ReviewDiscussion({
   readonly onGoToLocation: (location: CodeLocation) => void;
 }): JSX.Element {
   const bridge = window.dspatchReviewDiscussion;
+  // DSP-149: the agent's models from its SDK; the choice is the same one the chat uses.
+  const models = useMemo<ModelApi>(
+    () => ({
+      list: (provider) =>
+        bridge === undefined ? Promise.reject(new Error('This window has no discussion bridge.')) : bridge.listModels(provider),
+      choose: (provider, modelId) =>
+        bridge === undefined ? Promise.reject(new Error('This window has no discussion bridge.')) : bridge.chooseModel(provider, modelId),
+    }),
+    [bridge],
+  );
   const [messages, setMessages] = useState<readonly DiscussionMessage[]>([]);
   const [status, setStatus] = useState<DiscussionStatusView | null>(null);
   const [text, setText] = useState('');
@@ -660,6 +671,7 @@ export function ReviewDiscussion({
                 ))}
               </select>
             </label>
+            <ModelSelect provider={agent.provider} disabled={agentLocked} compact api={models} />
             {noAgent && (
               <div className="rv-sub" data-ev="discussion-choose-agent">
                 {words.chooseAgent}

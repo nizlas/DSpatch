@@ -20,6 +20,7 @@ import {
   type ReviewSearchHit,
   type RevisionSide,
 } from '../shared/review-model';
+import type { ModelListing } from '../shared/bridge';
 import type { ReviewWindowEntry, ReviewWindows } from './review-windows';
 
 /*
@@ -64,6 +65,9 @@ export interface ReviewDiscussionClient {
     argument?: unknown,
   ): Promise<unknown>;
   detach(targetId: number): void;
+  /** DSP-149: the agent's models from its SDK, and the choice shared with the chat. */
+  listModels(provider: unknown): Promise<ModelListing>;
+  chooseModel(provider: unknown, modelId: unknown): Promise<string>;
 }
 
 /** Why a sender is refused, or `null` when it is a review window. */
@@ -195,6 +199,11 @@ export function registerReviewIpc(windows: ReviewWindows, host: ReviewHostApi, d
     const target = targetOf(entryOf(event));
     return target === null ? { kind: 'refused', error: noReview } : ((await discussions.call('chooseAgent', target, provider)) as DiscussionChooseOutcome);
   });
+  // DSP-149: the agent's models and the choice, shared with the chat; no review needed.
+  ipcMain.handle(REVIEW_DISCUSSION_CHANNELS.listModels, (_event, provider: unknown) => discussions.listModels(provider));
+  ipcMain.handle(REVIEW_DISCUSSION_CHANNELS.chooseModel, (_event, provider: unknown, modelId: unknown) =>
+    discussions.chooseModel(provider, modelId),
+  );
   ipcMain.handle(
     REVIEW_DISCUSSION_CHANNELS.recap,
     async (event, leftOut: unknown): Promise<DiscussionStatusView | { readonly error: string }> => {

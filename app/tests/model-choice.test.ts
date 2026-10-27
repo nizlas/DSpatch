@@ -16,6 +16,7 @@ import { after, test } from 'node:test';
 import type { ModelInfo } from '../src/adapter/types.ts';
 import { ChatService, type ChatAdapter } from '../src/main/chat-service.ts';
 import type { StoredSessionProvider } from '../src/shared/bridge.ts';
+import { modelRows } from '../src/shared/model-rows.ts';
 
 const roots: string[] = [];
 after(() => {
@@ -115,4 +116,30 @@ test('two askers at once share one lookup', async () => {
 test("with no choice the provider's default is asked for, not a model DSpatch picks", () => {
   const { service: chat } = service(async () => MODELS);
   assert.equal(chat.modelFor('claude'), process.env['DSPATCH_CLAUDE_MODEL'] ?? '');
+});
+
+test('the dropdown names the default model and never shows "Provider\'s default"', () => {
+  const listing = {
+    provider: 'claude' as const,
+    chosen: '',
+    error: null,
+    source: 'test',
+    models: [
+      { id: 'default', displayName: 'Default (recommended)', resolvedId: 'claude-opus-5-5' },
+      { id: 'opus', displayName: 'Opus 5.5', resolvedId: 'claude-opus-5-5' },
+      { id: 'sonnet', displayName: 'Sonnet 5.5', resolvedId: 'claude-sonnet-5-5' },
+    ],
+  };
+  const none = modelRows(listing, '');
+  assert.equal(none.value, 'opus');
+  assert.deepEqual(none.rows.map((row) => row.label), ['Opus 5.5 · default', 'Sonnet 5.5']);
+  assert.equal(modelRows(listing, 'sonnet').value, 'sonnet');
+  assert.equal(modelRows(listing, 'default').value, 'opus', 'the default alias is the default model');
+  const unknown = modelRows(listing, 'gone');
+  assert.match(unknown.rows[0]?.label ?? '', /not offered to this account/);
+  const noDefault = modelRows({ ...listing, models: listing.models.slice(1) }, '');
+  assert.match(noDefault.rows[0]?.label ?? '', /not identified by the provider/);
+  for (const result of [none, unknown, noDefault]) {
+    assert.ok(result.rows.every((row) => !row.label.includes("Provider's default")));
+  }
 });
