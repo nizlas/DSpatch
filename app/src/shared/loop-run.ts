@@ -985,8 +985,9 @@ function describeProduct(product: StepProduct): string {
       }
       if (provenance === 'verification-stale') {
         return (
-          `outcome "${product.outcome}", which the run selected because the command result ` +
-          `the step was given did not describe the working folders`
+          `outcome "${product.outcome}", which the run selected because no completed command ` +
+          `in this run described the working folders as the step left them (a recorded result ` +
+          `did not describe the working folders, or none was recorded) and the run had changed files`
         );
       }
       return `outcome "${product.outcome}"`;

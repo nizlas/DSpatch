@@ -813,6 +813,13 @@ export const LOOP_RUN_TOOL_POLICY = 'provider-default' as const;
 export const CLAUDE_LOOP_STEP_TOOLS: readonly string[] = ['Read', 'Glob', 'Grep', 'Edit', 'Write'];
 
 /**
+ * DSP-145: DSpatch's command tool as a Claude step sees it, beside the built-in tools
+ * above. Equal to the adapter's `COMMAND_TOOL_ID` (checked by a test; this module is
+ * shared with the window and cannot import the adapter).
+ */
+export const CLAUDE_LOOP_COMMAND_TOOL = 'mcp__dspatch__run_command';
+
+/**
  * What a run's tool policy means for a person reading the node panel.
  *
  * By the provider the run uses (DSP-138): Claude's permissions are the main chat's,
@@ -835,10 +842,13 @@ export function describeRunToolPolicy(
     return (
       'Every agent step of a run with Claude opens its session with the main chat’s ' +
       `permissions: the tools ${CLAUDE_LOOP_STEP_TOOLS.join(', ')}, with reading and editing ` +
-      'pre-approved under the session’s working folder, and nothing else — no Bash or other ' +
-      'command tool, no MCP servers and no settings read from disk other than managed policy ' +
-      'settings. An agent step can read and change ' +
-      'files and cannot run commands. It is one policy for the whole run, fixed in DSpatch ' +
+      'pre-approved under the session’s working folder, and DSpatch’s own command tool ' +
+      `(${CLAUDE_LOOP_COMMAND_TOOL}), pre-approved — no Bash, no other MCP servers and no ` +
+      'settings read from disk other than managed policy settings. An agent step can read and ' +
+      'change files and run builds and tests through DSpatch’s command tool, which DSpatch ' +
+      'starts in the working folder under a time bound, records with the code it ran on, and ' +
+      'stops with its child processes on cancel; that is control and a record, not a sandbox. ' +
+      'It is one policy for the whole run, fixed in DSpatch ' +
       'rather than set by this drawing. A requirement ticked on a step, such as ' +
       '“no-file-writes”, is an instruction the agent is expected to follow, not a restriction ' +
       'these permissions apply.'
@@ -1135,9 +1145,9 @@ export const RUN_PROVIDER_CAPABILITIES: Readonly<
     'tool-restriction': {
       status: 'enforced',
       how:
-        `the tool allowlist DSpatch passes: ${CLAUDE_LOOP_STEP_TOOLS.join(', ')} and nothing ` +
-        'else, with no MCP servers and no settings read from disk other than managed policy ' +
-        'settings. It is one list for the ' +
+        `the tool allowlist DSpatch passes: ${CLAUDE_LOOP_STEP_TOOLS.join(', ')} and DSpatch’s ` +
+        `own command tool (${CLAUDE_LOOP_COMMAND_TOOL}) and nothing else, with no other MCP ` +
+        'servers and no settings read from disk other than managed policy settings. It is one list for the ' +
         'whole run, not one chosen per step.' +
         CLAUDE_EVIDENCE_NOTE,
       evidence: 'documentation',

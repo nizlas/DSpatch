@@ -768,7 +768,11 @@ describe('the project roles and chat-loop purposes are true for an agent without
 
   it('the check role tells both kinds of agent what to do', () => {
     const role = read('docs/loop/roles/project/project-check.role.md');
-    assert.match(role, /If your tools can run commands, run the checks you choose\./);
+    // DSP-145: the tools named, and the agent judges independently from real results.
+    assert.match(role, /If your tools can run commands, run the checks you choose\*\* — through DSpatch's command tool/);
+    assert.match(role, /You are independent of the work step/);
+    assert.match(role, /RESULT: rework/);
+    assert.match(role, /Do not declare `limit-reached`/);
     assert.match(role, /If your tools cannot run commands, do not say you ran anything\./);
     assert.match(role, /evidence about the code version it names and no other/);
     assert.doesNotMatch(role, /\*\*Run the checks you choose\.\*\* Use your own tools\./);
@@ -776,7 +780,9 @@ describe('the project roles and chat-loop purposes are true for an agent without
 
   it('the work role does too', () => {
     const role = read('docs/loop/roles/project/project-work.role.md');
-    assert.match(role, /if your tools can run commands, run the commands the work itself requires/);
+    // DSP-145: the work step runs its own builds and tests and fixes what fails.
+    assert.match(role, /where your tools can run commands — DSpatch's command tool, or the provider's own shell — find out how this project is built and tested/);
+    assert.match(role, /A failing build or test is information, not the end of your step/);
     assert.match(role, /If your tools cannot run commands, do not say you ran anything\./);
   });
 
@@ -785,11 +791,11 @@ describe('the project roles and chat-loop purposes are true for an agent without
       purpose: string;
       nodes: { id: string; purpose?: string }[];
     };
-    assert.match(graph.purpose, /where they can run commands/);
+    assert.match(graph.purpose, /where its tools can run commands/);
     for (const id of ['work', 'check']) {
       const purpose = graph.nodes.find((node) => node.id === id)?.purpose ?? '';
       assert.match(purpose, /where (your tools|they) can run commands/, id);
-      assert.match(purpose, /otherwise say what you could not run|do not say you ran anything/, id);
+      assert.match(purpose, /say what you could not run|do not say you ran anything/, id);
     }
   });
 });
@@ -866,7 +872,7 @@ describe('the brief panel for a drawing whose purpose is the mandate (DSP-139)',
     for (const line of rule?.text ?? []) {
       assert.ok(sent.includes(line), `shown line is in the rule as sent: ${line}`);
     }
-    assert.match((rule?.text ?? []).join(' '), /"could-not-check" whatever outcome you declare/);
+    assert.match((rule?.text ?? []).join(' '), /"could-not-check" in place of any verdict that would end the run in success/);
     const received = parts.find((part) => part.id === 'received');
     assert.match(received?.detail ?? '', /DSpatch’s record of the command it ran/);
     assert.doesNotMatch(received?.detail ?? '', /DSpatch runs the tests” — its account/);

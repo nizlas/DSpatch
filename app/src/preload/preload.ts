@@ -50,6 +50,7 @@ import type {
   StartSessionRequest,
   StoredRunRecordEntry,
   TestFreshness,
+  AgentCommandsReport,
   TestOutcome,
   TestRunRequest,
   TurnUsage,
@@ -95,6 +96,7 @@ const RUN_STATE: BridgeChannel = 'dspatch:run-state';
 const RUN_TEST: BridgeChannel = 'dspatch:run-test';
 const STOP_TEST: BridgeChannel = 'dspatch:stop-test';
 const TEST_FRESHNESS: BridgeChannel = 'dspatch:test-freshness';
+const AGENT_COMMANDS: BridgeChannel = 'dspatch:agent-commands';
 const WORKSPACE_CHANGES: BridgeChannel = 'dspatch:workspace-changes';
 const TURN_USAGE: BridgeChannel = 'dspatch:turn-usage';
 const AGENT_EVENT: BridgeChannel = 'dspatch:agent-event';
@@ -214,6 +216,7 @@ const bridge: DspatchBridge = {
       readonly note: string;
     }>,
   getTestFreshness: () => ipcRenderer.invoke(TEST_FRESHNESS) as Promise<TestFreshness>,
+  getAgentCommands: () => ipcRenderer.invoke(AGENT_COMMANDS) as Promise<AgentCommandsReport>,
   getWorkspaceChanges: () =>
     ipcRenderer.invoke(WORKSPACE_CHANGES) as Promise<WorkspaceReport>,
   getTurnUsage: (dspatchRunId: string) =>

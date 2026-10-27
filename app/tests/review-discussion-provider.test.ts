@@ -41,8 +41,13 @@ import { makeReviewFixture, type ReviewFixture } from './support/review-fixture.
 const CLEAN_ENV = Object.freeze({ PATH: process.env['PATH'] ?? '' });
 const POINT = { kind: 'point', walkId: 'W1', stepId: 'W1.1', placeIndex: 0 } as const;
 
-/** The chat's policy digest before DSP-132, pinned: the review fields are omitted, not `undefined`. */
-const CHAT_DIGEST = 'claude-agent-sdk:c5b4686f8f657fea8126d18dc395ac70287b7343a65e4862378c94fe8732f2c7';
+/**
+ * The chat's policy digest, pinned: the review fields are omitted, not `undefined`. It was
+ * `c5b4686f…` from DSP-117 to DSP-144; DSP-145 changed it on purpose by giving the chat
+ * DSpatch's command tool (`commandTool`, `mcp__dspatch__run_command`), which is what
+ * refuses an older Claude conversation's resume under the new rules.
+ */
+const CHAT_DIGEST = 'claude-agent-sdk:d1a84fb3f00cd9769ce098a6572fc09977de075e144e45fb0884f60ae9c98ba0';
 
 async function until(condition: () => boolean, what: string, ms = 3_000): Promise<void> {
   const started = Date.now();

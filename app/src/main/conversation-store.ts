@@ -2,6 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type {
+  AgentCommandEnding,
+  AgentCommandRecord,
+  AgentCommandRequester,
+} from '../adapter/types';
+import type {
   AttemptKind,
   AttemptState,
   ConversationListEntry,
@@ -808,8 +813,79 @@ function parseMessages(value: unknown): StoredConversation['messages'] {
       startedAtUtc: asString(entry['startedAtUtc'], ''),
       finishedAtUtc:
         typeof entry['finishedAtUtc'] === 'string' ? entry['finishedAtUtc'] : null,
+      ...commandsOf(entry['commands']),
     }));
   return messages.sort((left, right) => left.ordinal - right.ordinal);
+}
+
+const COMMAND_ENDINGS: readonly AgentCommandEnding[] = [
+  'exited',
+  'could-not-start',
+  'timed-out',
+  'stopped',
+  'refused',
+];
+
+const COMMAND_REQUESTERS: readonly AgentCommandRequester[] = ['agent-tool', 'gate', 'provider-reported'];
+
+/**
+ * DSP-145: the commands a message recorded, read back. A record without an id, a line
+ * or a known ending is dropped rather than guessed at; a missing snapshot stays `null`,
+ * which reads as not observed - never as unchanged.
+ */
+function commandsOf(value: unknown): { readonly commands?: readonly AgentCommandRecord[] } {
+  if (!Array.isArray(value)) {
+    return {};
+  }
+  const records: AgentCommandRecord[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const commandId = entry['commandId'];
+    const line = entry['line'];
+    const ending = entry['ending'];
+    if (
+      typeof commandId !== 'string' ||
+      typeof line !== 'string' ||
+      typeof ending !== 'string' ||
+      !COMMAND_ENDINGS.includes(ending as AgentCommandEnding)
+    ) {
+      continue;
+    }
+    const text = (key: string): string | null =>
+      typeof entry[key] === 'string' ? (entry[key] as string) : null;
+    const requestedBy = entry['requestedBy'];
+    records.push({
+      commandId,
+      requestedBy: COMMAND_REQUESTERS.includes(requestedBy as AgentCommandRequester)
+        ? (requestedBy as AgentCommandRequester)
+        : 'agent-tool',
+      line,
+      shell: text('shell') ?? '',
+      cwd: text('cwd') ?? '',
+      pid: typeof entry['pid'] === 'number' ? entry['pid'] : null,
+      startedAtUtc: text('startedAtUtc') ?? '',
+      finishedAtUtc: text('finishedAtUtc') ?? '',
+      durationMs: asNumber(entry['durationMs'], 0),
+      timeoutMs: typeof entry['timeoutMs'] === 'number' ? entry['timeoutMs'] : null,
+      ending: ending as AgentCommandEnding,
+      endingMessage: text('endingMessage'),
+      exitCode: typeof entry['exitCode'] === 'number' ? entry['exitCode'] : null,
+      signal: text('signal'),
+      killedByDspatch: entry['killedByDspatch'] === true,
+      stdout: text('stdout') ?? '',
+      stderr: text('stderr') ?? '',
+      outputTruncated: entry['outputTruncated'] === true,
+      outputNote: text('outputNote'),
+      testedSnapshotId: text('testedSnapshotId'),
+      afterRunSnapshotId: text('afterRunSnapshotId'),
+      snapshotRoots: Array.isArray(entry['snapshotRoots'])
+        ? entry['snapshotRoots'].filter((root): root is string => typeof root === 'string')
+        : [],
+    });
+  }
+  return records.length === 0 ? {} : { commands: records };
 }
 
 function asNumber(value: unknown, fallback: number): number {

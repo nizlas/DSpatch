@@ -24,6 +24,7 @@ import {
   attachUsage,
   currentTurn,
   describeActivity,
+  describeCommandLine,
   emptyChatState,
   markCancelRequested,
   routeEvent,
@@ -344,4 +345,24 @@ test('a cancelled run keeps the end its adapter reported, and each end reads dif
   assert.equal(turnStatusLabel(cursor), 'cancelled');
   assert.equal(turnStatusLabel({ status: 'error' }), 'error');
   assert.equal(turnStatusLabel({ status: 'streaming' }), 'streaming …');
+});
+
+test('DSP-145: a command the agent ran becomes one readable line on its turn, updated in place when it ends', () => {
+  let state = routeEvent(emptyChatState(SESSION), event('run.started', RUN_A), 'fix it');
+  const command = { commandId: 'c1', line: 'npm test', ending: null, exitCode: null, durationMs: null } as const;
+  state = routeEvent(state, event('command.started', RUN_A, { command }), '');
+  assert.deepEqual(describeCommandLine(state.turns[0]?.commands?.[0] ?? command), { verb: 'Running', after: '…' });
+  state = routeEvent(
+    state,
+    event('command.finished', RUN_A, { command: { ...command, ending: 'exited', exitCode: 1, durationMs: 1200 } }),
+    '',
+  );
+  const lines = state.turns[0]?.commands ?? [];
+  assert.equal(lines.length, 1, 'the same command, not a second line');
+  assert.deepEqual(describeCommandLine(lines[0] ?? command), { verb: 'Ran', after: ': exit 1 (1.2 s)' });
+  assert.doesNotMatch(JSON.stringify(describeCommandLine(lines[0] ?? command)), /mcp__/);
+  assert.deepEqual(
+    describeCommandLine({ ...command, ending: 'stopped', durationMs: 300 }),
+    { verb: 'Stopped', after: ' (0.3 s)' },
+  );
 });

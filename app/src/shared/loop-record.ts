@@ -194,6 +194,34 @@ export interface RecordedCommand {
   readonly truncatedOutput: string | null;
   /** The working copy's identity when this command finished, for review afterwards. */
   readonly snapshotAfterId: string | null;
+  /**
+   * DSP-145: who asked for it - `gate` (DSpatch ran it for a gate), `agent-tool` (DSpatch
+   * ran it at an agent's request) or `provider-reported` (the provider's own tool; DSpatch
+   * did not start it). Absent in older records, and read as a gate's.
+   */
+  readonly requestedBy?: 'agent-tool' | 'gate' | 'provider-reported';
+  readonly nodeId?: string;
+  readonly occurrence?: number;
+  /** DSP-145: every working folder's identity before and after it, as DSpatch observed. */
+  readonly testedSnapshotId?: string | null;
+  readonly afterRunSnapshotId?: string | null;
+  readonly changedWhileRunning?: boolean | null;
+  /**
+   * DSP-145: whether the working folders at the end of the run were exactly as this
+   * command left them. Written in the ending line only; `null` is not established.
+   */
+  readonly currentAtEnd?: boolean | null;
+  readonly originNote?: string;
+}
+
+/**
+ * DSP-145: whether a command's result decides the run's outcome value. A gate's does, as
+ * it always has. A command an agent ran through DSpatch's tool, or one the provider
+ * reported, is the agent's own choice of check inside its step - a failure there is
+ * information it acts on - so it is kept apart from the outcome and described beside it.
+ */
+export function isGateCommand(command: Pick<RecordedCommand, 'requestedBy'>): boolean {
+  return command.requestedBy === undefined || command.requestedBy === 'gate';
 }
 
 export interface RecordedFileChange {
@@ -688,6 +716,13 @@ export interface RunOutcomeInput {
  * *value* this rule would have a second way round it.
  */
 export function runOutcomeFrom(input: RunOutcomeInput): RunOutcomeKind {
+  // DSP-145 (review B1): only gate commands decide the value. An agent's own commands are
+  // tried, failed, fixed and run again inside one step, so a failure or an unstartable
+  // first attempt there is not the run's outcome; they are described beside it.
+  return outcomeFromGateCommands({ ...input, commands: input.commands.filter(isGateCommand) });
+}
+
+function outcomeFromGateCommands(input: RunOutcomeInput): RunOutcomeKind {
   if (input.commands.some((command) => command.notRun?.kind === 'could-not-start')) {
     return 'command-could-not-start';
   }
@@ -752,8 +787,10 @@ export function decidingCommandFor(
   outcome: RunOutcomeKind,
   commands: readonly RecordedCommand[],
 ): RecordedCommand | null {
+  // The commands the value was decided from, and no others (DSP-145).
+  const decisive = commands.filter(isGateCommand);
   const first = (match: (command: RecordedCommand) => boolean): RecordedCommand | null =>
-    commands.find(match) ?? null;
+    decisive.find(match) ?? null;
   switch (outcome) {
     case 'command-could-not-start':
       return first((command) => command.notRun?.kind === 'could-not-start');
@@ -762,7 +799,7 @@ export function decidingCommandFor(
     case 'tests-failed':
       return first((command) => command.notRun === null && command.exitCode !== 0);
     case 'work-verified': {
-      const ran = commands.filter((command) => command.notRun === null);
+      const ran = decisive.filter((command) => command.notRun === null);
       return ran[ran.length - 1] ?? null;
     }
     case 'unresolved':
@@ -784,6 +821,49 @@ export function describeRunOutcome(
   outcome: RunOutcomeKind,
   input: Pick<RunOutcomeInput, 'commands' | 'walk'>,
 ): string {
+  const agents = input.commands.filter((command) => !isGateCommand(command));
+  const gateSentence = describeGateOutcome(outcome, input, agents.length > 0);
+  return agents.length === 0 ? gateSentence : `${gateSentence} ${describeAgentCommands(agents)}`;
+}
+
+/**
+ * DSP-145: the commands agents ran in the run, said beside the outcome and never as it.
+ * Which one completed on the code as the run left it is the one fact worth stating; that
+ * shows a command ran on this code, not that the work was verified.
+ */
+export function describeAgentCommands(commands: readonly RecordedCommand[]): string {
+  if (commands.length === 0) {
+    return '';
+  }
+  const reported = commands.filter((command) => command.requestedBy === 'provider-reported').length;
+  const started = commands.length - reported;
+  const counted = [
+    ...(started === 0 ? [] : [`${String(started)} DSpatch ran at an agent’s request`]),
+    ...(reported === 0 ? [] : [`${String(reported)} the provider reported running with its own tool`]),
+  ].join(' and ');
+  const current = commands.filter(
+    (command) => command.currentAtEnd === true && command.notRun === null,
+  );
+  const last = current[current.length - 1];
+  const standing =
+    last === undefined
+      ? 'None of them completed on the code exactly as the run left it.'
+      : `The last that completed on the code exactly as the run left it, ${last.line ?? last.command}, ` +
+        `exited ${last.exitCode === null ? 'without an exit code' : String(last.exitCode)}.`;
+  return (
+    `The agents’ own commands are not the outcome above: ${counted}. ${standing} That shows ` +
+    `what ran on which code; it is the agents’ choice of check, not a verification by DSpatch.`
+  );
+}
+
+function describeGateOutcome(
+  outcome: RunOutcomeKind,
+  input: Pick<RunOutcomeInput, 'commands' | 'walk'>,
+  agentsRanCommands: boolean,
+): string {
+  const ownCommand = agentsRanCommands
+    ? 'DSpatch ran no check of its own.'
+    : 'DSpatch did not start a command of its own.';
   const attempted = decidingCommandFor(outcome, input.commands);
   // DSP-48 #1 and #2. `''` whenever the caller passed no walk or the walk moved
   // nothing, so every sentence below reads exactly as it did before for callers
@@ -816,7 +896,7 @@ export function describeRunOutcome(
       );
     case 'verification-not-performed': {
       const why = attempted?.notRun?.message.trim() ?? '';
-      const noCommand = why === '' ? 'DSpatch did not start a command of its own.' : why;
+      const noCommand = why === '' ? ownCommand : why;
       switch (input.walk?.terminalNodeId) {
         case 'done':
           return (
@@ -874,7 +954,7 @@ export function describeRunOutcome(
           );
         default:
           return (
-            `DSpatch did not start a command of its own. This run says nothing about ` +
+            `${ownCommand} This run says nothing about ` +
             `whether your project builds or its tests pass from a process DSpatch spawned, ` +
             `and it is not a test failure. ${noCommand} ` +
             `Anything the agent changed is still in the working copy.` +

@@ -39,6 +39,7 @@ import type { LoopGraph } from '../src/shared/loop-graph.ts';
 import { loadLoopGraph } from '../src/shared/loop-graph-load.ts';
 import { formatRunJournal } from '../src/shared/loop-run.ts';
 import { adapters, claudeSdk, type Query } from './support/claude-loop-sdk.ts';
+import { killLeftovers, treePids, waitGone } from './support/command-tree.ts';
 import { tempRoot } from './support/fixtures.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
@@ -241,12 +242,66 @@ describe('the duration-check example under Claude, through the editor run path',
         };
       },
     });
-    // The walk refuses to enter the next node after Cancel; the gate's own command is not
-    // stopped (recorded as a separate limitation), but nothing after it starts.
+    // The walk refuses to enter the next node after Cancel. This injected command ignores
+    // the signal on purpose; that the product's own gate command is stopped by Cancel is
+    // the next test (DSP-145).
     assert.equal(delivery.result.fault?.nodeId, 'check');
     assert.match(delivery.result.fault?.detail ?? '', /"check" was never started/);
     assert.notEqual(delivery.result.terminalNodeId, 'done');
     assert.equal(sdk.queries.length, 1, 'check never sent');
+  });
+
+  it('Cancel stops the gate\'s real command and the child it started, and records it as not finished (DSP-145)', async () => {
+    const abort = new AbortController();
+    let workspace = '';
+    // The scripted work step writes a test file that starts a child process and never
+    // ends, so the gate's own `node --test test/duration.test.ts` is a real process tree
+    // that only a stop can end.
+    const sdk = claudeSdk([
+      {
+        kind: 'answer',
+        text: 'Done.\n\nRESULT: succeeded',
+        act: (query) => {
+          workspace = String(query.options['cwd']);
+          fs.writeFileSync(
+            path.join(workspace, 'test', 'duration.test.ts'),
+            [
+              "import { spawn } from 'node:child_process';",
+              "import fs from 'node:fs';",
+              "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+              "fs.writeFileSync('pids.json', JSON.stringify({ parent: process.pid, child: child.pid }));",
+              'setInterval(() => {}, 1000);',
+              '',
+            ].join('\n'),
+            'utf8',
+          );
+        },
+      },
+      { kind: 'answer', text: 'RESULT: met' },
+    ]);
+    let pids: { parent: number; child: number } | null = null;
+    const running = run('cancel-gate-real', sdk, { abort });
+    try {
+      for (let waited = 0; workspace === '' && waited < 15_000; waited += 20) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      pids = await treePids(workspace, 30_000);
+      abort.abort();
+      const { delivery } = await running;
+      const command = delivery.inspection.commands[0];
+      assert.equal(command?.line, EXAMPLE_GATE_COMMAND);
+      assert.equal(command?.requestedBy, 'gate');
+      assert.equal(command?.notRun?.kind, 'did-not-finish');
+      assert.match(command?.notRun?.message ?? '', /DSpatch stopped the command before it finished/);
+      assert.equal(sdk.queries.length, 1, 'check never sent');
+      assert.notEqual(delivery.result.terminalNodeId, 'done');
+      assert.deepEqual(await waitGone([pids.parent, pids.child]), [], 'both processes are gone');
+    } finally {
+      if (pids !== null) {
+        killLeftovers([pids.parent, pids.child]);
+      }
+      await running.catch(() => undefined);
+    }
   });
 
   it('a check that edits after the test ends not-established, recorded as verification-stale', async () => {

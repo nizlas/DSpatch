@@ -2,7 +2,7 @@
 
 A short, ordered trial for the first run of DSpatch on the home Linux machine. Everything it relies on has been **prepared and verified offline on Windows only**; none of it has run on Linux, and no Claude turn has run through the DSpatch window. Requirements, the sandbox step and the background are in [app/README.md, Linux (prepared, not yet run)](../app/README.md#linux-prepared-not-yet-run) and [Claude in the main chat](../app/README.md#claude-in-the-main-chat-offline-prepared-not-yet-run-live).
 
-Part A needs no provider. Part B is the live Claude trial and needs the decisions listed before it. Part C runs loops with Claude after Part B, including a change that DSpatch verifies with a real test (DSP-138, DSP-139).
+Part A needs no provider. Part B is the live Claude trial and needs the decisions listed before it. Part C gives Claude an ordinary development task, in the chat and as a loop, in which it runs the build and tests itself (DSP-145).
 
 ## Part A - start, example review, stop (no provider)
 
@@ -76,9 +76,9 @@ Expected: it prints the SDK version it installs (`@anthropic-ai/claude-agent-sdk
 
    Expected: in *Open a project*, the *Agent* select offers *Claude* (without the variable it reads *Claude (off)*; without Claude support, *Claude (not installed)*).
 
-8. **Open the sample as Claude.** Choose *Claude* under *Agent*, then *Use a generated sample project*. Expected: the composer shows Agent Claude and Model claude-haiku-4-5; Session details show the tool policy (Read, Glob, Grep, Edit, Write; no Bash) and the authorization note; no Cursor agent is created.
+8. **Open the sample as Claude.** Choose *Claude* under *Agent*, then *Use a generated sample project*. Expected: the composer shows Agent Claude and Model claude-haiku-4-5; Session details show the tool policy (Read, Glob, Grep, Edit, Write, and DSpatch's command tool `mcp__dspatch__run_command`; no Bash) and the authorization note; no Cursor agent is created.
 
-9. **One question, one change.** Ask a question about a file, then request one small change. Expected: an answer; the change appears in the diff; DSpatch's own Run button runs the test (Claude has no Bash).
+9. **One question, one change.** Ask a question about a file, then request one small change. Expected: an answer; the change appears in the diff; Claude may run the tests itself through DSpatch's command tool (Part C tries that properly); DSpatch's own Run button still works.
 
 10. **Stop during a turn.** Start a longer request and press Stop. Expected: the turn reads *stopped · provider work unknown* (or *Stop not confirmed · provider work unknown* if the end could not be confirmed) - never a plain "cancelled".
 
@@ -86,35 +86,43 @@ Expected: it prints the SDK version it installs (`@anthropic-ai/claude-agent-sdk
 
 12. **Without the variable.** Start once with plain `npm run dev`. Expected: the Claude conversation is not resumed through Cursor; the window says the session belongs to another agent and offers *Start new Cursor session*.
 
-## Part C - a loop with Claude (live, after Part B)
+## Part C - an ordinary development task with Claude (live, after Part B)
 
-Loop runs use the chosen agent since DSP-138, and since DSP-139 a bundled example lets DSpatch run a real test between Claude's change and Claude's check. Before this trial all of it has run with Claude only offline: the real Claude adapter on a substituted SDK, in tests, with DSpatch running a real `node --test` in a generated repository. Run Part C only after Part B behaved as expected, in the same kind of launch: Claude support installed, `DSPATCH_CLAUDE_AUTHORIZATION` set, Claude chosen, and **one** folder open (Claude works in one folder; with more open, the run is refused before it starts).
+Since DSP-145 Claude can run builds and tests itself, through a command tool DSpatch provides: DSpatch starts the command in the project's folder under a 10-minute bound, records it with the code it ran on, shows it, and stops it together with its child processes when you cancel. It is a record and a stop, not a sandbox: the command runs with your own rights. Nobody types a test command. Before this trial all of it has run only offline: the real Claude adapter on a substituted SDK with a scripted model, and real `npm test` / `node --test` commands. **Whether Claude itself chooses the right commands and keeps going after a failure is what this trial shows.** Run it in the same kind of launch as Part B: Claude support installed, `DSPATCH_CLAUDE_AUTHORIZATION` set, Claude chosen, **one** folder open.
 
-Claude's loop steps can read and edit files but cannot run commands (no Bash; the same permissions as the main chat). In a loop, tests are therefore run by DSpatch itself in a **gate** step, and the check step judges the change against that real result.
+Two things to know first:
+- **Old Claude conversations** recorded with a DSpatch version from before DSP-145 cannot be resumed: the tools DSpatch gives Claude changed, and a session is not continued under other rules. The window reads *Could not resume the agent session*; its *Details* say the tool policy changed and to start a new session. Start a new session; the old conversation stays readable.
+- **Node:** the sample's tests are TypeScript run by `node --test`, so `node` must strip types without a flag: Node 23.6 or later, or 22.18 or later in the 22 line. Record `node --version` from the shell you start DSpatch in. If a command reports it *could not start* `npm`/`node`, they are not on DSpatch's PATH (for example nvm and a desktop-started DSpatch).
 
-**Node for the gate.** The example's gate runs `node --test test/duration.test.ts` through the shell, and the test file is TypeScript, so `node` must strip types without a flag: Node 23.6 or later, or 22.18 or later in the 22 line. Record `node --version` from the shell you start DSpatch in. With an older Node the gate ends *Tests failed* with an error about the `.ts` file in its output: an honest result, not a defect in the work. If the gate instead stops with a fault saying the command *could not start*, `node` is not on DSpatch's PATH (for example Node installed through nvm while DSpatch was started from the desktop rather than from that shell); that is a runtime fault, not a test failure.
+13. **One ordinary task in the chat.** Open a **new** generated sample project as Claude (*Use a generated sample project*). Send, without naming any command: *"formatDuration in src/duration.ts only handles seconds. Make it handle minutes and hours as the project expects, and make sure it works."* Expected:
+    - Claude reads the code and the README, edits `src/duration.ts`, and runs the project's tests itself (likely `npm test`); under the reply, quiet lines such as *Ran `npm test`: exit 1 (…)* then *exit 0*;
+    - if a run fails, Claude reads the output, fixes and runs again in the same turn;
+    - the reply says what changed, what was run and what it showed, and what remains;
+    - *Session details → Commands the agent ran* lists each command with folder, how it ended, duration, output and *Still current: yes/no* for the code as it is now (an earlier failing run reads *no*: the working copy has changed since it ran);
+    - the diff shows the change; no Cursor line in the main log.
+    Record what Claude ran, in which order, and whether it stopped too early or looped.
 
-13. **See which agent will run it.** Open the generated sample project as Claude, open the graph editor and choose the chat loop (`dspatch-chat-loop`). Expected: the line under the drawing reads *Runs with Claude (claude-haiku-4-5)…*, says that agent steps cannot run commands and that a gate's command is run by DSpatch, and adds that the drawing's `cursor` target is only a label. (The line assumes one folder, as the editor's Run does; with more open, *Use loop* refuses even though this line reads *Runs with Claude*.) Select the `check` node: its requirement answers say they describe **Claude**, not the drawing's target. No Cursor agent is created (main log: no `building a cursor` line).
+14. **Cancel during a command.** Send *"Run `node -e \"setTimeout(() => {}, 120000)\"` and tell me when it finishes."* (a harmless two-minute wait, named here only to have something to stop) and press Stop while it runs. Expected: the turn ends as stopped; the command is listed as stopped by DSpatch; afterwards no `node` process from it is left:
+    ```sh
+    ps -o pid,pgid,cmd -u "$USER" | grep -v grep | grep -e setTimeout -e "node --test"
+    ```
 
-14. **A reading assignment (chat loop).** In the chat, tick *Use loop* and send a small question that needs no command, for example *"Which function in this project formats durations? Name the file."* Expected: *work* then *check*, ending at *done* or *not established*; each step's answer appears under its own step; the run record in `userData/loop-runs/` has `"provider":"claude"`. The chat loop has no gate, so a check there that needs a build still ends *not established*; steps 15-17 are the test-backed runs.
+15. **The same task as a loop.** Open another new sample project as Claude, tick *Use loop* and send the task from step 13. Expected:
+    - *work* edits and runs the tests itself, possibly several times, and declares it is done;
+    - *check* (an independent agent with its own session) runs the checks itself and is handed the commands DSpatch recorded, each marked current or stale; it declares *met*, or *rework* with concrete findings, which sends the work back (at most 2 correction rounds), then checks again;
+    - the run ends at *done* (*Assignment met*), *Assignment not met* (including when the correction rounds are spent) or *Could not establish*;
+    - a *met* is only accepted if a command completed on the code exactly as the run left it, or nothing changed; otherwise DSpatch records *could not check* (`verification-stale`) and the run does not end at *done*;
+    - the run record in `userData/loop-runs/` has `"provider":"claude"` and the commands per step, with `requestedBy: "agent-tool"`; the ending line says the agents' commands are their choice of check, not a verification by DSpatch.
 
-15. **A change verified by a real test (the example).** In the graph editor choose **`dspatch-duration-check`**. Before pressing Run, select the `test` node: its panel says that no agent works in this step and that DSpatch runs `node --test test/duration.test.ts` itself, through the shell, in the run's working folder, with pass or fail taken from its exit code. Select `check`: the panel's description of the message shows the rule that a command result counts only for the snapshot it tested. Press **Run**. It runs in a freshly generated repository in a temporary folder (`dspatch-live-<run id>-…/duration-repo`), never in the open project. Expected:
-    - *work* (Claude) edits `src/duration.ts`;
-    - *test* shows the command, the folder, **exit code 0** and output reporting 3 passing tests;
-    - *check* (Claude) is given that record (command, folder, exit code, output and the tested snapshot) and declares *met*;
-    - the run ends at **Change met and tested**; the record has `"provider":"claude"`; the main log has no Cursor line.
+16. **Cancel during a loop command.** Start the loop from step 15 again and press Cancel while *work* runs a command. Expected: the run stops on *work*, the command is recorded as stopped, *check* never starts, no process is left (the `ps` line above). Restarting DSpatch shows the run in history and does not start it again.
 
-    If *check* itself edits a file after the test, the run ends *Could not establish* instead (as in step 17). That is the rule working, not a failure of the trial.
+17. **The review discussion stays text-only.** Open the review discussion with Claude (Part B) and ask it to run the tests. Expected: it answers in text; no command runs and none is listed.
 
-16. **A failing test.** Still in the editor, change the `work` node's purpose on the canvas (Run walks the canvas, including unsaved edits) to *"Do not change any file. Reply RESULT: succeeded."* and press Run. Expected, if Claude leaves the file unchanged: *test* shows a **non-zero exit code** with the real assertion failure in its output; the run ends at **Tests failed**; *check* never starts. The drawing's own purpose, sent to every step as the mandate, still asks for the function to be completed, so Claude may complete it anyway (the run then ends at *Change met and tested*) or declare a specification error (*Stopped without doing the work*); record what it did. That is not a defect: the failing path is shown offline by `app/tests/loop-gate-check.test.ts`. Undo the edit afterwards and do not save it.
+18. **Refusals, no run.** (a) With Claude's conversation open, add a second folder and try *Use loop*: a plain sentence that Claude works in one folder, ending *Nothing was started.* (b) Quit, start once with plain `npm run dev` (no `DSPATCH_CLAUDE_AUTHORIZATION`), **do not start a Cursor session**, open the graph editor: the line under the drawing reads *No loop run can start: …*. Nothing contacts Cursor or installs anything.
 
-17. **A stale result is not accepted (optional).** Change the `check` node's purpose to *"Add the comment `// checked` as the first line of src/duration.ts, then reply RESULT: met."* and press Run. Expected, if Claude makes the edit: the run ends at **Could not establish**, and the check step's record says DSpatch recorded `could-not-check` because the command result no longer described the working folder (`verification-stale`). If Claude declines the edit, note that and what it declared. Undo the edit afterwards.
+The bundled drawing `dspatch-duration-check` (a gate step in which DSpatch runs a fixed test command) remains as test material for the editor's Run; it is no longer the way to verify work and need not be tried.
 
-18. **Cancel during *work*.** Press Run on the example (or send a longer *Use loop* assignment) and press Cancel while *work* is running. Expected: the run stops on *work* (the record names the cancel on that step); neither *test* nor *check* starts. Restarting DSpatch shows the run in history and does not start it again. (A cancel while the *test* command itself runs stops the run before *check*, but the command runs until it ends or reaches its time bound.)
-
-19. **Refusals, no run.** (a) With Claude's conversation open, add a second folder to the workspace and try *Use loop*. Expected: a plain sentence that Claude works in one folder, ending *Nothing was started.* (b) Quit, start once with plain `npm run dev` (no `DSPATCH_CLAUDE_AUTHORIZATION`), **do not start a Cursor session** when the window offers one, and open the graph editor. Expected: the line under the drawing reads *No loop run can start: …* naming why Claude cannot be used. In both cases nothing contacts Cursor and nothing is installed or downloaded. (c) The older duration drawing `dspatch-live-duration` fixes a Cursor model, so its Run is refused under Claude in any launch; that is expected. Use `dspatch-duration-check`.
-
-Record for Part C: `node --version`; the agent line as shown; for each run its end status, the *test* step's command, folder and exit code, and whether the check's message contained them; whether the record carries `provider`; and the session details' reported model and tool list.
+Record for Part C: `node --version`; for each task the commands Claude ran in order with exit codes, whether it corrected after a failure, the end status, whether Session details and the run record show the commands with current/stale, and anything where Claude stopped early, looped, or claimed a check it did not run.
 
 ## What to record
 

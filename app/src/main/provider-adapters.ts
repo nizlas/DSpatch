@@ -5,6 +5,7 @@ import {
   REVIEW_PERMISSIONS,
   type ClaudePermissionPolicy,
 } from '../adapter/claude-agent-sdk-adapter';
+import type { AgentCommandRunner } from '../adapter/agent-adapter';
 import { CursorSdkAdapter, type ToolPolicy } from '../adapter/cursor-sdk-adapter';
 import type { StoredSessionProvider } from '../shared/bridge';
 import { LOOP_RUN_TOOL_POLICY } from '../shared/loop-graph';
@@ -15,6 +16,7 @@ import {
   type PresentationSendMode,
 } from './presentation-adapter';
 import { providerAvailability, providerDisplayName } from './provider-availability';
+import { createAgentCommandRunner } from './workspace-command';
 
 /**
  * The one place a provider adapter is built (DSP-132, DSP-136, DSP-138), for the main
@@ -27,8 +29,11 @@ import { providerAvailability, providerDisplayName } from './provider-availabili
  * | \`loop\` | \`LOOP_RUN_TOOL_POLICY\` (\`'provider-default'\`) | \`CHAT_PERMISSIONS\`, exactly |
  *
  * A loop step under Claude has the main chat's permissions and nothing more: it can read
- * and change files and cannot run commands. The commands DSpatch itself runs for a gate
- * node are not the agent's tools and are not decided here.
+ * and change files, and (DSP-145) run commands through DSpatch's command tool. The chat
+ * and the loop get DSpatch's command runner ({@link commandRunnerFor}); the review never
+ * does, and the Claude adapter refuses a runner with the review's policy as well. The
+ * commands DSpatch itself runs for a gate node are not the agent's tools and are not
+ * decided here.
  *
  * In presentation mode every adapter is SIMULATED: the chat's and the loop's from the
  * main process's own presentation options (the loop run used the same construction
@@ -66,8 +71,17 @@ export interface ProviderAdaptersOptions {
    */
   readonly construct?: {
     readonly cursor?: (toolPolicy: ToolPolicy) => ChatAdapter;
-    readonly claude?: (permissions: ClaudePermissionPolicy) => ChatAdapter;
+    /** `commandRunner` is DSpatch's runner for chat and loop, `undefined` for review. */
+    readonly claude?: (
+      permissions: ClaudePermissionPolicy,
+      commandRunner: AgentCommandRunner | undefined,
+    ) => ChatAdapter;
   };
+  /**
+   * DSP-145: how DSpatch's command runner is made for a chat or loop adapter. Defaults to
+   * {@link createAgentCommandRunner}. A test seam; never called for the review.
+   */
+  readonly commandRunner?: () => AgentCommandRunner;
 }
 
 export interface ProviderAdapters {
@@ -88,6 +102,14 @@ export interface ProviderAdapters {
 /** The Claude policy for a purpose. The review path can never receive the chat's. */
 export function claudePermissionsFor(purpose: AdapterPurpose): ClaudePermissionPolicy {
   return purpose === 'review' ? REVIEW_PERMISSIONS : CHAT_PERMISSIONS;
+}
+
+/**
+ * DSP-145: whether an adapter for this purpose is given DSpatch's command runner. The
+ * chat and loop steps are; the review discussion never is.
+ */
+export function commandRunnerFor(purpose: AdapterPurpose): boolean {
+  return purpose === 'chat' || purpose === 'loop';
 }
 
 /** The Cursor tool policy for a purpose. */
@@ -150,8 +172,13 @@ export function providerAdapters(options: ProviderAdaptersOptions): ProviderAdap
       }
       if (provider === 'claude') {
         const permissions = claudePermissionsFor(purpose);
+        // A loop step's executor snapshots the folders around each command itself, so its
+        // runner does not hash them again (review I2); the chat's runner does.
+        const commandRunner = commandRunnerFor(purpose)
+          ? (options.commandRunner ?? (() => createAgentCommandRunner({ snapshots: purpose === 'chat' })))()
+          : undefined;
         if (options.construct?.claude !== undefined) {
-          return options.construct.claude(permissions);
+          return options.construct.claude(permissions, commandRunner);
         }
         if (options.claudeAuthorizationReference === null) {
           throw new Error('Claude is not enabled for this launch.');
@@ -159,6 +186,7 @@ export function providerAdapters(options: ProviderAdaptersOptions): ProviderAdap
         return new ClaudeAgentSdkAdapter({
           authorization: { kind: 'subscription', authorization: options.claudeAuthorizationReference },
           permissions,
+          ...(commandRunner === undefined ? {} : { commandRunner }),
         });
       }
       const toolPolicy = cursorToolPolicyFor(purpose);

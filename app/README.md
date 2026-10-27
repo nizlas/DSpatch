@@ -1036,9 +1036,15 @@ with the Claude SDK substituted; **no Claude turn has run through the window**.
   so the session is refused with DSpatch's rule; the conversation stays on screen
   with *Start new Claude session* and *Switch to Cursor*.
 - **What the agent may do** (`CHAT_PERMISSIONS`): Read, Glob, Grep, Edit and Write
-  in the project; **no Bash**, so builds and tests go through DSpatch's own runner;
-  no MCP servers and no settings read from disk. Session details shows the policy
-  as sent. That Edit covers Write and Read covers Glob and Grep is Anthropic's
+  in the project, and **DSpatch's command tool** (`mcp__dspatch__run_command`,
+  DSP-145): the agent chooses and runs its own builds and tests, and DSpatch starts
+  each one in the working folder under a time bound, records it (line, folder, how it
+  ended, output, the snapshots before and after) and stops it with its child processes
+  on Cancel. That is control and a record, not a sandbox. **No Bash**; no MCP servers
+  other than DSpatch's own; no settings read from disk other than managed policy
+  settings. Session details shows the policy as sent and lists *Commands the agent
+  ran*, each current or stale against the working copy. A conversation recorded under
+  the earlier policy is not resumed: start a new session. That Edit covers Write and Read covers Glob and Grep is Anthropic's
   documentation, not yet observed. The model is `claude-haiku-4-5`, named rather
   than chosen.
 - **Chosen explicitly, never assumed (DSP-136).** *Open a project* has an *Agent*
@@ -1067,9 +1073,16 @@ with the Claude SDK substituted; **no Claude turn has run through the window**.
   that cannot go ahead is refused before anything is recorded or built, with the reason:
   no agent chosen, the agent unavailable or Claude support not installed, Claude's
   authentication check, more than one folder under Claude, or an entry step that fixes a
-  model Claude does not use. Claude's steps run with the main chat's permissions (read and
-  edit files, **no commands**), so a check that needs a build or test is likely to end
-  *could not establish*; a gate's command is run by DSpatch itself. **Checked offline
+  model Claude does not use. Claude's steps run with the main chat's permissions: read and
+  edit files, and run builds and tests through DSpatch's command tool (DSP-145); a
+  gate's command is run by DSpatch itself. In the chat loop the work step fixes and
+  re-runs within its own step; the check runs the checks itself and may send the work
+  back with findings (*rework*, at most two rounds, then *not met*). A verdict that ends
+  in success stands only if a command recorded in the run completed on the working
+  folders as the step left them, or the run changed nothing; otherwise the step's
+  `whenUndeclared` is recorded (`verification-stale`). Commands an agent ran never decide
+  the run's outcome value - they are listed beside it - and Cursor's own shell commands
+  are recorded as reported by the provider. **Checked offline
   with the real Claude adapter on a substituted SDK, not run live** (see
   [the Linux trial, Part C](../docs/LINUX_HOME_TRIAL.md)). The command-line runner
   (`scripts/run-loop-graph.mjs`) stays Cursor-only and says so.
@@ -1079,10 +1092,11 @@ with the Claude SDK substituted; **no Claude turn has run through the window**.
   itself runs `node --test test/duration.test.ts` (shown in the gate's panel), then
   *check* judges the change against that real result (command, folder, exit code, output
   and the snapshot it tested). A failed test ends *Tests failed*. A command result counts
-  only for the snapshot it tested: if the working folder differs or was not observed when
-  the receiving step starts or ends, DSpatch records that step's `whenUndeclared` outcome
-  (`verification-stale`) and says so in the step's message, so a stale result never ends
-  as success. No agent gets a command tool. **Checked offline with a real `node --test`
+  for the code it left: under the approval rule above, a success verdict stands only if a
+  recorded command completed on the working folders as the step left them; otherwise
+  DSpatch records the step's `whenUndeclared` outcome (`verification-stale`) and says so in
+  the step's message, so a stale result never ends as success. The gate's command stops
+  on Cancel. The duration command stays confined to this drawing. **Checked offline with a real `node --test`
   and the real Claude adapter on a substituted SDK, not run live with Claude.**
 - **The review discussion has its own, explicit agent (DSP-132).** Opened from the main
   window, a new discussion takes that window's agent; opened standalone (`npm run review`,

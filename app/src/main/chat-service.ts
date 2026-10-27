@@ -16,6 +16,7 @@ import {
 } from '../adapter/claude-support';
 import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
 import type {
+  AgentCommandRecord,
   AgentEvent,
   AgentEventListener,
   CapabilityReport,
@@ -32,6 +33,8 @@ import type {
   AbandonOutcome,
   AdapterInfo,
   AgentChoiceInfo,
+  AgentCommandsReport,
+  AgentCommandView,
   AttemptAcknowledgement,
   AttemptInfo,
   AttemptKind,
@@ -127,6 +130,8 @@ import {
   snapshotWorkspace,
   type WorkspaceSnapshot,
 } from './workspace-baseline';
+import { WORKSPACE_COMMAND_SLOTS, type WorkspaceCommandSlots } from './workspace-command';
+import { boundedOutput, DEFAULT_OUTPUT_BUDGET } from '../shared/loop-record';
 
 /**
  * Everything the chat window can do, on the main-process side of the bridge.
@@ -351,6 +356,8 @@ function classifyResumeFailure(error: unknown): {
       return {
         kind: 'resume-refused',
         failure: { kind: 'error', detail, providerCode },
+        // DSP-145: the Claude adapter's own refusal (the quoted detail) says the tool
+        // policy changed and that a new session is the way on.
         note: 'Trying again with the same inputs gives the same answer.',
       };
     case 'local_lookup_failed':
@@ -804,6 +811,11 @@ interface TurnRecord {
   readonly usageEvents: Array<{ atUtc: string; readings: readonly UsageReading[] }>;
   /** Kept verbatim in the main process; never sent to the renderer. */
   readonly rawEventTypes: Record<string, number>;
+  /**
+   * DSP-145: the commands DSpatch's command tool ran for the agent in this turn, from
+   * the adapter's `command.finished` - DSpatch's own record, not the provider's account.
+   */
+  readonly commands: AgentCommandRecord[];
 }
 
 interface CancelState {
@@ -1039,6 +1051,13 @@ export interface ChatServiceOptions {
    * writing into the real one. Production passes nothing.
    */
   readonly sampleProjectsRoot?: string;
+  /**
+   * DSP-145: which working copies have a command running that DSpatch started, shared
+   * with the agent's command runner so the Run button and the agent's command tool never
+   * run two commands in one working copy at once. Defaults to the process-wide slots the
+   * provider factory's runners use; a test passes its own to both.
+   */
+  readonly commandSlots?: WorkspaceCommandSlots;
   /**
    * Overrides for the two waiting periods, so a test does not spend 100 seconds
    * establishing a rule about them. Production passes nothing.
@@ -3346,6 +3365,11 @@ export class ChatService {
           'once would interleave their output and their file writes.',
       );
     }
+    const slots = this.options.commandSlots ?? WORKSPACE_COMMAND_SLOTS;
+    const agentHolds = slots.holderOf(session.workspacePath);
+    if (agentHolds !== null) {
+      throw new Error(describeRunRefused(agentHolds));
+    }
     // The same rule as for a message, for the same reason. A command whose outcome
     // is unknown may still hold the working directory — on Windows that also
     // prevents the folder from being replaced — so running it again is not a
@@ -3377,159 +3401,169 @@ export class ChatService {
       throw new Error(check.message ?? 'The command could not be run.');
     }
 
-    const shell = describeShell();
-    const beforeSnapshotId = this.safeSnapshotId();
-    const startedAtUtc = nowIso();
-    const startedAt = performance.now();
-    // The conversation that started it owns its result (WS-1 #8), even when the
-    // session has changed by the time it ends: closing a session stops a command,
-    // and its end arrives after the next conversation is already open.
-    const ownerId = this.conversationId;
-
-    const attempt = ledger.open('command', command);
-    // A process group of its own on POSIX, so that Stop reaches what the shell
-    // started; unchanged on Windows. Not measured on Linux.
-    const child = spawn(command, chatCommandSpawnOptions(cwd));
-    const run: ActiveCommand = {
-      child,
-      attemptId: attempt.attemptId,
-      ledger,
-      killedByDspatch: false,
-    };
-    this.activeCommand = run;
-    ledger.markRunning(
-      attempt.attemptId,
-      { localPid: child.pid ?? null },
-      `Started as pid ${String(child.pid ?? -1)} in ${cwd}, against ` +
-        `${beforeSnapshotId ?? 'an unhashed working copy'}.`,
-    );
-    this.options.log(
-      `${attempt.attemptId}: running \`${command}\` in ${cwd} ` +
-        `(pid ${String(child.pid ?? -1)}) against ` +
-        `${beforeSnapshotId ?? 'an unhashed working copy'}`,
-    );
-    // While it runs, so that killing the window mid-command leaves a `running`
-    // attempt on disk to reconcile rather than no trace of the command at all.
-    this.saveConversation();
-
-    let stdout = '';
-    let stderr = '';
-    let outputTruncated = false;
-    const append = (current: string, chunk: Buffer): string => {
-      if (current.length >= MAX_OUTPUT_CHARS) {
-        outputTruncated = true;
-        return current;
-      }
-      const next = current + chunk.toString('utf8');
-      if (next.length > MAX_OUTPUT_CHARS) {
-        outputTruncated = true;
-        return next.slice(0, MAX_OUTPUT_CHARS);
-      }
-      return next;
-    };
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdout = append(stdout, chunk);
-    });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr = append(stderr, chunk);
-    });
-
-    const ended = await new Promise<{
-      code: number | null;
-      signal: string | null;
-      error: string | null;
-    }>((resolve) => {
-      let settled = false;
-      child.on('error', (error) => {
-        if (settled) return;
-        settled = true;
-        resolve({ code: null, signal: null, error: describeError(error) });
-      });
-      child.on('close', (code, signal) => {
-        if (settled) return;
-        settled = true;
-        resolve({ code, signal: signal === null ? null : String(signal), error: null });
-      });
-    });
-
-    const durationMs = round(performance.now() - startedAt);
-    if (this.activeCommand === run) {
-      this.activeCommand = null;
+    const slot = slots.claim(session.workspacePath, { by: 'person', line: command });
+    if (!slot.ok) {
+      throw new Error(describeRunRefused(slot.holder));
     }
-    if (ended.error !== null) {
-      ledger.markFailed(
+    // R2: whatever happens from here on, the working copy's command slot is given back,
+    // or the agent's command tool would be refused until DSpatch restarted.
+    try {
+      const shell = describeShell();
+      const beforeSnapshotId = this.safeSnapshotId();
+      const startedAtUtc = nowIso();
+      const startedAt = performance.now();
+      // The conversation that started it owns its result (WS-1 #8), even when the
+      // session has changed by the time it ends: closing a session stops a command,
+      // and its end arrives after the next conversation is already open.
+      const ownerId = this.conversationId;
+
+      const attempt = ledger.open('command', command);
+      // A process group of its own on POSIX, so that Stop reaches what the shell
+      // started; unchanged on Windows. Not measured on Linux.
+      const child = spawn(command, chatCommandSpawnOptions(cwd));
+      const run: ActiveCommand = {
+        child,
+        attemptId: attempt.attemptId,
+        ledger,
+        killedByDspatch: false,
+      };
+      this.activeCommand = run;
+      ledger.markRunning(
         attempt.attemptId,
-        `The command could not be started: ${ended.error}`,
+        { localPid: child.pid ?? null },
+        `Started as pid ${String(child.pid ?? -1)} in ${cwd}, against ` +
+          `${beforeSnapshotId ?? 'an unhashed working copy'}.`,
       );
-      throw new Error(
-        `The command could not be started: ${ended.error}. DSpatch reports no exit ` +
-          'code for a process that never ran.',
+      this.options.log(
+        `${attempt.attemptId}: running \`${command}\` in ${cwd} ` +
+          `(pid ${String(child.pid ?? -1)}) against ` +
+          `${beforeSnapshotId ?? 'an unhashed working copy'}`,
       );
-    }
+      // While it runs, so that killing the window mid-command leaves a `running`
+      // attempt on disk to reconcile rather than no trace of the command at all.
+      this.saveConversation();
 
-    const killedByDspatch = run.killedByDspatch;
-    const verdict = evaluateTestVerdict({
-      killedByDspatch,
-      exitCode: ended.code,
-      signal: ended.signal,
-    });
-    const outcome: TestOutcome = {
-      command,
-      shell,
-      cwd,
-      pid: child.pid ?? null,
-      exitCode: ended.code,
-      signal: ended.signal,
-      killedByDspatch,
-      stdout,
-      stderr,
-      outputTruncated,
-      durationMs,
-      startedAtUtc,
-      finishedAtUtc: nowIso(),
-      snapshotId: beforeSnapshotId,
-      // The working copy it ran in, which is not the open one if the session changed.
-      afterRunSnapshotId: safeSnapshotIdOf(session.workspacePath),
-      baselineSnapshotId: session.baseline.snapshotId,
-      gitHeadRevision: session.git.headRevision,
-      verdict: verdict.verdict,
-      verdictHeadline: verdict.headline,
-      attemptId: attempt.attemptId,
-    };
-    const owner = ownerId === null ? null : (this.held.get(ownerId) ?? null);
-    if (owner !== null) {
-      owner.testRuns.push(outcome);
-      owner.lastTest = outcome;
+      let stdout = '';
+      let stderr = '';
+      let outputTruncated = false;
+      const append = (current: string, chunk: Buffer): string => {
+        if (current.length >= MAX_OUTPUT_CHARS) {
+          outputTruncated = true;
+          return current;
+        }
+        const next = current + chunk.toString('utf8');
+        if (next.length > MAX_OUTPUT_CHARS) {
+          outputTruncated = true;
+          return next.slice(0, MAX_OUTPUT_CHARS);
+        }
+        return next;
+      };
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout = append(stdout, chunk);
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr = append(stderr, chunk);
+      });
+
+      const ended = await new Promise<{
+        code: number | null;
+        signal: string | null;
+        error: string | null;
+      }>((resolve) => {
+        let settled = false;
+        child.on('error', (error) => {
+          if (settled) return;
+          settled = true;
+          resolve({ code: null, signal: null, error: describeError(error) });
+        });
+        child.on('close', (code, signal) => {
+          if (settled) return;
+          settled = true;
+          resolve({ code, signal: signal === null ? null : String(signal), error: null });
+        });
+      });
+
+      const durationMs = round(performance.now() - startedAt);
+      if (this.activeCommand === run) {
+        this.activeCommand = null;
+      }
+      if (ended.error !== null) {
+        ledger.markFailed(
+          attempt.attemptId,
+          `The command could not be started: ${ended.error}`,
+        );
+        throw new Error(
+          `The command could not be started: ${ended.error}. DSpatch reports no exit ` +
+            'code for a process that never ran.',
+        );
+      }
+
+      const killedByDspatch = run.killedByDspatch;
+      const verdict = evaluateTestVerdict({
+        killedByDspatch,
+        exitCode: ended.code,
+        signal: ended.signal,
+      });
+      const outcome: TestOutcome = {
+        command,
+        shell,
+        cwd,
+        pid: child.pid ?? null,
+        exitCode: ended.code,
+        signal: ended.signal,
+        killedByDspatch,
+        stdout,
+        stderr,
+        outputTruncated,
+        durationMs,
+        startedAtUtc,
+        finishedAtUtc: nowIso(),
+        snapshotId: beforeSnapshotId,
+        // The working copy it ran in, which is not the open one if the session changed.
+        afterRunSnapshotId: safeSnapshotIdOf(session.workspacePath),
+        baselineSnapshotId: session.baseline.snapshotId,
+        gitHeadRevision: session.git.headRevision,
+        verdict: verdict.verdict,
+        verdictHeadline: verdict.headline,
+        attemptId: attempt.attemptId,
+      };
+      const owner = ownerId === null ? null : (this.held.get(ownerId) ?? null);
+      if (owner !== null) {
+        owner.testRuns.push(outcome);
+        owner.lastTest = outcome;
+      }
+      // Shown only if its own conversation is still the one open.
+      if (this.session !== null && this.conversationId === ownerId) {
+        this.lastTest = outcome;
+      }
+      this.testRuns.push(outcome);
+      // The attempt's state follows the verdict, not the exit code. A run DSpatch
+      // killed is recorded as stopped rather than completed, and one that ended
+      // without an exit code is recorded as unknown, so the attempt list cannot
+      // disagree with the result panel about whether anything was established.
+      const ending =
+        `Exit code ${ended.code === null ? 'none' : String(ended.code)}, signal ` +
+        `${ended.signal ?? 'none'}, after ${String(durationMs)} ms. ${verdict.headline}`;
+      if (verdict.verdict === 'interrupted') {
+        ledger.markStopped(attempt.attemptId, ending);
+      } else if (verdict.verdict === 'unknown') {
+        ledger.markOutcomeUnknown(attempt.attemptId, ending);
+      } else {
+        ledger.markCompleted(attempt.attemptId, ending);
+      }
+      this.options.log(
+        `${attempt.attemptId}: command exit=${String(outcome.exitCode)} ` +
+          `signal=${outcome.signal ?? 'none'} killed=${String(outcome.killedByDspatch)} ` +
+          `verdict=${outcome.verdict} in ${String(outcome.durationMs)} ms ` +
+          `snapshot=${outcome.snapshotId ?? 'unknown'} -> ${
+            outcome.afterRunSnapshotId ?? 'unknown'
+          }`,
+      );
+      this.saveConversation(ownerId);
+      return outcome;
+    } finally {
+      slot.release();
     }
-    // Shown only if its own conversation is still the one open.
-    if (this.session !== null && this.conversationId === ownerId) {
-      this.lastTest = outcome;
-    }
-    this.testRuns.push(outcome);
-    // The attempt's state follows the verdict, not the exit code. A run DSpatch
-    // killed is recorded as stopped rather than completed, and one that ended
-    // without an exit code is recorded as unknown, so the attempt list cannot
-    // disagree with the result panel about whether anything was established.
-    const ending =
-      `Exit code ${ended.code === null ? 'none' : String(ended.code)}, signal ` +
-      `${ended.signal ?? 'none'}, after ${String(durationMs)} ms. ${verdict.headline}`;
-    if (verdict.verdict === 'interrupted') {
-      ledger.markStopped(attempt.attemptId, ending);
-    } else if (verdict.verdict === 'unknown') {
-      ledger.markOutcomeUnknown(attempt.attemptId, ending);
-    } else {
-      ledger.markCompleted(attempt.attemptId, ending);
-    }
-    this.options.log(
-      `${attempt.attemptId}: command exit=${String(outcome.exitCode)} ` +
-        `signal=${outcome.signal ?? 'none'} killed=${String(outcome.killedByDspatch)} ` +
-        `verdict=${outcome.verdict} in ${String(outcome.durationMs)} ms ` +
-        `snapshot=${outcome.snapshotId ?? 'unknown'} -> ${
-          outcome.afterRunSnapshotId ?? 'unknown'
-        }`,
-    );
-    this.saveConversation(ownerId);
-    return outcome;
   }
 
   /** Stop a running command from the window, with its whole process tree. */
@@ -3583,6 +3617,37 @@ export class ChatService {
       presentedStatus: presented.status,
       presentedHeadline: presented.headline,
     };
+  }
+
+  /**
+   * DSP-145: every command the agent ran through DSpatch's command tool in the open
+   * conversation, oldest first, each with whether its result still describes the code
+   * on disk - the same freshness rule as the Run button's result, against the snapshot
+   * taken after the command ended. Re-hashes the working copy once.
+   */
+  getAgentCommands(): AgentCommandsReport {
+    const checkedAtUtc = nowIso();
+    const messages =
+      this.conversationId === null
+        ? this.turns
+            .filter((turn) => turn.conversationId === null)
+            .map((turn) => toStoredMessage(turn))
+        : this.mergedMessages(this.conversationId);
+    const records = messages.flatMap((message) =>
+      (message.commands ?? []).map((record) => ({ record, dspatchRunId: message.dspatchRunId })),
+    );
+    const currentSnapshotId = records.length === 0 ? null : this.safeSnapshotId();
+    const commands: AgentCommandView[] = records.map(({ record, dspatchRunId }) => {
+      const verdict = evaluateFreshness({
+        hasResult: true,
+        testedSnapshotId: record.testedSnapshotId,
+        afterRunSnapshotId: record.afterRunSnapshotId,
+        currentSnapshotId,
+      });
+      const standing = verdict.kind === 'current' || verdict.kind === 'stale' ? verdict.kind : 'unknown';
+      return { record, dspatchRunId, standing, standingHeadline: verdict.headline };
+    });
+    return { commands, currentSnapshotId, checkedAtUtc };
   }
 
   // --- Saved conversations (DSP-4) -------------------------------------------
@@ -4984,6 +5049,7 @@ export class ChatService {
         finishedAtUtc: null,
         usageEvents: [],
         rawEventTypes: {},
+        commands: [],
       };
       this.turns.push(turn);
       this.currentTurn = turn;
@@ -5039,6 +5105,24 @@ export class ChatService {
         } else {
           ledger.markFailed(attemptId, detail);
         }
+      }
+    }
+
+    if (event.type === 'command.finished') {
+      // DSP-145: kept on the turn whose run it belongs to, by run ID, even if a newer
+      // turn is on screen by now, and saved at once: a command's record is evidence
+      // the next window must still have if this one is closed mid-turn.
+      const owner = this.turns.find((candidate) => candidate.dspatchRunId === event.dspatchRunId);
+      owner?.commands.push(storedCommandRecord(event.command));
+      const record = event.command;
+      this.options.log(
+        `agent command ${record.commandId}: \`${record.line}\` in ${record.cwd} ended ` +
+          `${record.ending} (exit ${record.exitCode === null ? 'none' : String(record.exitCode)}) ` +
+          `after ${String(record.durationMs)} ms; snapshot ${record.testedSnapshotId ?? 'not observed'} -> ` +
+          `${record.afterRunSnapshotId ?? 'not observed'}`,
+      );
+      if (owner !== undefined) {
+        this.saveConversation(owner.conversationId);
       }
     }
 
@@ -5234,6 +5318,7 @@ function toStoredMessage(turn: TurnRecord): StoredMessage {
     totalTokens: total?.value ?? null,
     startedAtUtc: turn.startedAtUtc,
     finishedAtUtc: turn.finishedAtUtc,
+    ...(turn.commands.length === 0 ? {} : { commands: [...turn.commands] }),
   };
 }
 
@@ -5491,6 +5576,22 @@ export function toUiEvent(event: AgentEvent): UiAgentEvent {
       return { ...base, toolName: event.name };
     case 'tool.finished':
       return { ...base, toolName: event.name, toolStatus: event.status };
+    case 'command.started':
+      return {
+        ...base,
+        command: { commandId: event.commandId, line: event.line, ending: null, exitCode: null, durationMs: null },
+      };
+    case 'command.finished':
+      return {
+        ...base,
+        command: {
+          commandId: event.command.commandId,
+          line: event.command.line,
+          ending: event.command.ending,
+          exitCode: event.command.exitCode,
+          durationMs: event.command.durationMs,
+        },
+      };
     case 'approval.requested':
       return { ...base, approvalSummary: event.request.summary };
     case 'usage':
@@ -5507,6 +5608,40 @@ export function toUiEvent(event: AgentEvent): UiAgentEvent {
     default:
       return base;
   }
+}
+
+/**
+ * DSP-145 (review I1): a command record as a conversation keeps it - the end of each
+ * stream within the same bound the run record uses, with a note of what was left out.
+ * The whole output exists only while the turn runs; nothing beyond the bound is saved.
+ */
+export function storedCommandRecord(record: AgentCommandRecord): AgentCommandRecord {
+  const out = boundedOutput(record.stdout);
+  const err = boundedOutput(record.stderr);
+  if (out.cutChars === 0 && err.cutChars === 0) {
+    return record;
+  }
+  const note =
+    `The conversation keeps the last ${String(DEFAULT_OUTPUT_BUDGET.maxOutputChars)} characters ` +
+    `of each stream: ${String(out.cutChars)} characters of standard output and ` +
+    `${String(err.cutChars)} of standard error were left out.`;
+  return {
+    ...record,
+    stdout: out.tail,
+    stderr: err.tail,
+    outputTruncated: true,
+    outputNote: record.outputNote === null ? note : `${record.outputNote} ${note}`,
+  };
+}
+
+/** DSP-145: why the Run button is refused while another command holds the working copy. */
+function describeRunRefused(holder: { readonly by: 'agent' | 'person'; readonly line: string }): string {
+  return holder.by === 'agent'
+    ? `The agent is running a command in this working copy (${holder.line}). Wait for its ` +
+        'result, or cancel the turn, before running another: two at once would interleave ' +
+        'their output and their file writes.'
+    : 'A command is already running in this working copy. Stop it first: two at once ' +
+        'would interleave their output and their file writes.';
 }
 
 /** A provider's name as the window says it. */

@@ -12,7 +12,7 @@ import { REPORT_WRITTEN_BY_SELF, undeclaredOutcomeOf } from './loop-graph';
 import type { LoopEdge, LoopGraph, LoopNode, NodeKind, ResultForm } from './loop-graph';
 import { kindEffect } from './loop-node-help';
 import { type LiveBinding } from './loop-editor-run';
-import { describeGateEvidenceRule } from './loop-results';
+import { describeApprovalRule, describeGateEvidenceRule, type SuccessRoute } from './loop-results';
 import type { RunJournalEntry } from './loop-run';
 import { describeWorkingRootsForAgent, type WorkingRoot } from './working-roots';
 
@@ -1390,6 +1390,8 @@ export interface BriefPart {
     | 'precedence'
     | 'received'
     | 'gate-evidence'
+    | 'run-commands'
+    | 'approval-rule'
     | 'run-change'
     | 'required-result'
     | 'declarations'
@@ -1481,6 +1483,12 @@ export function briefParts(
      * still true of every arrival that declares nothing.
      */
     readonly arrivals?: readonly Pick<LoopEdge, 'id' | 'from' | 'label' | 'delivers'>[];
+    /**
+     * DSP-145: this step's outcomes that end the run in success, from
+     * `successRoutesOf(graph, node)`. Left out, the panel shows no approval rule, which is
+     * what a caller with only the node can honestly say.
+     */
+    readonly successRoutes?: readonly SuccessRoute[];
   },
 ): readonly BriefPart[] {
   const isEntry = node.id === options.entryId;
@@ -1545,6 +1553,13 @@ export function briefParts(
           .split(/\n\n+/)
           .map((line) => line.trim())
           .filter((line) => line !== '');
+
+  // DSP-145: the rule a success verdict is held to, shown as it is sent.
+  const approvalRule = describeApprovalRule(options.successRoutes ?? [], undeclaredOutcomeOf(node))
+    .replace(/^\s*---\s*/, '')
+    .split(/\n\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
 
   // Which arrivals decide for themselves and which leave it to the node. Split rather
   // than listed together, because the two answer different questions: the first is *this
@@ -1756,6 +1771,30 @@ export function briefParts(
       ...(gateRule.length === 0 ? {} : { text: gateRule }),
     },
     {
+      // DSP-145. Known only while a run is happening, so described rather than shown.
+      id: 'run-commands',
+      heading: 'The commands DSpatch recorded in this run',
+      carried: approvalRule.length > 0,
+      present: approvalRule.length > 0,
+      detail:
+        'Added to a step whose verdict can end the run in success, whenever the run has recorded ' +
+        'commands: each one DSpatch ran for a gate or at an agent’s request through its command ' +
+        'tool, and each one the provider reported running with its own tool, with the step, the ' +
+        'folder, how it ended, the end of its output, its after-run snapshot and whether the ' +
+        'working folders are still that snapshot as this step starts. A command that changed files ' +
+        'while it ran is said to have done so. They are evidence; the step runs its own checks too.',
+    },
+    {
+      id: 'approval-rule',
+      heading: 'When DSpatch lets a success verdict stand',
+      carried: approvalRule.length > 0,
+      present: approvalRule.length > 0,
+      detail:
+        'Added to every step whose verdict can end the run in success. It can change the step’s ' +
+        'recorded outcome, so it is shown as sent:',
+      ...(approvalRule.length === 0 ? {} : { text: approvalRule }),
+    },
+    {
       id: 'run-change',
       heading: 'What the run has changed in the working folders',
       // The measurement itself travels inside the message, which is the whole of DSP-99:
@@ -1912,6 +1951,8 @@ export const CHAT_LOOP_WINDOW_LOOKUP: ChatLiveLookup = {
       'e-blocked': { label: 'blocked', to: 'stopped' },
       'e-met': { label: 'assignment met', to: 'done' },
       'e-not-met': { label: 'assignment not met', to: 'not-met' },
+      'e-rework': { label: 'not met: back to work with findings', to: 'work' },
+      'e-check-limit': { label: 'correction rounds spent', to: 'not-met' },
       'e-could-not-check': { label: 'could not check', to: 'not-established' },
       'e-check-spec': { label: 'spec-error while checking', to: 'not-established' },
       'e-check-blocked': { label: 'blocked while checking', to: 'not-established' },

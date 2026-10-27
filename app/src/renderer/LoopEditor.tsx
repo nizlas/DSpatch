@@ -126,6 +126,7 @@ import {
 import type { LoopRunAgentInfo, LoopRunAgentQuery } from '../shared/loop-run-agent-text';
 import { runningStep, stepStanding } from '../shared/loop-activity';
 import { BRIEF_EXCLUSIONS, briefParts, nodeHelpText, requiredForKind } from '../shared/loop-chat';
+import { successRoutesOf } from '../shared/loop-results';
 import {
   failureStandings,
   kindEffect,
@@ -3552,6 +3553,8 @@ function NodeInspector({
     // arrival* (DSP-100). Without them the panel would show one list for a step that is
     // handed different material depending on the route the run took to reach it.
     arrivals: graph.edges.filter((edge) => edge.to === node.id),
+    // DSP-145: the outcomes whose edge ends the run in success, for the approval rule.
+    successRoutes: successRoutesOf(graph, node),
   }).filter((part) => part.present);
 
   return (

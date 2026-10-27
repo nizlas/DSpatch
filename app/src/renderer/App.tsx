@@ -41,6 +41,8 @@ import type {
   TestFreshness,
   TestOutcome,
   TestVerdict,
+  AgentCommandsReport,
+  UiCommandLine,
   WorkspaceChange,
   WorkspaceReport,
 } from '../shared/bridge';
@@ -89,6 +91,7 @@ import {
   attachUsage,
   currentTurn as currentTurnOf,
   describeActivity,
+  describeCommandLine,
   emptyChatState,
   markCancelRequested,
   routeEvent,
@@ -342,6 +345,8 @@ function Workbench({
   const [testCommand, setTestCommand] = useState('');
   const [testCwd, setTestCwd] = useState('');
   const [freshness, setFreshness] = useState<TestFreshness | null>(null);
+  /** DSP-145: the commands the agent ran, for Session details. Read when it is opened. */
+  const [agentCommands, setAgentCommands] = useState<AgentCommandsReport | null>(null);
   const [stopNote, setStopNote] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceReport | null>(null);
   /*
@@ -1380,12 +1385,33 @@ function Workbench({
     }
   }, []);
 
+  /** DSP-145: re-read the agent's commands; a failed read keeps the previous list. */
+  const refreshAgentCommands = useCallback(async (): Promise<void> => {
+    try {
+      setAgentCommands(await window.dspatch.getAgentCommands());
+    } catch {
+      // Intentionally silent, as for the test result: the previous reading stays.
+    }
+  }, []);
+
+  useEffect(() => {
+    // DSP-145: whether each command still describes the code is a fresh hash, read
+    // when Session details is opened rather than kept running in the background.
+    if (detailsOpen) {
+      void refreshAgentCommands();
+    }
+  }, [detailsOpen, refreshAgentCommands]);
+
   // Subscribed before the first prompt, not after: early events would be lost.
   // Routing lives in `turn-routing.ts` so that the superseded-run rule can be
   // tested against a counter-example instead of only asserted here.
   useEffect(() => {
     const unsubscribe = window.dspatch.onAgentEvent((event) => {
       setChat((previous) => routeEvent(previous, event, pendingPrompt.current));
+      if (event.type === 'command.finished' || event.type === 'run.finished') {
+        // DSP-145: a new record, or the moment the code is likeliest to have moved on.
+        void refreshAgentCommands();
+      }
       if (event.type === 'run.started' || event.type === 'run.finished') {
         // Both ends of a run change an attempt's state in the main process.
         void refreshRunState();
@@ -1417,7 +1443,7 @@ function Workbench({
       }
     });
     return unsubscribe;
-  }, [checkConnection, refreshFreshness, refreshRunState]);
+  }, [checkConnection, refreshAgentCommands, refreshFreshness, refreshRunState]);
 
   /**
    * Put a failed turn's text back in the composer, or say where it is.
@@ -3213,6 +3239,7 @@ function Workbench({
           session={session}
           onCheckCursor={checkCursorNow}
         />
+        {session !== null && <AgentCommandsSection report={agentCommands} />}
 
         {session !== null && (
           <>
@@ -3637,6 +3664,71 @@ function SessionFacts({
       <p className="app__note">
         Every provider call happens in the main process behind the adapter; this
         window reaches it only over IPC.
+      </p>
+    </Section>
+  );
+}
+
+/**
+ * DSP-145: the commands the agent ran through DSpatch's command tool, in Session
+ * details. Each says what ran where, how it ended, how long it took, its output (the
+ * kept end of it) and whether its result still describes the code on disk.
+ */
+function AgentCommandsSection({
+  report,
+}: {
+  readonly report: AgentCommandsReport | null;
+}): JSX.Element {
+  const commands = report?.commands ?? [];
+  return (
+    <Section title="Commands the agent ran">
+      {commands.length === 0 ? (
+        <p className="app__note" data-ev="agent-commands-none">
+          The agent has not run any command through DSpatch in this conversation.
+        </p>
+      ) : (
+        <ol className="agent-commands" data-ev="agent-commands">
+          {commands.map(({ record, standing, standingHeadline }) => (
+            <li key={record.commandId} className="agent-commands__item">
+              <p>
+                <code>{record.line}</code>
+              </p>
+              <dl className="facts">
+                <Fact label="Folder" value={`${record.cwd} (${record.shell})`} />
+                <Fact
+                  label="Ended"
+                  value={
+                    record.ending === 'exited'
+                      ? `exit code ${record.exitCode === null ? 'unknown' : String(record.exitCode)}`
+                      : (record.endingMessage ?? record.ending)
+                  }
+                />
+                <Fact label="Took" value={`${(record.durationMs / 1000).toFixed(1)} s, started ${record.startedAtUtc}`} />
+                <Fact
+                  label="Code it ran against"
+                  value={`${record.testedSnapshotId ?? 'not observed'} → after: ${
+                    record.afterRunSnapshotId ?? 'not observed'
+                  }`}
+                />
+                <Fact
+                  label="Still current"
+                  value={`${standing === 'current' ? 'yes' : standing === 'stale' ? 'no' : 'unknown'} — ${standingHeadline}`}
+                />
+              </dl>
+              <details>
+                <summary>Output</summary>
+                {record.outputNote !== null && <p className="app__note">{record.outputNote}</p>}
+                <pre className="turn__answer">{record.stdout === '' ? '(no standard output)' : record.stdout}</pre>
+                {record.stderr !== '' && <pre className="turn__answer">{record.stderr}</pre>}
+              </details>
+            </li>
+          ))}
+        </ol>
+      )}
+      <p className="app__note">
+        DSpatch started each of these itself, in the working folder, under a time bound, and
+        can stop them with their child processes. That is control and a record, not a
+        sandbox: a command runs with your own rights.
       </p>
     </Section>
   );
@@ -4581,6 +4673,35 @@ function ReconciliationRow({
  * `data-ev` name appearing twice on one screen would make every scripted reading of
  * it ambiguous. The panel keeps the names it has always had.
  */
+/**
+ * DSP-145: what the agent ran in a turn, one short line each - the verb, the command line
+ * and how it ended. Shared by live and reopened replies; nothing when there were none.
+ */
+function CommandLines({
+  commands,
+  testId,
+}: {
+  readonly commands: readonly UiCommandLine[];
+  readonly testId: string;
+}): JSX.Element | null {
+  if (commands.length === 0) {
+    return null;
+  }
+  return (
+    <ul className="turn__commands" data-ev={testId}>
+      {commands.map((command) => {
+        const said = describeCommandLine(command);
+        return (
+          <li key={command.commandId} className="turn__command">
+            {said.verb} <code>{command.line}</code>
+            {said.after}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function RestoredMessage({
   message,
   prefix = 'restored-turn',
@@ -4646,6 +4767,17 @@ function RestoredMessage({
           <pre className="turn__answer">{message.resentContext}</pre>
         </details>
       )}
+      {/* DSP-145: the commands the agent ran, as the same quiet lines a live reply has. */}
+      <CommandLines
+        commands={(message.commands ?? []).map((record) => ({
+          commandId: record.commandId,
+          line: record.line,
+          ending: record.ending,
+          exitCode: record.exitCode,
+          durationMs: record.durationMs,
+        }))}
+        testId={`${at}-commands`}
+      />
       {message.errorMessage !== null && (
         <p className="app__error" data-ev={`${at}-error`}>
           {message.errorMessage}
@@ -6977,6 +7109,12 @@ function Turn({
           <Markdown text={turn.answer} />
         </div>
       )}
+      {/*
+        DSP-145: what the agent ran, one short line each, under its reply. The whole
+        record - folder, output, snapshots, whether it is still current - is in
+        Session details; nothing opens by itself.
+      */}
+      <CommandLines commands={turn.commands ?? []} testId={`turn-${String(index)}-commands`} />
       {/*
         The state of the turn stays in the column; the counting moves behind a
         disclosure. How many fragments a reply arrived in and how many tool calls

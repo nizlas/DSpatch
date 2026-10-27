@@ -143,7 +143,7 @@ import { workingRootsFrom } from '../shared/working-roots';
 import type { SampleProjectListing } from './sample-projects';
 import {
   graphVersionIdFor,
-  recordedCommandFrom,
+  recordedCommandsAtEnd,
   recordedSnapshotsFrom,
   RunRecordStore,
   type RunRecordWriter,
@@ -185,6 +185,7 @@ const RUN_STATE: BridgeChannel = 'dspatch:run-state';
 const RUN_TEST: BridgeChannel = 'dspatch:run-test';
 const STOP_TEST: BridgeChannel = 'dspatch:stop-test';
 const TEST_FRESHNESS: BridgeChannel = 'dspatch:test-freshness';
+const AGENT_COMMANDS: BridgeChannel = 'dspatch:agent-commands';
 const WORKSPACE_CHANGES: BridgeChannel = 'dspatch:workspace-changes';
 const TURN_USAGE: BridgeChannel = 'dspatch:turn-usage';
 const AGENT_EVENT: BridgeChannel = 'dspatch:agent-event';
@@ -4167,6 +4168,7 @@ function registerIpc(): void {
   );
   ipcMain.handle(STOP_TEST, () => chatService.stopRunningCommand());
   ipcMain.handle(TEST_FRESHNESS, () => chatService.getTestFreshness());
+  ipcMain.handle(AGENT_COMMANDS, () => chatService.getAgentCommands());
   ipcMain.handle(WORKSPACE_CHANGES, () => chatService.getWorkspaceChanges());
   ipcMain.handle(TURN_USAGE, (_event, dspatchRunId: string) =>
     chatService.getTurnUsage(dspatchRunId),
@@ -5895,12 +5897,12 @@ function closeChatLoopRecord(
   },
 ): ChatLoopRecordInfo {
   const atUtc = new Date().toISOString();
-  const commands: readonly RecordedCommand[] = (input.inspection?.commands ?? []).map((command) =>
-    // No clock reading passed in: each command carries the moment it really
-    // started, so these copies inside the ending line say the same thing as the
-    // lines written while the run was still walking.
-    recordedCommandFrom(command, input.inspection?.snapshotAfter?.snapshotId ?? null),
-  );
+  // No clock reading passed in: each command carries the moment it really started, so
+  // these copies inside the ending line say the same thing as the lines written while
+  // the run was still walking. DSP-145: each agent's command says whether the run ended
+  // on the code it left.
+  const commands: readonly RecordedCommand[] =
+    input.inspection === null ? [] : recordedCommandsAtEnd(input.inspection);
   const outcome = runOutcomeFrom({
     commands,
     status: input.result?.status ?? null,

@@ -215,8 +215,36 @@ export function recordedCommandFrom(
           `standard output and ${String(err.cutChars)} of standard error were cut from the ` +
           `beginning. What is kept is the end of each stream, which is where a failing ` +
           `command says why.`,
-    snapshotAfterId,
+    snapshotAfterId: snapshotAfterId ?? command.afterRunSnapshotId ?? null,
+    // DSP-145: who asked for it, and the code it ran on and left, per command.
+    ...(command.requestedBy === undefined ? {} : { requestedBy: command.requestedBy }),
+    ...(command.nodeId === undefined ? {} : { nodeId: command.nodeId }),
+    ...(command.occurrence === undefined ? {} : { occurrence: command.occurrence }),
+    ...(command.testedSnapshotId === undefined ? {} : { testedSnapshotId: command.testedSnapshotId }),
+    ...(command.afterRunSnapshotId === undefined ? {} : { afterRunSnapshotId: command.afterRunSnapshotId }),
+    ...(command.changedWhileRunning === undefined
+      ? {}
+      : { changedWhileRunning: command.changedWhileRunning }),
+    ...(command.originNote === undefined ? {} : { originNote: command.originNote }),
   };
+}
+
+/**
+ * The run's commands as its ending line records them (DSP-145): each as
+ * {@link recordedCommandFrom} keeps it, and each agent's or provider-reported command with
+ * `currentAtEnd` - whether the run ended on exactly the working folders it left. `null`
+ * where either side was not observed. A gate's record is unchanged.
+ */
+export function recordedCommandsAtEnd(inspection: LiveInspection): RecordedCommand[] {
+  const finalId = inspection.finalSnapshotId ?? null;
+  return inspection.commands.map((command) => {
+    const recorded = recordedCommandFrom(command, inspection.snapshotAfter?.snapshotId ?? null);
+    if (command.requestedBy === undefined || command.requestedBy === 'gate') {
+      return recorded;
+    }
+    const after = command.afterRunSnapshotId ?? null;
+    return { ...recorded, currentAtEnd: finalId === null || after === null ? null : after === finalId };
+  });
 }
 
 /**

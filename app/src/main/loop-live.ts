@@ -22,11 +22,13 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import type { AgentAdapter } from '../adapter/agent-adapter';
 import type {
+  AgentCommandRecord,
   AgentEvent,
   DspatchSessionId,
   ProviderId,
@@ -50,12 +52,6 @@ import {
   type TreeSnapshot,
 } from './experiment-repo';
 import { snapshotIdFor } from './workspace-baseline';
-import {
-  stopPosixProcessGroup,
-  treeSpawnOptions,
-  type KillFunction,
-  type StoppableChild,
-} from './process-tree';
 import { undeclaredOutcomeOf, type LoopNode, type StepLimits } from '../shared/loop-graph';
 import {
   carriesRunChange,
@@ -71,6 +67,13 @@ import {
   undeclaredReadableOutcome,
 } from '../shared/loop-chat';
 import { describeToolActivity, type StepActivity } from '../shared/loop-activity';
+import type { CommandNotStarted } from '../shared/loop-record';
+import {
+  describeApprovalRule,
+  describeRecordedCommands,
+  successRoutesOf,
+  type CommandEvidenceEntry,
+} from '../shared/loop-results';
 import {
   describeGateEvidenceRule,
   describeGateResult,
@@ -85,7 +88,6 @@ import {
   workingRootsFrom,
   type WorkingRoot,
 } from '../shared/working-roots';
-import type { CommandNotStarted } from '../shared/loop-record';
 import type {
   StepContext,
   StepExecution,
@@ -93,8 +95,25 @@ import type {
   StepNote,
   StepProduct,
 } from '../shared/loop-run';
-import { explainUnstartableCommand } from './command-start';
-import { checkRunRequest, describeShell } from './test-command';
+import {
+  DEFAULT_GATE_COMMAND_TIMEOUT_MS,
+  finishCommand,
+  runWorkspaceCommand,
+  toLiveCommandRecord,
+  type LiveCommandRecord,
+} from './workspace-command';
+
+// Moved to `workspace-command.ts` (DSP-145) and re-exported, so every existing caller
+// and test keeps its import.
+export {
+  commandNotRun,
+  DEFAULT_GATE_COMMAND_TIMEOUT_MS,
+  describeBound,
+  describeStoppedCommand,
+  gateCommandSpawnOptions,
+  killCommandTree,
+  type GateCommandKillDeps,
+} from './workspace-command';
 
 /** The prompt DSP-1 already measured against this generated repository. */
 export const LIVE_DURATION_PROMPT =
@@ -112,54 +131,7 @@ export const DEFAULT_LIVE_MODEL = 'composer-2';
 /** When a node has no `maxMinutes`, still refuse to wait forever. */
 export const FALLBACK_DEADLINE_MS = 20 * 60_000;
 
-export interface LiveCommandRecord {
-  readonly command: string;
-  /**
-   * The command line as a person would type it, without the shell prefix `command` carries.
-   *
-   * DSP-45 #4 asks the record to show the command *exactly as it ran*, and `command` does
-   * that â€” it is `cmd.exe /d /s /c cmake --build build`, which is literally what was
-   * started. What it does not show is the line itself, which is the part a person reads,
-   * compares with their field and retypes in a terminal. Both, rather than a choice
-   * between them.
-   *
-   * Optional and `null` for a command spawned without a shell, where there is no prefix to
-   * separate and the two would be the same string.
-   */
-  readonly line?: string | null;
-  readonly cwd: string;
-  readonly exitCode: number | null;
-  readonly signal: string | null;
-  readonly durationMs: number;
-  /**
-   * When the command was **started**, not when anybody heard about it.
-   *
-   * Carried on the record rather than taken from the clock by whoever writes it
-   * down. Both callers used to supply their own "now": `main.ts` at the moment the
-   * command settled, and `closeChatLoopRecord` at the moment the record was closed,
-   * which is later still â€” so `RecordedCommand.startedAtUtc` was a start time in
-   * name only and `durationMs` could not recover the real one from either. DSP-27
-   * is about to draw a timeline from this field.
-   */
-  readonly startedAtUtc: string;
-  readonly stdout: string;
-  readonly stderr: string;
-  /**
-   * Why no process ran, or `null` when one did.
-   *
-   * Its own field rather than an exit code, because an exit code is a statement
-   * about the project's tests and this is a statement about DSpatch. The first
-   * real chat-loop run reported "tests failed" for a C++ project it had never
-   * tested, because "there was nothing to run" arrived here as `exitCode: 1`.
-   *
-   * A kind and a message rather than a bare sentence, because DSP-26 #2 needs
-   * "there was nothing configured to run" and "there was a command and it could
-   * not be started" told apart, and two booleans that have to agree eventually
-   * disagree. `null` still means a process ran, so a fixture or a caller that
-   * writes `notRun: null` keeps its old meaning exactly.
-   */
-  readonly notRun: CommandNotStarted | null;
-}
+export type { LiveCommandRecord } from './workspace-command';
 
 export interface LiveSnapshotRef {
   readonly snapshotId: string;
@@ -229,6 +201,12 @@ export interface LiveInspection {
    * as Cursor.
    */
   provider: ProviderId | null;
+  /**
+   * DSP-145: every working folder's identity (one id over all of them) as the latest
+   * step left them, in the same terms as a command's `afterRunSnapshotId`. `null` or
+   * absent where not observed - never "unchanged".
+   */
+  finalSnapshotId?: string | null;
 }
 
 /**
@@ -604,6 +582,173 @@ function differingRoots(
 }
 
 /**
+ * One identity for every working folder's snapshot (DSP-145): the folder's own id where
+ * there is one folder, a digest over every folder's path and id otherwise. `null` where
+ * nothing was observed.
+ */
+export function combinedSnapshotId(ids: ReadonlyMap<string, string> | null): string | null {
+  if (ids === null || ids.size === 0) {
+    return null;
+  }
+  if (ids.size === 1) {
+    return [...ids.values()][0] ?? null;
+  }
+  const hash = createHash('sha256');
+  for (const [root, id] of [...ids].sort(([left], [right]) => left.localeCompare(right))) {
+    hash.update(`${root}\u0000${id}\u0000`);
+  }
+  return `roots-${hash.digest('hex').slice(0, 32)}`;
+}
+
+/** A command this run recorded, with what the approval rule needs of it (DSP-145). */
+interface RecordedStepCommand {
+  readonly record: LiveCommandRecord;
+  /** It ran to an exit of its own: not refused, not unstartable, not stopped. */
+  readonly completed: boolean;
+  /** Every folder's id just after it ended, or `null` where not observed. */
+  readonly after: ReadonlyMap<string, string> | null;
+}
+
+/** What a provider-reported command's record says about its own origin (DSP-145, B5). */
+export const PROVIDER_REPORTED_NOTE =
+  'Run by the provider with its own shell tool, not by DSpatch: DSpatch did not start or ' +
+  'stop it and knows only what the provider reported. DSpatch took its snapshots when it ' +
+  'observed the provider\'s start and finish events, so they approximate the code the ' +
+  'command saw. The provider does not report a working directory; the session\'s folder ' +
+  'is shown.';
+
+function recordOf(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function folderChange(
+  before: ReadonlyMap<string, string> | null,
+  after: ReadonlyMap<string, string> | null,
+): boolean | null {
+  return before === null || after === null ? null : differingRoots(before, after).length > 0;
+}
+
+/** An agent's command, from DSpatch's own record of it (`command.finished`). */
+function agentCommandEntry(
+  record: AgentCommandRecord,
+  nodeId: string,
+  occurrence: number,
+  before: ReadonlyMap<string, string> | null,
+  after: ReadonlyMap<string, string> | null,
+): RecordedStepCommand {
+  const notRun: CommandNotStarted | null =
+    record.ending === 'exited'
+      ? null
+      : {
+          kind:
+            record.ending === 'could-not-start'
+              ? 'could-not-start'
+              : record.ending === 'refused'
+                ? 'no-command-configured'
+                : 'did-not-finish',
+          message: record.endingMessage ?? `The command ended as "${record.ending}".`,
+        };
+  return {
+    record: {
+      command: `${record.shell} ${record.line}`,
+      line: record.line,
+      cwd: record.cwd,
+      exitCode: record.exitCode,
+      signal: record.signal,
+      durationMs: record.durationMs,
+      startedAtUtc: record.startedAtUtc,
+      stdout: record.stdout,
+      stderr: record.stderr,
+      notRun,
+      requestedBy: 'agent-tool',
+      nodeId,
+      occurrence,
+      testedSnapshotId: combinedSnapshotId(before),
+      afterRunSnapshotId: combinedSnapshotId(after),
+      changedWhileRunning: folderChange(before, after),
+      ending: record.ending,
+    },
+    completed: record.ending === 'exited',
+    after,
+  };
+}
+
+/** A command the provider reported running with its own shell tool (DSP-145, B5). */
+function providerReportedEntry(
+  event: Extract<AgentEvent, { type: 'tool.finished' }>,
+  nodeId: string,
+  occurrence: number,
+  cwd: string,
+  started: { readonly ids: ReadonlyMap<string, string> | null; readonly atUtc: string } | undefined,
+  after: ReadonlyMap<string, string> | null,
+): RecordedStepCommand {
+  const raw = recordOf(event.rawProviderEvent);
+  const args = recordOf(raw['args']);
+  const value = recordOf(recordOf(raw['result'])['value']);
+  const line =
+    typeof args['command'] === 'string' ? args['command'] : '(a shell command the provider did not describe)';
+  const exitCode = typeof value['exitCode'] === 'number' ? value['exitCode'] : null;
+  const startedAtUtc = started?.atUtc ?? event.at;
+  const took =
+    typeof value['executionTime'] === 'number'
+      ? value['executionTime']
+      : Math.max(0, Date.parse(event.at) - Date.parse(startedAtUtc));
+  const before = started?.ids ?? null;
+  return {
+    record: {
+      command: line,
+      line,
+      cwd,
+      exitCode,
+      signal: null,
+      durationMs: Number.isFinite(took) ? took : 0,
+      startedAtUtc,
+      stdout: typeof value['stdout'] === 'string' ? value['stdout'] : '',
+      stderr: typeof value['stderr'] === 'string' ? value['stderr'] : '',
+      notRun:
+        exitCode !== null
+          ? null
+          : {
+              kind: 'did-not-finish',
+              message:
+                `The provider reported this command${event.status === 'error' ? ' as failed' : ''} ` +
+                'without an exit code, so how it ended is not established.',
+            },
+      requestedBy: 'provider-reported',
+      nodeId,
+      occurrence,
+      testedSnapshotId: combinedSnapshotId(before),
+      afterRunSnapshotId: combinedSnapshotId(after),
+      changedWhileRunning: folderChange(before, after),
+      originNote: PROVIDER_REPORTED_NOTE,
+    },
+    completed: exitCode !== null,
+    after,
+  };
+}
+
+/** How a recorded command ended, in the words a later step reads. */
+function endedInWords(record: LiveCommandRecord): string {
+  if (record.notRun === null) {
+    return `exit code ${record.exitCode === null ? 'none' : String(record.exitCode)}` +
+      (record.signal === null ? '' : ` (signal ${record.signal})`);
+  }
+  switch (record.notRun.kind) {
+    case 'could-not-start':
+      return 'could not start';
+    case 'no-command-configured':
+      return 'not run (DSpatch declined it)';
+    case 'did-not-finish':
+      return record.requestedBy === 'provider-reported'
+        ? 'no exit code reported'
+        : 'stopped before it finished';
+  }
+}
+
+/** How long a timed-out step waits for a running command's record (DSP-145, B2). */
+export const COMMAND_RECORD_WAIT_MS = 15_000;
+
+/**
  * What DSpatch knows about which code a gate's command ran against (DSP-139).
  *
  * `tested` is `null` where that was not observed: a run that does not hash its working
@@ -691,6 +836,7 @@ export function emptyInspection(
     providerSessionId: null,
     sessions: [],
     provider,
+    finalSnapshotId: null,
   };
 }
 
@@ -804,89 +950,6 @@ export function refuseLiveWorkingRoots(
   };
 }
 
-/**
- * How long a gate command may run before DSpatch stops it and says so.
- *
- * A bound rather than a guess at how long a build takes: fifteen minutes is longer
- * than any build or suite this product has been pointed at, and the point of the
- * number is that there is one. Before there was, a command that never returned
- * held the run open with no ending and no record of why â€” the same user-visible
- * failure as the hung gate W2 closed, reached by a different route and not closed
- * by W2's fix.
- */
-export const DEFAULT_GATE_COMMAND_TIMEOUT_MS = 15 * 60_000;
-
-/**
- * A bound in the largest unit that does not round it away.
- *
- * `Math.round(ms / 60_000)` was the whole of this, and below thirty seconds it
- * produced *"still running after 0 minutes"* â€” a sentence saying the command ran for
- * no time at all. Harmless at today's fifteen-minute default and not reachable from
- * the UI, but the plan is for this bound to become a per-node budget owned by the
- * graph editor, and the first person to draw a 45-second gate budget would read it.
- */
-export function describeBound(ms: number): string {
-  if (ms < 1000) {
-    // Not "0 seconds", and not rounded up to one either: the number is smaller than
-    // the smallest unit worth printing, so say that instead of naming a duration.
-    return 'less than a second';
-  }
-  if (ms < 60_000) {
-    const seconds = Math.round(ms / 1000);
-    return `${String(seconds)} second${seconds === 1 ? '' : 's'}`;
-  }
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 60) {
-    return `${String(minutes)} minute${minutes === 1 ? '' : 's'}`;
-  }
-  const hours = ms / 3_600_000;
-  const rounded = Math.round(hours * 10) / 10;
-  return `${String(rounded)} hour${rounded === 1 ? '' : 's'}`;
-}
-
-/**
- * What DSpatch says about a command it stopped for outrunning its bound.
- *
- * **It says what it asked for, not what it achieved.** The previous wording was
- * *"so DSpatch stopped it"*, unconditionally, and the Verifier of this run measured
- * what that costs: it made a descendant survive â€” a hanging child that had spawned a
- * launcher which exited, the shape of every tool that starts a daemon or a compile
- * server and returns â€” and confirmed with `Get-Process` that the process was still
- * alive and still ticking a heartbeat file *after* DSpatch had written that sentence.
- * In the case where the tree really died, the message was byte-identical. A statement
- * that is the same whether or not it is true is not evidence, and this product's whole
- * argument is that its records are.
- *
- * `killCommandTree` cannot justify the old claim either: it spawns `taskkill` and
- * never reads its exit code, deliberately, because a kill that failed must not stop
- * the run from reporting the fact the person actually needs. So the honest sentence
- * is the one the gate's own outer backstop forty lines below already writes â€” the
- * command *may still be running: check for it before starting another run* â€” and this
- * is that sentence, with the reason it may still be running named.
- *
- * Containing the tree properly (a Windows Job Object) is DSP-34 and is not this.
- */
-export function describeStoppedCommand(input: {
-  readonly timeoutMs: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}): string {
-  const silent = input.stdout.trim() === '' && input.stderr.trim() === '';
-  return (
-    `The command was still running after ${describeBound(input.timeoutMs)}, so DSpatch asked ` +
-    `the operating system to stop it and the children it could find. Whether every process is ` +
-    `gone is not something DSpatch can see: one started through an intermediate that has ` +
-    `already exited is not reached, so the command may still be running â€” check for it before ` +
-    `starting another run. Nothing is known about whether your project builds or its tests ` +
-    `pass â€” this is not a test failure and not a pass. ` +
-    (silent
-      ? 'It printed nothing at all before it was stopped, which on Windows is what a command ' +
-        'waiting on a hidden dialog looks like: check that the Command field holds something ' +
-        'the shell runs rather than something Windows opens.'
-      : 'What it printed before it was stopped is kept below.')
-  );
-}
-
 export function runNodeProjectTest(workspacePath: string): Promise<LiveCommandRecord> {
   const args = ['--test', 'test/duration.test.ts'];
   const startedAt = Date.now();
@@ -924,262 +987,23 @@ export function runNodeProjectTest(workspacePath: string): Promise<LiveCommandRe
  * fallback to the suggestion: falling back would reintroduce the defect, and the
  * empty field is precisely the case where there is no suggestion to fall back to.
  */
-/**
- * A command record for a command that never started, because DSpatch declined to start it.
- *
- * `no-command-configured` rather than `could-not-start`, and the distinction is the whole
- * point of the kind existing: nothing broke, nothing half-happened, and no process was
- * spawned. DSP-44 routes exactly this kind as a gate verdict the graph can carry, so a run
- * that declined to run something ends at a step saying nothing was checked instead of
- * asking a person to reconcile a machine that is working correctly.
- *
- * Exported because DSP-45 adds a second reason to arrive here â€” a proposed command the
- * user has not confirmed â€” and two functions building this shape separately would
- * eventually build it differently.
- */
-export function commandNotRun(
-  command: string,
-  cwd: string,
-  message: string,
-): LiveCommandRecord {
-  const line = command.trim();
-  return {
-    command: line,
-    line: line === '' ? null : line,
-    cwd: cwd.trim(),
-    // No process, so no exit code. Inventing one here is precisely the defect that told
-    // Niclas his C++ tests had failed.
-    exitCode: null,
-    signal: null,
-    durationMs: 0,
-    startedAtUtc: new Date().toISOString(),
-    stdout: '',
-    stderr: '',
-    notRun: { kind: 'no-command-configured', message },
-  };
-}
-
 export function runConfiguredProjectTest(
   command: string,
   cwd: string,
   timeoutMs: number | null = DEFAULT_GATE_COMMAND_TIMEOUT_MS,
+  /** DSP-145: the walk's own stop; aborting stops the command and its children. */
+  signal?: AbortSignal,
 ): Promise<LiveCommandRecord> {
-  const line = command.trim();
-  const check = checkRunRequest(command, cwd);
-  if (!check.ok) {
-    return Promise.resolve(
-      commandNotRun(
-        command,
-        cwd,
-        check.message ?? 'DSpatch could not use the command field, and gave no reason.',
-      ),
-    );
-  }
-  const resolvedCwd = path.resolve(cwd.trim());
-  const startedAt = Date.now();
-  const child = spawn(line, gateCommandSpawnOptions(resolvedCwd));
-  return finishCommand(child, `${describeShell()} ${line}`, resolvedCwd, startedAt, line, timeoutMs);
-}
-
-/**
- * How the gate's command is spawned: through the shell, with this process's
- * environment, and on POSIX as the leader of its own process group so that the
- * timeout's stop reaches what the shell started (`process-tree.ts`). Process
- * group on POSIX; not measured on Linux. On Windows the options are exactly what
- * they were before.
- */
-export function gateCommandSpawnOptions(
-  cwd: string,
-  platform: NodeJS.Platform = process.platform,
-): { cwd: string; shell: true; windowsHide: true; env: NodeJS.ProcessEnv; detached?: true } {
-  return { cwd, shell: true, windowsHide: true, env: process.env, ...treeSpawnOptions(platform) };
-}
-
-/** What {@link killCommandTree} needs from the world, injected so it can be tested. */
-export interface GateCommandKillDeps {
-  readonly platform: NodeJS.Platform;
-  /** The gate does not wait for `taskkill`: it fires it and listens only for `error`. */
-  readonly spawn: (
-    command: string,
-    args: string[],
-    options: { windowsHide: boolean; stdio: 'ignore' },
-  ) => { on(event: 'error', listener: (err: Error) => void): unknown };
-  /** Defaults to `process.kill`. */
-  readonly kill?: KillFunction;
-}
-
-/**
- * Stop a command that outran its bound, and take its children with it.
- *
- * `taskkill /T /F` rather than `child.kill()` on Windows, because the gate spawns
- * through `cmd.exe`: killing the shell leaves whatever it started running, and the
- * whole reason this function exists is a case where the shell had handed the work
- * to something else. Best effort â€” a kill that fails must not stop the run from
- * reporting that the command did not finish, which is the fact the person needs.
- */
-export function killCommandTree(
-  child: StoppableChild,
-  deps: GateCommandKillDeps = { platform: process.platform, spawn },
-): void {
-  const pid = child.pid;
-  if (pid === undefined) {
-    return;
-  }
-  try {
-    if (deps.platform === 'win32') {
-      deps.spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
-        windowsHide: true,
-        stdio: 'ignore',
-      }).on('error', () => {
-        // Nothing to do: the record already says the command did not finish.
-      });
-    } else {
-      // The process group the command leads (`gateCommandSpawnOptions`), so this
-      // reaches what `sh` started, not `sh` alone; the shell by itself only if the
-      // group cannot be signalled. Process group on POSIX; not measured on Linux.
-      // A DSpatch crash or Ctrl+C in the dev terminal does not reach the detached
-      // group, and a descendant that calls `setsid` escapes it.
-      stopPosixProcessGroup(child, deps.kill);
-    }
-  } catch {
-    // Same. A process that could not be killed is reported, not hidden.
-  }
-}
-
-/**
- * Wait for a spawned command, and survive one that never starts.
- *
- * **The `error` listener is not decoration.** Until it was added this function
- * listened for `close` alone. The Verifier of run `20260917-182500-gate18`
- * measured what that costs: a working directory that does not exist at spawn time
- * makes Node emit `error` even with `shell: true`, because it cannot start
- * `cmd.exe` in a missing directory â€” and with nothing listening that became an
- * **uncaught exception in the Electron main process** while this promise never
- * settled, so the gate never returned and the whole run hung. A run that cannot
- * start its command has to report that it cannot start its command.
- *
- * Both listeners stay registered and a settled flag decides, rather than one
- * listener being removed by the other: `error` and `close` can both fire, and the
- * first honest answer is the one to keep.
- */
-function finishCommand(
-  child: ReturnType<typeof spawn>,
-  command: string,
-  cwd: string,
-  startedAt: number,
-  /**
-   * The user's own line, without the shell prefix `command` carries for display.
-   *
-   * Separate because `command` reads `cmd.exe /d /s /c npm test`, whose first word
-   * always exists â€” resolving *that* would answer a question nobody asked and
-   * would quietly turn the check below into a no-op. `null` for a command spawned
-   * without a shell, where a missing executable already arrives as `error`.
-   */
-  rawLine: string | null,
-  /**
-   * How long the command may run, or `null` for no bound.
-   *
-   * Owned here rather than raced by the caller, because the caller holds a promise
-   * and this function holds the child: only this side can stop the process. A race
-   * upstream would report the timeout honestly and leave the command running.
-   */
-  timeoutMs: number | null,
-): Promise<LiveCommandRecord> {
-  const startedAtUtc = new Date(startedAt).toISOString();
-  let stdout = '';
-  let stderr = '';
-  child.stdout?.on('data', (chunk: Buffer) => {
-    stdout += chunk.toString('utf8');
-  });
-  child.stderr?.on('data', (chunk: Buffer) => {
-    stderr += chunk.toString('utf8');
-  });
-  return new Promise((resolve) => {
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const settle = (partial: LiveCommandRecord): void => {
-      // The user's own line, added on every path out of this function rather than at each
-      // of the four `settle` calls, so a record cannot be written without it by someone
-      // adding a fifth.
-      const record: LiveCommandRecord = { ...partial, line: rawLine };
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (timer !== null) {
-        clearTimeout(timer);
-      }
-      resolve(record);
-    };
-    if (timeoutMs !== null) {
-      timer = setTimeout(() => {
-        killCommandTree(child);
-        settle({
-          command,
-          cwd,
-          // A stopped command has no exit code of its own. `signal` is left null
-          // because on Windows there is none: `taskkill /T /F` ends the tree with
-          // an ordinary exit code, so DSpatch's own record of having *asked* for the
-          // stop is the only evidence there is â€” the same reason `evaluateTestVerdict`
-          // checks `killedByDspatch` first, and the reason the message below claims
-          // the request rather than the result.
-          exitCode: null,
-          signal: null,
-          durationMs: Date.now() - startedAt,
-          startedAtUtc,
-          stdout,
-          stderr,
-          notRun: {
-            kind: 'did-not-finish',
-            message: describeStoppedCommand({ timeoutMs, stdout, stderr }),
-          },
-        });
-      }, timeoutMs);
-      timer.unref?.();
-    }
-    child.on('error', (error: Error) => {
-      settle({
-        command,
-        cwd,
-        // Not a fabricated code. There was no process, so there is no exit code,
-        // and `null` is the only true value â€” inventing one here is precisely the
-        // defect that told Niclas his C++ tests had failed.
-        exitCode: null,
-        signal: null,
-        durationMs: Date.now() - startedAt,
-        startedAtUtc,
-        stdout,
-        stderr,
-        notRun: {
-          kind: 'could-not-start',
-          message:
-            `DSpatch could not start the command in ${cwd}: ${error.message} The most ` +
-            `common cause is that the working directory no longer exists. Nothing ran, ` +
-            `so nothing about your project was checked.`,
-        },
-      });
-    });
-    child.on('close', (code, signal) => {
-      // Consulted only after a non-zero exit, and never allowed to stop a command
-      // from running. See `command-start.ts` for why this is the only honest and
-      // locale-safe way to tell a mistyped command from a failing test suite.
-      const unstartable =
-        rawLine === null
-          ? null
-          : explainUnstartableCommand({ line: rawLine, cwd, exitCode: code, stderr });
-      settle({
-        command,
-        cwd,
-        exitCode: code,
-        signal: signal === null ? null : String(signal),
-        durationMs: Date.now() - startedAt,
-        startedAtUtc,
-        stdout,
-        stderr,
-        notRun: unstartable === null ? null : { kind: 'could-not-start', message: unstartable },
-      });
-    });
-  });
+  // The shared runner (DSP-145), with no output bound and no snapshots: the gate's
+  // executor takes its own, and the record keeps exactly the shape it always had.
+  return runWorkspaceCommand({
+    line: command,
+    cwd,
+    requestedBy: 'gate',
+    timeoutMs,
+    ...(signal === undefined ? {} : { signal }),
+    maxOutputChars: null,
+  }).then(toLiveCommandRecord);
 }
 
 /**
@@ -1348,6 +1172,8 @@ function waitForTurn(
       event.type === 'assistant.delta' ||
       event.type === 'tool.started' ||
       event.type === 'tool.finished' ||
+      event.type === 'command.started' ||
+      event.type === 'command.finished' ||
       event.type === 'approval.requested'
     ) {
       onActivity?.(event);
@@ -1583,6 +1409,100 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
           `folder is now snapshot ${working}.`;
   };
 
+  /**
+   * Every command this run recorded, in order (DSP-145): gates', agents' through DSpatch's
+   * command tool, and the provider's own reported shell commands. Kept here because the
+   * approval rule and the check's evidence compare their after-run snapshots with the
+   * working folders, and only the executor took those snapshots.
+   */
+  const runCommands: RecordedStepCommand[] = [];
+  const takeCommand = (entry: RecordedStepCommand): void => {
+    runCommands.push(entry);
+    inspection.commands.push(entry.record);
+    options.onCommand?.(entry.record);
+  };
+  /** The run's first look at every folder, or `null` where any was not observed. */
+  const originIds = (): ReadonlyMap<string, string> | null => {
+    const ids = new Map<string, string>();
+    const first = inspection.snapshotBefore;
+    if (first === null) {
+      return null;
+    }
+    ids.set(inspection.workspacePath, first.snapshotId);
+    for (const root of inspection.roots) {
+      if (root.snapshotBefore === null) {
+        return null;
+      }
+      ids.set(root.path, root.snapshotBefore.snapshotId);
+    }
+    return ids;
+  };
+  /**
+   * Why a success verdict does not stand, or `null` where it does (DSP-145; DSP-139's
+   * gate rule, generalised; review B3). It stands when a command recorded in this run
+   * completed on exactly these working folders - every folder - or when the run has
+   * changed no file. Unobserved is never unchanged.
+   */
+  const approvalShortfall = (endIds: ReadonlyMap<string, string> | null): string | null => {
+    if (endIds === null) {
+      return (
+        'DSpatch is not reading the working folders’ content in this run, so it cannot tell ' +
+        'which code any command ran on, or whether the run changed anything.'
+      );
+    }
+    const origin = originIds();
+    if (origin !== null && differingRoots(origin, endIds).length === 0) {
+      return null;
+    }
+    if (
+      runCommands.some(
+        (entry) => entry.completed && entry.after !== null && differingRoots(entry.after, endIds).length === 0,
+      )
+    ) {
+      return null;
+    }
+    const completed = runCommands.filter((entry) => entry.completed);
+    const last = completed[completed.length - 1];
+    if (last === undefined) {
+      return (
+        'No command completed in this run - none was run, or none ran to an exit of its own - ' +
+        'and the run has changed files.'
+      );
+    }
+    const changed = last.after === null ? [] : differingRoots(last.after, endIds);
+    return (
+      `The last command that completed, ${last.record.line ?? last.record.command} ` +
+      `("${last.record.nodeId ?? 'a step'}"${(last.record.occurrence ?? 1) === 1 ? '' : ` visit ${String(last.record.occurrence)}`}), ` +
+      `left the working folders at ${last.record.afterRunSnapshotId ?? 'a state DSpatch did not observe'}; ` +
+      `they are now ${combinedSnapshotId(endIds) ?? 'not observed'}` +
+      (changed.length > 1 || (changed.length === 1 && changed[0] !== inspection.workspacePath)
+        ? ` (changed: ${changed.join(', ')}).`
+        : '.')
+    );
+  };
+  const evidenceEntry = (
+    entry: RecordedStepCommand,
+    now: ReadonlyMap<string, string> | null,
+  ): CommandEvidenceEntry => ({
+    nodeId: entry.record.nodeId ?? '(unknown step)',
+    occurrence: entry.record.occurrence ?? 1,
+    requestedBy: entry.record.requestedBy ?? 'gate',
+    line: entry.record.line ?? entry.record.command,
+    cwd: entry.record.cwd,
+    ended: endedInWords(entry.record),
+    durationMs: entry.record.durationMs,
+    afterRunSnapshotId: entry.record.afterRunSnapshotId ?? null,
+    standing:
+      now === null || entry.after === null
+        ? 'not-observed'
+        : differingRoots(entry.after, now).length === 0
+          ? 'current'
+          : 'stale',
+    changedWhileRunning: entry.record.changedWhileRunning ?? null,
+    stdout: entry.record.stdout,
+    stderr: entry.record.stderr,
+  });
+
   const remember = (context: StepContext, execution: StepExecution): StepExecution => {
     completed.set(`${context.node.id}:${String(context.occurrence)}`, execution);
     return execution;
@@ -1674,8 +1594,6 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
               },
             }
           : raced;
-      inspection.commands.push(command);
-      options.onCommand?.(command);
       // The state the command ran against, before it is overwritten below.
       //
       // DSP-45 #5. Not a second snapshot taken for this: the run's `snapshotAfter` at the
@@ -1739,6 +1657,23 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
                     'is not what it left behind.'
                   : null,
       });
+      // DSP-145: the gate's record, with who asked and the code it ran on and left, in the
+      // same terms as an agent's commands, so one rule reads them all.
+      takeCommand({
+        record: {
+          ...command,
+          requestedBy: 'gate',
+          nodeId: node.id,
+          occurrence: context.occurrence,
+          testedSnapshotId: combinedSnapshotId(testedIds),
+          afterRunSnapshotId: hashRoots ? combinedSnapshotId(afterIds) : null,
+          changedWhileRunning:
+            command.notRun !== null ? null : folderChange(testedIds, hashRoots ? afterIds : null),
+        },
+        completed: command.notRun === null,
+        after: hashRoots ? afterIds : null,
+      });
+      inspection.finalSnapshotId = hashRoots ? combinedSnapshotId(afterIds) : null;
       const selfModified =
         changedWhileChecking === true
           ? ` This command changed the working copy while it ran (${ranAgainst?.snapshotId ?? 'unknown'} ` +
@@ -1955,7 +1890,45 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       occurrence: context.occurrence,
     };
     const emit = options.onStepActivity;
+    // DSP-145: the commands this step's agent ran, as DSpatch observed them - its own
+    // record from DSpatch's command tool, or the provider's report of its own shell tool -
+    // with every folder's snapshot taken when the start and the end were observed.
+    const commandStarts = new Map<
+      string,
+      { readonly ids: ReadonlyMap<string, string> | null; readonly atUtc: string }
+    >();
+    const idsNow = (): ReadonlyMap<string, string> | null =>
+      hashRoots ? snapshotIdsOf(snapshotEveryRoot(inspection, true)) : null;
+    const observeCommand = (event: AgentEvent): void => {
+      if (event.type === 'command.started') {
+        commandStarts.set(event.commandId, { ids: idsNow(), atUtc: event.at });
+        return;
+      }
+      if (event.type === 'command.finished') {
+        const started = commandStarts.get(event.command.commandId);
+        commandStarts.delete(event.command.commandId);
+        takeCommand(agentCommandEntry(event.command, node.id, context.occurrence, started?.ids ?? null, idsNow()));
+        return;
+      }
+      if (event.type === 'tool.started' && event.name === 'shell') {
+        commandStarts.set(`shell:${event.toolCallId}`, { ids: idsNow(), atUtc: event.at });
+        return;
+      }
+      if (event.type === 'tool.finished' && event.name === 'shell') {
+        const key = `shell:${event.toolCallId}`;
+        const started = commandStarts.get(key);
+        commandStarts.delete(key);
+        takeCommand(
+          providerReportedEntry(event, node.id, context.occurrence, options.workspacePath, started, idsNow()),
+        );
+      }
+    };
+    const commandRunning = (): boolean => [...commandStarts.keys()].some((key) => !key.startsWith('shell:'));
     const turn = waitForTurn(options.adapter, openSession.dspatchSessionId, (event) => {
+      observeCommand(event);
+      if (event.type === 'command.started' || event.type === 'command.finished') {
+        return;
+      }
       if (emit === undefined) {
         return;
       }
@@ -2047,6 +2020,14 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       staleBecause: staleAtStart[index] ?? null,
     }));
     const evidenceText = describeGateEvidenceRule(evidenceStandings, undeclaredOutcomeOf(node));
+    // DSP-145: for a step whose verdict can end the run in success, the commands this run
+    // recorded with their standing now, and the rule its verdict is held to.
+    const routes = successRoutesOf(context.graph, node);
+    const commandsText =
+      routes.length === 0
+        ? ''
+        : describeRecordedCommands(runCommands.map((entry) => evidenceEntry(entry, startIds)));
+    const approvalText = describeApprovalRule(routes, undeclaredOutcomeOf(node));
     const requiredText = describeRequiredResult(node, context.archive);
     // What this step was **actually** handed, not what its node declares (DSP-100). An
     // arriving edge can now decide the handover, so a step that receives an account of
@@ -2078,6 +2059,8 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       receivedText +
       evidenceText +
       changeText +
+      commandsText +
+      approvalText +
       requiredText;
     // Announced before `send`, because the interval this increment exists for is the
     // one *before* the first provider event â€” the few seconds, or minutes, where a
@@ -2119,6 +2102,8 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       ]);
     } catch (error) {
       const afterByRoot = snapshotEveryRoot(inspection, hashRoots);
+      // R3: the working folders as this step left them, on every path out of it.
+      inspection.finalSnapshotId = hashRoots ? combinedSnapshotId(snapshotIdsOf(afterByRoot)) : null;
       const after = workingCopyIn(inspection, afterByRoot);
       applyDiff(inspection, before, after);
       applyRootDiffs(inspection, beforeByRoot, afterByRoot);
@@ -2139,8 +2124,25 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       }
       options.abortSignal?.removeEventListener('abort', onAbort);
     }
+    if (timedOut && commandRunning()) {
+      // DSP-145 (B2): the adapter stops a running command on cancel and sends its record
+      // before the run's end. Wait for that end, bounded, so the record is this step's.
+      let recordTimer: ReturnType<typeof setTimeout> | null = null;
+      await Promise.race([
+        turn.finished,
+        new Promise<void>((resolve) => {
+          recordTimer = setTimeout(resolve, COMMAND_RECORD_WAIT_MS);
+          recordTimer.unref?.();
+        }),
+      ]);
+      if (recordTimer !== null) {
+        clearTimeout(recordTimer);
+      }
+    }
 
     const afterByRoot = snapshotEveryRoot(inspection, hashRoots);
+    // R3: the working folders as this step left them, on every path out of it.
+    inspection.finalSnapshotId = hashRoots ? combinedSnapshotId(snapshotIdsOf(afterByRoot)) : null;
     const after = workingCopyIn(inspection, afterByRoot);
     const diff = applyDiff(inspection, before, after);
     // Every root, not only the working copy. A step that read code in one root and
@@ -2224,48 +2226,68 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     }
 
     const declared = productFromAssistantText(node, turn.assistantText());
-    // DSP-139, the other half of the rule stated in `evidenceText`: a step handed a gate's
-    // result whose working folders were not the tested code when it started or ended, or
-    // could not be observed, does not get to turn that result into a success. Its own
-    // `whenUndeclared` outcome is recorded instead; a declared failure stands.
+    // DSP-145, the rule stated in `approvalText` (DSP-139's gate rule, generalised): a
+    // verdict that would end the run in success stands only on a command completed on
+    // these working folders, or on a run that changed nothing. Otherwise the node's own
+    // `whenUndeclared` is recorded instead; a declared failure, or a verdict that leads
+    // anywhere else, stands.
     const endIds = hashRoots ? snapshotIdsOf(afterByRoot) : null;
-    const staleAtEnd = handedGates.map((gate) => staleBecause(gate.evidence, endIds));
-    const stale = [...staleAtStart, ...staleAtEnd].some((reason) => reason !== null);
+    inspection.finalSnapshotId = combinedSnapshotId(endIds);
     let product: StepProduct = declared.product;
     let staleNote = '';
-    if (stale && (product.kind === 'outcome' || product.kind === 'success')) {
-      const fallback = undeclaredOutcomeOf(node);
-      const tested = handedGates
-        .map(
-          (gate) =>
-            `"${gate.nodeId}" visit ${String(gate.occurrence)} tested ` +
-            `${gate.evidence.testedSnapshotId ?? 'code DSpatch did not observe'}`,
-        )
-        .join('; ');
+    const declaredProduct = product;
+    const leadsToSuccess =
+      declaredProduct.kind === 'outcome'
+        ? routes.some((route) => route.outcome === declaredProduct.outcome)
+        : declaredProduct.kind === 'success' &&
+          (context.graph.edges ?? []).some(
+            (edge) =>
+              edge.from === node.id &&
+              edge.when.on === 'success' &&
+              context.graph.nodes.some(
+                (target) => target.id === edge.to && target.kind === 'terminal' && target.ending === 'success',
+              ),
+          );
+    const shortfall = leadsToSuccess ? approvalShortfall(endIds) : null;
+    if (shortfall !== null && (product.kind === 'outcome' || product.kind === 'success')) {
+      // R1: a whenUndeclared that itself ends the run in success cannot stand in for a
+      // result nobody established; it is treated as no fallback at all.
+      const declaredFallback = undeclaredOutcomeOf(node);
+      const fallbackIsSuccess =
+        declaredFallback !== null && routes.some((route) => route.outcome === declaredFallback);
+      const fallback = fallbackIsSuccess ? null : declaredFallback;
+      const handedStale = [...staleAtStart, ...handedGates.map((gate) => staleBecause(gate.evidence, endIds))]
+        .filter((reason): reason is string => reason !== null);
       const seen =
-        `The command result this step was given does not describe the working folders: ` +
-        `${tested}; the working folder was ${startIds?.get(inspection.workspacePath) ?? 'not observed'} ` +
-        `when the step started and ${endIds?.get(inspection.workspacePath) ?? 'not observed'} when it ended. ` +
-        [...new Set([...staleAtStart, ...staleAtEnd].filter((reason) => reason !== null))].join(' ');
+        `The command results recorded in this run do not describe the working folders as this ` +
+        `step left them: ${shortfall}` +
+        (handedStale.length === 0 ? '' : ` ${[...new Set(handedStale)].join(' ')}`);
       const said = product.kind === 'outcome' ? `"${product.outcome}"` : 'plain success';
       if (fallback === null) {
         product = {
           kind: 'runtime-fault',
           fault: 'no-outcome-delivered',
           detail:
-            `${seen} "${node.id}" declared ${said}, and this node names no outcome for a result ` +
-            `nobody established ("whenUndeclared"), so there is nothing honest to route on and ` +
-            `the run stops here. Anything changed is still in the working copy.`,
+            `${seen} "${node.id}" declared ${said}, and ` +
+            (fallbackIsSuccess
+              ? `this node's outcome for a result nobody established ("whenUndeclared": ` +
+                `"${String(declaredFallback)}") itself ends the run in success, so it cannot stand ` +
+                `in for that result; there is nothing honest to route on and the run stops here. `
+              : `this node names no outcome for a result nobody established ("whenUndeclared"), ` +
+                `so there is nothing honest to route on and the run stops here. `) +
+            `Anything changed is still in the working copy.`,
         };
-        staleNote = ` ${seen} No outcome recorded: the node has no whenUndeclared.`;
+        staleNote = fallbackIsSuccess
+          ? ` ${seen} No outcome recorded: the node's whenUndeclared is itself a success route.`
+          : ` ${seen} No outcome recorded: the node has no whenUndeclared.`;
       } else if (product.kind === 'outcome' && product.outcome === fallback) {
         staleNote = ` ${seen} The step itself declared "${fallback}", which stands.`;
       } else {
         product = { kind: 'outcome', outcome: fallback, source: 'verification-stale' };
         staleNote =
           ` ${seen} DSpatch recorded "${fallback}" (this node's whenUndeclared) instead of ` +
-          `${said}, because a test result about one version of the code is not evidence ` +
-          `about another.`;
+          `${said}, because a result about one version of the code is not evidence about ` +
+          `another, and a completed command shows only that it ran on that code.`;
       }
     }
     const corroboration = describeSnapshotChange({
@@ -2372,11 +2394,21 @@ export function formatLiveInspection(inspection: LiveInspection): string {
     inspection.commands.length === 0
       ? '(none)'
       : inspection.commands
-          .map((command) =>
-            command.notRun === null
-              ? `${command.command}  exit=${String(command.exitCode)}  ${String(command.durationMs)}ms`
-              : `(${command.notRun.kind}: ${command.notRun.message})`,
-          )
+          .map((command) => {
+            // DSP-145: who asked for it, so a gate's command, one DSpatch ran for an agent
+            // and one the provider merely reported are not read as the same thing.
+            const origin =
+              command.requestedBy === 'agent-tool'
+                ? '[agent via DSpatch] '
+                : command.requestedBy === 'provider-reported'
+                  ? '[reported by provider] '
+                  : command.requestedBy === 'gate'
+                    ? '[gate] '
+                    : '';
+            return command.notRun === null
+              ? `${origin}${command.command}  exit=${String(command.exitCode)}  ${String(command.durationMs)}ms`
+              : `${origin}(${command.notRun.kind}: ${command.notRun.message})`;
+          })
           .join('\n            ');
   // One block per root, and the run-level lines below still describe the working copy.
   // A run with one root prints one root line and reads as it always did.

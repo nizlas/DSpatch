@@ -1489,7 +1489,7 @@ describe('a gate result as a handed-over body (DSP-139)', () => {
     );
     assert.match(current, /describes snapshot snap-a of the working folders and no other/);
     assert.match(current, /If the working folders are not that snapshot when this step ends/);
-    assert.match(current, /"could-not-check" whatever outcome you declare/);
+    assert.match(current, /"could-not-check" in place of any verdict that would end the run in success/);
     const stale = describeGateEvidenceRule(
       [{ nodeId: 'test', occurrence: 1, testedSnapshotId: 'snap-a', staleBecause: 'The working folder is now snapshot snap-b.' }],
       null,

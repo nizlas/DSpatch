@@ -164,7 +164,7 @@ describe('dspatch-chat-loop graph', () => {
     const check = graph.nodes.find((node) => node.id === 'check');
     assert.deepEqual(work?.outcomes, ['succeeded', 'unclear']);
     assert.deepEqual(check?.kind, 'agent');
-    assert.deepEqual(check?.outcomes, ['met', 'not-met', 'could-not-check']);
+    assert.deepEqual(check?.outcomes, ['met', 'rework', 'not-met', 'could-not-check']);
 
     const intoCheck = graph.edges.filter((edge) => edge.to === 'check');
     assert.deepEqual(
@@ -191,9 +191,11 @@ describe('dspatch-chat-loop graph', () => {
   it('routes each checking verdict to its own ending', () => {
     const graph = loadGraph('docs/loop/graphs/dspatch-chat-loop.graph.json');
     const check = graph.nodes.find((node) => node.id === 'check');
-    assert.deepEqual(check?.outcomes, ['met', 'not-met', 'could-not-check']);
+    assert.deepEqual(check?.outcomes, ['met', 'rework', 'not-met', 'could-not-check']);
+    // DSP-145: rework goes back to work with the check's findings.
     const expected: Record<string, string> = {
       met: 'done',
+      rework: 'work',
       'not-met': 'not-met',
       'could-not-check': 'not-established',
     };
@@ -236,8 +238,10 @@ describe('dspatch-chat-loop graph', () => {
   /** The bounds are guesses, and the file has to say so rather than imply a measurement. */
   it('raises its bounds and records that both numbers are guesses', () => {
     const graph = loadGraph('docs/loop/graphs/dspatch-chat-loop.graph.json');
-    assert.equal(graph.limits?.maxMinutes, 45);
-    assert.equal(graph.limits?.maxCalls, 5);
+    // DSP-145: two correction rounds, and room for three working turns that build and test.
+    assert.equal(graph.limits?.maxMinutes, 60);
+    assert.equal(graph.limits?.maxCalls, 7);
+    assert.equal(graph.limits?.maxReworkRounds, 2);
     assert.match(graph.limits?.note ?? '', /guess/i);
   });
 });
@@ -602,7 +606,7 @@ describe('describeSnapshotChange — corroboration, not a branch', () => {
 
 describe('declaredOutcomeFrom — a named verdict, or nothing readable', () => {
   const work = ['succeeded', 'unclear'];
-  const check = ['met', 'not-met', 'could-not-check'];
+  const check = ['met', 'rework', 'not-met', 'could-not-check'];
 
   it('reads a whole-line RESULT the node declared', () => {
     assert.equal(
@@ -820,7 +824,7 @@ describe('chatPromptFor', () => {
     assert.doesNotMatch(entryPrompt, /formatDuration/);
 
     const later = chatPromptFor(check, { entryId: graph.entry, mandate });
-    assert.match(later, /Establish whether the assignment was met/);
+    assert.match(later, /Establish independently whether the assignment was met/);
     assert.match(later, /RESULT: met/);
     assert.match(later, /RESULT: not-met/);
     assert.match(later, /RESULT: could-not-check/);
@@ -1210,7 +1214,7 @@ describe('chatPromptFor — the brief for an agent that has seen nothing', () =>
     assert.match(prompt, /Other steps of this run are other agents/);
     assert.match(prompt, /Mandate:/);
     assert.match(prompt, /Add a timeout to the retry helper/);
-    assert.match(prompt, /Establish whether the assignment was met/);
+    assert.match(prompt, /Establish independently whether the assignment was met/);
     // And it is told where to look for the handover, because the executor appends it
     // after this text and an agent reading top to bottom would not know it was coming.
     assert.match(prompt, /At the end of this message you will find what an earlier step left for you\./);
@@ -1222,7 +1226,7 @@ describe('chatPromptFor — the brief for an agent that has seen nothing', () =>
     // Order: who you are, then where things are, then what the run is for, then your
     // step — the same order the role preamble is placed for.
     assert.ok(prompt.indexOf('You have not seen') < prompt.indexOf('Mandate:'));
-    assert.ok(prompt.indexOf('Mandate:') < prompt.indexOf('Establish whether'));
+    assert.ok(prompt.indexOf('Mandate:') < prompt.indexOf('Establish independently whether'));
   });
 
   // DSP-79 left this out of a revisit as a repetition the session already held, and

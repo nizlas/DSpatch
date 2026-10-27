@@ -10,6 +10,8 @@
  */
 
 import type {
+  AgentCommandEnding,
+  AgentCommandRecord,
   AgentEventType,
   CapabilityReport,
   ProviderId,
@@ -1330,6 +1332,12 @@ export interface StoredMessage {
    * truth about those messages.
    */
   readonly resentContext: string | null;
+  /**
+   * DSP-145: the commands DSpatch's command tool ran for the agent in this turn, as
+   * DSpatch recorded them. Absent in files written before there was a command tool and
+   * in turns that ran none.
+   */
+  readonly commands?: readonly AgentCommandRecord[];
 }
 
 /**
@@ -1582,6 +1590,43 @@ export interface UiAgentEvent {
    * told" about that message rather than in general.
    */
   readonly resentContext?: string;
+  /**
+   * DSP-145: on `command.started` and `command.finished`, the command DSpatch's tool ran
+   * for the agent, as the transcript's short action line needs it. The whole record stays
+   * in the main process and is listed in Session details ({@link AgentCommandsReport}).
+   */
+  readonly command?: UiCommandLine;
+}
+
+/** DSP-145: one command the agent ran, as a transcript line shows it. */
+export interface UiCommandLine {
+  readonly commandId: string;
+  readonly line: string;
+  /** `null` while it runs. */
+  readonly ending: AgentCommandEnding | null;
+  readonly exitCode: number | null;
+  readonly durationMs: number | null;
+}
+
+/**
+ * DSP-145: one command the agent ran through DSpatch's command tool, with whether its
+ * result still describes the code on disk - the chat's own freshness rule
+ * (`evaluateFreshness`) against the snapshot taken after the command ended.
+ */
+export interface AgentCommandView {
+  readonly record: AgentCommandRecord;
+  /** The run (message) it belongs to. */
+  readonly dspatchRunId: string;
+  readonly standing: 'current' | 'stale' | 'unknown';
+  readonly standingHeadline: string;
+}
+
+/** DSP-145: the commands the agent ran in the open conversation, oldest first. */
+export interface AgentCommandsReport {
+  readonly commands: readonly AgentCommandView[];
+  /** The working copy's identity when this was checked, or `null` when unreadable. */
+  readonly currentSnapshotId: string | null;
+  readonly checkedAtUtc: string;
 }
 
 /** Token totals seen for one turn. Every field may be `null` — unknown, not 0. */
@@ -2141,6 +2186,8 @@ export interface DspatchBridge {
   stopWorkspaceTest(): Promise<{ readonly stopped: boolean; readonly note: string }>;
   /** Re-hash the working copy and say whether the last result still applies. */
   getTestFreshness(): Promise<TestFreshness>;
+  /** DSP-145: the commands the agent ran in this conversation, each with its standing. */
+  getAgentCommands(): Promise<AgentCommandsReport>;
   getWorkspaceChanges(): Promise<WorkspaceReport>;
   /** Token totals for a turn. Fields may be `null`: unknown, never 0. */
   getTurnUsage(dspatchRunId: string): Promise<TurnUsage>;
@@ -2940,6 +2987,7 @@ export type BridgeChannel =
   | 'dspatch:run-test'
   | 'dspatch:stop-test'
   | 'dspatch:test-freshness'
+  | 'dspatch:agent-commands'
   | 'dspatch:workspace-changes'
   | 'dspatch:turn-usage'
   | 'dspatch:agent-event'

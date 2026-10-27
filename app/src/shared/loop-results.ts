@@ -31,7 +31,7 @@
  * whichever happens to be newest.
  */
 
-import type { ResultForm } from './loop-graph';
+import type { LoopGraph, LoopNode, ResultForm } from './loop-graph';
 
 /**
  * Who chose the outcome a step's result is filed under.
@@ -73,11 +73,12 @@ export type OutcomeSource =
   /** An executor with no provider, standing in for whatever the step would have said. */
   | 'dry-run'
   /**
-   * DSP-139. The step was handed a gate's command result, and the working folders were
-   * not the code that command tested when the step started or ended, or DSpatch could
-   * not observe whether they were. The node's own `whenUndeclared` outcome replaced
-   * whatever the step declared, because a test result about one version of the code is
-   * not evidence about another. See {@link describeGateEvidenceRule}.
+   * DSP-139, generalised by DSP-145. The step declared an outcome that would end the run
+   * in success, and no command recorded in this run had completed on the working folders
+   * as the step left them (in every folder), while the run had changed files - or DSpatch
+   * could not observe the folders at all. The node's own `whenUndeclared` outcome replaced
+   * the declared one, because a result about one version of the code is not evidence
+   * about another. See {@link describeApprovalRule}.
    */
   | 'verification-stale';
 
@@ -522,8 +523,9 @@ export function describeGateEvidenceRule(
     whenUndeclared === null
       ? 'this step names no outcome for a result nobody established, so the run stops with a ' +
         'runtime fault instead of taking your verdict'
-      : `DSpatch records this step’s outcome as "${whenUndeclared}" whatever outcome you ` +
-        'declare (a declared failure still stands)';
+      : `DSpatch records this step’s outcome as "${whenUndeclared}" in place of any verdict ` +
+        'that would end the run in success, unless a command completed on the code as you ' +
+        'leave it (a declared failure still stands)';
   const staleNow = standings.some((standing) => standing.staleBecause !== null);
   const rule = staleNow
     ? `Because of that, ${consequence}: a test result about one version of the code is not ` +
@@ -621,3 +623,168 @@ export const RESULT_STORAGE_NOTE =
   'That path is inside DSpatch\u2019s own storage for this run. It is not in the folders ' +
   'you are working in and not in anybody\u2019s repository, so reading and writing there ' +
   'is part of this step and is not work on the project.';
+
+// --- When a success verdict stands (DSP-145) ------------------------------------------
+
+/** An outcome of a node whose edge ends the run at a terminal with `ending: success`. */
+export interface SuccessRoute {
+  readonly outcome: string;
+  readonly terminal: string;
+}
+
+/**
+ * The outcomes of `node` that lead straight to a success terminal. The approval rule
+ * applies to these and to nothing else: an outcome that leads to another step, or to
+ * an ending that is not a success, is left as the step declared it.
+ */
+export function successRoutesOf(
+  graph: Pick<LoopGraph, 'nodes' | 'edges'>,
+  node: Pick<LoopNode, 'id'>,
+): readonly SuccessRoute[] {
+  const routes: SuccessRoute[] = [];
+  // Read defensively: a hand-built context in a test may carry a partial graph.
+  for (const edge of graph.edges ?? []) {
+    if (edge.from !== node.id || edge.when.on !== 'outcome') {
+      continue;
+    }
+    const target = (graph.nodes ?? []).find((candidate) => candidate.id === edge.to);
+    if (target?.kind === 'terminal' && target.ending === 'success') {
+      routes.push({ outcome: edge.when.outcome, terminal: target.id });
+    }
+  }
+  return routes;
+}
+
+/**
+ * The rule a step whose verdict can end the run in success works under, said to that
+ * step (DSP-145; DSP-139 for gate results, generalised). Every instruction DSpatch adds
+ * is visible, and this one can change the step's recorded outcome, so it is sent
+ * whenever it applies and not only when it bites. Empty when the step has no such route.
+ */
+export function describeApprovalRule(
+  routes: readonly SuccessRoute[],
+  whenUndeclared: string | null,
+): string {
+  if (routes.length === 0) {
+    return '';
+  }
+  const declared = routes
+    .map((route) => `"${route.outcome}" ends this run in success ("${route.terminal}")`)
+    .join('; ');
+  // R1: a fallback that itself ends the run in success is no fallback.
+  const fallback =
+    whenUndeclared !== null && routes.some((route) => route.outcome === whenUndeclared)
+      ? null
+      : whenUndeclared;
+  const otherwise =
+    fallback === null
+      ? 'Otherwise this step names no outcome for a result nobody established, so the run ' +
+        'stops with a runtime fault instead of taking your verdict.'
+      : `Otherwise DSpatch records "${fallback}" (this step’s outcome for a result ` +
+        'nobody established) instead, and the run does not end in success. A declared failure, ' +
+        'or a verdict that leads anywhere else, stands as you declare it.';
+  return (
+    `\n\n---\n\nWhen DSpatch lets a success verdict stand.\n\n` +
+    `Declaring ${declared}. DSpatch lets that stand only if a command recorded in this run ` +
+    `completed on the code exactly as the working folders are when this step ends - in every ` +
+    `working folder - or if this run has changed no file at all. A command counts whether an ` +
+    `agent ran it through DSpatch’s command tool, the provider reported running it, or a gate ` +
+    `ran it; one that could not start, was refused, or was stopped does not, and neither does ` +
+    `a folder DSpatch could not observe. A completed command shows that it ran on this code, ` +
+    `not that its result was good: judging the result is yours. ${otherwise} Changing a file ` +
+    `after the last command makes every earlier result out of date, so run the check again ` +
+    `after your last change.\n`
+  );
+}
+
+/** One command DSpatch recorded in this run, as a later step is told about it. */
+export interface CommandEvidenceEntry {
+  readonly nodeId: string;
+  readonly occurrence: number;
+  readonly requestedBy: 'agent-tool' | 'gate' | 'provider-reported';
+  readonly line: string;
+  readonly cwd: string;
+  /** How it ended, in words: `exit code 1`, or why it has none. */
+  readonly ended: string;
+  readonly durationMs: number;
+  readonly afterRunSnapshotId: string | null;
+  /** Against the working folders as this step started. `not-observed` is never current. */
+  readonly standing: 'current' | 'stale' | 'not-observed';
+  readonly changedWhileRunning: boolean | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/** How much of each stream one entry carries into a message. */
+export const COMMAND_EVIDENCE_TAIL_CHARS = 2_000;
+
+/** The most entries one message lists; earlier ones are counted, not dropped silently. */
+export const COMMAND_EVIDENCE_MAX_ENTRIES = 20;
+
+function evidenceTail(label: string, text: string): string {
+  const trimmed = text.trimEnd();
+  if (trimmed === '') {
+    return `   ${label}: (nothing reported)`;
+  }
+  const cut = trimmed.length > COMMAND_EVIDENCE_TAIL_CHARS;
+  const kept = cut ? trimmed.slice(trimmed.length - COMMAND_EVIDENCE_TAIL_CHARS) : trimmed;
+  return (
+    `   ${label}${cut ? ` (the last ${String(COMMAND_EVIDENCE_TAIL_CHARS)} characters)` : ''}:\n` +
+    kept
+      .split('\n')
+      .map((line) => `     ${line}`)
+      .join('\n')
+  );
+}
+
+const ORIGIN: Record<CommandEvidenceEntry['requestedBy'], string> = {
+  'agent-tool': 'DSpatch ran it at an agent’s request, through its command tool',
+  gate: 'DSpatch ran it for a gate step',
+  'provider-reported':
+    'the provider reported running it with its own tool; DSpatch did not start it, saw only ' +
+    'the provider’s report, and took its snapshots when it saw the start and finish events, so ' +
+    'they approximate the code the command saw',
+};
+
+/**
+ * The commands DSpatch recorded in this run, for a step that judges the work (DSP-145).
+ * DSpatch's own records, with their standing against the working folders as the step
+ * starts. Empty when the run has recorded none.
+ */
+export function describeRecordedCommands(entries: readonly CommandEvidenceEntry[]): string {
+  if (entries.length === 0) {
+    return '';
+  }
+  const shown = entries.slice(-COMMAND_EVIDENCE_MAX_ENTRIES);
+  const omitted = entries.length - shown.length;
+  const each = shown.map((entry, index) => {
+    const standing =
+      entry.standing === 'current'
+        ? 'current - every working folder is still as it was when this command ended'
+        : entry.standing === 'stale'
+          ? 'stale - the working folders have changed since this command ended, so its result ' +
+            'describes older code'
+          : 'not observed - DSpatch could not compare it with the working folders, which is ' +
+            'never the same as unchanged';
+    return [
+      `${String(omitted + index + 1)}. ${entry.line}`,
+      `   Step: "${entry.nodeId}"${entry.occurrence === 1 ? '' : ` visit ${String(entry.occurrence)}`}; ${ORIGIN[entry.requestedBy]}.`,
+      `   Folder: ${entry.cwd}`,
+      `   Ended: ${entry.ended} after ${(entry.durationMs / 1000).toFixed(1)} s`,
+      `   After-run snapshot: ${entry.afterRunSnapshotId ?? 'not observed'} (${standing})`,
+      ...(entry.changedWhileRunning === true
+        ? ['   It changed files while it ran, so what it measured is not what it left behind.']
+        : []),
+      evidenceTail('Standard output', entry.stdout),
+      evidenceTail('Standard error', entry.stderr),
+    ].join('\n');
+  });
+  return (
+    `\n\n---\n\nCommands DSpatch recorded in this run.\n\n` +
+    `These are DSpatch’s own records of commands, not anybody’s account of them. Each is ` +
+    `compared with the working folders as this step starts. They are evidence for you to ` +
+    `weigh, not a verdict: run the checks you need yourself as well.` +
+    (omitted === 0 ? '' : ` ${String(omitted)} earlier command${omitted === 1 ? ' is' : 's are'} not listed.`) +
+    `\n\n${each.join('\n\n')}\n`
+  );
+}

@@ -945,6 +945,19 @@ body {
   padding-left: 0.625rem;
 }
 
+/* DSP-145: what the agent ran, one quiet line each under its reply. */
+.turn__commands {
+  list-style: none;
+  margin: 0.25rem 0;
+  padding-left: 0.625rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.agent-commands__item + .agent-commands__item {
+  margin-top: 0.75rem;
+}
+
 .turn__counts[open] > summary {
   margin-bottom: 0.25rem;
 }

@@ -3,17 +3,17 @@
   "formatVersion": 1,
   "id": "dspatch-chat-loop",
   "name": "Chat loop",
-  "purpose": "One bounded loop started from ordinary chat: the composer's text is the mandate. A successful work step always goes to a checking agent. That agent discovers how this project is checked and runs those checks with its own tools where they can run commands; where they cannot (a run with Claude), it judges from what it can read and says what it could not run. DSpatch does not ask the user for a command and does not start the project's build itself. This is not the external DSpatch development loop and not the isolated duration increment.",
+  "purpose": "One bounded loop started from ordinary chat: the composer's text is the mandate. The work step does the work and, where its tools can run commands, builds and tests it itself, fixing and re-running inside its own step until it judges the work done. A successful work step always goes to an independent checking agent, which runs the project's checks itself and either finds the assignment met, sends the work back with concrete findings, or finds that it cannot be met. DSpatch does not ask the user for a command and does not start the project's build itself; with Claude the agents run commands through DSpatch's command tool, which DSpatch starts, records and can stop. This is not the external DSpatch development loop and not the isolated duration increment.",
   "target": "cursor",
   "entry": "work",
   "onRuntimeFault": "stop-and-reconcile",
   "notes": "Rewritten for the interaction-model correction (increment 1). Work and check are both agent nodes. There is no choose-check step, no shell gate, and no branch chosen by comparing file trees. A successful work step always reaches check; the checking agent decides whether the assignment needed a build. Snapshots and path lists remain as corroboration in the record, not as routing. Since DSP-79 the two agent nodes have two provider sessions, so the check no longer inherits the work's conversation: it is given the work's own account as a declared result (produces/consumes) and nothing else. That makes it independent of the work's reasoning; it is still the same model on the same machine, so read it as a second look rather than as an outside auditor. Removing the confirmation leaves no DSpatch-specific permission gate on ordinary work (sandbox off, autoReview off, no hooks); real OS and provider permissions still apply. Do not point this graph at the DSpatch working copy. The duration fixture (dspatch-live-duration) is a separate drawing and is not this loop.",
   "limits": {
     "maxTasks": 1,
-    "maxCalls": 5,
-    "maxReworkRounds": 1,
-    "maxMinutes": 45,
-    "note": "Both numbers are guesses and are recorded as guesses. 45 minutes and 5 calls are room for a writing turn plus a checking turn that may run a real build, and neither has been measured against a C++/CMake project."
+    "maxCalls": 7,
+    "maxReworkRounds": 2,
+    "maxMinutes": 60,
+    "note": "All guesses, recorded as guesses (DSP-145). Two correction rounds is at most work, check, work, check, work, check: six calls, so 7 calls never ends a correction first, and a third request for rework ends at not-met through limit-reached. 60 minutes, up from 45, because the work step now runs its own builds and tests and may do so three times. None of it has been measured against a C++/CMake project."
   },
   "archive": {
     "path": ".dspatch-loop/runs/<run-id>/reports/",
@@ -30,6 +30,11 @@
       "id": "blocked",
       "label": "blocked",
       "meaning": "A concrete obstacle prevents the work: missing access, or a decision this run cannot make."
+    },
+    {
+      "id": "limit-reached",
+      "label": "correction rounds spent",
+      "meaning": "DSpatch's bound on correction rounds was spent while the check was still sending the work back. DSpatch routes this when the bound is reached; no step declares it."
     }
   ],
   "nodes": [
@@ -37,7 +42,7 @@
       "id": "work",
       "kind": "agent",
       "label": "Do what was asked",
-      "purpose": "Do what the Mandate asks, in the open project. May read freely, write the project's files when the mandate asks for a change, and run whatever commands the work itself requires where your tools can run commands; otherwise say what you could not run. Say what you established and what you did not.",
+      "purpose": "Do what the Mandate asks, in the open project. Read freely, change the project's files when the mandate asks for a change, and run the builds and tests the work needs with your own tools where they can run commands. A failing build or test is information: fix the cause and run it again within this step, until you judge the work done. Then say what changed, what you checked and what remains. Where your tools cannot run commands, say what you could not run. On a later visit you are given the checking step's findings: act on them, check again, and report.",
       "role": {
         "id": "project-work",
         "source": {
@@ -63,7 +68,7 @@
       "id": "check",
       "kind": "agent",
       "label": "Check the work",
-      "purpose": "Establish whether the assignment was met. Discover how this project is checked and run those checks with your own tools where they can run commands — possibly several, possibly none if the assignment was only to read. Where your tools cannot run commands, do not say you ran anything: judge from what you can read and say what you could not run. Do not ask the user to name a command.",
+      "purpose": "Establish independently whether the assignment was met. Discover how this project is checked and run those checks yourself where your tools can run commands - possibly several, possibly none if the assignment was only to read. Judge from real results, not from the work step's account. If the work can be fixed, say exactly what is wrong and declare rework; if it is met, declare met; if it cannot be met, declare not-met. Where your tools cannot run commands, do not say you ran anything. Do not ask the user to name a command.",
       "role": {
         "id": "project-check",
         "source": {
@@ -77,12 +82,13 @@
       "limits": {
         "maxMinutes": 20
       },
-      "outcomes": ["met", "not-met", "could-not-check"],
+      "outcomes": ["met", "rework", "not-met", "could-not-check"],
       "whenUndeclared": "could-not-check",
-      "declaredFailures": ["spec-error", "blocked"],
+      "declaredFailures": ["spec-error", "blocked", "limit-reached"],
       "notes": "This is an agent assignment, not a shell command DSpatch starts. A reading mandate may honestly need no build; that is a verdict the checking agent may reach, not a branch DSpatch takes by counting files. Its own session, so it did not watch the work happen: what it knows about the work is the mandate, this purpose, and the account `work` left, which is what `consumes` hands it. A missing or contradictory RESULT routes as could-not-check, and whenUndeclared above is where that is stated (DSP-103). It used to follow from the word could-not-check being one of two spellings the engine recognised; a third verdict named anything else would not have had the route, and nothing said so.",
       "report": { "writtenBy": "self" },
       "consumes": ["work"],
+      "produces": { "required": false, "form": "stored-result", "note": "Your verdict and findings. On rework they are the only thing the work step is given about what is wrong, so name each problem concretely: the command you ran, what it showed, and what has to change." },
       "view": { "x": 360, "y": 220 }
     },
     {
@@ -97,7 +103,7 @@
       "id": "not-met",
       "kind": "terminal",
       "label": "Assignment not met",
-      "purpose": "The checking step declared that the assignment was not met. What the work step changed is still in the working copy.",
+      "purpose": "The checking step declared that the assignment cannot be met, or the correction rounds were spent while it was still sending the work back. What the work step changed is still in the working copy.",
       "ending": "not-success",
       "view": { "x": 340, "y": 400 }
     },
@@ -161,6 +167,22 @@
       "to": "not-met",
       "when": { "on": "outcome", "outcome": "not-met" },
       "label": "assignment not met"
+    },
+    {
+      "id": "e-rework",
+      "from": "check",
+      "to": "work",
+      "when": { "on": "outcome", "outcome": "rework" },
+      "label": "not met: back to work with findings",
+      "delivers": ["check"],
+      "notes": "DSP-145. The check's concrete findings go back to the work step, which continues its own session. Counted against maxReworkRounds; a spent bound goes to not-met through limit-reached."
+    },
+    {
+      "id": "e-check-limit",
+      "from": "check",
+      "to": "not-met",
+      "when": { "on": "declared-failure", "failure": "limit-reached" },
+      "label": "correction rounds spent"
     },
     {
       "id": "e-could-not-check",

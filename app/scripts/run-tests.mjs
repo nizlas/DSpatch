@@ -111,6 +111,7 @@ const AREAS = {
       { file: 'chat-service.test.ts', heavy: true },
       { file: 'conversation-switch.test.ts', heavy: true },
       { file: 'provider-selection.test.ts', heavy: true },
+      { file: 'chat-agent-commands.test.ts', heavy: true },
     ],
   },
   review: {
@@ -127,6 +128,7 @@ const AREAS = {
       'claude-agent-sdk-adapter.test.ts',
       'claude-support.test.ts',
       { file: 'claude-agent-sdk-adapter-process.test.ts', heavy: true },
+      { file: 'claude-command-tool.test.ts', heavy: true },
     ],
   },
   project: {
@@ -143,6 +145,8 @@ const AREAS = {
       { file: 'loop-live.test.ts', heavy: true },
       { file: 'gate-command-reality.test.ts', heavy: true },
       { file: 'loop-gate-check.test.ts', heavy: true },
+      { file: 'workspace-command.test.ts', heavy: true },
+      { file: 'loop-agent-commands.test.ts', heavy: true },
     ],
   },
 };

@@ -224,6 +224,8 @@ export type AgentEventType =
   | 'reasoning.delta'
   | 'tool.started'
   | 'tool.finished'
+  | 'command.started'
+  | 'command.finished'
   | 'approval.requested'
   | 'usage'
   | 'run.finished';
@@ -287,6 +289,29 @@ export type AgentEvent =
       readonly name: string;
       readonly status: 'ok' | 'error';
     })
+  /**
+   * DSP-145: DSpatch's own command tool started a process for the agent. Raised by the
+   * adapter when DSpatch's handler begins, not from anything the provider streamed.
+   */
+  | (AgentEventBase & {
+      readonly type: 'command.started';
+      /** The provider's tool call this command answers, when it could be matched; else `null`. */
+      readonly toolCallId: string | null;
+      readonly commandId: string;
+      readonly line: string;
+      readonly cwd: string;
+    })
+  /**
+   * DSP-145: the authoritative record of a command DSpatch ran for the agent, raised
+   * when DSpatch's own handler settles - including a command stopped by Cancel, whether
+   * or not the provider ever streams a tool result for it (review B2). Always before the
+   * run's terminal `run.finished`, unless the runner ignored the stop request.
+   */
+  | (AgentEventBase & {
+      readonly type: 'command.finished';
+      readonly toolCallId: string | null;
+      readonly command: AgentCommandRecord;
+    })
   | (AgentEventBase & {
       readonly type: 'approval.requested';
       readonly request: ApprovalRequest;
@@ -302,6 +327,68 @@ export type AgentEvent =
       /** See {@link RunEnd}. Absent means not reported. */
       readonly end?: RunEnd;
     });
+
+// --- Commands DSpatch runs (DSP-145) -------------------------------------------
+
+/**
+ * Who asked for a command.
+ *
+ * - `agent-tool`: the agent, through DSpatch's own command tool; DSpatch started it.
+ * - `gate`: a gate node of a loop graph; DSpatch started it.
+ * - `provider-reported`: the provider ran it with its own tool and reported it; DSpatch
+ *   did not start it and observes only what the provider's events say.
+ */
+export type AgentCommandRequester = 'agent-tool' | 'gate' | 'provider-reported';
+
+/**
+ * How a command ended, as DSpatch observed it.
+ *
+ * - `exited`: the process ran and exited by itself; `exitCode` says how.
+ * - `could-not-start`: there was a command and no process could run it.
+ * - `timed-out`: still running at its time bound, so DSpatch stopped it.
+ * - `stopped`: DSpatch stopped it because the run was cancelled or ended.
+ * - `refused`: DSpatch declined to start it (an empty line, another command running).
+ */
+export type AgentCommandEnding = 'exited' | 'could-not-start' | 'timed-out' | 'stopped' | 'refused';
+
+/**
+ * One command DSpatch ran, as DSpatch itself observed it (not the provider's account).
+ *
+ * The snapshot identities are content hashes of every working folder: `testedSnapshotId`
+ * just before the process started, `afterRunSnapshotId` just after it ended. `null` means
+ * **not observed** - never "unchanged".
+ */
+export interface AgentCommandRecord {
+  readonly commandId: string;
+  readonly requestedBy: AgentCommandRequester;
+  /** The command line as given, without the shell prefix. */
+  readonly line: string;
+  /** The shell that interpreted it, e.g. `cmd.exe /d /s /c`. */
+  readonly shell: string;
+  readonly cwd: string;
+  readonly pid: number | null;
+  readonly startedAtUtc: Timestamp;
+  readonly finishedAtUtc: Timestamp;
+  readonly durationMs: number;
+  /** The time bound it ran under, or `null` for none. */
+  readonly timeoutMs: number | null;
+  readonly ending: AgentCommandEnding;
+  /** DSpatch's sentence about an ending other than `exited`; `null` for `exited`. */
+  readonly endingMessage: string | null;
+  readonly exitCode: number | null;
+  readonly signal: string | null;
+  /** DSpatch asked the operating system to stop it (time bound or cancel). */
+  readonly killedByDspatch: boolean;
+  readonly stdout: string;
+  readonly stderr: string;
+  /** Output was cut to the record's bound; `outputNote` says how. */
+  readonly outputTruncated: boolean;
+  readonly outputNote: string | null;
+  readonly testedSnapshotId: string | null;
+  readonly afterRunSnapshotId: string | null;
+  /** The folders the two snapshots cover. Empty when none was observed. */
+  readonly snapshotRoots: readonly string[];
+}
 
 /** Remove a subscription. Idempotent. */
 export type Unsubscribe = () => void;

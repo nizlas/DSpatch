@@ -1375,8 +1375,11 @@ describe("the checking step's third verdict: the assignment was not established"
 
   it('a named checking verdict still ends at its own terminal', async () => {
     const graph = loadChatGraph();
+    // DSP-145: the work wrote a file and no command ran, so a "met" does not stand - the
+    // approval rule records the check's whenUndeclared instead. A "not-met" leads to an
+    // ending that is not a success and stands as declared.
     for (const [later, terminal, edge] of [
-      [CHECK_MET, 'done', 'e-met'],
+      [CHECK_MET, 'not-established', 'e-could-not-check'],
       [CHECK_NOT_MET, 'not-met', 'e-not-met'],
     ] as const) {
       const workspace = scratch(`check-verdict-${terminal}`);
@@ -1478,9 +1481,12 @@ describe('which branch the run takes is declared, not measured from files', () =
     });
 
     assert.equal(result.status, 'completed');
-    assert.equal(result.terminalNodeId, 'done');
-    assert.deepEqual(result.path, ['work', 'check', 'done']);
-    assert.deepEqual(result.edgesTaken, ['e-succeeded', 'e-met']);
+    // Handed to check because the verdict said so; the check's "met" then does not stand,
+    // because the work changed a file and no command completed on it (DSP-145).
+    assert.deepEqual(result.path, ['work', 'check', 'not-established']);
+    assert.deepEqual(result.edgesTaken, ['e-succeeded', 'e-could-not-check']);
+    const checked = result.journal.find((line) => line.kind === 'node-produced' && line.nodeId === 'check');
+    assert.equal(checked?.data?.['outcomeSource'], 'verification-stale');
     assert.equal(commandsStarted, 0, 'a written file is not a reason to start a DSpatch command');
   });
 
@@ -1615,7 +1621,8 @@ describe('which branch the run takes is declared, not measured from files', () =
         runProjectTest: passingTest,
       }),
     });
-    assert.equal(result.terminalNodeId, 'done');
+    // DSP-145: a file changed and no command ran, so the check's "met" does not stand.
+    assert.equal(result.terminalNodeId, 'not-established');
     const produced = result.journal.find(
       (line) => line.kind === 'node-produced' && line.nodeId === 'work',
     );

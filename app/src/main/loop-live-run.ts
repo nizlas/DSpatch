@@ -21,6 +21,7 @@ import {
   formatLiveInspection,
   readLiveUsage,
   refuseLiveWorkingRoots,
+  DEFAULT_GATE_COMMAND_TIMEOUT_MS,
   runConfiguredProjectTest,
   writeInspectionJson,
   type LiveAgentReply,
@@ -259,7 +260,14 @@ function withEditorBinding(
       }),
     runProjectTest:
       options.runProjectTest ??
-      ((workspacePath) => runConfiguredProjectTest(binding.gateCommand, workspacePath)),
+      // The walk's own signal (DSP-145): Cancel stops the gate's command and its children.
+      ((workspacePath) =>
+        runConfiguredProjectTest(
+          binding.gateCommand,
+          workspacePath,
+          DEFAULT_GATE_COMMAND_TIMEOUT_MS,
+          options.abortSignal,
+        )),
   };
 }
 

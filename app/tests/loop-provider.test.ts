@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
-import { CHAT_PERMISSIONS } from '../src/adapter/claude-agent-sdk-adapter.ts';
+import { CHAT_PERMISSIONS, COMMAND_TOOL_ID } from '../src/adapter/claude-agent-sdk-adapter.ts';
 import { CLAUDE_NOT_INSTALLED_TEXT } from '../src/adapter/claude-support.ts';
 import { createFileRoleResolver } from '../src/main/loop-graph-roles.ts';
 import { runLiveGraph } from '../src/main/loop-live-run.ts';
@@ -33,7 +33,12 @@ import {
 } from '../src/main/loop-run-agent.ts';
 import { CLAUDE_CHAT_MODEL } from '../src/main/provider-availability.ts';
 import { RunRecordStore } from '../src/main/run-record-store.ts';
-import { CLAUDE_LOOP_STEP_TOOLS, describeRunToolPolicy, type LoopGraph } from '../src/shared/loop-graph.ts';
+import {
+  CLAUDE_LOOP_COMMAND_TOOL,
+  CLAUDE_LOOP_STEP_TOOLS,
+  describeRunToolPolicy,
+  type LoopGraph,
+} from '../src/shared/loop-graph.ts';
 import { loadLoopGraph } from '../src/shared/loop-graph-load.ts';
 import { adapters, claudeSdk, CLEAN_ENV } from './support/claude-loop-sdk.ts';
 import { tempRoot } from './support/fixtures.ts';
@@ -310,17 +315,16 @@ describe('a loop run that cannot start says why, and constructs nothing', () => 
 // --- What the window says, and Cursor unbroken -----------------------------------------
 
 describe('the agent line, the policy text and Cursor', () => {
-  it('names Claude, its model, that no step runs commands, and the drawing label', () => {
+  it('names Claude, its model, that steps run commands through DSpatch, and the drawing label', () => {
     const { factory, built } = adapters(null);
     const info = loopRunAgentInfo(request(factory), 'cursor');
     assert.equal(info.provider, 'claude');
     assert.match(
       info.line,
-      /^Runs with Claude \(claude-haiku-4-5\): its agent steps read and edit files and cannot run commands,/,
+      /^Runs with Claude \(claude-haiku-4-5\): its agent steps read and edit files and run builds and tests through DSpatch's command tool/,
     );
     assert.match(info.line, /A gate step's command is run by DSpatch itself\./);
-    assert.doesNotMatch(info.line, /No step can run/);
-    assert.match(info.line, /could not establish/);
+    assert.doesNotMatch(info.line, /cannot run commands/);
     assert.match(info.line, /Drawn for cursor/);
     assert.deepEqual(built.claudePermissions, [], 'reading the line constructs nothing');
   });
@@ -332,7 +336,11 @@ describe('the agent line, the policy text and Cursor', () => {
       assert.match(text, new RegExp(`\\b${tool}\\b`));
     }
     assert.match(text, /no Bash/);
-    assert.match(text, /An agent step can read and change files and cannot run commands/);
+    // DSP-145: the command tool is named, and is the same one the adapter offers.
+    assert.equal(CLAUDE_LOOP_COMMAND_TOOL, COMMAND_TOOL_ID);
+    assert.match(text, /mcp__dspatch__run_command/);
+    assert.match(text, /run builds and tests through DSpatch’s command tool/);
+    assert.match(text, /not a sandbox/);
     assert.match(text, /no-file-writes/);
     assert.match(describeRunToolPolicy('cursor'), /provider-default/);
   });

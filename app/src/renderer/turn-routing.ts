@@ -23,7 +23,7 @@
  */
 
 import type { RunEnd } from '../adapter/types';
-import type { TurnUsage, UiAgentEvent } from '../shared/bridge';
+import type { TurnUsage, UiAgentEvent, UiCommandLine } from '../shared/bridge';
 
 /** A turn's state as the window shows it. Never inferred from silence. */
 export type TurnStatus =
@@ -68,6 +68,11 @@ export interface TurnState {
   readonly lastTool: string | null;
   /** Distinct tool names, in the order first seen. Names only: no arguments. */
   readonly toolNames: readonly string[];
+  /**
+   * DSP-145: the commands DSpatch's command tool ran for the agent in this turn, in
+   * order, for the transcript's short action lines. Absent until the first one.
+   */
+  readonly commands?: readonly UiCommandLine[];
   readonly status: TurnStatus;
   /**
    * How a cancelled run ended locally, as the adapter reported it (DSP-116,
@@ -247,6 +252,21 @@ function applyToTurn(turn: TurnState, event: UiAgentEvent): TurnState {
         lastTool: event.toolName ?? turn.lastTool,
         toolNames: addToolName(turn.toolNames, event.toolName),
       };
+    case 'command.started':
+    case 'command.finished': {
+      const command = event.command;
+      if (command === undefined) {
+        return turn;
+      }
+      const earlier = turn.commands ?? [];
+      const known = earlier.some((entry) => entry.commandId === command.commandId);
+      return {
+        ...turn,
+        commands: known
+          ? earlier.map((entry) => (entry.commandId === command.commandId ? command : entry))
+          : [...earlier, command],
+      };
+    }
     case 'approval.requested':
       return {
         ...turn,
@@ -458,6 +478,38 @@ export interface ContextSummary {
   readonly fileContentsSentByDspatch: number;
   readonly toolCallsByAgent: number;
   readonly toolNames: readonly string[];
+}
+
+/**
+ * DSP-145: one command the agent ran, as the transcript's short line says it: a verb
+ * before the command line and how it ended after it. Readable words, never the tool's
+ * `mcp__` name; the full record is in Session details.
+ */
+export function describeCommandLine(command: UiCommandLine): {
+  readonly verb: string;
+  readonly after: string;
+} {
+  const took =
+    command.durationMs === null ? '' : ` (${(command.durationMs / 1000).toFixed(1)} s)`;
+  switch (command.ending) {
+    case null:
+      return { verb: 'Running', after: '…' };
+    case 'exited':
+      return {
+        verb: 'Ran',
+        after: `: exit ${command.exitCode === null ? 'unknown' : String(command.exitCode)}${took}`,
+      };
+    case 'timed-out':
+      return { verb: 'Stopped', after: ` at its time bound${took}` };
+    case 'stopped':
+      return { verb: 'Stopped', after: took };
+    case 'could-not-start':
+      return { verb: 'Could not start', after: '' };
+    case 'refused':
+      return { verb: 'Did not run', after: '' };
+    default:
+      return { verb: 'Ran', after: '' };
+  }
 }
 
 export function summariseContext(state: ChatState): ContextSummary {
