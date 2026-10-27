@@ -24,6 +24,7 @@ import type { ResolvedRole, RoleReference } from './loop-graph';
 import type { ParsedRunRecord, RecordedRunEnding } from './loop-record';
 import type { RunJournalEntry, RunResult } from './loop-run';
 import type { LiveRunAnnouncement, LoopRunEvent } from './loop-run-view';
+import type { LoopRunAgentInfo, LoopRunAgentQuery } from './loop-run-agent-text';
 import type { UnsavedDrawingAnswer, UnsavedDrawingOccasion } from './unsaved-drawing';
 import type { DirectoryPage, FileView, WorkspaceView } from './workspace-folders';
 
@@ -2290,6 +2291,13 @@ export interface DspatchBridge {
    */
   currentLoopRun(): Promise<LiveRunAnnouncement | null>;
   /**
+   * Which agent the graph editor's Run would use now, as one line, or why no run would
+   * start (DSP-138). **A read**: it starts, records and constructs nothing. `target` is
+   * the drawing's label, named in the line when it differs from the agent; `entry` is the
+   * drawing's entry step, so the line applies the Run's model rule to the same drawing.
+   */
+  readLoopRunAgent(query: LoopRunAgentQuery): Promise<LoopRunAgentInfo>;
+  /**
    * Walk the chosen loop definition on the project already open in chat.
    *
    * The composer's text is the entry mandate. Switching Use loop off cancels
@@ -2953,6 +2961,7 @@ export type BridgeChannel =
   | 'dspatch:cancel-editor-loop-run'
   | 'dspatch:loop-run-event'
   | 'dspatch:current-loop-run'
+  | 'dspatch:read-loop-run-agent'
   | 'dspatch:start-chat-loop-run'
   | 'dspatch:cancel-chat-loop-run'
   | 'dspatch:chat-loop-journal'

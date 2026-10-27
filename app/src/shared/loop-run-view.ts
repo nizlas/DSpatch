@@ -168,6 +168,13 @@ export interface LiveRunAnnouncement extends LoopRunIdentity {
    * Absent means `'running'`, which is what every announcement meant before.
    */
   readonly phase?: LoopRunPhase;
+  /**
+   * Which agent runs it, as one line (DSP-138): for a running announcement the provider
+   * and model the run actually uses; for a stand-by offer what *Use loop* would use now,
+   * or why no run would start. Built by `describeLoopRunAgent`. Optional, because an
+   * announcement written before this field existed must keep meaning what it meant.
+   */
+  readonly agent?: string;
 }
 
 export type LoopRunPhase = 'ready' | 'running';

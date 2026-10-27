@@ -29,6 +29,7 @@ import type { AgentAdapter } from '../adapter/agent-adapter';
 import type {
   AgentEvent,
   DspatchSessionId,
+  ProviderId,
   SessionHandle,
   UsageReading,
 } from '../adapter/types';
@@ -216,6 +217,12 @@ export interface LiveInspection {
   providerSessionId: string | null;
   /** Every session this run opened, in the order the nodes were first reached. */
   sessions: LiveSessionRef[];
+  /**
+   * The provider this run's agent steps were opened for (DSP-138). `null` means **not
+   * recorded** - an inspection built by a caller that named none - and is never read
+   * as Cursor.
+   */
+  provider: ProviderId | null;
 }
 
 /**
@@ -230,6 +237,8 @@ export interface LiveSessionRef {
   /** The node whose session this is. One session per agent node, not per visit. */
   readonly nodeId: string;
   readonly dspatchSessionId: string;
+  /** The provider the adapter says holds this session, from its handle (DSP-138). */
+  readonly provider: ProviderId;
   readonly providerSessionId: string;
   readonly openedAtUtc: string;
   /** How many visits to the node sent a prompt into it. 1 unless a rework edge came back. */
@@ -366,6 +375,19 @@ export interface LivePromptStep {
   };
 }
 
+/**
+ * What a loop run uses of a provider adapter, and nothing else (DSP-138).
+ *
+ * A `Pick` rather than the whole {@link AgentAdapter}, so the shared factory's
+ * `ChatAdapter` - Cursor's, Claude's or the presentation adapter - can be handed over
+ * without widening either interface. `resume`, approvals and model lists are not used:
+ * a loop step never resumes a session.
+ */
+export type LoopStepAdapter = Pick<
+  AgentAdapter,
+  'startSession' | 'subscribe' | 'send' | 'cancel' | 'readUsage' | 'dispose'
+>;
+
 export interface LiveExecutorOptions {
   readonly workspacePath: string;
   /**
@@ -377,7 +399,15 @@ export interface LiveExecutorOptions {
    * a change in the second folder is measured rather than invisible.
    */
   readonly workingRoots?: readonly WorkingRoot[];
-  readonly adapter: AgentAdapter;
+  readonly adapter: LoopStepAdapter;
+  /**
+   * The provider every agent step's session is opened for, and checked against
+   * (DSP-138). `runLiveGraph` always names the run's provider; there is no default.
+   * Left out - only by a caller that drives the executor directly, such as its own tests
+   * with a fake adapter - the session config names no provider, both real adapters refuse
+   * it, and the handle is not compared.
+   */
+  readonly provider?: ProviderId;
   readonly modelRequested: string;
   /** Cursor reports a used model separately from the request. Optional on the interface. */
   readonly modelReported?: (sessionId: DspatchSessionId) => string | null;
@@ -586,6 +616,7 @@ export function emptyInspection(
     workspacePath,
     process.platform === 'win32',
   ),
+  provider: ProviderId | null = null,
 ): LiveInspection {
   return {
     workspacePath,
@@ -616,6 +647,7 @@ export function emptyInspection(
     sessionId: null,
     providerSessionId: null,
     sessions: [],
+    provider,
   };
 }
 
@@ -1248,7 +1280,7 @@ interface TurnWait {
  * Its absence here is the enforcement.
  */
 function waitForTurn(
-  adapter: AgentAdapter,
+  adapter: Pick<AgentAdapter, 'subscribe'>,
   sessionId: DspatchSessionId,
   onActivity?: (event: AgentEvent) => void,
 ): TurnWait {
@@ -1728,8 +1760,11 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     let session = sessions.get(node.id);
     let sessionRef = inspection.sessions.find((entry) => entry.nodeId === node.id);
     if (session === undefined) {
+      const runProvider = options.provider;
       session = await options.adapter.startSession({
-        provider: 'cursor',
+        // The run's provider (DSP-138), never a default. Left out, the config names
+        // none and a real adapter refuses it at start - see `LiveExecutorOptions.provider`.
+        provider: runProvider as ProviderId,
         dspatchSessionId: stepSessionId(context.runId, node.id),
         modelRequested: options.modelRequested,
         workspacePath: options.workspacePath,
@@ -1738,10 +1773,20 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         // provider treats a merged list of one as no list.
         workspacePaths: providerRootPathsFor(rootsOfRun),
       });
+      // A session is bound to the run's provider. An adapter that answers for another
+      // is a fault on this step - thrown, so the walk records it here and goes no
+      // further - and the session is never used, let alone resumed elsewhere.
+      if (runProvider !== undefined && session.provider !== runProvider) {
+        throw new Error(
+          `The adapter opened "${node.id}" for ${session.provider}, but this run is bound to ` +
+            `${runProvider}. Nothing was sent to it.`,
+        );
+      }
       sessions.set(node.id, session);
       sessionRef = {
         nodeId: node.id,
         dspatchSessionId: session.dspatchSessionId,
+        provider: session.provider,
         providerSessionId: session.providerSessionId,
         openedAtUtc: new Date(now()).toISOString(),
         turns: 0,
@@ -2074,7 +2119,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
 }
 
 export async function readLiveUsage(
-  adapter: AgentAdapter,
+  adapter: Pick<AgentAdapter, 'readUsage'>,
   sessionId: DspatchSessionId,
   inspection: LiveInspection,
 ): Promise<void> {
@@ -2143,6 +2188,7 @@ export function formatLiveInspection(inspection: LiveInspection): string {
     `workspace   ${inspection.workspacePath}`,
     `roots       ${roots.length === 0 ? '(none)' : roots.join('\n            ')}`,
     `outside     ${inspection.rootsNote}`,
+    `agent       ${inspection.provider ?? '(not recorded)'}`,
     `model req   ${inspection.modelRequested}`,
     `model used  ${inspection.modelReported ?? 'unknown (not reported)'}`,
     // One line per agent node, because "the session" is no longer a thing a run has
@@ -2153,7 +2199,7 @@ export function formatLiveInspection(inspection: LiveInspection): string {
         : inspection.sessions
             .map(
               (entry) =>
-                `${entry.nodeId}  ${entry.dspatchSessionId}  provider ${entry.providerSessionId}  ` +
+                `${entry.nodeId}  ${entry.dspatchSessionId}  ${entry.provider} session ${entry.providerSessionId}  ` +
                 `${String(entry.turns)} turn${entry.turns === 1 ? '' : 's'}  ` +
                 `cost ${entry.costCents === null ? 'unknown (not zero)' : `${String(entry.costCents)} cents`}`,
             )

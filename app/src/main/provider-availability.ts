@@ -28,6 +28,13 @@ export interface ProviderAvailabilityInput {
   readonly claudeInstalled: boolean;
 }
 
+/**
+ * The model a Claude session asks for, in the main chat (DSP-117) and in a loop run
+ * (DSP-138). By name: the Claude adapter has no model list, so the window names the
+ * model rather than offering a choice.
+ */
+export const CLAUDE_CHAT_MODEL = 'claude-haiku-4-5';
+
 /** The sentence beside Cursor wherever its login matters. */
 export const CURSOR_LOGIN_NOTE =
   "Cursor's login is checked only when a Cursor session is used; DSpatch does not " +

@@ -59,7 +59,8 @@ import {
 } from '../shared/loop-chat';
 import { describeLiveBinding } from '../shared/loop-editor-run';
 import { formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
-import type { LoopNode, RoleReference, RoleResolver } from '../shared/loop-graph';
+import type { LoopGraph, LoopNode, LoopTarget, RoleReference, RoleResolver } from '../shared/loop-graph';
+import { describeLoopRunAgent, type LoopRunAgentInfo } from '../shared/loop-run-agent-text';
 import type { RunResult, RunStatus } from '../shared/loop-run';
 import {
   REVIEW_DENY_REASON,
@@ -99,6 +100,11 @@ import {
 } from './loop-graph-open';
 import { refuseLiveWorkingRoots } from './loop-live';
 import { defaultLiveModel, runLiveGraph } from './loop-live-run';
+import {
+  loopRunAgentInfo,
+  prepareLoopRun,
+  type LoopRunAgentRequest,
+} from './loop-run-agent';
 import { LoopRunController } from './loop-control-runtime';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
 import { LoopRunAudience } from './loop-run-audience';
@@ -199,6 +205,7 @@ const CHECK_REVIEW_WINDOWS: BridgeChannel = 'dspatch:check-review-windows';
 const START_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:start-editor-loop-run';
 const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
 const CURRENT_LOOP_RUN: BridgeChannel = 'dspatch:current-loop-run';
+const READ_LOOP_RUN_AGENT: BridgeChannel = 'dspatch:read-loop-run-agent';
 const START_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:start-chat-loop-run';
 const CANCEL_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:cancel-chat-loop-run';
 const CHAT_LOOP_JOURNAL: BridgeChannel = 'dspatch:chat-loop-journal';
@@ -468,21 +475,6 @@ function presentationAdapterOptions(): {
  */
 const presentationResumeRequested = presentationResumeMode(process.env['DSPATCH_CHAT_RESUME']);
 const presentationResume = new PresentationResumeBehaviour(presentationResumeRequested ?? 'ok');
-
-/**
- * The one seam that keeps presentation mode provider-free for loop runs.
- *
- * Spread into the options of every `runLiveGraph` this window can start - the chat's
- * *Use loop* run and the graph editor's Run - so in presentation mode each step's
- * adapter is the presentation adapter, and in every other launch the option is absent
- * and the run builds its default adapter. One constant for both handlers, so a loop
- * run cannot reach a provider from a presentation window by being started from the
- * other window (DSP-121 review B3: the editor's Run used to miss it).
- */
-const presentationLoopAdapter: { readonly createAdapter?: () => PresentationAdapter } =
-  presentationMode
-    ? { createAdapter: () => new PresentationAdapter(presentationAdapterOptions()) }
-    : {};
 
 /**
  * What a file chooser answers during a scripted window run (`DSPATCH_PICK_FILE`).
@@ -767,6 +759,111 @@ const adapterFactory = providerAdapters({
 /** The main chat's adapter per provider, from the shared factory. */
 function createChatAdapter(provider: StoredSessionProvider): ChatAdapter {
   return adapterFactory.createAdapter({ provider, purpose: 'chat' });
+}
+
+/**
+ * The agent a loop run started now would use, and how (DSP-138).
+ *
+ * The one seam both run handlers go through - the graph editor's Run and the chat's
+ * *Use loop* - so the provider is the explicit agent choice in both and nothing falls
+ * back to Cursor. Adapters come from the shared factory with purpose `'loop'`, which in
+ * presentation mode is the presentation adapter: a presentation window cannot reach a
+ * provider by starting a run from either window (DSP-121 review B3). Every construction
+ * is logged, as the chat's are.
+ */
+function loopRunRequest(input: {
+  readonly rootCount: number;
+  readonly entryNode?: Pick<LoopNode, 'id' | 'label' | 'model'>;
+  readonly cursorModel: string;
+}): LoopRunAgentRequest {
+  return {
+    ...input,
+    sessionProvider: chatService.openSession()?.provider ?? null,
+    chosenAgent: chatService.chosenAgent(),
+    adapters: {
+      preflight: (request) => adapterFactory.preflight(request),
+      createAdapter: (request) => {
+        log(
+          `[loop] building a ${request.provider} loop adapter` +
+            `${presentationMode ? ' (presentation, simulated)' : ''}`,
+        );
+        return adapterFactory.createAdapter(request);
+      },
+    },
+  };
+}
+
+/** The editor's Run: one generated folder, Cursor's live model, no node model read. */
+function editorLoopRunRequest(
+  entryNode: Pick<LoopNode, 'id' | 'label' | 'model'> | undefined,
+): LoopRunAgentRequest {
+  // The entry step goes in so the Claude model rule applies here as in *Use loop*
+  // (DSP-138 review B2). A Cursor run is unchanged: it asks for `defaultLiveModel()`.
+  return loopRunRequest({
+    rootCount: 1,
+    ...(entryNode === undefined ? {} : { entryNode }),
+    cursorModel: defaultLiveModel(),
+  });
+}
+
+/** The entry step a window named, checked field by field: it came from a renderer. */
+function entryFromQuery(value: unknown): Pick<LoopNode, 'id' | 'label' | 'model'> | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const entry = value as { id?: unknown; label?: unknown; model?: unknown };
+  if (typeof entry.id !== 'string') {
+    return undefined;
+  }
+  const model = entry.model as { policy?: unknown; model?: unknown } | undefined;
+  const policy: LoopNode['model'] =
+    model !== undefined &&
+    model !== null &&
+    (model.policy === 'inherit' || model.policy === 'fixed' || model.policy === 'described')
+      ? {
+          policy: model.policy,
+          ...(typeof model.model === 'string' ? { model: model.model } : {}),
+        }
+      : undefined;
+  return {
+    id: entry.id,
+    ...(typeof entry.label === 'string' ? { label: entry.label } : {}),
+    ...(policy === undefined ? {} : { model: policy }),
+  };
+}
+
+/**
+ * The chat's *Use loop*: every open folder, and the entry node's model as the run has
+ * always taken it.
+ */
+function chatLoopRunRequest(
+  rootCount: number,
+  entryNode: LoopNode | undefined,
+  sessionModel: string,
+): LoopRunAgentRequest {
+  return loopRunRequest({
+    rootCount,
+    ...(entryNode === undefined ? {} : { entryNode }),
+    cursorModel: modelForChatNode(entryNode, sessionModel),
+  });
+}
+
+/**
+ * The "Runs with ..." line for a chat loop standing by: what *Use loop* would run this
+ * drawing with now, by the same preparation the run makes. Constructs nothing.
+ */
+function chatLoopAgentInfo(graph: LoopGraph): LoopRunAgentInfo {
+  const session = chatService.openSession();
+  const rootCount =
+    session === null
+      ? 1
+      : workingRootsFrom(openWorkspaceFolders(), session.workspacePath, pathsAreCaseInsensitive)
+          .length;
+  const entryNode = graph.nodes.find((node) => node.id === graph.entry);
+  return loopRunAgentInfo(
+    chatLoopRunRequest(rootCount, entryNode, session?.modelRequested ?? ''),
+    graph.target,
+  );
 }
 
 /**
@@ -4798,9 +4895,10 @@ function registerLoopGraphIpc(): void {
       // references resolved to. A run that shows a window its drawing without its
       // bindings is a run that window cannot draw.
       const resolveEditorRole = createFileRoleResolver(ownRoot);
+      // No `connectedTargets`: a graph's target is a label of the drawing and does not
+      // decide which agent runs it (DSP-138). It only ever produced a notice.
       const loaded = loadLoopGraph(request.text, {
         resolveRole: resolveEditorRole,
-        connectedTargets: ['cursor'],
       });
       if (!loaded.ok) {
         return {
@@ -4813,6 +4911,15 @@ function registerLoopGraphIpc(): void {
       const binding = describeLiveBinding(loaded.graph);
       if (!binding.ready) {
         return { kind: 'refused', reason: binding.reason };
+      }
+
+      // DSP-138: which agent, decided before the control is claimed. A refusal starts
+      // nothing, claims nothing and constructs nothing.
+      const agent = prepareLoopRun(
+        editorLoopRunRequest(loaded.graph.nodes.find((node) => node.id === loaded.graph.entry)),
+      );
+      if (!agent.ok) {
+        return { kind: 'refused', reason: agent.reason };
       }
 
       editorLoopAbort = new AbortController();
@@ -4861,6 +4968,12 @@ function registerLoopGraphIpc(): void {
           graphText: request.text,
           startedAtUtc: new Date().toISOString(),
           phase: 'running',
+          // The provider actually used, from the preparation this run is walking with.
+          agent: describeLoopRunAgent({
+            provider: agent.provider,
+            modelRequested: agent.modelRequested,
+            drawnFor: loaded.graph.target,
+          }),
           // Read from the same bytes the run is walking, so the bindings that travel
           // are the bindings of the drawing that travels.
           roles: resolvedRolesWith(referencedRoles(request.text), resolveEditorRole),
@@ -4871,13 +4984,15 @@ function registerLoopGraphIpc(): void {
           repoRoot: ownRoot,
           outDir: null,
           resultsDir: runResultsDir(request.runId),
-          modelRequested: defaultLiveModel(),
+          modelRequested: agent.modelRequested,
           keepWorkspace: true,
           abortSignal: abort.signal,
           control: loopControl,
-          // Presentation mode stays provider-free here too: the same seam as the
-          // chat's loop run, so the editor's Run builds no real adapter in it.
-          ...presentationLoopAdapter,
+          // The chosen agent's adapter from the shared factory (DSP-138), which in
+          // presentation mode is the presentation adapter: the same seam as the chat's
+          // loop run, so the editor's Run builds no real adapter in it.
+          provider: agent.provider,
+          createAdapter: agent.createAdapter,
           onJournalEntry: (entry) => {
             // To the run's audience, not to `event.sender`. The sender was whichever
             // window pressed Run, which is not necessarily — and with two windows,
@@ -4951,6 +5066,23 @@ function registerLoopGraphIpc(): void {
    * next run. Nothing here starts a run, and asking twice is the same as asking once.
    */
   ipcMain.handle(CURRENT_LOOP_RUN, (): LiveRunAnnouncement | null => runAudience.current());
+
+  /**
+   * Which agent the graph editor's Run would use now, as one line (DSP-138).
+   *
+   * **A read.** The same preparation the Run makes, without starting, recording or
+   * constructing anything. `target` is the drawing's label, named when it differs.
+   */
+  ipcMain.handle(READ_LOOP_RUN_AGENT, (_event, query: unknown): LoopRunAgentInfo => {
+    const asked = (typeof query === 'object' && query !== null ? query : {}) as {
+      target?: unknown;
+      entry?: unknown;
+    };
+    const target = asked.target;
+    const drawnFor: LoopTarget | null =
+      target === 'cursor' || target === 'copilot' || target === 'claude-code' ? target : null;
+    return loopRunAgentInfo(editorLoopRunRequest(entryFromQuery(asked.entry)), drawnFor);
+  });
 
   /**
    * Pause, continue, and who decides the next step.
@@ -5071,9 +5203,10 @@ function registerLoopGraphIpc(): void {
       // caches, so the role file is read once per run however many nodes name it. Its
       // anchor is the definition's resource root, not the folder being worked on.
       const resolveRole = chosen.resolveRole;
+      // No `connectedTargets`: a graph's target is a label of the drawing and does not
+      // decide which agent runs it (DSP-138).
       const loaded = loadLoopGraph(graphText, {
         resolveRole,
-        connectedTargets: ['cursor'],
       });
       if (!loaded.ok) {
         return {
@@ -5115,7 +5248,16 @@ function registerLoopGraphIpc(): void {
       // the Build-and-test panel; this handler does not read it, write it, or wait
       // for a confirmation. Decision D3 is not a product requirement.
       const entryNode = loaded.graph.nodes.find((node) => node.id === loaded.graph.entry);
-      const modelRequested = modelForChatNode(entryNode, session.modelRequested);
+      // DSP-138: which agent and model, decided before the record is opened and the
+      // control is claimed. A refusal opens no record, claims nothing and constructs
+      // nothing. The session's provider first, as the shown line resolves it.
+      const agent = prepareLoopRun(
+        chatLoopRunRequest(workingRoots.length, entryNode, session.modelRequested),
+      );
+      if (!agent.ok) {
+        return { kind: 'refused', reason: agent.reason };
+      }
+      const modelRequested = agent.modelRequested;
       // Opened before the walk starts and appended to as it happens, because DSP-25
       // #4 says an interrupted run must still leave understandable history — which
       // rules out assembling anything at the end. `graphVersionIdFor` hashes the
@@ -5133,6 +5275,7 @@ function registerLoopGraphIpc(): void {
         graphPath: graphPath,
         graphVersionId,
         modelRequested,
+        provider: agent.provider,
         appVersion: app.getVersion(),
         startedAtUtc: new Date().toISOString(),
       });
@@ -5192,6 +5335,12 @@ function registerLoopGraphIpc(): void {
           graphText,
           startedAtUtc: new Date().toISOString(),
           phase: 'running',
+          // The provider actually used, from the preparation this run walks with.
+          agent: describeLoopRunAgent({
+            provider: agent.provider,
+            modelRequested: agent.modelRequested,
+            drawnFor: loaded.graph.target,
+          }),
           // The bindings this run is actually using, announced with the drawing.
           // `resolveRole` above has already read every one of them in order to build
           // the prompts, so this costs a cache lookup and closes the defect where a
@@ -5211,11 +5360,12 @@ function registerLoopGraphIpc(): void {
           bindingKind: 'chat-loop',
           abortSignal: abort.signal,
           control: loopControl,
-          // The same seam the direct chat has had since DSP-1, and for the same
-          // reason: a scripted run can then walk a real loop in the real window with
-          // no provider call. `presentationMode` is set by one environment value and
-          // nothing else constructs this, so an ordinary launch cannot reach it.
-          ...presentationLoopAdapter,
+          // The chosen agent's adapter from the shared factory (DSP-138), built once by
+          // the run and disposed by it. In presentation mode it is the presentation
+          // adapter - the same seam the direct chat has had since DSP-1 - so a scripted
+          // run walks a real loop in the real window with no provider call.
+          provider: agent.provider,
+          createAdapter: agent.createAdapter,
           promptFor: (node, step) => {
             const prompt = chatPromptFor(node, {
               entryId: loaded.graph.entry,
@@ -5555,6 +5705,8 @@ function registerLoopGraphIpc(): void {
         graphText,
         startedAtUtc: new Date().toISOString(),
         phase: 'ready',
+        // DSP-138: which agent *Use loop* would run this with now, or why it would not.
+        agent: chatLoopAgentInfo(judged.graph).line,
         roles: resolvedRolesWith(referencedRoles(graphText), chosen.resolveRole),
       },
     };

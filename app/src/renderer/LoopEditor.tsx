@@ -36,7 +36,6 @@ import {
   attributeSupport,
   describeRunToolPolicy,
   describeTargetChange,
-  runnableHere,
   withTarget,
 } from '../shared/loop-graph';
 import type {
@@ -122,6 +121,7 @@ import {
   type PinnedDrawingCheck,
   type RunView,
 } from '../shared/loop-run-view';
+import type { LoopRunAgentInfo, LoopRunAgentQuery } from '../shared/loop-run-agent-text';
 import { runningStep, stepStanding } from '../shared/loop-activity';
 import { BRIEF_EXCLUSIONS, briefParts, nodeHelpText, requiredForKind } from '../shared/loop-chat';
 import {
@@ -375,15 +375,56 @@ export function LoopEditor(): React.JSX.Element {
 
   const resolveRole = useMemo(() => resolverFromEntries(roles), [roles]);
 
-  // Which frameworks this machine is connected to. DSP-136: no longer asked in the
-  // background - opening the editor never contacts Cursor - so this stays `null`,
-  // "not established", which is a different answer from "none". The inspector says
-  // so beside "Loops run on Cursor only".
-  const [connectedTargets] = useState<readonly LoopTarget[] | null>(null);
+  // Which frameworks this machine is connected to is not asked here (DSP-136: opening
+  // the editor never contacts Cursor), and since DSP-138 it decides nothing about a run:
+  // a graph's target is a label of the drawing, and which agent runs it is `runAgent`
+  // below. So the editor passes no `connectedTargets`, and no "whether it can run here is
+  // unknown" notice is produced beside the line that says which agent runs it.
+
+  // Which agent a run would use now, read from the main process by the same preparation
+  // the Run makes (DSP-138). A read: nothing is started or constructed. Asked again when
+  // the drawing's target or entry step changes and when the window comes back to the
+  // front, which is when the agent choice made in the chat window can have changed. The
+  // entry step goes with it so the line applies the Run's model rule (review B2).
+  const [runAgent, setRunAgent] = useState<LoopRunAgentInfo | null>(null);
+  const entryNode = graph?.nodes.find((node) => node.id === graph.entry);
+  const agentQueryKey = JSON.stringify({
+    target: graph?.target ?? null,
+    entry:
+      entryNode === undefined
+        ? null
+        : {
+            id: entryNode.id,
+            ...(entryNode.label === undefined ? {} : { label: entryNode.label }),
+            ...(entryNode.model === undefined ? {} : { model: entryNode.model }),
+          },
+  });
+  useEffect(() => {
+    let cancelled = false;
+    const query = JSON.parse(agentQueryKey) as LoopRunAgentQuery;
+    const read = (): void => {
+      void window.dspatch.readLoopRunAgent(query).then(
+        (info) => {
+          if (!cancelled) {
+            setRunAgent(info);
+          }
+        },
+        () => {
+          /* The line stays as it was; a run gives its own account when it starts. */
+        },
+      );
+    };
+    read();
+    window.addEventListener('focus', read);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', read);
+    };
+  }, [agentQueryKey]);
 
   const findings = useMemo<readonly Finding[]>(
-    () => (graph === null ? [] : checkLoopGraph(graph, { resolveRole, connectedTargets })),
-    [graph, resolveRole, connectedTargets],
+    () => (graph === null ? [] : checkLoopGraph(graph, { resolveRole })),
+    [graph, resolveRole],
   );
   const index = useMemo(() => indexFindings(findings), [findings]);
 
@@ -476,7 +517,6 @@ export function LoopEditor(): React.JSX.Element {
     );
     const loaded = loadLoopGraph(outcome.text, {
       resolveRole: resolverFromEntries(roleMap),
-      connectedTargets,
     });
     const described = describeOpenedGraph({
       displayPath: outcome.displayPath,
@@ -538,10 +578,9 @@ export function LoopEditor(): React.JSX.Element {
       `${preamble}${described.opened} ${String(laidOut.graph.nodes.length)} nodes, ${String(laidOut.graph.edges.length)} edges.` +
         (laidOut.placed.length === 0
           ? ''
-          : ` ${String(laidOut.placed.length)} of them had no saved position and ${laidOut.placed.length === 1 ? 'was' : 'were'} placed on a grid; arrange them and save to keep it.`) +
-        ` ${loaded.runnable.reason}`,
+          : ` ${String(laidOut.placed.length)} of them had no saved position and ${laidOut.placed.length === 1 ? 'was' : 'were'} placed on a grid; arrange them and save to keep it.`),
     );
-  }, [connectedTargets]);
+  }, []);
 
   /**
    * Choose a loop and draw it. One act, which is the whole of DSP-85.
@@ -1068,12 +1107,11 @@ export function LoopEditor(): React.JSX.Element {
     }
     const loaded = loadLoopGraph(watch.run.graphText, {
       resolveRole: watchedResolveRole,
-      connectedTargets,
     });
     return loaded.ok
       ? serialiseLoopGraph(layOutMissingViews(loaded.graph).graph, { newline: '\n' })
       : null;
-  }, [watch?.run, watchedResolveRole, connectedTargets]);
+  }, [watch?.run, watchedResolveRole]);
 
   /**
    * The canvas as a drawing, for the two comparisons that need one.
@@ -2773,6 +2811,7 @@ export function LoopEditor(): React.JSX.Element {
               // resource root when a definition was the way in, which for a loop
               // declared outside DSpatch is not this repository (DSP-82).
               resourceRoot={file?.projectRoot ?? null}
+              runProvider={runAgent?.provider ?? null}
               onNote={setNote}
               onChange={(next) => apply(replaceNode(graph, selectedNode.id, next))}
               onDelete={() => {
@@ -2795,7 +2834,7 @@ export function LoopEditor(): React.JSX.Element {
             <GraphInspector
               graph={graph}
               findings={findings}
-              connectedTargets={connectedTargets}
+              agentLine={watch?.run.agent ?? runAgent?.line ?? null}
               onChange={(next) => apply(next)}
               onSelect={(target) => setSelection(target)}
             />
@@ -3459,6 +3498,7 @@ function NodeInspector({
   findings,
   help,
   resourceRoot,
+  runProvider,
   onNote,
   onChange,
   onDelete,
@@ -3468,6 +3508,8 @@ function NodeInspector({
   readonly role: ResolvedRole | null;
   readonly findings: readonly Finding[];
   readonly help: boolean;
+  /** The agent a run would use now (DSP-138), or `null` when none would start. */
+  readonly runProvider: 'cursor' | 'claude' | null;
   /** Where this graph's role paths are measured from, or `null` when nothing is open. */
   readonly resourceRoot: string | null;
   readonly onNote: (note: string) => void;
@@ -3707,7 +3749,12 @@ function NodeInspector({
           */}
           <h3>What the step may do while it works</h3>
           <p className="muted" data-ev="node-tool-policy">
-            {describeRunToolPolicy()}
+            {describeRunToolPolicy(runProvider)}
+          </p>
+          <p className="muted" data-ev="node-tool-policy-scope">
+            The requirement answers on this step describe the drawing&apos;s target,{' '}
+            <strong>{graph.target}</strong>. The sentence above is what applies to the agent a run
+            uses.
           </p>
         </section>
       ) : null}
@@ -4289,18 +4336,18 @@ function EdgeInspector({
 function GraphInspector({
   graph,
   findings,
-  connectedTargets,
+  agentLine,
   onChange,
   onSelect,
 }: {
   readonly graph: LoopGraph;
   readonly findings: readonly Finding[];
-  readonly connectedTargets: readonly LoopTarget[] | null;
+  /** Which agent runs this loop (DSP-138): the watched run's own line, else a fresh read. */
+  readonly agentLine: string | null;
   readonly onChange: (next: LoopGraph) => void;
   readonly onSelect: (selection: Selection) => void;
 }): React.JSX.Element {
   const groups = groupFindings(findings);
-  const here = runnableHere(graph, connectedTargets);
   return (
     <div className="inspector">
       <h2>The graph</h2>
@@ -4331,10 +4378,11 @@ function GraphInspector({
         </select>
       </label>
       <p className="muted">
-        Target <strong>{graph.target}</strong>, stored in the file. {here.reason}
+        Target <strong>{graph.target}</strong>, stored in the file. It is a label of the drawing
+        and does not choose the agent; the line below says which agent runs it.
       </p>
-      <p className="muted" data-ev="loops-cursor-only">
-        Loops run on Cursor only. Cursor&apos;s connection is not checked here.
+      <p className="muted" data-ev="loop-run-agent">
+        {agentLine ?? 'Which agent runs this loop is being read.'}
       </p>
       <p className="muted">
         On a runtime fault: <strong>{graph.onRuntimeFault}</strong> <Unhonoured attribute="onRuntimeFault" />

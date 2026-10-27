@@ -1060,8 +1060,19 @@ with the Claude SDK substituted; **no Claude turn has run through the window**.
   resumed through Cursor, nor the other way round. In a launch without Claude, a
   Claude-recorded conversation opens with nothing built, called or sent, and the
   window offers *Start new Cursor session* only if Cursor is the chosen agent.
-- **Loops run on Cursor only**, as the graph editor says; it no longer checks Cursor's
-  connection in the background.
+- **Loops run with the chosen agent (DSP-138).** *Use loop* in the chat and the graph
+  editor's *Run* use the open conversation's agent, else the agent chosen in *Open a
+  project*; nothing is assumed, and a graph's `target` is a label of the drawing, not a
+  choice of agent. The editor shows *Runs with <agent> (<model>)* before a run. A run
+  that cannot go ahead is refused before anything is recorded or built, with the reason:
+  no agent chosen, the agent unavailable or Claude support not installed, Claude's
+  authentication check, more than one folder under Claude, or an entry step that fixes a
+  model Claude does not use. Claude's steps run with the main chat's permissions (read and
+  edit files, **no commands**), so a check that needs a build or test is likely to end
+  *could not establish*; a gate's command is run by DSpatch itself. **Checked offline
+  with the real Claude adapter on a substituted SDK, not run live** (see
+  [the Linux trial, Part C](../docs/LINUX_HOME_TRIAL.md)). The command-line runner
+  (`scripts/run-loop-graph.mjs`) stays Cursor-only and says so.
 - **The review discussion has its own, explicit agent (DSP-132).** Opened from the main
   window, a new discussion takes that window's agent; opened standalone (`npm run review`,
   *Open Example Review*) it has none, and asks *Choose an agent for this discussion*

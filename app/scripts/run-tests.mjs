@@ -82,6 +82,7 @@ const AREAS = {
       'loop-instruction-wiring.test.ts',
       'loop-liveness.test.ts',
       'loop-node-help.test.ts',
+      'loop-provider.test.ts',
       'loop-record.test.ts',
       'loop-results.test.ts',
       'loop-run.test.ts',

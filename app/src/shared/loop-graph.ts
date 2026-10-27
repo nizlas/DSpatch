@@ -263,10 +263,14 @@ export const TARGET_CAPABILITIES: TargetCapabilities = {
    * `.claude/agents/` so that Claude Code can take part in the *external* development
    * loop, and they come from Claude Code's sub-agent documentation (read 20 October
    * 2026), not from a run. Every cell carries `whenDSpatchWalksTheRun: NOT_RUN`
-   * explicitly: no adapter opens a Claude Code session, `connectedTargets` is
-   * `['cursor']` wherever a run is checked, and a generated file is not a runtime
-   * provider. Without the explicit cell `capabilityAnswer` would fall back to the
-   * generated-file answer and the product would read these as established.
+   * explicitly: no adapter opens a Claude Code session for these files, and a generated
+   * file is not a runtime provider. Since DSP-138 a run DSpatch walks can use the Claude
+   * adapter (`ClaudeAgentSdkAdapter`) when Claude is the chosen agent, but a graph's
+   * `target` is a label of the drawing and does not choose the run's provider, so
+   * nothing in this row describes that adapter; its permissions are stated by
+   * `describeRunToolPolicy('claude')`. Without the explicit cell `capabilityAnswer`
+   * would fall back to the generated-file answer and the product would read these as
+   * established.
    */
   'claude-code': {
     'no-file-writes': {
@@ -789,8 +793,10 @@ export interface AttributeSupport {
  * DSP-94, from DSP-92's F6. This was a literal in `loop-live-run.ts` and appeared on no
  * screen, so whether a step could touch a file at all was a run-level decision a reader
  * had to find by opening the main process. It is a constant here, beside the capability
- * table that already names the value that is *not* chosen, and `loop-live-run.ts` passes
- * it to the adapter — so the panel showing it is showing what is used, not a copy.
+ * table that already names the value that is *not* chosen, and the Cursor adapter of a
+ * loop run is given it — by `provider-adapters.ts` (purpose `'loop'`) in the window and by
+ * `loop-live-cli.ts` on the command line — so the panel showing it is showing what is
+ * used, not a copy. A Claude loop step has the main chat's permissions instead (DSP-138).
  *
  * It is deliberately **not** a field on a node or a graph. Nothing in the format selects
  * it, no drawing can vary it, and giving it a box before anything can honour one would be
@@ -799,14 +805,44 @@ export interface AttributeSupport {
 export const LOOP_RUN_TOOL_POLICY = 'provider-default' as const;
 
 /**
- * What {@link LOOP_RUN_TOOL_POLICY} means for a person reading the node panel.
+ * The tools a Claude loop step has, by name: the main chat's `CHAT_PERMISSIONS.tools`
+ * (`claude-agent-sdk-adapter.ts`), which `provider-adapters.ts` gives purpose `'loop'`
+ * (DSP-138). Restated here because this module is read by the renderer, which must not
+ * import an adapter; `loop-provider.test.ts` holds the two lists equal.
+ */
+export const CLAUDE_LOOP_STEP_TOOLS: readonly string[] = ['Read', 'Glob', 'Grep', 'Edit', 'Write'];
+
+/**
+ * What a run's tool policy means for a person reading the node panel.
  *
- * Takes the value rather than closing over it, so the sentence is chosen by the policy
- * in force and a different one cannot be described while another is passed.
+ * By the provider the run uses (DSP-138): Claude's permissions are the main chat's,
+ * Cursor's is {@link LOOP_RUN_TOOL_POLICY}. `null` is no agent chosen, which no run can
+ * start with. For Cursor it takes the policy value rather than closing over it, so the
+ * sentence is chosen by the policy in force and a different one cannot be described
+ * while another is passed.
  */
 export function describeRunToolPolicy(
+  provider: 'cursor' | 'claude' | null,
   policy: 'provider-default' | 'text-only' = LOOP_RUN_TOOL_POLICY,
 ): string {
+  if (provider === null) {
+    return (
+      'No agent is chosen, so no run can start and no step has any tools. Under Cursor a ' +
+      'step gets Cursor’s own tools; under Claude it gets the main chat’s permissions.'
+    );
+  }
+  if (provider === 'claude') {
+    return (
+      'Every agent step of a run with Claude opens its session with the main chat’s ' +
+      `permissions: the tools ${CLAUDE_LOOP_STEP_TOOLS.join(', ')}, with reading and editing ` +
+      'pre-approved under the session’s working folder, and nothing else — no Bash or other ' +
+      'command tool, no MCP servers and no settings read from disk. An agent step can read and change ' +
+      'files and cannot run commands. It is one policy for the whole run, fixed in DSpatch ' +
+      'rather than set by this drawing. A requirement ticked on a step, such as ' +
+      '“no-file-writes”, is an instruction the agent is expected to follow, not a restriction ' +
+      'these permissions apply.'
+    );
+  }
   return policy === 'text-only'
     ? 'Every step of a run DSpatch walks opens its session with the tool policy “text-only”: the ' +
         'adapter passes an empty tool list, so the agent can answer with text and can reach no file ' +

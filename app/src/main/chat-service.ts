@@ -75,6 +75,7 @@ import type {
 } from '../shared/bridge';
 import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
 import {
+  CLAUDE_CHAT_MODEL,
   providerAvailability,
   providerDisplayName,
   type ProviderAvailability,
@@ -145,10 +146,11 @@ import {
 const DEFAULT_MODEL = 'claude-haiku-4-5';
 
 /**
- * The model a Claude chat session asks for (DSP-117). By name: the Claude adapter
- * has no model list, so the window names the model rather than offering a choice.
+ * The model a Claude chat session asks for (DSP-117). Defined beside the provider
+ * availability since DSP-138, so a loop run names the same model without importing
+ * this service; re-exported here for the callers that already read it from here.
  */
-export const CLAUDE_CHAT_MODEL = 'claude-haiku-4-5';
+export { CLAUDE_CHAT_MODEL };
 
 /**
  * How long DSpatch keeps looking for provider work after a cancellation.

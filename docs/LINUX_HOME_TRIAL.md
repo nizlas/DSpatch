@@ -2,7 +2,7 @@
 
 A short, ordered trial for the first run of DSpatch on the home Linux machine. Everything it relies on has been **prepared and verified offline on Windows only**; none of it has run on Linux, and no Claude turn has run through the DSpatch window. Requirements, the sandbox step and the background are in [app/README.md, Linux (prepared, not yet run)](../app/README.md#linux-prepared-not-yet-run) and [Claude in the main chat](../app/README.md#claude-in-the-main-chat-offline-prepared-not-yet-run-live).
 
-Part A needs no provider. Part B is the live Claude trial and needs the decisions listed before it.
+Part A needs no provider. Part B is the live Claude trial and needs the decisions listed before it. Part C runs a small loop with Claude after Part B (DSP-138).
 
 ## Part A - start, example review, stop (no provider)
 
@@ -85,6 +85,22 @@ Expected: it prints the SDK version it installs (`@anthropic-ai/claude-agent-sdk
 11. **Reopen.** Quit and start again with the same variable. Expected: the conversation opens as Claude. *Agent* keeps *Claude* from the last start (DSP-136); if another agent is chosen, the conversation opens with its history and offers *Resume with Claude*. Whether the provider session itself resumes is not established (DSP-122 is offline-verified only); DSpatch says which it did.
 
 12. **Without the variable.** Start once with plain `npm run dev`. Expected: the Claude conversation is not resumed through Cursor; the window says the session belongs to another agent and offers *Start new Cursor session*.
+
+## Part C - a loop with Claude (live, after Part B)
+
+Loop runs use the chosen agent since DSP-138. Before this trial they have run with Claude only offline: the real Claude adapter on a substituted SDK, in tests. Run Part C only after Part B behaved as expected, in the same kind of launch: Claude support installed, `DSPATCH_CLAUDE_AUTHORIZATION` set, Claude chosen, and **one** folder open (Claude works in one folder; with more open, the run is refused before it starts).
+
+13. **See which agent will run it.** Open the generated sample project as Claude, open the graph editor and choose the chat loop (`dspatch-chat-loop`). Expected: the line under the drawing reads *Runs with Claude (claude-haiku-4-5)…* and says that agent steps cannot run commands and that a gate's command is run by DSpatch; it adds that the drawing's `cursor` target is only a label. (The editor's line assumes one folder, as the editor's Run does; with more open, *Use loop* refuses even though this line reads *Runs with Claude*.) No Cursor agent is created (main log: no `building a cursor` line).
+
+14. **A reading assignment.** In the chat, tick *Use loop* and send a small question that needs no command, for example *"Which function in this project formats durations? Name the file."* Expected: *work* then *check*, ending at *done* or *not established*; each step's answer appears under its own step; the run record in `userData/loop-runs/` has `"provider":"claude"`.
+
+15. **A one-file change.** Send *"Add a one-line comment at the top of README.md saying it is a sample."* Expected: the change appears in the diff. The check step cannot run tests (Claude has no Bash), so a check that needs a build or test ends *not established* (could not establish) rather than *done*. That is the expected honest outcome, not a failure of the trial.
+
+16. **Cancel during *work*.** Send a longer assignment and press Cancel while *work* is running. Expected: the run stops on *work* (the record names the cancel on that step); *check* never starts. Restarting DSpatch shows the run in history and does not start it again.
+
+17. **Refusals, no run.** (a) With Claude's conversation open, add a second folder to the workspace and try *Use loop*. Expected: a plain sentence that Claude works in one folder, ending *Nothing was started.* (b) Quit, start once with plain `npm run dev` (no `DSPATCH_CLAUDE_AUTHORIZATION`), **do not start a Cursor session** when the window offers one, and open the graph editor. Expected: the line under the drawing reads *No loop run can start: …* naming why Claude cannot be used. In both cases nothing contacts Cursor and nothing is installed or downloaded. The editor's own *Run* (the duration drawing) is refused under Claude in any launch, because that drawing fixes a Cursor model.
+
+Record for Part C: the agent line as shown, the end status of each run, whether the record carries `provider`, and the session details' reported model and tool list.
 
 ## What to record
 

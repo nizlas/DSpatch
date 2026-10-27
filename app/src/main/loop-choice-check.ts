@@ -55,9 +55,10 @@ export type LoopChoiceJudgement =
  * 2. the graph does not validate — the definition's name and `formatFindings`;
  * 3. the runner will not walk this drawing — the binding's own reason.
  *
- * `connectedTargets` is `['cursor']` for the same reason it is in the preview and in
- * the run: a graph's target binding is part of whether it validates, and judging it
- * against a different set would answer a question neither of those asked.
+ * No `connectedTargets` is given, as none is given by the runs (DSP-138): a graph's
+ * `target` is a label of the drawing and does not decide which agent runs it, and the
+ * check only ever produced a notice, never a refusal. Which agent runs it is decided by
+ * `prepareLoopRun` when the run starts.
  *
  * `consequence` is the caller's half of the one sentence that has one — *there is
  * nothing to show*, *it was not chosen*. Passed in rather than fixed, because the
@@ -77,7 +78,6 @@ export function judgeChosenLoop(
   const chosen = outcome.chosen;
   const loaded = loadLoopGraph(chosen.graphText, {
     resolveRole: chosen.resolveRole,
-    connectedTargets: ['cursor'],
   });
   if (!loaded.ok) {
     /*

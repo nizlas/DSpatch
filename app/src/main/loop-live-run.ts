@@ -1,14 +1,18 @@
 /**
- * CLI orchestration for a live loop run. Separate from `loop-live.ts` so tests
- * can exercise the executor with a fake adapter without constructing Cursor.
+ * Orchestration for a live loop run, for the window and the command line. Separate from
+ * `loop-live.ts` so tests can exercise the executor with a fake adapter.
+ *
+ * Provider-neutral (DSP-138): the caller names the run's provider and hands over the
+ * factory that builds its adapter. Nothing here constructs a provider adapter or imports
+ * one, so the product's run path cannot reach Cursor unless Cursor was chosen. The
+ * command line's Cursor construction is in `loop-live-cli.ts`.
  */
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { AgentAdapter } from '../adapter/agent-adapter';
-import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
+import type { ProviderId } from '../adapter/types';
 import { generateExperimentRepo } from './experiment-repo';
 import {
   createLiveExecutor,
@@ -23,6 +27,7 @@ import {
   type LiveExecutorOptions,
   type LiveInspection,
   type LivePromptStep,
+  type LoopStepAdapter,
 } from './loop-live';
 import type { StepActivity } from '../shared/loop-activity';
 import { describeChosenLoopBinding } from '../shared/loop-chat';
@@ -36,9 +41,7 @@ import {
   type RunResult,
   type StepNote,
 } from '../shared/loop-run';
-import { formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
 import {
-  LOOP_RUN_TOOL_POLICY,
   writeReachOf,
   type LoopGraph,
   type LoopNode,
@@ -119,20 +122,26 @@ export interface LiveCliOptions {
    */
   readonly control?: RunControlPort;
   /**
-   * Which adapter the run's agent steps go through. Left out, it is Cursor's.
+   * The provider this run's agent steps go through (DSP-138). Required, with no
+   * default: the window resolves it from the explicit agent choice (`prepareLoopRun`),
+   * and the command line names Cursor. Every step session is opened for it and checked
+   * against it, and the inspection carries it.
+   */
+  readonly provider: ProviderId;
+  /**
+   * Which adapter the run's agent steps go through. Required since DSP-138: the run
+   * module builds no adapter of its own, so nothing here can fall back to Cursor.
    *
-   * The seam the direct chat has had since DSP-1 and the loop run did not. It exists
-   * for the same reason: `PresentationAdapter` lets the **window** walk a run on this
-   * machine with no provider call, which is the only way to check in the window the
-   * things the window alone decides — and the window's own wiring of a result store is
-   * one of them. Without it the loop path could only be exercised by paying for a turn,
-   * so it was exercised by nothing.
+   * The window passes the shared factory's adapter for the chosen provider and purpose
+   * `'loop'`, which in presentation mode is the presentation adapter - so a window can
+   * walk a run on this machine with no provider call, which is the only way to check in
+   * the window the things the window alone decides.
    *
    * A factory rather than an instance, because `driveLive` owns the adapter's lifetime:
    * it disposes what it made, and handing it something to dispose that a caller still
    * held would be a second owner of one resource.
    */
-  readonly createAdapter?: () => AgentAdapter;
+  readonly createAdapter: () => LoopStepAdapter;
 }
 
 export interface LiveCliDelivery {
@@ -146,20 +155,6 @@ export interface LiveCliDelivery {
 
 export function defaultLiveModel(): string {
   return process.env['DSPATCH_LIVE_MODEL'] ?? DEFAULT_LIVE_MODEL;
-}
-
-export function runLiveLoop(options: LiveCliOptions): Promise<LiveCliDelivery> {
-  const graphText = fs.readFileSync(options.graphPath, 'utf8');
-  const loaded = loadLoopGraph(graphText, {
-    resolveRole: createFileRoleResolver(options.repoRoot),
-    connectedTargets: ['cursor'],
-  });
-  if (!loaded.ok) {
-    throw new Error(
-      `${options.graphPath} does not validate, so it was not run:\n\n${formatFindings(loaded.findings)}`,
-    );
-  }
-  return runLiveGraph(loaded.graph, options);
 }
 
 /**
@@ -248,7 +243,7 @@ async function driveLive(
   generated: boolean,
   options: Omit<LiveCliOptions, 'graphPath'>,
 ): Promise<LiveCliDelivery> {
-  const inspection = emptyInspection(workspacePath, options.modelRequested, roots);
+  const inspection = emptyInspection(workspacePath, options.modelRequested, roots, options.provider);
   // Before the walk, so the note the record carries and the behaviour the executor takes are
   // the same decision rather than two that could disagree.
   const snapshots = snapshotDecisionFor(graph, options.repoRoot);
@@ -263,11 +258,10 @@ async function driveLive(
   const resultsDir =
     options.resultsDir ??
     (options.outDir === null || options.outDir === '' ? null : path.join(path.resolve(options.outDir), 'results'));
-  // The policy is a named constant beside the capability table rather than a literal
-  // here, so the node panel can state what a step may do by reading the value the
-  // adapter is actually given (DSP-94, F6).
-  const adapter =
-    options.createAdapter?.() ?? new CursorSdkAdapter({ toolPolicy: LOOP_RUN_TOOL_POLICY });
+  // Built here and nowhere else, so this function is the adapter's one owner and
+  // disposes it once, in the `finally` below. Which provider, and with which tools, the
+  // caller decided (`provider-adapters.ts`, purpose `'loop'`).
+  const adapter = options.createAdapter();
   /**
    * What the provider says it used, from an adapter that is willing to say.
    *
@@ -300,6 +294,7 @@ async function driveLive(
         workspacePath,
         workingRoots: roots,
         adapter,
+        provider: options.provider,
         modelRequested: options.modelRequested,
         modelReported: modelReportedBy,
         abortSignal: options.abortSignal,

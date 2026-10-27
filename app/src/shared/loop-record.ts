@@ -72,6 +72,11 @@ export interface RunRecordIdentity {
   readonly graphPath: string;
   readonly graphVersionId: string;
   readonly modelRequested: string;
+  /**
+   * The agent the run's steps went through (DSP-138). Absent in a record written before
+   * it was recorded, which reads as **not recorded** and is never taken to mean Cursor.
+   */
+  readonly provider?: 'cursor' | 'claude';
   readonly appVersion: string;
   readonly startedAtUtc: string;
 }
@@ -578,6 +583,7 @@ function parseIdentity(value: unknown): RunRecordIdentity | null {
     return null;
   }
   const conversationId = value['conversationId'];
+  const provider = value['provider'];
   return {
     runId,
     projectPath,
@@ -587,6 +593,8 @@ function parseIdentity(value: unknown): RunRecordIdentity | null {
     graphPath: asString(value['graphPath'], ''),
     graphVersionId: asString(value['graphVersionId'], ''),
     modelRequested: asString(value['modelRequested'], ''),
+    // Only a value this build writes. Anything else, or nothing, stays not recorded.
+    ...(provider === 'cursor' || provider === 'claude' ? { provider } : {}),
     appVersion: asString(value['appVersion'], 'unknown'),
     startedAtUtc: asString(value['startedAtUtc'], ''),
   };

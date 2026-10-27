@@ -15,7 +15,9 @@
  *
  * `--live` is a different executor, not a flag the dry-run path inspects. It
  * generates an isolated experiment repository, refuses DSpatch itself as a
- * workspace, and drives agent nodes through the existing Cursor adapter.
+ * workspace, and drives agent nodes through the existing Cursor adapter. The command
+ * line runs loops with Cursor only (DSP-138); the window runs them with the agent
+ * chosen there.
  *
  *   npm run loop:dry-run
  *   npm run loop:live
@@ -35,11 +37,8 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { createFileRoleResolver } from '../src/main/loop-graph-roles';
-import {
-  defaultLiveModel,
-  LIVE_GRAPH_REL,
-  runLiveLoop,
-} from '../src/main/loop-live-run';
+import { CLI_LOOP_AGENT_NOTE, runLiveLoop } from '../src/main/loop-live-cli';
+import { defaultLiveModel, LIVE_GRAPH_REL } from '../src/main/loop-live-run';
 import { chatPromptFor } from '../src/shared/loop-chat';
 import { workingRootsFrom } from '../src/shared/working-roots';
 import { formatFindings, loadLoopGraph } from '../src/shared/loop-graph-load';
@@ -343,6 +342,7 @@ if (options.live) {
       ...chatBinding,
     });
     process.stdout.write(
+      `agent      Cursor. ${CLI_LOOP_AGENT_NOTE}\n` +
       `graph      ${path.relative(repoRoot, path.resolve(process.cwd(), options.graph))}\n` +
         `workspace  ${delivery.workspacePath} (${delivery.workspaceKept ? 'left on disk' : 'deleted'})\n` +
         `model      requested ${options.model}, reported ${delivery.inspection.modelReported ?? 'unknown'}\n` +
