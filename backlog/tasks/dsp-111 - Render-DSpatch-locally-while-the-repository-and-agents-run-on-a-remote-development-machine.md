@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-10-21 15:09'
-updated_date: '2026-10-27 16:10'
+updated_date: '2026-10-27 18:44'
 labels:
   - integration
 dependencies:
@@ -109,4 +109,51 @@ Focus (Niclas, 26 Oct 2026; run 20261026-230000-host-review): the first host ste
 Result (run 20261026-230000-host-review; I-3 call 11; Verifier 012 PASS; Reviewer 013 ACCEPT; coordinator applied R-2 item 6): first host step for review done LOCALLY - not remote operation. src/shared/review-host-contract.ts ReviewHostApi (serialisable; host-error codes unknown-session, invalid-request, definition-unreadable, git-failed, save-failed, internal; plain messages, technical detail separate); src/host/review-host.ts (owns repository access via ReviewService per session, the recent index, identity keys and review records; imports no Electron or renderer - pinned by a boundary test and a runtime require walk); src/host/local-review-host.ts binding (structuredClone in/out; throws -> internal). review-windows.ts and review-ipc.ts reach the repository and review records only through the contract; renderer and preloads unchanged. Verified on Windows: the same flows through the binding on a git fixture; in a real window a base-build record restored unchanged, navigation, code views, sv/en, note and position across a restart, a simulated save error keeping the work, Open example review; review-direct, review-window, review-discussion scenarios. ACs #1-#4 stay open. Next steps: a separate host process; a transport; authentication; reconnection; host-side browsing for review definitions (dialogs still return client-local paths); a host-side refusal of a second session on one review (single writer); moving ReviewService under src/host/; the review discussion still runs in main.
 
 27 Oct 2026: description widened to the full host-client flow (chat, review, loops, disconnect and reconnect), with criteria #5-#10 and four open decisions for Niclas. The first milestone and criteria #1-#4 are kept. DSP-131 (Linux launch) is now a dependency because the host runs on the home Linux machine. DSP-110 informs the design but is not a dependency. Copilot at work is DSP-148 and is not part of this card.
+
+27 Oct 2026, current focus (Niclas): implement a separate local host process that an ordinary local start uses automatically for project work (projects, chat, review, loops), behind serialisable contracts reusable by a later remote transport. Approved here: the separate local host process and automatic local connection without SSH. Not approved: remote authentication, SSH, disconnect policy for work in progress, several clients, local caching of remote history. Real Linux and two-machine trials are later.
+
+Result, 27 Oct 2026: separate local host process (local, NOT remote operation; criteria #1-#10 stay open).
+
+What a person can now do: an ordinary local start of DSpatch starts a separate project host process automatically, with no SSH, no sign-in and no manual start. Opening projects, the chat, review (with the review discussion) and loop runs work through it, in the same windows as before.
+
+Which functions go through the host:
+- The host (`app/src/host/project-host.ts`, entry `host-process.ts`, Electron `utilityProcess`, local process channel, nothing on a network) holds:
+  - the chat service and its adapter, and projects, conversations, sample projects and the workspace;
+  - loop definitions, graphs, role files, loop runs, their control, instructions and run records;
+  - the review host (`ReviewHostApi`) and the review discussions with their adapters (tool-free policy unchanged);
+  - the probe.
+- Methods form a typed contract (`shared/project-host-contract.ts`). Both sides typecheck against it, and the host refuses to start unless it serves exactly those methods. Events go to an audience: the chat window, every window, the run audience, or one renderer.
+- The client (`main/main.ts`) keeps windows, menus, file choosers, message boxes, the clipboard, the file manager, the editor's unsaved-drawing registry and the scripted-run harness.
+
+Failures:
+- **Start failure:** said before any window opens (Try again / Quit; unattended runs exit 26).
+- **Lost host:** every waiting call is answered `host-lost` ("unknown; nothing was sent again"), and calls after that are refused as not done. The person may restart, which reattaches the review windows to the new host and reloads the windows. The editor's unsaved drawing is asked about first (Save / Discard / Keep). Unattended runs exit 27.
+- **Client gone:** the host closes its adapters and ends; this is interim local behaviour, not a disconnect policy.
+- **Quit:** the host closes within its own stated bound plus a margin.
+
+Data: no format change and the same files under userData. Export reads the bytes on the host and writes them on the client, byte for byte.
+
+Verification on Windows, home computer.
+- **Real processes:**
+  - typecheck and build pass. The whole suite passed once on the final code (1625/1625), including a new `host` group: the channel against a separate stand-in process, the real host process under Node (serves, events, data across a restart, the after-close reading, ends when the client is gone), and boundaries (the host reaches no Electron or renderer; the client loads only its own files and shared shapes).
+  - Window scenarios in presentation mode through Electron and the utility-process host, final build: presentation, loop-result, stop-asked, errors, switch first and again, resume-choice refused, failed and ok, review-window, review-discussion, review-direct, unsaved-edits-survive-a-switch, one-graph-view regression, and liveness-and-an-ending, all exit 0.
+  - Host killed mid chat-loop run: one unanswered call (`loop.startChatRun`), exit 27, the run record left without an ending (reads back incomplete), nothing resent.
+  - Host entry removed: "stopped while starting", no window opened, no DSpatch file written.
+  - Packaged build (into the scratchpad) ran presentation from app.asar: passed.
+- **Simulated:** every provider answer (presentation adapters); the native file dialogs (scripted picks).
+- **Pre-existing failures, identical on an unchanged build of aec3140:**
+  - says-less fails on the words "mandate" and "walks";
+  - folders: the large folder is not drawn within 120 s.
+
+Review: dspatch-reviewer REWORK (B1 after-close reading lost on shutdown; B2 a restart discarding the editor's unsaved drawing; improvements I1-I6), all addressed; the re-review gave ACCEPT. It notes that `host.shutdown` is registered outside the typed `handle()`, and that the client allowlist accepts any `shared/` file.
+
+Remaining direct dependencies or departures:
+- File choosers return client paths.
+- *Show in folder* and the role-source reveal use the client's file manager on host paths (same machine today).
+- The scripted harness reads host evidence through scripted-only methods.
+- Ending the host when the client is gone is interim behaviour.
+- The review discussion panel after a restart is not observed.
+- Child processes of a host that crashed are not established to end.
+
+Still open and needing Niclas's decision (unchanged): the transport and its authentication; what a dropped connection does to work in progress; one or several clients (single writer per conversation and review is not host-enforced yet); where durable history lives and any local caching. Not done: host-side browsing, a remote transport, reconnection, two-machine and Linux trials (DSP-131).
 <!-- SECTION:NOTES:END -->
