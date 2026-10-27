@@ -12,6 +12,7 @@ import { REPORT_WRITTEN_BY_SELF, undeclaredOutcomeOf } from './loop-graph';
 import type { LoopEdge, LoopGraph, LoopNode, NodeKind, ResultForm } from './loop-graph';
 import { kindEffect } from './loop-node-help';
 import { type LiveBinding } from './loop-editor-run';
+import { describeGateEvidenceRule } from './loop-results';
 import type { RunJournalEntry } from './loop-run';
 import { describeWorkingRootsForAgent, type WorkingRoot } from './working-roots';
 
@@ -1075,6 +1076,44 @@ export const TASK_PRECEDENCE: readonly string[] = [
     'is bounded by, hold whatever any text here says about precedence.',
 ];
 
+/** The entry step's opening line when a person's text is the mandate (the chat loop). */
+export const ENTRY_LINE_FROM_PERSON =
+  'This is the entry step of a DSpatch chat loop. The text under Mandate is the work to do.';
+
+/**
+ * The entry step's opening line when the drawing's own purpose is the mandate (DSP-139):
+ * the editor's Run of a bundled drawing, where nobody typed anything.
+ */
+export const ENTRY_LINE_FROM_DRAWING =
+  'This is the entry step of a DSpatch loop run started from the loop editor. Nobody ' +
+  'typed a mandate for it: the text under Mandate is the purpose the drawing states ' +
+  'for the whole run, and the text under Your step is the work this step does.';
+
+/** How a later step is introduced to a mandate that is the drawing's purpose (DSP-139). */
+export const MANDATE_INTRO_FROM_DRAWING =
+  'Nobody typed a mandate for this run. This is the purpose the drawing states for the ' +
+  'whole run, and it is what the whole run is for:';
+
+/**
+ * {@link TASK_PRECEDENCE} for a run nobody typed a mandate for (DSP-139, review I1).
+ *
+ * The editor's Run of a bundled drawing has no person's words: its mandate is the
+ * drawing's own top-level purpose. Telling the step that "the person's own words" are
+ * the assignment, or that a later message from that person updates it, would describe a
+ * run that is not happening. The two paragraphs about limits hold unchanged.
+ */
+export const DRAWING_TASK_PRECEDENCE: readonly string[] = [
+  '',
+  'Where two things you have been given disagree, this is the order. Nobody typed a ' +
+    'mandate for this run: the Mandate above is the purpose the drawing states for the ' +
+    'whole run, and your step is the purpose its node states. Those two are the ' +
+    'assignment. Another step’s account of the work is that step’s account and ' +
+    'does not replace them, and a command result DSpatch hands you is its record of what ' +
+    'ran, not a restatement of the assignment.',
+  TASK_PRECEDENCE[3] ?? '',
+  TASK_PRECEDENCE[4] ?? '',
+];
+
 /**
  * The opening of a brief to an agent that has seen nothing of this run.
  *
@@ -1213,8 +1252,17 @@ export function chatPromptFor(
      * implicit because the agent was there for the previous one.
      */
     readonly step?: ChatStepIdentity;
+    /**
+     * Whose words `mandate` is (DSP-139, review I1). `'person'`, the default, is the
+     * chat loop: the composer's text. `'drawing'` is the editor's Run of a bundled
+     * drawing, where nobody typed anything and `mandate` is the drawing's own purpose;
+     * the brief then says so, and the entry step's node purpose is its task.
+     */
+    readonly mandateFrom?: 'person' | 'drawing';
   },
 ): string {
+  const fromDrawing = options.mandateFrom === 'drawing';
+  const precedence = fromDrawing ? DRAWING_TASK_PRECEDENCE : TASK_PRECEDENCE;
   const preamble = rolePreamble(options.role);
   const declared = declarationInstructions(node.declaredFailures);
   const results = outcomeInstructions(node);
@@ -1231,12 +1279,14 @@ export function chatPromptFor(
       ...preamble,
       ...identity,
       ...folders,
-      'This is the entry step of a DSpatch chat loop. The text under Mandate is the work to do.',
+      fromDrawing ? ENTRY_LINE_FROM_DRAWING : ENTRY_LINE_FROM_PERSON,
       '',
       'Mandate:',
       options.mandate.trim(),
-      ...(purpose === '' ? [] : ['', 'Standing purpose for this node:', purpose]),
-      ...TASK_PRECEDENCE,
+      ...(purpose === ''
+        ? []
+        : ['', fromDrawing ? 'Your step:' : 'Standing purpose for this node:', purpose]),
+      ...precedence,
       '',
       // The first word, not somewhere in the reply. `declaredFailureFrom` reads only
       // the opening of the first line, so the instruction has to ask for the opening
@@ -1283,7 +1333,9 @@ export function chatPromptFor(
     options.step === undefined
       ? []
       : [
-          options.step.freshSession
+          fromDrawing
+            ? MANDATE_INTRO_FROM_DRAWING
+            : options.step.freshSession
             ? 'The run was started with this mandate. It is what the whole run is for:'
             : 'The run was started with this mandate, and it is repeated here unchanged so ' +
               'that it stands beside anything else in this message that describes the work. ' +
@@ -1300,7 +1352,7 @@ export function chatPromptFor(
     ...mandate,
     ...(mandate.length === 0 ? [] : ['Your step:']),
     task,
-    ...TASK_PRECEDENCE,
+    ...precedence,
     '',
     ...declared,
     ...results,
@@ -1337,6 +1389,7 @@ export interface BriefPart {
     | 'task'
     | 'precedence'
     | 'received'
+    | 'gate-evidence'
     | 'run-change'
     | 'required-result'
     | 'declarations'
@@ -1401,8 +1454,19 @@ export function briefParts(
      * would state a fact nobody established.
      */
     readonly workingRootCount: number | null;
-    /** For each consumed id, what that node leaves — which decides quoted against named. */
-    readonly producedBy: (nodeId: string) => { readonly form: ResultForm; readonly label: string } | null;
+    /**
+     * For each consumed id, what that node leaves — which decides quoted against named —
+     * and whether it is a gate, whose result is DSpatch's record of a command (DSP-139).
+     */
+    readonly producedBy: (
+      nodeId: string,
+    ) => { readonly form: ResultForm; readonly label: string; readonly isGate?: boolean } | null;
+    /**
+     * Whose words the mandate is, as {@link chatPromptFor} takes it (DSP-139). The editor's
+     * Run of a drawing bound with `drawing-purposes` sends `'drawing'`; left out is the
+     * chat loop's `'person'`, and the panel reads exactly as it did.
+     */
+    readonly mandateFrom?: 'person' | 'drawing';
     /** The archive path this step's own result would land at, when the graph names one. */
     readonly archivePath: string | null;
     /** `report.writtenBy`: `self`, another node's id, or `null` when the graph says nothing. */
@@ -1420,6 +1484,7 @@ export function briefParts(
   },
 ): readonly BriefPart[] {
   const isEntry = node.id === options.entryId;
+  const fromDrawing = options.mandateFrom === 'drawing';
   const purpose = node.purpose?.trim() ?? '';
   const consumed = node.consumes ?? [];
   const roleInstructions = options.role?.instructions?.trim() ?? '';
@@ -1441,6 +1506,14 @@ export function briefParts(
         `to start rather than sending this step an empty handover.`
       );
     }
+    if (produced.isGate === true) {
+      return (
+        `“${produced.label}” — a gate, so what is handed over is DSpatch’s record of the command it ` +
+        `ran: the command, the folder, the exit code or signal, the end of its output and the ` +
+        `snapshot it tested, reproduced whole inside the message. It is not anybody’s account of ` +
+        `the work.`
+      );
+    }
     return produced.form === 'markdown-file'
       ? `“${produced.label}” — its report is named by path. The agent opens the file itself; the ` +
         `message does not contain it, because the file is the result and a copy could disagree with it.`
@@ -1448,6 +1521,30 @@ export function briefParts(
         `to point at, so the text travels.`;
   };
   const received = consumed.map(describeHandover);
+  // Gates whose result can reach this step, on any route (DSP-139). Each one brings the
+  // stale rule into the message, and the panel shows that rule as it is sent.
+  const handedGateIds = [
+    ...new Set([
+      ...consumed,
+      ...(options.arrivals ?? []).flatMap((edge) => edge.delivers ?? []),
+    ]),
+  ].filter((id) => options.producedBy(id)?.isGate === true);
+  const gateRule =
+    handedGateIds.length === 0
+      ? []
+      : describeGateEvidenceRule(
+          handedGateIds.map((id) => ({
+            nodeId: id,
+            occurrence: 1,
+            testedSnapshotId: '<the snapshot it tested>',
+            staleBecause: null,
+          })),
+          undeclaredOutcomeOf(node),
+        )
+          .replace(/^\s*---\s*/, '')
+          .split(/\n\n+/)
+          .map((line) => line.trim())
+          .filter((line) => line !== '');
 
   // Which arrivals decide for themselves and which leave it to the node. Split rather
   // than listed together, because the two answer different questions: the first is *this
@@ -1575,10 +1672,16 @@ export function briefParts(
     },
     {
       id: 'mandate',
-      heading: 'The mandate the run was started with',
+      heading: fromDrawing
+        ? 'The drawing’s own purpose, sent as the mandate'
+        : 'The mandate the run was started with',
       carried: true,
       present: true,
-      detail: isEntry
+      detail: fromDrawing
+        ? 'Nobody types a mandate for this run: the editor’s Run sends the purpose this drawing ' +
+          'states for the whole run, to every step, and says so. ' +
+          (isEntry ? 'The entry step is told, as sent:' : 'A later step is told, as sent:')
+        : isEntry
         ? 'The text a person typed is the task of this step. It is the whole of what the run was ' +
           'asked for, and how it ranks against everything else in the message is stated below in ' +
           'the words the step is sent.'
@@ -1588,10 +1691,15 @@ export function briefParts(
           'another step’s account of the assignment arrives, and ranking that account against the ' +
           'person’s own words cannot be done when only one of them is in the message. What holds ' +
           'when the two disagree is stated below, in the words the step is sent.',
+      // The editor's Run says whose words these are; shown from the constants the prompt
+      // builder uses (DSP-139), so the panel and the message cannot disagree.
+      ...(fromDrawing
+        ? { text: [isEntry ? ENTRY_LINE_FROM_DRAWING : MANDATE_INTRO_FROM_DRAWING] }
+        : {}),
     },
     {
       id: 'task',
-      heading: isEntry ? 'This node’s standing purpose' : 'This step’s task',
+      heading: isEntry && !fromDrawing ? 'This node’s standing purpose' : 'This step’s task',
       carried: true,
       present: true,
       detail:
@@ -1600,7 +1708,9 @@ export function briefParts(
             ? 'Nothing written, so the message carries the mandate alone.'
             : `Nothing written, so the message says only “Continue the loop at "${node.id}".” That ` +
               `is the whole instruction this step would get. Write one.`
-          : isEntry
+          : isEntry && fromDrawing
+            ? 'Sent after the drawing’s purpose, under “Your step:”, as the work this step does.'
+            : isEntry
             ? 'Sent after the mandate as this node’s standing purpose, so a person’s own words lead.'
             : 'The purpose of this node, sent as the task. It is the only thing telling this agent ' +
               'what its step is for.',
@@ -1610,14 +1720,17 @@ export function briefParts(
       heading: 'Which of them governs where two disagree',
       carried: true,
       present: true,
-      detail:
-        'Sent to every agent step, after the task: the entry step, a fresh later step, and a ' +
-        'revisit — which is the round where an earlier step’s account of the assignment arrives, ' +
-        'and the reason both that account and the person’s own words have to be in the same ' +
-        'message for this to be a ranking anyone could make. As sent:',
+      detail: fromDrawing
+        ? 'Sent to every agent step, after the task. Nobody typed a mandate for this run, so it ' +
+          'ranks the drawing’s purpose and the step’s task above any other step’s account, and ' +
+          'says nothing about a person’s words. As sent:'
+        : 'Sent to every agent step, after the task: the entry step, a fresh later step, and a ' +
+          'revisit — which is the round where an earlier step’s account of the assignment arrives, ' +
+          'and the reason both that account and the person’s own words have to be in the same ' +
+          'message for this to be a ranking anyone could make. As sent:',
       // The blank line that separates it from the task in the prompt is not part of what
       // it says, so it is not shown as though it were.
-      text: TASK_PRECEDENCE.filter((line) => line !== ''),
+      text: (fromDrawing ? DRAWING_TASK_PRECEDENCE : TASK_PRECEDENCE).filter((line) => line !== ''),
     },
     {
       id: 'received',
@@ -1625,6 +1738,22 @@ export function briefParts(
       carried: false,
       present: consumed.length > 0 || arrivalsThatDecide.some((edge) => (edge.delivers ?? []).length > 0),
       detail: receivedDetail,
+    },
+    {
+      // DSP-139. The rule the engine appends whenever a gate's result is handed over: it
+      // changes the step's recorded outcome, so it is shown as it is sent (AGENT_BEHAVIOUR
+      // §2). The snapshot id is known only when the run happens, so it is a placeholder.
+      id: 'gate-evidence',
+      heading: 'Which code a command result describes, and what happens if it changes',
+      carried: gateRule.length > 0,
+      present: gateRule.length > 0,
+      detail:
+        'Added after what earlier steps left, because a gate’s command result reaches this step. ' +
+        'A test result counts only for the snapshot of the working folders it ran against; if the ' +
+        'folders differ, or cannot be observed, when this step starts or ends, DSpatch records the ' +
+        'outcome this node names for a result nobody established instead of the step’s verdict. ' +
+        'As sent, with the snapshot filled in when the run happens:',
+      ...(gateRule.length === 0 ? {} : { text: gateRule }),
     },
     {
       id: 'run-change',

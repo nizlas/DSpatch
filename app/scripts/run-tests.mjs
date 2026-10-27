@@ -142,6 +142,7 @@ const AREAS = {
     files: [
       { file: 'loop-live.test.ts', heavy: true },
       { file: 'gate-command-reality.test.ts', heavy: true },
+      { file: 'loop-gate-check.test.ts', heavy: true },
     ],
   },
 };

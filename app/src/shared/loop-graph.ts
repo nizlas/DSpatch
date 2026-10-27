@@ -836,7 +836,8 @@ export function describeRunToolPolicy(
       'Every agent step of a run with Claude opens its session with the main chat’s ' +
       `permissions: the tools ${CLAUDE_LOOP_STEP_TOOLS.join(', ')}, with reading and editing ` +
       'pre-approved under the session’s working folder, and nothing else — no Bash or other ' +
-      'command tool, no MCP servers and no settings read from disk. An agent step can read and change ' +
+      'command tool, no MCP servers and no settings read from disk other than managed policy ' +
+      'settings. An agent step can read and change ' +
       'files and cannot run commands. It is one policy for the whole run, fixed in DSpatch ' +
       'rather than set by this drawing. A requirement ticked on a step, such as ' +
       '“no-file-writes”, is an instruction the agent is expected to follow, not a restriction ' +
@@ -1059,6 +1060,90 @@ export function capabilityAnswer(
     ? cell.whenDSpatchWalksTheRun
     : cell;
 }
+
+/** The agent a run DSpatch walks goes through (DSP-138). Not a drawing's `target`. */
+export type RunProvider = 'cursor' | 'claude';
+
+const CLAUDE_EVIDENCE_NOTE =
+  ' Set by DSpatch and passed to the SDK only in offline tests; not observed against the ' +
+  'real Claude runtime.';
+
+/**
+ * What each requirement amounts to on a run DSpatch walks, by the agent the run uses
+ * (DSP-139).
+ *
+ * {@link TARGET_CAPABILITIES} is keyed by a drawing's `target`, which is a label and does
+ * not choose the run's agent; the node panel used to answer from it, so under Claude it
+ * described Cursor. This table answers for the agent instead.
+ *
+ * **Cursor's row is not a copy.** It is read from the Cursor row's DSpatch-walked
+ * answers, so the two cannot drift. **Claude's row describes the adapter's permissions
+ * (`CHAT_PERMISSIONS`), not the generated agent files** that the `claude-code` target
+ * row describes, and it sits here rather than beside that row so nothing reads one as
+ * the other. Its evidence is documentation: the permissions are configured by DSpatch
+ * and checked offline with a substituted SDK, and no live Claude session has been
+ * observed applying them.
+ */
+export const RUN_PROVIDER_CAPABILITIES: Readonly<
+  Record<RunProvider, Readonly<Record<RequirementId, CapabilityAnswer>>>
+> = {
+  cursor: Object.fromEntries(
+    REQUIREMENTS.map((requirement) => [
+      requirement,
+      capabilityAnswer('cursor', requirement, 'dspatch-walked-run'),
+    ]),
+  ) as Record<RequirementId, CapabilityAnswer>,
+  claude: {
+    'no-file-writes': {
+      status: 'other-means',
+      how:
+        'nothing applies it on this path, so it is an instruction in the role text and the ' +
+        'agent is trusted to follow it. Every step of a run with Claude gets the main ' +
+        `chat’s permissions, which include ${CLAUDE_LOOP_STEP_TOOLS.filter((tool) => tool === 'Edit' || tool === 'Write').join(' and ')} ` +
+        'with editing pre-approved under the working folder.' +
+        CLAUDE_EVIDENCE_NOTE,
+      evidence: 'documentation',
+    },
+    'background-execution': {
+      status: 'other-means',
+      how:
+        'a step runs headless with the permission mode `dontAsk`, so nothing waits for a ' +
+        'person to approve a tool. Nobody has established that this is what Claude means ' +
+        'by background execution, so it is achieved another way rather than enforced.' +
+        CLAUDE_EVIDENCE_NOTE,
+      evidence: 'documentation',
+    },
+    'fixed-model-selection': {
+      status: 'enforced',
+      how:
+        'the model DSpatch passes to the SDK for the session, not a field in any file. ' +
+        'Still enforced, and by something outside the agent — but every step of a run ' +
+        'with Claude runs the one model DSpatch uses for Claude, whatever model the step ' +
+        'names: only the entry step’s fixed model is checked, and a run whose entry ' +
+        'fixes a different model is refused before it starts.' +
+        CLAUDE_EVIDENCE_NOTE,
+      evidence: 'documentation',
+    },
+    'no-subagent-delegation': {
+      status: 'enforced',
+      how:
+        `the tool allowlist DSpatch passes (${CLAUDE_LOOP_STEP_TOOLS.join(', ')}) has no ` +
+        'Agent tool, so a step cannot start an agent of its own.' +
+        CLAUDE_EVIDENCE_NOTE,
+      evidence: 'documentation',
+    },
+    'tool-restriction': {
+      status: 'enforced',
+      how:
+        `the tool allowlist DSpatch passes: ${CLAUDE_LOOP_STEP_TOOLS.join(', ')} and nothing ` +
+        'else, with no MCP servers and no settings read from disk other than managed policy ' +
+        'settings. It is one list for the ' +
+        'whole run, not one chosen per step.' +
+        CLAUDE_EVIDENCE_NOTE,
+      evidence: 'documentation',
+    },
+  },
+};
 
 /**
  * Whether any step of this drawing could write into the run's working folders.

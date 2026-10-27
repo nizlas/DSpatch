@@ -71,7 +71,15 @@ export type OutcomeSource =
   /** A router node's branch, read off its configuration without anybody being asked. */
   | 'router-branch'
   /** An executor with no provider, standing in for whatever the step would have said. */
-  | 'dry-run';
+  | 'dry-run'
+  /**
+   * DSP-139. The step was handed a gate's command result, and the working folders were
+   * not the code that command tested when the step started or ended, or DSpatch could
+   * not observe whether they were. The node's own `whenUndeclared` outcome replaced
+   * whatever the step declared, because a test result about one version of the code is
+   * not evidence about another. See {@link describeGateEvidenceRule}.
+   */
+  | 'verification-stale';
 
 /** The outcome a result was filed under, and whose it is. */
 export interface ProducedOutcome {
@@ -323,14 +331,209 @@ export function describeReceivedResults(received: readonly RecordedResult[]): st
   return (
     `\n\n---\n\nThis step has been given ${
       received.length === 1 ? 'the result of an earlier step' : `${String(received.length)} earlier results`
-    } in this run. ${
-      received.length === 1
-        ? 'It is that step\u2019s account of its own work'
-        : 'Each is that step\u2019s account of its own work'
-    }, not a restatement of the assignment.\n\n${parts.join('\n\n')}\n${
+    } in this run. ${receivedKind(received)}, not a restatement of the assignment.\n\n${parts.join('\n\n')}\n${
       anyFile ? `\n${RESULT_STORAGE_NOTE}\n` : ''
     }`
   );
+}
+
+/**
+ * What the handed-over material is, in one clause.
+ *
+ * DSP-139: a gate's result is not anybody's account. It is DSpatch's record of a
+ * command it ran itself, and calling it "that step's account of its own work" would
+ * tell the checking agent to weigh a measured exit code like a claim. A handover with
+ * no gate result is worded exactly as it was before.
+ */
+function receivedKind(received: readonly RecordedResult[]): string {
+  const gates = received.filter(
+    (result) => result.outcome !== undefined && outcomeProvenance(result.outcome) === 'gate-verdict',
+  );
+  if (gates.length === 0) {
+    return received.length === 1
+      ? 'It is that step’s account of its own work'
+      : 'Each is that step’s account of its own work';
+  }
+  // A gate that ran no command files the verdict `not-verified` and nothing else does
+  // (`NOT_VERIFIED_OUTCOME` in loop-chat.ts; a test holds the two equal). Saying it "ran"
+  // a command there would be the claim this card exists to stop (review R-1 I2).
+  const ranNone = gates.filter((result) => result.outcome?.name === GATE_RAN_NO_COMMAND_OUTCOME).length;
+  const clause =
+    ranNone === 0
+      ? 'DSpatch’s record of a command it ran itself'
+      : ranNone === gates.length
+        ? 'DSpatch’s record that it ran no command'
+        : 'DSpatch’s record of a command it ran itself, or of running none';
+  if (gates.length === received.length) {
+    return received.length === 1 ? `It is ${clause}` : `Each is ${clause}`;
+  }
+  return `A gate’s result is ${clause}, and each other one is that step’s account of its own work`;
+}
+
+/** The verdict a gate files when it started no command. Equal to `NOT_VERIFIED_OUTCOME`. */
+export const GATE_RAN_NO_COMMAND_OUTCOME = 'not-verified';
+
+/**
+ * The command a gate ran, as the body of its result (DSP-139).
+ *
+ * Structural rather than `LiveCommandRecord`, which lives in the main process: this
+ * module is shared, and only the fields the body names are needed.
+ */
+export interface GateCommandFacts {
+  /** What was started, shell prefix included. */
+  readonly command: string;
+  /** The line as configured, without the shell prefix, where there is one. */
+  readonly line?: string | null;
+  readonly cwd: string;
+  readonly exitCode: number | null;
+  readonly signal: string | null;
+  readonly durationMs: number;
+  readonly startedAtUtc: string;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly notRun: { readonly kind: string; readonly message: string } | null;
+}
+
+/** How much of each output stream a gate's result carries, counted from the end. */
+export const GATE_OUTPUT_TAIL_CHARS = 4000;
+
+function outputSection(name: string, text: string): string {
+  if (text.trim() === '') {
+    return `${name}: no output was reported.`;
+  }
+  if (text.length <= GATE_OUTPUT_TAIL_CHARS) {
+    return `${name} (all ${String(text.length)} characters):\n${text}`;
+  }
+  const left = text.length - GATE_OUTPUT_TAIL_CHARS;
+  return (
+    `${name} (the last ${String(GATE_OUTPUT_TAIL_CHARS)} of ${String(text.length)} characters; ` +
+    `the first ${String(left)} are left out here and kept whole in the run’s command ` +
+    `record):\n${text.slice(left)}`
+  );
+}
+
+/**
+ * The body a gate files as its result, which is what a later step is handed.
+ *
+ * DSP-139. Everything a checking step needs to judge a test result without taking
+ * anybody's word for it: which run, which gate and visit, the command as configured and
+ * as started, the folder, the exit code or signal, when and how long, the verdict, which
+ * snapshot of the working folders it ran against and which it left, and the output,
+ * bounded from the end because the end is where a test runner says what failed. A
+ * stream with nothing in it says so (INTERACTION_MODEL §5): an empty section would read
+ * as if the output had been left out.
+ */
+export function describeGateResult(input: {
+  readonly runId: string;
+  readonly nodeId: string;
+  readonly occurrence: number;
+  readonly verdict: string;
+  readonly command: GateCommandFacts;
+  /** The snapshot the command ran against, or `null` where DSpatch did not observe it. */
+  readonly testedSnapshotId: string | null;
+  /** The snapshot after the command, or `null` where DSpatch did not observe it. */
+  readonly afterSnapshotId: string | null;
+  /** A sentence about the command changing what it measured, or empty. */
+  readonly selfModified: string;
+}): string {
+  const { command } = input;
+  const ran = command.notRun === null;
+  const exit =
+    command.signal === null
+      ? `Exit code: ${command.exitCode === null ? 'none reported' : String(command.exitCode)}`
+      : `Ended by signal ${command.signal}` +
+        (command.exitCode === null ? '' : `, exit code ${String(command.exitCode)}`);
+  const lines = [
+    ran
+      ? 'DSpatch ran this command itself. No agent ran it and no agent reported it.'
+      : 'DSpatch started no command for this gate, so nothing was tested. No agent was asked.',
+    '',
+    `Run: ${input.runId}`,
+    `Gate: "${input.nodeId}", visit ${String(input.occurrence)}`,
+    `Command as configured: ${command.line ?? command.command}`,
+    ...(ran ? [`Command as started: ${command.command}`] : []),
+    `Working folder: ${command.cwd}`,
+    ...(ran
+      ? [`Started: ${command.startedAtUtc}, finished after ${String(command.durationMs)} ms`, exit]
+      : [`Not run: ${command.notRun?.message ?? ''}`]),
+    `Verdict: "${input.verdict}"${ran ? ' (pass is exit code 0, anything else is fail)' : ''}`,
+    // When the snapshot was taken, said rather than implied (review R-1 I3): it is the
+    // run's observation at the end of the step before the gate, and nothing DSpatch does
+    // between that and starting the command writes to the folders.
+    ran
+      ? `Tested snapshot: ${
+          input.testedSnapshotId === null
+            ? 'not observed — DSpatch did not read the working folders before the command ran'
+            : `${input.testedSnapshotId} (as DSpatch observed the working folders when the ` +
+              `step before this gate ended; nothing DSpatch does between then and starting the ` +
+              `command writes to them)`
+        }`
+      : 'Tested snapshot: none — no command ran',
+    `Snapshot after the command: ${input.afterSnapshotId ?? 'not observed'}`,
+    ...(input.selfModified.trim() === '' ? [] : [input.selfModified.trim()]),
+    '',
+    outputSection('Standard output', command.stdout),
+    '',
+    outputSection('Standard error', command.stderr),
+  ];
+  return lines.join('\n');
+}
+
+/** One gate result a step was handed, as the rule below needs it. */
+export interface GateEvidenceStanding {
+  readonly nodeId: string;
+  readonly occurrence: number;
+  /** The working copy's tested snapshot, or `null` where it was not observed. */
+  readonly testedSnapshotId: string | null;
+  /** Why the result does not describe the working folders now, or `null` where it does. */
+  readonly staleBecause: string | null;
+}
+
+/**
+ * The rule a step handed a gate's result works under, said to that step (DSP-139, A3).
+ *
+ * Every instruction DSpatch adds to a step is to be visible (AGENT_BEHAVIOUR §1), and
+ * this one changes the step's recorded outcome, so it is stated in the message whenever
+ * a gate result is handed over and not only when it bites. Empty when none was.
+ */
+export function describeGateEvidenceRule(
+  standings: readonly GateEvidenceStanding[],
+  whenUndeclared: string | null,
+): string {
+  if (standings.length === 0) {
+    return '';
+  }
+  const each = standings.map((standing) => {
+    const who =
+      `"${standing.nodeId}"` +
+      (standing.occurrence === 1 ? '' : ` (visit ${String(standing.occurrence)})`);
+    const tested =
+      standing.testedSnapshotId === null
+        ? `The command result from ${who} describes code DSpatch did not observe, so which ` +
+          `version of the code it tested is not established.`
+        : `The command result from ${who} describes snapshot ${standing.testedSnapshotId} of ` +
+          `the working folders and no other version of the code. DSpatch took that snapshot ` +
+          `when the step before the command ended.`;
+    return standing.staleBecause === null
+      ? `${tested} The working folders are still that snapshot as this step starts.`
+      : `${tested} ${standing.staleBecause} It does not describe the code you are checking.`;
+  });
+  const consequence =
+    whenUndeclared === null
+      ? 'this step names no outcome for a result nobody established, so the run stops with a ' +
+        'runtime fault instead of taking your verdict'
+      : `DSpatch records this step’s outcome as "${whenUndeclared}" whatever outcome you ` +
+        'declare (a declared failure still stands)';
+  const staleNow = standings.some((standing) => standing.staleBecause !== null);
+  const rule = staleNow
+    ? `Because of that, ${consequence}: a test result about one version of the code is not ` +
+      `evidence about another. Judge from what you can establish yourself, and say what you ` +
+      `could not.`
+    : `If the working folders are not that snapshot when this step ends — because you or ` +
+      `anything else changed a file — or DSpatch cannot observe them, ${consequence}: a ` +
+      `test result about one version of the code is not evidence about another. Changing a ` +
+      `file in this step makes the command result out of date.`;
+  return `\n\n---\n\nWhich code the command result describes.\n\n${each.join('\n\n')}\n\n${rule}\n`;
 }
 
 /**
@@ -379,6 +582,13 @@ function describeProducedOutcome(outcome: ProducedOutcome | undefined): string {
       return (
         ` ${named} came from a dry run standing in for that step, so no agent and no ` +
         `command produced it. It is not a verdict on anything.`
+      );
+    case 'verification-stale':
+      return (
+        ` ${named} is not that step’s own verdict. It was handed a command result ` +
+        `about code that was no longer, or could not be shown to be, the code in the ` +
+        `working folders, so DSpatch recorded the outcome its node names for a result ` +
+        `nobody established. What it actually said is in the result itself.`
       );
     case 'unknown':
       return (

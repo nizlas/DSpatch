@@ -86,7 +86,9 @@ import type {
   OpenedLoopDefinition,
 } from '../shared/bridge';
 import {
+  describeGateRunner,
   describeLiveBinding,
+  editorLiveBindingFor,
   editorJournalOpen,
   liveRunOffer,
   newEditorRunId,
@@ -3523,7 +3525,9 @@ function NodeInspector({
   const undeclared = undeclaredStanding(graph, node);
   const failures = failureStandings(graph, node);
   const limits = limitStandings(node, graph.limits);
-  const requirements = requirementStandings(node, role, graph.target, REQUIREMENTS);
+  // By the agent a run would use and by the step's kind (DSP-139), not by the drawing's
+  // target, which is a label: under Claude the target's answers described Cursor.
+  const requirements = requirementStandings(node, role, runProvider, REQUIREMENTS);
   const inherited = requirements.filter((standing) => standing.fromRole);
   const parts = briefParts(node, {
     entryId: graph.entry,
@@ -3536,8 +3540,12 @@ function NodeInspector({
       const other = nodeById(graph, id);
       return other?.produces === undefined
         ? null
-        : { form: other.produces.form, label: other.label ?? other.id };
+        : { form: other.produces.form, label: other.label ?? other.id, isGate: other.kind === 'gate' };
     },
+    // Whose words the mandate is on the run the editor would start (DSP-139): a drawing
+    // bound with its own purposes is sent its purpose as the mandate, and the panel says so.
+    mandateFrom:
+      editorLiveBindingFor(graph.id)?.prompts === 'drawing-purposes' ? 'drawing' : 'person',
     archivePath: graph.archive?.path ?? null,
     reportWrittenBy: node.report?.writtenBy ?? null,
     // Every edge that leads here, so "what earlier steps left for it" can say *which
@@ -3586,6 +3594,16 @@ function NodeInspector({
       <p className="muted" data-ev="node-purpose-goes">
         {effect.purposeGoes}
       </p>
+      {/*
+        Who runs a gate (DSP-139): DSpatch, not an agent, and with which command where the
+        editor's Run binds one. Said here because a gate's requirements and the agent's
+        tools do not apply to it, and the panel otherwise reads as though they might.
+      */}
+      {node.kind === 'gate' ? (
+        <p className="muted" data-ev="node-gate-runner">
+          {describeGateRunner(graph.id)}
+        </p>
+      ) : null}
       {effect.withoutEffect.length === 0 ? null : (
         <ul className="no-effect" data-ev="node-without-effect">
           {effect.withoutEffect.map((sentence) => (
@@ -3752,9 +3770,9 @@ function NodeInspector({
             {describeRunToolPolicy(runProvider)}
           </p>
           <p className="muted" data-ev="node-tool-policy-scope">
-            The requirement answers on this step describe the drawing&apos;s target,{' '}
-            <strong>{graph.target}</strong>. The sentence above is what applies to the agent a run
-            uses.
+            {runProvider === null
+              ? 'The requirement answers on this step describe the agent a run uses, and no agent is chosen, so they say nothing is established yet.'
+              : `The requirement answers on this step describe ${runProvider === 'claude' ? 'Claude' : 'Cursor'}, the agent a run started now would use, and so does the sentence above. The drawing's target, ${graph.target}, is a label and is not what answers them.`}
           </p>
         </section>
       ) : null}
@@ -3975,7 +3993,9 @@ function NodeInspector({
               <span className="setting-name">
                 {standing.help.name} <code>{standing.requirement}</code>
                 {standing.fromRole ? <span className="inherited">already required by the role</span> : null}
-                {standing.inForce && standing.enforcement !== 'enforced' ? (
+                {standing.inForce &&
+                standing.enforcement !== 'enforced' &&
+                standing.enforcement !== 'not-applicable' ? (
                   <Unhonoured stated={standing.howItHolds} />
                 ) : null}
               </span>

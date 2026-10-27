@@ -21,6 +21,7 @@ import {
   formatLiveInspection,
   readLiveUsage,
   refuseLiveWorkingRoots,
+  runConfiguredProjectTest,
   writeInspectionJson,
   type LiveAgentReply,
   type LiveCommandRecord,
@@ -30,8 +31,12 @@ import {
   type LoopStepAdapter,
 } from './loop-live';
 import type { StepActivity } from '../shared/loop-activity';
-import { describeChosenLoopBinding } from '../shared/loop-chat';
-import { describeLiveBinding, LIVE_DURATION_GRAPH_ID } from '../shared/loop-editor-run';
+import { chatPromptFor, describeChosenLoopBinding } from '../shared/loop-chat';
+import {
+  describeLiveBinding,
+  editorLiveBindingFor,
+  LIVE_DURATION_GRAPH_ID,
+} from '../shared/loop-editor-run';
 import {
   formatRunJournal,
   journalToJsonl,
@@ -90,7 +95,8 @@ export interface LiveCliOptions {
   readonly abortSignal?: AbortSignal;
   readonly onJournalEntry?: (entry: RunJournalEntry) => void;
   /**
-   * Which live binding to apply. Editor Run stays duration-only. Chat Use loop
+   * Which live binding to apply. Editor Run walks only the drawings listed in
+   * `EDITOR_LIVE_BINDINGS`, in a generated experiment repository. Chat Use loop
    * walks dspatch-chat-loop on the project already open.
    */
   readonly bindingKind?: LiveBindingKind;
@@ -207,7 +213,54 @@ export function runLiveGraph(graph: LoopGraph, options: Omit<LiveCliOptions, 'gr
     return Promise.reject(new Error(refusal.message));
   }
 
-  return driveLive(graph, workspacePath, roots, generated, options);
+  return driveLive(graph, workspacePath, roots, generated, withEditorBinding(graph, bindingKind, options));
+}
+
+/**
+ * The editor binding's own prompts and gate command, where it has them (DSP-139).
+ *
+ * The duration fixture keeps the executor's defaults: its one hardcoded prompt and
+ * `runNodeProjectTest`. A drawing bound with `drawing-purposes` gets the chat loop's
+ * brief built from its own purposes and role files, with the drawing's top-level purpose
+ * as the run's mandate (review I1), and its gate runs the binding's command through
+ * `runConfiguredProjectTest` in the run's working folder. A caller that passes its own
+ * `promptFor` or `runProjectTest` keeps it: that is how a test injects a slow command.
+ */
+function withEditorBinding(
+  graph: LoopGraph,
+  bindingKind: LiveBindingKind,
+  options: Omit<LiveCliOptions, 'graphPath'>,
+): Omit<LiveCliOptions, 'graphPath'> {
+  const binding = bindingKind === 'editor-duration' ? editorLiveBindingFor(graph.id) : null;
+  if (binding === null || binding.prompts !== 'drawing-purposes') {
+    return options;
+  }
+  const resolveRole = createFileRoleResolver(options.repoRoot);
+  return {
+    ...options,
+    promptFor:
+      options.promptFor ??
+      ((node, step) => {
+        const resolved = node.role === undefined ? null : resolveRole(node.role);
+        return chatPromptFor(node, {
+          entryId: graph.entry,
+          mandate: graph.purpose,
+          mandateFrom: 'drawing',
+          step,
+          role:
+            resolved === null
+              ? null
+              : {
+                  id: resolved.id,
+                  sourcePath: resolved.sourcePath,
+                  instructions: resolved.instructions ?? null,
+                },
+        });
+      }),
+    runProjectTest:
+      options.runProjectTest ??
+      ((workspacePath) => runConfiguredProjectTest(binding.gateCommand, workspacePath)),
+  };
 }
 
 /**

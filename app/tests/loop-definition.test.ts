@@ -58,6 +58,8 @@ const existingGraphs = [
   chatGraphRel,
   path.join('docs', 'loop', 'graphs', 'dspatch-development-loop.graph.json'),
   path.join('docs', 'loop', 'graphs', 'dspatch-live-duration.graph.json'),
+  // DSP-139: the example the editor runs under Claude as well as Cursor.
+  path.join('docs', 'loop', 'graphs', 'dspatch-duration-check.graph.json'),
 ];
 
 const temporaries: string[] = [];

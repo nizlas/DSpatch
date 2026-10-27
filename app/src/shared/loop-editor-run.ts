@@ -7,9 +7,10 @@
  *
  * Dry-run is renderer-safe. It uses {@link createDryRunExecutor}, which closes
  * over no provider, so a press in the window cannot spend a turn. Live is only
- * *described* here: the prompt and test gate are still hardcoded for
- * {@link LIVE_DURATION_GRAPH_ID}, and a different drawing must be refused with
- * a sentence rather than silently given that prompt.
+ * *described* here: each drawing the editor may live-run has an entry in
+ * {@link EDITOR_LIVE_BINDINGS} saying what its prompts and its gate command are, and
+ * a drawing with none must be refused with a sentence rather than silently given
+ * somebody else's prompt.
  */
 
 import type { LoopGraph } from './loop-graph';
@@ -23,8 +24,99 @@ import {
   type StepExecutor,
 } from './loop-run';
 
-/** The only graph this increment will live-run. */
+/** The duration fixture: one agent with a hardcoded prompt, then the test gate. */
 export const LIVE_DURATION_GRAPH_ID = 'dspatch-live-duration';
+
+/**
+ * The example that changes code, lets DSpatch run the tests and has a second agent
+ * check the change against the real result (DSP-139). Its agent steps inherit the run's
+ * model, so it runs under Claude as well as under Cursor.
+ */
+export const DURATION_CHECK_GRAPH_ID = 'dspatch-duration-check';
+
+/**
+ * The command DSpatch runs for {@link DURATION_CHECK_GRAPH_ID}'s gate, in the run's
+ * working folder, through the same shell and bounds as every configured gate command.
+ *
+ * In code and not in the drawing, on purpose (DSP-139 Q1): the drawing format has no
+ * command field, and giving it one would let any drawing file have a shell line run when
+ * Run is pressed. This is one bundled drawing declaring its own gate; its purpose names
+ * the same command and a test holds the two equal. `node` must be on DSpatch's PATH.
+ */
+export const EXAMPLE_GATE_COMMAND = 'node --test test/duration.test.ts';
+
+/**
+ * What the editor's Run does for one drawing it may live-run.
+ *
+ * `prompts` says whose words an agent step is sent: the duration fixture's one hardcoded
+ * prompt, or the chat loop's brief built from the drawing's own purposes and role files.
+ * `gateCommand` is the command line shown for its gate, which DSpatch runs itself.
+ */
+export interface EditorLiveBinding {
+  readonly graphId: string;
+  readonly prompts: 'duration-fixture' | 'drawing-purposes';
+  /** The command its gate runs, as a person would type it. */
+  readonly gateCommand: string;
+  /** How that command is started, in a sentence for the gate's panel. */
+  readonly gateRunsHow: string;
+  readonly readyReason: string;
+}
+
+/**
+ * Every drawing the editor's Run will live-run, by id. Every other id is refused.
+ *
+ * A table rather than a second `if`, so that what is bound is listed in one place and a
+ * third entry is a decision somebody writes down rather than a branch that grows.
+ */
+export const EDITOR_LIVE_BINDINGS: readonly EditorLiveBinding[] = [
+  {
+    graphId: LIVE_DURATION_GRAPH_ID,
+    prompts: 'duration-fixture',
+    gateCommand: 'node --test test/duration.test.ts',
+    gateRunsHow:
+      'with the Node runtime DSpatch itself runs on, without a shell, in the run’s ' +
+      'working folder',
+    readyReason:
+      `Live is ready for ${LIVE_DURATION_GRAPH_ID}. Run uses an isolated experiment ` +
+      `repository and the cheapest writing model already seen to work; it does not use ` +
+      `the DSpatch working copy. The graph on the canvas is what will be walked, including ` +
+      `unsaved edits.`,
+  },
+  {
+    graphId: DURATION_CHECK_GRAPH_ID,
+    prompts: 'drawing-purposes',
+    gateCommand: EXAMPLE_GATE_COMMAND,
+    gateRunsHow: 'through the shell, in the run’s working folder',
+    readyReason:
+      `Live is ready for ${DURATION_CHECK_GRAPH_ID}. Run uses an isolated experiment ` +
+      `repository, not the DSpatch working copy: an agent changes the code, DSpatch runs ` +
+      `${EXAMPLE_GATE_COMMAND} itself, and a second agent checks the change against that ` +
+      `result. Each agent step is sent its node's purpose and its role file as drawn. The ` +
+      `graph on the canvas is what will be walked, including unsaved edits.`,
+  },
+];
+
+/** The editor's binding for a drawing, or `null` when it has none. */
+export function editorLiveBindingFor(graphId: string): EditorLiveBinding | null {
+  return EDITOR_LIVE_BINDINGS.find((binding) => binding.graphId === graphId) ?? null;
+}
+
+/**
+ * What a gate step's panel says about who runs it (DSP-139).
+ *
+ * A gate has no agent, so the agent's tools and the requirement answers do not apply to
+ * it. Where the editor's Run binds a command to this drawing, the command is named.
+ */
+export function describeGateRunner(graphId: string): string {
+  const binding = editorLiveBindingFor(graphId);
+  return binding === null
+    ? 'No agent works in this step. DSpatch runs a gate’s command itself, and this ' +
+        'drawing has no command bound for the editor’s Run, so a live run of it is ' +
+        'refused. The agent’s tools and the requirements below do not apply here.'
+    : `No agent works in this step. DSpatch runs \`${binding.gateCommand}\` itself, ` +
+        `${binding.gateRunsHow}; pass or fail is its exit code. The agent’s tools and ` +
+        `the requirements below do not apply here.`;
+}
 
 /**
  * There is no forbidden graph id, and the absence is the point (DSP-78).
@@ -82,27 +174,21 @@ export function describeLiveBinding(graph: {
   readonly id: string;
   readonly name: string;
 }): LiveBinding {
-  if (graph.id !== LIVE_DURATION_GRAPH_ID) {
+  const binding = editorLiveBindingFor(graph.id);
+  if (binding === null) {
     return {
       ready: false,
       state: 'unbound',
       reason:
         `Refusing to live-run "${graph.name}" (${graph.id}): this drawing has no live binding. ` +
-        `The live prompt and the local test gate are hardcoded for ${LIVE_DURATION_GRAPH_ID} ` +
-        `(complete formatDuration in an isolated experiment repository). Running that prompt ` +
-        `against a different drawing would silently do the wrong work. Dry-run still walks ` +
-        `this canvas as it is.`,
+        `The editor's Run has prompts and a local test gate only for ` +
+        `${EDITOR_LIVE_BINDINGS.map((entry) => entry.graphId).join(' and ')} (complete ` +
+        `formatDuration in an isolated experiment repository). Running those against a ` +
+        `different drawing would silently do the wrong work. Dry-run still walks this canvas ` +
+        `as it is.`,
     };
   }
-  return {
-    ready: true,
-    state: 'ready',
-    reason:
-      `Live is ready for ${LIVE_DURATION_GRAPH_ID}. Run uses an isolated experiment ` +
-      `repository and the cheapest writing model already seen to work; it does not use ` +
-      `the DSpatch working copy. The graph on the canvas is what will be walked, including ` +
-      `unsaved edits.`,
-  };
+  return { ready: true, state: 'ready', reason: binding.readyReason };
 }
 
 function graphDeclaresLimitReached(graph: LoopGraph): boolean {

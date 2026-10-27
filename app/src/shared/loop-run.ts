@@ -983,6 +983,12 @@ function describeProduct(product: StepProduct): string {
       if (provenance === 'unknown') {
         return `outcome "${product.outcome}", with nothing recorded about who chose that name`;
       }
+      if (provenance === 'verification-stale') {
+        return (
+          `outcome "${product.outcome}", which the run selected because the command result ` +
+          `the step was given did not describe the working folders`
+        );
+      }
       return `outcome "${product.outcome}"`;
     }
     case 'declared-failure':

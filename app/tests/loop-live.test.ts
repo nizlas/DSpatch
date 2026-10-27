@@ -51,6 +51,7 @@ import { loadLoopGraph } from '../src/shared/loop-graph-load';
 import type { LoopGraph, LoopNode } from '../src/shared/loop-graph';
 import {
   createDryRunExecutor,
+  formatRunJournal,
   runLoopGraph,
   type ArchivePlacement,
   type JournalKind,
@@ -2917,5 +2918,158 @@ describe('createDryRunExecutor remains unable to reach a provider', () => {
     assert.equal(result.usage.providerTurns, 0);
     assert.equal(result.dryRun, true);
     assert.equal(result.status, 'completed');
+  });
+});
+
+/**
+ * DSP-139. A gate's result counts only for the code its command ran against.
+ *
+ * Executor-level, with a fake adapter and an injected command, because the case review A1
+ * is about cannot be reached through `runLiveGraph`: `hashWorkingRoots: false` is decided
+ * there from the drawing, and with it every snapshot is an empty tree whose id is the
+ * same before and after any change. Comparing ids would call that "unchanged".
+ */
+describe('a gate result handed to a later step (DSP-139)', () => {
+  const role = {
+    id: 'live-role',
+    source: { kind: 'cursor-agent-file' as const, path: 'docs/loop/roles/live.role.md' },
+  };
+  function gateGraph(whenUndeclared: boolean): LoopGraph {
+    return {
+      format: 'dspatch-loop-graph',
+      formatVersion: 1,
+      id: 'live-gate-handover',
+      name: 'Work, test, check',
+      purpose: 'A live-executor fixture for a gate result handed to a checking step.',
+      target: 'cursor',
+      entry: 'work',
+      onRuntimeFault: 'stop-and-reconcile',
+      failureKinds: [],
+      archive: { path: 'reports/<run-id>', entryPerNode: true, referenceReturned: true },
+      nodes: [
+        { id: 'work', kind: 'agent', label: 'Work', role },
+        {
+          id: 'test',
+          kind: 'gate',
+          label: 'Test',
+          outcomes: ['pass', 'fail'],
+          produces: { required: true, form: 'stored-result' },
+        },
+        {
+          id: 'check',
+          kind: 'agent',
+          label: 'Check',
+          role,
+          consumes: ['test'],
+          outcomes: ['met', 'not-met', 'could-not-check'],
+          ...(whenUndeclared ? { whenUndeclared: 'could-not-check' } : {}),
+        },
+        { id: 'done', kind: 'terminal', label: 'Done', ending: 'success' },
+        { id: 'not-established', kind: 'terminal', label: 'Not established', ending: 'not-success' },
+        { id: 'failed', kind: 'terminal', label: 'Failed', ending: 'not-success' },
+      ],
+      edges: [
+        { id: 'g1', from: 'work', to: 'test', when: { on: 'success' } },
+        { id: 'g2', from: 'test', to: 'check', when: { on: 'outcome', outcome: 'pass' } },
+        { id: 'g3', from: 'test', to: 'failed', when: { on: 'outcome', outcome: 'fail' } },
+        { id: 'g4', from: 'check', to: 'done', when: { on: 'outcome', outcome: 'met' } },
+        { id: 'g5', from: 'check', to: 'failed', when: { on: 'outcome', outcome: 'not-met' } },
+        { id: 'g6', from: 'check', to: 'not-established', when: { on: 'outcome', outcome: 'could-not-check' } },
+      ],
+    };
+  }
+
+  function passingCommand(cwd: string): LiveCommandRecord {
+    return {
+      command: 'cmd.exe /d /s /c node --test',
+      line: 'node --test',
+      cwd,
+      exitCode: 0,
+      signal: null,
+      durationMs: 12,
+      startedAtUtc: new Date().toISOString(),
+      stdout: 'tests 3\npass 3\n',
+      stderr: '',
+      notRun: null,
+    };
+  }
+
+  async function walk(
+    name: string,
+    options: { readonly hash: boolean; readonly whenUndeclared: boolean; readonly checkReply?: string },
+  ) {
+    const workspace = scratch(`gate-${name}`);
+    fs.writeFileSync(path.join(workspace, 'a.txt'), 'a\n', 'utf8');
+    const adapter = new FakeAdapter({ assistantText: 'Done.', laterAssistantText: options.checkReply ?? CHECK_MET });
+    const result = await runLoopGraph(gateGraph(options.whenUndeclared), {
+      runId: `live-gate-${name}`,
+      dryRun: false,
+      resultStore: createFileResultStore(scratch(`gate-${name}-store`)),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection: emptyInspection(workspace, 'composer-2'),
+        hashWorkingRoots: options.hash,
+        promptFor: (node) => `Do the ${node.id} step.`,
+        runProjectTest: (cwd) => Promise.resolve(passingCommand(cwd)),
+      }),
+    });
+    return { result, adapter };
+  }
+
+  it('hands the command record over with the tested snapshot, and lets the verdict stand while the code is unchanged', async () => {
+    const { result, adapter } = await walk('current', { hash: true, whenUndeclared: true });
+    assert.equal(result.terminalNodeId, 'done', result.fault?.detail ?? '');
+    const check = adapter.sends[1] ?? '';
+    assert.match(check, /DSpatch’s record of a command it ran itself/);
+    assert.match(check, /Command as configured: node --test/);
+    assert.match(check, /Exit code: 0/);
+    const tested = /Tested snapshot: (\S+)/.exec(check)?.[1] ?? '';
+    assert.notEqual(tested, '');
+    assert.match(check, new RegExp(`describes snapshot ${tested} of the working folders`));
+    assert.match(check, /still that snapshot as this step starts/);
+    assert.match(check, /DSpatch records this step’s outcome as "could-not-check"/);
+  });
+
+  it('treats an unobserved working copy as stale, never as unchanged (review A1)', async () => {
+    const { result, adapter } = await walk('unhashed', { hash: false, whenUndeclared: true });
+    const check = adapter.sends[1] ?? '';
+    assert.match(check, /not reading the working folders’ content in this run/);
+    assert.match(check, /It does not describe the code you are checking/);
+    assert.equal(result.terminalNodeId, 'not-established', 'the declared "met" did not stand');
+    assert.match(formatRunJournal(result), /did not describe the working folders/);
+  });
+
+  it('stops with a reason where the receiving step names no whenUndeclared', async () => {
+    const { result } = await walk('no-fallback', { hash: false, whenUndeclared: false });
+    assert.equal(result.status, 'runtime-fault');
+    assert.equal(result.fault?.nodeId, 'check');
+    assert.match(result.fault?.detail ?? '', /names no outcome for a result nobody established/);
+  });
+
+  it('lets a declared failure stand under the stale rule', async () => {
+    const { result } = await walk('stale-blocked', {
+      hash: false,
+      whenUndeclared: true,
+      checkReply: 'BLOCKED the test record is unreadable.',
+    });
+    // `check` draws no edge for `blocked`, so a declared failure ends the walk there;
+    // what matters is that it was not replaced by "could-not-check".
+    assert.notEqual(result.terminalNodeId, 'not-established');
+    const produced = result.journal.find((entry) => entry.kind === 'node-produced' && entry.nodeId === 'check');
+    assert.notEqual(produced?.data?.['outcomeSource'], 'verification-stale');
+    assert.match(formatRunJournal(result), /declared failure "blocked"/);
+  });
+
+  it('keeps a check’s own declaration of its whenUndeclared outcome as its own', async () => {
+    const { result } = await walk('stale-own', {
+      hash: false,
+      whenUndeclared: true,
+      checkReply: CHECK_COULD_NOT,
+    });
+    assert.equal(result.terminalNodeId, 'not-established');
+    const produced = result.journal.find((entry) => entry.kind === 'node-produced' && entry.nodeId === 'check');
+    assert.equal(produced?.data?.['outcomeSource'], 'step-declared');
   });
 });

@@ -1073,6 +1073,17 @@ with the Claude SDK substituted; **no Claude turn has run through the window**.
   with the real Claude adapter on a substituted SDK, not run live** (see
   [the Linux trial, Part C](../docs/LINUX_HOME_TRIAL.md)). The command-line runner
   (`scripts/run-loop-graph.mjs`) stays Cursor-only and says so.
+- **A change checked by a test DSpatch runs (DSP-139).** The bundled drawing
+  `dspatch-duration-check` runs from the editor's *Run* with any chosen agent, Claude
+  included: *work* edits a generated experiment repository, a gate step in which DSpatch
+  itself runs `node --test test/duration.test.ts` (shown in the gate's panel), then
+  *check* judges the change against that real result (command, folder, exit code, output
+  and the snapshot it tested). A failed test ends *Tests failed*. A command result counts
+  only for the snapshot it tested: if the working folder differs or was not observed when
+  the receiving step starts or ends, DSpatch records that step's `whenUndeclared` outcome
+  (`verification-stale`) and says so in the step's message, so a stale result never ends
+  as success. No agent gets a command tool. **Checked offline with a real `node --test`
+  and the real Claude adapter on a substituted SDK, not run live with Claude.**
 - **The review discussion has its own, explicit agent (DSP-132).** Opened from the main
   window, a new discussion takes that window's agent; opened standalone (`npm run review`,
   *Open Example Review*) it has none, and asks *Choose an agent for this discussion*

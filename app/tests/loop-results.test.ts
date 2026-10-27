@@ -25,13 +25,18 @@ import { loadLoopGraph, type Finding } from '../src/shared/loop-graph-load';
 import type { LoopGraph, ResolvedRole } from '../src/shared/loop-graph';
 import {
   createMemoryResultStore,
+  describeGateEvidenceRule,
+  describeGateResult,
   describeReceivedResults,
+  GATE_OUTPUT_TAIL_CHARS,
+  GATE_RAN_NO_COMMAND_OUTCOME,
   outcomeProvenance,
   resultOfVisit,
   type OutcomeSource,
   type RecordedResult,
   type ResultStore,
 } from '../src/shared/loop-results';
+import { NOT_VERIFIED_OUTCOME } from '../src/shared/loop-chat';
 import {
   createDryRunExecutor,
   runLoopGraph,
@@ -1391,5 +1396,202 @@ describe('where results are allowed to land', () => {
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
+  });
+});
+
+/** DSP-139: what a gate files as its result, and how a step handed one is told about it. */
+describe('a gate result as a handed-over body (DSP-139)', () => {
+  const command = {
+    command: 'cmd.exe /d /s /c node --test test/duration.test.ts',
+    line: 'node --test test/duration.test.ts',
+    cwd: 'C:/work/repo',
+    exitCode: 1,
+    signal: null,
+    durationMs: 120,
+    startedAtUtc: '2026-10-27T09:00:00.000Z',
+    stdout: '',
+    stderr: '',
+    notRun: null,
+  };
+
+  it('names the run, the visit, the command, the folder, the exit code and the tested snapshot', () => {
+    const body = describeGateResult({
+      runId: 'run-1',
+      nodeId: 'test',
+      occurrence: 2,
+      verdict: 'fail',
+      command,
+      testedSnapshotId: 'snap-a',
+      afterSnapshotId: 'snap-a',
+      selfModified: '',
+    });
+    for (const line of [
+      'Run: run-1',
+      'Gate: "test", visit 2',
+      'Command as configured: node --test test/duration.test.ts',
+      'Command as started: cmd.exe /d /s /c node --test test/duration.test.ts',
+      'Working folder: C:/work/repo',
+      'Exit code: 1',
+      'Verdict: "fail"',
+      'Tested snapshot: snap-a',
+    ]) {
+      assert.ok(body.includes(line), `${line} in:\n${body}`);
+    }
+    assert.match(body, /Standard output: no output was reported\./);
+    assert.match(body, /Standard error: no output was reported\./);
+  });
+
+  it('keeps the end of a long output and says how much was left out and where it is', () => {
+    const long = `${'x'.repeat(10_000)}THE-END`;
+    const body = describeGateResult({
+      runId: 'run-1',
+      nodeId: 'test',
+      occurrence: 1,
+      verdict: 'pass',
+      command: { ...command, exitCode: 0, stdout: long },
+      testedSnapshotId: null,
+      afterSnapshotId: null,
+      selfModified: '',
+    });
+    assert.match(body, /THE-END/);
+    assert.match(body, new RegExp(`the last ${String(GATE_OUTPUT_TAIL_CHARS)} of 10007 characters`));
+    assert.match(body, /kept whole in the run\u2019s command record/);
+    assert.ok(body.length < long.length, 'bounded');
+    assert.match(body, /Tested snapshot: not observed/);
+  });
+
+  it('tells the receiving step a gate result is DSpatch\u2019s record, not an account', () => {
+    const text = describeReceivedResults([
+      {
+        runId: 'run-1',
+        nodeId: 'test',
+        occurrence: 1,
+        callId: 2,
+        form: 'stored-result',
+        ref: 'run:run-1/test#1',
+        path: null,
+        digest: 'd',
+        bytes: 4,
+        body: 'body',
+        outcome: { name: 'pass', source: 'gate-verdict' },
+        filedBy: 'test',
+        filedByTheRunner: true,
+      },
+    ]);
+    assert.match(text, /It is DSpatch\u2019s record of a command it ran itself/);
+    assert.doesNotMatch(text, /account of its own work/);
+  });
+
+  it('states the stale rule whenever a gate result is handed over, and says when it already applies', () => {
+    const current = describeGateEvidenceRule(
+      [{ nodeId: 'test', occurrence: 1, testedSnapshotId: 'snap-a', staleBecause: null }],
+      'could-not-check',
+    );
+    assert.match(current, /describes snapshot snap-a of the working folders and no other/);
+    assert.match(current, /If the working folders are not that snapshot when this step ends/);
+    assert.match(current, /"could-not-check" whatever outcome you declare/);
+    const stale = describeGateEvidenceRule(
+      [{ nodeId: 'test', occurrence: 1, testedSnapshotId: 'snap-a', staleBecause: 'The working folder is now snapshot snap-b.' }],
+      null,
+    );
+    assert.match(stale, /now snapshot snap-b\. It does not describe the code you are checking/);
+    assert.match(stale, /runtime fault/);
+    assert.equal(describeGateEvidenceRule([], 'x'), '');
+  });
+
+  it('tells a later step that a stale-replaced outcome is not the step’s own verdict', () => {
+    const text = describeReceivedResults([
+      {
+        runId: 'run-1',
+        nodeId: 'check',
+        occurrence: 1,
+        callId: 3,
+        form: 'stored-result',
+        ref: 'run:run-1/check#1',
+        path: null,
+        digest: 'd',
+        bytes: 4,
+        body: 'body',
+        outcome: { name: 'could-not-check', source: 'verification-stale' },
+        filedBy: 'check',
+        filedByTheRunner: true,
+      },
+    ]);
+    assert.match(text, /is not that step’s own verdict/);
+  });
+});
+
+describe('a gate that ran no command says so (DSP-139, review R-1 I2)', () => {
+  it('does not claim to have run anything, in the body or the handover', () => {
+    const body = describeGateResult({
+      runId: 'run-1',
+      nodeId: 'test',
+      occurrence: 1,
+      verdict: 'not-verified',
+      command: {
+        command: '',
+        line: null,
+        cwd: 'C:/work/repo',
+        exitCode: null,
+        signal: null,
+        durationMs: 0,
+        startedAtUtc: '2026-10-27T09:00:00.000Z',
+        stdout: '',
+        stderr: '',
+        notRun: { kind: 'no-command-configured', message: 'Nothing was configured.' },
+      },
+      testedSnapshotId: null,
+      afterSnapshotId: 'snap-a',
+      selfModified: '',
+    });
+    assert.match(body, /^DSpatch started no command for this gate, so nothing was tested\./);
+    assert.doesNotMatch(body, /ran this command itself/);
+    assert.doesNotMatch(body, /Command as started/);
+    assert.match(body, /Tested snapshot: none — no command ran/);
+
+    const text = describeReceivedResults([
+      {
+        runId: 'run-1',
+        nodeId: 'test',
+        occurrence: 1,
+        callId: 2,
+        form: 'stored-result',
+        ref: 'run:run-1/test#1',
+        path: null,
+        digest: 'd',
+        bytes: 4,
+        body,
+        outcome: { name: 'not-verified', source: 'gate-verdict' },
+        filedBy: 'test',
+        filedByTheRunner: true,
+      },
+    ]);
+    assert.match(text, /It is DSpatch’s record that it ran no command/);
+    assert.equal(GATE_RAN_NO_COMMAND_OUTCOME, NOT_VERIFIED_OUTCOME);
+  });
+
+  it('says when the tested snapshot was taken', () => {
+    const body = describeGateResult({
+      runId: 'run-1',
+      nodeId: 'test',
+      occurrence: 1,
+      verdict: 'pass',
+      command: {
+        command: 'node --test',
+        line: 'node --test',
+        cwd: 'C:/work/repo',
+        exitCode: 0,
+        signal: null,
+        durationMs: 5,
+        startedAtUtc: '2026-10-27T09:00:00.000Z',
+        stdout: 'ok',
+        stderr: '',
+        notRun: null,
+      },
+      testedSnapshotId: 'snap-a',
+      afterSnapshotId: 'snap-a',
+      selfModified: '',
+    });
+    assert.match(body, /Tested snapshot: snap-a \(as DSpatch observed the working folders when the step before this gate ended/);
   });
 });

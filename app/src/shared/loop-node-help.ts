@@ -31,13 +31,17 @@
  * Pure, and shared with the window: no filesystem, no React.
  */
 
-import { capabilityAnswer, effectiveRequirements, undeclaredOutcomeOf } from './loop-graph';
+import {
+  effectiveRequirements,
+  RUN_PROVIDER_CAPABILITIES,
+  undeclaredOutcomeOf,
+  type RunProvider,
+} from './loop-graph';
 import type {
   FailureKind,
   LoopEdge,
   LoopGraph,
   LoopNode,
-  LoopTarget,
   NodeKind,
   RequirementId,
   ResolvedRole,
@@ -209,42 +213,65 @@ export interface RequirementStanding {
   readonly fromRole: boolean;
   readonly inForce: boolean;
   /**
-   * What the target does about it: enforced, achieved another way, unestablished, or
+   * What the run's agent does about it: enforced, achieved another way, unestablished, or
    * impossible. This is the line that separates a restriction from an instruction.
+   * `not-applicable` is a step no agent works in, such as a gate (DSP-139).
    */
-  readonly enforcement: 'enforced' | 'other-means' | 'unknown' | 'unmet';
+  readonly enforcement: 'enforced' | 'other-means' | 'unknown' | 'unmet' | 'not-applicable';
   /** One sentence naming the mechanism, or naming its absence. Empty when not in force. */
   readonly howItHolds: string;
 }
 
+/**
+ * What a requirement means on a step no agent works in (DSP-139). A gate's command is
+ * started by DSpatch itself, so the agent's tools and these answers are not in play.
+ */
+export const NO_AGENT_IN_STEP =
+  'No agent works in this step, so this requirement does not apply here: DSpatch runs the ' +
+  'step itself and no agent’s tools are involved.';
+
+const NO_AGENT_CHOSEN =
+  'No agent is chosen, so no run can start and nothing answers for this requirement yet. ' +
+  'Choose an agent and this says what that agent does about it.';
+
+/**
+ * How a requirement stands on one node of a run DSpatch walks.
+ *
+ * Answered by the agent the run uses (DSP-139), not by the drawing's `target`: the
+ * target is a label, and answering from it described Cursor under a run with Claude.
+ * `null` is no agent chosen. A step no agent works in, a gate among them, answers
+ * `not-applicable` whatever the agent.
+ */
 export function requirementStanding(
   requirement: RequirementId,
-  node: Pick<LoopNode, 'requirements'>,
+  node: Pick<LoopNode, 'requirements' | 'kind'>,
   role: ResolvedRole | null,
-  target: LoopTarget,
+  runProvider: RunProvider | null,
 ): RequirementStanding {
   const onNode = (node.requirements ?? []).includes(requirement);
   const fromRole = (role?.requirements ?? []).includes(requirement);
-  // The panel describes a node of a drawing DSpatch runs, so it asks about that path and
-  // not about a generated agent file, which nothing in a walked run reads.
-  const answer = capabilityAnswer(target, requirement, 'dspatch-walked-run');
   const inForce = onNode || fromRole;
+  const base = { requirement, help: REQUIREMENT_HELP[requirement], onNode, fromRole, inForce };
+  if (node.kind !== 'agent') {
+    return { ...base, enforcement: 'not-applicable', howItHolds: inForce ? NO_AGENT_IN_STEP : '' };
+  }
+  if (runProvider === null) {
+    return { ...base, enforcement: 'unknown', howItHolds: inForce ? NO_AGENT_CHOSEN : '' };
+  }
+  const answer = RUN_PROVIDER_CAPABILITIES[runProvider][requirement];
   return {
-    requirement,
-    help: REQUIREMENT_HELP[requirement],
-    onNode,
-    fromRole,
-    inForce,
+    ...base,
     enforcement: answer.status,
-    howItHolds: inForce ? howRequirementHolds(target, answer.status, answer.how) : '',
+    howItHolds: inForce ? howRequirementHolds(runProvider, answer.status, answer.how) : '',
   };
 }
 
 function howRequirementHolds(
-  target: LoopTarget,
-  status: RequirementStanding['enforcement'],
+  provider: RunProvider,
+  status: Exclude<RequirementStanding['enforcement'], 'not-applicable'>,
   how: string,
 ): string {
+  const target = provider === 'claude' ? 'Claude' : 'Cursor';
   switch (status) {
     case 'enforced':
       return `${target} enforces this itself: ${how}`;
@@ -265,12 +292,12 @@ function howRequirementHolds(
 
 /** Every requirement, with where it came from, for one node. */
 export function requirementStandings(
-  node: Pick<LoopNode, 'requirements'>,
+  node: Pick<LoopNode, 'requirements' | 'kind'>,
   role: ResolvedRole | null,
-  target: LoopTarget,
+  runProvider: RunProvider | null,
   requirements: readonly RequirementId[],
 ): readonly RequirementStanding[] {
-  return requirements.map((requirement) => requirementStanding(requirement, node, role, target));
+  return requirements.map((requirement) => requirementStanding(requirement, node, role, runProvider));
 }
 
 /** What the role brings to this node, as opposed to what the node adds itself. */

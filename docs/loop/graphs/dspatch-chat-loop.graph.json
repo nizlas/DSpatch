@@ -3,7 +3,7 @@
   "formatVersion": 1,
   "id": "dspatch-chat-loop",
   "name": "Chat loop",
-  "purpose": "One bounded loop started from ordinary chat: the composer's text is the mandate. A successful work step always goes to a checking agent. That agent discovers how this project is checked and runs those checks with its own tools. DSpatch does not ask the user for a command and does not start the project's build itself. This is not the external DSpatch development loop and not the isolated duration increment.",
+  "purpose": "One bounded loop started from ordinary chat: the composer's text is the mandate. A successful work step always goes to a checking agent. That agent discovers how this project is checked and runs those checks with its own tools where they can run commands; where they cannot (a run with Claude), it judges from what it can read and says what it could not run. DSpatch does not ask the user for a command and does not start the project's build itself. This is not the external DSpatch development loop and not the isolated duration increment.",
   "target": "cursor",
   "entry": "work",
   "onRuntimeFault": "stop-and-reconcile",
@@ -37,7 +37,7 @@
       "id": "work",
       "kind": "agent",
       "label": "Do what was asked",
-      "purpose": "Do what the Mandate asks, in the open project. May read freely, write the project's files when the mandate asks for a change, and run whatever commands the work itself requires. Say what you established and what you did not.",
+      "purpose": "Do what the Mandate asks, in the open project. May read freely, write the project's files when the mandate asks for a change, and run whatever commands the work itself requires where your tools can run commands; otherwise say what you could not run. Say what you established and what you did not.",
       "role": {
         "id": "project-work",
         "source": {
@@ -63,7 +63,7 @@
       "id": "check",
       "kind": "agent",
       "label": "Check the work",
-      "purpose": "Establish whether the assignment was met. Discover how this project is checked and run those checks with your own tools — possibly several, possibly none if the assignment was only to read. Do not ask the user to name a command.",
+      "purpose": "Establish whether the assignment was met. Discover how this project is checked and run those checks with your own tools where they can run commands — possibly several, possibly none if the assignment was only to read. Where your tools cannot run commands, do not say you ran anything: judge from what you can read and say what you could not run. Do not ask the user to name a command.",
       "role": {
         "id": "project-check",
         "source": {

@@ -27,6 +27,8 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { describeGateRunner, EXAMPLE_GATE_COMMAND } from '../src/shared/loop-editor-run';
+
 import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import {
   BRIEF_EXCLUSIONS,
@@ -34,14 +36,22 @@ import {
   carriesRunChange,
   chatPromptFor,
   describeRunChange,
+  DRAWING_TASK_PRECEDENCE,
+  ENTRY_LINE_FROM_DRAWING,
+  MANDATE_INTRO_FROM_DRAWING,
   nodeHelpText,
   ROLE_BLOCK_CLOSE,
   ROLE_BLOCK_OPEN,
+  TASK_PRECEDENCE,
 } from '../src/shared/loop-chat';
+import { describeGateEvidenceRule } from '../src/shared/loop-results';
 import { loadLoopGraph } from '../src/shared/loop-graph-load';
 import {
+  capabilityAnswer,
   NODE_KINDS,
   REQUIREMENTS,
+  RUN_PROVIDER_CAPABILITIES,
+  TARGET_CAPABILITIES,
   type LoopGraph,
   type LoopNode,
   type ResolvedRole,
@@ -52,6 +62,7 @@ import {
   limitHelp,
   limitStandings,
   LIMIT_KEYS,
+  NO_AGENT_IN_STEP,
   outcomeStandings,
   REQUIREMENT_HELP,
   requirementStandings,
@@ -681,5 +692,201 @@ describe('the help says what a setting does, in words', () => {
         `${id}: the tooltip should show the purpose rather than a second copy of it`,
       );
     }
+  });
+});
+
+/**
+ * DSP-139. The requirement answers belong to the agent a run uses and to the kind of
+ * step, not to the drawing's target, which is a label.
+ */
+describe('requirement answers by the run’s agent and the step’s kind (DSP-139)', () => {
+  const asked: LoopNode = {
+    id: 'step',
+    kind: 'agent',
+    requirements: ['no-file-writes', 'no-subagent-delegation', 'tool-restriction', 'fixed-model-selection'],
+  };
+  const of = (provider: 'cursor' | 'claude' | null, node: LoopNode = asked) =>
+    new Map(requirementStandings(node, null, provider, REQUIREMENTS).map((standing) => [standing.requirement, standing]));
+
+  it('answers for Claude from its own permissions, which differ from Cursor’s', () => {
+    const claude = of('claude');
+    assert.equal(claude.get('no-subagent-delegation')?.enforcement, 'enforced');
+    assert.equal(claude.get('tool-restriction')?.enforcement, 'enforced');
+    assert.equal(claude.get('no-file-writes')?.enforcement, 'other-means');
+    assert.match(claude.get('no-file-writes')?.howItHolds ?? '', /^Claude does not enforce this/);
+    assert.match(claude.get('fixed-model-selection')?.howItHolds ?? '', /whatever model the step names/);
+    assert.match(claude.get('tool-restriction')?.howItHolds ?? '', /not observed against the real Claude runtime/);
+    const cursor = of('cursor');
+    assert.equal(cursor.get('no-subagent-delegation')?.enforcement, 'other-means');
+    assert.equal(cursor.get('tool-restriction')?.enforcement, 'unknown');
+  });
+
+  it('reads Cursor’s row from the target table rather than copying it', () => {
+    for (const requirement of REQUIREMENTS) {
+      assert.deepEqual(
+        RUN_PROVIDER_CAPABILITIES.cursor[requirement],
+        capabilityAnswer('cursor', requirement, 'dspatch-walked-run'),
+      );
+    }
+  });
+
+  it('keeps the target table as it was: no Claude row beside claude-code', () => {
+    assert.deepEqual(Object.keys(TARGET_CAPABILITIES).sort(), ['claude-code', 'copilot', 'cursor']);
+    for (const requirement of REQUIREMENTS) {
+      assert.equal(capabilityAnswer('claude-code', requirement, 'dspatch-walked-run').status, 'unknown');
+    }
+  });
+
+  it('says nothing is established when no agent is chosen', () => {
+    for (const standing of [...of(null).values()].filter((entry) => entry.inForce)) {
+      assert.equal(standing.enforcement, 'unknown');
+      assert.match(standing.howItHolds, /No agent is chosen/);
+    }
+  });
+
+  it('says a gate has no agent, whatever the run’s agent, and names the command it runs', () => {
+    const gate: LoopNode = { id: 'test', kind: 'gate', requirements: ['no-file-writes'] };
+    for (const provider of ['cursor', 'claude', null] as const) {
+      const standing = of(provider, gate).get('no-file-writes');
+      assert.equal(standing?.enforcement, 'not-applicable');
+      assert.equal(standing?.howItHolds, NO_AGENT_IN_STEP);
+    }
+    const bound = describeGateRunner('dspatch-duration-check');
+    assert.match(bound, /^No agent works in this step\./);
+    assert.ok(bound.includes(`DSpatch runs \`${EXAMPLE_GATE_COMMAND}\` itself`), bound);
+    assert.match(bound, /pass or fail is its exit code/);
+    assert.match(describeGateRunner('some-other-drawing'), /no command bound/);
+  });
+});
+
+/**
+ * DSP-139 AC #7. The instructions that reach a step are true for an agent that cannot
+ * run commands, and still tell one that can to run them.
+ */
+describe('the project roles and chat-loop purposes are true for an agent without a shell (DSP-139)', () => {
+  const read = (rel: string) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+
+  it('the check role tells both kinds of agent what to do', () => {
+    const role = read('docs/loop/roles/project/project-check.role.md');
+    assert.match(role, /If your tools can run commands, run the checks you choose\./);
+    assert.match(role, /If your tools cannot run commands, do not say you ran anything\./);
+    assert.match(role, /evidence about the code version it names and no other/);
+    assert.doesNotMatch(role, /\*\*Run the checks you choose\.\*\* Use your own tools\./);
+  });
+
+  it('the work role does too', () => {
+    const role = read('docs/loop/roles/project/project-work.role.md');
+    assert.match(role, /if your tools can run commands, run the commands the work itself requires/);
+    assert.match(role, /If your tools cannot run commands, do not say you ran anything\./);
+  });
+
+  it('the chat loop’s purposes make running commands conditional on the tools', () => {
+    const graph = JSON.parse(read('docs/loop/graphs/dspatch-chat-loop.graph.json')) as {
+      purpose: string;
+      nodes: { id: string; purpose?: string }[];
+    };
+    assert.match(graph.purpose, /where they can run commands/);
+    for (const id of ['work', 'check']) {
+      const purpose = graph.nodes.find((node) => node.id === id)?.purpose ?? '';
+      assert.match(purpose, /where (your tools|they) can run commands/, id);
+      assert.match(purpose, /otherwise say what you could not run|do not say you ran anything/, id);
+    }
+  });
+});
+
+/**
+ * DSP-139, review R-1 B1. The panel describes what the editor's Run actually sends for a
+ * drawing bound with its own purposes: the drawing's purpose as the mandate, the
+ * precedence text without a person's words, and the stale rule beside a gate's result.
+ */
+describe('the brief panel for a drawing whose purpose is the mandate (DSP-139)', () => {
+  const graph = loadGraph(path.join('docs', 'loop', 'graphs', 'dspatch-duration-check.graph.json'));
+  const resolve = createFileRoleResolver(repoRoot);
+  const partsFor = (id: string) => {
+    const node = nodeNamed(graph, id);
+    const resolved = node.role === undefined ? null : resolve(node.role);
+    return briefParts(node, {
+      entryId: graph.entry,
+      role:
+        resolved === null
+          ? null
+          : { id: resolved.id, sourcePath: resolved.sourcePath, instructions: resolved.instructions ?? null },
+      workingRootCount: null,
+      producedBy: (other) => {
+        const producer = nodeNamed(graph, other);
+        return producer.produces === undefined
+          ? null
+          : { form: producer.produces.form, label: producer.label ?? producer.id, isGate: producer.kind === 'gate' };
+      },
+      mandateFrom: 'drawing',
+      archivePath: graph.archive?.path ?? null,
+      reportWrittenBy: node.report?.writtenBy ?? null,
+      arrivals: graph.edges.filter((edge) => edge.to === id),
+    });
+  };
+
+  it('shows the precedence text the message carries, word for word', () => {
+    for (const id of ['work', 'check']) {
+      const node = nodeNamed(graph, id);
+      const prompt = chatPromptFor(node, {
+        entryId: graph.entry,
+        mandate: graph.purpose,
+        mandateFrom: 'drawing',
+        step: {
+          runId: 'r',
+          occurrence: 1,
+          callId: 1,
+          freshSession: true,
+          arrivedBy: null,
+          attachments: { receivedResults: false, requiredResult: false, runChange: false },
+        },
+      });
+      const shown = partsFor(id).find((part) => part.id === 'precedence')?.text ?? [];
+      assert.deepEqual(shown, DRAWING_TASK_PRECEDENCE.filter((line) => line !== ''));
+      for (const line of shown) {
+        assert.ok(prompt.includes(line), `${id}: the panel shows a line the message carries`);
+      }
+      assert.ok(!shown.join(' ').includes('person’s own words'), id);
+      const mandate = partsFor(id).find((part) => part.id === 'mandate');
+      const opening = id === graph.entry ? ENTRY_LINE_FROM_DRAWING : MANDATE_INTRO_FROM_DRAWING;
+      assert.deepEqual(mandate?.text, [opening]);
+      assert.ok(prompt.includes(opening), `${id}: the opening shown is the one sent`);
+    }
+  });
+
+  it('shows the stale rule for the check, and words the gate handover as DSpatch’s record', () => {
+    const parts = partsFor('check');
+    const rule = parts.find((part) => part.id === 'gate-evidence');
+    assert.equal(rule?.present, true);
+    assert.equal(rule?.carried, true);
+    const sent = describeGateEvidenceRule(
+      [{ nodeId: 'test', occurrence: 1, testedSnapshotId: '<the snapshot it tested>', staleBecause: null }],
+      'could-not-check',
+    );
+    for (const line of rule?.text ?? []) {
+      assert.ok(sent.includes(line), `shown line is in the rule as sent: ${line}`);
+    }
+    assert.match((rule?.text ?? []).join(' '), /"could-not-check" whatever outcome you declare/);
+    const received = parts.find((part) => part.id === 'received');
+    assert.match(received?.detail ?? '', /DSpatch’s record of the command it ran/);
+    assert.doesNotMatch(received?.detail ?? '', /DSpatch runs the tests” — its account/);
+    assert.equal(partsFor('work').find((part) => part.id === 'gate-evidence')?.present, false);
+  });
+
+  it('leaves the chat loop’s panel as it was', () => {
+    const node = nodeNamed(graph, 'work');
+    const person = briefParts(node, {
+      entryId: graph.entry,
+      role: null,
+      workingRootCount: null,
+      producedBy: () => null,
+      archivePath: null,
+      reportWrittenBy: null,
+    });
+    assert.deepEqual(
+      person.find((part) => part.id === 'precedence')?.text,
+      TASK_PRECEDENCE.filter((line) => line !== ''),
+    );
+    assert.equal(person.find((part) => part.id === 'mandate')?.text, undefined);
   });
 });

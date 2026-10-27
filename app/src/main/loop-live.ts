@@ -56,7 +56,7 @@ import {
   type KillFunction,
   type StoppableChild,
 } from './process-tree';
-import type { LoopNode, StepLimits } from '../shared/loop-graph';
+import { undeclaredOutcomeOf, type LoopNode, type StepLimits } from '../shared/loop-graph';
 import {
   carriesRunChange,
   declaredFailureFrom,
@@ -71,7 +71,13 @@ import {
   undeclaredReadableOutcome,
 } from '../shared/loop-chat';
 import { describeToolActivity, type StepActivity } from '../shared/loop-activity';
-import { describeReceivedResults, RESULT_STORAGE_NOTE } from '../shared/loop-results';
+import {
+  describeGateEvidenceRule,
+  describeGateResult,
+  describeReceivedResults,
+  RESULT_STORAGE_NOTE,
+  type GateEvidenceStanding,
+} from '../shared/loop-results';
 import {
   describeUnobservedOutside,
   primaryRootOf,
@@ -572,6 +578,43 @@ function workingCopyIn(
       files: [],
     }
   );
+}
+
+/**
+ * Each root's snapshot id, keyed by the root's path (DSP-139).
+ *
+ * Every root and the working copy, so the stale rule compares every folder a run works
+ * in rather than only the first one (review I5).
+ */
+function snapshotIdsOf(snapshots: ReadonlyMap<string, TreeSnapshot>): ReadonlyMap<string, string> {
+  const ids = new Map<string, string>();
+  for (const [root, snapshot] of snapshots) {
+    ids.set(root, snapshotIdFor(snapshot));
+  }
+  return ids;
+}
+
+/** The roots whose snapshot differs between two readings, or is missing from one. */
+function differingRoots(
+  tested: ReadonlyMap<string, string>,
+  now: ReadonlyMap<string, string>,
+): readonly string[] {
+  const roots = new Set([...tested.keys(), ...now.keys()]);
+  return [...roots].filter((root) => tested.get(root) !== now.get(root));
+}
+
+/**
+ * What DSpatch knows about which code a gate's command ran against (DSP-139).
+ *
+ * `tested` is `null` where that was not observed: a run that does not hash its working
+ * folders gets the same fixed id for every empty tree, so comparing ids there would call
+ * any change "unchanged" (review A1). Unobserved is unknown, and unknown is stale.
+ */
+interface GateEvidence {
+  readonly testedSnapshotId: string | null;
+  readonly tested: ReadonlyMap<string, string> | null;
+  /** Why this result can never describe the working folders, or `null`. */
+  readonly unusable: string | null;
 }
 
 /**
@@ -1500,6 +1543,45 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
    * resumable, not run at once â€” and it holds.
    */
   const sessions = new Map<string, SessionHandle>();
+  /**
+   * Which code each gate visit's command ran against, keyed `node#visit` (DSP-139).
+   *
+   * A step handed a gate's result is held to it: the result counts only for the code it
+   * tested. Kept by the executor because only the executor saw the snapshots; the result
+   * the runner hands over carries the node and the visit, which is the key.
+   */
+  const gateEvidence = new Map<string, GateEvidence>();
+  /**
+   * Why a gate's result does not describe the working folders as they are now, or `null`
+   * where it does. `now` is `null` where this run does not read file content, and that
+   * is never "unchanged" (review A1). Every root is compared (review I5).
+   */
+  const staleBecause = (
+    evidence: GateEvidence,
+    now: ReadonlyMap<string, string> | null,
+  ): string | null => {
+    if (evidence.unusable !== null) {
+      return evidence.unusable;
+    }
+    if (now === null) {
+      return (
+        'DSpatch is not reading the working folders’ content in this run, so it cannot ' +
+        'tell whether they are still that code.'
+      );
+    }
+    if (evidence.tested === null) {
+      return 'Which code the command ran against is not established.';
+    }
+    const differing = differingRoots(evidence.tested, now);
+    if (differing.length === 0) {
+      return null;
+    }
+    const working = now.get(inspection.workspacePath) ?? 'not observed';
+    return differing.length === 1 && differing[0] === inspection.workspacePath
+      ? `The working folder is now snapshot ${working}.`
+      : `These working folders have changed since: ${differing.join(', ')}. The working ` +
+          `folder is now snapshot ${working}.`;
+  };
 
   const remember = (context: StepContext, execution: StepExecution): StepExecution => {
     completed.set(`${context.node.id}:${String(context.occurrence)}`, execution);
@@ -1603,6 +1685,22 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       // it was checking*, which for a CMake project is the difference between "the tests
       // pass" and "the build directory this was measured from no longer exists".
       const ranAgainst = inspection.snapshotAfter;
+      // Every root's tested snapshot too, read before `applyRootDiffs` below overwrites
+      // them. `null` where any of them, or the working copy, was never observed, or where
+      // this run does not read file content at all (review A1, I5).
+      const testedIds: ReadonlyMap<string, string> | null = (() => {
+        if (!hashRoots || ranAgainst === null) {
+          return null;
+        }
+        const ids = new Map<string, string>([[inspection.workspacePath, ranAgainst.snapshotId]]);
+        for (const root of inspection.roots) {
+          if (root.snapshotAfter === null) {
+            return null;
+          }
+          ids.set(root.path, root.snapshotAfter.snapshotId);
+        }
+        return ids;
+      })();
       const afterByRoot = snapshotEveryRoot(inspection, hashRoots);
       const after = workingCopyIn(inspection, afterByRoot);
       // A gate's command can write into any root â€” a build in one, a generated file in
@@ -1621,6 +1719,26 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         ranAgainst === null || command.notRun !== null
           ? null
           : ranAgainst.snapshotId !== snapshotIdFor(after);
+      // What a later step handed this result may treat it as evidence about (DSP-139).
+      // Compared against what the command ran against, not what it left (review A2).
+      const afterIds = snapshotIdsOf(afterByRoot);
+      gateEvidence.set(`${node.id}#${String(context.occurrence)}`, {
+        testedSnapshotId: testedIds === null ? null : (ranAgainst?.snapshotId ?? null),
+        tested: testedIds,
+        unusable:
+          command.notRun !== null
+            ? 'No command ran, so it tested no code.'
+            : !hashRoots
+              ? 'DSpatch is not reading the working folders’ content in this run, so which ' +
+                'code the command ran against is not established.'
+              : testedIds === null
+                ? 'DSpatch had not observed the working folders before the command ran, so which ' +
+                  'code it tested is not established.'
+                : differingRoots(testedIds, afterIds).length > 0
+                  ? 'The command changed the working folders while it ran, so what it measured ' +
+                    'is not what it left behind.'
+                  : null,
+      });
       const selfModified =
         changedWhileChecking === true
           ? ` This command changed the working copy while it ran (${ranAgainst?.snapshotId ?? 'unknown'} ` +
@@ -1629,6 +1747,19 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
             `tree. It matters because the result below describes the state before those ` +
             `writes.`
           : '';
+      const gateResultBody = (verdict: string): string | undefined =>
+        node.produces === undefined || node.produces.form === 'none'
+          ? undefined
+          : describeGateResult({
+              runId: context.runId,
+              nodeId: node.id,
+              occurrence: context.occurrence,
+              verdict,
+              command,
+              testedSnapshotId: testedIds === null ? null : (ranAgainst?.snapshotId ?? null),
+              afterSnapshotId: hashRoots ? snapshotIdFor(after) : null,
+              selfModified,
+            });
       // A gate that started no process has produced no verdict on the project, so
       // it may not return `pass` or `fail`. What it returns instead depends on
       // *why*, and DSP-44 moves exactly one of the three reasons.
@@ -1655,8 +1786,10 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
           ? notVerifiedOutcome(node.outcomes ?? [])
           : null;
       if (command.notRun !== null && notVerified !== null) {
+        const notVerifiedBody = gateResultBody(notVerified);
         return remember(context, {
           product: { kind: 'outcome', outcome: notVerified, source: 'gate-verdict' },
+          ...(notVerifiedBody === undefined ? {} : { resultBody: notVerifiedBody }),
           summary:
             `No provider turn and no command: ${command.notRun.message} This is the gate's ` +
             `"${notVerified}" verdict, not a pass and not a failure â€” nothing is known about ` +
@@ -1707,10 +1840,14 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         });
       }
       const passed = command.exitCode === 0;
+      // The command's own record as the gate's result, for a gate that declares one
+      // (DSP-139), so a later step is handed what ran and not anybody's account of it.
+      const verdictBody = gateResultBody(passed ? 'pass' : 'fail');
       return remember(context, {
         // A gate's own verdict, from an exit code (DSP-103 #9). Recorded as the gate's so
         // that a step handed this result is not told an agent declared "pass".
         product: { kind: 'outcome', outcome: passed ? 'pass' : 'fail', source: 'gate-verdict' },
+        ...(verdictBody === undefined ? {} : { resultBody: verdictBody }),
         summary:
           `No provider turn. Ran ${command.command} in ${command.cwd}; exit ` +
           `${String(command.exitCode)}. Snapshot ${snapshotIdFor(after)}.${selfModified}`,
@@ -1887,6 +2024,29 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     // read `git status`, found two inventory files two earlier runs had left uncommitted
     // in the same folder, and reported them as this run's delivery.
     const receivedText = describeReceivedResults(context.received);
+    // DSP-139. A gate's result counts only for the code its command ran against. Which
+    // code that was, and the rule this step works under because of it, are stated beside
+    // the result whenever one is handed over (review A3), not only when the rule bites.
+    const handedGates = context.received
+      .filter((result) => result.outcome?.source === 'gate-verdict')
+      .map((result) => ({
+        nodeId: result.nodeId,
+        occurrence: result.occurrence,
+        evidence: gateEvidence.get(`${result.nodeId}#${String(result.occurrence)}`) ?? {
+          testedSnapshotId: null,
+          tested: null,
+          unusable: 'DSpatch has no record in this run of which code that command ran against.',
+        },
+      }));
+    const startIds = hashRoots ? snapshotIdsOf(beforeByRoot) : null;
+    const staleAtStart = handedGates.map((gate) => staleBecause(gate.evidence, startIds));
+    const evidenceStandings: GateEvidenceStanding[] = handedGates.map((gate, index) => ({
+      nodeId: gate.nodeId,
+      occurrence: gate.occurrence,
+      testedSnapshotId: gate.evidence.testedSnapshotId,
+      staleBecause: staleAtStart[index] ?? null,
+    }));
+    const evidenceText = describeGateEvidenceRule(evidenceStandings, undeclaredOutcomeOf(node));
     const requiredText = describeRequiredResult(node, context.archive);
     // What this step was **actually** handed, not what its node declares (DSP-100). An
     // arriving edge can now decide the handover, so a step that receives an account of
@@ -1916,6 +2076,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         },
       }) +
       receivedText +
+      evidenceText +
       changeText +
       requiredText;
     // Announced before `send`, because the interval this increment exists for is the
@@ -2063,6 +2224,50 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     }
 
     const declared = productFromAssistantText(node, turn.assistantText());
+    // DSP-139, the other half of the rule stated in `evidenceText`: a step handed a gate's
+    // result whose working folders were not the tested code when it started or ended, or
+    // could not be observed, does not get to turn that result into a success. Its own
+    // `whenUndeclared` outcome is recorded instead; a declared failure stands.
+    const endIds = hashRoots ? snapshotIdsOf(afterByRoot) : null;
+    const staleAtEnd = handedGates.map((gate) => staleBecause(gate.evidence, endIds));
+    const stale = [...staleAtStart, ...staleAtEnd].some((reason) => reason !== null);
+    let product: StepProduct = declared.product;
+    let staleNote = '';
+    if (stale && (product.kind === 'outcome' || product.kind === 'success')) {
+      const fallback = undeclaredOutcomeOf(node);
+      const tested = handedGates
+        .map(
+          (gate) =>
+            `"${gate.nodeId}" visit ${String(gate.occurrence)} tested ` +
+            `${gate.evidence.testedSnapshotId ?? 'code DSpatch did not observe'}`,
+        )
+        .join('; ');
+      const seen =
+        `The command result this step was given does not describe the working folders: ` +
+        `${tested}; the working folder was ${startIds?.get(inspection.workspacePath) ?? 'not observed'} ` +
+        `when the step started and ${endIds?.get(inspection.workspacePath) ?? 'not observed'} when it ended. ` +
+        [...new Set([...staleAtStart, ...staleAtEnd].filter((reason) => reason !== null))].join(' ');
+      const said = product.kind === 'outcome' ? `"${product.outcome}"` : 'plain success';
+      if (fallback === null) {
+        product = {
+          kind: 'runtime-fault',
+          fault: 'no-outcome-delivered',
+          detail:
+            `${seen} "${node.id}" declared ${said}, and this node names no outcome for a result ` +
+            `nobody established ("whenUndeclared"), so there is nothing honest to route on and ` +
+            `the run stops here. Anything changed is still in the working copy.`,
+        };
+        staleNote = ` ${seen} No outcome recorded: the node has no whenUndeclared.`;
+      } else if (product.kind === 'outcome' && product.outcome === fallback) {
+        staleNote = ` ${seen} The step itself declared "${fallback}", which stands.`;
+      } else {
+        product = { kind: 'outcome', outcome: fallback, source: 'verification-stale' };
+        staleNote =
+          ` ${seen} DSpatch recorded "${fallback}" (this node's whenUndeclared) instead of ` +
+          `${said}, because a test result about one version of the code is not evidence ` +
+          `about another.`;
+      }
+    }
     const corroboration = describeSnapshotChange({
       changedFiles: diff.changed.length,
       addedFiles: diff.added.length,
@@ -2104,7 +2309,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         ? undefined
         : turn.assistantText();
     return remember(context, {
-      product: declared.product,
+      product,
       ...(resultBody === undefined ? {} : { resultBody }),
       summary:
         `One provider turn. Requested ${options.modelRequested}, reported ` +
@@ -2112,6 +2317,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         `${snapshotIdFor(after)}. Changed: ${changed.length > 0 ? changed.join(', ') : 'none'}.` +
         (declared.why === null ? '' : ` ${declared.why}`) +
         ` ${corroboration}` +
+        staleNote +
         sessionNote,
       providerTurns: 1,
     });

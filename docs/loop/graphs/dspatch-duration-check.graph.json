@@ -1,0 +1,151 @@
+{
+  "format": "dspatch-loop-graph",
+  "formatVersion": 1,
+  "id": "dspatch-duration-check",
+  "name": "Duration change, tested and checked",
+  "purpose": "Complete formatDuration in src/duration.ts of the isolated experiment repository so that the existing tests in test/duration.test.ts pass, without editing any test file and without adding dependencies. One agent makes the change, DSpatch runs the tests itself, and a second agent judges the change against the real test result. This is not the external DSpatch development loop and not the chat loop.",
+  "target": "cursor",
+  "entry": "work",
+  "onRuntimeFault": "stop-and-reconcile",
+  "notes": "DSP-139. Why DSpatch runs the test here rather than an agent: Niclas's mandate of 27 October 2026 chose gate steps in which DSpatch runs an explicitly configured build or test command, and no command tool for Claude. So the agent steps only read and edit, the gate runs the command, and the check step is handed the gate's real record (command, folder, exit code or signal, bounded output, the run, the visit and the snapshot it tested). The command is not a field of this file: the drawing format has none, and the editor's Run binds it in code for this one bundled drawing (EXAMPLE_GATE_COMMAND in app/src/shared/loop-editor-run.ts), shown in the gate's panel and named in its purpose. This is a bundled drawing declaring its own gate, not a Command field in ordinary chat: the chat loop and Use loop do not change, nobody is asked for a command, and pressing Run is the act (INTERACTION_MODEL.md sections 6 and 8). The stale rule: a test result counts only for the snapshot of the working folders it ran against. If the working folders differ from it, or cannot be observed, when the check starts or ends, the check is told so and its outcome is recorded as its whenUndeclared (could-not-check), so a change made after the test cannot end at done. A failing test ends at tests-failed with no rework round. Both agent steps inherit the run's model, so this runs under Claude and under Cursor. Do not point this graph at the DSpatch repository: Run generates an isolated experiment repository.",
+  "limits": {
+    "maxTasks": 1,
+    "maxCalls": 4,
+    "maxReworkRounds": 1,
+    "maxMinutes": 30,
+    "note": "Four calls is the work step, the gate, the check and one spare. Guesses, recorded as guesses."
+  },
+  "archive": {
+    "path": ".dspatch-loop/runs/<run-id>/reports/",
+    "entryPerNode": true,
+    "referenceReturned": true
+  },
+  "failureKinds": [
+    {
+      "id": "spec-error",
+      "label": "specification error",
+      "meaning": "The task's premise is wrong and the change cannot be made in place. The run stops rather than inventing a different task."
+    },
+    {
+      "id": "blocked",
+      "label": "blocked",
+      "meaning": "A concrete obstacle prevents the work: missing access, or a decision this run cannot make."
+    }
+  ],
+  "nodes": [
+    {
+      "id": "work",
+      "kind": "agent",
+      "label": "Complete formatDuration",
+      "purpose": "Edit src/duration.ts so that the tests in test/duration.test.ts pass; the tests are the specification, so read them. Do not edit any test file and do not add dependencies. You do not need to run the tests: the next step is DSpatch running them. Say what you changed and what you did not establish.",
+      "role": {
+        "id": "project-work",
+        "source": {
+          "kind": "role-source",
+          "path": "docs/loop/roles/project/project-work.role.md"
+        }
+      },
+      "model": {
+        "policy": "inherit"
+      },
+      "limits": {
+        "maxMinutes": 15
+      },
+      "outcomes": ["succeeded", "unclear"],
+      "whenUndeclared": "unclear",
+      "declaredFailures": ["spec-error", "blocked"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": false, "form": "stored-result", "note": "Your account of what you changed. The checking step is a different agent with none of this conversation." },
+      "view": { "x": 360, "y": 60 }
+    },
+    {
+      "id": "test",
+      "kind": "gate",
+      "label": "DSpatch runs the tests",
+      "purpose": "DSpatch runs node --test test/duration.test.ts in the run's working folder. Pass or fail is the process exit code, not an agent's account.",
+      "outcomes": ["pass", "fail", "not-verified"],
+      "notes": "No role and no provider turn. The command is bound to this drawing by the editor's Run (EXAMPLE_GATE_COMMAND), and this purpose names it so a reader sees what will run. Its result is filed and handed to check.",
+      "produces": { "required": false, "form": "stored-result", "note": "DSpatch's record of the command it ran." },
+      "view": { "x": 360, "y": 200 }
+    },
+    {
+      "id": "check",
+      "kind": "agent",
+      "label": "Check the change",
+      "purpose": "Establish whether the assignment was met, from the change in the working folders, the work step's account and the test result DSpatch handed you. That result is evidence about the code version it names and no other. Do not edit files.",
+      "role": {
+        "id": "project-check",
+        "source": {
+          "kind": "role-source",
+          "path": "docs/loop/roles/project/project-check.role.md"
+        }
+      },
+      "model": {
+        "policy": "inherit"
+      },
+      "limits": {
+        "maxMinutes": 15
+      },
+      "outcomes": ["met", "not-met", "could-not-check"],
+      "whenUndeclared": "could-not-check",
+      "declaredFailures": ["spec-error", "blocked"],
+      "report": { "writtenBy": "self" },
+      "consumes": ["work", "test"],
+      "view": { "x": 360, "y": 340 }
+    },
+    {
+      "id": "done",
+      "kind": "terminal",
+      "label": "Change met and tested",
+      "purpose": "The tests DSpatch ran passed on the code that was checked, and the checking step declared the assignment met.",
+      "ending": "success",
+      "view": { "x": 120, "y": 500 }
+    },
+    {
+      "id": "tests-failed",
+      "kind": "terminal",
+      "label": "Tests failed",
+      "purpose": "The command DSpatch ran exited non-zero. Its output is in the record. The change is still in the working copy, and nothing checked it further.",
+      "ending": "not-success",
+      "view": { "x": 620, "y": 200 }
+    },
+    {
+      "id": "not-met",
+      "kind": "terminal",
+      "label": "Assignment not met",
+      "purpose": "The checking step declared that the assignment was not met. What the work step changed is still in the working copy.",
+      "ending": "not-success",
+      "view": { "x": 340, "y": 500 }
+    },
+    {
+      "id": "not-established",
+      "kind": "terminal",
+      "label": "Could not establish",
+      "purpose": "The run could not establish whether the assignment was met: the work was unclear, no test command ran, the check could not decide, or the test result did not describe the code that was checked. This is not a pass and not a failure of the project.",
+      "ending": "not-success",
+      "view": { "x": 560, "y": 500 }
+    },
+    {
+      "id": "stopped",
+      "kind": "terminal",
+      "label": "Stopped without doing the work",
+      "purpose": "The work step reported that the premise was wrong or that it was blocked, so the work was not done and nothing was tested.",
+      "ending": "not-success",
+      "view": { "x": 100, "y": 200 }
+    }
+  ],
+  "edges": [
+    { "id": "e-succeeded", "from": "work", "to": "test", "when": { "on": "outcome", "outcome": "succeeded" }, "label": "work succeeded" },
+    { "id": "e-unclear", "from": "work", "to": "not-established", "when": { "on": "outcome", "outcome": "unclear" }, "label": "work unclear" },
+    { "id": "e-spec", "from": "work", "to": "stopped", "when": { "on": "declared-failure", "failure": "spec-error" }, "label": "spec-error" },
+    { "id": "e-blocked", "from": "work", "to": "stopped", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked" },
+    { "id": "e-pass", "from": "test", "to": "check", "when": { "on": "outcome", "outcome": "pass" }, "label": "tests passed" },
+    { "id": "e-fail", "from": "test", "to": "tests-failed", "when": { "on": "outcome", "outcome": "fail" }, "label": "tests failed" },
+    { "id": "e-not-verified", "from": "test", "to": "not-established", "when": { "on": "outcome", "outcome": "not-verified" }, "label": "no command ran" },
+    { "id": "e-met", "from": "check", "to": "done", "when": { "on": "outcome", "outcome": "met" }, "label": "assignment met" },
+    { "id": "e-not-met", "from": "check", "to": "not-met", "when": { "on": "outcome", "outcome": "not-met" }, "label": "assignment not met" },
+    { "id": "e-could-not-check", "from": "check", "to": "not-established", "when": { "on": "outcome", "outcome": "could-not-check" }, "label": "could not check" },
+    { "id": "e-check-spec", "from": "check", "to": "not-established", "when": { "on": "declared-failure", "failure": "spec-error" }, "label": "spec-error while checking" },
+    { "id": "e-check-blocked", "from": "check", "to": "not-established", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked while checking" }
+  ]
+}
