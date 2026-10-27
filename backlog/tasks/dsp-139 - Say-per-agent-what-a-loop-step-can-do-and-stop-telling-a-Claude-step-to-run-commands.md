@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-10-27 02:33'
-updated_date: '2026-10-27 07:53'
+updated_date: '2026-10-27 10:16'
 labels:
   - loop
   - providers
@@ -46,4 +46,6 @@ R-0 ACCEPT WITH AMENDMENTS; V-1 PASS on mandate items (findings F1-F3); R-1 REWO
 R-2: code rework accepted; guide step 16 made conditional (a real model may still complete the function because the drawing's purpose is the mandate) and the old-Node wording corrected. Recorded improvements, not done here: claude-agent-sdk-adapter.ts describePermissionPolicy still says 'no settings read from disk' (add 'other than managed policy settings', as in loop-graph.ts); the panel's 'What earlier steps left for it' part carries the tag 'pointed at, not included' beside 'reproduced whole inside the message' for stored-result and gate handovers (predates DSP-139; loop-chat.ts received part carried:false); DRAWING_TASK_PRECEDENCE reuses the line 'a later message from the person included' in a run nobody typed into (accurate as shown, inaccurate in context). Verified offline only: V-1 and V-2 PASS; no real Claude run.
 
 Result (offline, Windows): the bundled drawing dspatch-duration-check runs from the editor's Run with Claude chosen through the real adapter on a substituted SDK; DSpatch runs a real node --test in a generated repository; the check receives command, folder, exit code, bounded output and the tested snapshot; failed test ends Tests failed; stale or unobserved results never end at success; cancel during work or the gate starts no later step; Cursor constructed 0 times, no installs. Tests: loop 611, live 86, presentation 298, chat 382, typecheck and build. Not established: any real Claude run, Linux, Node version thresholds, Niclas's UX assessment. Next: Linux trial Part C steps 13-19.
+
+27 Oct 2026, DSP-145: the hard-coded gate of dspatch-duration-check is kept only as test material for the editor's Run; the product's verification flow is now the development agent running its own commands through DSpatch's command tool, with the generalised approval rule. DSP-140, 142, 143 and 144 were closed or merged into DSP-145.
 <!-- SECTION:NOTES:END -->
