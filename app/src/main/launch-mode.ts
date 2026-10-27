@@ -64,6 +64,8 @@ export const chatRunScenario: ScriptedScenario =
                                 ? 'how-the-liveness-looks'
                                 : chatRunValue === 'workspace-flow'
                                 ? 'workspace-flow'
+                                : chatRunValue === 'model-list'
+                                ? 'model-list'
                                 : chatRunValue === 'switch'
                                   ? 'workspace-switch'
                                   : chatRunValue === 'resume-choice'

@@ -103,6 +103,7 @@ const AREAS = {
       'project-store.test.ts',
       'workspace-folders.test.ts',
       'workspace-tools.test.ts',
+      'model-choice.test.ts',
       'run-record-store.test.ts',
       'command-start.test.ts',
       'test-command.test.ts',

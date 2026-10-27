@@ -3169,6 +3169,7 @@ function Workbench({
                   provider={session.provider}
                   disabled={busy !== null || activeTurn !== null || loopBusy}
                   compact
+                  reportedModel={[...chat.turns].reverse().find((turn) => (turn.modelReported ?? null) !== null)?.modelReported ?? null}
                 />
                 {/* What the choice applies to, one click away (DSP-121 UX), kept for the composer's choice. */}
                 <details className="model__help">
@@ -3728,6 +3729,10 @@ function TurnFactsSection({ turns }: { readonly turns: readonly TurnState[] }): 
                   {turn.status} · {String(turn.deltaCount)} text fragments · {String(turn.toolsFinished)} of{' '}
                   {String(turn.toolsStarted)} tool calls finished
                   {turn.lastTool === null ? '' : ` · last tool ${turn.lastTool}`} ·{' '}
+                  {(turn.modelReported ?? null) === null
+                    ? 'model not reported by the provider'
+                    : `model reported: ${turn.modelReported ?? ''}`}{' '}
+                  ·{' '}
                   {turn.usage === null || turn.usage.totalTokens === null
                     ? 'tokens unknown'
                     : `${String(turn.usage.totalTokens)} tokens`}{' '}

@@ -741,7 +741,8 @@ async function nameScenarioAgent(): Promise<void> {
 export async function runScriptedWorkflow(
   plan: ScriptedRunPlan,
 ): Promise<ScriptedRunReport> {
-  if (plan.scenario !== 'review-direct') {
+  // DSP-149: `model-list` chooses Claude itself and must never choose Cursor.
+  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list') {
     await nameScenarioAgent();
   }
   switch (plan.scenario) {
@@ -791,6 +792,8 @@ export async function runScriptedWorkflow(
       return runReviewHoldScenario(plan);
     case 'workspace-flow':
       return runWorkspaceFlowScenario(plan);
+    case 'model-list':
+      return runModelListScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -10291,6 +10294,69 @@ async function runWorkspaceFlowScenario(plan: ScriptedRunPlan): Promise<Scripted
     return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-149: the real model list, through the host and the dropdown            */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The model dropdown against the provider's real SDK: Claude is chosen, the start page's
+ * dropdown fills from the host's lookup (Claude Code's own `supportedModels()`), a model
+ * is chosen and the choice is kept. **No message is sent**, so no model turn runs; the
+ * lookup does start Claude Code and use the existing login. Cursor is never chosen.
+ */
+async function runModelListScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const observations: Record<string, unknown> = {
+    plan,
+    limits:
+      'REAL SDK: the list comes from the installed Claude Agent SDK through the project host. ' +
+      'No message was sent and no model turn ran. Which model a reply uses is not observed here.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  try {
+    await waitFor('the start page', () => element('start-page') !== null, 60_000);
+    await chooseInSelect('open-agent-select', 'claude');
+    await waitFor(
+      'the model list to be read',
+      () => {
+        const select = element('model-select');
+        return (select instanceof HTMLSelectElement && !select.disabled) || element('model-list-error') !== null;
+      },
+      90_000,
+    );
+    const error = textOf('model-list-error-detail');
+    const options = [...((element('model-select') as HTMLSelectElement | null)?.options ?? [])].map((option) => ({
+      value: option.value,
+      label: option.textContent ?? '',
+    }));
+    record('model list on the start page', { error, options });
+    observations['options'] = options;
+    if (error !== '' || options.length < 2) {
+      failures.push(`the dropdown did not get the real list: ${error === '' ? `${String(options.length)} options` : error}`);
+    }
+    await window.dspatch.captureWindow('model-list');
+    const pick = options.find((option) => option.value === 'sonnet') ?? options[1];
+    if (pick !== undefined) {
+      await chooseInSelect('model-select', pick.value);
+      await sleep(500);
+      const kept = await window.dspatch.listModels('claude');
+      record('model chosen', { picked: pick.value, kept: kept.chosen, source: kept.source });
+      if (kept.chosen !== pick.value) {
+        failures.push(`the choice was not kept (${kept.chosen})`);
+      }
+      await window.dspatch.captureWindow('model-chosen');
+    }
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (caught) {
+    failures.push(caught instanceof Error ? caught.message : String(caught));
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
   }
 }

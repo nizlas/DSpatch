@@ -4,7 +4,7 @@ title: Start from a conversation and work in workspaces of several folders
 status: Review
 assignee: []
 created_date: '2026-10-27 20:04'
-updated_date: '2026-10-27 21:47'
+updated_date: '2026-10-27 22:08'
 labels: []
 dependencies:
   - DSP-111
@@ -104,4 +104,23 @@ Verified (isolated user data, no provider call):
 - the real profile was untouched by every run since the cleanup.
 
 Simulated: every provider answer and the model list (the presentation adapter's fixed list, labelled SIMULATED in its source). Not run: Claude's live model discovery (it starts Claude Code and authenticates; earlier constraints forbid live probes here); Cursor's list (the account is closed). Both are items for Niclas's manual trial.
+
+27 Oct 2026, the model list against real Claude (Niclas's trial showed 'Models unavailable').
+
+Root cause: listModels() ran Claude Code in a fresh temporary folder and deleted it in 'finally'. On Windows the deletion fails with EPERM while Claude Code still has that folder as its working directory, and that error replaced the list Claude had returned. Two such folders from the trial (22:55 and 22:57) were left in %TEMP%.
+
+Fix: the lookup runs in one fixed, empty, DSpatch-owned folder (%TEMP%\dspatch-claude-models) that is never deleted. Concurrent lookups for one agent share a single read. The four leftover empty folders were removed.
+
+The dropdown:
+- failure: 'Models unavailable' with Try again, and the concrete reason under Why;
+- an earlier explicit choice stays chosen while the list is missing;
+- 'Provider's default' is kept apart from named models;
+- 'Last reply: <model>' shows the model Claude reported in its init message for the last turn, never the requested id; Session details > Turns shows the reported model per turn, or 'not reported'.
+
+Verified with the real SDK (home computer, existing Claude login, no message sent, no model turn):
+- the adapter's listModels() returned the account's list in about 0.8 s: Default (recommended) -> claude-opus-5-5, Opus 5.5, Fable 5.1, Sonnet 5.5, Haiku 5.5, Haiku 4.5, and older models, 13 in all;
+- the window scenario model-list (real app, real project host, Claude chosen, no presentation adapter) filled the start page's dropdown with those 13 plus Provider's default, and the choice of Sonnet 5.5 was kept;
+- existing turn information: Claude Code's transcript of the trial session (model fields only) shows all 18 replies came from claude-opus-5-5, which is what Default resolves to.
+
+Not observed live: 'Last reply' in a new turn (that would need a model turn); it is covered by the adapter's recorded init model and unit tests.
 <!-- SECTION:NOTES:END -->

@@ -158,6 +158,8 @@ export interface ModelChoice {
   readonly displayName: string;
   /** What the provider says about the model, when it says anything (DSP-149). */
   readonly description?: string;
+  /** The provider's own id an alias resolves to, when it says (DSP-149). */
+  readonly resolvedId?: string;
 }
 
 /**
@@ -1659,6 +1661,12 @@ export interface CancelObservations {
  */
 export interface UiAgentEvent {
   readonly type: AgentEventType;
+  /**
+   * DSP-149: on `run.finished`, the model the provider reported for this session (for
+   * Claude, the `init` message's `model`). Absent when it reported none: then only the
+   * requested model is known, and nothing claims it was used.
+   */
+  readonly modelReported?: string;
   readonly dspatchSessionId: string;
   readonly dspatchRunId: string;
   readonly at: string;
@@ -1750,6 +1758,8 @@ export type ScriptedScenario =
    * provider call: the presentation adapter answers and makes the tool calls.
    */
   | 'workspace-flow'
+  /** DSP-149: the real model list through the host and the dropdown; no message is sent. */
+  | 'model-list'
   | 'interactive-chat'
   | 'review-and-test'
   /**

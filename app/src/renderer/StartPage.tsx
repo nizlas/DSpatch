@@ -597,21 +597,30 @@ export function NoWorkspaceBar({
 
 /**
  * The model for the chosen agent (DSP-149): every model the agent's SDK lists for this
- * account, by name, and *Default* for the provider's own choice. The technical id is in
- * the tooltip. A model that is chosen but not listed stays visible and says so; nothing
- * is replaced by another model.
+ * account, by name, and *Provider's default* for leaving the choice to the provider. The
+ * technical id is in the tooltip.
+ *
+ * - A failed lookup says so, offers *Try again*, and keeps its concrete reason under
+ *   *Why*. A model chosen earlier stays chosen meanwhile; it is not called unavailable,
+ *   because nothing has said so.
+ * - *Last reply* is the model the provider **reported** for the last reply, never the
+ *   requested id presented as confirmed. Nothing is shown when nothing was reported.
  */
 export function ModelSelect({
   provider,
   disabled,
   compact = false,
+  reportedModel = null,
 }: {
   readonly provider: StoredSessionProvider | null;
   readonly disabled: boolean;
   readonly compact?: boolean;
+  /** What the provider reported for the last reply, or `null`. */
+  readonly reportedModel?: string | null;
 }): JSX.Element | null {
   const [listing, setListing] = useState<ModelListing | null>(null);
   const [chosen, setChosen] = useState<string>('');
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
     setListing(null);
@@ -623,63 +632,113 @@ export function ModelSelect({
             setChosen(answer.chosen);
           }
         },
-        () => undefined,
+        (error: unknown) => {
+          if (live) {
+            setListing({
+              provider,
+              models: [],
+              chosen,
+              error: error instanceof Error ? error.message : String(error),
+              source: 'the request to DSpatch',
+            });
+          }
+        },
       );
     }
     return () => {
       live = false;
     };
-  }, [provider]);
+    // `chosen` is deliberately not a dependency: the lookup runs per agent and per retry.
+  }, [provider, attempt]);
   if (provider === null) {
     return null;
   }
   const models = listing?.models ?? [];
-  const offered = chosen === '' || models.some((model) => model.id === chosen);
-  const current = models.find((model) => model.id === chosen);
+  const failed = listing?.error != null;
+  const listedChosen = models.find((model) => model.id === chosen);
+  const unknownChosen = chosen !== '' && listedChosen === undefined;
+  // The model's own name for a reported id: an exact entry first, then an alias that
+  // resolves to it, the provider's "default" alias last, so a reply from claude-opus-5-5
+  // reads as Opus 5.5 rather than as "Default".
+  const nameOf = (id: string): string => {
+    const exact = models.find((model) => model.id === id);
+    const aliases = models.filter((model) => model.resolvedId === id);
+    const named = exact ?? aliases.find((model) => model.id !== 'default') ?? aliases[0];
+    return named?.displayName ?? id;
+  };
   return (
-    <label
-      className={`provider provider--model${compact ? ' provider--compact' : ''}`}
-      title={
-        listing === null
-          ? 'Reading the models this agent offers…'
-          : listing.error !== null
-            ? `The models could not be read: ${listing.error}`
-            : `${current === undefined ? (chosen === '' ? 'The provider chooses' : chosen) : `${current.displayName} (${current.id})`} · from ${listing.source}`
-      }
-    >
-      <span className="sr-only">Model</span>
-      <select
-        className="provider__select"
-        data-ev="model-select"
-        value={chosen}
-        disabled={disabled || listing === null}
-        onChange={(event) => {
-          const next = event.target.value;
-          setChosen(next);
-          void window.dspatch.setRequestedModel(next).then(
-            (inForce) => {
-              setChosen(inForce);
-            },
-            () => undefined,
-          );
-        }}
+    <span className={`model-pick${compact ? ' model-pick--compact' : ''}`}>
+      <label
+        className={`provider provider--model${compact ? ' provider--compact' : ''}`}
+        title={
+          listing === null
+            ? 'Reading the models this agent offers…'
+            : chosen === ''
+              ? `No model chosen here: the provider uses its own default. List from ${listing.source}.`
+              : `${listedChosen === undefined ? chosen : `${listedChosen.displayName} (${listedChosen.id}${listedChosen.resolvedId !== undefined && listedChosen.resolvedId !== listedChosen.id ? ` → ${listedChosen.resolvedId}` : ''})`} · requested for the next message · list from ${listing.source}`
+        }
       >
-        <option value="">Default model</option>
-        {!offered && <option value={chosen}>{`${chosen} (not offered to this account)`}</option>}
-        {models.map((model) => (
-          <option key={model.id} value={model.id} title={model.description ?? model.id}>
-            {model.displayName}
-          </option>
-        ))}
-      </select>
-      <svg className="provider__chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d="M7 10l5 5 5-5" />
-      </svg>
-      {listing?.error != null && (
-        <span className="provider__error" data-ev="model-list-error">
+        <span className="sr-only">Model</span>
+        <select
+          className="provider__select"
+          data-ev="model-select"
+          value={chosen}
+          disabled={disabled || listing === null}
+          onChange={(event) => {
+            const next = event.target.value;
+            setChosen(next);
+            void window.dspatch.setRequestedModel(next).then(
+              (inForce) => {
+                setChosen(inForce);
+              },
+              () => undefined,
+            );
+          }}
+        >
+          <option value="">Provider&apos;s default</option>
+          {unknownChosen && (
+            <option value={chosen}>
+              {failed ? chosen : `${chosen} (not offered to this account)`}
+            </option>
+          )}
+          {models.map((model) => (
+            <option key={model.id} value={model.id} title={model.description ?? model.id}>
+              {model.displayName}
+            </option>
+          ))}
+        </select>
+        <svg className="provider__chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M7 10l5 5 5-5" />
+        </svg>
+      </label>
+      {failed && (
+        <span className="model-pick__problem" data-ev="model-list-error">
           Models unavailable
+          <button
+            type="button"
+            className="model-pick__retry"
+            data-ev="model-list-retry"
+            onClick={() => {
+              setAttempt((count) => count + 1);
+            }}
+          >
+            Try again
+          </button>
+          <details className="model-pick__why">
+            <summary>Why</summary>
+            <span data-ev="model-list-error-detail">{listing?.error}</span>
+          </details>
         </span>
       )}
-    </label>
+      {reportedModel !== null && reportedModel !== '' && (
+        <span
+          className="model-pick__reported"
+          data-ev="model-reported"
+          title={`Reported by the provider for the last reply: ${reportedModel}`}
+        >
+          Last reply: {nameOf(reportedModel)}
+        </span>
+      )}
+    </span>
   );
 }

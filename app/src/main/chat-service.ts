@@ -1582,6 +1582,22 @@ export class ChatService {
    * otherwise one built for the reading and disposed again. Read once per launch.
    */
   async listModels(provider: StoredSessionProvider): Promise<ModelListing> {
+    // One lookup at a time per agent: two controls asking at once share it rather than
+    // starting Claude Code twice.
+    const running = this.modelListsInFlight.get(provider);
+    if (running !== undefined) {
+      return running;
+    }
+    const lookup = this.readModelList(provider).finally(() => {
+      this.modelListsInFlight.delete(provider);
+    });
+    this.modelListsInFlight.set(provider, lookup);
+    return lookup;
+  }
+
+  private readonly modelListsInFlight = new Map<StoredSessionProvider, Promise<ModelListing>>();
+
+  private async readModelList(provider: StoredSessionProvider): Promise<ModelListing> {
     const chosen = this.modelFor(provider);
     const source =
       provider === 'claude'
@@ -1597,6 +1613,7 @@ export class ChatService {
         id: model.id,
         displayName: model.displayName === '' ? model.id : model.displayName,
         ...(model.description === undefined ? {} : { description: model.description }),
+        ...(model.resolvedId === undefined ? {} : { resolvedId: model.resolvedId }),
       })),
     });
     if (cached !== undefined) {
@@ -5683,10 +5700,22 @@ export class ChatService {
     // The recap travels with the run that carried it, so the window can say what
     // this particular message was sent with rather than what the session was set
     // up to send at some earlier moment.
+    const reported =
+      event.type === 'run.finished' && this.adapter !== null
+        ? (() => {
+            try {
+              return this.adapter.modelReported(event.dspatchSessionId);
+            } catch {
+              return null;
+            }
+          })()
+        : null;
     this.options.send(
       event.type === 'run.started' && this.pendingResentContext !== null
         ? { ...ui, resentContext: this.pendingResentContext }
-        : ui,
+        : reported === null
+          ? ui
+          : { ...ui, modelReported: reported },
     );
   }
 }

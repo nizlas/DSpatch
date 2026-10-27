@@ -726,3 +726,47 @@
     opacity: 0.8;
   }
 }
+
+/* DSP-149: the model choice, its retry, and what the provider reported. */
+.model-pick {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+}
+
+.model-pick__problem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #f0b4ba;
+  font-size: 0.82rem;
+}
+
+.model-pick__retry {
+  border: 1px solid rgba(240, 180, 186, 0.45);
+  border-radius: 0.35rem;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0.1rem 0.45rem;
+  cursor: pointer;
+}
+
+.model-pick__why > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.model-pick__why[open] > span {
+  display: block;
+  max-width: 28rem;
+  margin-top: 0.25rem;
+  color: var(--text);
+  white-space: normal;
+}
+
+.model-pick__reported {
+  color: var(--muted);
+  font-size: 0.82rem;
+}

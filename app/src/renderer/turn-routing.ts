@@ -82,6 +82,8 @@ export interface TurnState {
   readonly errorMessage: string | null;
   readonly approvalSummary: string | null;
   readonly usage: TurnUsage | null;
+  /** DSP-149: the model the provider reported at the end of the turn; `null` when none was reported. */
+  readonly modelReported?: string | null;
   readonly cancelRequested: boolean;
   /** A newer run has started. This turn no longer receives events. */
   readonly superseded: boolean;
@@ -284,6 +286,7 @@ function applyToTurn(turn: TurnState, event: UiAgentEvent): TurnState {
         ...(event.end === undefined ? {} : { end: event.end }),
         errorMessage: event.errorMessage ?? null,
         finishedAtUtc: event.at,
+        modelReported: event.modelReported ?? null,
       };
     default:
       return turn;

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -2010,7 +2010,13 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       throw new ClaudeAdapterError(this.assessment.refusal, 'authentication_refused');
     }
     const queryFn = await this.queryFunction();
-    const folder = mkdtempSync(path.join(tmpdir(), 'dspatch-claude-models-'));
+    // One fixed, empty folder DSpatch owns, created when missing and never deleted here.
+    // It used to be a fresh folder removed in `finally`: on Windows that removal fails
+    // with EPERM while Claude Code still has the folder as its working directory, and
+    // the failure replaced the list Claude had just given (Niclas's trial, 27 Oct 2026:
+    // "Models unavailable" over a working login).
+    const folder = path.join(tmpdir(), 'dspatch-claude-models');
+    mkdirSync(folder, { recursive: true });
     const abortController = new AbortController();
     let release: () => void = () => undefined;
     const held = new Promise<void>((resolve) => {
@@ -2060,7 +2066,6 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       release();
       abortController.abort();
       handle.close?.();
-      rmSync(folder, { recursive: true, force: true });
     }
   }
 
