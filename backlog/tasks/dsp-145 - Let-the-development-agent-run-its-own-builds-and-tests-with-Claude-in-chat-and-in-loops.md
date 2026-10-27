@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-10-27 08:43'
-updated_date: '2026-10-27 10:25'
+updated_date: '2026-10-27 12:50'
 labels:
   - providers
   - loop
@@ -45,4 +45,6 @@ Plan report 001 accepted with amendments B1-B5 (report 002). Decisions on recomm
 Recorded, not done here (R-1 improvements): I3 the check's evidence section can reach about 80 000 characters (20 entries, 2 000-character tails); I4 in dspatch-development-loop-runnable the approval rule lands on coordinator-report (reported -> delivered), so a run that changed files with no current completed command ends at reporting-incomplete with verification-stale; I5 the chat's freshness for a session with several folders would always read stale (chat sessions are single-folder today). Known limit: a gate-less chat loop's outcome badge reads verification-not-performed even when the check ran tests through DSpatch; the sentence beside it explains. Snapshot cost of hashing the working folders around each command is unmeasured on large repositories. The approval rule applies to every agent node with a success route in any graph, including Cursor graphs (Cursor shell calls count as provider-reported evidence).
 
 Result (offline, Windows; simulated model, real commands): Claude gets DSpatch's command tool (mcp__dspatch__run_command, an in-process MCP tool) in the chat and in loops, never in the review discussion. DSpatch starts each command in the working folder under a 10-minute bound, records it with the snapshots it ran on, shows it under the reply and in Session details, and stops it with its child processes on cancel; a failed command is a tool result to the same agent. In the chat loop the check runs its own checks, can send the work back with concrete findings (at most 2 correction rounds), and a met stands only with a completed command current for every folder or no change. Verified: task, edit, failing npm test, correction, passing test, report in chat (ChatService.sendPrompt) and loop (prepareLoopRun -> runLiveGraph) with real node --test in generated repositories; cancel with real child processes; review separation; Cursor 0, no installs. Tests: loop 611, live 107, chat 386, presentation 299, provider 96, review 90, typecheck and build. Reviews: R-0 accept with B1-B5, R-1 rework R1-R5, R-2 accept. Not established: a real Claude choosing and correcting its own commands, the real SDK MCP/zod handshake and typecheck:claude, Linux, Niclas's UX assessment. Recorded, not done: R-2 I-d (no test of the default runner choice per purpose in provider-adapters.ts). Next: Linux trial Part C steps 13-18.
+
+27 Oct 2026, DSP-146: the DSpatch-owned command tool this task added (mcp__dspatch__run_command) departed from the governing decisions (INTERACTION_MODEL.md sections 1, 5, 8; RUNTIME_PLATFORM_ROADMAP.md section 1.2) and was not an approved architecture change. DSP-146 replaced it with Claude Code's own Bash/PowerShell under DSpatch's permission policy, recorded through the SDK's hooks. The notes above are kept as the record of what was built at the time.
 <!-- SECTION:NOTES:END -->
