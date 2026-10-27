@@ -110,13 +110,28 @@ export interface SessionConfig {
    * neither this nor more than one entry gets exactly the session it got before.
    * Omitted or a single entry means one working root.
    *
-   * **Roots, not permissions.** An adapter may pass these to its provider so each
-   * folder's project configuration is loaded, and Cursor's does. Nothing on this
-   * interface grants or withholds filesystem access, and no adapter may report that it
-   * does: `CapabilityReport` has no containment capability because none of the
-   * connected transports offers one.
+   * **Roots, not containment.** Each adapter passes these to its provider through the
+   * provider's own multi-folder mechanism (Cursor `local.dirs`, Claude
+   * `additionalDirectories`), and the Claude adapter extends its own read and edit
+   * rules to them so the agent can work in every folder under the same rules as in the
+   * first (DSP-149). That is the provider's permission layer, not a sandbox: no adapter
+   * may report that a folder list confines anything.
    */
   readonly workspacePaths?: readonly string[];
+  /**
+   * DSP-149: what the session works on. `workspace` (the default) is a workspace's
+   * folders with the adapter's ordinary tools. `conversation` is a conversation with
+   * no workspace yet: the agent gets none of its built-in file or command tools, only
+   * {@link appTools}, and works in an empty folder DSpatch owns.
+   */
+  readonly toolScope?: 'workspace' | 'conversation';
+  /**
+   * DSP-149: DSpatch's own functions offered to the agent as tools, through the
+   * provider SDK's supported tool mechanism (Claude: an in-process MCP server; Cursor:
+   * `local.customTools`). They run in the host, are the same functions the menus use,
+   * and replace none of the agent's own tools. Absent or empty means none.
+   */
+  readonly appTools?: readonly AppTool[];
   /**
    * The tool policy the session was recorded under, as the adapter's own digest
    * (DSP-122). Read by `resume()` only: an adapter whose current policy digests
@@ -126,6 +141,37 @@ export interface SessionConfig {
    * before DSP-117; tests and probes do.
    */
   readonly expectedToolPolicy?: string;
+}
+
+/** One parameter of an {@link AppTool}: a string, or a list of strings. */
+export interface AppToolParameter {
+  readonly type: 'string' | 'string-list';
+  readonly description: string;
+  /** Required unless this is true. */
+  readonly optional?: boolean;
+}
+
+/** What an {@link AppTool} returns to the model: text, marked as an error when it failed. */
+export interface AppToolResult {
+  readonly text: string;
+  readonly isError: boolean;
+}
+
+/**
+ * A DSpatch function offered to the agent as a tool (DSP-149).
+ *
+ * Provider-neutral on purpose: each adapter turns it into its SDK's own tool definition,
+ * so the name, description and parameters the model sees are DSpatch's, written once,
+ * and shown in the session details exactly as sent.
+ */
+export interface AppTool {
+  /** snake_case; the model sees it under the SDK's naming for in-process tools. */
+  readonly name: string;
+  readonly description: string;
+  readonly parameters: Readonly<Record<string, AppToolParameter>>;
+  /** Reads and changes nothing. Passed to the SDK as a hint, never as an enforcement. */
+  readonly readOnly: boolean;
+  execute(args: Readonly<Record<string, unknown>>): Promise<AppToolResult>;
 }
 
 /**

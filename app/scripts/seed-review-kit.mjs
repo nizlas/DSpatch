@@ -65,9 +65,10 @@ const projects = new ProjectStore(path.join(USERDATA, 'dspatch-projects.json'));
 const base = Date.now() - 60 * 60 * 1000;
 // Oldest first, so P1 ends up at the top of Recent.
 [two.repo, one.repo].forEach((project, index) => {
-  const state = projects.recordOpened(project, { atUtc: new Date(base + index * 60_000).toISOString() });
-  if (state.error !== null) {
-    throw new Error(state.error);
+  // DSP-149: a project in Recent is a one-folder workspace.
+  const outcome = projects.openFolder(project, new Date(base + index * 60_000).toISOString());
+  if (outcome.problem !== null) {
+    throw new Error(outcome.problem);
   }
 });
 
@@ -91,7 +92,7 @@ const summary = {
   definition,
   secondDefinition,
   revisions: { P1: { base: one.base, target: one.target }, P2: { base: two.base, target: two.target } },
-  recent: projects.read().recentProjects.map((entry) => entry.path),
+  recent: projects.read().workspaces.map((entry) => entry.folders[0]),
 };
 fs.writeFileSync(path.join(KIT, 'seed-summary.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
 

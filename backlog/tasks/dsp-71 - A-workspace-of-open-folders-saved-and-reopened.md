@@ -4,7 +4,7 @@ title: 'A workspace of open folders, saved and reopened'
 status: Review
 assignee: []
 created_date: '2026-09-20 09:01'
-updated_date: '2026-09-20 11:26'
+updated_date: '2026-10-27 20:50'
 labels: []
 dependencies:
   - DSP-68
@@ -38,4 +38,6 @@ Two decisions on the record. A folder added to the workspace is also SEARCHED fo
 One folder remains the run's working copy; the others are folders DSpatch shows and searches. Generalising now would mean inventing what several working roots mean, which is DSP-72's job.
 
 Verified in report 008. Candidate sha256:872b85ca. UX acceptance HUMAN_PENDING. Known: saved workspaces record absolute paths; a reopen names missing folders rather than dropping them.
+
+27 Oct 2026, DSP-149 (Niclas's decision): the workspace is now the thing a person opens, with a persistent identity, a name and its folders, and its conversation pointer lives on it. The decision recorded above not to store a conversation id on the workspace is superseded by that decision; it still has one answer, resumed against the workspace's first folder. Store format 3; a version-2 file is migrated in memory and nothing in it is dropped.
 <!-- SECTION:NOTES:END -->

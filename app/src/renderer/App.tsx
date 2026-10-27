@@ -28,8 +28,10 @@ import type {
   EnvironmentInfo,
   LoopDefinitionListing,
   PresentedTestStatus,
-  ProjectListEntry,
-  ProjectListing,
+  RecentWorkspaceEntry,
+  RecentWorkspaces,
+  WorkspaceOpenOutcome,
+  WorkspaceOpenRequest,
   RendererSource,
   RestoredConversation,
   RunStateReport,
@@ -70,6 +72,7 @@ import {
   type BridgeFailure,
 } from './recovery';
 import { describePlainly } from './plain-error';
+import { StartPage, RecentDialog, NoWorkspaceBar } from './StartPage';
 import {
   COPIED_NOTE,
   COPY_DIAGNOSTICS_LABEL,
@@ -317,7 +320,19 @@ function Workbench({
     kind: 'not-checked',
   });
   const [connectionAttempts, setConnectionAttempts] = useState(0);
-  const [projects, setProjects] = useState<ProjectListing | null>(null);
+  const [recent, setRecent] = useState<RecentWorkspaces | null>(null);
+  /** DSP-149: the conversation history, from the menu. */
+  const [historyOpen, setHistoryOpen] = useState(false);
+  /**
+   * DSP-149: a message typed on the start page, sent once the conversation it starts
+   * has opened. The text itself stays in `prompt`, so a failure keeps it.
+   */
+  const [sendWhenOpen, setSendWhenOpen] = useState(false);
+  /** Late-bound so the menu handler, declared earlier, can reach them. */
+  const pickFolderRef = useRef<(() => Promise<void>) | null>(null);
+  const startSessionRef = useRef<((request: StartSessionRequest) => Promise<boolean>) | null>(null);
+  const openProviderRef = useRef<StoredSessionProvider | null>(null);
+  const sendRef = useRef<(() => Promise<void>) | null>(null);
   const [session, setSession] = useState<ChatSessionInfo | null>(null);
   const [sessionError, setSessionError] = useState<BridgeFailure | null>(null);
   const [chat, setChat] = useState<ChatState>(emptyChatState(null));
@@ -386,8 +401,6 @@ function Workbench({
   /** Milliseconds since Send, while nothing has come back. `null` when not waiting. */
   const [waitMs, setWaitMs] = useState<number | null>(null);
   const [stopWaitingNote, setStopWaitingNote] = useState<string | null>(null);
-  /** What forgetting remembered projects did, in the main process's own words. */
-  const [forgetNote, setForgetNote] = useState<string | null>(null);
   /**
    * What happened when the loop editor window was asked for, when it is worth saying.
    *
@@ -397,7 +410,6 @@ function Workbench({
    */
   const [editorWindowNote, setEditorWindowNote] = useState<string | null>(null);
   const [reviewWindowNote, setReviewWindowNote] = useState<string | null>(null);
-  const [forgetting, setForgetting] = useState(false);
   /**
    * The sample projects DSpatch has generated, when someone has asked to see them.
    *
@@ -1256,52 +1268,29 @@ function Workbench({
     };
   }, []);
 
-  const refreshProjects = useCallback(async (): Promise<void> => {
+  const refreshProjects = useCallback(async (): Promise<RecentWorkspaces | null> => {
     try {
-      setProjects(await window.dspatch.listProjects());
+      const listing = await window.dspatch.listRecentWorkspaces();
+      setRecent(listing);
+      return listing;
     } catch {
-      // The list of remembered projects is a convenience. Losing it must not
-      // stop the folder picker from working, so the failure is left silent here
-      // and the store's own error text is what the panel shows when it has one.
+      // Recent projects is a convenience. Losing it must not stop Open Project from
+      // working, so the failure is left silent here.
+      return null;
     }
   }, []);
 
-  useEffect(() => {
-    void refreshProjects();
-  }, [refreshProjects]);
-
   /**
-   * Forget remembered projects.
-   *
-   * DSP-5 friction 3: nine of ten remembered entries were throwaway `%TEMP%`
-   * repositories from overnight verification, several already gone from disk, and
-   * nothing in the window could remove one.
-   *
-   * The listing comes back from the main process rather than being pruned here, so
-   * the rows on screen are what the file now says. A refusal to change the file is
-   * reported in `note` and leaves the rows where they were, which is the truth.
+   * Remove from recent (DSP-149): the entry and nothing else. The list that comes back
+   * is what the file now says.
    */
-  const forgetProjects = useCallback(
-    async (projectPaths: readonly string[]): Promise<void> => {
-      if (projectPaths.length === 0) {
-        return;
-      }
-      setForgetting(true);
-      try {
-        const outcome = await window.dspatch.forgetProjects(projectPaths);
-        setProjects(outcome.projects);
-        setForgetNote(outcome.note);
-      } catch (error) {
-        setForgetNote(
-          `Nothing was removed: ${describeBridgeFailure(error).message} The list is ` +
-            'unchanged, and no folder or saved conversation was touched.',
-        );
-      } finally {
-        setForgetting(false);
-      }
-    },
-    [],
-  );
+  const removeFromRecent = useCallback(async (workspaceId: string): Promise<void> => {
+    try {
+      setRecent(await window.dspatch.removeFromRecent([workspaceId]));
+    } catch {
+      void refreshProjects();
+    }
+  }, [refreshProjects]);
 
   /**
    * What DSpatch has left behind in its own sample location (DSP-61).
@@ -1550,6 +1539,16 @@ function Workbench({
           openDetails();
         } else if (command === 'hide-session-details') {
           setDetailsOpen(false);
+        } else if (command === 'open-project') {
+          setDetailsOpen(false);
+          void pickFolderRef.current?.();
+        } else if (command === 'new-sample-project') {
+          setDetailsOpen(false);
+          void startSessionRef.current?.({ kind: 'sample', provider: openProviderRef.current });
+        } else if (command === 'show-history') {
+          setDetailsOpen(false);
+          setHistoryOpen(true);
+          void refreshConversations();
         } else if (command === 'show-sample-projects') {
           // Shows, and nothing more. The removing is the button in that panel,
           // because DSP-61's decision was that clearing out old sample projects is
@@ -1557,11 +1556,13 @@ function Workbench({
           openDetails();
           void refreshSampleProjects();
         } else {
+          // `change-project`: Recent Projects…, the whole list with search.
           setDetailsOpen(false);
           setChoosing(true);
+          void refreshProjects();
         }
       }),
-    [openDetails, refreshSampleProjects],
+    [openDetails, refreshConversations, refreshProjects, refreshSampleProjects],
   );
 
   /**
@@ -1757,8 +1758,39 @@ function Workbench({
     transcriptMetrics,
   ]);
 
+  /**
+   * The window's half of a session that opened, however it was opened: the start page,
+   * Recent, Open Project, or the chat's own workspace tools (DSP-149). The composer's
+   * text is not touched, so a draft survives a workspace opening.
+   */
+  const applyOpened = useCallback(
+    (opened: ChatSessionInfo): void => {
+      setSession(opened);
+      setChat(emptyChatState(opened.dspatchSessionId));
+      // The fields are seeded from the project, then owned by the user. A later
+      // session over a different project reseeds them; nothing else does.
+      setTestCommand(opened.suggestedTestCommand);
+      setTestCwd(opened.suggestedTestCwd);
+      setChoosing(false);
+      void restoreLoopRuns(opened.conversationId);
+      // A restored conversation about a different project is no longer the history
+      // of what is on screen, and leaving it there would invite reading its diff
+      // as belonging to this project. One about the same project stays: it is this
+      // conversation's earlier half, which is the whole point of continuing.
+      setRestored((previous) =>
+        previous === null ||
+        samePathOn(environment.platform, previous.project.path, opened.workspacePath)
+          ? previous
+          : null,
+      );
+      void refreshProjects();
+      void refreshConversations();
+    },
+    [environment.platform, refreshConversations, refreshProjects, restoreLoopRuns],
+  );
+
   const startSession = useCallback(
-    async (request: StartSessionRequest): Promise<void> => {
+    async (request: StartSessionRequest | { readonly workspace: WorkspaceOpenRequest }): Promise<boolean> => {
       setBusy('starting-session');
       setSessionError(null);
       setActionError(null);
@@ -1786,29 +1818,23 @@ function Workbench({
       setResolvedNote(null);
       setRecapDiscarded(false);
       try {
-        const opened = await window.dspatch.startChatSession(request);
-        setSession(opened);
-        setChat(emptyChatState(opened.dspatchSessionId));
-        // The fields are seeded from the project, then owned by the user. A later
-        // session over a different project reseeds them; nothing else does.
-        setTestCommand(opened.suggestedTestCommand);
-        setTestCwd(opened.suggestedTestCwd);
-        setChoosing(false);
-        void restoreLoopRuns(opened.conversationId);
-        // A restored conversation about a different project is no longer the history
-        // of what is on screen, and leaving it there would invite reading its diff
-        // as belonging to this project. One about the same project stays: it is this
-        // conversation's earlier half, which is the whole point of continuing.
-        setRestored((previous) =>
-          previous === null ||
-          samePathOn(environment.platform, previous.project.path, opened.workspacePath)
-            ? previous
-            : null,
-        );
-        void refreshProjects();
-        void refreshConversations();
+        if ('workspace' in request) {
+          // DSP-149: a workspace — from Recent, or a chosen first folder.
+          const outcome = await window.dspatch.openWorkspace(request.workspace);
+          if (outcome.kind === 'refused') {
+            setSessionError(describeBridgeFailure(new Error(outcome.problem)));
+            void refreshProjects();
+            return false;
+          }
+          setWorkspaceView(outcome.workspace);
+          applyOpened(outcome.session);
+        } else {
+          applyOpened(await window.dspatch.startChatSession(request));
+        }
+        return true;
       } catch (error) {
         setSessionError(describeBridgeFailure(error));
+        return false;
       } finally {
         setBusy(null);
         // Closing a session records what became unknown about anything still
@@ -1816,15 +1842,59 @@ function Workbench({
         void refreshRunState();
       }
     },
-    [
-      applyLoopTurnEvent,
-      environment.platform,
-      refreshConversations,
-      refreshProjects,
-      refreshRunState,
-      restoreLoopRuns,
-    ],
+    [applyLoopTurnEvent, applyOpened, refreshProjects, refreshRunState],
   );
+
+  /**
+   * DSP-149: the chat's own workspace tools opened a workspace once its turn ended. The
+   * session on screen is replaced exactly as an opening from the window replaces it;
+   * the composer's text is kept.
+   */
+  useEffect(
+    () =>
+      window.dspatch.onSessionReplaced((outcome: WorkspaceOpenOutcome) => {
+        if (outcome.kind === 'refused') {
+          setSessionError(describeBridgeFailure(new Error(outcome.problem)));
+          return;
+        }
+        setChat(emptyChatState(null));
+        scrollReason.current = 'conversation-replaced';
+        applyLoopTurnEvent({ kind: 'conversation-replaced' });
+        applyLoopInstructionEvent({ kind: 'conversation-replaced' });
+        setLoopLines([]);
+        setWorkspace(null);
+        setWorkspaceView(outcome.workspace);
+        applyOpened(outcome.session);
+        void refreshRunState();
+      }),
+    [applyLoopTurnEvent, applyOpened, refreshRunState],
+  );
+
+  /**
+   * DSP-149: at startup, Recent is read, and a conversation begun without a workspace
+   * that has messages comes back as it was left. Nothing is sent and no workspace is
+   * opened on anyone's behalf.
+   */
+  const startupRead = useRef(false);
+  useEffect(() => {
+    if (startupRead.current) {
+      return;
+    }
+    startupRead.current = true;
+    void refreshProjects().then((listing) => {
+      if (listing?.looseConversationId != null) {
+        void startSession({ kind: 'loose', conversationId: listing.looseConversationId });
+      }
+    });
+  }, [refreshProjects, startSession]);
+
+  /** DSP-149: a message from the start page goes once its conversation has opened. */
+  useEffect(() => {
+    if (sendWhenOpen && session !== null && busy === null) {
+      setSendWhenOpen(false);
+      void sendRef.current?.();
+    }
+  }, [sendWhenOpen, session, busy]);
 
   /**
    * Remove the recap before it is sent (DSP-121 AC#2).
@@ -1916,9 +1986,12 @@ function Workbench({
       setBusy(null);
     }
     if (chosen !== null) {
-      await startSession({ kind: 'folder', path: chosen, provider: openProvider });
+      await startSession({ workspace: { folder: chosen, provider: openProvider } });
     }
   }, [startSession, openProvider]);
+  pickFolderRef.current = pickFolder;
+  startSessionRef.current = startSession;
+  openProviderRef.current = openProvider;
 
   /**
    * Send the composer's text.
@@ -2121,6 +2194,7 @@ function Workbench({
       refreshRunState,
     ],
   );
+  sendRef.current = () => send();
 
   /**
    * What to say beside the composer about a stop the window has just asked for.
@@ -2362,7 +2436,137 @@ function Workbench({
     });
   }, []);
 
-  const showChooser = session === null || choosing;
+  /** DSP-149: open a Recent entry — its workspace, or for the startup project its folder. */
+  const openRecent = (entry: RecentWorkspaceEntry): void => {
+    void startSession({
+      workspace:
+        entry.id === null
+          ? { folder: entry.folders[0] ?? '', provider: openProvider }
+          : { workspaceId: entry.id, provider: openProvider },
+    });
+  };
+  const recentDialog = choosing ? (
+    <RecentDialog
+      recent={recent}
+      busy={busy !== null}
+      onOpenRecent={openRecent}
+      onOpenProject={() => {
+        void pickFolder();
+      }}
+      onRemoveFromRecent={(workspaceId) => {
+        void removeFromRecent(workspaceId);
+      }}
+      onClose={() => {
+        setChoosing(false);
+      }}
+    />
+  ) : null;
+  const historyDialog = historyOpen ? (
+    <div
+      className="dialog-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          setHistoryOpen(false);
+        }
+      }}
+    >
+      <div
+        className="dialog dialog--wide"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Conversation history"
+        data-ev="history"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            setHistoryOpen(false);
+          }
+        }}
+      >
+        <div className="dialog__head">
+          <h2 className="dialog__title">Conversation history</h2>
+          <button
+            type="button"
+            className="button button--quiet"
+            aria-label="Close"
+            data-ev="history-close"
+            onClick={() => {
+              setHistoryOpen(false);
+            }}
+          >
+            ✕
+          </button>
+        </div>
+        <SavedConversations
+          conversations={conversations}
+          busy={busy}
+          resumeError={resumeError}
+          onResume={(conversationId) => {
+            setHistoryOpen(false);
+            void resume(conversationId);
+          }}
+          onRefresh={() => {
+            void refreshConversations();
+          }}
+        />
+      </div>
+    </div>
+  ) : null;
+
+  // DSP-149: with nothing open, the start page is the whole window.
+  if (session === null && restored === null) {
+    return (
+      <>
+        <StartPage
+          agentChoice={environment.agentChoice}
+          provider={openProvider}
+          onChooseProvider={chooseOpenAgent}
+          recent={recent}
+          busy={busy !== null}
+          problem={
+            sessionError === null ? null : (
+              <Failure
+                failure={sessionError}
+                testId="session-error"
+                onRetry={() => {
+                  void pickFolder();
+                }}
+                onChooseFolder={() => {
+                  void pickFolder();
+                }}
+                onOpenAgain={() => {
+                  void pickFolder();
+                }}
+              />
+            )
+          }
+          prompt={prompt}
+          onPrompt={setPrompt}
+          onSend={() => {
+            setSendWhenOpen(true);
+            void startSession({ kind: 'loose', provider: openProvider }).then((opened) => {
+              if (!opened) {
+                setSendWhenOpen(false);
+              }
+            });
+          }}
+          onOpenProject={() => {
+            void pickFolder();
+          }}
+          onOpenRecent={openRecent}
+          onViewAll={() => {
+            setChoosing(true);
+            void refreshProjects();
+          }}
+          onRemoveFromRecent={(workspaceId) => {
+            void removeFromRecent(workspaceId);
+          }}
+          listHidden={choosing}
+        />
+        {recentDialog}
+        {historyDialog}
+      </>
+    );
+  }
 
   return (
     <>
@@ -2410,6 +2614,21 @@ function Workbench({
       */}
       <div className="shell">
       <FolderSidebar
+        chats={(conversations?.entries ?? []).filter(
+          (entry) =>
+            workspaceView.folders[0] !== undefined &&
+            samePathOn(environment.platform, entry.projectPath, workspaceView.folders[0].path),
+        )}
+        currentConversationId={session?.conversationId ?? null}
+        busy={busy !== null || activeTurn !== null || loopBusy}
+        onOpenChat={(conversationId) => {
+          void resume(conversationId);
+        }}
+        onNewChat={() => {
+          if (workspaceView.id !== null) {
+            void startSession({ workspace: { workspaceId: workspaceView.id, provider: openProvider, newChat: true } });
+          }
+        }}
         view={workspaceView}
         width={sidebarWidth}
         onWidth={setSidebarWidth}
@@ -2426,43 +2645,8 @@ function Workbench({
       />
       <div className={`workarea${detailsOpen ? ' workarea--details' : ''}`}>
       <div className="workarea__lead">
-      {showChooser && (
-        <ProjectChooser
-          projects={projects}
-          conversations={conversations}
-          connection={connection}
-          agentChoice={environment.agentChoice}
-          openProvider={openProvider}
-          onOpenProvider={chooseOpenAgent}
-          busy={busy}
-          sessionError={sessionError}
-          resumeError={resumeError}
-          hasSession={session !== null}
-          onPick={() => {
-            void pickFolder();
-          }}
-          onOpen={(projectPath) => {
-            void startSession({ kind: 'folder', path: projectPath, provider: openProvider });
-          }}
-          forgetting={forgetting}
-          forgetNote={forgetNote}
-          onForget={(projectPaths) => {
-            void forgetProjects(projectPaths);
-          }}
-          onSample={() => {
-            void startSession({ kind: 'sample', provider: openProvider });
-          }}
-          onResume={(conversationId) => {
-            void resume(conversationId);
-          }}
-          onRefreshConversations={() => {
-            void refreshConversations();
-          }}
-          onDismiss={() => {
-            setChoosing(false);
-          }}
-        />
-      )}
+      {recentDialog}
+      {historyDialog}
 
       {restored !== null && (
         <RestoredPanel
@@ -2485,6 +2669,21 @@ function Workbench({
       {session !== null && (
         <>
           <section className="panel panel--conversation">
+            {session.origin === 'no-workspace' ? (
+              <NoWorkspaceBar
+                busy={busy !== null || activeTurn !== null || loopBusy}
+                onOpenProject={() => {
+                  void pickFolder();
+                }}
+                onRecent={() => {
+                  setChoosing(true);
+                  void refreshProjects();
+                }}
+                onNewConversation={() => {
+                  void startSession({ kind: 'loose', conversationId: null });
+                }}
+              />
+            ) : (
             <div className="panel__head">
               {/* Which project this conversation is about, and nothing else on the
                   line. §9 asks for project identity to stay compact rather than
@@ -2494,7 +2693,8 @@ function Workbench({
                 data-ev="project-path"
                 title={session.workspacePath}
               >
-                {header.project}
+                {/* DSP-149: the workspace's name; its first folder until it is named. */}
+                {workspaceView.name ?? header.project}
               </h2>
               <div className="panel__actions">
                 <button
@@ -2565,6 +2765,7 @@ function Workbench({
                 </button>
               </div>
             </div>
+            )}
 
             {editorWindowNote === null ? null : (
               <p className="note" data-ev="editor-window-note">
@@ -2862,6 +3063,8 @@ function Workbench({
                     Sending …
                   </span>
                 )}
+                {/* DSP-149: a loop runs in a workspace; without one there is nothing to run it on. */}
+                {session.origin !== 'no-workspace' && (
                 <label
                   className="loop-toggle"
                   // "beside this box" until DSP-85 moved the chooser into the graph editor.
@@ -2917,6 +3120,7 @@ function Workbench({
                   />
                   Use loop
                 </label>
+                )}
                 {/*
                   There is no loop chooser here, and no `Choose a file…` (DSP-85 #5).
 
@@ -3760,264 +3964,6 @@ const DETAIL_TEST_ID: Record<string, string | undefined> = {
   'How this is wired': 'adapter-note',
 };
 
-function ProjectChooser({
-  projects,
-  conversations,
-  connection,
-  agentChoice,
-  openProvider,
-  onOpenProvider,
-  busy,
-  sessionError,
-  resumeError,
-  hasSession,
-  forgetting,
-  forgetNote,
-  onPick,
-  onOpen,
-  onForget,
-  onSample,
-  onResume,
-  onRefreshConversations,
-  onDismiss,
-}: {
-  readonly projects: ProjectListing | null;
-  readonly conversations: ConversationListing | null;
-  readonly connection: ConnectionStatus;
-  readonly agentChoice: AgentChoiceInfo;
-  readonly openProvider: StoredSessionProvider | null;
-  readonly onOpenProvider: (provider: StoredSessionProvider) => void;
-  readonly busy: Busy;
-  readonly sessionError: BridgeFailure | null;
-  readonly resumeError: BridgeFailure | null;
-  readonly hasSession: boolean;
-  readonly forgetting: boolean;
-  readonly forgetNote: string | null;
-  readonly onPick: () => void;
-  readonly onOpen: (projectPath: string) => void;
-  readonly onForget: (projectPaths: readonly string[]) => void;
-  readonly onSample: () => void;
-  readonly onResume: (conversationId: string) => void;
-  readonly onRefreshConversations: () => void;
-  readonly onDismiss: () => void;
-}): JSX.Element {
-  // DSP-136: no Cursor gate. Opening never waits for Cursor's connection: a Cursor
-  // session without a usable login fails at start with Cursor's own message and
-  // sends nothing; with no agent chosen the project opens with no session and asks.
-  const shownProvider: StoredSessionProvider | null =
-    openProvider === 'claude' && !agentChoice.claudeEnabled ? null : openProvider;
-  const cursorProblem =
-    shownProvider === 'cursor' &&
-    (connection.kind === 'not-connected' || connection.kind === 'error');
-  const disabled = busy !== null;
-  // `recent` only: a project named by the environment is not in the store, so
-  // there would be nothing to remove for it.
-  const missingRemembered = (projects?.entries ?? []).filter(
-    (entry) => entry.origin === 'recent' && !entry.exists,
-  );
-  return (
-    <section className="panel panel--lead">
-      <div className="panel__head">
-        <h2 className="panel__title">Open a project</h2>
-        {hasSession && (
-          <button
-            type="button"
-            className="button button--quiet"
-            data-ev="keep-project"
-            onClick={onDismiss}
-          >
-            Keep the current one
-          </button>
-        )}
-      </div>
-      <p className="app__note">
-        Pick the folder you want to work in. DSpatch records its git revision and
-        which files are already modified before anything starts, so your own
-        uncommitted work stays yours and cannot later be attributed to the agent.
-      </p>
-
-      <div className="row">
-        {/*
-          DSP-117: the agent a new conversation starts with. A project whose
-          conversation already has a session opens with that session's agent.
-        */}
-        <div className="model">
-          <label className="model__label" title={agentChoice.claudeNote}>
-            <span>Agent</span>
-            <select
-              className="model__select"
-              data-ev="open-agent-select"
-              value={shownProvider ?? ''}
-              disabled={busy !== null}
-              onChange={(event) => {
-                const value = event.target.value;
-                if (value === 'cursor' || value === 'claude') {
-                  onOpenProvider(value);
-                }
-              }}
-            >
-              {shownProvider === null && (
-                <option value="" disabled>
-                  Choose an agent
-                </option>
-              )}
-              <option value="cursor">Cursor</option>
-              <option value="claude" disabled={!agentChoice.claudeEnabled}>
-                {claudeOptionLabel(agentChoice)}
-              </option>
-            </select>
-          </label>
-        </div>
-        <button
-          type="button"
-          className="button button--primary"
-          data-ev="pick-folder"
-          onClick={onPick}
-          disabled={disabled}
-        >
-          {busy === 'picking-folder' ? 'Choosing …' : 'Choose a folder …'}
-        </button>
-        <button
-          type="button"
-          className="button"
-          data-ev="new-session"
-          onClick={onSample}
-          disabled={disabled}
-        >
-          Use a generated sample project
-        </button>
-        {busy === 'starting-session' && (
-          <span className="pending" data-ev="session-pending">
-            opening the project and hashing its files …
-          </span>
-        )}
-      </div>
-
-      {shownProvider === null && openProvider !== null && (
-        // R1: a stored choice that cannot be used in this launch is named, with why.
-        <p className="app__note" data-ev="open-agent-unusable">
-          {openProvider === 'claude' ? 'Claude' : 'Cursor'} was chosen, but it cannot be used in this
-          launch: {agentChoice.claudeNote} Choose another agent, or start DSpatch so that it can be used.
-        </p>
-      )}
-      {shownProvider === null && openProvider === null && (
-        <p className="app__note" data-ev="open-agent-needed">
-          No agent is chosen. A project opens with its history and no agent session
-          until you choose one.
-        </p>
-      )}
-      {cursorProblem && (
-        <p className="app__note" data-ev="open-cursor-problem">
-          Cursor has no usable login right now, so a Cursor session will fail when it
-          starts. Nothing is sent.
-        </p>
-      )}
-      {agentChoice.claudeNotInstalledText !== null && (
-        // DSP-133: visible, not only in the tooltip. Nothing here installs anything.
-        <p className="app__note" data-ev="claude-not-installed">
-          {agentChoice.claudeNotInstalledText
-            .split('`')
-            .map((part, index) => (index % 2 === 1 ? <code key={index}>{part}</code> : part))}
-        </p>
-      )}
-      <p className="app__note" data-ev="open-agent-note">
-        Opening a project uses this agent. A conversation recorded with another agent
-        opens with its history and asks first: a new session with this agent, or
-        resume with the recorded one.
-      </p>
-
-      {sessionError !== null && (
-        <Failure
-          failure={sessionError}
-          testId="session-error"
-          onRetry={onPick}
-          onChooseFolder={onPick}
-          onOpenAgain={onPick}
-        />
-      )}
-
-      <div data-ev="projects">
-        {projects !== null && projects.entries.length > 0 && (
-          <ul className="files">
-            {projects.entries.map((entry, index) => (
-              <ProjectRow
-                key={entry.path}
-                entry={entry}
-                index={index}
-                disabled={disabled}
-                forgetting={forgetting}
-                onOpen={onOpen}
-                onForget={onForget}
-              />
-            ))}
-          </ul>
-        )}
-        {/*
-          DSP-5 friction 3. Nine of Niclas's ten remembered entries were throwaway
-          `%TEMP%` repositories from overnight verification, several already gone
-          from disk, and nothing here could remove one. Per-row *Forget* is the
-          answer; this line is the answer to nine of them, because forgetting the
-          gone ones one at a time is the same chore in nine pieces.
-
-          Only entries the store actually holds are offered. A project named by
-          `DSPATCH_PROJECT_PATH` is not remembered anywhere, so there is nothing to
-          forget about it.
-        */}
-        {projects !== null && missingRemembered.length > 0 && (
-          <div className="row" data-ev="projects-missing">
-            <span className="files__note">
-              {missingRemembered.length === 1
-                ? 'One remembered folder is not on disk any more.'
-                : `${String(
-                    missingRemembered.length,
-                  )} remembered folders are not on disk any more.`}{' '}
-              Forgetting {missingRemembered.length === 1 ? 'it' : 'them'} changes
-              only this list.
-            </span>
-            <button
-              type="button"
-              className="button button--quiet"
-              data-ev="forget-missing-projects"
-              onClick={() => {
-                onForget(missingRemembered.map((entry) => entry.path));
-              }}
-              disabled={forgetting}
-            >
-              {forgetting
-                ? 'Forgetting …'
-                : missingRemembered.length === 1
-                  ? 'Forget the missing folder'
-                  : `Forget all ${String(missingRemembered.length)} missing folders`}
-            </button>
-          </div>
-        )}
-        {forgetNote !== null && (
-          <p className="app__note" data-ev="forget-projects-note">
-            {forgetNote}
-          </p>
-        )}
-        {projects !== null && projects.entries.length === 0 && (
-          <p className="app__note">
-            No projects remembered yet. The one you choose will appear here next
-            time.
-          </p>
-        )}
-        {projects !== null && projects.error !== null && (
-          <p className="app__note">{projects.error}</p>
-        )}
-      </div>
-
-      <SavedConversations
-        conversations={conversations}
-        busy={busy}
-        resumeError={resumeError}
-        onResume={onResume}
-        onRefresh={onRefreshConversations}
-      />
-    </section>
-  );
-}
-
 /**
  * The saved conversations, as a way back into work that was interrupted.
  *
@@ -4280,102 +4226,37 @@ function ConversationRow({
         >
           {busy === 'resuming' ? 'Reading …' : 'Read this back'}
         </button>
-        {/*
-          Deliberately not disabled by `entry.error`. Getting an unreadable record
-          out to somewhere safe is exactly what someone wants when the record is
-          unreadable, and the export copies bytes without reading them.
-        */}
-        <button
-          type="button"
-          className="button button--quiet"
-          data-ev={`export-conversation-${String(index)}`}
-          onClick={() => {
-            void exportIt();
-          }}
-          disabled={working}
-        >
-          {working ? 'Copying …' : 'Export a copy'}
-        </button>
-        <button
-          type="button"
-          className="button button--quiet"
-          data-ev={`reveal-conversation-${String(index)}`}
-          onClick={() => {
-            void revealIt();
-          }}
-        >
-          Show the file
-        </button>
+        {/* DSP-149: secondary actions for the chosen conversation. */}
+        <details className="files__more" data-ev={`conversation-more-${String(index)}`}>
+          <summary>More</summary>
+          {/*
+            Deliberately not disabled by `entry.error`. Getting an unreadable record
+            out to somewhere safe is exactly what someone wants when the record is
+            unreadable, and the export copies bytes without reading them.
+          */}
+          <button
+            type="button"
+            className="button button--quiet"
+            data-ev={`export-conversation-${String(index)}`}
+            onClick={() => {
+              void exportIt();
+            }}
+            disabled={working}
+          >
+            {working ? 'Copying …' : 'Export a copy'}
+          </button>
+          <button
+            type="button"
+            className="button button--quiet"
+            data-ev={`reveal-conversation-${String(index)}`}
+            onClick={() => {
+              void revealIt();
+            }}
+          >
+            Show the file
+          </button>
+          </details>
       </div>
-    </li>
-  );
-}
-
-const PROJECT_ORIGIN_LABEL: Record<ProjectListEntry['origin'], string> = {
-  recent: 'opened before',
-  'startup-environment': 'named at startup by DSPATCH_PROJECT_PATH',
-};
-
-function ProjectRow({
-  entry,
-  index,
-  disabled,
-  forgetting,
-  onOpen,
-  onForget,
-}: {
-  readonly entry: ProjectListEntry;
-  readonly index: number;
-  readonly disabled: boolean;
-  readonly forgetting: boolean;
-  readonly onOpen: (projectPath: string) => void;
-  readonly onForget: (projectPaths: readonly string[]) => void;
-}): JSX.Element {
-  return (
-    <li className="files__row">
-      <span className="files__path" data-ev={`project-${String(index)}-path`}>
-        {entry.path}
-      </span>
-      <span className="files__note">
-        {PROJECT_ORIGIN_LABEL[entry.origin]}
-        {entry.lastOpenedAtUtc === null ? '' : ` · last opened ${entry.lastOpenedAtUtc}`}
-        {entry.exists
-          ? entry.isGitRepository === true
-            ? ' · git repository'
-            : ' · no .git here'
-          : ' · missing: the folder is not there any more'}
-      </span>
-      <button
-        type="button"
-        className="button button--quiet"
-        data-ev={`open-project-${String(index)}`}
-        onClick={() => {
-          onOpen(entry.path);
-        }}
-        disabled={disabled || !entry.exists}
-      >
-        Open
-      </button>
-      {/*
-        *Forget*, not *Remove*: the word has to say that this is about the list and
-        not about the folder. Enabled for a missing folder too — that is the case it
-        was asked for. Absent for a project named by the environment, because
-        nothing remembers it and the button would have nothing to do.
-      */}
-      {entry.origin === 'recent' && (
-        <button
-          type="button"
-          className="button button--quiet"
-          data-ev={`forget-project-${String(index)}`}
-          title="Removes this entry from DSpatch's list. The folder and any saved conversation are untouched."
-          onClick={() => {
-            onForget([entry.path]);
-          }}
-          disabled={forgetting}
-        >
-          Forget
-        </button>
-      )}
     </li>
   );
 }
@@ -7400,18 +7281,35 @@ interface TreeRow {
  * would cost the read this defers, and a folder with `node_modules` in it is
  * survivable precisely because no code here walks a subtree.
  */
+/** A chat's label in the sidebar: when it was last saved, and how long it is. */
+function chatLabel(chat: ConversationListEntry): string {
+  const saved = chat.savedAtUtc.replace('T', ' ').slice(0, 16);
+  return `${saved} · ${String(chat.messageCount)} message${chat.messageCount === 1 ? '' : 's'}`;
+}
+
 function FolderSidebar({
   view,
   width,
   onWidth,
   onRemove,
   onAdd,
+  chats,
+  currentConversationId,
+  busy,
+  onOpenChat,
+  onNewChat,
 }: {
   readonly view: WorkspaceView;
   readonly width: number;
   readonly onWidth: (width: number) => void;
   readonly onRemove: (folderPath: string) => void;
   readonly onAdd: () => void;
+  /** DSP-149: this workspace's chats, newest first. */
+  readonly chats: readonly ConversationListEntry[];
+  readonly currentConversationId: string | null;
+  readonly busy: boolean;
+  readonly onOpenChat: (conversationId: string) => void;
+  readonly onNewChat: () => void;
 }): JSX.Element | null {
   const [pages, setPages] = useState<Readonly<Record<string, DirectoryPage>>>({});
   const [expanded, setExpanded] = useState<readonly string[]>([]);
@@ -7518,7 +7416,9 @@ function FolderSidebar({
   return (
     <aside className="sidebar" style={{ width: `${String(width)}px` }} data-ev="sidebar">
       <div className="sidebar__head">
-        <span className="sidebar__title">Folders</span>
+        <span className="sidebar__title" data-ev="workspace-name" title={view.folders.map((folder) => folder.path).join('\n')}>
+          {view.name ?? 'Folders'}
+        </span>
         {/* DSP-72 changed what this does, so it changed what it says. Until this card a
             folder added here was shown and searched and reached no run, and the title
             said exactly that. It is now one of the run's working folders: it is passed
@@ -7529,7 +7429,7 @@ function FolderSidebar({
           type="button"
           className="button button--quiet"
           data-ev="add-folder"
-          title="Add a folder beside the ones already open. It joins the folders a run works with and its loops are looked for too. The project this conversation opened stays the working directory."
+          title="Add a folder to this workspace. The agent works in it from its next message, in the chat and in loops; the first folder stays where commands start."
           onClick={onAdd}
         >
           Add…
@@ -7660,6 +7560,33 @@ function FolderSidebar({
           )}
         </div>
       )}
+
+      {/* DSP-149: the workspace's chats. The one on screen is marked; an older one is read
+          back first, as from the history, and continued from there. */}
+      <div className="sidebar__chats" data-ev="workspace-chats">
+        <div className="sidebar__chats-head">
+          <span className="sidebar__title">Chats</span>
+          <button type="button" className="button button--quiet" data-ev="new-chat" disabled={busy} onClick={onNewChat}>
+            New chat
+          </button>
+        </div>
+        {chats.map((chat, index) => (
+          <button
+            type="button"
+            key={chat.conversationId}
+            className={`sidebar__chat${chat.conversationId === currentConversationId ? ' sidebar__chat--current' : ''}`}
+            data-ev={`workspace-chat-${String(index)}`}
+            aria-current={chat.conversationId === currentConversationId ? 'true' : undefined}
+            disabled={busy || chat.conversationId === currentConversationId}
+            title={`${String(chat.messageCount)} message${chat.messageCount === 1 ? '' : 's'}, last saved ${chat.savedAtUtc}`}
+            onClick={() => {
+              onOpenChat(chat.conversationId);
+            }}
+          >
+            {chat.conversationId === currentConversationId ? 'This chat' : chatLabel(chat)}
+          </button>
+        ))}
+      </div>
 
       {/*
         The chat keeps the main space. This drags the sidebar between

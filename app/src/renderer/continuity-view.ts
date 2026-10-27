@@ -505,7 +505,7 @@ export interface DiagnosticsInput {
    */
   readonly context: Pick<
     SessionContextInfo,
-    'statement' | 'workingDirectorySent' | 'modelSent' | 'toolPolicySent'
+    'statement' | 'workingDirectorySent' | 'modelSent' | 'toolPolicySent' | 'otherFoldersSent' | 'dspatchToolsSent'
   >;
   readonly adapterId: string;
   /** Where the conversation on screen was read back from. */
@@ -554,6 +554,13 @@ export function conversationDiagnostics(input: DiagnosticsInput): readonly Diagn
   add('working-directory', 'Working directory', input.context.workingDirectorySent);
   add('model', 'Model', input.context.modelSent);
   add('tool-policy', 'Tool policy', input.context.toolPolicySent);
+  // DSP-149: the workspace's other folders, and DSpatch's own tools word for word.
+  (input.context.otherFoldersSent ?? []).forEach((folder, index) => {
+    add(`other-folder-${String(index)}`, 'Also a working folder', folder);
+  });
+  (input.context.dspatchToolsSent ?? []).forEach((tool) => {
+    add(`dspatch-tool-${tool.name}`, `DSpatch tool ${tool.name}`, tool.description);
+  });
   add('context-note', 'What is resent', continuity.contextNote);
   continuity.earlierSendsMayHaveReached.forEach((send, index) => {
     add(`earlier-send-${String(index)}`, 'Earlier message with no confirmed end', earlierSendLine(send));

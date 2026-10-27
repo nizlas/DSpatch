@@ -11,6 +11,7 @@ import type {
   ScriptedRunReport,
   StartSessionRequest,
   StoredSessionProvider,
+  WorkspaceOpenRequest,
   TestRunRequest,
 } from './bridge';
 import type { HostEnvironmentFacts, HostShutdownAnswer } from './host-protocol';
@@ -95,9 +96,10 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'chat.workspaceChanges': () => BridgeAnswer<'getWorkspaceChanges'>;
   readonly 'chat.turnUsage': (dspatchRunId: string) => BridgeAnswer<'getTurnUsage'>;
 
-  // --- Projects, sample projects and conversations -----------------------------------
-  readonly 'projects.list': () => BridgeAnswer<'listProjects'>;
-  readonly 'projects.forget': (projectPaths: readonly string[]) => BridgeAnswer<'forgetProjects'>;
+  // --- Workspaces (DSP-149), sample projects and conversations ------------------------
+  readonly 'workspaces.recent': () => BridgeAnswer<'listRecentWorkspaces'>;
+  readonly 'workspaces.removeFromRecent': (workspaceIds: readonly string[]) => BridgeAnswer<'removeFromRecent'>;
+  readonly 'workspaces.open': (request: WorkspaceOpenRequest) => BridgeAnswer<'openWorkspace'>;
   readonly 'samples.list': () => BridgeAnswer<'listSampleProjects'>;
   readonly 'samples.clean': (paths: readonly string[]) => BridgeAnswer<'cleanUpSampleProjects'>;
   readonly 'conversations.list': () => BridgeAnswer<'listConversations'>;
@@ -238,8 +240,9 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'chat.agentCommands': true,
   'chat.workspaceChanges': true,
   'chat.turnUsage': true,
-  'projects.list': true,
-  'projects.forget': true,
+  'workspaces.recent': true,
+  'workspaces.removeFromRecent': true,
+  'workspaces.open': true,
   'samples.list': true,
   'samples.clean': true,
   'conversations.list': true,

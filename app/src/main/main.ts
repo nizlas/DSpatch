@@ -27,7 +27,8 @@ import type {
   GraphSavedElsewhere,
   UnsavedDrawing,
   MenuCommand,
-  ProjectListing,
+  RecentWorkspaces,
+  WorkspaceOpenRequest,
   ProjectPickOutcome,
   RendererReady,
   ChatLoopPrepareOutcome,
@@ -90,8 +91,9 @@ const SET_MODEL: BridgeChannel = 'dspatch:set-model';
 const CHOOSE_AGENT: BridgeChannel = 'dspatch:choose-agent';
 const MENU_COMMAND: BridgeChannel = 'dspatch:menu-command';
 const PICK_PROJECT: BridgeChannel = 'dspatch:pick-project';
-const LIST_PROJECTS: BridgeChannel = 'dspatch:list-projects';
-const FORGET_PROJECTS: BridgeChannel = 'dspatch:forget-projects';
+const LIST_RECENT_WORKSPACES: BridgeChannel = 'dspatch:list-recent-workspaces';
+const REMOVE_FROM_RECENT: BridgeChannel = 'dspatch:remove-from-recent';
+const OPEN_WORKSPACE: BridgeChannel = 'dspatch:open-workspace';
 const LIST_SAMPLE_PROJECTS: BridgeChannel = 'dspatch:list-sample-projects';
 const CLEAN_SAMPLE_PROJECTS: BridgeChannel = 'dspatch:clean-sample-projects';
 const LIST_CONVERSATIONS: BridgeChannel = 'dspatch:list-conversations';
@@ -1669,17 +1671,27 @@ function installApplicationMenu(): void {
         label: '&File',
         submenu: [
           {
-            label: 'Open Folder…',
+            // DSP-149: a folder, then its workspace — created with the folder's name, or
+            // reopened. The window asks for the folder so the agent it opens with is the
+            // one chosen on screen.
+            label: 'Open Project…',
             accelerator: 'CmdOrCtrl+O',
+            click: () => {
+              tell('open-project');
+            },
+          },
+          {
+            // DSP-149: every workspace in Recent, with search. The start page shows the
+            // most recent ones; this is the whole list, from anywhere.
+            label: 'Recent Projects…',
+            accelerator: 'CmdOrCtrl+Shift+O',
             click: () => {
               tell('change-project');
             },
           },
           {
-            // Adds a root to the tree, a folder to the loop-definition search, and
-            // since DSP-72 a working folder to any loop run started afterwards. It
-            // does not move the working directory: that stays the project the chat
-            // session opened. See `extraWorkspaceFolders`.
+            // DSP-149: another folder in the open workspace. The agent works in it from
+            // its next message, in the chat and in loops; the primary does not move.
             label: 'Add Folder to Workspace…',
             click: () => {
               logIfFailed('Add Folder to Workspace', addWorkspaceFolder(null));
@@ -1729,6 +1741,18 @@ function installApplicationMenu(): void {
             },
           },
           { type: 'separator' },
+          // DSP-149: development and test flows only. A person's start page has no
+          // sample project; an unpackaged build keeps one here for trials.
+          ...(app.isPackaged
+            ? []
+            : [
+                {
+                  label: 'New Sample Project (development)',
+                  click: () => {
+                    tell('new-sample-project');
+                  },
+                },
+              ]),
           {
             // Shows the list; the removing is a button beside it. DSP-61: clearing
             // out old sample projects is a separate act a person performs, and a
@@ -1745,6 +1769,16 @@ function installApplicationMenu(): void {
       {
         label: '&Session',
         submenu: [
+          {
+            // DSP-149: every saved conversation, workspace chats and older stand-alone ones,
+            // with export and file information for a chosen one.
+            label: 'Conversation History…',
+            accelerator: 'CmdOrCtrl+H',
+            click: () => {
+              tell('show-history');
+            },
+          },
+          { type: 'separator' },
           {
             label: 'Session details, identifiers and diagnostics',
             accelerator: 'CmdOrCtrl+I',
@@ -1787,7 +1821,10 @@ function installApplicationMenu(): void {
   Menu.setApplicationMenu(menu);
   menuItemsByCommand.clear();
   for (const [command, label] of [
-    ['change-project', 'Open Folder…'],
+    ['change-project', 'Recent Projects…'],
+    ['open-project', 'Open Project…'],
+    ['show-history', 'Conversation History…'],
+    ['new-sample-project', 'New Sample Project (development)'],
     ['open-graph-file', 'Open Graph File…'],
     ['show-run-journal', 'Run journal (diagnostics)'],
     ['show-sample-projects', 'Old sample projects…'],
@@ -2845,9 +2882,12 @@ function registerIpc(): void {
     return { kind: 'chosen', path: chosen };
   });
 
-  ipcMain.handle(LIST_PROJECTS, (): Promise<ProjectListing> => hostCall('projects.list', NO_SENDER));
-  ipcMain.handle(FORGET_PROJECTS, (_event, projectPaths: readonly string[]) =>
-    hostCall('projects.forget', NO_SENDER, projectPaths),
+  ipcMain.handle(LIST_RECENT_WORKSPACES, (): Promise<RecentWorkspaces> => hostCall('workspaces.recent', NO_SENDER));
+  ipcMain.handle(REMOVE_FROM_RECENT, (_event, workspaceIds: readonly string[]) =>
+    hostCall('workspaces.removeFromRecent', NO_SENDER, workspaceIds),
+  );
+  ipcMain.handle(OPEN_WORKSPACE, (_event, request: WorkspaceOpenRequest) =>
+    hostCall('workspaces.open', NO_SENDER, request),
   );
   ipcMain.handle(LIST_SAMPLE_PROJECTS, (): Promise<SampleProjectsView> => hostCall('samples.list', NO_SENDER));
   ipcMain.handle(CLEAN_SAMPLE_PROJECTS, (_event, paths: readonly string[]) =>
@@ -3023,6 +3063,12 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
+      ...(chatRunScenario === 'workspace-flow'
+        ? {
+            flowPhase: process.env['DSPATCH_FLOW_PHASE'] === 'again' ? ('again' as const) : ('first' as const),
+            flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
+          }
+        : {}),
       // DSP-121: how the presentation adapter was told to answer resumes, and
       // whether the window is to be left open after the open.
       ...(chatRunScenario === 'resume-choice'
@@ -3064,7 +3110,7 @@ function registerIpc(): void {
     // Only the client can resize a window, and "the chat does not follow the
     // window's width" is a claim about a window being resized. Answers the content
     // width the renderer ended up with, so the trial reads the window it got.
-    ipcMain.handle(SET_WINDOW_WIDTH, (_event, width: number): number => {
+    ipcMain.handle(SET_WINDOW_WIDTH, (_event, width: number, height?: number): number => {
       const window = liveMainWindow();
       if (window === null) {
         return 0;
@@ -3075,7 +3121,12 @@ function registerIpc(): void {
         window.unmaximize();
       }
       const bounds = window.getBounds();
-      window.setBounds({ ...bounds, width: Math.max(Math.round(width), 320) });
+      // DSP-149: a height too, for the low-window reading; the window's own minimum holds.
+      window.setBounds({
+        ...bounds,
+        width: Math.max(Math.round(width), 320),
+        ...(typeof height === 'number' ? { height: Math.max(Math.round(height), 240) } : {}),
+      });
       return window.getContentBounds().width;
     });
     /*
@@ -3530,6 +3581,19 @@ function main(): void {
     // Before anything of DSpatch's is created or written: the project host, started
     // below, is the first thing that touches DSpatch's files under `userData`.
     const expectedUserData = process.env['DSPATCH_CHAT_EXPECT_USERDATA'] ?? '';
+    // DSP-149: required, not optional. On 20 September scripted `loop-choice` runs that
+    // named no user-data folder wrote ten throwaway Temp projects into a person's real
+    // Recent list. A scripted run now has to say where its user data is.
+    if (chatRunMode && expectedUserData.trim() === '') {
+      log(
+        'scripted run refused: DSPATCH_CHAT_EXPECT_USERDATA is not set. A scripted run must name ' +
+          'an isolated user-data folder (and start with --user-data-dir set to it), so it can never ' +
+          `write into a real profile. Nothing of DSpatch's was created or written; exiting with ` +
+          `${String(CHAT_EXIT_WRONG_USERDATA)}.`,
+      );
+      app.exit(CHAT_EXIT_WRONG_USERDATA);
+      return;
+    }
     if (chatRunMode && expectedUserData.trim() !== '') {
       const actual = app.getPath('userData');
       if (!samePathSpelling(actual, expectedUserData)) {

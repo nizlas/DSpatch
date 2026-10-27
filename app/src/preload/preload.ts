@@ -25,7 +25,6 @@ import type {
   EditorLoopRunOutcome,
   EditorLoopRunRequest,
   EnvironmentInfo,
-  ForgetProjectsResult,
   LoopDefinitionChooseOutcome,
   LoopDefinitionListing,
   LoopGraphOpenOutcome,
@@ -36,7 +35,9 @@ import type {
   GraphSavedElsewhere,
   UnsavedDrawing,
   MenuCommand,
-  ProjectListing,
+  RecentWorkspaces,
+  WorkspaceOpenOutcome,
+  WorkspaceOpenRequest,
   ProjectPickOutcome,
   RendererReady,
   ResolvedRoleEntry,
@@ -76,8 +77,10 @@ const SET_MODEL: BridgeChannel = 'dspatch:set-model';
 const CHOOSE_AGENT: BridgeChannel = 'dspatch:choose-agent';
 const MENU_COMMAND: BridgeChannel = 'dspatch:menu-command';
 const PICK_PROJECT: BridgeChannel = 'dspatch:pick-project';
-const LIST_PROJECTS: BridgeChannel = 'dspatch:list-projects';
-const FORGET_PROJECTS: BridgeChannel = 'dspatch:forget-projects';
+const LIST_RECENT_WORKSPACES: BridgeChannel = 'dspatch:list-recent-workspaces';
+const REMOVE_FROM_RECENT: BridgeChannel = 'dspatch:remove-from-recent';
+const OPEN_WORKSPACE: BridgeChannel = 'dspatch:open-workspace';
+const SESSION_REPLACED: BridgeChannel = 'dspatch:session-replaced';
 const LIST_SAMPLE_PROJECTS: BridgeChannel = 'dspatch:list-sample-projects';
 const CLEAN_SAMPLE_PROJECTS: BridgeChannel = 'dspatch:clean-sample-projects';
 const LIST_CONVERSATIONS: BridgeChannel = 'dspatch:list-conversations';
@@ -174,9 +177,20 @@ const bridge: DspatchBridge = {
   },
   pickProjectFolder: () =>
     ipcRenderer.invoke(PICK_PROJECT) as Promise<ProjectPickOutcome>,
-  listProjects: () => ipcRenderer.invoke(LIST_PROJECTS) as Promise<ProjectListing>,
-  forgetProjects: (projectPaths: readonly string[]) =>
-    ipcRenderer.invoke(FORGET_PROJECTS, projectPaths) as Promise<ForgetProjectsResult>,
+  listRecentWorkspaces: () => ipcRenderer.invoke(LIST_RECENT_WORKSPACES) as Promise<RecentWorkspaces>,
+  removeFromRecent: (workspaceIds: readonly string[]) =>
+    ipcRenderer.invoke(REMOVE_FROM_RECENT, workspaceIds) as Promise<RecentWorkspaces>,
+  openWorkspace: (request: WorkspaceOpenRequest) =>
+    ipcRenderer.invoke(OPEN_WORKSPACE, request) as Promise<WorkspaceOpenOutcome>,
+  onSessionReplaced: (listener: (opened: WorkspaceOpenOutcome) => void) => {
+    const handler = (_event: unknown, payload: WorkspaceOpenOutcome): void => {
+      listener(payload);
+    };
+    ipcRenderer.on(SESSION_REPLACED, handler);
+    return () => {
+      ipcRenderer.removeListener(SESSION_REPLACED, handler);
+    };
+  },
   listSampleProjects: () =>
     ipcRenderer.invoke(LIST_SAMPLE_PROJECTS) as Promise<SampleProjectsView>,
   cleanUpSampleProjects: (paths: readonly string[]) =>
@@ -244,8 +258,8 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(PRESS_MENU_ITEM, command) as Promise<boolean>,
   captureWindow: (label: string) =>
     ipcRenderer.invoke(CAPTURE_WINDOW, label) as Promise<boolean>,
-  setWindowWidth: (width: number) =>
-    ipcRenderer.invoke(SET_WINDOW_WIDTH, width) as Promise<number>,
+  setWindowWidth: (width: number, height?: number) =>
+    ipcRenderer.invoke(SET_WINDOW_WIDTH, width, height) as Promise<number>,
   emulateReducedMotion: (reduce: boolean) =>
     ipcRenderer.invoke(EMULATE_REDUCED_MOTION, reduce) as Promise<boolean>,
 

@@ -28,7 +28,7 @@ import {
   type HostShutdownAnswer,
   type HostStartConfig,
 } from '../src/shared/host-protocol.ts';
-import type { ProjectListing } from '../src/shared/bridge.ts';
+import type { ChatSessionInfo, RecentWorkspaces, WorkspaceOpenOutcome } from '../src/shared/bridge.ts';
 import type { WorkspaceView } from '../src/shared/workspace-folders.ts';
 import { forkHost, type ForkedHost } from './support/forked-host.ts';
 
@@ -89,9 +89,9 @@ describe('the project host process', () => {
     const host = await startHost(config);
     try {
       assert.notEqual(host.child.pid(), process.pid, 'a separate process');
-      const listing = await host.connection.call<ProjectListing>('projects.list', NO_SENDER);
-      assert.equal(path.dirname(listing.storePath), config.userDataDir, 'the project store is under the data directory the client named');
-      assert.deepEqual(listing.entries, []);
+      const listing = await host.connection.call<RecentWorkspaces>('workspaces.recent', NO_SENDER);
+      assert.deepEqual(listing.entries, [], 'a fresh data directory has nothing in Recent');
+      assert.equal(listing.looseConversationId, null);
 
       // A method's own refusal reaches the caller with its own sentence, as over Electron's IPC.
       await assert.rejects(host.connection.call('chat.chooseAgent', NO_SENDER, 'not-an-agent'), /^Error: Unknown agent\.$|Unknown agent\./);
@@ -106,31 +106,79 @@ describe('the project host process', () => {
     }
   });
 
-  it('sends a change of the workspace to every window, and keeps a saved workspace across a restart', async () => {
+  it('opens a workspace, adds a folder to it, and has its name, folders and Recent entry after a restart (DSP-149)', async () => {
     const config = freshConfig();
-    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-host-folder-'));
+    const first = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-host-first-'));
+    const second = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-host-second-'));
     const workspaceFile = path.join(config.userDataDir, 'saved.dspatch-workspace.json');
-    const first = await startHost(config);
+    const one = await startHost(config);
+    let workspaceId: string | null = null;
     try {
-      const added = await first.connection.call<WorkspaceView>('workspace.addFolder', NO_SENDER, folder);
-      assert.ok(added.folders.some((entry) => path.resolve(entry.path) === path.resolve(folder)));
-      const announced = first.events.filter((event) => event.channel === 'dspatch:workspace-folders-changed');
-      assert.equal(announced.length, 1);
-      assert.deepEqual(announced[0]?.to, { kind: 'every-window' });
-      const saved = await first.connection.call<WorkspaceView>('workspace.saveFile', NO_SENDER, workspaceFile);
+      // Open Project: the workspace of a first folder, created with its name. No agent is
+      // chosen in a fresh data directory, so the conversation opens with no provider session.
+      const opened = await one.connection.call<WorkspaceOpenOutcome>('workspaces.open', NO_SENDER, { folder: first });
+      assert.equal(opened.kind, 'opened');
+      if (opened.kind !== 'opened') {
+        return;
+      }
+      workspaceId = opened.workspace.id;
+      assert.equal(opened.workspace.name, path.basename(first));
+      assert.equal(opened.session.provider, null, 'no provider is assumed');
+
+      const added = await one.connection.call<WorkspaceView>('workspace.addFolder', NO_SENDER, second);
+      assert.deepEqual(
+        added.folders.map((entry) => path.resolve(entry.path)),
+        [path.resolve(first), path.resolve(second)],
+      );
+      assert.equal(added.folders[0]?.working, true, 'the first folder stays where commands start');
+      const announced = one.events.filter((event) => event.channel === 'dspatch:workspace-folders-changed');
+      assert.ok(announced.length >= 1);
+      assert.deepEqual(announced.at(-1)?.to, { kind: 'every-window' });
+      const saved = await one.connection.call<WorkspaceView>('workspace.saveFile', NO_SENDER, workspaceFile);
       assert.equal(saved.filePath, path.resolve(workspaceFile));
     } finally {
-      await closeHost(first);
+      await closeHost(one);
     }
 
-    // A new host over the same data reopens the saved workspace by itself (DSP-71).
-    const second = await startHost(config);
+    // A new host over the same data: the workspace is in Recent with both folders, and
+    // opening it gives the session every folder again.
+    const two = await startHost(config);
     try {
-      const view = await second.connection.call<WorkspaceView>('workspace.view', NO_SENDER);
-      assert.equal(view.filePath, path.resolve(workspaceFile));
-      assert.ok(view.folders.some((entry) => path.resolve(entry.path) === path.resolve(folder)));
+      const recent = await two.connection.call<RecentWorkspaces>('workspaces.recent', NO_SENDER);
+      const entry = recent.entries.find((candidate) => candidate.id === workspaceId);
+      assert.ok(entry !== undefined, 'the workspace is in Recent after a restart');
+      assert.equal(recent.entries.length, 1, 'one entry for a workspace of two folders');
+      assert.deepEqual(entry.folders.map((folder) => path.resolve(folder)), [path.resolve(first), path.resolve(second)]);
+      const reopened = await two.connection.call<WorkspaceOpenOutcome>('workspaces.open', NO_SENDER, { workspaceId });
+      assert.equal(reopened.kind, 'opened');
+      if (reopened.kind === 'opened') {
+        assert.equal(reopened.workspace.folders.length, 2);
+        assert.equal(reopened.workspace.filePath, path.resolve(workspaceFile));
+      }
+
+      // Remove from recent drops the entry and nothing else: the folders are there, and
+      // opening the first folder again brings the same workspace back with its folders.
+      const removed = await two.connection.call<RecentWorkspaces>('workspaces.removeFromRecent', NO_SENDER, [workspaceId]);
+      assert.equal(removed.entries.length, 0);
+      assert.ok(fs.existsSync(first) && fs.existsSync(second));
+      const back = await two.connection.call<WorkspaceOpenOutcome>('workspaces.open', NO_SENDER, { folder: first });
+      assert.equal(back.kind === 'opened' ? back.workspace.id : null, workspaceId);
+      assert.equal(back.kind === 'opened' ? back.workspace.folders.length : 0, 2);
+
+      // A conversation with no workspace never works in the process's own folder.
+      const loose = await two.connection.call<ChatSessionInfo>('chat.startSession', NO_SENDER, { kind: 'loose' });
+      assert.equal(loose.origin, 'no-workspace');
+      assert.equal(path.dirname(loose.workspacePath), config.userDataDir);
+      assert.notEqual(path.resolve(loose.workspacePath), path.resolve(process.cwd()));
+
+      // A primary that has gone is refused when someone tries to open it, with the reason.
+      const gone = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-host-gone-'));
+      fs.rmSync(gone, { recursive: true, force: true });
+      const refused = await two.connection.call<WorkspaceOpenOutcome>('workspaces.open', NO_SENDER, { folder: gone });
+      assert.equal(refused.kind, 'refused');
+      assert.match(refused.kind === 'refused' ? refused.problem : '', /There is no folder at/);
     } finally {
-      await closeHost(second);
+      await closeHost(two);
     }
   });
 

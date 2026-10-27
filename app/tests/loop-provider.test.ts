@@ -255,11 +255,10 @@ describe('a loop run that cannot start says why, and constructs nothing', () => 
     assert.deepEqual(built.claudePermissions, []);
   });
 
-  it('refuses more than one working folder under Claude', () => {
-    const { factory, built } = adapters(null);
-    const reason = refusal(prepareLoopRun(request(factory, { rootCount: 2 })));
-    assert.match(reason, /Claude works in one folder/);
-    assert.deepEqual(built.claudePermissions, []);
+  it('runs a loop with several working folders under Claude (DSP-149)', () => {
+    const { factory } = adapters(null);
+    const prepared = prepareLoopRun(request(factory, { rootCount: 2 }));
+    assert.equal(prepared.ok, true, 'the folders reach Claude as additionalDirectories; nothing is refused');
   });
 
   it('refuses an entry step that fixes a model the Claude run does not use', () => {

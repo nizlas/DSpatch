@@ -354,12 +354,14 @@ const order = [
   [A, ids['A'] ?? ''],
 ];
 order.forEach(([project, conversationId], index) => {
-  const state = projects.recordOpened(project, {
-    conversationId,
-    atUtc: new Date(base + index * 60_000).toISOString(),
-  });
-  if (state.error !== null) {
-    throw new Error(state.error);
+  // DSP-149: a one-folder workspace that continues this conversation.
+  const opened = projects.openFolder(project, new Date(base + index * 60_000).toISOString());
+  if (opened.problem !== null || opened.workspace === null) {
+    throw new Error(opened.problem ?? 'no workspace');
+  }
+  const pointed = projects.updateWorkspace(opened.workspace.id, { lastConversationId: conversationId === '' ? null : conversationId });
+  if (pointed.problem !== null) {
+    throw new Error(pointed.problem);
   }
 });
 
@@ -410,8 +412,8 @@ const summary = {
     error: projectState.error,
     readOnly: projectState.readOnly,
     formatVersion: projectState.formatVersion,
-    recent: projectState.recentProjects.map((entry) => ({
-      path: entry.path,
+    recent: projectState.workspaces.map((entry) => ({
+      path: entry.folders[0],
       conversation: entry.lastConversationId,
     })),
   },

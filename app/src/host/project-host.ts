@@ -23,8 +23,8 @@ import type {
   LoopGraphSaveOutcome,
   LoopGraphSaveRequest,
   LoopInstructionEventPayload,
-  ProjectListEntry,
-  ProjectListing,
+  RecentWorkspaceEntry,
+  RecentWorkspaces,
   ResolvedRoleEntry,
   SampleProjectsView,
   ScriptedRunReport,
@@ -33,7 +33,10 @@ import type {
   StoredSession,
   StoredSessionProvider,
   TestRunRequest,
+  WorkspaceOpenOutcome,
+  WorkspaceOpenRequest,
 } from '../shared/bridge';
+import type { AppTool } from '../adapter/types';
 import type { HostEnvironmentFacts, HostEventTarget, HostShutdownAnswer, HostStartConfig } from '../shared/host-protocol';
 import {
   PROJECT_HOST_METHOD_NAMES,
@@ -89,6 +92,8 @@ import {
 import { claudeSupportStatus } from '../adapter/claude-support';
 import { CLAUDE_CHAT_MODEL, ChatService, type ChatAdapter } from '../main/chat-service';
 import { ConversationStore } from '../main/conversation-store';
+import { ProjectStore, type WorkspaceRecord } from '../main/project-store';
+import { workspaceTools } from './workspace-tools';
 import { locateExampleReview } from '../main/example-review';
 import { InstructionQueue } from '../main/instruction-queue';
 import { chatRunHold, chatRunMode, chatRunScenario, presentationMode } from '../main/launch-mode';
@@ -123,7 +128,6 @@ import {
   presentationSendMode,
 } from '../main/presentation-adapter';
 import { PROBE_EXIT, runCursorProbe } from '../main/probe-cursor';
-import { ProjectStore } from '../main/project-store';
 import { providerAdapters } from '../main/provider-adapters';
 import { providerAvailability } from '../main/provider-availability';
 import {
@@ -194,6 +198,7 @@ function log(message: string): void {
 
 const AGENT_EVENT: BridgeChannel = 'dspatch:agent-event';
 const WORKSPACE_FOLDERS_CHANGED: BridgeChannel = 'dspatch:workspace-folders-changed';
+const SESSION_REPLACED: BridgeChannel = 'dspatch:session-replaced';
 const LOOP_CONTROL_CHANNEL: BridgeChannel = 'dspatch:loop-control';
 const CHAT_LOOP_JOURNAL: BridgeChannel = 'dspatch:chat-loop-journal';
 const CHAT_LOOP_REPLY: BridgeChannel = 'dspatch:chat-loop-reply';
@@ -507,8 +512,15 @@ function createChatService(): ChatService {
     log(`[chat] ${message}`);
   },
   conversations: () => requireConversationStore(),
+  // DSP-149: which chat continues is decided by the workspace being opened and passed
+  // with the request; without one, the most recent workspace of this first folder.
   conversationForProject: (projectPath) =>
-    requireProjectStore().conversationFor(projectPath),
+    requireProjectStore().workspaceForPrimary(projectPath)?.lastConversationId ?? null,
+  looseFolder: () => path.join(userDataDir(), 'conversation-without-workspace'),
+  appTools: () => chatWorkspaceTools(),
+  onTurnSettled: () => {
+    openPendingWorkspace();
+  },
   // DSP-136: every chat adapter construction is logged, so a run record can show that
   // none was built where no agent was chosen.
   createAdapter: (provider) => {
@@ -577,103 +589,92 @@ function requireProjectStore(): ProjectStore {
 }
 
 /* --------------------------------------------------------------------------- */
-/* A workspace of open folders (DSP-71)                                        */
+/* Workspaces: an identity, a name and folders (DSP-71, DSP-72, DSP-149)       */
 /* --------------------------------------------------------------------------- */
 
 /**
- * Folders open beside the project, and the loop this arrangement chose.
+ * The open workspace.
  *
- * **What "the open project" now means, stated once so it is not inferred from the
- * code.** DSpatch has assumed one open folder everywhere: the chat session's working
- * copy, `refuseLiveWorkspace`, `recordOpened`, the loop-definition search. A
- * workspace of several folders does not fit that, and DSP-71 took the smaller of the two
- * available answers: one folder was the run's working copy and the others were folders
- * DSpatch showed and searched, changing nothing about a run.
+ * **A workspace is what a person opens** (DSP-149): a record in the project store with
+ * a persistent identity, a name and one or more folders, the first being the primary —
+ * the agent's working directory and the provider session's resume key. Its folders are
+ * the open session's folders (`chatService.sessionFolders()`): every one of them is
+ * given to the agent, in the chat and in loop runs, by each SDK's own multi-folder
+ * mechanism. DSP-71's "one working folder and others shown beside it" and its
+ * module-level list of extra folders are gone; there is one list, and it is the
+ * workspace's.
  *
- * **DSP-72 changed that half.** Every folder in this list is now a working folder of any
- * loop run started afterwards: `workingRootsFrom(openWorkspaceFolders(), …)` builds the
- * run's roots from exactly this, they are handed to the provider as `cwd` plus `dirs`,
- * and each is snapshotted. What did **not** change is which folder is primary — the
- * project the chat session opened is still the working directory, still the shell's
- * `cwd`, and still what the provider scopes its agent store by.
- *
- * **And the ordinary chat path is untouched.** `chat-service.ts` builds its
- * `SessionConfig` with `workspacePath` alone, so a message outside a loop run gives the
- * agent the working directory and nothing else. That asymmetry is real, and app/README.md
- * names which path it is describing rather than saying "the folders reach Cursor" flatly.
- *
- * So this still holds only the *extra* folders. The working one is wherever it always was.
+ * `null` while a conversation with no workspace is on screen, or nothing is open.
  */
-const extraWorkspaceFolders: string[] = [];
-
-/** The saved workspace this arrangement came from, or `null` if it is unsaved. */
-let workspaceFilePath: string | null = null;
+let openWorkspaceId: string | null = null;
 
 /**
- * The loop definition this workspace chose.
- *
- * DSP-68 deferred remembering this and said so in a comment here; the comment is gone
- * because this is the answer. It is written to the project store whenever it changes
- * and read back at startup, and it is what a saved workspace file carries beside its
- * folders.
+ * The loop definition this workspace chose (DSP-68, DSP-71). Kept per workspace in the
+ * store; at startup it is the most recently opened workspace's.
  */
 let workspaceLoopDefinitionKey: string | null = null;
 
+/**
+ * A workspace the chat's own tools asked to open (DSP-149). Opened when the turn that
+ * asked has ended: opening replaces the session the agent is answering in.
+ */
+let pendingWorkspaceOpen: string | null = null;
+
 const pathsAreCaseInsensitive = process.platform === 'win32';
 
-/** Every folder open now, the run's working copy first. */
+function openWorkspaceRecord(): WorkspaceRecord | null {
+  return openWorkspaceId === null ? null : requireProjectStore().workspace(openWorkspaceId);
+}
+
+/** Every folder of the open workspace, the primary first; empty with none open. */
 function openWorkspaceFolders(): readonly string[] {
-  const working = chatService.openSession()?.workspacePath ?? null;
-  let folders: readonly string[] = working === null ? [] : [path.resolve(working)];
-  for (const folder of extraWorkspaceFolders) {
-    folders = addFolderTo(folders, folder, pathsAreCaseInsensitive);
+  const session = chatService.openSession();
+  if (session === null || session.origin === 'no-workspace') {
+    return [];
   }
-  return folders;
+  const folders = chatService.sessionFolders();
+  return folders.length === 0 ? [path.resolve(session.workspacePath)] : folders;
 }
 
 function currentWorkspaceView(problem: string | null = null): WorkspaceView {
-  const working = chatService.openSession()?.workspacePath ?? null;
-  const resolvedWorking = working === null ? null : path.resolve(working);
   const folders = openWorkspaceFolders();
+  const record = openWorkspaceRecord();
   return {
-    folders: folders.map((folder) => ({
+    id: record?.id ?? null,
+    name: record?.name ?? (folders[0] === undefined ? null : folderDisplayName(folders[0])),
+    folders: folders.map((folder, index) => ({
       path: folder,
       name: folderDisplayName(folder),
-      working:
-        resolvedWorking !== null &&
-        sameFolder(folder, resolvedWorking, pathsAreCaseInsensitive),
+      working: index === 0,
     })),
     loopDefinitionKey: workspaceLoopDefinitionKey,
-    filePath: workspaceFilePath,
+    filePath: record?.filePath ?? null,
     problem,
   };
 }
 
 /**
- * Tell the window what the folders are now.
+ * Tell the windows what the workspace is now.
  *
- * Pushed rather than polled because the menu can change them, and a menu bar is
- * exactly the part of the application the renderer cannot see.
+ * Pushed rather than polled because the menu and the chat's own tools can change it,
+ * and neither is something the renderer can see.
  */
 function announceWorkspace(problem: string | null = null): WorkspaceView {
   const view = currentWorkspaceView(problem);
-  // Every window, not only the chat's. The view carries `loopDefinitionKey`, which
-  // since DSP-84 is what the editor reads to say which loop the next mandate walks;
-  // an editor in its own window that never heard the announcement would be the second
-  // answer this card exists to prevent.
+  // Every window, not only the chat's: the view carries `loopDefinitionKey`, which the
+  // editor reads to say which loop the next mandate walks (DSP-84).
   sendToEveryWindow(WORKSPACE_FOLDERS_CHANGED, view);
   return view;
 }
 
-/** Write the arrangement to the project store. A failure costs the memory, not the work. */
-function rememberWorkspace(): void {
-  const state = requireProjectStore().rememberWorkspace({
-    filePath: workspaceFilePath,
-    folders: openWorkspaceFolders(),
-    loopDefinitionKey: workspaceLoopDefinitionKey,
-  });
-  if (state.error !== null) {
-    log(`[workspace] ${state.error}`);
+/** Write a change to the open workspace. A failure costs the memory, not the work. */
+function updateOpenWorkspace(patch: Parameters<ProjectStore['updateWorkspace']>[1]): void {
+  if (openWorkspaceId === null) {
+    return;
+  }
+  const outcome = requireProjectStore().updateWorkspace(openWorkspaceId, patch);
+  if (outcome.problem !== null) {
+    log(`[workspace] ${outcome.problem}`);
   }
 }
 
@@ -683,131 +684,310 @@ function rememberWorkspace(): void {
  * Called from the three places a choice is made — the chooser beside the composer, the
  * file picker, and the editor's `Use this loop` — and from nowhere else, so a preview
  * that resolves the default does not silently write a choice nobody made.
- *
- * **This is the one place the selection changes**, which is what makes DSP-84's "one
- * source" claim a property of the code rather than a promise. Every window learns
- * about it through `announceWorkspace` below, and none of them keeps a selection of
- * its own that could disagree.
  */
 function noteChosenLoopDefinition(key: string | null): void {
   if (key === null || key === '' || key === workspaceLoopDefinitionKey) {
     return;
   }
   workspaceLoopDefinitionKey = key;
-  rememberWorkspace();
+  updateOpenWorkspace({ loopDefinitionKey: key });
   announceWorkspace();
 }
 
 /**
- * Add a folder beside the ones already open.
- *
- * The folder is named: when a person chooses it, the client's native chooser has
- * already answered (DSP-111), and a scripted trial names it directly.
+ * Add folders to the open workspace (DSP-149): the menu's *Add Folder to Workspace…*
+ * and the chat's `add_folders_to_workspace` both come here. Each folder gets the checks
+ * an opened folder gets. The workspace remembers them, and the open session works in
+ * them from its next message.
+ */
+function addFoldersToOpenWorkspace(
+  chosen: readonly string[],
+): { readonly folders: readonly string[] } | { readonly problem: string } {
+  if (openWorkspaceRecord() === null) {
+    return {
+      problem:
+        'No workspace is open, so there is nothing to add a folder to. Open a project first; ' +
+        'the folder can then be added to its workspace.',
+    };
+  }
+  let folders = openWorkspaceFolders();
+  for (const folder of chosen) {
+    let checked: string;
+    try {
+      checked = chatService.checkFolder(folder);
+    } catch (error) {
+      return { problem: error instanceof Error ? error.message : String(error) };
+    }
+    if (folders.some((open) => sameFolder(open, checked, pathsAreCaseInsensitive))) {
+      continue;
+    }
+    folders = addFolderTo(folders, checked, pathsAreCaseInsensitive);
+  }
+  updateOpenWorkspace({ folders });
+  chatService.setWorkingFolders(folders);
+  announceWorkspace();
+  return { folders };
+}
+
+/**
+ * Add a folder chosen in the client's native chooser (DSP-111) or named by a scripted
+ * trial.
  */
 function addWorkspaceFolder(chosen: string): WorkspaceView {
   const resolved = path.resolve(chosen);
-  try {
-    if (!fs.statSync(resolved).isDirectory()) {
-      return announceWorkspace(
-        `${resolved} is a file, not a folder, so it was not added. Open the folder it ` +
-          'is in and the file will be in the tree.',
-      );
-    }
-  } catch (error) {
-    return announceWorkspace(
-      `${resolved} could not be opened, so it was not added: ` +
-        `${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
   if (openWorkspaceFolders().some((open) => sameFolder(open, resolved, pathsAreCaseInsensitive))) {
-    return announceWorkspace(`${resolved} is already open in this workspace.`);
+    return announceWorkspace(`${resolved} is already in this workspace.`);
   }
-  extraWorkspaceFolders.push(resolved);
-  rememberWorkspace();
-  return announceWorkspace();
+  const outcome = addFoldersToOpenWorkspace([resolved]);
+  return 'problem' in outcome ? announceWorkspace(`${outcome.problem} Nothing was added.`) : currentWorkspaceView();
 }
 
 /**
  * Remove a folder from the workspace.
  *
- * **DSP-71 #2 is the absence of a filesystem call in this function.** It removes a
- * string from a list; there is no path from here to deleting anything, and no
- * conversation is keyed on a folder being in the workspace.
- *
- * The run's working copy is refused rather than removed. It is the open project, and
- * closing a project is a different act with different consequences; taking it out of
- * the tree would leave a conversation working in a folder the window no longer shows.
+ * **The link and nothing else** (DSP-71 #2): no file is deleted, no folder is touched,
+ * no conversation is removed. The primary is refused: it is the working directory and
+ * the conversation's resume key, and a workspace with another primary is another
+ * workspace.
  */
 function removeWorkspaceFolder(folderPath: string): WorkspaceView {
   const resolved = path.resolve(folderPath);
-  const working = chatService.openSession()?.workspacePath ?? null;
-  if (working !== null && sameFolder(path.resolve(working), resolved, pathsAreCaseInsensitive)) {
+  const folders = openWorkspaceFolders();
+  if (folders[0] !== undefined && sameFolder(folders[0], resolved, pathsAreCaseInsensitive)) {
     return announceWorkspace(
-      `${resolved} is the project this conversation is working in, so it was not ` +
-        'removed from the workspace. Nothing on disk was touched. Open another ' +
-        'project to work somewhere else.',
+      `${resolved} is this workspace's primary folder, where the agent's commands start, so it ` +
+        'was not removed. Nothing on disk was touched.',
     );
   }
-  const remaining = removeFolderFrom(extraWorkspaceFolders, resolved, pathsAreCaseInsensitive);
-  const changed = remaining.length !== extraWorkspaceFolders.length;
-  extraWorkspaceFolders.length = 0;
-  extraWorkspaceFolders.push(...remaining);
-  if (changed) {
-    rememberWorkspace();
+  const remaining = removeFolderFrom(folders, resolved, pathsAreCaseInsensitive);
+  if (remaining.length !== folders.length) {
+    updateOpenWorkspace({ folders: remaining });
+    chatService.setWorkingFolders(remaining);
   }
   return announceWorkspace();
 }
 
-/** Open a saved workspace: the folders it lists, and the loop definition it chose. */
-function openWorkspace(target: string): WorkspaceView {
-  const resolved = path.resolve(target);
+/**
+ * Open a workspace (DSP-149): one from Recent, or the workspace of a chosen first folder,
+ * created with the folder's name when there is none.
+ *
+ * Every folder is checked before anything is closed; a primary that is missing refuses
+ * the opening with the reason, here, when the person tries to open it — the list does
+ * not carry standing warnings. Another folder that is missing is named, and the
+ * workspace opens without it.
+ *
+ * A conversation begun without a workspace that has messages moves into the workspace
+ * and continues there in a new provider session with DSpatch's recap (`carry`);
+ * otherwise the workspace's own last chat continues, or a new one starts. Either way
+ * nothing is sent and no work starts.
+ */
+async function openWorkspaceFor(request: WorkspaceOpenRequest): Promise<WorkspaceOpenOutcome> {
+  const store = requireProjectStore();
+  let record: WorkspaceRecord | null;
+  let folders: readonly string[];
+  if ('workspaceId' in request) {
+    record = store.workspace(request.workspaceId);
+    if (record === null) {
+      return { kind: 'refused', problem: 'That workspace is no longer known to DSpatch. Nothing was opened.' };
+    }
+    folders = record.folders;
+  } else {
+    const resolved = path.resolve(request.folder);
+    record = store.workspaceForPrimary(resolved);
+    folders = record?.folders ?? [resolved];
+  }
+  const primary = folders[0];
+  if (primary === undefined) {
+    return { kind: 'refused', problem: 'This workspace has no folders. Nothing was opened.' };
+  }
+  try {
+    chatService.checkFolder(primary);
+  } catch (error) {
+    return {
+      kind: 'refused',
+      problem:
+        `${record === null ? 'The project' : `"${record.name}"`} could not be opened: ` +
+        `${error instanceof Error ? error.message : String(error)} Nothing was closed or changed.`,
+    };
+  }
+  const usable: string[] = [primary];
+  const missing: string[] = [];
+  for (const folder of folders.slice(1)) {
+    try {
+      usable.push(chatService.checkFolder(folder));
+    } catch {
+      missing.push(folder);
+    }
+  }
+  if (record === null) {
+    const created = store.openFolder(primary);
+    if (created.problem !== null) {
+      log(`[workspace] ${created.problem}`);
+    }
+    record = created.workspace;
+    if (record === null) {
+      return { kind: 'refused', problem: created.problem ?? 'The workspace could not be recorded.' };
+    }
+  }
+  const carried = chatService.looseConversationWithMessages();
+  const startRequest: StartSessionRequest =
+    carried === null
+      ? {
+          kind: 'folder',
+          path: primary,
+          folders: usable.slice(1),
+          conversationId: request.newChat === true ? null : record.lastConversationId,
+          ...(request.provider === undefined ? {} : { provider: request.provider }),
+        }
+      : { kind: 'carry', path: primary, folders: usable.slice(1), conversationId: carried, workspaceName: record.name };
+  const previousWorkspace = openWorkspaceId;
+  openWorkspaceId = record.id;
+  let session: ChatSessionInfo;
+  try {
+    session = await chatService.startChatSession(startRequest);
+  } catch (error) {
+    // The chat service closes the earlier session before it opens the new one, so after
+    // a failure no session is open, and no workspace is either.
+    openWorkspaceId = chatService.openSession() === null ? null : previousWorkspace;
+    announceWorkspace();
+    return {
+      kind: 'refused',
+      problem: `"${record.name}" could not be opened: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  store.recordOpened(record.id);
+  updateOpenWorkspace({ lastConversationId: session.conversationId });
+  if (carried !== null) {
+    const outcome = store.setLooseConversation(null);
+    if (outcome.problem !== null) {
+      log(`[workspace] ${outcome.problem}`);
+    }
+  }
+  if (record.loopDefinitionKey !== null) {
+    workspaceLoopDefinitionKey = record.loopDefinitionKey;
+  }
+  log(
+    `[workspace] opened "${record.name}" (${record.id}) with ${String(usable.length)} folder(s)` +
+      `${carried === null ? '' : `; carried conversation ${carried} into it`}`,
+  );
+  const workspace = announceWorkspace(
+    missing.length === 0
+      ? null
+      : `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not on this computer, so ` +
+          `${missing.length === 1 ? 'it was' : 'they were'} left out this time. The workspace still lists ` +
+          `${missing.length === 1 ? 'it' : 'them'}.`,
+  );
+  return { kind: 'opened', session, workspace };
+}
 
+/**
+ * A conversation with no workspace (DSP-149): the one begun before, unless a new one is
+ * asked for. It is remembered at once, so it survives a restart before any workspace
+ * exists.
+ */
+async function openLooseConversation(request: Extract<StartSessionRequest, { kind: 'loose' }>): Promise<ChatSessionInfo> {
+  const store = requireProjectStore();
+  const conversationId = request.conversationId === undefined ? store.read().looseConversationId : request.conversationId;
+  const session = await chatService.startChatSession({ ...request, conversationId });
+  openWorkspaceId = null;
+  const outcome = store.setLooseConversation(session.conversationId);
+  if (outcome.problem !== null) {
+    log(`[workspace] ${outcome.problem}`);
+  }
+  announceWorkspace();
+  return session;
+}
+
+/** The chat's tools asked for a workspace to be opened; open it now the turn has ended. */
+function openPendingWorkspace(): void {
+  const id = pendingWorkspaceOpen;
+  if (id === null) {
+    return;
+  }
+  pendingWorkspaceOpen = null;
+  void openWorkspaceFor({ workspaceId: id }).then(
+    (outcome) => {
+      sendToMainWindow(SESSION_REPLACED, outcome);
+    },
+    (error: unknown) => {
+      sendToMainWindow(SESSION_REPLACED, {
+        kind: 'refused',
+        problem: `The workspace could not be opened: ${error instanceof Error ? error.message : String(error)}`,
+      } satisfies WorkspaceOpenOutcome);
+    },
+  );
+}
+
+/** What the chat's workspace tools reach: the same functions as the menus (DSP-149). */
+function chatWorkspaceTools(): readonly AppTool[] {
+  return workspaceTools({
+    recent: () =>
+      requireProjectStore()
+        .read()
+        .workspaces.filter((record) => !record.hiddenFromRecent)
+        .map((record) => ({ id: record.id, name: record.name, folders: record.folders })),
+    openWorkspace: () => {
+      const record = openWorkspaceRecord();
+      return record === null ? null : { id: record.id, name: record.name, folders: openWorkspaceFolders() };
+    },
+    checkFolder: (folder) => chatService.checkFolder(folder),
+    createWorkspace: (name, folders) => {
+      const outcome = requireProjectStore().createWorkspace({ name, folders });
+      if (outcome.workspace === null) {
+        return { problem: outcome.problem ?? 'The workspace could not be recorded.' };
+      }
+      log(`[workspace] the chat created "${outcome.workspace.name}" (${outcome.workspace.id})`);
+      return { id: outcome.workspace.id };
+    },
+    addFolders: (folders) => addFoldersToOpenWorkspace(folders),
+    openWhenTurnEnds: (workspaceId) => {
+      pendingWorkspaceOpen = workspaceId;
+      log(`[workspace] the chat asked for ${workspaceId} to be opened when its turn ends`);
+    },
+  });
+}
+
+/**
+ * Open a saved `.dspatch-workspace.json` (DSP-71): the workspace it describes, recorded
+ * in the store and opened as any other.
+ */
+async function openWorkspace(target: string): Promise<WorkspaceView> {
+  const resolved = path.resolve(target);
   let text: string;
   try {
     text = fs.readFileSync(resolved, 'utf8');
   } catch (error) {
     return announceWorkspace(
-      `${resolved} could not be read, so no folder was opened and the workspace you ` +
-        `have is unchanged: ${error instanceof Error ? error.message : String(error)}`,
+      `${resolved} could not be read, so nothing was opened: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
     );
   }
   const read = parseWorkspaceFile(text, resolved);
   if (!read.ok) {
-    // The folders on screen are left exactly as they were. A workspace that will not
-    // load must not also be the reason the ones already open disappear.
     return announceWorkspace(read.problem);
   }
-
-  extraWorkspaceFolders.length = 0;
-  let folders: readonly string[] = [];
-  for (const folder of read.workspace.folders) {
-    folders = addFolderTo(folders, path.resolve(folder), pathsAreCaseInsensitive);
+  const folders = read.workspace.folders.map((folder) => path.resolve(folder));
+  const primary = folders[0];
+  if (primary === undefined) {
+    return announceWorkspace(`${resolved} lists no folders, so nothing was opened.`);
   }
-  extraWorkspaceFolders.push(...folders);
-  workspaceFilePath = resolved;
-  workspaceLoopDefinitionKey = read.workspace.loopDefinitionKey;
-  rememberWorkspace();
-
-  // A folder that has since been moved or deleted is named rather than dropped. A
-  // workspace that quietly came back one folder short would be worse than one that
-  // says which one is missing.
-  const missing = folders.filter((folder) => !fs.existsSync(folder));
-  return announceWorkspace(
-    missing.length === 0
-      ? null
-      : `${String(missing.length)} folder${missing.length === 1 ? '' : 's'} in this ` +
-          `workspace ${missing.length === 1 ? 'is' : 'are'} not on this machine: ` +
-          `${missing.join(', ')}. ${missing.length === 1 ? 'It is' : 'They are'} still ` +
-          'listed so the workspace is not silently shorter than it was.',
-  );
+  const store = requireProjectStore();
+  const existing =
+    store.read().workspaces.find((record) => record.filePath !== null && sameFolder(record.filePath, resolved, pathsAreCaseInsensitive)) ??
+    null;
+  const record = existing ?? store.createWorkspace({ name: folderDisplayName(primary), folders }).workspace;
+  if (record === null) {
+    return announceWorkspace('The workspace could not be recorded, so nothing was opened.');
+  }
+  store.updateWorkspace(record.id, { folders, filePath: resolved, loopDefinitionKey: read.workspace.loopDefinitionKey });
+  const outcome = await openWorkspaceFor({ workspaceId: record.id });
+  sendToMainWindow(SESSION_REPLACED, outcome);
+  return outcome.kind === 'opened' ? outcome.workspace : announceWorkspace(outcome.problem);
 }
 
 /**
- * Write the open folders and the chosen definition to a file.
- *
- * DSP-71 #5 is `workspaceFileText`'s doing: a workspace holds folders and a loop, and
- * there is no field in it for a run result.
+ * Write the open workspace's folders and chosen definition to a file. DSP-71 #5 is
+ * `workspaceFileText`'s doing: there is no field in it for a run result.
  */
 function saveWorkspace(target: string): WorkspaceView {
   const resolved = path.resolve(target);
@@ -815,10 +995,7 @@ function saveWorkspace(target: string): WorkspaceView {
     fs.mkdirSync(path.dirname(resolved), { recursive: true });
     fs.writeFileSync(
       resolved,
-      workspaceFileText({
-        folders: openWorkspaceFolders(),
-        loopDefinitionKey: workspaceLoopDefinitionKey,
-      }),
+      workspaceFileText({ folders: openWorkspaceFolders(), loopDefinitionKey: workspaceLoopDefinitionKey }),
       'utf8',
     );
   } catch (error) {
@@ -827,34 +1004,18 @@ function saveWorkspace(target: string): WorkspaceView {
         `${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  workspaceFilePath = resolved;
-  rememberWorkspace();
+  updateOpenWorkspace({ filePath: resolved });
   return announceWorkspace();
 }
+
 /**
- * What the last workspace was, read once at startup.
- *
- * **A saved workspace comes back; an unsaved arrangement does not.** Saving is the
- * deliberate act that says this set of folders is a thing worth having again, so a
- * workspace with a file behind it is reopened from that file — which is also why the
- * file rather than the store is the source of truth for its contents. An arrangement
- * that was only ever built up in a window restores its chosen loop definition and no
- * folders, because opening a folder is an act a person performs and a window that had
- * opened three of them before anyone asked would be the interface deciding the work.
- *
- * Nothing here starts a session or chooses a working copy. The tree shows roots; the
- * project a run works in is still opened by opening it.
+ * What is restored at startup: the loop definition of the most recently opened
+ * workspace, and nothing else. Opening a workspace is an act a person performs (or asks
+ * the chat to perform); a window that had opened one before anyone asked would be the
+ * interface deciding the work.
  */
 function restoreRememberedWorkspace(): void {
-  const remembered = requireProjectStore().currentWorkspace();
-  if (remembered === null) {
-    return;
-  }
-  if (remembered.filePath === null) {
-    workspaceLoopDefinitionKey = remembered.loopDefinitionKey;
-    return;
-  }
-  openWorkspace(remembered.filePath);
+  workspaceLoopDefinitionKey = requireProjectStore().read().workspaces[0]?.loopDefinitionKey ?? null;
 }
 
 /**
@@ -906,21 +1067,6 @@ function runResultsDir(runId: string): string {
   return path.join(userDataDir(), 'loop-runs', runId, 'results');
 }
 /**
- * The cheap "is this a git repository" check for the list.
- *
- * Presence of a `.git` entry, which is a file rather than a directory inside a
- * worktree. The authoritative reading is done by `git` itself when a session
- * opens; this only decides what label the row carries.
- */
-function hasGitEntry(dir: string): boolean {
-  try {
-    return fs.existsSync(path.join(dir, '.git'));
-  } catch {
-    return false;
-  }
-}
-
-/**
  * The sample projects DSpatch generated, as the window shows them (DSP-61).
  *
  * The note is written here rather than in the renderer because it is a statement
@@ -964,60 +1110,57 @@ function sampleProjectsView(): SampleProjectsView {
   return describeSampleProjects(chatService.listSampleProjects());
 }
 
-function projectListing(): ProjectListing {
+/**
+ * Recent projects (DSP-149): every workspace not removed from the list, most recently
+ * opened first, after the project named at startup by `DSPATCH_PROJECT_PATH` when it is
+ * not one of them. Whether each primary folder exists is read now; a missing one is
+ * reported when someone tries to open it, not as a warning on the list.
+ */
+function recentWorkspaces(problem: string | null = null): RecentWorkspaces {
   const state = requireProjectStore().read();
-  const entries: ProjectListEntry[] = [];
-
-  const describe = (
-    projectPath: string,
-    origin: ProjectListEntry['origin'],
-    lastOpenedAtUtc: string | null,
-    openCount: number | null,
-  ): ProjectListEntry => {
-    const exists = (() => {
-      try {
-        return fs.statSync(projectPath).isDirectory();
-      } catch {
-        return false;
-      }
-    })();
-    return {
-      path: projectPath,
-      lastOpenedAtUtc,
-      openCount,
-      origin,
-      exists,
-      isGitRepository: exists ? hasGitEntry(projectPath) : null,
-    };
+  const exists = (folder: string): boolean => {
+    try {
+      return fs.statSync(folder).isDirectory();
+    } catch {
+      return false;
+    }
   };
-
+  const entries: RecentWorkspaceEntry[] = state.workspaces
+    .filter((record) => !record.hiddenFromRecent)
+    .map((record) => ({
+      id: record.id,
+      name: record.name,
+      folders: record.folders,
+      lastOpenedAtUtc: record.lastOpenedAtUtc === '' ? null : record.lastOpenedAtUtc,
+      primaryExists: exists(record.folders[0] ?? ''),
+    }));
   if (startupProjectPath !== undefined && startupProjectPath.trim() !== '') {
     const resolved = path.resolve(startupProjectPath.trim());
-    entries.push(describe(resolved, 'startup-environment', null, null));
-  }
-  for (const project of state.recentProjects) {
-    // Windows paths differ in case without differing; Linux paths do not, and
-    // folding case there would merge two genuinely different projects.
-    const same = (left: string, right: string): boolean =>
-      process.platform === 'win32'
-        ? left.toLowerCase() === right.toLowerCase()
-        : left === right;
-    if (entries.some((entry) => same(entry.path, project.path))) {
-      continue;
+    if (!entries.some((entry) => sameFolder(entry.folders[0] ?? '', resolved, pathsAreCaseInsensitive))) {
+      entries.unshift({
+        id: null,
+        name: folderDisplayName(resolved),
+        folders: [resolved],
+        lastOpenedAtUtc: null,
+        primaryExists: exists(resolved),
+      });
     }
-    entries.push(
-      describe(project.path, 'recent', project.lastOpenedAtUtc, project.openCount),
-    );
   }
-
+  // The conversation begun without a workspace comes back only if it has something in it.
+  const loose = state.looseConversationId;
+  const looseHasMessages =
+    loose !== null &&
+    (requireConversationStore()
+      .list()
+      .entries.find((entry) => entry.conversationId === loose)?.messageCount ?? 0) > 0;
   return {
-    formatVersion: state.formatVersion,
-    storePath: state.filePath,
     entries,
-    error: state.error,
+    error: problem ?? state.error,
     readOnly: state.readOnly,
+    looseConversationId: looseHasMessages ? loose : null,
   };
 }
+
 function environmentFacts(): HostEnvironmentFacts {
   return {
     // DSP-136: a reading of the open session's adapter, never a construction. At
@@ -3247,52 +3390,34 @@ function registerCoreMethods(): void {
     return chosen;
   });
 
-  handle('projects.list', (): ProjectListing => projectListing());
+  handle('workspaces.recent', (): RecentWorkspaces => recentWorkspaces());
 
   /**
-   * Forget remembered projects.
-   *
-   * The renderer names paths it was just shown, and this only ever edits one list
-   * in DSpatch's own settings file. Nothing here deletes a folder, and nothing here
-   * touches the conversation store — a conversation whose project has been
-   * forgotten is still saved, still listed and still openable.
-   *
-   * The reply carries the freshly read listing rather than a mutated copy of what
-   * the renderer had, so what the window shows next is what the file now says.
+   * Remove from recent (DSP-149): the list entries and nothing else. No folder is
+   * touched, no conversation is removed, and each workspace keeps its name and folders.
    */
-  handle('projects.forget', (_event, projectPaths: readonly string[]) => {
-    const asked = Array.isArray(projectPaths) ? projectPaths : [];
-    const outcome = requireProjectStore().forget(asked);
-    log(
-      `forget-projects: asked for ${String(asked.length)}, removed ` +
-        `${String(outcome.removed.length)}` +
-        (outcome.state.error === null ? '' : `, error: ${outcome.state.error}`),
-    );
-    const projects = projectListing();
-    const note =
-      outcome.removed.length === 0
-        ? outcome.state.error === null
-          ? 'Nothing was removed: none of those projects was in the list. No ' +
-            'folder and no saved conversation was touched.'
-          : `Nothing was removed. ${outcome.state.error} No folder and no saved ` +
-            'conversation was touched.'
-        : `${String(outcome.removed.length)} remembered ` +
-          `${outcome.removed.length === 1 ? 'project' : 'projects'} removed from ` +
-          `${projects.storePath}. The ` +
-          `${outcome.removed.length === 1 ? 'folder' : 'folders'} on disk and every ` +
-          'saved conversation are untouched: conversations are kept separately and ' +
-          'are still listed under "Saved conversations".';
-    return {
-      removed: outcome.removed,
-      notFound: outcome.notFound,
-      // `projects.error` describes reading the list; a failure to change it is in
-      // the note above, and the two must not be confused for one another.
-      projects:
-        outcome.state.error === null || projects.error !== null
-          ? projects
-          : { ...projects, error: outcome.state.error },
-      note,
-    };
+  handle('workspaces.removeFromRecent', (_event, workspaceIds: readonly string[]): RecentWorkspaces => {
+    const ids = Array.isArray(workspaceIds) ? workspaceIds.filter((id) => typeof id === 'string') : [];
+    const outcome = requireProjectStore().removeFromRecent(ids);
+    log(`[workspace] removed ${String(ids.length)} from Recent${outcome.problem === null ? '' : `: ${outcome.problem}`}`);
+    return recentWorkspaces(outcome.problem);
+  });
+
+  handle('workspaces.open', async (_event, request: WorkspaceOpenRequest) => {
+    // The resume-choice record's host half (DSP-121): opening from Recent is a session
+    // start like any other, so the file's session block is read before and after it.
+    const fileSessionBefore = chatRunScenario === 'resume-choice' ? resumeChoiceFileSession() : null;
+    const outcome = await openWorkspaceFor(request);
+    if (chatRunScenario === 'resume-choice') {
+      recordResumeChoice(
+        'start-session',
+        'folder',
+        fileSessionBefore,
+        outcome.kind === 'opened' ? 'ok' : 'refused',
+        outcome.kind === 'opened' ? null : outcome.problem,
+      );
+    }
+    return outcome;
   });
 
   /**
@@ -3335,12 +3460,14 @@ function registerCoreMethods(): void {
     // change with it. Without this the pointer only ever recorded whichever
     // conversation a project was *opened* with, and choosing an earlier one and
     // working in it left the next open returning to the older one.
-    const state = requireProjectStore().rememberConversation(
-      restored.project.path,
-      restored.conversationId,
-    );
-    if (state.error !== null) {
-      log(`[projects] ${state.error}`);
+    // DSP-149: the chat a workspace continues is the one last worked in there, so a chat
+    // read back and continued is the one its workspace opens with next time.
+    const owner = requireProjectStore().workspaceForPrimary(restored.project.path);
+    if (owner !== null) {
+      const outcome = requireProjectStore().updateWorkspace(owner.id, { lastConversationId: restored.conversationId });
+      if (outcome.problem !== null) {
+        log(`[workspace] ${outcome.problem}`);
+      }
     }
     return restored;
   });
@@ -3366,6 +3493,21 @@ function registerCoreMethods(): void {
     // ordinary launch does not touch this.
     const fileSessionBefore =
       chatRunScenario === 'resume-choice' ? resumeChoiceFileSession() : null;
+    // DSP-149: a folder opens its workspace, and a conversation without one opens in
+    // DSpatch's own empty folder; both go through the same functions as the start page.
+    if (request.kind === 'folder') {
+      const outcome = await openWorkspaceFor({
+        folder: request.path,
+        ...(request.provider === undefined ? {} : { provider: request.provider }),
+      });
+      if (outcome.kind === 'refused') {
+        throw new Error(outcome.problem);
+      }
+      return outcome.session;
+    }
+    if (request.kind === 'loose') {
+      return openLooseConversation(request);
+    }
     let session: ChatSessionInfo;
     try {
       session = await chatService.startChatSession(request);
@@ -3384,24 +3526,6 @@ function registerCoreMethods(): void {
     if (chatRunScenario === 'resume-choice') {
       recordResumeChoice('start-session', request.kind, fileSessionBefore, 'ok', null);
     }
-    if (request.kind === 'folder') {
-      // Remembered only once the session actually opened. A folder that was
-      // refused or unreadable has no business in the list of recent projects.
-      // A generated sample stays out of it too: it is a throwaway directory under
-      // temp, and its conversation is still reachable from the conversation list.
-      // The conversation ID goes in beside the path, so opening this project again
-      // continues the same conversation rather than starting an empty one next to it.
-      const state = requireProjectStore().recordOpened(session.workspacePath, {
-        conversationId: session.conversationId,
-      });
-      if (state.error !== null) {
-        log(`[projects] ${state.error}`);
-      }
-    }
-    // The project is the workspace's working root, so opening one changes the tree.
-    // Announced rather than left for the window to infer, because the folder list is
-    // also changed from a menu the renderer cannot see.
-    rememberWorkspace();
     announceWorkspace();
     return session;
   });
@@ -3457,7 +3581,7 @@ function registerCoreMethods(): void {
   handle('workspace.view', (): WorkspaceView => currentWorkspaceView());
   handle('workspace.addFolder', (_event, folderPath: string): WorkspaceView => addWorkspaceFolder(folderPath));
   handle('workspace.removeFolder', (_event, folderPath: string): WorkspaceView => removeWorkspaceFolder(folderPath));
-  handle('workspace.openFile', (_event, filePath: string): WorkspaceView => openWorkspace(filePath));
+  handle('workspace.openFile', (_event, filePath: string): Promise<WorkspaceView> => openWorkspace(filePath));
   handle('workspace.saveFile', (_event, filePath: string): WorkspaceView => saveWorkspace(filePath));
   handle('workspace.readDirectory', (_event, dirPath: string): DirectoryPage => readDirectoryPage(dirPath));
   handle('workspace.readFile', (_event, filePath: string): FileView => readFileForViewing(filePath));

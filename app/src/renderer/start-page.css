@@ -1,0 +1,669 @@
+/* --- The start page (DSP-149). ------------------------------------------------
+   Niclas's approved target image: a graphite background with a faint blue tone, the
+   DSpatch wordmark with a blue-turquoise S, Open Project and Remote Session side by
+   side, a calm Recent list and a composer. The gradients and the restrained light are
+   part of that identity (his decision of 27 October 2026, replacing the earlier rule
+   against gradients for this page). The decoration is separate layers behind the
+   content: base light here, SVG bands and edges in `StartBackdrop`. It never takes a
+   click or focus, adds no scroll area, and is toned down in narrow and low windows. */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.start {
+  --start-bg: #0b0f15;
+  --start-text: #eef1f5;
+  --start-muted: #8d97a6;
+  --start-line: rgba(255, 255, 255, 0.08);
+  --start-edge: rgba(255, 255, 255, 0.16);
+  --start-accent: #3b82f6;
+  --start-focus: #60a5fa;
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  color: var(--start-text);
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 30%, rgba(40, 58, 92, 0.28), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 85% 85%, rgba(14, 116, 144, 0.12), transparent 70%),
+    linear-gradient(180deg, #0d121a 0%, var(--start-bg) 100%);
+}
+
+.start__backdrop {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Anchored to the bottom-right corner; at least a minimum size, so in a small window
+   the bands are cut at the outer edges rather than shrunk into the content. */
+.start__backdrop svg {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: max(100%, 960px);
+  height: max(100%, 640px);
+}
+
+.start__top,
+.start__content {
+  position: relative;
+  z-index: 1;
+}
+
+.start__top {
+  position: fixed;
+  top: 1.15rem;
+  left: 1.25rem;
+}
+
+.start__content {
+  box-sizing: border-box;
+  min-height: 100%;
+  width: min(40rem, 100% - 2.5rem);
+  margin: 0 auto;
+  padding: clamp(4rem, 17vh, 12rem) 0 4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1.75rem;
+}
+
+.wordmark {
+  margin: 0 0 0.25rem;
+  text-align: center;
+  font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  font-weight: 700;
+  font-size: clamp(3.25rem, 9vw, 7rem);
+  line-height: 1;
+  letter-spacing: -0.045em;
+  color: #f1f3f6;
+}
+
+.wordmark__s {
+  background: linear-gradient(160deg, #3b82f6 0%, #0ea5e9 55%, #22d3ee 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.start__actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+}
+
+.start__remote {
+  position: relative;
+  display: inline-flex;
+}
+
+.start__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  min-width: 14.75rem;
+  padding: 0.85rem 1.5rem;
+  border: 1px solid var(--start-edge);
+  border-radius: 0.6rem;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--start-text);
+  font: inherit;
+  font-size: 1.05rem;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.start__action:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.start__action--inactive {
+  color: rgba(238, 241, 245, 0.45);
+  border-color: rgba(255, 255, 255, 0.09);
+  cursor: default;
+}
+
+.start__icon {
+  width: 1.45rem;
+  height: 1.45rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.start__tip {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 17rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--start-edge);
+  border-radius: 0.45rem;
+  background: #141a23;
+  color: var(--start-text);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms ease;
+  z-index: 3;
+}
+
+.start__remote:hover .start__tip,
+.start__remote:focus-within .start__tip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.start__problem {
+  margin: -0.5rem auto 0;
+  max-width: 34rem;
+  text-align: center;
+  color: #f0b4ba;
+  font-size: 0.9rem;
+}
+
+.recent {
+  width: min(100%, 39rem);
+  margin: 0.75rem auto 0;
+}
+
+.recent__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--start-line);
+}
+
+.recent__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 400;
+  color: var(--start-muted);
+}
+
+.recent__all {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--start-accent);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.recent__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.recent__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+  padding: 0 0.35rem;
+  border-bottom: 1px solid var(--start-line);
+}
+
+/* The name has priority; the path gives way first and is cut at its start. */
+.recent__name {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 62%;
+  padding: 0.85rem 0.15rem;
+  border: 0;
+  background: none;
+  color: var(--start-text);
+  font: inherit;
+  font-size: 1.12rem;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.recent__name:hover:not(:disabled) {
+  color: #ffffff;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.3);
+  text-underline-offset: 0.2em;
+}
+
+.recent__where {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 0.5rem;
+  color: var(--start-muted);
+  font-size: 0.9rem;
+}
+
+/* The path is cut at its start, so its end - the part that tells folders apart -
+   stays visible however narrow the row is. Every full path is the row's tooltip. */
+.recent__path {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: right;
+}
+
+.recent__path bdi {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.recent__more {
+  flex: none;
+  font-size: 0.82rem;
+}
+
+.recent__menu {
+  position: relative;
+  flex: none;
+}
+
+.recent__menu-button {
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: none;
+  color: var(--start-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.recent__row:hover .recent__menu-button,
+.recent__menu-button:focus-visible,
+.recent__menu-button[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.recent__menu-button:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.recent__popup {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 4;
+  min-width: 12rem;
+  padding: 0.3rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 0.45rem;
+  background: #151b24;
+  box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.45);
+}
+
+.recent__popup button {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.7rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent__popup button:hover,
+.recent__popup button:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.start__composer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: min(100%, 41.5rem);
+  margin: 1.25rem auto 0;
+  padding: 0.55rem 0.6rem 0.55rem 1.4rem;
+  border: 1px solid var(--start-edge);
+  border-radius: 0.6rem;
+  background: rgba(16, 21, 29, 0.72);
+}
+
+.start__input {
+  flex: 1 1 auto;
+  min-height: 2.6rem;
+  max-height: 12rem;
+  padding: 0.6rem 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: none;
+  color: var(--start-text);
+  font: inherit;
+  font-size: 1.05rem;
+  field-sizing: content;
+}
+
+.start__input::placeholder {
+  color: var(--start-muted);
+}
+
+.start__send {
+  flex: none;
+  width: 2.6rem;
+  height: 2.6rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: none;
+  color: var(--start-text);
+  cursor: pointer;
+}
+
+.start__send:disabled {
+  color: var(--start-muted);
+  cursor: default;
+}
+
+.start__send-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* Focus is always visible here, on dark and over the bands alike. */
+.start :focus-visible,
+.dialog :focus-visible,
+.noworkspace :focus-visible {
+  outline: 2px solid var(--start-focus, #60a5fa);
+  outline-offset: 2px;
+}
+
+.start__composer:focus-within {
+  border-color: rgba(96, 165, 250, 0.55);
+}
+
+.start__input:focus-visible {
+  outline: none;
+}
+
+/* The provider choice, top left: what is actually chosen, or that nothing is. */
+.provider {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 0.7rem 0.45rem 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.provider__dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: #6b7280;
+}
+
+.provider__dot--claude {
+  background: #d97757;
+}
+
+.provider__dot--cursor {
+  background: #e5e7eb;
+}
+
+.provider__select {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0 1.4rem 0 0;
+  cursor: pointer;
+}
+
+.provider__select option {
+  background: #151b24;
+  color: var(--text);
+}
+
+.provider__chevron {
+  position: absolute;
+  right: 0.65rem;
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  pointer-events: none;
+}
+
+.provider--none .provider__select {
+  color: var(--muted);
+}
+
+/* Narrow windows (the window's own minimum is 720 px): the bands step back. */
+@media (max-width: 820px) {
+  .start__backdrop {
+    opacity: 0.5;
+  }
+}
+
+/* Narrower still, as with a large zoom: the two entrances stack. */
+@media (max-width: 560px) {
+  .start__action {
+    min-width: 0;
+    width: 100%;
+  }
+  .start__actions > .start__action,
+  .start__remote {
+    flex: 1 1 100%;
+  }
+  .start__content {
+    padding-top: 5rem;
+  }
+  .recent__name {
+    max-width: 60%;
+  }
+}
+
+/* Low windows: a smaller wordmark, less space between, the bands quieter still. */
+@media (max-height: 620px) {
+  .start__backdrop {
+    opacity: 0.35;
+  }
+  .start__content {
+    padding-top: 3.75rem;
+    gap: 1.1rem;
+  }
+  .wordmark {
+    font-size: clamp(2.5rem, 7vw, 4rem);
+  }
+}
+
+/* --- Dialogs: Recent projects (View all) and Conversation history (DSP-149). --- */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 8vh 1rem 1rem;
+  background: rgba(4, 7, 12, 0.6);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: min(40rem, 100%);
+  max-height: 84vh;
+  padding: 1rem 1.1rem 1.1rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.7rem;
+  background: #121821;
+  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.55);
+  overflow-y: auto;
+  --start-text: var(--text);
+  --start-muted: var(--muted);
+  --start-line: var(--line);
+  --start-accent: #3b82f6;
+}
+
+.dialog--wide {
+  width: min(56rem, 100%);
+}
+
+.dialog__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.dialog__title {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.dialog__search {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.dialog__empty {
+  margin: 0.5rem 0;
+  color: var(--muted);
+}
+
+.dialog .recent__name {
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.dialog .recent__menu-button {
+  opacity: 1;
+}
+
+/* --- Above a conversation with no workspace yet (DSP-149). ------------------- */
+.noworkspace {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  padding: 0.25rem 0 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.wordmark--compact {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: -0.03em;
+  text-align: left;
+}
+
+.noworkspace__label {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.noworkspace__spacer {
+  flex: 1 1 auto;
+}
+
+/* The workspace's chats, in the sidebar under its folders (DSP-149). */
+.sidebar__chats {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}
+
+.sidebar__chats-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sidebar__chat {
+  display: block;
+  width: 100%;
+  padding: 0.3rem 0.4rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.sidebar__chat:hover,
+.sidebar__chat:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sidebar__chat--current {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* Conversation history: export and file information are secondary (DSP-149). */
+.files__more {
+  display: inline-block;
+  color: var(--muted);
+}
+
+.files__more > summary {
+  cursor: pointer;
+  padding: 0.35rem 0.5rem;
+}
+
+.files__more[open] {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}

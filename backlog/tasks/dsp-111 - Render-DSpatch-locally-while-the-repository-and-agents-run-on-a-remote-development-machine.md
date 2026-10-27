@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-10-21 15:09'
-updated_date: '2026-10-27 18:44'
+updated_date: '2026-10-27 20:50'
 labels:
   - integration
 dependencies:
@@ -156,4 +156,6 @@ Remaining direct dependencies or departures:
 - Child processes of a host that crashed are not established to end.
 
 Still open and needing Niclas's decision (unchanged): the transport and its authentication; what a dropped connection does to work in progress; one or several clients (single writer per conversation and review is not host-enforced yet); where durable history lives and any local caching. Not done: host-side browsing, a remote transport, reconnection, two-machine and Linux trials (DSP-131).
+
+27 Oct 2026, DSP-149 (Niclas's decision): the start page has a Remote Session button beside Open Project, the approved entrance to connecting over SSH and choosing folders on the remote host. Placement, name and SSH as the intended path are approved; authentication details, disconnect behaviour and several clients are not decided. Until this card's remote transport exists the button is shown inactive with a short explanation, and nothing connects. Local and remote workspaces are meant to reopen from the same Recent list, with a remote workspace's connection settings saved with it.
 <!-- SECTION:NOTES:END -->

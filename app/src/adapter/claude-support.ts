@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
 import type { SDKSessionInfo } from './claude-sdk-shapes';
@@ -233,6 +234,64 @@ export async function loadClaudeSdk(
     );
   }
   return (await import(pathToFileURL(sdkEntry(directory)).href)) as ClaudeSdkModule;
+}
+
+/**
+ * The SDK's in-process tool API, as far as the adapter calls it (DSP-149): the SDK's
+ * own `createSdkMcpServer` and `tool`, and the zod the SDK takes parameter shapes in.
+ * Typed loosely here because the SDK is not a dependency of the app; the shapes the
+ * adapter passes are checked against the installed SDK by `npm run typecheck:claude`.
+ */
+export interface ClaudeToolKit {
+  readonly createSdkMcpServer: (options: {
+    readonly name: string;
+    readonly version: string;
+    readonly tools: readonly unknown[];
+  }) => unknown;
+  readonly tool: (
+    name: string,
+    description: string,
+    shape: Record<string, unknown>,
+    handler: (args: unknown, extra: unknown) => Promise<unknown>,
+    extras: { readonly annotations: { readonly readOnlyHint: boolean } },
+  ) => unknown;
+  readonly z: ClaudeZod;
+}
+
+/** The part of zod the adapter uses to describe a parameter. */
+export interface ClaudeZodSchema {
+  describe(description: string): ClaudeZodSchema;
+  optional(): ClaudeZodSchema;
+}
+export interface ClaudeZod {
+  string(): ClaudeZodSchema;
+  array(item: ClaudeZodSchema): ClaudeZodSchema;
+}
+
+/**
+ * Load the SDK's tool API and zod from Claude support. zod is the SDK's own peer
+ * dependency, installed beside it by `npm run claude:install`; it is resolved from that
+ * folder, never from the app's dependencies.
+ */
+export async function loadClaudeToolKit(directory: string = claudeSupportDir()): Promise<ClaudeToolKit> {
+  const sdk = (await loadClaudeSdk(directory)) as unknown as {
+    readonly createSdkMcpServer: ClaudeToolKit['createSdkMcpServer'];
+    readonly tool: ClaudeToolKit['tool'];
+  };
+  const requireFromSupport = createRequire(path.join(directory, 'package.json'));
+  let zodModule: { readonly z?: ClaudeZod } & Partial<ClaudeZod>;
+  try {
+    zodModule = (await import(pathToFileURL(requireFromSupport.resolve('zod')).href)) as typeof zodModule;
+  } catch (error) {
+    throw new ClaudeAdapterError(
+      'Claude support is installed without zod, which the Claude SDK needs for DSpatch\'s ' +
+        'tools. Run `npm run claude:install` in `app/` again.',
+      'claude_support_missing',
+      error,
+    );
+  }
+  const z = zodModule.z ?? (zodModule as ClaudeZod);
+  return { createSdkMcpServer: sdk.createSdkMcpServer, tool: sdk.tool, z };
 }
 
 /** What decides whether Claude can be chosen in a launch: both parts, each stated. */

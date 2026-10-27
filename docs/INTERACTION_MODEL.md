@@ -2,7 +2,7 @@
 
 Who does what, and how the conversation continues
 
-DSpatch · 27 October 2026 · Version 1.4 · Owner: Niclas Danielsson
+DSpatch · 27 October 2026 · Version 1.5 · Owner: Niclas Danielsson
 
 This is the governing description of how a person, the agents and Maestro share the work. It describes intended behaviour, not a claim that every feature is implemented or verified.
 
@@ -103,6 +103,18 @@ How this relates to the sections above, which are not rewritten:
 - §4.3 says a question during work does not automatically steer it. Under this decision a question sent during agent work also goes to that work. The receiving agent interprets the intent, as this section requires: it answers the question and changes direction only if it takes the message as an instruction. A separate answer path for questions during work would need a new decision.
 - §4.4 and the paragraph above expect delivery at a handover or when an interrupted step continues. This decision adds delivery into the running work where the runtime supports it; where it does not, the message stays pending as described above.
 - The working-copy rule for commands built in DSP-145 and DSP-146 locks only per command and in one direction. It is narrower than the symmetric rule decided here.
+
+### 3.2 Starting from a conversation, and workspaces of several folders (decision, 27 October 2026)
+
+Niclas decided the following on 27 October 2026. [DSP-149](../backlog/tasks/dsp-149%20-%20Start-from-a-conversation-and-work-in-workspaces-of-several-folders.md) implements it; what that card left open is listed there.
+
+- **The start page** holds a discreet provider choice at the top left, the DSpatch wordmark, **Open Project** and **Remote Session** side by side, **Recent projects** with *View all*, and a composer for starting a conversation without a workspace. Nothing else: no git information, timestamps, per-row buttons, explanations, sample project, conversation archive, diagnostics or standing warnings. The approved target image's graphite background, blue–turquoise gradient in the S and translucent bands along the bottom and right edges are part of the identity; they sit behind the content and give way to a conversation.
+- **Remote Session** is the intended entrance to connecting over SSH and choosing folders on the remote host. Its placement and name are approved; the remote implementation is [DSP-111](../backlog/tasks/dsp-111%20-%20Render-DSpatch-locally-while-the-repository-and-agents-run-on-a-remote-development-machine.md)'s, and until it exists the button is shown inactive with a short explanation. Local and remote workspaces are meant to reopen from the same Recent list.
+- **A workspace** has a persistent identity, a name (its first folder's name by default) and one or more folders, possibly from different Git repositories. The first folder is where the agent's commands start; that does not limit the workspace to one folder. Every folder is given to the agent, in the chat and in loops, through each provider SDK's own mechanism. Open Project creates or reopens the workspace of a chosen first folder; *Add Folder to Workspace* adds more. Recent lists workspaces, one entry each; *Remove from recent* removes only the entry.
+- **A conversation can start before a workspace exists.** No provider is assumed on a new installation. Such a conversation never uses DSpatch's repository or the process's working directory as the person's project; it is saved and survives a restart. When a workspace is opened it continues there as the same visible conversation; opening an existing workspace makes it a chat of its own there, with that workspace's older chats kept apart. A new provider session gets the conversation through DSpatch's disclosed recap and is not described as the same session.
+- **Opening a workspace sends nothing and starts no work.** An explicit request in the conversation is kept and continues when the person sends the next message.
+- **The chat can use DSpatch's workspace functions** — find existing folders under a stated place on the current host, create, name and open a workspace, add folders — through the provider SDK's supported tool mechanism, using the same host functions as the menus. It asks when something is ambiguous or missing rather than inventing a path, never writes DSpatch's own configuration files, and never creates or moves folders. These tools replace none of the agent's own tools; their descriptions are shown word for word in the session details.
+- **Older and stand-alone conversations** are reached from a history view in the menu, where export and file information are secondary actions for a chosen conversation.
 
 ## 4 Seven situations
 
@@ -290,6 +302,10 @@ Practical trials should cover:
 For the next increment, prioritise the ongoing-interaction and recovery trials above. Compare the experience with Niclas's working Cursor loop: the user should be able to converse, understand handovers and intervene just as naturally, while DSpatch makes the run easier to follow and recover. Passing technical tests alone does not establish that this interaction is usable.
 
 Identify the build and provider used for each trial. Report untested behaviour and limitations explicitly, including inability to confirm cancellation or resume an agent session. Record the user's judgement separately where usability needs it.
+
+### Revision 1.5
+
+Records Niclas's decisions of 27 October 2026 on the start page, workspaces of several folders, a conversation that begins before a workspace and follows the person into it, the chat's use of DSpatch's workspace functions, and Remote Session as the intended SSH entrance (§3.2).
 
 ### Revision 1.3
 

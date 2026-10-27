@@ -7,14 +7,18 @@ import {
   getDefaultSdkStateRoot,
   type AgentUsage,
   type ModelSelection,
+  type LocalAgentOptions,
   type Run,
   type SDKAgent,
+  type SDKCustomTool,
+  type SDKJsonValue,
   type SDKMessage,
 } from '@cursor/sdk';
 
 import type { AgentAdapter } from './agent-adapter';
 import type {
   AdapterError,
+  AppTool,
   AgentEvent,
   AgentEventListener,
   ApprovalDecision,
@@ -157,8 +161,12 @@ export interface CursorDisposalRecord {
 
 interface SessionState {
   readonly dspatchSessionId: DspatchSessionId;
-  readonly config: SessionConfig;
-  readonly agent: SDKAgent;
+  /** Replaced when the workspace's folders change (DSP-149). */
+  config: SessionConfig;
+  /** Replaced by a resume with the new `local.dirs` when the folders change (DSP-149). */
+  agent: SDKAgent;
+  /** The folders changed since the agent was created or resumed; resumed before the next send. */
+  rootsChanged: boolean;
   readonly providerSessionId: string;
   readonly createdAt: Timestamp;
   readonly listeners: Set<AgentEventListener>;
@@ -278,7 +286,39 @@ export function providerAgentIdFor(dspatchSessionId: DspatchSessionId): string {
  * `{type:"insecure_none"}`. `dirs` loads configuration; it does not confine anything,
  * and no string DSpatch shows may suggest otherwise.
  */
-export function localOptionsFor(config: SessionConfig): {
+/**
+ * DSP-149: DSpatch's app tools as the SDK's `local.customTools`, which it exposes to the
+ * model as its `custom-user-tools` MCP server and runs in this process. Parameters
+ * become a JSON Schema object; the result is MCP text content with an error flag.
+ */
+export function cursorCustomTools(tools: readonly AppTool[]): Record<string, SDKCustomTool> {
+  const result: Record<string, SDKCustomTool> = {};
+  for (const appTool of tools) {
+    const properties: Record<string, SDKJsonValue> = {};
+    const required: string[] = [];
+    for (const [key, parameter] of Object.entries(appTool.parameters)) {
+      properties[key] =
+        parameter.type === 'string'
+          ? { type: 'string', description: parameter.description }
+          : { type: 'array', items: { type: 'string' }, description: parameter.description };
+      if (parameter.optional !== true) {
+        required.push(key);
+      }
+    }
+    result[appTool.name] = {
+      description: appTool.description,
+      inputSchema: { type: 'object', properties, required },
+      annotations: { readOnlyHint: appTool.readOnly },
+      execute: async (args) => {
+        const outcome = await appTool.execute(args);
+        return { content: [{ type: 'text', text: outcome.text }], isError: outcome.isError };
+      },
+    };
+  }
+  return result;
+}
+
+export function localOptionsFor(config: SessionConfig): Pick<LocalAgentOptions, 'customTools'> & {
   readonly cwd: string;
   readonly dirs?: string[];
 } {
@@ -293,10 +333,20 @@ export function localOptionsFor(config: SessionConfig): {
       roots.push(folder);
     }
   }
+  const appTools = config.appTools ?? [];
   return {
     cwd: config.workspacePath,
     ...(roots.length > 1 ? { dirs: roots } : {}),
+    ...(appTools.length === 0 ? {} : { customTools: cursorCustomTools(appTools) }),
   };
+}
+
+/**
+ * Built-in tools off: the review discussion's text-only policy, and (DSP-149) a
+ * conversation with no workspace yet, which gets only DSpatch's app tools.
+ */
+function noBuiltInTools(toolPolicy: ToolPolicy, config: SessionConfig): boolean {
+  return toolPolicy === 'text-only' || config.toolScope === 'conversation';
 }
 
 export class CursorSdkAdapter implements AgentAdapter {
@@ -332,7 +382,7 @@ export class CursorSdkAdapter implements AgentAdapter {
         agentId: providerAgentIdFor(dspatchSessionId),
         model: this.modelSelection(config),
         name: `DSpatch ${dspatchSessionId}`,
-        ...(this.toolPolicy === 'text-only' ? { tools: [] } : {}),
+        ...(noBuiltInTools(this.toolPolicy, config) ? { tools: [] } : {}),
         local: localOptionsFor(config),
       });
     } catch (error) {
@@ -366,7 +416,7 @@ export class CursorSdkAdapter implements AgentAdapter {
     try {
       agent = await Agent.resume(providerAgentIdFor(sessionId), {
         model: this.modelSelection(config),
-        ...(this.toolPolicy === 'text-only' ? { tools: [] } : {}),
+        ...(noBuiltInTools(this.toolPolicy, config) ? { tools: [] } : {}),
         // The same roots, because `dirs` is not on `send`: a resumed session that
         // omitted them would silently drop every root but the first, and the agent
         // would lose the folders' rules with nothing on screen to say so.
@@ -401,6 +451,23 @@ export class CursorSdkAdapter implements AgentAdapter {
         `Session "${sessionId}" already has an active run ` +
           `(${state.activeRun.dspatchRunId}). At most one run per session.`,
       );
+    }
+
+    if (state.rootsChanged) {
+      // DSP-149: `dirs` is on `Agent.create` and `Agent.resume` and never on `send`, so
+      // a changed folder list reaches Cursor by resuming the same agent with it. The old
+      // handle is closed first; the agent and its history are the provider's, unchanged.
+      try {
+        await state.agent[Symbol.asyncDispose]();
+        state.agent = await Agent.resume(providerAgentIdFor(sessionId), {
+          model: this.modelSelection(state.config),
+          ...(noBuiltInTools(this.toolPolicy, state.config) ? { tools: [] } : {}),
+          local: localOptionsFor(state.config),
+        });
+        state.rootsChanged = false;
+      } catch (error) {
+        throw toAdapterError('resume', error);
+      }
     }
 
     const dspatchRunId = newRunId();
@@ -628,6 +695,19 @@ export class CursorSdkAdapter implements AgentAdapter {
     return [...this.disposalRecords];
   }
 
+  /**
+   * DSP-149: the folders changed. Applied before the next send by resuming the agent
+   * with the new `local.dirs`; the primary (`cwd`) is never changed here.
+   */
+  setWorkspaceRoots(sessionId: DspatchSessionId, roots: readonly string[]): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) {
+      return;
+    }
+    state.config = { ...state.config, workspacePaths: [...roots] };
+    state.rootsChanged = true;
+  }
+
   /** Where the SDK keeps local agent state for a workspace. Outside the repo. */
   static localStateRootFor(workspacePath: string): string {
     return getDefaultSdkStateRoot(workspacePath);
@@ -643,6 +723,7 @@ export class CursorSdkAdapter implements AgentAdapter {
       dspatchSessionId,
       config,
       agent,
+      rootsChanged: false,
       providerSessionId: agent.agentId,
       createdAt,
       listeners: new Set(),

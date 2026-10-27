@@ -12,7 +12,7 @@ import type * as Sdk from '@anthropic-ai/claude-agent-sdk' with { 'resolution-mo
 
 import type { ClaudeQueryFunction, ClaudeQueryHandle } from '../src/adapter/claude-agent-sdk-adapter';
 import type * as Ours from '../src/adapter/claude-sdk-shapes';
-import type { ClaudeSdkModule } from '../src/adapter/claude-support';
+import type { ClaudeSdkModule, ClaudeToolKit } from '../src/adapter/claude-support';
 
 function fits<T>(value: T): T {
   return value;
@@ -27,7 +27,8 @@ declare const oursUserMessage: Ours.SDKUserMessage;
 declare const oursHookCallback: Ours.HookCallback;
 declare const oursHookOutput: Ours.HookJSONOutput;
 declare const oursSpawned: Ours.SpawnedProcess;
-declare const oursOptions: Ours.Options;
+declare const oursOptions: Omit<Ours.Options, 'mcpServers'>;
+declare const sdkServer: ReturnType<typeof Sdk.createSdkMcpServer>;
 declare const oursQueryParams: Parameters<ClaudeQueryFunction>[0];
 
 // SDK -> DSpatch.
@@ -43,7 +44,21 @@ fits<Sdk.HookCallback>(oursHookCallback);
 fits<Sdk.HookJSONOutput>(oursHookOutput);
 fits<Sdk.SpawnedProcess>(oursSpawned);
 fits<Sdk.Options>(oursOptions);
-fits<Parameters<typeof Sdk.query>[0]>(oursQueryParams);
+fits<Parameters<typeof Sdk.query>[0]>({ ...oursQueryParams, options: { ...oursQueryParams.options, mcpServers: undefined } });
+
+// DSP-149: the in-process tool server. DSpatch passes what the SDK's own
+// `createSdkMcpServer` returned, unchanged, as an `mcpServers` value; it calls the
+// SDK's `createSdkMcpServer` and `tool` with the arguments its tool kit declares.
+fits<NonNullable<Sdk.Options['mcpServers']>[string]>(sdkServer);
+declare const kitServerOptions: Parameters<ClaudeToolKit['createSdkMcpServer']>[0];
+declare const kitToolArgs: Parameters<ClaudeToolKit['tool']>;
+fits<Parameters<typeof Sdk.createSdkMcpServer>[0]['name']>(kitServerOptions.name);
+fits<Parameters<typeof Sdk.createSdkMcpServer>[0]['version']>(kitServerOptions.version);
+fits<Parameters<typeof Sdk.tool>[0]>(kitToolArgs[0]);
+fits<Parameters<typeof Sdk.tool>[1]>(kitToolArgs[1]);
+fits<NonNullable<Parameters<typeof Sdk.tool>[4]>['annotations']>(kitToolArgs[4].annotations);
+// What a handler returns is MCP text content with an error flag.
+fits<Awaited<ReturnType<Parameters<typeof Sdk.tool>[3]>>>({ content: [{ type: 'text', text: '' }], isError: false });
 
 // Key checks (R-0 A1). The `fits` lines above assign declared values, which TypeScript
 // does not check for excess properties, so a key the SDK dropped or renamed would still

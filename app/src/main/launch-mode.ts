@@ -62,6 +62,8 @@ export const chatRunScenario: ScriptedScenario =
                               ? 'liveness-and-an-ending'
                               : chatRunValue === 'liveness-look'
                                 ? 'how-the-liveness-looks'
+                                : chatRunValue === 'workspace-flow'
+                                ? 'workspace-flow'
                                 : chatRunValue === 'switch'
                                   ? 'workspace-switch'
                                   : chatRunValue === 'resume-choice'
@@ -142,6 +144,9 @@ export const presentationMode =
   // them, and after a restart. Everything in it is read from files on this machine;
   // the adapter only lets a session open, and nothing is sent to it.
   chatRunScenario === 'workspace-switch' ||
+  // DSP-149: the start page, workspaces and the chat's tools. Every reply and tool call
+  // is the presentation adapter's; what is checked is DSpatch's own.
+  chatRunScenario === 'workspace-flow' ||
   // DSP-121: the refused and failed resume states through the real choice panel. The
   // refusal is the presentation adapter's own, simulated on this machine; the one
   // message the scenario sends after choosing a new session is answered locally.

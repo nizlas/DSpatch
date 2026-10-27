@@ -4,7 +4,7 @@ title: 'Several named working roots in the run, described honestly'
 status: Review
 assignee: []
 created_date: '2026-09-20 09:03'
-updated_date: '2026-09-20 12:44'
+updated_date: '2026-10-27 20:50'
 labels: []
 dependencies:
   - DSP-70
@@ -48,4 +48,6 @@ DECISIONS: a root containing DSpatch refuses the WHOLE RUN, naming every offendi
 Verified in report 011 (PASS WITH FINDINGS); all three findings closed. Candidate sha256:538ece71. 822 fast tests, 55 live, 0 fail. UX acceptance HUMAN_PENDING.
 
 STILL OPEN: no run with two roots has actually walked, so what an agent DOES with two roots is unobserved. Per-root measurement is proven with a fake adapter. Two roots cost two tree walks per step and nothing measures that cost. dirs on resume is unexercised - the Verifier judged it not worth its own card since create and resume call the same function, and recommends folding the check into whichever card spends the first two-root provider turn.
+
+27 Oct 2026, DSP-149: 'The roots reach the provider ONLY on a loop run' no longer holds. An ordinary chat message now gives the agent every folder of the workspace too (Cursor cwd plus dirs; Claude additionalDirectories with the policy's anchored Read and Edit rules restated per folder). The one-folder refusal for Claude in loops is removed. Still no containment; per-folder change reports and command snapshots cover every folder.
 <!-- SECTION:NOTES:END -->

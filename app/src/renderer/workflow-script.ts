@@ -185,6 +185,17 @@ function textOf(name: string): string {
   return (element(name)?.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Whether the window is past its connection check, or has none to make yet (DSP-149):
+ * the start page has no session details and checks no connection before a session.
+ */
+function connectionDecided(): boolean {
+  return (
+    element('start-page') !== null ||
+    ['connected', 'not-connected', 'error'].includes(textOf('connection-kind'))
+  );
+}
+
 function attributeOf(name: string, attribute: string): string {
   return element(name)?.getAttribute(attribute) ?? '';
 }
@@ -778,6 +789,8 @@ export async function runScriptedWorkflow(
       return runReviewDiscussionScenario(plan);
     case 'review-hold':
       return runReviewHoldScenario(plan);
+    case 'workspace-flow':
+      return runWorkspaceFlowScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -821,13 +834,8 @@ async function runErrorsReadWellScenario(
   };
 
   try {
-    await waitFor(
-      'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
-      60_000,
-    );
-
-    await click('new-session');
+    // DSP-149: the sample project is a development menu item now, not a start page button.
+    await window.dspatch.pressMenuItem('new-sample-project');
     await waitFor(
       'the refusal to reach the window',
       () => element('session-error') !== null,
@@ -1007,7 +1015,7 @@ async function runLoopFilesAResultScenario(plan: ScriptedRunPlan): Promise<Scrip
   try {
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor(
@@ -1250,7 +1258,7 @@ async function runChosenLoopScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
   try {
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor(
@@ -1540,7 +1548,7 @@ async function runOpenChooseRunScenario(plan: ScriptedRunPlan): Promise<Scripted
   try {
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor(
@@ -2141,7 +2149,7 @@ async function runOneGraphViewScenario(plan: ScriptedRunPlan): Promise<ScriptedR
   try {
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor(
@@ -2874,7 +2882,7 @@ async function runLivenessAndAnEndingScenario(
   try {
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor(
@@ -3489,7 +3497,7 @@ async function runChatSaysLessScenario(plan: ScriptedRunPlan): Promise<ScriptedR
   try {
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor(
@@ -3772,7 +3780,7 @@ async function runStopIAskedForScenario(plan: ScriptedRunPlan): Promise<Scripted
   try {
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor(
@@ -4062,7 +4070,7 @@ async function runUnsavedEditsSurviveASwitchScenario(
 
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor(
@@ -4470,7 +4478,7 @@ async function runFoldersAndTreeScenario(plan: ScriptedRunPlan): Promise<Scripte
 
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor(
@@ -4730,7 +4738,7 @@ async function runSeveralWorkingRootsScenario(
   try {
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor(
@@ -5129,7 +5137,7 @@ async function runConversationComesBackScenario(
   try {
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
 
@@ -5243,7 +5251,7 @@ async function runPresentationScenario(
   try {
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
 
@@ -5253,7 +5261,8 @@ async function runPresentationScenario(
     const chromeHeightAtRest = bar?.getBoundingClientRect().height ?? 0;
     record('chrome-at-rest', { chromeHeightPx: Math.round(chromeHeightAtRest) });
 
-    await click('new-session');
+    // DSP-149: a sample project is a development menu item, not a start page button.
+    await window.dspatch.pressMenuItem('new-sample-project');
     await waitFor(
       'a session to open',
       () => textOf('session-id') !== '' && element('prompt') !== null,
@@ -5662,7 +5671,8 @@ async function runPresentationScenario(
     // across a restart, which `conversation-store.test.ts` covers separately.
     // Through the menu, for the reason the details were: *Open a project…* is a
     // menu item and the button that used to do this is gone.
-    await window.dspatch.pressMenuItem('change-project');
+    // DSP-149: saved conversations are in the history view, from the menu.
+    await window.dspatch.pressMenuItem('show-history');
     await waitFor('the conversation list', () => element('conversations') !== null, 30_000);
     let elementsAfterReopening: readonly string[] = [];
     if (element('resume-0') !== null) {
@@ -5841,7 +5851,7 @@ async function runReviewAndTestScenario(
   try {
     await waitFor(
       'the connection panel to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       120_000,
     );
     const connectionKind = textOf('connection-kind');
@@ -6162,7 +6172,7 @@ async function runInteractiveChatScenario(
   try {
     await waitFor(
       'the connection panel to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       120_000,
     );
     const connectionKind = textOf('connection-kind');
@@ -6528,7 +6538,7 @@ async function runConversationDuringWorkScenario(
     // --- The connection, by the same gate as every other scenario ------------
     await waitFor(
       'the connection panel to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       120_000,
     );
     const connectionKind = textOf('connection-kind');
@@ -6557,7 +6567,8 @@ async function runConversationDuringWorkScenario(
     // to offer: a loop run writes files and runs commands in the project it is
     // given, and this scenario must never be pointed at somebody's own work by a
     // remembered entry in a list.
-    await click('new-session');
+    // DSP-149: a sample project is a development menu item, not a start page button.
+    await window.dspatch.pressMenuItem('new-sample-project');
     await waitFor(
       'a session id in the window',
       () => textOf('session-id').startsWith('dsp-session-'),
@@ -6980,7 +6991,7 @@ async function runFullWorkflow(
     // --- 1. Connection status, as the window shows it ------------------------
     await waitFor(
       'the connection panel to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       120_000,
     );
     const connectionKind = textOf('connection-kind');
@@ -7017,7 +7028,8 @@ async function runFullWorkflow(
     }
 
     // --- 2. A session over a freshly generated working copy ------------------
-    await click('new-session');
+    // DSP-149: a sample project is a development menu item, not a start page button.
+    await window.dspatch.pressMenuItem('new-sample-project');
     await waitFor(
       'a session id in the window',
       () => textOf('session-id').startsWith('dsp-session-'),
@@ -7804,7 +7816,11 @@ async function runWorkspaceSwitchScenario(plan: ScriptedRunPlan): Promise<Script
 
   /** "Read this back" on a saved conversation, and what the restored panel drew. */
   const readBack = async (label: string, target: string): Promise<Record<string, unknown>> => {
-    await showChooser(`to read ${label} back`);
+    // DSP-149: saved conversations are in the history view, from the menu.
+    if (element('history') === null) {
+      await window.dspatch.pressMenuItem('show-history');
+      await waitFor(`the history view (to read ${label} back)`, () => element('history') !== null, 10_000);
+    }
     await waitFor(
       `${label} to be listed among the saved conversations`,
       () => rowOf('conversation-project', '', target) !== null,
@@ -7880,7 +7896,7 @@ async function runWorkspaceSwitchScenario(plan: ScriptedRunPlan): Promise<Script
     }
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor('the Recent list', () => element('project-0-path') !== null, 60_000);
@@ -9038,7 +9054,7 @@ async function runResumeChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     }
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
     await waitFor('the Recent list', () => element('project-0-path') !== null, 60_000);
@@ -9393,7 +9409,7 @@ async function runReviewWindowScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     }
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
 
@@ -9573,7 +9589,7 @@ async function runReviewHoldScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     if (projectOne === undefined) {
       throw new Error('the hand-over needs P1 in DSPATCH_CHAT_SWITCH_PROJECTS');
     }
-    await waitFor('the connection to reach a decided state', () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')), 60_000);
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
     if (element('projects') === null) {
       await window.dspatch.pressMenuItem('change-project');
       await waitFor('the project chooser', () => element('projects') !== null, 10_000);
@@ -9800,7 +9816,7 @@ async function runReviewDiscussionScenario(plan: ScriptedRunPlan): Promise<Scrip
     }
     await waitFor(
       'the connection to reach a decided state',
-      () => ['connected', 'not-connected', 'error'].includes(textOf('connection-kind')),
+      connectionDecided,
       60_000,
     );
 
@@ -10011,6 +10027,227 @@ async function runReviewDiscussionScenario(plan: ScriptedRunPlan): Promise<Scrip
     } catch {
       // The exit closes them in any case.
     }
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-149: start page, a conversation, a workspace of several folders       */
+/* ------------------------------------------------------------------------- */
+
+/** Words from the old start page that must not be on the new one, anywhere on it. */
+const OLD_START_PAGE_WORDS = [
+  'Saved conversations',
+  'Read this back',
+  'Export a copy',
+  'Show the file',
+  'Forget',
+  'opened before',
+  'generated sample',
+  'sample project',
+  'snapshot',
+  'DSPATCH_PROJECT_PATH',
+  'git repository',
+  'format version',
+  'dsp-session',
+];
+
+/** The whole start page as text, including whatever is below the visible area. */
+function startPageText(): string {
+  return (element('start-page')?.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** Screenshots of the start page: normal, narrow and low, each scrolled to its end too. */
+async function captureStartPage(label: string, record: (name: string, detail: Record<string, unknown>) => void): Promise<void> {
+  const sizes: readonly (readonly [string, number, number])[] = [
+    ['normal', 1440, 940],
+    ['narrow', 720, 940],
+    ['low', 1280, 560],
+  ];
+  for (const [name, width, height] of sizes) {
+    const contentWidth = await window.dspatch.setWindowWidth(width, height);
+    await sleep(400);
+    const page = element('start-page');
+    if (page !== null) {
+      page.scrollTop = 0;
+    }
+    await sleep(120);
+    await window.dspatch.captureWindow(`${label}-${name}`);
+    const scrollRange = page === null ? 0 : page.scrollHeight - page.clientHeight;
+    if (page !== null && scrollRange > 0) {
+      page.scrollTop = scrollRange;
+      await sleep(150);
+      await window.dspatch.captureWindow(`${label}-${name}-scrolled`);
+      page.scrollTop = 0;
+    }
+    record(`start page captured (${label}, ${name})`, {
+      contentWidth,
+      innerHeight: window.innerHeight,
+      scrollRangePx: scrollRange,
+      documentScrolls: document.documentElement.scrollHeight > document.documentElement.clientHeight,
+    });
+  }
+  await window.dspatch.setWindowWidth(1440, 940);
+  await sleep(300);
+}
+
+/**
+ * The connected flow, in two processes over one isolated user-data folder.
+ *
+ * `first`: the start page (empty Recent), a conversation with no workspace, a workspace
+ * of two folders created by the chat's own tools and opened with the conversation
+ * carried in, the agent's folders read back, a third folder added from the menu's path.
+ *
+ * `again` (a restart): Recent with the workspace and seeded long entries, a new
+ * conversation carried into the existing workspace as a chat of its own, the folders
+ * after the restart, the history view, and Remove from recent.
+ *
+ * SIMULATED: every reply and every tool call comes from the presentation adapter, which
+ * calls the session's real DSpatch tools when a prompt names them. No provider is
+ * called. The host, the store, the conversation files and the window are the real ones.
+ */
+async function runWorkspaceFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const phase = plan.flowPhase ?? 'first';
+  const root = plan.flowRoot ?? '';
+  const sep = root.includes('\\') ? '\\' : '/';
+  const alpha = `${root}${sep}alpha`;
+  const beta = `${root}${sep}beta`;
+  const gamma = `${root}${sep}gamma`;
+  const observations: Record<string, unknown> = {
+    plan,
+    phase,
+    limits:
+      'SIMULATED provider: the presentation adapter answered every message and made the tool ' +
+      'calls a prompt named, through the session’s own DSpatch tools. No model chose those calls. ' +
+      'The host process, the stores, the conversation files and the window are real.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const lower = (text: string): string => text.toLowerCase();
+  const historyTurns = (): number => document.querySelectorAll('[data-ev^="history-turn-"][data-ended]').length;
+  const answerOf = (index: number): string => textOf(`turn-${String(index)}-answer`);
+
+  try {
+    await waitFor('the start page', () => element('start-page') !== null, 60_000);
+    const text = startPageText();
+    const leftovers = OLD_START_PAGE_WORDS.filter((word) => lower(text).includes(lower(word)));
+    expect(leftovers.length === 0, `the start page still says: ${leftovers.join(', ')}`);
+    for (const gone of ['conversations', 'diagnostics', 'sample-projects', 'projects']) {
+      expect(element(gone) === null, `the start page has the old "${gone}" panel`);
+    }
+    expect(element('open-project') !== null && element('remote-session') !== null, 'both entrances are on the start page');
+    expect(attributeOf('remote-session', 'aria-disabled') === 'true', 'Remote Session is shown inactive');
+    record('start page read', { text, leftovers, recentRows: document.querySelectorAll('[data-ev^="open-project-"]').length });
+    await captureStartPage(phase === 'first' ? 'start-empty' : 'start-recent', record);
+
+    if (phase === 'first') {
+      // 1. A conversation with no workspace.
+      await typeInto('start-prompt', 'I want to work on the agent integration across two projects.');
+      await click('start-send');
+      await waitFor('the first reply', () => element('active-answer') === null && element('turn-0-answer') !== null, 60_000);
+      expect(element('no-workspace') !== null, 'the conversation shows that it has no workspace yet');
+      record('conversation with no workspace', { answer: answerOf(0) });
+      await window.dspatch.captureWindow('loose-conversation');
+
+      // 2. A workspace of two folders, created through the chat's tools.
+      const find = JSON.stringify({ names: ['alpha', 'beta'], under: root });
+      const create = JSON.stringify({ name: 'Agentintegration', folders: [alpha, beta] });
+      await sendAndSettle(1, `Create it from alpha and beta. [[tool find_folders ${find}]] [[tool create_workspace ${create}]]`, 60_000);
+      record('tool calls answered', { answer: answerOf(1) });
+      expect(/Created the workspace "Agentintegration"/.test(answerOf(1)), 'create_workspace did not report the workspace');
+      await waitFor('the workspace to open with the conversation', () => textOf('workspace-name') === 'Agentintegration', 30_000);
+      const carried = historyTurns();
+      expect(carried >= 2, `the conversation did not come with it (${String(carried)} earlier turns shown)`);
+      expect(element('no-workspace') === null, 'the window still says there is no workspace');
+      record('workspace opened with the conversation', {
+        historyTurns: carried,
+        rootsShown: document.querySelectorAll('.tree-row--root').length,
+        continuity: textOf('continuity-statement'),
+      });
+      await window.dspatch.captureWindow('workspace-opened');
+
+      // 3. The same conversation continues, with both folders given to the agent.
+      await sendAndSettle(0, 'Go on with what I asked. [[folders]]', 60_000);
+      expect(lower(answerOf(0)).includes(lower(alpha)) && lower(answerOf(0)).includes(lower(beta)), 'the session was not given both folders');
+      record('both folders given', { answer: answerOf(0) });
+
+      // 4. A third folder, through the same function as File > Add Folder to Workspace.
+      await window.dspatch.addFolderToWorkspace(gamma);
+      await waitFor('three folders in the sidebar', () => document.querySelectorAll('.tree-row--root').length === 3, 20_000);
+      await sendAndSettle(1, 'And now? [[folders]]', 60_000);
+      expect(lower(answerOf(1)).includes(lower(gamma)), 'the added folder did not reach the session');
+      record('third folder given', { answer: answerOf(1) });
+      await window.dspatch.captureWindow('workspace-three-folders');
+      observations['conversations'] = (await window.dspatch.listConversations()).entries.map((entry) => ({
+        id: entry.conversationId,
+        project: entry.projectPath,
+        messages: entry.messageCount,
+      }));
+    } else {
+      // 1. After the restart: the workspace in Recent, one entry, with its folders.
+      const names = [...document.querySelectorAll('[data-ev^="open-project-"]')].map((node) => node.textContent ?? '');
+      expect(names.includes('Agentintegration'), 'the workspace is not in Recent after a restart');
+      const before = (await window.dspatch.listConversations()).entries.map((entry) => entry.conversationId);
+
+      // 2. A new conversation, then the existing workspace: a chat of its own there.
+      await typeInto('start-prompt', 'One more idea before I open the workspace.');
+      await click('start-send');
+      await waitFor('the reply', () => element('active-answer') === null && element('turn-0-answer') !== null, 60_000);
+      await click('loose-recent');
+      await waitFor('Recent projects', () => element('projects') !== null, 10_000);
+      const row = [...document.querySelectorAll('[data-ev^="open-project-"]')].findIndex((node) => node.textContent === 'Agentintegration');
+      expect(row >= 0, 'Agentintegration is not in the Recent dialog');
+      await click(`open-project-${String(Math.max(row, 0))}`);
+      await waitFor('the workspace to open', () => textOf('workspace-name') === 'Agentintegration', 30_000);
+      const chats = document.querySelectorAll('[data-ev^="workspace-chat-"]').length;
+      expect(chats >= 2, `the earlier chat is not kept beside the new one (${String(chats)} chats)`);
+      expect(historyTurns() === 1, `the new chat shows ${String(historyTurns())} earlier turns; it should show only its own`);
+      record('existing workspace opened with a new chat', { chats, historyTurns: historyTurns() });
+
+      // 3. Name, folders and history after the restart.
+      await sendAndSettle(0, 'Which folders? [[folders]]', 60_000);
+      for (const folder of [alpha, beta, gamma]) {
+        expect(lower(answerOf(0)).includes(lower(folder)), `${folder} is not given after the restart`);
+      }
+      await window.dspatch.captureWindow('workspace-after-restart');
+      const after = (await window.dspatch.listConversations()).entries.map((entry) => entry.conversationId);
+      expect(before.every((id) => after.includes(id)), 'an earlier conversation is missing');
+
+      // 4. The history view reaches every conversation.
+      await window.dspatch.pressMenuItem('show-history');
+      await waitFor('the history view', () => element('history') !== null && element('conversations') !== null, 10_000);
+      const listed = document.querySelectorAll('[data-ev^="conversation-project-"]').length;
+      expect(listed >= after.length, 'the history view does not list every conversation');
+      await window.dspatch.captureWindow('history');
+      await click('history-close');
+      record('history', { listed, conversations: after.length });
+
+      // 5. Remove from recent: the entry only.
+      await window.dspatch.pressMenuItem('change-project');
+      await waitFor('Recent projects', () => element('projects') !== null, 10_000);
+      const rowsBefore = document.querySelectorAll('[data-ev^="open-project-"]').length;
+      const target = [...document.querySelectorAll('[data-ev^="open-project-"]')].findIndex((node) => node.textContent !== 'Agentintegration');
+      if (target >= 0) {
+        const path = textOf(`project-${String(target)}-path`);
+        await click(`project-menu-${String(target)}`);
+        await click(`remove-from-recent-${String(target)}`);
+        await waitFor('the entry to leave the list', () => document.querySelectorAll('[data-ev^="open-project-"]').length === rowsBefore - 1, 10_000);
+        record('removed from recent', { path, rowsBefore });
+      }
+      await click('dialog-close');
+    }
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
   }
 }

@@ -115,6 +115,15 @@ export type MenuCommand =
   | 'show-session-details'
   | 'hide-session-details'
   | 'change-project'
+  /** DSP-149: Open Project… — the folder chooser, then that folder's workspace. */
+  | 'open-project'
+  /** DSP-149: the conversation history, every saved conversation with its secondary actions. */
+  | 'show-history'
+  /**
+   * DSP-149: a generated sample project, for development and test flows only. The menu
+   * item exists only in an unpackaged build; the start page no longer offers it.
+   */
+  | 'new-sample-project'
   /**
    * Show what DSpatch has left behind in its own sample location (DSP-61).
    *
@@ -198,53 +207,53 @@ export type ProjectPickOutcome =
   | { readonly kind: 'chosen'; readonly path: string }
   | { readonly kind: 'cancelled' };
 
-/** How a project came to be offered in the window. */
-export type ProjectEntryOrigin = 'recent' | 'startup-environment';
-
-export interface ProjectListEntry {
-  readonly path: string;
-  /** `null` for a project that has not been opened through DSpatch yet. */
+/**
+ * One workspace in Recent projects (DSP-149).
+ *
+ * `id` is `null` only for the project named at startup by `DSPATCH_PROJECT_PATH`,
+ * which is offered before it has a workspace; opening it creates or reopens one.
+ */
+export interface RecentWorkspaceEntry {
+  readonly id: string | null;
+  readonly name: string;
+  /** The first is the primary: the agent's working directory. */
+  readonly folders: readonly string[];
+  /** `null` for the startup project, which has not been opened through DSpatch yet. */
   readonly lastOpenedAtUtc: string | null;
-  readonly openCount: number | null;
-  readonly origin: ProjectEntryOrigin;
   /** Checked when the list was read. A remembered folder can have been moved. */
-  readonly exists: boolean;
-  /** `null` when it was not determined. */
-  readonly isGitRepository: boolean | null;
+  readonly primaryExists: boolean;
 }
 
-/** The remembered projects, and the state of the file they are kept in. */
-export interface ProjectListing {
-  readonly formatVersion: number;
-  readonly storePath: string;
-  readonly entries: readonly ProjectListEntry[];
-  /** Non-null means the list is incomplete or absent, and says why. */
+/** Every workspace in Recent, most recently opened first, and the state of its file. */
+export interface RecentWorkspaces {
+  readonly entries: readonly RecentWorkspaceEntry[];
+  /** Non-null means the list is incomplete or absent, or a change was not saved, and says why. */
   readonly error: string | null;
   /** The file is from a newer DSpatch and will be read but not rewritten. */
   readonly readOnly: boolean;
+  /**
+   * The conversation begun before any workspace was chosen, when it has messages; the
+   * window reopens it at startup so it is there as it was left. `null` otherwise.
+   */
+  readonly looseConversationId: string | null;
 }
 
+/** Which workspace to open: one from Recent, or the workspace of a chosen first folder. */
+export type WorkspaceOpenRequest = (
+  | { readonly workspaceId: string; readonly provider?: StoredSessionProvider | null }
+  | { readonly folder: string; readonly provider?: StoredSessionProvider | null }
+) & {
+  /** Start a new chat in the workspace rather than continue its last one. */
+  readonly newChat?: boolean;
+};
+
 /**
- * What forgetting remembered projects did, with the list as it now stands.
- *
- * `removed` is what actually left the file, not what was asked for: a read-only
- * file and a failed write both remove nothing, and the window has to be able to
- * say so rather than show an entry as gone until the next restart.
+ * What opening a workspace did. `refused` changes nothing: the conversation on screen
+ * and the workspace that was open are as they were.
  */
-export interface ForgetProjectsResult {
-  readonly removed: readonly string[];
-  /** Asked for but not in the list. A normal outcome, not a failure. */
-  readonly notFound: readonly string[];
-  readonly projects: ProjectListing;
-  /**
-   * What this did and did not touch, for the window to show.
-   *
-   * Removal is a change to one list in DSpatch's own settings file. It is stated
-   * rather than left to be assumed, because "remove" is a word that reasonably
-   * makes someone worry about their folder.
-   */
-  readonly note: string;
-}
+export type WorkspaceOpenOutcome =
+  | { readonly kind: 'opened'; readonly session: ChatSessionInfo; readonly workspace: WorkspaceView }
+  | { readonly kind: 'refused'; readonly problem: string };
 
 /**
  * One sample project DSpatch generated, as offered for removal (DSP-61).
@@ -439,6 +448,37 @@ export type StartSessionRequest =
       readonly kind: 'folder';
       readonly path: string;
       readonly provider?: StoredSessionProvider | null;
+      /**
+       * DSP-149: every folder of the workspace, the primary (`path`) first. Absent
+       * means the one folder.
+       */
+      readonly folders?: readonly string[];
+      /**
+       * DSP-149: which conversation continues, decided by the host from the workspace:
+       * its last chat, or `null` for a new one. Absent means the conversation last
+       * worked in over this folder, as before.
+       */
+      readonly conversationId?: string | null;
+    }
+  /**
+   * DSP-149: a conversation with no workspace, in an empty folder DSpatch owns and
+   * never presents as the person's project. `conversationId` `null` starts a new one.
+   */
+  | {
+      readonly kind: 'loose';
+      readonly provider?: StoredSessionProvider | null;
+      readonly conversationId?: string | null;
+    }
+  /**
+   * DSP-149: the conversation on screen moves into a workspace and continues there in a
+   * new provider session, with DSpatch's recap of it disclosed before the next message.
+   */
+  | {
+      readonly kind: 'carry';
+      readonly path: string;
+      readonly folders: readonly string[];
+      readonly conversationId: string;
+      readonly workspaceName: string;
     }
   | { readonly kind: 'sample'; readonly provider?: StoredSessionProvider | null }
   /**
@@ -454,7 +494,8 @@ export type StartSessionRequest =
    */
   | { readonly kind: 'retry-resume'; readonly acknowledgedAttemptIds?: readonly string[] };
 
-export type SessionOrigin = 'chosen-folder' | 'generated-sample';
+/** `no-workspace` (DSP-149): a conversation begun before any workspace was chosen. */
+export type SessionOrigin = 'chosen-folder' | 'generated-sample' | 'no-workspace';
 
 /** How a path differs from git `HEAD`. */
 export type DirtyKind =
@@ -530,6 +571,13 @@ export interface SessionContextInfo {
   readonly toolPolicySent: string;
   /** Always 0 in this build: DSpatch uploads no file content. */
   readonly fileContentsSentByDspatch: number;
+  /** DSP-149: the workspace's other folders, given to the agent beside the working directory. */
+  readonly otherFoldersSent?: readonly string[];
+  /**
+   * DSP-149: DSpatch's own tools offered to the agent, each with the description the
+   * model is given word for word. Absent or empty when none were offered.
+   */
+  readonly dspatchToolsSent?: readonly { readonly name: string; readonly description: string }[];
   readonly statement: string;
 }
 
@@ -921,6 +969,25 @@ export interface WorkspaceReport {
   /** Differing files with no diff text. Each one says why in `diffLimitation`. */
   readonly filesWithoutDiff: number;
   readonly diffDurationMs: number;
+  /**
+   * DSP-149: the same comparison for every other folder of the workspace, each against
+   * its own baseline, taken when the session opened or when the folder was added.
+   */
+  readonly otherFolders?: readonly FolderChangeReport[];
+}
+
+/** One non-primary folder's changes since its own baseline (DSP-149). */
+export interface FolderChangeReport {
+  readonly folderPath: string;
+  readonly baselineSnapshotId: string;
+  readonly baselineTakenAtUtc: string;
+  readonly observedSnapshotId: string;
+  readonly changed: readonly WorkspaceChange[];
+  readonly added: readonly WorkspaceChange[];
+  readonly removed: readonly WorkspaceChange[];
+  readonly unchangedCount: number;
+  readonly truncated: boolean;
+  readonly coverageNote: string;
 }
 
 /** What the user asked DSpatch to run. Both fields come from the window. */
@@ -1650,6 +1717,13 @@ export interface TurnUsage {
  */
 export type ScriptedScenario =
   | 'full-workflow'
+  /**
+   * DSP-149: the start page, a conversation with no workspace, a workspace of several
+   * folders made through the chat's own tools, a folder added, and (`flowPhase` again)
+   * the restart, Recent, a carried chat, the history view and Remove from recent. No
+   * provider call: the presentation adapter answers and makes the tool calls.
+   */
+  | 'workspace-flow'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2030,6 +2104,9 @@ export interface ScriptedRunPlan {
    * main process leaves the window open for a person instead of exiting.
    */
   readonly resumeHold?: boolean;
+  /** DSP-149 `workspace-flow`: which process this is, and the folder its projects are in. */
+  readonly flowPhase?: 'first' | 'again';
+  readonly flowRoot?: string;
 }
 
 /** Where the renderer's own observations end up. */
@@ -2085,17 +2162,27 @@ export interface DspatchBridge {
    * actually created rather than where it was typed.
    */
   pickProjectFolder(): Promise<ProjectPickOutcome>;
-  /** The remembered projects, plus any project named at startup. */
-  listProjects(): Promise<ProjectListing>;
+  /** Recent projects: every workspace not removed from the list, plus any project named at startup. */
+  listRecentWorkspaces(): Promise<RecentWorkspaces>;
   /**
-   * Drop remembered projects from the list, and nothing else.
+   * Remove workspaces from Recent, and nothing else (DSP-149).
    *
-   * No folder is deleted and no saved conversation is removed: this edits one list
-   * in DSpatch's settings file. DSP-5 found the list full of throwaway `%TEMP%`
-   * repositories left by overnight verification, several already gone from disk,
-   * with no way to remove any of them.
+   * No folder is touched and no conversation is removed: the workspace keeps its name,
+   * folders and chats, and opening its first folder again brings it back.
    */
-  forgetProjects(projectPaths: readonly string[]): Promise<ForgetProjectsResult>;
+  removeFromRecent(workspaceIds: readonly string[]): Promise<RecentWorkspaces>;
+  /**
+   * Open a workspace (DSP-149): one from Recent, or the workspace of a chosen first
+   * folder, created with the folder's name when there is none. A conversation begun
+   * without a workspace moves into it and continues there; otherwise the workspace's
+   * own last chat continues. Sends nothing and starts no work.
+   */
+  openWorkspace(request: WorkspaceOpenRequest): Promise<WorkspaceOpenOutcome>;
+  /**
+   * The session the window shows was replaced from outside the window: the chat's own
+   * workspace tools opened a workspace (DSP-149). Carries what `openWorkspace` returns.
+   */
+  onSessionReplaced(listener: (opened: WorkspaceOpenOutcome) => void): () => void;
   /**
    * What DSpatch has left behind in its own sample location. Reads only.
    *
@@ -2230,7 +2317,7 @@ export interface DspatchBridge {
    * than the width it asked for. Registered with the two above — under
    * `DSPATCH_CHAT_RUN` and nowhere else.
    */
-  setWindowWidth(width: number): Promise<number>;
+  setWindowWidth(width: number, height?: number): Promise<number>;
   /**
    * Ask the window to behave as a person with *reduce motion* set. Scripted runs only.
    *
@@ -2973,8 +3060,10 @@ export type BridgeChannel =
   | 'dspatch:choose-agent'
   | 'dspatch:menu-command'
   | 'dspatch:pick-project'
-  | 'dspatch:list-projects'
-  | 'dspatch:forget-projects'
+  | 'dspatch:list-recent-workspaces'
+  | 'dspatch:remove-from-recent'
+  | 'dspatch:open-workspace'
+  | 'dspatch:session-replaced'
   | 'dspatch:list-sample-projects'
   | 'dspatch:clean-sample-projects'
   | 'dspatch:list-conversations'

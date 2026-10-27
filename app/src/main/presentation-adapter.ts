@@ -292,6 +292,8 @@ export class PresentationResumeBehaviour {
 
 interface SessionState {
   readonly dspatchSessionId: string;
+  /** DSP-149: what the session was given: its folders and DSpatch's app tools. */
+  config: SessionConfig;
   listener: AgentEventListener | null;
   runCounter: number;
   activeRun: string | null;
@@ -343,6 +345,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       config.dspatchSessionId ?? `dsp-session-presentation-${String(this.sessionCounter)}`;
     this.sessions.set(dspatchSessionId, {
       dspatchSessionId,
+      config,
       listener: null,
       runCounter: 0,
       activeRun: null,
@@ -370,6 +373,63 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // old ID, and the continuity wording must not claim more than that.
     const handle = this.open({ ...config, dspatchSessionId: sessionId });
     return Promise.resolve({ ...handle, resumeEvidence: 'none' });
+  }
+
+  /** DSP-149: the folders changed; the next simulated turn reports the new list. */
+  setWorkspaceRoots(sessionId: string, roots: readonly string[]): void {
+    const state = this.sessions.get(sessionId);
+    if (state !== undefined) {
+      state.config = { ...state.config, workspacePaths: [...roots] };
+    }
+  }
+
+  /**
+   * SIMULATED provider behaviour for DSP-149's window trial, in presentation mode only.
+   * `[[tool NAME {json}]]` in a prompt calls that app tool with those arguments, as a
+   * model would through its SDK's tool mechanism; `[[folders]]` answers with the folders
+   * the session was given. The tools are the session's own `appTools`, the host's real
+   * functions. Nothing else in a prompt is acted on.
+   */
+  private async simulatedTools(
+    state: SessionState,
+    prompt: string,
+    base: { readonly dspatchSessionId: string; readonly dspatchRunId: string; readonly rawProviderEvent: unknown },
+    emit: (event: AgentEvent) => void,
+  ): Promise<string[]> {
+    const lines: string[] = [];
+    // Only the person's new message: a recap DSpatch put in front of it repeats earlier
+    // messages, and their tool directives were acted on when those messages were sent.
+    const marker = '=== end of the record. The message below is the new one, from the person. ===';
+    const at = prompt.lastIndexOf(marker);
+    const own = at === -1 ? prompt : prompt.slice(at + marker.length);
+    if (own.includes('[[folders]]')) {
+      const roots = [state.config.workspacePath, ...(state.config.workspacePaths ?? []).slice(1)];
+      lines.push(`Working folders given to this session: ${roots.join(' | ')}`);
+    }
+    let index = 0;
+    for (const match of own.matchAll(/\[\[tool (\w+) (\{.*?\})\]\]/g)) {
+      const name = match[1] ?? '';
+      const tool = (state.config.appTools ?? []).find((entry) => entry.name === name);
+      index += 1;
+      const toolCallId = `${base.dspatchRunId}-tool-${String(index)}`;
+      emit({ ...base, type: 'tool.started', at: new Date().toISOString(), toolCallId, name });
+      let text: string;
+      let ok = false;
+      if (tool === undefined) {
+        text = `The tool ${name} was not given to this session.`;
+      } else {
+        try {
+          const outcome = await tool.execute(JSON.parse(match[2] ?? '{}') as Record<string, unknown>);
+          text = outcome.text;
+          ok = !outcome.isError;
+        } catch (error) {
+          text = `The tool ${name} failed: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+      emit({ ...base, type: 'tool.finished', at: new Date().toISOString(), toolCallId, name, status: ok ? 'ok' : 'error' });
+      lines.push(`Tool ${name}: ${text}`);
+    }
+    return lines;
   }
 
   hasActiveRun(sessionId: string): boolean {
@@ -410,14 +470,14 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // Appended rather than folded in, so the Markdown the presentation scenarios read
     // is byte for byte what it was and only a loop prompt sees anything new.
     const declared = firstOfferedOutcome(prompt);
-    const answer =
+    let answer =
       declared === null
         ? presentationReply(token)
         : `${presentationReply(token)}\n\nRESULT: ${declared}`;
     // Chunked on whitespace, so what arrives is the partial text a real stream
     // produces — including a fence that is open for several frames, which is the
     // case the reader has to survive.
-    const chunks = answer.match(/[\s\S]{1,40}/g) ?? [answer];
+    let chunks = answer.match(/[\s\S]{1,40}/g) ?? [answer];
 
     const emit = (event: AgentEvent): void => {
       state.listener?.(event);
@@ -497,7 +557,17 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
         state.timers.add(timer);
       });
     }
-    setTimeout(reply, 0);
+    // DSP-149: any simulated tool calls run first, and their results are part of the reply.
+    const withTools = (): void => {
+      void this.simulatedTools(state, prompt, base, emit).then((lines) => {
+        if (lines.length > 0) {
+          answer = `${answer}\n\n${lines.join('\n\n')}`;
+          chunks = answer.match(/[\s\S]{1,40}/g) ?? [answer];
+        }
+        reply();
+      });
+    };
+    setTimeout(withTools, 0);
 
     return Promise.resolve({ dspatchRunId });
   }

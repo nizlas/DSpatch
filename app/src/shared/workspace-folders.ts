@@ -52,20 +52,22 @@ export interface WorkspaceFolderView {
   readonly path: string;
   readonly name: string;
   /**
-   * True for the one folder a run works in.
+   * True for the primary folder: the agent's working directory, where its shell
+   * starts and what each provider resumes a session against (DSP-149).
    *
-   * There is exactly one for now, and it is the project the chat session opened.
-   * DSP-72 is where several working roots in a run get their meaning; until then a
-   * folder added to the workspace is a folder DSpatch can *show* and look for loop
-   * definitions in, and the run's working copy is unchanged by adding or removing
-   * one. The flag exists so the window can say which is which rather than implying
-   * that all of them are worked in.
+   * Every folder of the workspace is worked in — the agent is given all of them, in
+   * the chat and in loops — so this is not "the one folder a run works in", which it
+   * meant before DSP-149. The flag says which folder commands start in.
    */
   readonly working: boolean;
 }
 
 /** What the window draws as the tree's roots, and where the workspace came from. */
 export interface WorkspaceView {
+  /** The open workspace's identity (DSP-149), or `null` when none is open. */
+  readonly id: string | null;
+  /** What the workspace is called; the first folder's name unless it was named. */
+  readonly name: string | null;
   readonly folders: readonly WorkspaceFolderView[];
   readonly loopDefinitionKey: string | null;
   /** The saved file this workspace was opened from or saved to. `null` when unsaved. */
@@ -75,6 +77,8 @@ export interface WorkspaceView {
 }
 
 export const EMPTY_WORKSPACE_VIEW: WorkspaceView = {
+  id: null,
+  name: null,
   folders: [],
   loopDefinitionKey: null,
   filePath: null,

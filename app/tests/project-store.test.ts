@@ -1,15 +1,13 @@
 /**
- * The remembered-projects file.
+ * The workspaces file (DSP-149, building on DSP-2, DSP-4 and DSP-71).
  *
- * The behaviour worth testing is not that a path round-trips. It is what happens
- * to a file this code does not fully understand: DSP-4 will extend this store
- * rather than add a second one, so a future DSpatch will write fields this build
- * has never heard of, and the failure mode to avoid is *this* build quietly
- * rewriting that file and dropping them. The same applies to a file a user has
- * hand-edited into invalid JSON — it is their data, and overwriting it is worse
- * than losing the list.
+ * The behaviour worth testing is not that a path round-trips. It is what happens to a
+ * file this code does not fully understand — a newer DSpatch's, or one a person has
+ * hand-edited into invalid JSON — which must be read and never rewritten; what happens
+ * to an older file, which must be migrated without losing a remembered project or its
+ * conversation; and that removing an entry from Recent removes nothing else.
  *
- *     node --test tests/project-store.test.ts        (from app/)
+ *     node --import ./scripts/ts-resolve.mjs --test tests/project-store.test.ts   (from app/)
  */
 
 import assert from 'node:assert/strict';
@@ -21,15 +19,18 @@ import { after, test } from 'node:test';
 import {
   PROJECT_STORE_FORMAT_VERSION,
   ProjectStore,
+  defaultWorkspaceName,
 } from '../src/main/project-store.ts';
+import type { RecentWorkspaceEntry } from '../src/shared/bridge.ts';
+import { matchesSearch, moreFoldersLabel, startPageSelection } from '../src/shared/recent-workspaces.ts';
 
 const roots: string[] = [];
 
-function storeIn(name: string): { store: ProjectStore; filePath: string } {
+function storeIn(name: string): { store: ProjectStore; filePath: string; root: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `dspatch-store-${name}-`));
   roots.push(root);
   const filePath = path.join(root, 'nested', 'dspatch-projects.json');
-  return { store: new ProjectStore(filePath), filePath };
+  return { store: new ProjectStore(filePath), filePath, root };
 }
 
 after(() => {
@@ -39,319 +40,181 @@ after(() => {
 });
 
 test('no file yet is the normal first run, not an error', () => {
-  const { store } = storeIn('missing');
+  const { store } = storeIn('first');
   const state = store.read();
-  assert.deepEqual(state.recentProjects, []);
   assert.equal(state.error, null);
   assert.equal(state.readOnly, false);
-  assert.equal(state.formatVersion, PROJECT_STORE_FORMAT_VERSION);
+  assert.deepEqual(state.workspaces, []);
+  assert.equal(state.looseConversationId, null);
 });
 
-test('opening a project writes a versioned file, creating the directory', () => {
-  const { store, filePath } = storeIn('write');
-  const state = store.recordOpened(path.join(os.tmpdir(), 'project-one'), {
-    atUtc: '2026-09-14T21:00:00.000Z',
-  });
-  assert.equal(state.error, null);
-  assert.equal(state.recentProjects.length, 1);
-
-  const onDisk: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  // 2 since DSP-71 added `workspaces` beside `recentProjects`.
-  assert.equal(
-    (onDisk as { formatVersion: number }).formatVersion,
-    PROJECT_STORE_FORMAT_VERSION,
-  );
-  assert.equal(store.read().recentProjects[0]?.openCount, 1);
-  assert.equal(store.read().recentProjects[0]?.lastOpenedAtUtc, '2026-09-14T21:00:00.000Z');
+test('Open Project creates a workspace named after its folder, and reopens it the next time', () => {
+  const { store, filePath } = storeIn('open');
+  const created = store.openFolder('C:/work/MiniDAWLab', '2026-10-27T10:00:00.000Z');
+  assert.equal(created.problem, null);
+  assert.equal(created.workspace?.name, 'MiniDAWLab');
+  assert.deepEqual(created.workspace?.folders, [path.resolve('C:/work/MiniDAWLab')]);
+  const again = store.openFolder('C:/work/MiniDAWLab', '2026-10-27T11:00:00.000Z');
+  assert.equal(again.workspace?.id, created.workspace?.id, 'the same identity, not a second workspace');
+  assert.equal(again.workspace?.openCount, 2);
+  const onDisk = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { formatVersion: number };
+  assert.equal(onDisk.formatVersion, PROJECT_STORE_FORMAT_VERSION);
 });
 
-test('the newest project comes first and its open count grows', () => {
+test('a workspace keeps its name, its folders in order and its chat across a new store over the same file', () => {
+  const { store, filePath } = storeIn('persist');
+  const created = store.createWorkspace({ name: 'Agentintegration', folders: ['C:/dev/one', 'C:/dev/two'] });
+  const id = created.workspace?.id ?? '';
+  store.updateWorkspace(id, { lastConversationId: 'conv-1', loopDefinitionKey: 'k' });
+  store.updateWorkspace(id, { folders: ['C:/dev/one', 'C:/dev/two', 'C:/dev/three'] });
+  const reread = new ProjectStore(filePath).workspace(id);
+  assert.equal(reread?.name, 'Agentintegration');
+  assert.deepEqual(reread?.folders, ['C:/dev/one', 'C:/dev/two', 'C:/dev/three'].map((folder) => path.resolve(folder)));
+  assert.equal(reread?.lastConversationId, 'conv-1');
+  assert.equal(reread?.loopDefinitionKey, 'k');
+});
+
+test('changing a workspace is not an opening: Recent does not reorder for it', () => {
   const { store } = storeIn('order');
-  const first = path.join(os.tmpdir(), 'project-one');
-  const second = path.join(os.tmpdir(), 'project-two');
-  store.recordOpened(first);
-  store.recordOpened(second);
-  assert.equal(store.read().recentProjects[0]?.path, path.resolve(second));
-
-  store.recordOpened(first);
-  const state = store.read();
-  assert.equal(state.recentProjects[0]?.path, path.resolve(first));
-  assert.equal(state.recentProjects[0]?.openCount, 2);
-  assert.equal(state.recentProjects.length, 2);
+  const older = store.openFolder('C:/a', '2026-10-01T00:00:00.000Z').workspace?.id ?? '';
+  store.openFolder('C:/b', '2026-10-02T00:00:00.000Z');
+  store.updateWorkspace(older, { lastConversationId: 'conv-x', folders: ['C:/a', 'C:/c'] });
+  assert.deepEqual(
+    store.read().workspaces.map((record) => record.name),
+    ['b', 'a'],
+  );
 });
 
-test('a file from a newer DSpatch is read but never rewritten', () => {
-  const { store, filePath } = storeIn('newer');
-  const future = {
-    formatVersion: PROJECT_STORE_FORMAT_VERSION + 1,
-    recentProjects: [
-      { path: 'C:/kept', lastOpenedAtUtc: '2026-10-01T00:00:00.000Z', openCount: 3 },
-    ],
-    conversationsAddedByALaterVersion: [{ id: 'x' }],
-  };
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(future, null, 2), 'utf8');
-
-  const state = store.read();
-  assert.equal(state.readOnly, true);
-  assert.equal(state.recentProjects.length, 1);
-  assert.match(String(state.error), /newer/);
-
-  // The list the window shows is updated; the file is not touched.
-  const afterOpen = store.recordOpened(path.join(os.tmpdir(), 'project-new'));
-  assert.equal(afterOpen.recentProjects[0]?.path, path.resolve(path.join(os.tmpdir(), 'project-new')));
-  const unchanged: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  assert.deepEqual(unchanged, future);
+test('Remove from recent hides the entry and nothing else; opening its folder brings it back as it was', () => {
+  const { store, root } = storeIn('remove');
+  const folder = fs.mkdtempSync(path.join(root, 'project-'));
+  fs.writeFileSync(path.join(folder, 'keep.txt'), 'kept', 'utf8');
+  const created = store.createWorkspace({ name: 'Named', folders: [folder, path.join(root, 'other')] });
+  const id = created.workspace?.id ?? '';
+  store.updateWorkspace(id, { lastConversationId: 'conv-kept' });
+  store.removeFromRecent([id]);
+  const hidden = store.workspace(id);
+  assert.equal(hidden?.hiddenFromRecent, true);
+  assert.equal(hidden?.name, 'Named');
+  assert.equal(hidden?.lastConversationId, 'conv-kept');
+  assert.equal(fs.readFileSync(path.join(folder, 'keep.txt'), 'utf8'), 'kept');
+  const back = store.openFolder(folder);
+  assert.equal(back.workspace?.id, id);
+  assert.equal(back.workspace?.hiddenFromRecent, false);
+  assert.equal(back.workspace?.folders.length, 2);
 });
 
-test('an unparsable file is reported and left alone', () => {
-  const { store, filePath } = storeIn('broken');
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, '{ this is not json', 'utf8');
-
-  const state = store.read();
-  assert.equal(state.readOnly, true);
-  assert.deepEqual(state.recentProjects, []);
-  assert.match(String(state.error), /not valid JSON/);
-
-  store.recordOpened(path.join(os.tmpdir(), 'project-x'));
-  assert.equal(fs.readFileSync(filePath, 'utf8'), '{ this is not json');
-});
-
-test('entries that are not usable are skipped rather than crashing the list', () => {
-  const { store, filePath } = storeIn('junk');
+test('a version-2 file is migrated: every remembered project becomes a workspace and keeps its conversation', () => {
+  const { store, filePath } = storeIn('migrate');
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(
     filePath,
     JSON.stringify({
-      formatVersion: 1,
+      formatVersion: 2,
       recentProjects: [
-        { path: '' },
-        { path: 42 },
-        'not an object',
-        { path: 'C:/good' },
+        { path: 'C:/dev/MiniDAWLab', lastOpenedAtUtc: '2026-10-14T20:23:05.247Z', openCount: 31, lastConversationId: 'conv-m' },
+        { path: 'C:/temp/run-1', lastOpenedAtUtc: '2026-09-20T09:00:00.000Z', openCount: 1 },
+      ],
+      workspaces: [
+        { filePath: null, folders: ['C:/dev/MiniDAWLab', 'C:/dev/extra'], loopDefinitionKey: 'k', lastOpenedAtUtc: '2026-10-14T20:23:05.251Z' },
       ],
     }),
     'utf8',
   );
   const state = store.read();
-  assert.deepEqual(
-    state.recentProjects.map((project) => project.path),
-    ['C:/good'],
-  );
-  assert.equal(state.error, null);
-});
-
-/**
- * The association DSP-4 AC#5 rests on, checked against the real file.
- *
- * This is the test whose absence let a live defect through: `recordOpened` took
- * `(path, atUtc, conversationId)` and the one caller passed the conversation id
- * second. Both are strings, so it typechecked, and the conversation was never
- * recorded — reopening a project would have started an empty conversation beside
- * its work. The named-options signature makes that particular slip impossible; this
- * test makes the behaviour observable rather than assumed.
- */
-test('a project remembers the conversation it was worked in', () => {
-  const { store, filePath } = storeIn('conversation');
-  const project = path.join(os.tmpdir(), 'project-with-conversation');
-  store.recordOpened(project, { conversationId: 'conv-20260915-aaaa', atUtc: '2026-09-15T06:00:00.000Z' });
-
-  assert.equal(store.conversationFor(project), 'conv-20260915-aaaa');
-  const onDisk = JSON.parse(fs.readFileSync(filePath, 'utf8')) as {
-    recentProjects: readonly { lastOpenedAtUtc: string; lastConversationId: string | null }[];
-  };
-  assert.equal(onDisk.recentProjects[0]?.lastConversationId, 'conv-20260915-aaaa');
-  // The timestamp field holds a timestamp, which is what went wrong before.
-  assert.equal(onDisk.recentProjects[0]?.lastOpenedAtUtc, '2026-09-15T06:00:00.000Z');
-});
-
-test('opening a project without naming a conversation keeps the one it had', () => {
-  const { store } = storeIn('conversation-kept');
-  const project = path.join(os.tmpdir(), 'project-keeps');
-  store.recordOpened(project, { conversationId: 'conv-first' });
-  store.recordOpened(project);
-  assert.equal(store.conversationFor(project), 'conv-first');
-
-  store.recordOpened(project, { conversationId: 'conv-second' });
-  assert.equal(store.conversationFor(project), 'conv-second');
-});
-
-/**
- * The pointer has to follow the conversation actually being worked in.
- *
- * `recordOpened` was its only writer, and it runs once, when a session opens — so the
- * pointer recorded whichever conversation was current *then* and nothing moved it
- * afterwards. Choosing an earlier conversation and working in it therefore left the
- * project still pointing at the one it had been opened with, and the next open came
- * back to that one.
- */
-test('choosing another conversation moves the pointer without counting as an opening', () => {
-  const { store, filePath } = storeIn('conversation-moved');
-  const project = path.join(os.tmpdir(), 'project-moves-pointer');
-  store.recordOpened(project, {
-    conversationId: 'conv-opened-with',
-    atUtc: '2026-09-15T06:00:00.000Z',
-  });
-
-  const state = store.rememberConversation(project, 'conv-chosen-later');
-  assert.equal(state.error, null);
-  assert.equal(store.conversationFor(project), 'conv-chosen-later');
-  // Not an opening: the count and the timestamp describe openings, and bumping them
-  // here would reorder the list of recent projects every time a conversation was read.
-  const entry = store.read().recentProjects[0];
-  assert.equal(entry?.openCount, 1);
-  assert.equal(entry?.lastOpenedAtUtc, '2026-09-15T06:00:00.000Z');
-  // And it is on disk, which is the whole point: the next DSpatch finds the later one.
-  assert.equal(new ProjectStore(filePath).conversationFor(project), 'conv-chosen-later');
-});
-
-test('a conversation in a project nobody has opened does not invent an entry', () => {
-  const { store } = storeIn('conversation-unknown-project');
-  const project = path.join(os.tmpdir(), 'project-never-opened-pointer');
-  store.rememberConversation(project, 'conv-orphan');
-  assert.equal(store.conversationFor(project), null);
-  assert.equal(store.read().recentProjects.length, 0);
-});
-
-test('a project nobody has opened has no conversation', () => {
-  const { store } = storeIn('conversation-none');
-  assert.equal(store.conversationFor(path.join(os.tmpdir(), 'never-opened')), null);
-});
-
-test('a missing formatVersion means the file was not written by this store', () => {
-  const { store, filePath } = storeIn('unversioned');
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify({ recentProjects: [{ path: 'C:/x' }] }), 'utf8');
-  const state = store.read();
-  assert.equal(state.readOnly, true);
-  assert.match(String(state.error), /formatVersion/);
-});
-
-// --- Forgetting a remembered project (DSP-6 item 3) -------------------------
-//
-// DSP-5's trial found nine of ten remembered entries were throwaway `%TEMP%`
-// repositories from overnight verification, several already gone from disk, and
-// no way to remove any of them. The requirement that carries the risk is not the
-// removal: it is that removal touches the list and nothing else.
-
-test('forgetting a project removes its entry and leaves the others', () => {
-  const { store, filePath } = storeIn('forget');
-  const keep = path.join(os.tmpdir(), 'project-keep');
-  const drop = path.join(os.tmpdir(), 'project-drop');
-  store.recordOpened(keep, { conversationId: 'conv-keep' });
-  store.recordOpened(drop, { conversationId: 'conv-drop' });
-
-  const outcome = store.forget([drop]);
-  assert.deepEqual(outcome.removed, [path.resolve(drop)]);
-  assert.deepEqual(outcome.notFound, []);
-  assert.equal(outcome.state.error, null);
-  assert.deepEqual(
-    outcome.state.recentProjects.map((entry) => entry.path),
-    [path.resolve(keep)],
-  );
-
-  // On disk, not just in the returned object: the point is the next read.
-  const reread = store.read();
-  assert.deepEqual(
-    reread.recentProjects.map((entry) => entry.path),
-    [path.resolve(keep)],
-  );
-  // The survivor keeps everything it had, including its conversation.
-  assert.equal(reread.recentProjects[0]?.lastConversationId, 'conv-keep');
+  assert.equal(state.readOnly, false);
+  assert.equal(state.workspaces.length, 2, 'nothing dropped, Temp paths included');
+  const mini = state.workspaces[0];
+  assert.equal(mini?.name, 'MiniDAWLab');
+  assert.deepEqual(mini?.folders, ['C:/dev/MiniDAWLab', 'C:/dev/extra']);
+  assert.equal(mini?.lastConversationId, 'conv-m');
+  assert.equal(mini?.loopDefinitionKey, 'k');
+  assert.equal(mini?.openCount, 31);
+  // The identity is derived, so reading the same old file twice agrees.
+  assert.equal(new ProjectStore(filePath).read().workspaces[0]?.id, mini?.id);
+  // Written as version 3 on the next change, with the projects still readable by an older build.
+  store.recordOpened(mini?.id ?? '');
   const onDisk = JSON.parse(fs.readFileSync(filePath, 'utf8')) as {
     formatVersion: number;
+    recentProjects: readonly { path: string }[];
   };
-  assert.equal(onDisk.formatVersion, PROJECT_STORE_FORMAT_VERSION);
+  assert.equal(onDisk.formatVersion, 3);
+  assert.deepEqual(onDisk.recentProjects.map((entry) => entry.path), ['C:/dev/MiniDAWLab', 'C:/temp/run-1']);
 });
 
-test('forgetting a project does not touch the folder or anything in it', () => {
-  const { store } = storeIn('forget-keeps-disk');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-real-project-'));
-  roots.push(root);
-  const file = path.join(root, 'source.txt');
-  fs.writeFileSync(file, 'the user\u2019s work', 'utf8');
-  store.recordOpened(root);
-
-  store.forget([root]);
-
-  assert.deepEqual(store.read().recentProjects, []);
-  assert.equal(fs.existsSync(root), true, 'the project folder is still there');
-  assert.equal(fs.readFileSync(file, 'utf8'), 'the user\u2019s work');
-});
-
-test('a forgotten project can simply be opened again', () => {
-  const { store } = storeIn('forget-then-open');
-  const project = path.join(os.tmpdir(), 'project-again');
-  store.recordOpened(project, { conversationId: 'conv-old' });
-  store.forget([project]);
-
-  // The conversation association went with the entry, and says so by being null
-  // rather than by pointing at a conversation this list no longer records.
-  assert.equal(store.conversationFor(project), null);
-  const reopened = store.recordOpened(project);
-  assert.equal(reopened.recentProjects[0]?.path, path.resolve(project));
-  assert.equal(reopened.recentProjects[0]?.openCount, 1);
-});
-
-test('forgetting several at once is one write, and unknown paths are reported', () => {
-  const { store } = storeIn('forget-many');
-  const gone = ['gone-one', 'gone-two', 'gone-three'].map((name) =>
-    path.join(os.tmpdir(), name),
-  );
-  const kept = path.join(os.tmpdir(), 'project-still-here');
-  for (const project of [...gone, kept]) {
-    store.recordOpened(project);
-  }
-  const neverListed = path.join(os.tmpdir(), 'never-listed');
-
-  const outcome = store.forget([...gone, neverListed]);
-  assert.equal(outcome.removed.length, 3);
-  assert.deepEqual(outcome.notFound, [path.resolve(neverListed)]);
-  assert.deepEqual(
-    store.read().recentProjects.map((entry) => entry.path),
-    [path.resolve(kept)],
-  );
-});
-
-test('forgetting a path that is not in the list changes nothing and is not an error', () => {
-  const { store } = storeIn('forget-absent');
-  const project = path.join(os.tmpdir(), 'project-present');
-  store.recordOpened(project);
-
-  const outcome = store.forget([path.join(os.tmpdir(), 'project-absent')]);
-  assert.deepEqual(outcome.removed, []);
-  assert.equal(outcome.state.error, null);
-  assert.equal(outcome.state.recentProjects.length, 1);
-});
-
-test('an empty request is a no-op rather than a rewrite', () => {
-  const { store, filePath } = storeIn('forget-nothing');
-  store.recordOpened(path.join(os.tmpdir(), 'project-untouched'));
-  const before = fs.readFileSync(filePath, 'utf8');
-
-  const outcome = store.forget([]);
-  assert.deepEqual(outcome.removed, []);
-  assert.equal(fs.readFileSync(filePath, 'utf8'), before);
-});
-
-test('a file this build must not rewrite is refused, and says nothing was removed', () => {
-  const { store, filePath } = storeIn('forget-readonly');
+test('a file from a newer DSpatch is read but never rewritten', () => {
+  const { store, filePath } = storeIn('newer');
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const future = {
     formatVersion: PROJECT_STORE_FORMAT_VERSION + 1,
-    recentProjects: [
-      { path: 'C:/kept', lastOpenedAtUtc: '2026-10-01T00:00:00.000Z', openCount: 3 },
-    ],
-    fieldsFromALaterVersion: ['keep me'],
+    workspaces: [{ id: 'ws-1', name: 'Theirs', folders: ['C:/kept'], lastOpenedAtUtc: '2026-10-01T00:00:00.000Z' }],
+    somethingThisBuildHasNeverHeardOf: true,
   };
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(future, null, 2), 'utf8');
-
-  const outcome = store.forget(['C:/kept']);
-  assert.deepEqual(outcome.removed, [], 'nothing was removed');
-  assert.match(String(outcome.state.error), /nothing was removed/);
-  // Still listed, because it is still in the file. Showing it as gone would be a
-  // claim the next read contradicts.
-  assert.equal(outcome.state.recentProjects.length, 1);
+  fs.writeFileSync(filePath, JSON.stringify(future), 'utf8');
+  const state = store.read();
+  assert.equal(state.readOnly, true);
+  assert.equal(state.workspaces[0]?.name, 'Theirs');
+  assert.match(String(state.error), /newer/);
+  const outcome = store.openFolder('C:/mine');
+  assert.notEqual(outcome.problem, null);
   assert.deepEqual(JSON.parse(fs.readFileSync(filePath, 'utf8')), future);
+});
+
+test('an unparsable file is reported and left alone', () => {
+  const { store, filePath } = storeIn('broken');
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, '{ not json', 'utf8');
+  const state = store.read();
+  assert.equal(state.readOnly, true);
+  assert.match(String(state.error), /not valid JSON/);
+  store.openFolder('C:/x');
+  assert.equal(fs.readFileSync(filePath, 'utf8'), '{ not json');
+});
+
+test('the conversation begun without a workspace is remembered, and can be cleared', () => {
+  const { store, filePath } = storeIn('loose');
+  store.setLooseConversation('conv-loose');
+  assert.equal(new ProjectStore(filePath).read().looseConversationId, 'conv-loose');
+  store.setLooseConversation(null);
+  assert.equal(new ProjectStore(filePath).read().looseConversationId, null);
+});
+
+test('a workspace needs a folder, and a name falls back to its first folder', () => {
+  const { store } = storeIn('names');
+  assert.notEqual(store.createWorkspace({ name: 'x', folders: [] }).problem, null);
+  assert.equal(store.createWorkspace({ name: '  ', folders: ['C:/dev/DSpatch'] }).workspace?.name, 'DSpatch');
+  assert.equal(defaultWorkspaceName('C:/dev/DSpatch/'), 'DSpatch');
+});
+
+/* --- What the start page lists (shared/recent-workspaces.ts) ----------------- */
+
+function entry(name: string, daysAgo: number | null, folders: readonly string[] = [`C:/p/${name}`]): RecentWorkspaceEntry {
+  const now = Date.parse('2026-10-27T12:00:00.000Z');
+  return {
+    id: name,
+    name,
+    folders,
+    lastOpenedAtUtc: daysAgo === null ? null : new Date(now - daysAgo * 86_400_000).toISOString(),
+    primaryExists: true,
+  };
+}
+const NOW = Date.parse('2026-10-27T12:00:00.000Z');
+
+test('the start page shows the last three months, topped up to five, at most ten', () => {
+  const twoRecent = [entry('a', 1), entry('b', 10), entry('c', 200), entry('d', 300), entry('e', 400), entry('f', 500)];
+  assert.deepEqual(startPageSelection(twoRecent, NOW).map((e) => e.name), ['a', 'b', 'c', 'd', 'e']);
+  const twelveRecent = Array.from({ length: 12 }, (_, index) => entry(`r${String(index)}`, index));
+  assert.equal(startPageSelection(twelveRecent, NOW).length, 10);
+  const sevenRecentAndOld = [...Array.from({ length: 7 }, (_, index) => entry(`r${String(index)}`, index)), entry('old', 365)];
+  assert.deepEqual(startPageSelection(sevenRecentAndOld, NOW).map((e) => e.name).includes('old'), false);
+  assert.deepEqual(startPageSelection([entry('only', 400)], NOW).map((e) => e.name), ['only']);
+});
+
+test('search matches a name or any folder, and a workspace of several folders says how many more', () => {
+  const multi = entry('Agentintegration', 1, ['C:/dev/DSpatch', 'C:/dev/MiniDAWLab']);
+  assert.equal(matchesSearch(multi, 'minidaw'), true);
+  assert.equal(matchesSearch(multi, 'agent'), true);
+  assert.equal(matchesSearch(multi, 'nothing'), false);
+  assert.equal(moreFoldersLabel(multi.folders), '+1 folder');
+  assert.equal(moreFoldersLabel(['C:/one']), '');
 });

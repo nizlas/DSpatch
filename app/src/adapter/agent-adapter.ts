@@ -85,6 +85,16 @@ export interface AgentAdapter {
    */
   cancel(sessionId: DspatchSessionId): Promise<void>;
 
+  /**
+   * DSP-149: the session's folders changed (a folder was added to its workspace). The
+   * primary — `config.workspacePath` — never changes here; `roots` lists every folder,
+   * the primary first. Takes effect from the next `send`, by the provider's own means:
+   * the Claude adapter passes the new list on its next `query()`, the Cursor adapter
+   * resumes its agent with the new `local.dirs` before the next send. Optional: an
+   * adapter without it keeps the folders it was started with.
+   */
+  setWorkspaceRoots?(sessionId: DspatchSessionId, roots: readonly string[]): void;
+
   /** Models this adapter instance can request. */
   listModels(): Promise<readonly ModelInfo[]>;
 

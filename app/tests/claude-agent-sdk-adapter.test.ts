@@ -26,8 +26,11 @@ import {
   CANCEL_INTERRUPT_WAIT_MS,
   CANCEL_KILL_WAIT_MS,
   CANCEL_STOP_REASON,
+  absoluteRulePath,
+  CHAT_PERMISSIONS,
   ClaudeAgentSdkAdapter,
   DISPOSE_BOUND_MS,
+  REVIEW_PERMISSIONS,
   DISPOSE_EXIT_WAIT_MS,
   PREVIOUS_TURN_EXIT_MS,
   STDERR_TAIL_BYTES,
@@ -38,6 +41,7 @@ import {
   providerSessionIdFor,
 } from '../src/adapter/claude-agent-sdk-adapter.ts';
 import { CursorSdkAdapter } from '../src/adapter/cursor-sdk-adapter.ts';
+import type { ClaudeToolKit } from '../src/adapter/claude-support.ts';
 import type { AgentEvent } from '../src/adapter/types.ts';
 import {
   CANCEL_REPLY_PROMPT,
@@ -1230,25 +1234,102 @@ test('startSession refuses an ID this instance already holds', async () => {
   }
 });
 
-test('more than one working folder is refused with a clear error', async () => {
-  const { queryFn, calls, spawnProcess } = fakeSdk(async function* () {});
-  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
+test('every folder of the workspace reaches Claude, under the same rules as the first (DSP-149)', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield result(call);
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, permissions: CHAT_PERMISSIONS });
   try {
     const first = workspace('root-a');
     const second = workspace('root-b');
-    await assert.rejects(
-      adapter.startSession(startConfig(first, { workspacePaths: [first, second] })),
-      /names 2 working folders, and the Claude adapter supports exactly one/,
+    const handle = await adapter.startSession(startConfig(first, { workspacePaths: [first, second] }));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    let finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'look at both');
+    await finished;
+    const options = calls[0]?.options ?? {};
+    assert.equal(options['cwd'], first, 'the first folder stays the working directory and the resume key');
+    assert.deepEqual(options['additionalDirectories'], [second]);
+    const rule = absoluteRulePath(second);
+    assert.match(rule, /^\/\//);
+    assert.deepEqual(
+      (options['allowedTools'] as string[]).filter((entry) => entry.includes(rule)),
+      [`Read(${rule}/**)`, `Edit(${rule}/**)`],
+      'the anchored read and edit rules are restated for the other folder, and nothing more',
     );
-    // The primary repeated as the only entry is still one root.
-    await adapter.startSession(startConfig(first, { workspacePaths: [first] }));
-    await assert.rejects(
-      adapter.startSession({ ...startConfig(first), provider: 'cursor' as const }),
-      /serves the "claude" provider/,
-    );
-    assert.equal(calls.length, 0);
+
+    // A folder added later reaches the next turn, by the same means.
+    const third = workspace('root-c');
+    adapter.setWorkspaceRoots(handle.dspatchSessionId, [first, second, third]);
+    finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'and the third');
+    await finished;
+    assert.deepEqual(calls[1]?.options['additionalDirectories'], [second, third]);
+    assert.equal(calls[1]?.options['cwd'], first);
   } finally {
     await adapter.dispose();
+  }
+});
+
+test('absolute rule paths use the documented POSIX form', () => {
+  assert.equal(absoluteRulePath('C:\\Users\\nicla\\dev\\One'), '//c/Users/nicla/dev/One');
+  assert.equal(absoluteRulePath('/home/nicla/dev/one/'), '//home/nicla/dev/one');
+});
+
+test("a conversation without a workspace gets only DSpatch's tools; the review never gets them (DSP-149)", async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield result(call);
+  });
+  const built: { name: string; tools: unknown[] }[] = [];
+  const toolKit = async (): Promise<ClaudeToolKit> => {
+    const schema = { describe: () => schema, optional: () => schema };
+    return {
+      z: { string: () => schema, array: () => schema },
+      tool: (name: string) => ({ name }),
+      createSdkMcpServer: (options: { name: string; tools: readonly unknown[] }) => {
+        built.push({ name: options.name, tools: [...options.tools] });
+        return { type: 'sdk', name: options.name, instance: {} };
+      },
+    } as unknown as ClaudeToolKit;
+  };
+  const appTool = {
+    name: 'list_recent_workspaces',
+    description: 'd',
+    parameters: {},
+    readOnly: true,
+    execute: async () => ({ text: '', isError: false }),
+  };
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, permissions: CHAT_PERMISSIONS, toolKit });
+  const review = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV, permissions: REVIEW_PERMISSIONS, toolKit });
+  try {
+    const dir = workspace('loose');
+    const handle = await adapter.startSession(startConfig(dir, { toolScope: 'conversation', appTools: [appTool] }));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'make a workspace');
+    await finished;
+    const options = calls[0]?.options ?? {};
+    assert.deepEqual(options['tools'], [], 'no built-in tool');
+    assert.deepEqual(options['allowedTools'], ['mcp__dspatch__list_recent_workspaces']);
+    assert.equal(options['strictMcpConfig'], true);
+    assert.deepEqual(Object.keys(options['mcpServers'] ?? {}), ['dspatch']);
+    assert.equal(built.length, 1);
+    assert.equal(options['additionalDirectories'], undefined);
+
+    const reviewHandle = await review.startSession(startConfig(dir, { appTools: [appTool] }));
+    const reviewSeen = collect(review, reviewHandle.dspatchSessionId);
+    const reviewFinished = reviewSeen.nextFinish();
+    await review.send(reviewHandle.dspatchSessionId, 'a question');
+    await reviewFinished;
+    const reviewOptions = calls[1]?.options ?? {};
+    assert.deepEqual(reviewOptions['allowedTools'], []);
+    assert.equal(reviewOptions['mcpServers'], undefined, 'the review discussion stays tool-free');
+    assert.equal(built.length, 1);
+  } finally {
+    await adapter.dispose();
+    await review.dispose();
   }
 });
 
@@ -1940,8 +2021,9 @@ test("resume keeps startSession's preconditions, each answered before any lookup
       /serves the "claude" provider/,
     );
     await assert.rejects(
-      y.resume(RESUMED_ID, startConfig(dir, { workspacePaths: [dir, workspace('resume-second-root')] })),
-      /names 2 working folders/,
+      // DSP-149: several folders are accepted; no working folder at all is not.
+      y.resume(RESUMED_ID, startConfig('')),
+      /names no working folder/,
     );
     await y.startSession(startConfig(dir, { dspatchSessionId: RESUMED_ID }));
     await assert.rejects(y.resume(RESUMED_ID, startConfig(dir)), /already open/);

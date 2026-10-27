@@ -105,12 +105,8 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
     return refused(unavailable);
   }
   if (provider === 'claude') {
-    if (request.rootCount > 1) {
-      return refused(
-        `Claude works in one folder, and this run would have ${String(request.rootCount)} ` +
-          'folders open. Close the other folders in the workspace to run this loop with Claude.',
-      );
-    }
+    // DSP-149: no folder-count refusal. A run's other folders reach Claude as
+    // `additionalDirectories`, with the policy's read and edit rules restated for each.
     const model = request.entryNode?.model;
     if (
       model?.policy === 'fixed' &&

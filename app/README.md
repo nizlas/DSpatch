@@ -1630,24 +1630,37 @@ npm run package
   given — which is a folder path, a model name and your prompts, and **no file
   content**, because opening a folder does not put it in front of the model; and
   what is happening right now.
-- **Folders** (the sidebar): the project tree, with the open project marked
-  `project` and any folder added beside it with *Add…*. These folders are **not a
-  boundary**. What they are, checked against the code (DSP-125 moved this here from
-  a note in the sidebar):
-  - The open project is the **working directory**: the folder the provider session
-    is opened with as `cwd`, and the default working directory of the build and test
-    command (`chat-service.ts`, `SessionConfig.workspacePath`; `localOptionsFor` in
-    `cursor-sdk-adapter.ts`).
+- **The start page** (DSP-149): the agent choice, Open Project and an inactive Remote
+  Session (SSH is DSP-111's, not built), Recent projects with *View all*, and a
+  composer for a conversation with no workspace yet. Such a conversation runs in an
+  empty folder DSpatch owns under `userData` (`conversation-without-workspace`), with
+  none of the agent's file or command tools, only DSpatch's workspace tools; it is
+  saved and reopened after a restart. Opening a workspace moves it there and opens a
+  new provider session with DSpatch's recap in front of the next message.
+- **Workspaces** (the store, `project-store.ts`, format 3): an identity, a name and one
+  or more folders. *Remove from recent* hides the entry only. The chat's workspace
+  tools (`host/workspace-tools.ts`) are the same host functions as the menus, offered
+  through each SDK's tool mechanism — Claude: an in-process MCP server named `dspatch`
+  (`mcp__dspatch__…`, allowed under `strictMcpConfig`); Cursor: `local.customTools` —
+  and listed word for word in the session details.
+- **Folders** (the sidebar): the workspace's folders, its name as the heading, and its
+  chats. These folders are **not a boundary**. What they are, checked against the code:
+  - The first folder is the **working directory**: the folder the provider session
+    is opened with as `cwd`, its resume key, and the default working directory of the
+    build and test command (`chat-service.ts`, `SessionConfig.workspacePath`).
+  - **Every folder is a working folder, in the chat and in loop runs** (DSP-149;
+    before it, the chat gave the agent the first folder alone). Cursor gets them as
+    `cwd` plus `dirs` (`localOptionsFor`), resumed with the new list when a folder is
+    added; Claude as `additionalDirectories`, passed on the next turn, with the
+    policy's own `Read(/**)` and `Edit(/**)` restated for each folder as an absolute
+    `//` rule (`rootRules` in `claude-agent-sdk-adapter.ts`), so nothing more is
+    allowed in an added folder than in the first. Changes are measured per folder
+    from each folder's own baseline; a command's snapshot covers every folder.
   - All open folders, and DSpatch's own working copy, are searched for loop definitions (`loopFolders()` in `main.ts`).
-  - **During a loop run** every open folder is a working folder of the run: DSpatch
-    hands them to Cursor as the session's workspace folders (`cwd` plus `dirs`;
-    `workspacePaths: providerRootPathsFor(...)` in `loop-live.ts`) and measures what
-    changed in each one with a before-and-after snapshot - unless no step of the
-    drawing may write, in which case the run's record says that no snapshot was taken
-    (`snapshotDecisionFor` in `loop-live-run.ts`).
-  - **An ordinary chat message** gives the agent the working directory alone; the
-    other folders reach nobody (`chat-service.ts` builds its `SessionConfig` with
-    `workspacePath` only, so `localOptionsFor` passes no `dirs`).
+  - **During a loop run** DSpatch measures what changed in each folder with a
+    before-and-after snapshot - unless no step of the drawing may write, in which case
+    the run's record says that no snapshot was taken (`snapshotDecisionFor` in
+    `loop-live-run.ts`).
   - **A folder's own rules, skills and `AGENTS.md` are not loaded** on either path:
     DSpatch does not turn on Cursor's project settings. `localOptionsFor` passes no
     `settingSources`, which the SDK reads as every setting source off; DSP-91's probe

@@ -17,6 +17,7 @@ import {
 import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
 import type {
   AgentCommandRecord,
+  AppTool,
   AgentEvent,
   AgentEventListener,
   CapabilityReport,
@@ -73,6 +74,7 @@ import type {
   TestRunRequest,
   TurnUsage,
   UiAgentEvent,
+  FolderChangeReport,
   WorkspaceChange,
   WorkspaceReport,
 } from '../shared/bridge';
@@ -921,6 +923,8 @@ export interface ChatAdapter {
   permissionPolicy?(): ClaudePermissionPolicy;
   subscribe(sessionId: string, listener: AgentEventListener): Unsubscribe;
   send(sessionId: string, prompt: string): Promise<RunReference>;
+  /** DSP-149: see {@link AgentAdapter.setWorkspaceRoots}. */
+  setWorkspaceRoots?(sessionId: string, roots: readonly string[]): void;
   cancel(sessionId: string): Promise<void>;
   readUsage(scope: UsageQuery): Promise<readonly UsageReading[]>;
   providerMessageTypes(sessionId: string): Record<string, number>;
@@ -1044,6 +1048,20 @@ export interface ChatServiceOptions {
    * project that has not been opened since conversations existed.
    */
   readonly conversationForProject?: (projectPath: string) => string | null;
+  /**
+   * DSP-149: the empty folder DSpatch owns for a conversation with no workspace yet.
+   * Never a person's project, never DSpatch's repository, never the process's working
+   * directory. Required to open such a conversation.
+   */
+  readonly looseFolder?: () => string;
+  /**
+   * DSP-149: DSpatch's own functions offered to the chat's agent as tools (the workspace
+   * functions the menus use). Called once per opened session. Loop steps and the review
+   * discussion never get them.
+   */
+  readonly appTools?: () => readonly AppTool[];
+  /** DSP-149: called whenever a turn has ended, so the host can act on what it asked for. */
+  readonly onTurnSettled?: () => void;
   /**
    * Where generated sample projects live. Defaults to `%TEMP%/dspatch-chat`.
    *
@@ -1277,6 +1295,16 @@ export class ChatService {
   private session: ChatSessionInfo | null = null;
 
   private baseline: WorkspaceSnapshot | null = null;
+
+  /**
+   * DSP-149: every folder of the open session's workspace, the primary first. The
+   * primary is `this.session.workspacePath` and has {@link baseline}; each other folder
+   * has its own baseline in {@link otherBaselines}, taken when the session opened or when
+   * the folder was added.
+   */
+  private workspaceFolders: readonly string[] = [];
+
+  private readonly otherBaselines = new Map<string, WorkspaceSnapshot>();
 
   /**
    * Paths that already differed from git `HEAD` when the session opened.
@@ -1798,12 +1826,14 @@ export class ChatService {
     // provider session is over whatever is open now; asking the caller to name a
     // path again would make it a way of opening something else.
     const openBeforeClose = this.session;
+    // DSP-149: a new provider session over the same workspace keeps all its folders.
+    const foldersBeforeClose = this.workspaceFolders;
     // DSP-117: an explicitly named provider, or for a new provider session the one
     // already selected. Refused before anything is closed when it cannot be used.
     const selectedBeforeClose = this.selectedProvider;
     // DSP-136: `null` is "no agent chosen", `undefined` "not named here".
     const namedProvider: StoredSessionProvider | null | undefined =
-      request.kind === 'retry-resume'
+      request.kind === 'retry-resume' || request.kind === 'carry'
         ? undefined
         : request.kind === 'new-provider-session'
           ? (request.provider ?? selectedBeforeClose)
@@ -1860,12 +1890,42 @@ export class ChatService {
         `${generated.gitCommit ?? 'none'}) in a folder of its own outside the ` +
         'DSpatch repository. Earlier sample projects are left alone; removing them ' +
         'is a separate action in the Project menu.';
+    } else if (request.kind === 'loose') {
+      // DSP-149: no workspace. An empty folder DSpatch owns, so the agent's working
+      // directory is never a person's project, DSpatch's repository or wherever the
+      // process happened to start.
+      const loose = this.options.looseFolder?.() ?? null;
+      if (loose === null) {
+        throw new Error('A conversation without a workspace cannot be opened in this launch.');
+      }
+      fs.mkdirSync(loose, { recursive: true });
+      origin = 'no-workspace';
+      workspacePath = path.resolve(loose);
+      workspaceOrigin =
+        'an empty folder DSpatch keeps for conversations that have no workspace yet. ' +
+        'No project of yours is open, and the agent has no file or command tools here.';
     } else {
       origin = 'chosen-folder';
       workspacePath = this.validateProjectFolder(request.path);
       workspaceOrigin =
         'chosen by you. DSpatch did not create, move or delete anything in it.';
     }
+    // DSP-149: every folder of the workspace, the primary first; each is checked as the
+    // primary is, so DSpatch's own working copy is refused whichever position it has.
+    const requestedFolders =
+      request.kind === 'folder' || request.kind === 'carry'
+        ? (request.folders ?? [])
+        : request.kind === 'new-provider-session' || request.kind === 'retry-resume'
+          ? foldersBeforeClose.slice(1)
+          : [];
+    const workspaceFolders: string[] = [workspacePath];
+    for (const folder of requestedFolders) {
+      const checked = this.validateProjectFolder(folder);
+      if (!workspaceFolders.some((kept) => samePath(kept, checked))) {
+        workspaceFolders.push(checked);
+      }
+    }
+    this.workspaceFolders = workspaceFolders;
 
     const git = readGitWorkingCopyState(workspacePath);
     const gitInfo: GitBaselineInfo = {
@@ -1896,7 +1956,14 @@ export class ChatService {
       DEFAULT_RETENTION_LIMITS,
     );
     this.baseline = baseline;
-    const conversationId = this.adoptConversationFor(workspacePath, baseline);
+    const conversationId = this.adoptConversationFor(
+      workspacePath,
+      baseline,
+      request.kind === 'folder' || request.kind === 'loose' || request.kind === 'carry'
+        ? request.conversationId
+        : undefined,
+    );
+    this.takeOtherBaselines();
     this.runner = resolveNodeRunner();
     const suggestion = suggestBuildCommand(workspacePath, this.runner?.path ?? null);
 
@@ -1917,14 +1984,16 @@ export class ChatService {
     const chosen: StoredSessionProvider | null =
       request.kind === 'new-provider-session'
         ? (namedProvider ?? null)
-        : request.kind === 'retry-resume'
+        : request.kind === 'carry'
+          ? (selectedBeforeClose ?? this.chosenAgent())
+          : request.kind === 'retry-resume'
           ? (recordedProviderForSelection ?? selectedBeforeClose)
           : namedProvider === undefined
             ? this.chosenAgent()
             : namedProvider;
     const chosenUsable = chosen !== null && this.available(chosen);
     const opensSession =
-      request.kind === 'new-provider-session'
+      request.kind === 'new-provider-session' || request.kind === 'carry'
         ? chosenUsable
         : recordedProviderForSelection === null
           ? chosenUsable
@@ -1955,9 +2024,11 @@ export class ChatService {
       provider: selected,
       modelRequested: this.modelFor(selected),
       workspacePath,
+      ...this.sessionScope(origin),
       // Review B3: a Claude-recorded session is resumed only under the tool policy
       // it was recorded with; the adapter refuses a mismatch before any lookup.
       ...(request.kind !== 'new-provider-session' &&
+      request.kind !== 'carry' &&
       selected === 'claude' &&
       recordedProviderForSelection === 'claude' &&
       savedForSelection !== null
@@ -2001,7 +2072,8 @@ export class ChatService {
       config,
       conversationId,
       workspacePath,
-      request.kind === 'new-provider-session',
+      request.kind === 'new-provider-session' || request.kind === 'carry',
+      request.kind === 'carry' ? request.workspaceName : null,
     );
     this.continuity = continued.continuity;
     this.pendingResendContext = continued.continuity.contextToResend;
@@ -2049,6 +2121,7 @@ export class ChatService {
       // DSP-117: the policy actually given, where the adapter has one (Claude);
       // Cursor's sessions use the provider's default and say so.
       toolPolicySent: this.agentChoice(selected).toolPolicyText,
+      ...this.contextExtras(origin),
       fileContentsSentByDspatch: 0,
       statement: providerSessionOpen
         ? 'DSpatch sent the agent this working directory path, the model name and ' +
@@ -2322,6 +2395,7 @@ export class ChatService {
         workingDirectorySent: workspacePath,
         modelSent: this.modelRequested(),
         toolPolicySent: this.agentChoice(chosen).toolPolicyText,
+        ...this.contextExtras(input.origin),
         fileContentsSentByDspatch: 0,
         statement:
           'No provider session is open for this conversation, and no agent was built: ' +
@@ -2390,6 +2464,11 @@ export class ChatService {
      * it is sent and removable until then.
      */
     newProviderSessionRequested = false,
+    /**
+     * DSP-149: the workspace this conversation has just moved into, which is why the
+     * new provider session was opened. `null` for every other new session.
+     */
+    movedIntoWorkspace: string | null = null,
   ): Promise<OpenedProviderSession> {
     const saved = this.savedSessionFor(conversationId);
     // The same merged conversation the window is given (WS-1 #10): the file's
@@ -2450,9 +2529,11 @@ export class ChatService {
         };
       }
       const reason =
-        previousId === null
-          ? 'you asked for a new provider session'
-          : `you asked for a new provider session rather than continuing ${previousId}`;
+        movedIntoWorkspace !== null
+          ? `this conversation moved into the workspace "${movedIntoWorkspace}", and a provider session belongs to the folder it was started in`
+          : previousId === null
+            ? 'you asked for a new provider session'
+            : `you asked for a new provider session rather than continuing ${previousId}`;
       const recap = this.recapFor(conversationId, workspacePath, reason);
       this.options.log(
         `new provider session requested; not resuming ${previousId ?? 'anything'}`,
@@ -2473,6 +2554,14 @@ export class ChatService {
           contextNote: resendNote(recap, savedMessageCount),
           savedMessageCount,
           statement:
+            movedIntoWorkspace !== null
+              ? `This conversation moved into the workspace "${movedIntoWorkspace}". It ` +
+                'continues here in a new provider session, because the earlier one was ' +
+                'started in another folder and a provider session is resumed only where ' +
+                'it began. The model here has no memory of the conversation above. What ' +
+                'it will be given is below, word for word, in front of your next message ' +
+                '— unless you remove it first. Nothing has been sent.'
+              :
             'This is a new provider session, opened because you asked for one. ' +
             'DSpatch did not try to resume ' +
             `${previousId ?? 'the earlier session'}: whatever that session was ` +
@@ -4000,13 +4089,23 @@ export class ChatService {
    * again would raise the same unknown outcomes a second time. Its own record comes
    * with it, and nothing of the conversation that was open before (WS-1 #7).
    */
-  private adoptConversationFor(workspacePath: string, baseline: WorkspaceSnapshot): string {
+  private adoptConversationFor(
+    workspacePath: string,
+    baseline: WorkspaceSnapshot,
+    /**
+     * DSP-149: the conversation the host chose — a workspace's last chat, the carried
+     * one, or `null` for a new one. Absent keeps the earlier rule.
+     */
+    explicit?: string | null,
+  ): string {
     const store = this.options.conversations?.() ?? null;
     const current = this.current();
     const known =
-      current !== null && samePath(current.projectPath, workspacePath)
-        ? current.conversationId
-        : (this.options.conversationForProject?.(workspacePath) ?? null);
+      explicit !== undefined
+        ? explicit
+        : current !== null && samePath(current.projectPath, workspacePath)
+          ? current.conversationId
+          : (this.options.conversationForProject?.(workspacePath) ?? null);
     const inMemory = known === null ? null : (this.held.get(known) ?? null);
     // The whole read is kept, not just the conversation in it: a file that exists and
     // could not be parsed is the one case where the window must say so rather than
@@ -4447,7 +4546,15 @@ export class ChatService {
       return null;
     }
     try {
-      return snapshotWorkspace(session.workspacePath).snapshotId;
+      const primary = snapshotWorkspace(session.workspacePath).snapshotId;
+      const others = this.workspaceFolders.slice(1);
+      if (others.length === 0) {
+        return primary;
+      }
+      // DSP-149: one identity for the code in every folder, so a command's result counts
+      // only for the code it ran against in all of them, not only in the first.
+      const parts = [primary, ...others.map((folder) => `${folder}=${snapshotWorkspace(folder).snapshotId}`)];
+      return `roots-${createHash('sha256').update(parts.join('\n')).digest('hex').slice(0, 16)}`;
     } catch {
       return null;
     }
@@ -4541,12 +4648,91 @@ export class ChatService {
     // Kept verbatim, as the diff that was put in front of a reviewer. Saving the
     // inputs and recomputing later would produce a diff of whatever the files became,
     // presented as the one that was read.
+    const otherFolders = this.otherFolderChanges();
+    const full: WorkspaceReport = otherFolders.length === 0 ? report : { ...report, otherFolders };
     const held = this.current();
     if (held !== null) {
-      held.reviewedDiff = report;
+      held.reviewedDiff = full;
     }
     this.saveConversation();
-    return report;
+    return full;
+  }
+
+  /**
+   * DSP-149: every non-primary folder's changes since its own baseline, by the same
+   * comparison and diff rules as the primary's. A folder that cannot be read now is
+   * reported with no changes and a note saying so, never silently left out.
+   */
+  private otherFolderChanges(): FolderChangeReport[] {
+    const reports: FolderChangeReport[] = [];
+    for (const [folder, baseline] of this.otherBaselines) {
+      let after: WorkspaceSnapshot;
+      try {
+        after = snapshotWorkspace(folder);
+      } catch (error) {
+        reports.push({
+          folderPath: folder,
+          baselineSnapshotId: baseline.snapshotId,
+          baselineTakenAtUtc: baseline.snapshot.takenAtUtc,
+          observedSnapshotId: '',
+          changed: [],
+          added: [],
+          removed: [],
+          unchangedCount: 0,
+          truncated: true,
+          coverageNote: `This folder could not be read just now, so its changes are unknown: ${describeError(error)}`,
+        });
+        continue;
+      }
+      const diff = diffSnapshots(baseline.snapshot, after.snapshot);
+      const beforeLabel = `${baseline.snapshotId} (baseline, ${baseline.snapshot.takenAtUtc})`;
+      const afterLabel = `${after.snapshotId} (on disk, ${after.snapshot.takenAtUtc})`;
+      const describe = (
+        relPath: string,
+        beforeSha256: string | null,
+        afterSha256: string | null,
+        beforeBytes: number | null,
+        afterBytes: number | null,
+      ): WorkspaceChange => {
+        const text = buildUnifiedDiff({
+          relPath,
+          before: this.baselineSide(relPath, beforeSha256, baseline),
+          after: this.onDiskSide(folder, relPath, afterSha256, after.snapshotId),
+          beforeLabel,
+          afterLabel,
+        });
+        return {
+          relPath,
+          beforeSha256,
+          afterSha256,
+          beforeBytes,
+          afterBytes,
+          preexistingDirty: false,
+          unifiedDiff: text.unifiedDiff,
+          diffLimitation: text.limitation,
+          addedLines: text.addedLines,
+          removedLines: text.removedLines,
+          diffTruncated: text.truncated,
+        };
+      };
+      reports.push({
+        folderPath: folder,
+        baselineSnapshotId: baseline.snapshotId,
+        baselineTakenAtUtc: baseline.snapshot.takenAtUtc,
+        observedSnapshotId: after.snapshotId,
+        changed: diff.changed.map((file) =>
+          describe(file.relPath, file.beforeSha256, file.afterSha256, file.beforeBytes, file.afterBytes),
+        ),
+        added: diff.added.map((file) => describe(file.relPath, null, file.sha256, null, file.bytes)),
+        removed: diff.removed.map((file) => describe(file.relPath, file.sha256, null, file.bytes, null)),
+        unchangedCount: diff.unchangedCount,
+        truncated: baseline.truncated || after.truncated,
+        coverageNote:
+          `${this.coverageNote(baseline)} Counted from when this folder joined the session ` +
+          '(the session opening, or the folder being added); a restart counts afresh.',
+      });
+    }
+    return reports;
   }
 
   /**
@@ -4584,11 +4770,14 @@ export class ChatService {
   }
 
   /** The baseline side of one file's diff: its bytes, or why they are missing. */
-  private baselineSide(relPath: string, beforeSha256: string | null): DiffSide {
+  private baselineSide(
+    relPath: string,
+    beforeSha256: string | null,
+    baseline: WorkspaceSnapshot | null = this.baseline,
+  ): DiffSide {
     if (beforeSha256 === null) {
       return { kind: 'absent' };
     }
-    const baseline = this.baseline;
     if (baseline === null || baseline.contents === null) {
       return {
         kind: 'unavailable',
@@ -4850,6 +5039,98 @@ export class ChatService {
     }
   }
 
+  /**
+   * DSP-149: the tool scope and app tools a session over this origin gets. A
+   * conversation with no workspace has only DSpatch's app tools; a workspace has every
+   * folder and the app tools as well; a generated sample has neither app tools nor more
+   * than its one folder.
+   */
+  private sessionScope(origin: SessionOrigin): Pick<SessionConfig, 'toolScope' | 'appTools' | 'workspacePaths'> {
+    const appTools = origin === 'generated-sample' ? [] : (this.options.appTools?.() ?? []);
+    return {
+      toolScope: origin === 'no-workspace' ? 'conversation' : 'workspace',
+      ...(appTools.length === 0 ? {} : { appTools }),
+      ...(this.workspaceFolders.length > 1 ? { workspacePaths: [...this.workspaceFolders] } : {}),
+    };
+  }
+
+  /** DSP-149: what the session details show of the folders and tools given to the agent. */
+  private contextExtras(origin: SessionOrigin): Pick<SessionContextInfo, 'otherFoldersSent' | 'dspatchToolsSent'> {
+    const scope = this.sessionScope(origin);
+    return {
+      ...(scope.workspacePaths === undefined ? {} : { otherFoldersSent: scope.workspacePaths.slice(1) }),
+      ...(scope.appTools === undefined
+        ? {}
+        : { dspatchToolsSent: scope.appTools.map((tool) => ({ name: tool.name, description: tool.description })) }),
+    };
+  }
+
+  /** Baselines for every non-primary folder that has none yet; dropped ones forgotten. */
+  private takeOtherBaselines(): void {
+    const others = this.workspaceFolders.slice(1);
+    for (const kept of [...this.otherBaselines.keys()]) {
+      if (!others.some((folder) => samePath(folder, kept))) {
+        this.otherBaselines.delete(kept);
+      }
+    }
+    for (const folder of others) {
+      if (![...this.otherBaselines.keys()].some((kept) => samePath(kept, folder))) {
+        this.otherBaselines.set(
+          folder,
+          snapshotWorkspace(folder, DEFAULT_SNAPSHOT_LIMITS, DEFAULT_RETENTION_LIMITS),
+        );
+      }
+    }
+  }
+
+  /** The open session's folders, the primary first; empty with no session. */
+  sessionFolders(): readonly string[] {
+    return this.session === null ? [] : this.workspaceFolders;
+  }
+
+  /**
+   * DSP-149: the workspace's folders changed (a folder was added or removed). The primary
+   * is not changed here: it is the working directory and the provider session's resume
+   * key. The adapter is told, and applies it from the next message by its SDK's own
+   * means; a new folder gets its own baseline now, so its changes are counted from here.
+   */
+  setWorkingFolders(folders: readonly string[]): void {
+    const session = this.session;
+    if (session === null || session.origin === 'no-workspace') {
+      return;
+    }
+    const next: string[] = [session.workspacePath];
+    for (const folder of folders) {
+      const resolved = path.resolve(folder);
+      if (!next.some((kept) => samePath(kept, resolved))) {
+        next.push(resolved);
+      }
+    }
+    this.workspaceFolders = next;
+    this.takeOtherBaselines();
+    if (this.continuity.providerSessionOpen && this.adapter !== null) {
+      this.adapter.setWorkspaceRoots?.(session.dspatchSessionId, next);
+    }
+    this.options.log(`working folders now: ${next.join(', ')}`);
+  }
+
+  /** Whether the session on screen is a conversation without a workspace that has messages. */
+  looseConversationWithMessages(): string | null {
+    const session = this.session;
+    if (session === null || session.origin !== 'no-workspace') {
+      return null;
+    }
+    return this.mergedMessages(session.conversationId).length > 0 ? session.conversationId : null;
+  }
+
+  /**
+   * DSP-149: the same checks a folder gets when opened, for one named without opening it
+   * (a workspace being created from the chat). Throws with the reason.
+   */
+  checkFolder(candidate: string): string {
+    return this.validateProjectFolder(candidate);
+  }
+
   private async closeSession(): Promise<void> {
     // DSpatch stops the command because it is closing the session, so its exit is
     // not a verdict about the code (WS-1 #8); the result stays with its conversation.
@@ -5077,6 +5358,10 @@ export class ChatService {
     // ending, and recording it against the current attempt would be a lie about
     // both.
     if (event.type === 'run.finished') {
+      // DSP-149: after this event's own handling, so the host sees the turn as ended.
+      setTimeout(() => {
+        this.options.onTurnSettled?.();
+      }, 0);
       const owner = this.attemptByRunId.get(event.dspatchRunId);
       if (owner !== undefined) {
         const { ledger, attemptId } = owner;
@@ -5160,7 +5445,7 @@ export class ChatService {
               testedSnapshotId: started?.beforeSnapshotId ?? null,
               afterRunSnapshotId: this.safeSnapshotId(),
               snapshotRoots:
-                started?.workspacePath === null || started === undefined ? [] : [started.workspacePath],
+                started?.workspacePath === null || started === undefined ? [] : [...this.workspaceFolders],
             }
           : event.command;
       const owner = this.turns.find((candidate) => candidate.dspatchRunId === event.dspatchRunId);

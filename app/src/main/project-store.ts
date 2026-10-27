@@ -1,119 +1,156 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * The recently used projects, in one small versioned JSON file.
+ * DSpatch's workspaces, in one small versioned JSON file.
  *
- * One file, versioned from the start, because DSP-4 will extend this store with
- * conversation history rather than introduce a second one. `formatVersion` is
- * written now so that a later DSpatch can recognise this file, and — more
- * importantly — so that an **older** DSpatch meeting a newer file refuses to
- * rewrite it instead of quietly discarding fields it does not understand.
+ * One file, versioned from the start, because DSP-4 extended this store with
+ * conversation history rather than introduce a second one. `formatVersion` exists so
+ * that an **older** DSpatch meeting a newer file refuses to rewrite it instead of
+ * quietly discarding fields it does not understand.
  *
- * Nothing here is essential to operating DSpatch: a missing or unreadable file
- * costs the list of recent projects and nothing else. So every failure is
- * reported and none of them is fatal, and a file that cannot be parsed is left
- * on disk rather than overwritten — it is the user's data, and it may be
- * recoverable by hand.
+ * Nothing here is essential to operating DSpatch: a missing or unreadable file costs
+ * the list of recent workspaces and nothing else. So every failure is reported and
+ * none of them is fatal, and a file that cannot be parsed is left on disk rather than
+ * overwritten: it is the user's data, and it may be recoverable by hand.
  */
 
 /**
- * 2 since DSP-71 added `workspaces` beside `recentProjects`.
+ * 3 since DSP-149 gave a workspace an identity, a name and its own conversation.
  *
- * Bumped rather than left alone precisely so that the refuse-to-rewrite behaviour
- * above does the right thing in the direction that matters: a build from before this
- * card meeting a file written by this one reads the recent projects it understands
- * and **will not write**, instead of saving the file back without the workspaces and
- * losing a person's open folders. A version-1 file is read by this build without
- * complaint; it simply has no workspaces in it, which is the truth about it.
+ * Version 2 (DSP-71) kept `recentProjects` — single folders — beside `workspaces`, an
+ * arrangement of folders keyed by a saved file. DSP-149 made the workspace the thing a
+ * person opens: Recent lists workspaces, a workspace holds one folder or several, and
+ * its conversation pointer lives on it. A version-2 file is read and migrated in
+ * memory (every remembered folder becomes a one-folder workspace, named after the
+ * folder, keeping its conversation) and written as version 3 on the next change. An
+ * older build meeting a version-3 file reads the `recentProjects` this build still
+ * writes beside the workspaces, and refuses to write.
  */
-export const PROJECT_STORE_FORMAT_VERSION = 2;
+export const PROJECT_STORE_FORMAT_VERSION = 3;
 
+/**
+ * A workspace: a persistent identity, a name and an ordered collection of folders.
+ *
+ * **The first folder is the primary.** It is the agent's working directory — the
+ * shell's `cwd`, and what each provider scopes its own session store by — so it is
+ * part of a provider session's resume key. The other folders are working folders of
+ * the same sessions (DSP-72, DSP-149). Order is the person's.
+ *
+ * **The conversation pointer is here.** DSP-71 and DSP-72 kept it off the workspace
+ * while "the open project" was a folder and a workspace was an arrangement around it:
+ * with one primary there was one answer, recorded on the folder. DSP-149 made the
+ * workspace the thing that is opened and that owns its chats, so the answer moved with
+ * it. It is still one answer: a workspace has one primary, and the conversation it
+ * continues is resumed against that primary.
+ *
+ * `hiddenFromRecent` is *Remove from recent*: the entry leaves the list and nothing
+ * else changes. The workspace keeps its identity, name, folders and conversations, and
+ * opening its first folder again brings it back.
+ */
+export interface WorkspaceRecord {
+  readonly id: string;
+  readonly name: string;
+  readonly folders: readonly string[];
+  /** The saved `.dspatch-workspace.json` this workspace was opened from or saved to. */
+  readonly filePath: string | null;
+  /** The loop definition chosen for this workspace (DSP-68, DSP-71). */
+  readonly loopDefinitionKey: string | null;
+  readonly lastOpenedAtUtc: string;
+  readonly openCount: number;
+  /** The chat this workspace was last worked in, or `null`. */
+  readonly lastConversationId: string | null;
+  readonly hiddenFromRecent: boolean;
+}
+
+/**
+ * Written beside the workspaces for an older build to read (version 2 and earlier).
+ *
+ * Derived on every write from the workspaces' primaries; never read by this build
+ * except when migrating a file that has no version-3 workspaces yet.
+ */
 export interface RecentProject {
   readonly path: string;
   readonly lastOpenedAtUtc: string;
   readonly openCount: number;
-  /**
-   * The saved conversation this project was last worked in, if any.
-   *
-   * The reason it is here and not derived from the conversation files: opening a
-   * project after a restart has to **continue** its conversation rather than start a
-   * second one beside it, and matching by path across the saved files would guess.
-   * `null` means DSpatch has no record of one, which is the honest answer for a
-   * project opened before this field existed — a version-1 file written by DSP-2's
-   * build has no such field, and reading it must not invent one.
-   */
   readonly lastConversationId: string | null;
-}
-
-/**
- * A set of folders a person had open together, and the loop they chose for it.
- *
- * **Not a second project list.** A `RecentProject` is a folder that was opened and
- * worked in; this is the arrangement several of them were open in. The two are in one
- * file because DSP-71 said to add to this store rather than restructure it, and
- * because a second store would have its own version, its own corruption case and its
- * own refuse-to-rewrite rule to get right.
- *
- * **There is deliberately no `lastConversationId` here, and DSP-72 kept it that way.**
- * DSP-71's description reserves one, against the day several folders make "which
- * folder's conversation is this" unanswerable, and deferred the question to the card
- * that gave several working roots a meaning. That card has now been done, and the
- * question still has exactly one answer.
- *
- * Working roots stopped being singular; **the working directory did not.** A run's
- * roots are an ordered list with one primary, and the primary is not a presentation
- * choice: it is the shell's `cwd`, and the provider scopes its own local agent store by
- * `cwd`, so which root is primary is part of the resume key. A conversation continues
- * against that store. So "which folder's conversation is this" resolves, as it did
- * before, to the working directory's `RecentProject` entry, where
- * `rememberConversation` already puts the pointer — and a second pointer here would be
- * a second answer to a one-answer question, which is the shape of the bug
- * `rememberConversation` was written to fix.
- *
- * What would change this is a run whose roots have no primary, or one where two roots
- * could each be resumed against separately. Neither exists, and the field should be
- * added when one does rather than reserved against the possibility. The test asserting
- * this field is **absent** stays, and it is now asserting a decision two cards have
- * taken rather than an omission waiting to be corrected.
- *
- * `filePath` is the saved `.dspatch-workspace.json` this arrangement came from, and
- * `null` for the one a person has simply built up in the window without saving it.
- */
-export interface WorkspaceRecord {
-  readonly filePath: string | null;
-  readonly folders: readonly string[];
-  /** The declaration file the person chose. Collected here from DSP-68. */
-  readonly loopDefinitionKey: string | null;
-  readonly lastOpenedAtUtc: string;
 }
 
 interface StoreFile {
   readonly formatVersion: number;
-  readonly recentProjects: readonly RecentProject[];
   readonly workspaces: readonly WorkspaceRecord[];
+  /** The conversation begun before any workspace was chosen (DSP-149), or `null`. */
+  readonly looseConversationId: string | null;
+  readonly recentProjects: readonly RecentProject[];
 }
 
 export interface ProjectStoreState {
   readonly filePath: string;
   readonly formatVersion: number;
-  readonly recentProjects: readonly RecentProject[];
-  /** Most recently used first. Empty for a version-1 file, which had none. */
+  /** Most recently opened first, hidden ones included. */
   readonly workspaces: readonly WorkspaceRecord[];
+  readonly looseConversationId: string | null;
   /** Non-null means the list is incomplete or absent, and says why. */
   readonly error: string | null;
-  /** True when the file is from a later DSpatch and must not be rewritten. */
+  /** True when the file is from a later DSpatch, or unreadable, and must not be rewritten. */
   readonly readOnly: boolean;
 }
 
-/** More than this is a list nobody reads; the newest entries are kept. */
-const MAX_RECENT = 12;
+/** Far more than anyone reopens; View all shows every one of them. */
+const MAX_WORKSPACES = 500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseRecent(value: unknown): readonly RecentProject[] {
+/** Windows paths differ in case without differing. */
+export function samePath(left: string, right: string): boolean {
+  return process.platform === 'win32'
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
+/** The last segment of a folder path; the name a new workspace gets. */
+export function defaultWorkspaceName(folder: string): string {
+  const trimmed = folder.replace(/[\\/]+$/, '');
+  const name = path.basename(trimmed);
+  return name === '' ? folder : name;
+}
+
+/**
+ * A stable identity for a workspace migrated from a version-2 entry.
+ *
+ * Derived from its first folder rather than random, so reading the same old file twice
+ * (or in a build that cannot write it) gives the same identity both times.
+ */
+function migratedId(primary: string): string {
+  const key = process.platform === 'win32' ? primary.toLowerCase() : primary;
+  return `ws-${crypto.createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
+}
+
+export function newWorkspaceId(): string {
+  return `ws-${crypto.randomUUID()}`;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+function parseFolders(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const folders: string[] = [];
+  for (const folder of value) {
+    if (typeof folder === 'string' && folder.trim() !== '' && !folders.some((kept) => samePath(kept, folder))) {
+      folders.push(folder);
+    }
+  }
+  return folders;
+}
+
+function parseRecentProjects(value: unknown): RecentProject[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -126,50 +163,110 @@ function parseRecent(value: unknown): readonly RecentProject[] {
     if (typeof projectPath !== 'string' || projectPath.trim() === '') {
       continue;
     }
-    const lastOpened = entry['lastOpenedAtUtc'];
     const openCount = entry['openCount'];
-    const conversationId = entry['lastConversationId'];
     projects.push({
       path: projectPath,
-      lastOpenedAtUtc: typeof lastOpened === 'string' ? lastOpened : '',
+      lastOpenedAtUtc: typeof entry['lastOpenedAtUtc'] === 'string' ? entry['lastOpenedAtUtc'] : '',
       openCount: typeof openCount === 'number' && Number.isFinite(openCount) ? openCount : 1,
-      lastConversationId: typeof conversationId === 'string' && conversationId !== ''
-        ? conversationId
-        : null,
+      lastConversationId: stringOrNull(entry['lastConversationId']),
     });
   }
   return projects;
 }
 
-/** More than this and the list is history nobody reopens. */
-const MAX_WORKSPACES = 8;
-
-function parseWorkspaces(value: unknown): readonly WorkspaceRecord[] {
-  if (!Array.isArray(value)) {
-    return [];
+/** A version-3 workspace entry, or `null` when it is not usable. */
+function parseWorkspace(entry: unknown): WorkspaceRecord | null {
+  if (!isRecord(entry)) {
+    return null;
   }
-  const records: WorkspaceRecord[] = [];
-  for (const entry of value) {
-    if (!isRecord(entry)) {
+  const folders = parseFolders(entry['folders']);
+  const id = stringOrNull(entry['id']);
+  if (folders.length === 0 || id === null) {
+    return null;
+  }
+  const name = stringOrNull(entry['name']);
+  const openCount = entry['openCount'];
+  return {
+    id,
+    name: name ?? defaultWorkspaceName(folders[0] ?? ''),
+    folders,
+    filePath: stringOrNull(entry['filePath']),
+    loopDefinitionKey: stringOrNull(entry['loopDefinitionKey']),
+    lastOpenedAtUtc: typeof entry['lastOpenedAtUtc'] === 'string' ? entry['lastOpenedAtUtc'] : '',
+    openCount: typeof openCount === 'number' && Number.isFinite(openCount) ? openCount : 1,
+    lastConversationId: stringOrNull(entry['lastConversationId']),
+    hiddenFromRecent: entry['hiddenFromRecent'] === true,
+  };
+}
+
+/**
+ * A version-1 or version-2 file's contents as version-3 workspaces.
+ *
+ * Every remembered project becomes a one-folder workspace named after its folder and
+ * keeping its conversation. A version-2 arrangement whose first folder is such a
+ * project lends it its extra folders and loop definition; one whose first folder is
+ * not remembered becomes a workspace of its own. Nothing is dropped.
+ */
+function migrateVersion2(parsed: Record<string, unknown>): WorkspaceRecord[] {
+  const projects = parseRecentProjects(parsed['recentProjects']);
+  const arrangements = Array.isArray(parsed['workspaces']) ? parsed['workspaces'] : [];
+  const records: WorkspaceRecord[] = projects.map((project) => ({
+    id: migratedId(project.path),
+    name: defaultWorkspaceName(project.path),
+    folders: [project.path],
+    filePath: null,
+    loopDefinitionKey: null,
+    lastOpenedAtUtc: project.lastOpenedAtUtc,
+    openCount: project.openCount,
+    lastConversationId: project.lastConversationId,
+    hiddenFromRecent: false,
+  }));
+  for (const arrangement of arrangements) {
+    if (!isRecord(arrangement)) {
       continue;
     }
-    const folders = entry['folders'];
-    if (!Array.isArray(folders)) {
+    const folders = parseFolders(arrangement['folders']);
+    const primary = folders[0];
+    if (primary === undefined) {
       continue;
     }
-    const filePath = entry['filePath'];
-    const key = entry['loopDefinitionKey'];
-    const at = entry['lastOpenedAtUtc'];
-    records.push({
-      filePath: typeof filePath === 'string' && filePath !== '' ? filePath : null,
-      folders: folders.filter(
-        (folder): folder is string => typeof folder === 'string' && folder.trim() !== '',
-      ),
-      loopDefinitionKey: typeof key === 'string' && key !== '' ? key : null,
-      lastOpenedAtUtc: typeof at === 'string' ? at : '',
-    });
+    const at = typeof arrangement['lastOpenedAtUtc'] === 'string' ? arrangement['lastOpenedAtUtc'] : '';
+    const index = records.findIndex((record) => samePath(record.folders[0] ?? '', primary));
+    const existing = index === -1 ? null : records[index];
+    if (existing === null || existing === undefined) {
+      records.push({
+        id: migratedId(primary),
+        name: defaultWorkspaceName(primary),
+        folders,
+        filePath: stringOrNull(arrangement['filePath']),
+        loopDefinitionKey: stringOrNull(arrangement['loopDefinitionKey']),
+        lastOpenedAtUtc: at,
+        openCount: 1,
+        lastConversationId: null,
+        hiddenFromRecent: false,
+      });
+      continue;
+    }
+    if (existing.folders.length > 1) {
+      // A second arrangement over the same first folder; the newer one was read first.
+      continue;
+    }
+    records[index] = {
+      ...existing,
+      folders,
+      filePath: stringOrNull(arrangement['filePath']),
+      loopDefinitionKey: stringOrNull(arrangement['loopDefinitionKey']),
+      lastOpenedAtUtc: existing.lastOpenedAtUtc > at ? existing.lastOpenedAtUtc : at,
+    };
   }
   return records;
+}
+
+/** Most recently opened first; the order everything reads the list in. */
+function byRecency(records: readonly WorkspaceRecord[]): WorkspaceRecord[] {
+  return [...records].sort((left, right) =>
+    left.lastOpenedAtUtc < right.lastOpenedAtUtc ? 1 : left.lastOpenedAtUtc > right.lastOpenedAtUtc ? -1 : 0,
+  );
 }
 
 export class ProjectStore {
@@ -183,8 +280,8 @@ export class ProjectStore {
     const empty = (error: string | null, readOnly = false): ProjectStoreState => ({
       filePath: this.filePath,
       formatVersion: PROJECT_STORE_FORMAT_VERSION,
-      recentProjects: [],
       workspaces: [],
+      looseConversationId: null,
       error,
       readOnly,
     });
@@ -211,7 +308,6 @@ export class ProjectStore {
         true,
       );
     }
-
     if (!isRecord(parsed)) {
       return empty(
         `the settings file at ${this.filePath} does not contain a JSON object. It ` +
@@ -219,7 +315,6 @@ export class ProjectStore {
         true,
       );
     }
-
     const version = parsed['formatVersion'];
     if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
       return empty(
@@ -229,354 +324,206 @@ export class ProjectStore {
         true,
       );
     }
-    if (version > PROJECT_STORE_FORMAT_VERSION) {
-      return {
-        filePath: this.filePath,
-        formatVersion: version,
-        // Read what is recognisable; refuse to write. A newer DSpatch may hold
-        // fields this one would silently drop on the next save.
-        recentProjects: parseRecent(parsed['recentProjects']).slice(0, MAX_RECENT),
-        workspaces: parseWorkspaces(parsed['workspaces']).slice(0, MAX_WORKSPACES),
-        error:
-          `the settings file at ${this.filePath} is format version ` +
-          `${String(version)}, newer than the ${String(
-            PROJECT_STORE_FORMAT_VERSION,
-          )} this build writes. It is being read but will not be changed.`,
-        readOnly: true,
-      };
-    }
 
+    const workspaces =
+      version >= 3
+        ? (Array.isArray(parsed['workspaces']) ? parsed['workspaces'] : [])
+            .map(parseWorkspace)
+            .filter((record): record is WorkspaceRecord => record !== null)
+        : migrateVersion2(parsed);
+    const looseConversationId = version >= 3 ? stringOrNull(parsed['looseConversationId']) : null;
+    const newer = version > PROJECT_STORE_FORMAT_VERSION;
     return {
       filePath: this.filePath,
       formatVersion: version,
-      recentProjects: parseRecent(parsed['recentProjects']).slice(0, MAX_RECENT),
-      workspaces: parseWorkspaces(parsed['workspaces']).slice(0, MAX_WORKSPACES),
-      error: null,
-      readOnly: false,
+      workspaces: byRecency(workspaces).slice(0, MAX_WORKSPACES),
+      looseConversationId,
+      error: newer
+        ? `the settings file at ${this.filePath} is format version ${String(version)}, ` +
+          `newer than the ${String(PROJECT_STORE_FORMAT_VERSION)} this build writes. It ` +
+          'is being read but will not be changed.'
+        : null,
+      // Read what is recognisable; refuse to write. A newer DSpatch may hold fields this
+      // one would silently drop on the next save.
+      readOnly: newer,
     };
   }
 
-  /** The conversation a project was last worked in, or `null` if there is none. */
-  conversationFor(projectPath: string): string | null {
-    const normalised = path.resolve(projectPath);
-    return (
-      this.read().recentProjects.find((entry) => samePath(entry.path, normalised))
-        ?.lastConversationId ?? null
-    );
-  }
-
-  /**
-   * Move a project to the front of the list.
-   *
-   * Returns the state as it now stands, including a write failure, so the window
-   * can say that the project opened but was not remembered — which is true, and
-   * better than an unexplained empty list next time.
-   *
-   * `conversationId` is what makes reopening a project continue its work rather
-   * than start beside it. Omitting it keeps whatever was recorded before, so a code
-   * path that does not know about conversations cannot erase the association.
-   *
-   * Both options are named rather than positional because both are strings: a
-   * conversation id passed where a timestamp was expected typechecks perfectly and
-   * silently records the wrong thing in both fields. That mistake was made here.
-   */
-  recordOpened(
-    projectPath: string,
-    options: { readonly conversationId?: string; readonly atUtc?: string } = {},
-  ): ProjectStoreState {
-    const atUtc = options.atUtc ?? new Date().toISOString();
-    const conversationId = options.conversationId;
-    const current = this.read();
-    const normalised = path.resolve(projectPath);
-    const previous = current.recentProjects.find((entry) => samePath(entry.path, normalised));
-    const entry: RecentProject = {
-      path: normalised,
-      lastOpenedAtUtc: atUtc,
-      openCount: (previous?.openCount ?? 0) + 1,
-      lastConversationId: conversationId ?? previous?.lastConversationId ?? null,
-    };
-    const recentProjects = [
-      entry,
-      ...current.recentProjects.filter((old) => !samePath(old.path, normalised)),
-    ].slice(0, MAX_RECENT);
-
-    if (current.readOnly) {
-      return { ...current, recentProjects };
-    }
-
-    const file: StoreFile = {
-      formatVersion: PROJECT_STORE_FORMAT_VERSION,
-      recentProjects,
-      workspaces: current.workspaces,
-    };
-    try {
-      fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-      fs.writeFileSync(this.filePath, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
-    } catch (error) {
-      return {
-        ...current,
-        recentProjects,
-        error: `the project opened, but it could not be remembered for next time: ${describe(error)}`,
-      };
-    }
-    return {
-      filePath: this.filePath,
-      formatVersion: PROJECT_STORE_FORMAT_VERSION,
-      recentProjects,
-      workspaces: current.workspaces,
-      error: null,
-      readOnly: false,
-    };
+  workspace(id: string): WorkspaceRecord | null {
+    return this.read().workspaces.find((record) => record.id === id) ?? null;
   }
 
   /**
-   * Point a remembered project at the conversation being worked in now.
-   *
-   * **Separate from {@link recordOpened} because this is not an opening.** That
-   * method was the only writer of `lastConversationId`, and it runs once, at the
-   * moment a session opens — so the pointer recorded whichever conversation was
-   * current *then* and nothing moved it afterwards. Reading an earlier conversation
-   * back and then working in it therefore left the project pointing at the one it
-   * had been opened with, and the next open returned to that one.
-   *
-   * Nothing else about the entry changes: `openCount` and `lastOpenedAtUtc` describe
-   * openings, and bumping them here would make the list of recent projects reorder
-   * itself every time a conversation was chosen.
-   *
-   * A project not in the list is left alone rather than added. This is the pointer on
-   * an existing entry; a project earns its entry by being opened.
+   * The workspace whose first folder this is: the most recently opened one, hidden or
+   * not. `null` when there is none.
    */
-  rememberConversation(projectPath: string, conversationId: string): ProjectStoreState {
-    const current = this.read();
-    const normalised = path.resolve(projectPath);
-    const previous = current.recentProjects.find((entry) => samePath(entry.path, normalised));
-    if (
-      previous === undefined ||
-      conversationId === '' ||
-      previous.lastConversationId === conversationId
-    ) {
-      return current;
-    }
-    const recentProjects = current.recentProjects.map((entry) =>
-      samePath(entry.path, normalised) ? { ...entry, lastConversationId: conversationId } : entry,
-    );
-    if (current.readOnly) {
-      return { ...current, recentProjects };
-    }
-    const file: StoreFile = {
-      formatVersion: PROJECT_STORE_FORMAT_VERSION,
-      recentProjects,
-      workspaces: current.workspaces,
-    };
-    try {
-      fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-      fs.writeFileSync(this.filePath, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
-    } catch (error) {
-      return {
-        ...current,
-        recentProjects,
-        error:
-          'this conversation could not be recorded as the project\'s latest, so ' +
-          `opening the project again may return to an earlier one: ${describe(error)}`,
-      };
-    }
-    return {
-      filePath: this.filePath,
-      formatVersion: PROJECT_STORE_FORMAT_VERSION,
-      recentProjects,
-      workspaces: current.workspaces,
-      error: null,
-      readOnly: false,
-    };
+  workspaceForPrimary(folder: string): WorkspaceRecord | null {
+    const resolved = path.resolve(folder);
+    return this.read().workspaces.find((record) => samePath(record.folders[0] ?? '', resolved)) ?? null;
   }
 
   /**
-   * Remove remembered projects from the list.
-   *
-   * **This is the only thing it does.** Nothing is deleted from disk, no project
-   * folder is touched and no saved conversation is removed or rewritten — the
-   * conversations live in their own directory keyed by conversation ID, and a
-   * conversation whose project has been forgotten is still listed and still
-   * readable. The entry's `lastConversationId` goes with the entry, so opening that
-   * folder again would start a new conversation rather than continue the old one;
-   * the old one is reached from Saved conversations, which is where it always was.
-   *
-   * DSP-5 is why this exists: nine of the ten remembered entries were throwaway
-   * `%TEMP%` repositories left by overnight verification runs, several no longer on
-   * disk, and the list had no way to drop one. `MAX_RECENT` alone does not help —
-   * it evicts the oldest, which is the opposite of what was wanted.
-   *
-   * A path that is not in the list is not an error: the caller is a window that may
-   * be working from a list read a moment ago, and "it is not there" is the state it
-   * asked for. `removed` says what actually happened.
-   *
-   * A file this build must not rewrite is refused rather than pruned in memory.
-   * Reporting a removal that the next read would undo is worse than saying no.
+   * Open Project: the workspace of this first folder, reopened, or a new one created
+   * with the folder's name. Either way it is moved to the front of Recent and shown
+   * there again if it had been removed from it.
    */
-  forget(projectPaths: readonly string[]): ForgetOutcome {
-    const current = this.read();
-    const targets = projectPaths
-      .filter((value) => typeof value === 'string' && value.trim() !== '')
-      .map((value) => path.resolve(value));
-    if (targets.length === 0) {
-      return { state: current, removed: [], notFound: [] };
+  openFolder(folder: string, atUtc: string = new Date().toISOString()): StoreOutcome {
+    const resolved = path.resolve(folder);
+    const existing = this.workspaceForPrimary(resolved);
+    if (existing !== null) {
+      return this.recordOpened(existing.id, atUtc);
     }
-
-    const removed = current.recentProjects
-      .filter((entry) => targets.some((target) => samePath(entry.path, target)))
-      .map((entry) => entry.path);
-    const notFound = targets.filter(
-      (target) => !current.recentProjects.some((entry) => samePath(entry.path, target)),
-    );
-
-    if (current.readOnly) {
-      return {
-        state: {
-          ...current,
-          error:
-            `nothing was removed: ${this.filePath} ` +
-            `${current.error ?? 'cannot be rewritten by this build'}`,
-        },
-        removed: [],
-        notFound,
-      };
-    }
-    if (removed.length === 0) {
-      return { state: current, removed, notFound };
-    }
-
-    const recentProjects = current.recentProjects.filter(
-      (entry) => !targets.some((target) => samePath(entry.path, target)),
-    );
-    const file: StoreFile = {
-      formatVersion: PROJECT_STORE_FORMAT_VERSION,
-      recentProjects,
-      workspaces: current.workspaces,
-    };
-    try {
-      fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-      fs.writeFileSync(this.filePath, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
-    } catch (error) {
-      // The list on disk is unchanged, so the list reported here has to be too.
-      // A window showing the entry as gone until the next restart would be lying.
-      return {
-        state: {
-          ...current,
-          error:
-            'the list could not be changed, so nothing was removed and the ' +
-            `entries are still remembered: ${describe(error)}`,
-        },
-        removed: [],
-        notFound,
-      };
-    }
-    return {
-      state: {
-        filePath: this.filePath,
-        formatVersion: PROJECT_STORE_FORMAT_VERSION,
-        recentProjects,
-        workspaces: current.workspaces,
-        error: null,
-        readOnly: false,
-      },
-      removed,
-      notFound,
-    };
+    return this.createWorkspace({ name: defaultWorkspaceName(resolved), folders: [resolved] }, atUtc);
   }
 
   /**
-   * The arrangement of folders a person last had open, or `null`.
-   *
-   * Read at startup for **one thing**: the loop definition that was chosen. DSpatch
-   * deliberately does not reopen the folders on its own — opening a folder is an act
-   * a person performs, and a window that had opened three of them before anyone
-   * asked would be the interface deciding the work. The folders are here so that
-   * reopening the arrangement is offered, not so that it happens.
+   * A new workspace of these folders, the first being the primary, at the front of
+   * Recent. The folders are recorded as given (resolved); none is created or moved.
    */
-  currentWorkspace(): WorkspaceRecord | null {
-    return this.read().workspaces[0] ?? null;
-  }
-
-  /**
-   * Record the arrangement now open, moving it to the front.
-   *
-   * Keyed by `filePath` when there is one, so saving the same workspace twice keeps
-   * one entry, and by "the unsaved one" otherwise, of which there is at most one.
-   *
-   * This is where DSP-68's deferred question lands. The manual loop-definition picker
-   * remembered nothing across a restart because the right owner of that memory was
-   * this card; `loopDefinitionKey` is that owner. Nothing about a run is written here
-   * and there is no field to write it in.
-   */
-  rememberWorkspace(
-    workspace: {
-      readonly filePath: string | null;
-      readonly folders: readonly string[];
-      readonly loopDefinitionKey: string | null;
-    },
+  createWorkspace(
+    request: { readonly name: string; readonly folders: readonly string[] },
     atUtc: string = new Date().toISOString(),
-  ): ProjectStoreState {
-    const current = this.read();
-    const entry: WorkspaceRecord = {
-      filePath: workspace.filePath === null ? null : path.resolve(workspace.filePath),
-      folders: workspace.folders.map((folder) => path.resolve(folder)),
-      loopDefinitionKey: workspace.loopDefinitionKey,
+  ): StoreOutcome {
+    const folders = parseFolders(request.folders.map((folder) => path.resolve(folder)));
+    const primary = folders[0];
+    if (primary === undefined) {
+      return { state: this.read(), workspace: null, problem: 'A workspace needs at least one folder.' };
+    }
+    const name = request.name.trim() === '' ? defaultWorkspaceName(primary) : request.name.trim();
+    const record: WorkspaceRecord = {
+      id: newWorkspaceId(),
+      name,
+      folders,
+      filePath: null,
+      loopDefinitionKey: null,
       lastOpenedAtUtc: atUtc,
+      openCount: 1,
+      lastConversationId: null,
+      hiddenFromRecent: false,
     };
-    const sameEntry = (other: WorkspaceRecord): boolean =>
-      entry.filePath === null
-        ? other.filePath === null
-        : other.filePath !== null && samePath(other.filePath, entry.filePath);
-    const workspaces = [entry, ...current.workspaces.filter((old) => !sameEntry(old))].slice(
-      0,
-      MAX_WORKSPACES,
-    );
+    return this.write((current) => [record, ...current], record.id);
+  }
 
+  /** Moved to the front of Recent, counted, and shown there again. */
+  recordOpened(id: string, atUtc: string = new Date().toISOString()): StoreOutcome {
+    return this.write(
+      (current) =>
+        current.map((record) =>
+          record.id === id
+            ? { ...record, lastOpenedAtUtc: atUtc, openCount: record.openCount + 1, hiddenFromRecent: false }
+            : record,
+        ),
+      id,
+    );
+  }
+
+  /**
+   * Change what a workspace is called, which folders it has, which loop it chose or
+   * which chat it continues. Nothing about when it was opened changes: choosing a chat
+   * or adding a folder is not an opening, and Recent must not reorder itself for it.
+   */
+  updateWorkspace(
+    id: string,
+    patch: {
+      readonly name?: string;
+      readonly folders?: readonly string[];
+      readonly loopDefinitionKey?: string | null;
+      readonly lastConversationId?: string | null;
+      readonly filePath?: string | null;
+    },
+  ): StoreOutcome {
+    return this.write(
+      (current) =>
+        current.map((record) => {
+          if (record.id !== id) {
+            return record;
+          }
+          const folders =
+            patch.folders === undefined ? record.folders : parseFolders(patch.folders.map((f) => path.resolve(f)));
+          return {
+            ...record,
+            ...(patch.name === undefined || patch.name.trim() === '' ? {} : { name: patch.name.trim() }),
+            folders: folders.length === 0 ? record.folders : folders,
+            ...(patch.loopDefinitionKey === undefined ? {} : { loopDefinitionKey: patch.loopDefinitionKey }),
+            ...(patch.lastConversationId === undefined ? {} : { lastConversationId: patch.lastConversationId }),
+            ...(patch.filePath === undefined ? {} : { filePath: patch.filePath }),
+          };
+        }),
+      id,
+    );
+  }
+
+  /**
+   * Remove from recent: **the list entry and nothing else.** No folder is touched, no
+   * conversation is removed and the workspace keeps its identity, name and folders —
+   * opening its first folder again brings it back as it was. Unknown ids are ignored.
+   */
+  removeFromRecent(ids: readonly string[]): StoreOutcome {
+    return this.write((current) =>
+      current.map((record) => (ids.includes(record.id) ? { ...record, hiddenFromRecent: true } : record)),
+    );
+  }
+
+  /** The conversation begun before any workspace was chosen, or `null` to clear it. */
+  setLooseConversation(conversationId: string | null): StoreOutcome {
+    return this.write((current) => current, undefined, conversationId);
+  }
+
+  private write(
+    change: (current: readonly WorkspaceRecord[]) => readonly WorkspaceRecord[],
+    focusId?: string,
+    looseConversationId?: string | null,
+  ): StoreOutcome {
+    const current = this.read();
+    const workspaces = byRecency(change(current.workspaces)).slice(0, MAX_WORKSPACES);
+    const loose = looseConversationId === undefined ? current.looseConversationId : looseConversationId;
+    const next: ProjectStoreState = { ...current, workspaces, looseConversationId: loose };
+    const workspace = focusId === undefined ? null : (workspaces.find((record) => record.id === focusId) ?? null);
     if (current.readOnly) {
-      return { ...current, workspaces };
+      return {
+        state: next,
+        workspace,
+        problem:
+          `DSpatch could not remember this for next time: ${current.error ?? 'the settings file cannot be rewritten by this build'}`,
+      };
     }
     const file: StoreFile = {
       formatVersion: PROJECT_STORE_FORMAT_VERSION,
-      recentProjects: current.recentProjects,
       workspaces,
+      looseConversationId: loose,
+      recentProjects: workspaces
+        .filter((record) => !record.hiddenFromRecent)
+        .map((record) => ({
+          path: record.folders[0] ?? '',
+          lastOpenedAtUtc: record.lastOpenedAtUtc,
+          openCount: record.openCount,
+          lastConversationId: record.lastConversationId,
+        })),
     };
     try {
       fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
       fs.writeFileSync(this.filePath, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
     } catch (error) {
       return {
-        ...current,
-        workspaces,
-        error:
-          'the folders you have open could not be remembered for next time: ' +
-          `${describe(error)}`,
+        state: { ...next, error: `DSpatch could not remember this for next time: ${describe(error)}` },
+        workspace,
+        problem: `DSpatch could not remember this for next time: ${describe(error)}`,
       };
     }
     return {
-      filePath: this.filePath,
-      formatVersion: PROJECT_STORE_FORMAT_VERSION,
-      recentProjects: current.recentProjects,
-      workspaces,
-      error: null,
-      readOnly: false,
+      state: { ...next, formatVersion: PROJECT_STORE_FORMAT_VERSION, error: null, readOnly: false },
+      workspace,
+      problem: null,
     };
   }
 }
 
-/** What {@link ProjectStore.forget} did, separated from what was asked for. */
-export interface ForgetOutcome {
+/** What a change did: the state as it now stands, the workspace concerned, and any failure. */
+export interface StoreOutcome {
   readonly state: ProjectStoreState;
-  /** Entries actually dropped from the file. Empty when the write was refused. */
-  readonly removed: readonly string[];
-  /** Paths that were not in the list to begin with. Not a failure. */
-  readonly notFound: readonly string[];
-}
-
-/** Windows paths differ in case without differing. */
-export function samePath(left: string, right: string): boolean {
-  return process.platform === 'win32'
-    ? left.toLowerCase() === right.toLowerCase()
-    : left === right;
+  readonly workspace: WorkspaceRecord | null;
+  /** Set when the change could not be written, and says why. */
+  readonly problem: string | null;
 }
 
 function describe(error: unknown): string {

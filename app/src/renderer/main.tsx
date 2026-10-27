@@ -7,6 +7,7 @@ import { LoopEditor } from './LoopEditor';
 import { ReviewView } from './ReviewView';
 import './styles.css';
 import './loop-editor.css';
+import './start-page.css';
 import './review.css';
 
 const host = document.getElementById('root');

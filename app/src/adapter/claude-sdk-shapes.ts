@@ -85,6 +85,13 @@ export interface SpawnedProcess {
 /** The `query()` options DSpatch sets. Every other option is left to the SDK's default. */
 export interface Options {
   cwd?: string;
+  /** DSP-149: the workspace's other folders, passed on as `--add-dir`. */
+  additionalDirectories?: string[];
+  /**
+   * DSP-149: DSpatch's in-process server for its app tools, exactly as the SDK's
+   * `createSdkMcpServer` returned it. Opaque here; checked in sdk-shapes-compat.ts.
+   */
+  mcpServers?: Record<string, unknown>;
   model?: string;
   tools?: string[];
   allowedTools?: string[];

@@ -11,12 +11,13 @@ import type {
   SpawnedProcess,
   SpawnOptions as ClaudeSpawnOptions,
 } from './claude-sdk-shapes';
-import { ClaudeAdapterError, loadClaudeSdk } from './claude-support';
+import { ClaudeAdapterError, loadClaudeSdk, loadClaudeToolKit, type ClaudeToolKit } from './claude-support';
 
 import type { AgentAdapter } from './agent-adapter';
 import type {
   AdapterError,
   AgentCommandRecord,
+  AppTool,
   AgentEvent,
   AgentEventListener,
   ApprovalDecision,
@@ -990,6 +991,11 @@ export interface ClaudeAgentSdkAdapterOptions {
   readonly spawnProcess?: ClaudeProcessSpawner;
   /** Substitute timers for the cancellation waits. Tests only. */
   readonly timers?: CancelTimers;
+  /**
+   * DSP-149: substitute for loading the SDK's `createSdkMcpServer`, `tool` and zod from
+   * Claude support. Tests only; the product loads the installed SDK's own.
+   */
+  readonly toolKit?: () => Promise<ClaudeToolKit>;
 }
 
 // --- Capabilities --------------------------------------------------------------
@@ -1269,7 +1275,10 @@ interface ObservedProcess {
 
 interface SessionState {
   readonly dspatchSessionId: DspatchSessionId;
-  readonly config: SessionConfig;
+  /** Replaced, never edited, when the workspace's folders change (DSP-149). */
+  config: SessionConfig;
+  /** DSP-149: the in-process server for the session's app tools, built on its first send. */
+  toolServer: unknown;
   /** The UUID DSpatch chose for the provider session. */
   readonly providerSessionId: string;
   readonly createdAt: Timestamp;
@@ -1400,26 +1409,98 @@ export function providerSessionIdFor(dspatchSessionId: DspatchSessionId): string
 }
 
 /**
- * The one root this adapter accepts. More than one distinct root is refused:
- * DSP-109 covers a single working directory only.
+ * Every folder of the session, the primary (`cwd`) first, duplicates dropped by the
+ * host's case rule. DSP-149 lifted DSP-109's one-folder limit: the other folders reach
+ * Claude Code as `additionalDirectories` (passed on as `--add-dir`), which the
+ * documentation says makes them working directories whose files are read without a
+ * prompt and edited under the permission mode, and {@link rootRules} extends the
+ * policy's own allow rules to them. The primary stays the working directory and the
+ * resume key.
  */
-export function singleRoot(config: SessionConfig): string {
+export function sessionRoots(config: SessionConfig): readonly string[] {
   const roots: string[] = [];
   for (const folder of [config.workspacePath, ...(config.workspacePaths ?? [])]) {
     if (folder !== '' && !roots.some((kept) => foldFolder(kept) === foldFolder(folder))) {
       roots.push(folder);
     }
   }
-  if (roots.length > 1) {
-    throw new ClaudeAdapterError(
-      `This session names ${String(roots.length)} working folders, and the Claude ` +
-        'adapter supports exactly one. Start it with a single folder.',
-    );
-  }
-  if (roots.length === 0) {
+  if (roots.length === 0 || config.workspacePath === '') {
     throw new ClaudeAdapterError('This session names no working folder.');
   }
-  return config.workspacePath;
+  return roots;
+}
+
+/**
+ * A folder as Claude Code's permission rules spell an absolute path: `//` and the
+ * POSIX form, which on Windows is `/c/Users/...` for `C:\Users\...` (permissions
+ * documentation, read 27 Oct 2026: "On Windows, paths are normalized to POSIX form
+ * before matching").
+ */
+export function absoluteRulePath(folder: string): string {
+  const drive = /^([A-Za-z]):[\\/]*(.*)$/.exec(folder);
+  const posix =
+    drive === null
+      ? folder.replace(/\\/g, '/')
+      : `/${(drive[1] ?? '').toLowerCase()}/${(drive[2] ?? '').replace(/\\/g, '/')}`;
+  return `/${posix.replace(/\/+$/, '')}`;
+}
+
+/**
+ * The policy's folder-anchored allow rules, repeated for each other folder (DSP-149).
+ *
+ * A single-slash rule such as `Edit(/**)` is anchored at the primary working directory,
+ * so on its own it pre-approves nothing in an added folder, and under `dontAsk` an edit
+ * there would be refused. Each such rule is restated with the folder's absolute path,
+ * so every folder of the workspace is worked in under the same rules as the first —
+ * nothing more is allowed there than in the primary. Rules that are not anchored at
+ * the working directory (`Bash`, an absolute `//` rule) are not repeated.
+ */
+export function rootRules(policy: ClaudePermissionPolicy, otherRoots: readonly string[]): readonly string[] {
+  const rules: string[] = [];
+  for (const rule of policy.allowedTools) {
+    const anchored = /^([A-Za-z]+)\(\/(?!\/)(.*)\)$/.exec(rule);
+    if (anchored === null) {
+      continue;
+    }
+    for (const root of otherRoots) {
+      rules.push(`${anchored[1] ?? ''}(${absoluteRulePath(root)}/${anchored[2] ?? ''})`);
+    }
+  }
+  return rules;
+}
+
+/** The server name DSpatch's app tools are offered under; tools read `mcp__dspatch__<name>`. */
+export const APP_TOOL_SERVER = 'dspatch';
+
+/** The name the model sees for one app tool under Claude's MCP naming. */
+export function claudeAppToolName(tool: Pick<AppTool, 'name'>): string {
+  return `mcp__${APP_TOOL_SERVER}__${tool.name}`;
+}
+
+/**
+ * The SDK's in-process MCP server for a session's app tools (DSP-149): `tool()` per app
+ * tool, its parameters as the SDK's zod shape, its result as MCP text content.
+ */
+export function buildAppToolServer(kit: ClaudeToolKit, tools: readonly AppTool[]): unknown {
+  const definitions = tools.map((appTool) => {
+    const shape: Record<string, unknown> = {};
+    for (const [key, parameter] of Object.entries(appTool.parameters)) {
+      let schema = parameter.type === 'string' ? kit.z.string() : kit.z.array(kit.z.string());
+      schema = schema.describe(parameter.description);
+      shape[key] = parameter.optional === true ? schema.optional() : schema;
+    }
+    return kit.tool(
+      appTool.name,
+      appTool.description,
+      shape,
+      async (args: unknown) => {
+        const result = await appTool.execute(asRecord(args));
+        return { content: [{ type: 'text', text: result.text }], isError: result.isError };
+      },
+      { annotations: { readOnlyHint: appTool.readOnly } },
+    );
+  });
+  return kit.createSdkMcpServer({ name: APP_TOOL_SERVER, version: '1.0.0', tools: definitions });
 }
 
 /** Windows paths differ in case without differing; elsewhere they do not. */
@@ -1463,6 +1544,8 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
 
   private loadedQuery: ClaudeQueryFunction | null = null;
 
+  private readonly toolKitLoader: () => Promise<ClaudeToolKit>;
+
   private readonly substitutedLookup: ClaudeLocalLookup | null;
 
   private loadedLookup: ClaudeLocalLookup | null = null;
@@ -1499,6 +1582,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       this.signalDisposeBegun = resolve;
     });
     this.substitutedQuery = options.queryFn ?? null;
+    this.toolKitLoader = options.toolKit ?? (() => loadClaudeToolKit());
     this.substitutedLookup = options.localLookup ?? null;
     this.spawnProcess = options.spawnProcess ?? nodeSpawn;
     this.timers = options.timers ?? REAL_TIMERS;
@@ -1553,6 +1637,22 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
   policyDigest(): string {
     const digest = createHash('sha256').update(canonicalJson(this.permissions)).digest('hex');
     return `claude-agent-sdk:${digest}`;
+  }
+
+  /**
+   * DSP-149: every query is started anew with `resume`, so a changed folder list is
+   * passed on the next turn as `additionalDirectories`. The primary is not changed
+   * here; it is the resume key, and a different primary is a different session.
+   */
+  setWorkspaceRoots(sessionId: DspatchSessionId, roots: readonly string[]): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) {
+      return;
+    }
+    state.config = {
+      ...state.config,
+      workspacePaths: [state.config.workspacePath, ...roots.filter((root) => foldFolder(root) !== foldFolder(state.config.workspacePath))],
+    };
   }
 
   async startSession(config: SessionConfig): Promise<SessionHandle> {
@@ -1771,6 +1871,11 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         this.finishNotStarted(state, run);
         this.markPumpFinished(state, run);
         return { dspatchRunId: run.dspatchRunId };
+      }
+      // DSP-149: the session's app tools as the SDK's in-process MCP server, built once.
+      const appTools = state.config.appTools ?? [];
+      if (state.toolServer === null && appTools.length > 0 && this.permissions.denyEveryTool !== true) {
+        state.toolServer = buildAppToolServer(await this.toolKitLoader(), appTools);
       }
       run.handle = queryFn({
         prompt: oneMessagePrompt(prompt),
@@ -2256,7 +2361,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     if (this.assessment.refusal !== null) {
       throw new ClaudeAdapterError(this.assessment.refusal, 'authentication_refused');
     }
-    singleRoot(config);
+    sessionRoots(config);
     if (this.sessions.has(dspatchSessionId)) {
       throw new ClaudeAdapterError(
         `Session "${dspatchSessionId}" is already open. Close it before reusing the ID.`,
@@ -2267,11 +2372,24 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
 
   private optionsFor(state: SessionState, run: ClaudeRun): ClaudeQueryOptions {
     const { config } = state;
+    const otherRoots = sessionRoots(config).slice(1);
+    // DSP-149: a conversation with no workspace yet gets none of the built-in tools,
+    // only DSpatch's app tools; a workspace session gets the policy's tools in every
+    // folder, plus the app tools. The review policy (`denyEveryTool`) never gets either.
+    const conversationOnly = config.toolScope === 'conversation';
+    const appTools = this.permissions.denyEveryTool === true ? [] : (config.appTools ?? []);
+    const appToolNames = appTools.map(claudeAppToolName);
     return {
       cwd: config.workspacePath,
       ...(config.modelRequested === '' ? {} : { model: config.modelRequested }),
-      tools: [...this.permissions.tools],
-      allowedTools: [...this.permissions.allowedTools],
+      tools: conversationOnly ? [] : [...this.permissions.tools],
+      allowedTools: conversationOnly
+        ? appToolNames
+        : [...this.permissions.allowedTools, ...rootRules(this.permissions, otherRoots), ...appToolNames],
+      ...(conversationOnly || otherRoots.length === 0 ? {} : { additionalDirectories: [...otherRoots] }),
+      ...(state.toolServer === null || appTools.length === 0
+        ? {}
+        : { mcpServers: { [APP_TOOL_SERVER]: state.toolServer } }),
       ...(this.permissions.disallowedTools === undefined
         ? {}
         : { disallowedTools: [...this.permissions.disallowedTools] }),
@@ -3445,6 +3563,7 @@ function newSessionState(
     outstanding: new Set(),
     runs: [],
     unconfirmedRun: null,
+    toolServer: null,
     activeRun: null,
     lastRun: null,
     modelReportedValue: null,
