@@ -1779,6 +1779,8 @@ export type ScriptedScenario =
   | 'steering'
   /** DSP-147: a graph editor run stopped without a confirmed end, across a restart. */
   | 'editor-uncertain'
+  /** DSP-147: where a steering message sits in the conversation, live and read back after a restart. */
+  | 'steering-placement'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -3080,6 +3082,8 @@ export interface AddLoopInstructionRequest {
   /** The run it was typed into. A message is scoped to the work it concerns. */
   readonly runId: string;
   readonly text: string;
+  /** DSP-147: what of the run's output the window had shown when it was sent. */
+  readonly anchor?: { readonly replyIndex: number; readonly textOffset: number };
 }
 
 /**
@@ -3145,6 +3149,8 @@ export type LoopInstructionEventPayload =
 /** DSP-147: a steering message for the ordinary chat turn that is working. */
 export interface SteerTurnRequest {
   readonly text: string;
+  /** DSP-147: how much of the turn's answer the window had shown when it was sent. */
+  readonly anchor?: { readonly textOffset: number };
 }
 
 /**
@@ -3186,6 +3192,8 @@ export interface StoredSteering {
   readonly providerMessageId: string | null;
   /** The adapter's technical account, for Session details. */
   readonly detail: string | null;
+  /** DSP-147: how much of the turn's answer had been shown when it was sent. */
+  readonly anchor?: { readonly textOffset: number };
 }
 
 /**

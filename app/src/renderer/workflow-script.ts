@@ -802,6 +802,8 @@ export async function runScriptedWorkflow(
       return runSteeringScenario(plan);
     case 'editor-uncertain':
       return runEditorUncertainScenario(plan);
+    case 'steering-placement':
+      return runSteeringPlacementScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -11034,6 +11036,255 @@ async function runEditorUncertainScenario(plan: ScriptedRunPlan): Promise<Script
       actionError: textOf('action-error'),
       cwd: textOf('test-cwd'),
       routeNote: textOf('composer-route-note'),
+    };
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-147: where a steering message sits, live and after a restart          */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Two processes over one isolated user-data folder (`flowPhase`), SIMULATED provider
+ * and SIMULATED steering (folded into the working turn at its next chunk):
+ *
+ * - `first`: a chat turn steered with Enter and with the Steering button; a loop step
+ *   steered with Enter. Each message is drawn inside the work it was sent into, after the
+ *   text that had been shown and before what came after; it reaches the step that was
+ *   working, while it still works; later steps are briefed with it.
+ * - `again`: after a restart, the project reopened from the start page: the same
+ *   messages are in the same places, each once.
+ *
+ * What it cannot show is when a real model reads a message.
+ */
+async function runSteeringPlacementScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const phase = plan.flowPhase ?? 'first';
+  const observations: Record<string, unknown> = {
+    plan,
+    phase,
+    limits:
+      'SIMULATED provider and SIMULATED steering (presentation adapter). The window, host, ' +
+      'loop runner, conversation file, run record and the restart are real.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const CHAT_ENTER = 'Only the parser, please.';
+  const CHAT_BUTTON = 'And leave the lexer alone.';
+  const LOOP_ENTER = 'Ta hänsyn till README också.';
+  const entriesWith = (text: string): HTMLElement[] =>
+    [...document.querySelectorAll<HTMLElement>('[data-state][data-placement]')].filter((entry) =>
+      (entry.textContent ?? '').includes(text),
+    );
+  const entryWith = (text: string): HTMLElement | null => entriesWith(text)[0] ?? null;
+  const follows = (first: Element | null, second: Element | null): boolean =>
+    first !== null &&
+    second !== null &&
+    (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  /** The message sits between a stretch of the answer and the rest of it. */
+  const between = (entry: Element | null, before: string, after: string): boolean =>
+    follows(element(before), entry) && follows(entry, element(after));
+  const lineUnder = (text: string): string =>
+    entryWith(text)?.querySelector('[data-ev$="-account"]')?.textContent ?? '';
+  const replyNames = (at: string): string[] =>
+    [...document.querySelectorAll<HTMLElement>(`[data-ev^="${at}-reply-"][data-ev$="-who"]`)].map((who) =>
+      (who.dataset['ev'] ?? '').replace(/-who$/, ''),
+    );
+
+  try {
+    if (phase === 'again') {
+      // The sample project from the first phase, opened as a person opens a folder.
+      await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+      await window.dspatch.pressMenuItem('open-project');
+      // The folder opens on a new chat; the earlier one is in the sidebar's list.
+      const earlier = (): HTMLButtonElement | null =>
+        [...document.querySelectorAll<HTMLButtonElement>('[data-ev^="workspace-chat-"]')].find(
+          (row) => row.getAttribute('aria-current') !== 'true' && !row.disabled,
+        ) ?? null;
+      await waitFor('the earlier chat to be listed', () => earlier() !== null, 60_000, 100);
+      earlier()?.click();
+      // Read back first, as a file: the chat's messages in place before anything is opened.
+      await waitFor('the saved chat to be read', () => entryWith(CHAT_ENTER) !== null, 60_000, 100);
+      const panelEntry = entryWith(CHAT_ENTER);
+      const panelAt = (panelEntry?.dataset['ev'] ?? '').replace(/-steering-\d+$/, '');
+      record('read from the file', { entry: panelEntry?.dataset['ev'] ?? null });
+      expect(
+        panelAt !== '' && between(panelEntry, `${panelAt}-answer`, `${panelAt}-answer-after-0`),
+        'the saved chat does not show the message between the answer it interrupted and what followed',
+      );
+      // Then continued: the project opens again, with its history and its loop runs.
+      await click('restored-continue');
+      await waitFor('the conversation to be read back', () => element('loop-turn-0') !== null, 60_000, 100);
+      await sleep(800);
+      // In the conversation itself; the restored-conversation panel beside it is the file.
+      const inThread = (text: string): HTMLElement[] =>
+        entriesWith(text).filter((entry) => element('transcript')?.contains(entry) === true);
+      const chatEntry = inThread(CHAT_ENTER)[0] ?? null;
+      const chatAt = (chatEntry?.dataset['ev'] ?? '').replace(/-steering-\d+$/, '');
+      const loopEntry = inThread(LOOP_ENTER)[0] ?? null;
+      const loopReply = loopEntry?.previousElementSibling?.getAttribute('data-ev') ?? '';
+      const read = {
+        chatEntry: chatEntry?.dataset['ev'] ?? null,
+        counts: [CHAT_ENTER, CHAT_BUTTON, LOOP_ENTER].map((text) => inThread(text).length),
+        loopEntry: loopEntry?.dataset['ev'] ?? null,
+        loopReply,
+        loopNext: loopEntry?.nextElementSibling?.getAttribute('data-ev') ?? null,
+      };
+      record('read back after the restart', read);
+      expect(read.counts.every((count) => count === 1), `a message is missing or drawn twice: ${JSON.stringify(read.counts)}`);
+      expect(
+        chatAt !== '' && between(chatEntry, `${chatAt}-answer`, `${chatAt}-answer-after-0`),
+        'the chat message is not back between the answer it interrupted and what followed',
+      );
+      expect(follows(chatEntry, inThread(CHAT_BUTTON)[0] ?? null), 'the two chat messages are not back in the order they were sent');
+      expect(
+        /-reply-\d+$/.test(loopReply) && read.loopNext === `${loopReply}-after-0`,
+        'the loop message is not back inside the reply of the step it was sent to',
+      );
+      expect(lineUnder(LOOP_ENTER) === '' && lineUnder(CHAT_ENTER) === '', 'a delivered message read back has a status line under it');
+      await window.dspatch.captureWindow('steering-placement-read-back');
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await window.dspatch.pressMenuItem('new-sample-project');
+    await waitFor('a session to open', () => textOf('session-id') !== '' && element('prompt') !== null, 30_000);
+    observations['workspace'] = textOf('test-cwd');
+
+    // --- A chat turn: Enter, then the Steering button --------------------------------
+    await typeInto('prompt', '[[slow]] Look at the build, mark-place-chat.');
+    await sendFromComposer();
+    await waitFor('the turn to be writing', () => rawTextOf('active-answer').replace('…', '').trim().length > 20, 30_000, 25);
+    const shownAtEnter = rawTextOf('active-answer').trim();
+    await typeInto('prompt', CHAT_ENTER);
+    await sendFromComposer();
+    await waitFor('the message in the turn', () => entryWith(CHAT_ENTER) !== null, 10_000, 10);
+    const chatEntry = entryWith(CHAT_ENTER);
+    const shownBefore = rawTextOf('active-answer').trim();
+    expect(
+      chatEntry?.dataset['placement'] === 'inline' && chatEntry.closest('[data-ev="turn-0"]') !== null,
+      'the Enter message is not inside the turn it was sent into',
+    );
+    expect(
+      shownBefore.startsWith(shownAtEnter.slice(0, Math.max(0, shownAtEnter.length - 1))),
+      'text shown before the message did not stay before it',
+    );
+    await waitFor('the turn to write on after it', () => rawTextOf('active-answer-after-0').trim() !== '', 30_000, 25);
+    await typeInto('prompt', CHAT_BUTTON);
+    await click('steer');
+    await waitFor('the second message in the turn', () => entryWith(CHAT_BUTTON) !== null, 10_000, 10);
+    await waitFor('the turn to end', () => element('active-answer') === null && element('turn-0-answer') !== null, 60_000, 50);
+    await waitFor(
+      'both delivered',
+      () => entryWith(CHAT_ENTER)?.dataset['state'] === 'delivered' && entryWith(CHAT_BUTTON)?.dataset['state'] === 'delivered',
+      10_000,
+      25,
+    );
+    const chatPlaced = {
+      shownAtEnter: shownAtEnter.length,
+      before: rawTextOf('turn-0-answer').trim().slice(-40),
+      after: rawTextOf('turn-0-answer-after-0').trim().slice(0, 60),
+      lineUnder: lineUnder(CHAT_ENTER),
+      byTime: document.querySelectorAll('[data-placement="by-time"]').length,
+    };
+    record('chat turn steered by Enter and by the button', chatPlaced);
+    expect(between(entryWith(CHAT_ENTER), 'turn-0-answer', 'turn-0-answer-after-0'), 'the Enter message is not between the answer shown and what followed');
+    expect(
+      follows(entryWith(CHAT_ENTER), entryWith(CHAT_BUTTON)) && entryWith(CHAT_BUTTON)?.closest('[data-ev="turn-0"]') !== null,
+      'the button message is not in the turn, after the first',
+    );
+    expect(chatPlaced.lineUnder === '' && lineUnder(CHAT_BUTTON) === '', 'a delivered message keeps a status line');
+    expect(chatPlaced.byTime === 0, 'a message was drawn apart from the turn it was sent into');
+    await window.dspatch.captureWindow('steering-placement-chat');
+
+    // --- A loop step: Enter while it works ---------------------------------------------
+    await setCheckbox('use-loop', true);
+    await sleep(300);
+    const runsBefore = countEntries('loop-turn');
+    const at = `loop-turn-${String(runsBefore)}`;
+    await typeInto('prompt', '[[slow]] Report what the project is for, mark-place-loop.');
+    await sendFromComposer();
+    await waitFor('a step to be writing', () => rawTextOf(`${at}-live-text`).trim().length > 20, 60_000, 25);
+    const workingStep = textOf(`${at}-live-who`);
+    const repliesAtSend = replyNames(at).length;
+    await typeInto('prompt', LOOP_ENTER);
+    await sendFromComposer();
+    await waitFor('the message in the working step', () => entryWith(LOOP_ENTER) !== null, 10_000, 10);
+    const quietWhileWaiting =
+      entryWith(LOOP_ENTER)?.querySelector('.turn__meta--quiet') !== null ||
+      entryWith(LOOP_ENTER)?.dataset['state'] === 'delivered';
+    expect(entryWith(LOOP_ENTER)?.closest(`[data-ev="${at}-live"]`) !== null, 'the loop message is not inside the step that was working');
+    expect(quietWhileWaiting, 'the waiting loop message is not shown quietly');
+    await waitFor('the loop message to be delivered', () => entryWith(LOOP_ENTER)?.dataset['state'] === 'delivered', 30_000, 25);
+    const deliveredTo = {
+      workingStep,
+      stillWorking: textOf(`${at}-live-who`),
+      repliesAtSend,
+      repliesAtDelivery: replyNames(at).length,
+    };
+    expect(
+      deliveredTo.stillWorking === workingStep && deliveredTo.repliesAtDelivery === repliesAtSend,
+      `not delivered to the step that was working: ${JSON.stringify(deliveredTo)}`,
+    );
+    await waitFor('the step to write on after it', () => rawTextOf(`${at}-live-text-after-0`).trim() !== '', 30_000, 25);
+    expect(lineUnder(LOOP_ENTER) === '', 'the delivered loop message keeps a status line');
+    await window.dspatch.captureWindow('steering-placement-loop-live');
+    await waitFor('the loop run to end', () => loopRunEnded(runsBefore), 180_000, 100);
+    const settled = entryWith(LOOP_ENTER);
+    const reply = settled?.previousElementSibling?.getAttribute('data-ev') ?? '';
+    const placedInReply =
+      /-reply-\d+$/.test(reply) && settled?.nextElementSibling?.getAttribute('data-ev') === `${reply}-after-0`;
+    record('loop step steered by Enter', { ...deliveredTo, quietWhileWaiting, reply, placedInReply, count: entriesWith(LOOP_ENTER).length });
+    expect(placedInReply, 'the loop message is not inside the reply of the step it was sent to once the run ended');
+    expect(entriesWith(LOOP_ENTER).length === 1, 'the loop message is drawn twice');
+
+    // --- Later steps are briefed with it ------------------------------------------------
+    const conversations = await window.dspatch.listConversations();
+    const newest = [...conversations.entries].sort((a, b) => (a.savedAtUtc < b.savedAtUtc ? 1 : -1))[0];
+    const records = await window.dspatch.listRunRecords(newest?.conversationId ?? '');
+    const run = records.find((entry) => (entry.record?.identity?.mandate ?? '').includes('mark-place-loop'));
+    const replies = run?.record?.replies ?? [];
+    const briefed = replies.filter((entry) => (entry.prompt ?? '').includes(LOOP_ENTER));
+    const recordedMessages = run?.record?.ending?.messages ?? [];
+    record('later steps briefed', {
+      steps: replies.map((entry) => entry.nodeId),
+      briefed: briefed.map((entry) => entry.nodeId),
+      recorded: recordedMessages.map((message) => ({
+        outcome: message.outcome,
+        anchor: message.anchor,
+        during: message.delivery?.during ?? false,
+      })),
+    });
+    expect(
+      briefed.length >= 1 && !(replies[0]?.prompt ?? '').includes(LOOP_ENTER),
+      'later steps were not briefed with the message, or the steered step was also given it in its prompt',
+    );
+    expect(
+      recordedMessages.length === 1 && recordedMessages[0]?.outcome === 'delivered' && recordedMessages[0]?.anchor !== null,
+      'the run record does not keep the message with its place',
+    );
+    await window.dspatch.captureWindow('steering-placement-loop-ended');
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (caught) {
+    failures.push(caught instanceof Error ? caught.message : String(caught));
+    observations['atFailure'] = {
+      entries: [...document.querySelectorAll<HTMLElement>('[data-state][data-placement]')].map((entry) => ({
+        ev: entry.dataset['ev'],
+        state: entry.dataset['state'],
+        placement: entry.dataset['placement'],
+        text: (entry.textContent ?? '').slice(0, 80),
+      })),
+      actionError: textOf('action-error'),
+      composerNote: textOf('composer-note'),
     };
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
   }

@@ -1314,6 +1314,18 @@ body {
   border-left: 3px solid var(--muted);
 }
 
+/* DSP-147: a message sent into running work, in the flow of the answer it was sent into. */
+.turn__steering {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.25rem 0;
+}
+
+.turn__steering .turn__prompt {
+  border-left: 3px solid var(--muted);
+}
+
 /*
   The one thing about a run that needs doing, when there is one. One line, and
   absent whenever the state and the badge are the whole story (DSP-90).

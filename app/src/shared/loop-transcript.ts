@@ -36,11 +36,12 @@ import type { TrailBranch } from './chat-workspace';
 import {
   finishStep,
   foldStepActivity,
+  runningStep,
   type StepActivity,
   type StepActivityState,
 } from './loop-activity';
 import { endingWithoutDetail } from './loop-chat';
-import { type LoopInstruction } from './loop-instruction';
+import { type InstructionAnchor, type LoopInstruction } from './loop-instruction';
 import {
   briefRunOutcome,
   parseRunRecord,
@@ -277,6 +278,11 @@ export interface LoopTurn {
    * for an answer that arrived yesterday.
    */
   readonly restoredFrom?: 'record';
+  /**
+   * DSP-147: the messages the person sent into this run, read back from its record, each
+   * with where it was sent. While a run is watched, the window holds them instead.
+   */
+  readonly messages?: readonly LoopInstruction[];
 }
 
 export type LoopTurnEvent =
@@ -1340,9 +1346,85 @@ export function loopTurnsFromRecords(
       abandoned: false,
       ending: endingFromRecord(record, entry.error),
       restoredFrom: 'record',
+      ...((): { messages?: readonly LoopInstruction[] } => {
+        const messages = messagesFromEnding(identity.runId, record.ending?.messages);
+        return messages.length === 0 ? {} : { messages };
+      })(),
     });
   }
   return turns;
+}
+
+/**
+ * DSP-147: where a message sent into this run now belongs: after the replies already
+ * shown, and after as much of the working step's reply as is shown.
+ */
+export function loopMessageAnchor(turn: Pick<LoopTurn, 'runId' | 'replies' | 'steps'>): InstructionAnchor {
+  return {
+    replyIndex: turn.replies.length,
+    textOffset: runningStep(turn.steps ?? [], turn.runId)?.text.length ?? 0,
+  };
+}
+
+/**
+ * DSP-147: which of a run's messages go inside its reply at `replyIndex`, which inside
+ * the step still working, and which after everything (no anchor, or past what exists).
+ */
+export function messagesAtReply<T extends { readonly instruction: LoopInstruction }>(
+  messages: readonly T[],
+  replyIndex: number,
+): readonly T[] {
+  return messages.filter((entry) => entry.instruction.anchor?.replyIndex === replyIndex);
+}
+
+/**
+ * DSP-147: a run's recorded messages as the entries the window draws. An entry without
+ * an id, a text or a known outcome is dropped rather than guessed at; an anchor that is
+ * not a pair of counts is read as unknown, which puts the message after the run's replies.
+ */
+export function messagesFromEnding(runId: string, recorded: unknown): readonly LoopInstruction[] {
+  if (!Array.isArray(recorded)) {
+    return [];
+  }
+  const count = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+  const messages: LoopInstruction[] = [];
+  for (const entry of recorded as unknown[]) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const value = entry as Record<string, unknown>;
+    const outcome = value['outcome'];
+    if (
+      typeof value['id'] !== 'string' ||
+      typeof value['text'] !== 'string' ||
+      (outcome !== 'delivered' && outcome !== 'unconfirmed' && outcome !== 'not-delivered')
+    ) {
+      continue;
+    }
+    const anchor = value['anchor'];
+    const replyIndex = typeof anchor === 'object' && anchor !== null ? count((anchor as Record<string, unknown>)['replyIndex']) : null;
+    const textOffset = typeof anchor === 'object' && anchor !== null ? count((anchor as Record<string, unknown>)['textOffset']) : null;
+    const delivery = value['delivery'];
+    const delivered =
+      outcome === 'delivered' && typeof delivery === 'object' && delivery !== null
+        ? (delivery as LoopInstruction['delivered'])
+        : outcome === 'delivered'
+          ? { nodeId: '', nodeLabel: '', occurrence: 0, atUtc: '' }
+          : null;
+    messages.push({
+      id: value['id'] as string,
+      runId,
+      text: value['text'] as string,
+      receivedAtUtc: typeof value['receivedAtUtc'] === 'string' ? (value['receivedAtUtc'] as string) : '',
+      delivered,
+      runEnded: outcome === 'not-delivered',
+      scope: 'loop',
+      ...(outcome === 'unconfirmed' ? { unconfirmed: true } : {}),
+      ...(replyIndex === null || textOffset === null ? {} : { anchor: { replyIndex, textOffset } }),
+    });
+  }
+  return messages;
 }
 
 /**

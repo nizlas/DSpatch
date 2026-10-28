@@ -131,6 +131,11 @@ interface ActiveRun {
   readonly dspatchRunId: DspatchRunId;
   run: Run | null;
   status: RunStatus;
+  /**
+   * DSP-147: steering sent before `agent.send` handed back the `Run`, waiting for it
+   * (`null` when the send failed), so the running turn gets it rather than the next one.
+   */
+  readonly runWaiters: ((run: Run | null) => void)[];
   /** Set once the stream pump has stopped, so a stuck pump is visible. */
   streamPumpFinished: boolean;
   /**
@@ -476,6 +481,7 @@ export class CursorSdkAdapter implements AgentAdapter {
       dspatchRunId,
       run: null,
       status: 'created',
+      runWaiters: [],
       streamPumpFinished: false,
       assistantText: '',
     };
@@ -500,6 +506,9 @@ export class CursorSdkAdapter implements AgentAdapter {
         },
       });
     } catch (error) {
+      for (const waiter of activeRun.runWaiters.splice(0)) {
+        waiter(null);
+      }
       const adapterError = toAdapterError('send', error);
       this.finishRun(state, activeRun, 'error', {
         message: adapterError.message,
@@ -511,6 +520,9 @@ export class CursorSdkAdapter implements AgentAdapter {
     }
 
     activeRun.run = run;
+    for (const waiter of activeRun.runWaiters.splice(0)) {
+      waiter(run);
+    }
     void this.consumeRun(state, activeRun, run);
     return { dspatchRunId };
   }
@@ -564,14 +576,24 @@ export class CursorSdkAdapter implements AgentAdapter {
     this.assertUsable();
     const state = this.requireSession(sessionId);
     const activeRun = state.activeRun;
-    if (activeRun === null || activeRun.run === null || activeRun.status !== 'running') {
+    if (activeRun === null || activeRun.status !== 'running') {
       return {
         state: 'not-delivered',
         reason: 'no-running-turn',
         detail: 'The session had no running turn to add the message to.',
       };
     }
-    const run = activeRun.run;
+    // The turn has started and `agent.send` has not yet handed back its `Run`: wait for it.
+    const run =
+      activeRun.run ?? (await new Promise<Run | null>((resolve) => activeRun.runWaiters.push(resolve)));
+    if (run === null) {
+      return {
+        state: 'not-delivered',
+        reason: 'no-running-turn',
+        dspatchRunId: activeRun.dspatchRunId,
+        detail: 'The turn failed to start, so the message was not given to Cursor.',
+      };
+    }
     if (typeof run.steer !== 'function') {
       return {
         state: 'not-delivered',

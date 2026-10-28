@@ -1282,7 +1282,10 @@ interface HeldResult {
 
 /** DSP-147: one steering message on its way into a running turn. */
 interface PendingSteer {
-  readonly uuid: string;
+  readonly uuid: ReturnType<typeof randomUUID>;
+  readonly text: string;
+  /** Not yet given to the SDK: the turn had not reached `query()` when it was sent. */
+  awaitingHandle: boolean;
   accepted: boolean;
   readonly onUpdate: ((update: SteerUpdate) => void) | undefined;
   readonly settle: (update: SteerUpdate) => void;
@@ -1897,6 +1900,13 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         state.lastRun = previous;
         state.outstanding.delete(run);
         state.runs.splice(state.runs.indexOf(run), 1);
+        for (const pending of [...run.steers.values()]) {
+          pending.settle({
+            state: 'not-delivered',
+            reason: 'no-running-turn',
+            detail: 'The turn was never started, so the message was not written to Claude Code.',
+          });
+        }
         throw new ClaudeAdapterError(
           `The previous turn in session "${sessionId}" is still delivering messages ` +
             `after ${String(PREVIOUS_TURN_EXIT_MS)} ms, so a new turn was not started.`,
@@ -1936,6 +1946,12 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         options: this.optionsFor(state, run),
       });
       state.accountReads.push(readAccount(run.dspatchRunId, run.handle));
+      // DSP-147: steering sent while this turn was still on its way to `query()`.
+      for (const pending of [...run.steers.values()]) {
+        if (pending.awaitingHandle) {
+          this.offerSteer(run, run.handle, pending);
+        }
+      }
     } catch (error) {
       const adapterError = toAdapterError('send', error);
       const failure = {
@@ -1989,7 +2005,15 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     this.assertUsable();
     const state = this.requireSession(sessionId);
     const run = state.activeRun;
-    if (run === null || run.terminalEmitted || run.handle === null || run.status !== 'running') {
+    // A turn that `send` has opened but whose `query()` is not called yet (the previous
+    // turn's stream, the SDK or the app tools still loading) is the running turn: the
+    // message is held for it and given to the SDK as soon as the handle exists, rather
+    // than refused and left for whatever work comes next (DSP-147, Niclas's trial).
+    if (
+      run === null ||
+      run.terminalEmitted ||
+      (run.status !== 'running' && run.status !== 'created')
+    ) {
       return {
         state: 'not-delivered',
         reason: 'no-running-turn',
@@ -2004,8 +2028,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         detail: 'The running turn had been asked to stop.',
       };
     }
-    const handle = run.handle;
-    if (typeof handle.streamInput !== 'function') {
+    if (run.handle !== null && typeof run.handle.streamInput !== 'function') {
       return {
         state: 'not-delivered',
         reason: 'unsupported',
@@ -2021,6 +2044,8 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     });
     const pending: PendingSteer = {
       uuid,
+      text,
+      awaitingHandle: run.handle === null,
       accepted: false,
       onUpdate,
       settle: (update) => {
@@ -2033,18 +2058,35 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       },
     };
     run.steers.set(uuid, pending);
+    if (run.handle !== null) {
+      this.offerSteer(run, run.handle, pending);
+    }
+    return outcome;
+  }
+
+  /**
+   * DSP-147: give one steering message to the SDK through `Query.streamInput()`. The SDK
+   * writes it to Claude Code at once (sdk.mjs 0.3.306); when Claude Code folds it into
+   * the turn (between tool rounds) or runs it as a following turn is Claude Code's.
+   */
+  private offerSteer(run: ClaudeRun, handle: ClaudeQueryHandle, pending: PendingSteer): void {
+    pending.awaitingHandle = false;
+    if (typeof handle.streamInput !== 'function') {
+      pending.settle({ state: 'not-delivered', reason: 'unsupported', detail: 'This query handle has no streamInput().' });
+      return;
+    }
     const message: SDKUserMessage = {
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content: pending.text },
       parent_tool_use_id: null,
-      uuid,
+      uuid: pending.uuid,
     };
     const input = (async function* () {
       yield message;
       // The SDK asks for the next message only after writing this one to Claude Code.
-      if (!settled) {
+      if (run.steers.has(pending.uuid)) {
         pending.accepted = true;
-        pending.onUpdate?.({ state: 'accepted', dspatchRunId: run.dspatchRunId, providerMessageId: uuid });
+        pending.onUpdate?.({ state: 'accepted', dspatchRunId: run.dspatchRunId, providerMessageId: pending.uuid });
       }
     })();
     void handle.streamInput(input).catch((error: unknown) => {
@@ -2052,7 +2094,6 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         pending.settle({ state: 'not-delivered', reason: 'failed', detail: errorText(error) });
       }
     });
-    return outcome;
   }
 
   /**

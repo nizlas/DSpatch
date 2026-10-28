@@ -19,6 +19,9 @@ import { InstructionQueue } from '../src/main/instruction-queue.ts';
 import { PresentationAdapter } from '../src/main/presentation-adapter.ts';
 import { WorkingCopyLock, foldersOverlap, uncertainLoopWork } from '../src/main/working-copy-lock.ts';
 import type { LoopInstructionEventPayload, UiAgentEvent } from '../src/shared/bridge.ts';
+import { interleaveMessages, steeringSplitPoint } from '../src/shared/loop-instruction.ts';
+import { LOOP_RUN_RECORD_VERSION, serialiseRecordLine } from '../src/shared/loop-record.ts';
+import { loopMessageAnchor, loopTurnsFromRecordText, messagesAtReply } from '../src/shared/loop-transcript.ts';
 import { tempRoot } from './support/fixtures.ts';
 
 const services: ChatService[] = [];
@@ -78,7 +81,7 @@ test('a message during a turn goes into that turn, is delivered on the runtime\'
   await h.service.startChatSession({ kind: 'folder', path: h.workspace });
   await h.service.sendPrompt('[[slow]] Look at the failing build.');
   await until(() => h.events.some((event) => event.type === 'assistant.delta'), 'the turn to be working');
-  const outcome = await h.service.steerTurn('Change nothing yet; investigate first.');
+  const outcome = await h.service.steerTurn('Change nothing yet; investigate first.', { textOffset: 7 });
   assert.equal(outcome.kind, 'received');
   await until(() => finishedRuns(h.events) === 1, 'the turn to end');
   const kinds = h.steering.map((payload) => payload.kind);
@@ -94,6 +97,75 @@ test('a message during a turn goes into that turn, is delivered on the runtime\'
   const message = h.store.read(saved?.conversationId ?? '').conversation?.messages[0];
   assert.equal(message?.steering?.[0]?.state, 'delivered');
   assert.equal(message?.steering?.[0]?.text, 'Change nothing yet; investigate first.');
+  // Where it was sent in the answer, so it reads back in the same place.
+  assert.deepEqual(message?.steering?.[0]?.anchor, { textOffset: 7 });
+});
+
+test('a message is placed after the text that had been shown, never inside a word or a code block', () => {
+  const text = 'First line\nSecond line\n```\ncode a\ncode b\n```\nAfter.';
+  assert.equal(steeringSplitPoint(text, 0), 0);
+  assert.equal(steeringSplitPoint(text, 11), 11, 'at a line start it stays');
+  assert.equal(steeringSplitPoint(text, 13), 17, 'inside a word: forward to its end');
+  const fenceEnd = text.indexOf('After.');
+  assert.equal(steeringSplitPoint(text, text.indexOf('code a') + 2), fenceEnd, 'inside a fence: after it closes');
+  assert.equal(steeringSplitPoint(text, 999), text.length);
+  const pieces = interleaveMessages('Before. After.', [
+    { offset: 7, message: 'one' },
+    { offset: 7, message: 'two' },
+  ]);
+  assert.deepEqual(pieces, [
+    { kind: 'text', text: 'Before.' },
+    { kind: 'message', message: 'one' },
+    { kind: 'message', message: 'two' },
+    { kind: 'text', text: ' After.' },
+  ]);
+});
+
+test('a loop message is anchored in the working step, and its record reads back in that place', () => {
+  const anchor = loopMessageAnchor({
+    runId: 'run-1',
+    replies: [{ nodeId: 'plan', nodeLabel: 'Plan', text: 'Planned.', occurrence: 1 }],
+    steps: [
+      {
+        runId: 'run-1',
+        nodeId: 'build',
+        occurrence: 1,
+        roleId: null,
+        roleSourcePath: null,
+        startedAtUtc: '2026-10-28T10:00:00.000Z',
+        lastEventAtUtc: null,
+        text: 'Working on it',
+        tools: [],
+        awaitingApproval: null,
+        finished: false,
+      } as never,
+    ],
+  });
+  assert.deepEqual(anchor, { replyIndex: 1, textOffset: 13 });
+  const header = { line: 'header', formatVersion: LOOP_RUN_RECORD_VERSION, identity: {
+    runId: 'run-1', projectPath: 'p', conversationId: 'c', graphId: 'g', graphPath: 'g.json', graphVersionId: 'v', modelRequested: '', appVersion: '0',
+    mandate: 'Do it', startedAtUtc: '2026-10-28T10:00:00.000Z',
+  } };
+  const ending = { line: 'ending', ending: {
+    endedAtUtc: '2026-10-28T10:05:00.000Z', kind: 'finished', status: 'completed', terminalNodeId: null,
+    outcome: 'verification-not-performed', outcomeText: '', modelRequested: '', modelReported: null, commands: [],
+    snapshots: { beforeId: null, beforeFileCount: 0, afterId: null, afterFileCount: 0, changed: [], added: [], removed: [], truncated: null },
+    note: '', cancelled: false, cost: 'unknown',
+    messages: [
+      { id: 'm1', text: 'Only the parser.', receivedAtUtc: '2026-10-28T10:01:00.000Z', anchor,
+        outcome: 'delivered', delivery: { nodeId: 'build', nodeLabel: 'Build', occurrence: 1, atUtc: '2026-10-28T10:01:01.000Z', during: true } },
+      { id: 'm2', text: 'Lost.', receivedAtUtc: '', anchor: { replyIndex: 'x' }, outcome: 'not-delivered', delivery: null },
+    ],
+  } };
+  const text = [header, ending].map((line) => serialiseRecordLine(line as never)).join('');
+  const turn = loopTurnsFromRecordText(text)[0];
+  const messages = (turn?.messages ?? []).map((instruction) => ({ instruction }));
+  assert.equal(messages.length, 2);
+  assert.deepEqual(messagesAtReply(messages, 1).map((entry) => entry.instruction.id), ['m1']);
+  assert.equal(messages[0]?.instruction.delivered?.during, true);
+  // An anchor that is not a pair of counts is unknown: the message goes after the replies.
+  assert.equal(messages[1]?.instruction.anchor, undefined);
+  assert.equal(messages[1]?.instruction.runEnded, true);
 });
 
 test('a message the running turn cannot take waits for its end, then goes in once as the next message', async () => {

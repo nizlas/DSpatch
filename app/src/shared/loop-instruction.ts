@@ -93,6 +93,23 @@ export interface LoopInstruction {
    * the end of the chat turn, when it is sent as the next message.
    */
   readonly waitingFor?: 'next-step' | 'end-of-turn' | null;
+  /** DSP-147: where in the work's output the message was sent. Absent: not known. */
+  readonly anchor?: InstructionAnchor;
+}
+
+/**
+ * DSP-147: where a message sent into running work belongs in the conversation, as what
+ * the window had shown of that work when it was sent. The agent text shown before it
+ * stays before it, and what came after goes after it, live and when read back.
+ */
+export interface InstructionAnchor {
+  /**
+   * A loop run: how many of the run's replies were already shown, so the working step's
+   * reply is the one with this index. Absent for an ordinary turn, which has one answer.
+   */
+  readonly replyIndex?: number;
+  /** How many characters of that reply (or the turn's answer) had been shown. */
+  readonly textOffset: number;
 }
 
 /**
@@ -140,6 +157,7 @@ export function storedSteeringAsInstruction(entry: StoredSteering, runId: string
     delivered,
     runEnded: entry.state === 'not-delivered' || entry.state === 'waiting-end-of-turn',
     scope: 'chat',
+    ...(entry.anchor === undefined ? {} : { anchor: entry.anchor }),
     ...(entry.state === 'unconfirmed' || entry.state === 'accepted' || entry.state === 'received'
       ? { unconfirmed: true }
       : {}),
@@ -726,6 +744,75 @@ export function composerRouteNote(route: ComposerRoute): string | null {
     case 'agent-turn':
       return null;
   }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Where a message sits in the output it was sent into (DSP-147)              */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Where to break `text` for a message sent when `offset` characters of it had been
+ * shown. Never earlier, so everything the person had read stays above their message;
+ * moved forward only to the end of a word, or past the end of a fenced code block it
+ * would otherwise cut, so both halves still read as text.
+ */
+export function steeringSplitPoint(text: string, offset: number): number {
+  const at = Math.max(0, Math.min(Math.floor(Number.isFinite(offset) ? offset : 0), text.length));
+  if (at === 0 || at === text.length) {
+    return at;
+  }
+  const lines = text.slice(0, at).split('\n');
+  const insideFence = lines.filter((line) => /^\s*```/.test(line)).length % 2 === 1;
+  if (insideFence) {
+    // The line holding `at` is the fence's opening or one inside it; the block closes at
+    // the next fence line after it.
+    const lineEnd = text.indexOf('\n', at);
+    let search = lineEnd === -1 ? text.length : lineEnd + 1;
+    while (search < text.length) {
+      const next = text.indexOf('\n', search);
+      const line = text.slice(search, next === -1 ? text.length : next);
+      if (/^\s*```/.test(line)) {
+        return next === -1 ? text.length : next + 1;
+      }
+      search = next === -1 ? text.length : next + 1;
+    }
+    return text.length;
+  }
+  if (/\s/.test(text.charAt(at - 1)) || /\s/.test(text.charAt(at))) {
+    return at;
+  }
+  const space = /\s/.exec(text.slice(at));
+  return space === null ? text.length : at + space.index;
+}
+
+export type AnchoredPiece<T> =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'message'; readonly message: T };
+
+/**
+ * `text` with each message put where it was sent ({@link steeringSplitPoint}), in the
+ * order they were sent where two fall at the same place. Empty text pieces are left out.
+ */
+export function interleaveMessages<T>(
+  text: string,
+  messages: readonly { readonly offset: number; readonly message: T }[],
+): readonly AnchoredPiece<T>[] {
+  const placed = messages
+    .map((entry, order) => ({ at: steeringSplitPoint(text, entry.offset), order, message: entry.message }))
+    .sort((left, right) => left.at - right.at || left.order - right.order);
+  const pieces: AnchoredPiece<T>[] = [];
+  let from = 0;
+  for (const entry of placed) {
+    if (entry.at > from) {
+      pieces.push({ kind: 'text', text: text.slice(from, entry.at) });
+      from = entry.at;
+    }
+    pieces.push({ kind: 'message', message: entry.message });
+  }
+  if (from < text.length) {
+    pieces.push({ kind: 'text', text: text.slice(from) });
+  }
+  return pieces;
 }
 
 function ordinal(value: number): string {

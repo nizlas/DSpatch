@@ -3703,6 +3703,37 @@ test('a steering message no result lists is not confirmed, and the run ends with
   }
 });
 
+test('steering sent while the turn is still on its way to query() is given to that turn, not refused', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    await call.firstStreamed;
+    yield delta(call, 'adjusted.');
+    yield result(call, { user_message_uuids: ['u-prompt', streamedUuid(call)] });
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('steer-before-query')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const finished = seen.nextFinish();
+    // Not awaited: `send` has opened the turn and has not reached query() yet.
+    const sent = adapter.send(handle.dspatchSessionId, 'Fix the build');
+    assert.equal(calls.length, 0, 'query() not called yet');
+    const updates: string[] = [];
+    const outcome = adapter.steer(handle.dspatchSessionId, 'Only the parser.', (update) => {
+      updates.push(update.state);
+    });
+    await sent;
+    await finished;
+    const settled = await outcome;
+    assert.equal(settled.state, 'delivered');
+    assert.deepEqual(updates, ['accepted']);
+    assert.equal(calls.length, 1, 'the same turn, no second query');
+    assert.deepEqual((calls[0]!.streamed[0] as Record<string, any>)['message'], { role: 'user', content: 'Only the parser.' });
+  } finally {
+    await adapter.dispose();
+  }
+});
+
 test('steering with no running turn writes nothing and says so', async () => {
   const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
     yield init(call);

@@ -47,6 +47,7 @@
 // defect an earlier run of this loop already found and paid for.
 import { describeMovedPaths } from './loop-chat';
 import type { CommandProvenance } from './loop-command';
+import type { InstructionAnchor, LoopInstructionDelivery } from './loop-instruction';
 import type { RunJournalEntry, RunStatus } from './loop-run';
 
 export const LOOP_RUN_RECORD_VERSION = 1;
@@ -301,6 +302,29 @@ export interface RecordedRunEnding {
   readonly cancelled: boolean;
   /** `'unknown'` is not zero. A reading never taken is not a reading of nought. */
   readonly cost: 'unknown' | number;
+  /**
+   * DSP-147: the messages the person sent into the run while it worked, where each was
+   * sent and what became of it, so the conversation reads back with each in its place.
+   * Optional and additive: absent in records written before it, and in runs with none.
+   * The prompts on the `agent-reply` lines remain the evidence of what a step was given.
+   */
+  readonly messages?: readonly RecordedRunMessage[];
+}
+
+/** DSP-147: one message sent into a running loop run, as the run's ending records it. */
+export interface RecordedRunMessage {
+  readonly id: string;
+  readonly text: string;
+  readonly receivedAtUtc: string;
+  /** What of the run's output the window had shown when it was sent; `null`: not known. */
+  readonly anchor: InstructionAnchor | null;
+  /**
+   * `delivered`: a step's prompt held it, or the runtime's receipt said the step took it
+   * in (`delivery.during`). `unconfirmed`: the runtime had it, with no such receipt.
+   * `not-delivered`: no agent was given it.
+   */
+  readonly outcome: 'delivered' | 'unconfirmed' | 'not-delivered';
+  readonly delivery: LoopInstructionDelivery | null;
 }
 
 export interface RecordedAgentReply {

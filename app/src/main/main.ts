@@ -3078,7 +3078,7 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
-      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain'
+      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement'
         ? {
             flowPhase: ((): 'first' | 'again' | 'retry' | 'switch' => {
               const named = process.env['DSPATCH_FLOW_PHASE'];

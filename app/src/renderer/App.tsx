@@ -143,6 +143,7 @@ import {
   composerCanSend,
   composerRouteNote,
   composerSendRoute,
+  interleaveMessages,
   loopInstructionBadgeText,
   loopInstructionInline,
   loopInstructionState,
@@ -161,7 +162,9 @@ import {
   loopTurnStatusText,
   loopTurnsAfter,
   loopTurnsFromRecords,
+  loopMessageAnchor,
   mergeTranscript,
+  messagesAtReply,
   type ConversationStanding,
   type LoopTurn,
   type LoopTurnEvent,
@@ -550,10 +553,40 @@ function Workbench({
   }, [chat]);
   const activity = useMemo(() => describeActivity(chat), [chat]);
   /** The conversation column: ordinary turns and loop turns, in one order. */
+  /**
+   * DSP-147: a message sent into running work sits inside the turn it was sent into, at
+   * the point its anchor names, when it has one and that turn is in the column; by run id.
+   * The rest keep their place by time. Indices are positions in `loopInstructions`, so an
+   * entry keeps its name wherever it is drawn.
+   */
+  const placedMessages = useMemo(() => {
+    const runs = new Set([...chat.turns.map((turn) => turn.dspatchRunId), ...loopTurns.map((turn) => turn.runId)]);
+    const placed = new Map<string, PlacedMessage[]>();
+    loopInstructions.forEach((instruction, index) => {
+      if (instruction.anchor === undefined || !runs.has(instruction.runId)) {
+        return;
+      }
+      placed.set(instruction.runId, [
+        ...(placed.get(instruction.runId) ?? []),
+        { instruction, testId: `instruction-${String(index)}` },
+      ]);
+    });
+    return placed;
+  }, [chat.turns, loopTurns, loopInstructions]);
   const transcript = useMemo(
-    () => mergeTranscript(chat.turns, loopTurns, loopInstructions),
-    [chat.turns, loopTurns, loopInstructions],
+    () =>
+      mergeTranscript(chat.turns, loopTurns, loopInstructions).filter(
+        (item) =>
+          item.kind !== 'instruction' ||
+          !(placedMessages.get(item.instruction.runId) ?? []).some((entry) => entry.instruction.id === item.instruction.id),
+      ),
+    [chat.turns, loopTurns, loopInstructions, placedMessages],
   );
+  /** DSP-147: what the column shows now, read when a message is sent into running work. */
+  const shownChat = useRef(chat);
+  shownChat.current = chat;
+  const shownLoopTurns = useRef(loopTurns);
+  shownLoopTurns.current = loopTurns;
   const context = useMemo(() => summariseContext(chat), [chat]);
 
   /**
@@ -2090,8 +2123,11 @@ function Workbench({
         // DSP-147: into the turn that is working. No `busy` and no new turn: the turn it
         // joins is what is working, and the message is shown with where it has got to.
         setActionError(null);
+        // DSP-147: after as much of the answer as the person has seen.
+        const steered = currentTurnOf(shownChat.current);
+        const anchor = steered === null ? undefined : { textOffset: steered.answer.length };
         try {
-          const outcome = await window.dspatch.steerTurn({ text });
+          const outcome = await window.dspatch.steerTurn({ text, ...(anchor === undefined ? {} : { anchor }) });
           if (outcome.kind === 'refused') {
             setComposerNote(outcome.reason);
             return;
@@ -2112,6 +2148,7 @@ function Workbench({
               delivered: null,
               runEnded: false,
               scope: 'chat',
+              ...(anchor === undefined ? {} : { anchor }),
             },
           });
           setComposerNote(null);
@@ -2126,10 +2163,14 @@ function Workbench({
         // `busy`: this send does not wait for a provider turn and must not make
         // the window look as though it does — the run it joins is what is working.
         setActionError(null);
+        // DSP-147: after the replies and the part of the working step's reply already shown.
+        const walking = shownLoopTurns.current.find((turn) => turn.runId === route.runId);
+        const anchor = walking === undefined ? undefined : loopMessageAnchor(walking);
         try {
           const outcome = await window.dspatch.addLoopInstruction({
             runId: route.runId,
             text,
+            ...(anchor === undefined ? {} : { anchor: { replyIndex: anchor.replyIndex ?? 0, textOffset: anchor.textOffset } }),
           });
           if (outcome.kind === 'refused') {
             // The text stays in the box, which is what the refusal says. Losing
@@ -2148,6 +2189,7 @@ function Workbench({
               delivered: null,
               runEnded: false,
               scope: 'loop',
+              ...(anchor === undefined ? {} : { anchor }),
             },
           });
           setComposerNote(null);
@@ -3043,6 +3085,7 @@ function Workbench({
                     index={item.index}
                     active={item.turn.dspatchRunId === activeTurn?.dspatchRunId}
                     contextCarriedAutomatically={session.continuity.contextTransfer === 'automatic'}
+                    steering={placedMessages.get(item.turn.dspatchRunId) ?? NO_PLACED_MESSAGES}
                   />
                 ) : item.kind === 'loop' ? (
                   <LoopTurnEntry
@@ -3057,6 +3100,7 @@ function Workbench({
                     liveStanding={
                       item.turn.runId === newestLoopTurn?.runId ? liveStanding : null
                     }
+                    liveMessages={placedMessages.get(item.turn.runId) ?? NO_PLACED_MESSAGES}
                   />
                 ) : (
                   <InstructionEntry
@@ -4776,6 +4820,17 @@ function RestoredMessage({
   readonly quiet?: boolean;
 }): JSX.Element {
   const at = `${prefix}-${String(message.ordinal)}`;
+  // DSP-147: steering whose place in the answer was saved goes back to that place.
+  const placedSteering: readonly PlacedMessage[] = (message.steering ?? []).flatMap((entry, position) =>
+    entry.anchor === undefined
+      ? []
+      : [
+          {
+            instruction: storedSteeringAsInstruction(entry, message.dspatchRunId),
+            testId: `${at}-steering-${String(position)}`,
+          },
+        ],
+  );
   const showHead = !quiet || message.terminalStatus === null;
   return (
     <article className="turn" data-ev={at} data-ended={message.terminalStatus ?? 'unreported'}>
@@ -4799,15 +4854,15 @@ function RestoredMessage({
       />
       {/* AC#5's second half: a saved reply is read back formatted, not as the raw
           characters it was stored as. */}
-      <div className="turn__answer" data-ev={`${at}-answer`}>
-        {message.answer === '' ? (
+      {message.answer === '' ? (
+        <div className="turn__answer" data-ev={`${at}-answer`}>
           <p className="app__note">
             Nothing was received for this turn before DSpatch stopped listening.
           </p>
-        ) : (
-          <Markdown text={message.answer} />
-        )}
-      </div>
+        </div>
+      ) : (
+        <AnswerWithMessages text={message.answer} messages={placedSteering} testId={`${at}-answer`} />
+      )}
       {/*
         A saved turn that carried a summary says so when it is read back, in the
         same sentence as the live turn and for the same reason: what the model was
@@ -4833,8 +4888,12 @@ function RestoredMessage({
         }))}
         testId={`${at}-commands`}
       />
-      {/* DSP-147: steering sent into this turn, and the last thing known about each. */}
+      {/* DSP-147: steering sent into this turn whose place in the answer is not known (or
+          that has no answer to sit in), after it, and the last thing known about each. */}
       {(message.steering ?? []).map((entry, position) => {
+        if (entry.anchor !== undefined && message.answer !== '') {
+          return null;
+        }
         const instruction = storedSteeringAsInstruction(entry, message.dspatchRunId);
         const inline = loopInstructionInline(instruction);
         return (
@@ -6493,9 +6552,15 @@ function LoopTurnEntry({
   index,
   standing,
   liveStanding,
+  liveMessages,
 }: {
   readonly turn: LoopTurn;
   readonly index: number;
+  /**
+   * DSP-147: the messages this window holds for the run, each with where it was sent.
+   * With the ones read back from the run's record, by id, the window's own first.
+   */
+  readonly liveMessages: readonly PlacedMessage[];
   /** The state of the run this entry is about, and its note. `null` for any other. */
   readonly standing: ConversationStanding | null;
   /**
@@ -6512,6 +6577,24 @@ function LoopTurnEntry({
   const ending = loopTurnEndingLine(turn);
   const steps = turn.steps ?? [];
   const live = turn.ending === null ? runningStep(steps, turn.runId) : null;
+  const messages: readonly PlacedMessage[] = [
+    ...liveMessages,
+    ...(turn.messages ?? [])
+      .filter((instruction) => !liveMessages.some((entry) => entry.instruction.id === instruction.id))
+      .map((instruction, position) => ({ instruction, testId: `${at}-message-${String(position)}` })),
+  ];
+  // Inside the reply they were sent during, or the step still working; the rest after.
+  const replyCount = turn.replies.length;
+  const trailing = messages.filter((entry) => {
+    const at = entry.instruction.anchor?.replyIndex;
+    return at === undefined || at > replyCount || (at === replyCount && live === null);
+  });
+  const trail = handoffTrail(turn.replies, turn.branches ?? []);
+  // Each reply item's position among the replies, which is what an anchor counts.
+  const replyOrdinals = trail.reduce<number[]>(
+    (ordinals, item) => [...ordinals, (ordinals[ordinals.length - 1] ?? -1) + (item.kind === 'handoff' ? 0 : 1)],
+    [],
+  );
   return (
     <article className="turn turn--loop" data-ev={at}>
       {/*
@@ -6540,7 +6623,7 @@ function LoopTurnEntry({
         Everything here survives a restart: `loopTurnsFromRecords` rebuilds the same
         replies from disk and the same trail comes back out.
       */}
-      {handoffTrail(turn.replies, turn.branches ?? []).map((item, itemIndex) =>
+      {trail.map((item, itemIndex) =>
         item.kind === 'handoff' ? (
           <p
             key={`handoff-${String(itemIndex)}`}
@@ -6559,9 +6642,11 @@ function LoopTurnEntry({
                 what an agent did to the project would not be the agent's account.
                 Formatted for the same reason an ordinary reply is: a role's report
                 is the most heading-and-list-shaped text in the window. */}
-            <div className="turn__answer" data-ev={`${at}-reply-${String(itemIndex)}`}>
-              <Markdown text={item.text} />
-            </div>
+            <AnswerWithMessages
+              text={item.text}
+              messages={messagesAtReply(messages, replyOrdinals[itemIndex] ?? -1)}
+              testId={`${at}-reply-${String(itemIndex)}`}
+            />
             {/* What this step did, beside the work it did it for. §9 asks for tool
                 detail expanded alongside the relevant work rather than in a log
                 somewhere else; a step that made no tool calls shows nothing. */}
@@ -6591,8 +6676,16 @@ function LoopTurnEntry({
         keeps the reply and the prompt it answered, and nothing here is written down.
       */}
       {live === null ? null : (
-        <LiveStep step={live} standing={liveStanding} testId={`${at}-live`} />
+        <LiveStep
+          step={live}
+          standing={liveStanding}
+          testId={`${at}-live`}
+          messages={messagesAtReply(messages, replyCount)}
+        />
       )}
+      {trailing.map((entry) => (
+        <InstructionEntry key={entry.instruction.id} instruction={entry.instruction} testId={entry.testId} inline />
+      ))}
       {live === null && liveStanding !== null && turn.ending === null ? (
         <p
           className={`step-status step-status--${liveStanding.standing}`}
@@ -6774,10 +6867,13 @@ function LiveStep({
   step,
   standing,
   testId,
+  messages,
 }: {
   readonly step: StepActivityState;
   readonly standing: StepStandingReport | null;
   readonly testId: string;
+  /** DSP-147: messages sent while this step worked, at the point each was sent. */
+  readonly messages: readonly PlacedMessage[];
 }): JSX.Element {
   return (
     <div className="live-step" data-ev={testId}>
@@ -6798,10 +6894,12 @@ function LiveStep({
       )}
       {/* The reply as it is being written, in the place the finished reply will take.
           Formatted the same way, so nothing jumps when the two swap over. */}
-      {step.text === '' ? null : (
-        <div className="turn__answer" data-ev={`${testId}-text`}>
-          <Markdown text={step.text} />
-        </div>
+      {step.text === '' ? (
+        messages.map((entry) => (
+          <InstructionEntry key={entry.instruction.id} instruction={entry.instruction} testId={entry.testId} inline />
+        ))
+      ) : (
+        <AnswerWithMessages text={step.text} messages={messages} testId={`${testId}-text`} />
       )}
       {step.tools.length === 0 ? null : (
         <ul className="tool-calls__list tool-calls__list--live" data-ev={`${testId}-tools`}>
@@ -6887,21 +6985,95 @@ function RunStanding({
  * message is a line saying where it has got to, which is the distinction §4.4
  * insists on: DSpatch holding it is not an agent having it.
  */
+/** DSP-147: a message sent into running work, and the name its entry is drawn under. */
+interface PlacedMessage {
+  readonly instruction: LoopInstruction;
+  readonly testId: string;
+}
+
+const NO_PLACED_MESSAGES: readonly PlacedMessage[] = [];
+
+/**
+ * DSP-147: an answer with the messages sent into it drawn where each was sent: the text
+ * the person had seen before it, what the agent wrote afterwards after it. With none,
+ * exactly the answer as it has always been drawn. The first stretch of text keeps the
+ * answer's own name; the later ones are `<name>-after-<n>`.
+ */
+function AnswerWithMessages({
+  text,
+  messages,
+  testId,
+}: {
+  readonly text: string;
+  readonly messages: readonly PlacedMessage[];
+  readonly testId: string;
+}): JSX.Element {
+  if (messages.length === 0) {
+    return (
+      <div className="turn__answer" data-ev={testId}>
+        <Markdown text={text} />
+      </div>
+    );
+  }
+  const pieces = interleaveMessages(
+    text,
+    messages.map((entry) => ({ offset: entry.instruction.anchor?.textOffset ?? text.length, message: entry })),
+  );
+  let stretch = -1;
+  return (
+    <>
+      {pieces.map((piece) => {
+        if (piece.kind === 'message') {
+          return (
+            <InstructionEntry
+              key={piece.message.instruction.id}
+              instruction={piece.message.instruction}
+              testId={piece.message.testId}
+              inline
+            />
+          );
+        }
+        stretch += 1;
+        return (
+          <div
+            key={`text-${String(stretch)}`}
+            className="turn__answer"
+            data-ev={stretch === 0 ? testId : `${testId}-after-${String(stretch - 1)}`}
+          >
+            <Markdown text={piece.text} />
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function InstructionEntry({
   instruction,
-  index,
+  index = 0,
+  testId,
+  inline: inFlow = false,
 }: {
   readonly instruction: LoopInstruction;
-  readonly index: number;
+  readonly index?: number;
+  readonly testId?: string;
+  /** DSP-147: drawn inside the turn it was sent into, in the flow of its output. */
+  readonly inline?: boolean;
 }): JSX.Element {
-  const at = `instruction-${String(index)}`;
+  const at = testId ?? `instruction-${String(index)}`;
   const state = loopInstructionState(instruction);
   // DSP-147: nothing under a delivered message, a quiet word while it waits, and a
   // visible line only when delivery was not confirmed or did not happen. The full
   // account is in Session details.
   const inline = loopInstructionInline(instruction);
   return (
-    <article className="turn turn--instruction" data-ev={at} data-state={state} data-scope={instruction.scope ?? 'loop'}>
+    <article
+      className={inFlow ? 'turn__steering' : 'turn turn--instruction'}
+      data-ev={at}
+      data-state={state}
+      data-scope={instruction.scope ?? 'loop'}
+      data-placement={inFlow ? 'inline' : 'by-time'}
+    >
       <p className="turn__loop-mark" data-ev={`${at}-mark`}>
         Steering
       </p>
@@ -7135,10 +7307,13 @@ function Turn({
   index,
   active,
   contextCarriedAutomatically,
+  steering,
 }: {
   readonly turn: TurnState;
   readonly index: number;
   readonly active: boolean;
+  /** DSP-147: steering sent into this turn, drawn at the point of the answer it was sent. */
+  readonly steering: readonly PlacedMessage[];
   /**
    * DSP-149: the recap in front of this message was the automatic carrying of the
    * conversation into a workspace. It is shown under Session details, not here.
@@ -7213,19 +7388,23 @@ function Turn({
         pretending otherwise.
       */}
       {turn.answer === '' ? (
-        <pre
-          className="turn__answer"
-          data-ev={active ? 'active-answer' : `turn-${String(index)}-answer`}
-        >
-          {active ? '…' : '(no text in this turn)'}
-        </pre>
+        <>
+          <pre
+            className="turn__answer"
+            data-ev={active ? 'active-answer' : `turn-${String(index)}-answer`}
+          >
+            {active ? '…' : '(no text in this turn)'}
+          </pre>
+          {steering.map((entry) => (
+            <InstructionEntry key={entry.instruction.id} instruction={entry.instruction} testId={entry.testId} inline />
+          ))}
+        </>
       ) : (
-        <div
-          className="turn__answer"
-          data-ev={active ? 'active-answer' : `turn-${String(index)}-answer`}
-        >
-          <Markdown text={turn.answer} />
-        </div>
+        <AnswerWithMessages
+          text={turn.answer}
+          messages={steering}
+          testId={active ? 'active-answer' : `turn-${String(index)}-answer`}
+        />
       )}
       {/*
         DSP-145: what the agent ran, one short line each, under its reply. The whole

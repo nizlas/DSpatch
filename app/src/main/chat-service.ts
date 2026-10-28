@@ -3409,7 +3409,7 @@ export class ChatService {
    * turn (it then goes in as the next message when the turn ends, which the window sends
    * through its ordinary send), and `not-delivered` when the turn stopped first.
    */
-  async steerTurn(text: string): Promise<SteerTurnOutcome> {
+  async steerTurn(text: string, anchor?: { readonly textOffset: number }): Promise<SteerTurnOutcome> {
     const { adapter, session } = this.requireSession();
     const said = text.trim();
     if (said === '') {
@@ -3430,6 +3430,7 @@ export class ChatService {
       providerMessageId: null,
       detail: null,
       everAccepted: false,
+      ...(anchor === undefined ? {} : { anchor: { textOffset: anchor.textOffset } }),
     };
     turn.steering.push(entry);
     this.saveConversation(turn.conversationId);
@@ -6314,6 +6315,7 @@ function toStoredMessage(turn: TurnRecord): StoredMessage {
             settledAtUtc: entry.settledAtUtc,
             providerMessageId: entry.providerMessageId,
             detail: entry.detail,
+            ...(entry.anchor === undefined ? {} : { anchor: entry.anchor }),
           })),
         }),
   };

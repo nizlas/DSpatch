@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-10-27 14:09'
-updated_date: '2026-10-28 17:30'
+updated_date: '2026-10-28 18:20'
 labels: []
 dependencies: []
 priority: high
@@ -158,4 +158,36 @@ Verified, SIMULATED provider and isolated userData, `DSPATCH_CHAT_RUN=editor-unc
 Unit tests (steering.test.ts) cover the same rules, plus the gate a new editor run meets. The steering scenario, the test groups chat, loop and host, and the typechecks also pass.
 
 Not shown in the window: an editor run refused by earlier unconfirmed work. Its fresh folder can only overlap a workspace that contains the temp folder. The gate and its naming are unit-tested, and the editor's button is typechecked only. The real steering trial with Claude stays open (AC #1).
+
+28 Oct 2026, current focus (follow-up from Niclas's manual Claude trial): a message sent with Enter while a loop node worked seemed to take effect only in the next node, and a delivered steering message stayed in a separate box at the bottom instead of in the conversation. Reconstructing the path UI → host → loop → adapter; cause not yet established.
+28 Oct 2026, follow-up of Niclas's manual Claude trial (local commit, not pushed). Two observations were reported: a message sent with Enter while a loop node worked seemed to take effect only in the next node, and a delivered steering message stayed in a separate box at the bottom. The old run no longer exists, so the path was reconstructed from the code. The cause of the first observation is not established.
+
+**Delivery: what the code shows**
+- **One delivery path.** Enter and the Steering button already used the same path: both call the same `send()` and the same `composerSendRoute`. That path goes to `loop.addInstruction` for a loop run and to `chat.steerTurn` for a turn. The host offers the message to the working step's adapter through `onSteerableStep`, which is set before the step's `send`. The adapter writes it at once with the SDK's `Query.streamInput()`, which writes to Claude Code without waiting (read in sdk.mjs 0.3.306). In the installed Claude Code binary, a message on stdin gets the queue priority `"next"` by default and is folded into the running turn between tool rounds (code reading, not a contract; the SDK's `user_message_uuids` documentation says the same).
+- **A real gap, fixed.** Between `send()` opening a turn and `query()` returning a handle, `steer()` answered `no-running-turn`. During that time the previous stream, the SDK or the app tools may still be loading. The host then put the message back in the queue, so the **next** step took it. Now the Claude adapter holds such a message in the run and gives it to `streamInput` as soon as the handle exists. This is the first offer, not a resend. If the turn never starts, the message is settled as not delivered and waits for the next step, as before. The Cursor adapter does the same: it waits for `agent.send`'s `Run` before calling `Run.steer()`, which is typechecked but not tested.
+- **Other explanations that remain.** If Claude Code has no tool round left in the node's turn, it runs the message as a following turn of the same query. The node then answers it after its own reply, and later nodes are briefed with it ("Earlier in this run"). Either case could look like "the next node acted on it". Which one happened in the trial is unknown.
+- **What each signal means.** DSpatch's delivery is the write through `streamInput`, shown as accepted. The SDK's receipt is the uuid in a result's `user_message_uuids`, shown as delivered. Neither shows when the model took the instruction into account. The receipt is also given for a following turn, so it does not prove an effect mid-turn.
+
+**Placement**
+- **Inside the work it was sent into.** A message sent into running work is now drawn inside that work instead of after it by time. The window sends an anchor with the message: for a turn, how much of the answer it had shown; for a loop run, how many replies it had shown and how much of the working step's text. The answer is split there, moved forward only to the end of a word or past an open code fence. The text shown before stays before, and later output comes after. This applies live, in the working step and in the finished reply.
+- **After reopening.** A turn's anchor is saved on `StoredSteering`. A loop run's messages, with their anchor and outcome, are saved on the run's ending line (`RecordedRunEnding.messages`, an optional field added to that line). An older build ignores the field, and no new record line kind was added. The window takes messages read back from a record together with its own by id, so none is drawn twice. A message without an anchor keeps its place by time, as before.
+- **Status.** A quiet word while the message waits. Nothing once it is delivered. A visible line when delivery is unconfirmed or did not happen. Technical details stay in Session details.
+
+**Verified, SIMULATED provider and steering, isolated userData** (`DSPATCH_CHAT_RUN=steering-placement`, two processes, real Enter and clicks, both passed):
+1. `first`: a chat turn steered with Enter, then with the Steering button. Both messages sat inside the turn: after the answer text shown when they were sent, and before the output that followed. Both were delivered, with no status line, and nothing was drawn apart.
+2. A loop step steered with Enter. The message was drawn inside the working step and delivered while the same step was still working, with no new reply in between. The step wrote on after it, and once the step had ended the message sat inside that step's reply. The later step ("check") was briefed with it and the steered step's prompt did not hold it. The record kept it as delivered (`during`) with its anchor.
+3. `again`, after a restart: the saved chat (read from the file, then continued) and the loop run read back with each message in the same place, once each.
+
+**Other checks.** Unit tests: the adapter holds a message sent before `query()`, the split point and its interleaving, the record round-trip, and the anchor saved with a turn's steering. The test groups chat (399 of 400 pass, none fail), loop (620) and host (13), the typechecks, and the existing steering scenario also pass.
+
+**Not established**
+- When a real Claude model takes a steering message into account, and what happened in Niclas's trial. AC #1 stays open.
+- Cursor's hold before `Run` exists is typechecked only.
+
+**Trial at home**
+1. Start a Use loop run whose first node does several tool calls (for example, "read every file under src and summarise each").
+2. While it reads, press Enter with a short, checkable instruction (for example, "Also count the lines of each file").
+3. Session details should say "Delivered to “<node>”". If the node's own reply already acts on the instruction, it was folded in mid-turn.
+4. If the node acts on it only after its reply, or only the next node does, Claude Code ran it as a following turn.
+
 <!-- SECTION:NOTES:END -->

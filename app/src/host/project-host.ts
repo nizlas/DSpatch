@@ -68,6 +68,7 @@ import {
   type RecordedCommand,
   type RecordedEndingKind,
   type RecordedRunEnding,
+  type RecordedRunMessage,
   type RunWalkEnding,
 } from '../shared/loop-record';
 import { describeLoopRunAgent, type LoopRunAgentInfo } from '../shared/loop-run-agent-text';
@@ -1947,6 +1948,11 @@ function registerLoopMethods(): void {
   let chatLoopGiven: string[] = [];
   /** DSP-147: what became of each steering message in this run, for its ending note. */
   let chatLoopSteered: { readonly text: string; readonly outcome: string }[] = [];
+  /**
+   * DSP-147: every message the person sent into this run, where it was sent and what
+   * became of it, written on the run's ending so the conversation reads back in order.
+   */
+  let chatLoopMessages = new Map<string, RecordedRunMessage>();
   /** DSP-147: a loop run's agent work with no confirmed end, into the attempt ledger. */
   const recordUncertainLoopWork = (
     runId: string,
@@ -2726,7 +2732,9 @@ function registerLoopMethods(): void {
       chatLoopRunId = request.runId;
       chatLoopGiven = [];
       chatLoopSteered = [];
+      chatLoopMessages = new Map();
       chatLoopInstructionEvents = (payload) => {
+        noteRunMessageEvent(chatLoopMessages, payload);
         sendToSender(LOOP_INSTRUCTION_EVENT, payload);
       };
       /**
@@ -2881,6 +2889,7 @@ function registerLoopMethods(): void {
             //
             // A message no step ever took has no prompt to live in, and that case is
             // carried on the run's ending note instead. See `undeliveredNote`.
+            noteRunMessageEvent(chatLoopMessages, payload);
             sendToSender(LOOP_INSTRUCTION_EVENT, payload);
             return `${earlier}${instructionPreamble(taken.map((entry) => entry.text))}${prompt}`;
           },
@@ -2988,6 +2997,7 @@ function registerLoopMethods(): void {
           note: workspaceNote,
           modelRequested,
           cancelled,
+          messages: [...chatLoopMessages.values()],
         });
         endedStatus = delivery.result.status;
         /*
@@ -3023,6 +3033,7 @@ function registerLoopMethods(): void {
           note: `The loop could not be run: ${note}`,
           modelRequested,
           cancelled: chatLoopAbort?.signal.aborted ?? false,
+          messages: [...chatLoopMessages.values()],
         });
         endedNote = `The loop could not be run: ${note}`;
         return { kind: 'failed', note };
@@ -3129,6 +3140,14 @@ function registerLoopMethods(): void {
         };
       }
       const entry = chatLoopInstructions.add(request.runId, text, new Date().toISOString());
+      chatLoopMessages.set(entry.id, {
+        id: entry.id,
+        text,
+        receivedAtUtc: entry.receivedAtUtc,
+        anchor: request.anchor ?? null,
+        outcome: 'not-delivered',
+        delivery: null,
+      });
       const received: AddLoopInstructionOutcome = {
         kind: 'received',
         instructionId: entry.id,
@@ -3378,6 +3397,37 @@ function undeliveredNote(
  * holds) beside the prompts that hold the ones given at a step's start. `''` when there
  * were none, so a run without steering keeps its note byte for byte.
  */
+/** DSP-147: what an event about the run's messages settles about each, for its record. */
+function noteRunMessageEvent(
+  messages: Map<string, RecordedRunMessage>,
+  payload: LoopInstructionEventPayload,
+): void {
+  if (!('instructionIds' in payload)) {
+    return;
+  }
+  for (const id of payload.instructionIds) {
+    const known = messages.get(id);
+    if (known === undefined || known.outcome === 'delivered') {
+      continue;
+    }
+    if (payload.kind === 'delivered') {
+      messages.set(id, {
+        ...known,
+        outcome: 'delivered',
+        delivery: {
+          nodeId: payload.nodeId,
+          nodeLabel: payload.nodeLabel,
+          occurrence: payload.occurrence,
+          atUtc: payload.atUtc,
+          ...(payload.during === true ? { during: true } : {}),
+        },
+      });
+    } else if (payload.kind === 'unconfirmed') {
+      messages.set(id, { ...known, outcome: 'unconfirmed' });
+    }
+  }
+}
+
 function steeredNote(steered: readonly { readonly text: string; readonly outcome: string }[]): string {
   if (steered.length === 0) {
     return '';
@@ -3437,6 +3487,7 @@ function closeChatLoopRecord(
     readonly note: string;
     readonly modelRequested: string;
     readonly cancelled: boolean;
+    readonly messages?: readonly RecordedRunMessage[];
   },
 ): ChatLoopRecordInfo {
   const atUtc = new Date().toISOString();
@@ -3508,6 +3559,7 @@ function closeChatLoopRecord(
     note: input.note,
     cancelled: input.cancelled || (input.inspection?.cancelled ?? false),
     cost: input.inspection?.cost ?? 'unknown',
+    ...(input.messages === undefined || input.messages.length === 0 ? {} : { messages: input.messages }),
   };
   record.finish(ending);
   const failures = record.failures();
@@ -3817,7 +3869,7 @@ function registerCoreMethods(): void {
   // the continuity the window shows from then on.
   handle('chat.discardPendingRecap', () => chatService.discardPendingRecap());
   // DSP-147: steering of the turn that is working; it never starts a turn.
-  handle('chat.steerTurn', (_event, request: SteerTurnRequest) => chatService.steerTurn(request.text));
+  handle('chat.steerTurn', (_event, request: SteerTurnRequest) => chatService.steerTurn(request.text, request.anchor));
   handle(
     'chat.sendPrompt',
     async (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) => {

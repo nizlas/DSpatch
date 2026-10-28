@@ -935,9 +935,21 @@ function steeringOf(value: unknown): { readonly steering?: readonly StoredSteeri
       settledAtUtc: optional('settledAtUtc'),
       providerMessageId: optional('providerMessageId'),
       detail: optional('detail'),
+      ...anchorOf(entry['anchor']),
     });
   }
   return entries.length === 0 ? {} : { steering: entries };
+}
+
+/** DSP-147: where a steering message sat in the answer; dropped when it is not a count. */
+function anchorOf(value: unknown): { readonly anchor?: { readonly textOffset: number } } {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const offset = value['textOffset'];
+  return typeof offset === 'number' && Number.isInteger(offset) && offset >= 0
+    ? { anchor: { textOffset: offset } }
+    : {};
 }
 
 function asNumber(value: unknown, fallback: number): number {
