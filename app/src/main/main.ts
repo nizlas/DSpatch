@@ -2616,6 +2616,25 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
     script = READ_PAIR_WINDOW;
   } else if (request.action === 'go-to-step') {
     script = `(() => window.__dspatchReviewCheck ? window.__dspatchReviewCheck.goToStep(${JSON.stringify(request.stepId)}) : false)()`;
+  } else if (request.action === 'select-text') {
+    script = `(() => {
+      const element = document.querySelector(${selector});
+      if (!(element instanceof HTMLElement)) { return ''; }
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node !== null && (node.textContent || '').trim() === '') { node = walker.nextNode(); }
+      if (node === null) { return ''; }
+      const text = node.textContent || '';
+      const start = text.length - text.trimStart().length;
+      const range = document.createRange();
+      range.setStart(node, start);
+      range.setEnd(node, Math.min(text.length, start + ${String(request.length)}));
+      const chosen = window.getSelection();
+      chosen.removeAllRanges();
+      chosen.addRange(range);
+      element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      return chosen.toString();
+    })()`;
   } else if (request.action === 'select') {
     script = `(() => {
       const element = document.querySelector(${selector});
@@ -2656,7 +2675,13 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
           walk: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read() : null,
           decisions: [...document.querySelectorAll('.rv-decision')].map((node) => (node.textContent || '').replace(/\s+/g, ' ').trim()),
           showInDiff: document.querySelector('[data-ev="walk-show-in-diff"]') !== null,
-          text: (document.body.textContent || '').replace(/\s+/g, ' ').slice(0, 4000),
+          deepenings: [...document.querySelectorAll('[data-ev="step-deepening"]')].map((node) => ({ state: node.getAttribute('data-state'), text: (node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300) })),
+          walkJob: (document.querySelector('.rv-walk-delegate [data-state]') || { getAttribute: () => null }).getAttribute('data-state'),
+          walkJobText: (document.querySelector('.rv-walk-delegate') || { textContent: '' }).textContent,
+          rightWidth: (document.querySelector('.rv-right') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width,
+          codeWidth: (document.querySelector('.rv-code') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width,
+          overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          text: (document.body.textContent || '').replace(/\s+/g, ' ').slice(0, 30000),
         }))()`;
 
 /** Read the loop editor's window through its check hook, or close it like its X does. */
@@ -3246,7 +3271,7 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
-      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review'
+      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks'
         ? {
             flowPhase: ((): 'first' | 'again' | 'retry' | 'switch' => {
               const named = process.env['DSPATCH_FLOW_PHASE'];

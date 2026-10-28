@@ -1785,6 +1785,8 @@ export type ScriptedScenario =
   | 'editor-joins-run'
   /** DSP-150: a revision pair chosen and reviewed in its diff window, a walk beside it, and a restart. */
   | 'pair-review'
+  /** DSP-152: walks prepared, a step deepened, parts delegated, stopped, reopened and read back after a restart. SIMULATED provider. */
+  | 'code-walks'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2051,6 +2053,8 @@ export type PairWindowCheckRequest =
   | { readonly action: 'go-to-step'; readonly id: number; readonly stepId: string }
   | { readonly action: 'capture'; readonly id: number; readonly label: string }
   | { readonly action: 'focus'; readonly id: number }
+  /** DSP-152: select the first words of an element's text and release the mouse there, as a person selecting it. */
+  | { readonly action: 'select-text'; readonly id: number; readonly selector: string; readonly length: number }
   | { readonly action: 'close'; readonly id: number };
 
 /** What the `editor-joins-run` scenario asks of the loop editor's own window. */

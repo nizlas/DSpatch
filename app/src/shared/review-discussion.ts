@@ -420,6 +420,31 @@ export interface DiscussionMessage {
   readonly dspatchSessionId?: string;
   /** DSP-132: the tool policy the agent was given for this question, as one line. */
   readonly toolPolicy?: string;
+  /**
+   * DSP-152: a question asked from a walk step's own actions (Tell me more, Explain more
+   * simply, Explain this). It is an ordinary question in the discussion; this says which
+   * action asked it, so the step can show its answer as a deepening beside it.
+   */
+  readonly deepen?: DeepenRequest;
+}
+
+/** Which deepening a question is, and the selected text for Explain this. */
+export interface DeepenRequest {
+  readonly action: 'more' | 'simpler' | 'explain';
+  readonly text?: string;
+}
+
+/** A deepening request from a window, or `null` when there is none or it is malformed. */
+export function deepenFrom(raw: unknown): DeepenRequest | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  const action = raw['action'];
+  if (action !== 'more' && action !== 'simpler' && action !== 'explain') {
+    return null;
+  }
+  const text = typeof raw['text'] === 'string' ? raw['text'].slice(0, 2000) : undefined;
+  return text === undefined || text.trim() === '' ? { action } : { action, text };
 }
 
 /**
@@ -660,6 +685,10 @@ function adoptMessages(value: unknown): DiscussionMessage[] {
     if (typeof entry['toolPolicy'] === 'string') {
       message.toolPolicy = entry['toolPolicy'];
     }
+    const deepen = deepenFrom(entry['deepen']);
+    if (deepen !== null) {
+      message.deepen = deepen;
+    }
     messages.push(message);
   }
   return messages;
@@ -824,6 +853,8 @@ export interface DiscussionSendInput {
   readonly subject: DiscussionSubject;
   readonly selection: CodeLocation | null;
   readonly language?: Lang;
+  /** DSP-152: asked from a walk step's own deepening action. */
+  readonly deepen?: DeepenRequest;
 }
 
 export type DiscussionSendOutcome =

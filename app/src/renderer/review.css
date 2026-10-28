@@ -192,26 +192,41 @@
 
 /* --- Three columns ----------------------------------------------------------- */
 
+/* DSP-152: the explanation column is wider by default and the reviewer's chosen width
+   (--rv-right-width, set from the saved preference) is kept, never more than about half
+   the window so the code stays usable in a smaller one. The divider is its own column. */
 .rv-body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(14rem, 20rem) minmax(0, 1fr) minmax(17rem, 25rem);
+  grid-template-columns: minmax(13rem, 18rem) minmax(0, 1fr) 6px minmax(16rem, min(var(--rv-right-width, 520px), 48vw));
 }
 
 .rv-body-wide {
-  grid-template-columns: minmax(26rem, 42rem) minmax(0, 1fr) minmax(17rem, 25rem);
+  grid-template-columns: minmax(26rem, 42rem) minmax(0, 1fr) 6px minmax(16rem, min(var(--rv-right-width, 520px), 40vw));
 }
 
 @media (max-width: 1150px) {
   .rv-body,
   .rv-body-wide {
-    grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr) minmax(15rem, 19rem);
+    grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr) 6px minmax(15rem, min(var(--rv-right-width, 520px), 44vw));
   }
 
   .rv-body-wide {
-    grid-template-columns: minmax(20rem, 26rem) minmax(0, 1fr) minmax(15rem, 19rem);
+    grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr) 6px minmax(15rem, min(var(--rv-right-width, 520px), 36vw));
   }
+}
+
+.rv-divider {
+  cursor: col-resize;
+  background: var(--line);
+  touch-action: none;
+}
+
+.rv-divider:hover,
+.rv-divider:focus-visible {
+  background: var(--muted);
+  outline: none;
 }
 
 .rv-left,
@@ -2293,4 +2308,193 @@
 
 .rv-pair .rv-pair-gap button:hover {
   color: var(--text);
+}
+
+/* --- DSP-152: reading a walk, deepening it, and agent work ------------------------------
+   The explanation keeps a comfortable line length and clear space between paragraphs;
+   deepenings fold under the step; agent work is a quiet line while it runs and a result
+   that can be folded once it has one. */
+
+.rv-step-panel {
+  max-width: 48rem;
+}
+
+.rv-explanation .markdown p,
+.rv-deepening .markdown p {
+  line-height: 1.55;
+  margin: 0 0 0.75rem;
+}
+
+.rv-summary {
+  line-height: 1.55;
+}
+
+.rv-purpose .rv-more {
+  margin-left: 0.4rem;
+  padding: 0 0.3rem;
+  font-size: 0.8rem;
+}
+
+.rv-deepen {
+  margin: 0.4rem 0 0.9rem;
+}
+
+.rv-deepen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.rv-deepen-actions button {
+  font-size: 0.82rem;
+}
+
+.rv-deepening {
+  border-left: 2px solid color-mix(in srgb, var(--unknown) 60%, var(--line));
+  padding: 0.2rem 0 0.2rem 0.7rem;
+  margin: 0.4rem 0;
+}
+
+.rv-deepening > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 0.3rem;
+}
+
+.rv-walk-delegate {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.rv-walk-delegate > button {
+  align-self: flex-start;
+  font-size: 0.82rem;
+}
+
+.rv-agent-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.rv-agent-picker label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+}
+
+.rv-agent-picker input {
+  width: 14rem;
+}
+
+.rv-agent-delegate {
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.rv-agent-delegate p {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+}
+
+.rv-agent-line {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 1.2rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.rv-walk-delegate .rv-agent-line,
+.rv-agent-review .rv-agent-line {
+  padding: 0.2rem 0;
+  border-bottom: none;
+}
+
+.rv-agent-line-failed,
+.rv-agent-line-unknown {
+  color: var(--no);
+}
+
+.rv-agent-spinner {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--unknown);
+  animation: rv-agent-spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rv-agent-spinner {
+    animation: none;
+  }
+}
+
+@keyframes rv-agent-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.rv-agent-reviews {
+  padding: 0.3rem 1rem;
+  border-bottom: 1px solid var(--line);
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.rv-agent-review {
+  margin: 0.3rem 0;
+  font-size: 0.86rem;
+}
+
+.rv-agent-review > summary {
+  cursor: pointer;
+  color: var(--text);
+}
+
+.rv-agent-review-body {
+  padding: 0.3rem 0 0.3rem 1rem;
+  border-left: 2px solid color-mix(in srgb, var(--unknown) 60%, var(--line));
+  margin-top: 0.3rem;
+  max-width: 60rem;
+  line-height: 1.5;
+}
+
+.rv-agent-review-body p {
+  margin: 0 0 0.5rem;
+}
+
+.rv-agent-findings {
+  margin: 0 0 0.5rem;
+  padding-left: 1.1rem;
+}
+
+.rv-agent-finding-problem strong {
+  color: var(--no);
+}
+
+.rv-agent-insufficient {
+  color: var(--muted);
+}
+
+.rv-agent-uncertain ul {
+  margin: 0.2rem 0 0.5rem;
+  padding-left: 1.1rem;
+}
+
+.rv-agent-adjustments > summary {
+  cursor: pointer;
+  color: var(--muted);
 }

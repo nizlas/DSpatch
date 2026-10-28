@@ -809,6 +809,8 @@ export async function runScriptedWorkflow(
       return runEditorJoinsRunScenario(plan);
     case 'pair-review':
       return runPairReviewScenario(plan);
+    case 'code-walks':
+      return runCodeWalksScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -11761,7 +11763,7 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       await inPairWindow(diffAgain.id, '[data-ev="pair-walks"]');
       const none = await untilPair(diffAgain.id, 'the walk list', (reading) => (reading.pair?.walksNote ?? '') !== '');
       record('no walks', { note: none.pair?.walksNote, files: none.pair?.files });
-      expect(none.pair?.walksNote === 'No code walks for these revisions.', `the absence of walks is not said: ${String(none.pair?.walksNote)}`);
+      expect((none.pair?.walksNote ?? '').startsWith('No code walks for these revisions.'), `the absence of walks is not said: ${String(none.pair?.walksNote)}`);
       await inPairWindow(diffAgain.id, '[data-ev="pair-file-0"]');
       const lib = await untilPair(diffAgain.id, 'the lib diff', (reading) => (reading.pair?.strips?.length ?? 0) === 2);
       expect(fileReading(lib, 'index.ts')?.percent === 0, 'a pair without walks does not review normally');
@@ -12048,5 +12050,274 @@ async function closeDiffWindows(): Promise<void> {
     if (row.view === 'diff') {
       await window.dspatch.pairWindowCheck({ action: 'close', id: row.id });
     }
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-152: agent-generated code walks, deepening and delegated review        */
+/* ------------------------------------------------------------------------- */
+
+interface JobReading {
+  readonly id: string;
+  readonly kind: 'walks' | 'review';
+  readonly state: string;
+  readonly note: string;
+  readonly scope: string | null;
+  readonly approved: readonly { readonly start: number; readonly end: number; readonly path: string }[];
+  readonly findings: number;
+  readonly insufficient: boolean;
+  readonly definitionPath: string | null;
+  readonly uncovered: number;
+}
+
+function jobsOf(reading: PairWindowReading | null): readonly JobReading[] {
+  return ((reading?.pair as { jobs?: JobReading[] } | null)?.jobs ?? []);
+}
+
+function lastJob(reading: PairWindowReading | null, kind: 'walks' | 'review', scope?: string): JobReading | undefined {
+  return [...jobsOf(reading)].reverse().find((job) => job.kind === kind && (scope === undefined || (job.scope ?? '').includes(scope)));
+}
+
+const settledJob = (job: JobReading | undefined): boolean => job !== undefined && job.state !== 'running' && job.state !== 'cancelling';
+
+/** How many prompts the review adapters were sent, from the host's record of them. */
+async function reviewPromptsSent(): Promise<readonly string[]> {
+  const answer = await window.dspatch.reviewWindowCheck({ action: 'read' });
+  const reading = answer.detail as { adapterSent?: { review?: readonly string[] } };
+  return reading.adapterSent?.review ?? [];
+}
+
+/**
+ * DSP-152 in the real windows, with the SIMULATED presentation provider: prepare code
+ * walks for a chosen pair (with one repair round), open a generated walk, deepen a step
+ * and a selected sentence, delegate lines, a file with too little material and a walk,
+ * stop a delegated review, and read it all back after reopening and (phase `again`) a
+ * restart without any agent call being repeated.
+ *
+ * Simulated answers prove the flow, not what a real model writes or how well it explains.
+ */
+async function runCodeWalksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const phase = plan.flowPhase ?? 'first';
+  const observations: Record<string, unknown> = {
+    plan,
+    phase,
+    limits:
+      'SIMULATED provider (presentation adapter with DSPATCH_REVIEW_SIM=bad-ref-first). The windows, the host, ' +
+      'its job records, git and the review discussion are real. Simulated answers prove the flow, not the ' +
+      'quality of a real model\'s walks or explanations.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const capture = async (id: number, label: string): Promise<void> => {
+    await sleep(500);
+    await window.dspatch.pairWindowCheck({ action: 'capture', id, label });
+  };
+  const openApp = async (id: number): Promise<PairWindowReading> => {
+    await untilPair(id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
+    await inPairWindow(id, '[data-ev="pair-repo-0"]');
+    await untilPair(id, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
+    await inPairWindow(id, '[data-ev="pair-commit-1"]');
+    await inPairWindow(id, '[data-ev="pair-commit-0"]');
+    await inPairWindow(id, '[data-ev="pair-open"]');
+    return untilPair(id, 'the diff review', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
+  };
+  /** Open a file of the review from Files changed, whatever the window shows now. */
+  const showFile = async (id: number, filePath: string): Promise<void> => {
+    await inPairWindow(id, '[data-ev="pair-files"]').catch(() => undefined);
+    const list = await untilPair(id, 'Files changed', (reading) => reading.pair?.fileKey === null && (reading.pair.files?.length ?? 0) > 0);
+    const index = (list.pair?.files ?? []).findIndex((file) => file.path === filePath);
+    await inPairWindow(id, `[data-ev="pair-file-${String(index)}"]`);
+  };
+  const delegate = async (id: number, starter: string, scopeWord: string): Promise<JobReading> => {
+    await inPairWindow(id, starter);
+    await untilPair(id, 'the agent picker', (reading) => reading.text.includes('Agent') && reading.text.includes('Model'), 15_000);
+    await inPairWindow(id, '[data-ev="pair-delegate-agent-start"], [data-ev="pair-delegate-all-agent-start"]');
+    const done = await untilPair(id, `the delegated review of ${scopeWord}`, (reading) => settledJob(lastJob(reading, 'review', scopeWord)), 60_000);
+    return lastJob(done, 'review', scopeWord) as JobReading;
+  };
+
+  try {
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await waitFor('a project to be offered in the window', () => element('project-0-path') !== null, 60_000);
+    await click('open-project-0');
+    await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
+    await click('open-review');
+    const diff = await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'));
+    const opened = await openApp(diff.id);
+
+    if (phase === 'again') {
+      // --- After a restart: everything read back, nothing asked again -------------------
+      const sentBefore = (await reviewPromptsSent()).length;
+      const jobs = jobsOf(opened);
+      const interrupted = jobs.find((job) => (job.scope ?? '').includes('src/after.ts'));
+      record('after restart', { jobs: jobs.map((job) => `${job.kind}:${job.state}:${job.scope ?? ''}`), sentBefore });
+      expect(jobs.some((job) => job.kind === 'walks' && job.state === 'done'), 'the prepared walks are not in the record after a restart');
+      expect(jobs.some((job) => job.kind === 'review' && job.state === 'done' && job.findings > 0), 'the delegated review and its findings are not back after a restart');
+      expect(interrupted?.state === 'unknown', `a review interrupted by closing DSpatch is not unknown: ${String(interrupted?.state)}`);
+      expect((interrupted?.approved.length ?? 0) === 0, 'an interrupted review approved something');
+      await showFile(diff.id, 'src/keep.ts');
+      const keep = await untilPair(diff.id, 'keep.ts with its agent review', (reading) => (reading.pair?.strips?.length ?? 0) === 5 && ((reading.pair as { agentReviewsShown?: number }).agentReviewsShown ?? 0) > 0);
+      expect(stripOf(keep, 'target', 8)?.status === 'agent', 'the agent approval is not drawn after a restart');
+      await inPairWindow(diff.id, '[data-ev="pair-walks"]');
+      await untilPair(diff.id, 'the walk list', (reading) => reading.text.includes('Code walks ·'));
+      await inPairWindow(diff.id, '[data-ev="pair-walk-0"]');
+      const walk = await untilWindow('the generated walk', (rows) => rows.find((row) => row.view === 'walk'));
+      const walkBack = await untilPair(walk.id, 'the walk with its deepenings', (reading) => reading.walk?.kind === 'opened' && (reading as { deepenings?: unknown[] }).deepenings !== undefined && ((reading as { deepenings?: unknown[] }).deepenings?.length ?? 0) > 0, 30_000);
+      record('walk after restart', { deepenings: (walkBack as { deepenings?: unknown[] }).deepenings });
+      await sleep(1500);
+      const sentAfter = (await reviewPromptsSent()).length;
+      expect(sentAfter === sentBefore, `reopening after a restart sent ${String(sentAfter - sentBefore)} prompt(s) to the agent`);
+      await capture(walk.id, 'walk-after-restart');
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    // --- 1. Prepare code walks with a chosen agent and model ------------------------------
+    await inPairWindow(diff.id, '[data-ev="pair-prepare-walks"]');
+    await untilPair(diff.id, 'the agent picker', (reading) => reading.text.includes('Agent') && reading.text.includes('Model'), 15_000);
+    await capture(diff.id, 'prepare-picker');
+    await inPairWindow(diff.id, '[data-ev="pair-walks-agent-start"]');
+    const running = await untilPair(diff.id, 'the preparation to run', (reading) => lastJob(reading, 'walks') !== undefined);
+    record('preparing', { job: lastJob(running, 'walks') });
+    const prepared = await untilPair(diff.id, 'the walks prepared', (reading) => settledJob(lastJob(reading, 'walks')), 90_000);
+    const walksJob = lastJob(prepared, 'walks');
+    record('prepared', { job: walksJob });
+    expect(walksJob?.state === 'done', `the preparation did not finish: ${String(walksJob?.state)} ${String(walksJob?.note)}`);
+    expect((walksJob?.uncovered ?? 0) > 0 && (walksJob?.note ?? '').includes('in no walk'), 'the changed lines no walk covers are not shown');
+    const sentAfterPrepare = await reviewPromptsSent();
+    expect(sentAfterPrepare.filter((prompt) => prompt.startsWith('DSPATCH-REVIEW-TASK: prepare-walks')).length === 1, 'the preparation was sent more than once');
+    expect(sentAfterPrepare.filter((prompt) => prompt.startsWith('DSPATCH-REVIEW-TASK: repair-walks')).length === 1, 'a bad reference did not get exactly one repair round');
+    expect(!sentAfterPrepare.some((prompt) => prompt.includes('WORKING TREE ONLY')), 'the agent was given working-copy content');
+    await capture(diff.id, 'prepared');
+
+    // --- 2. Open the generated walk ----------------------------------------------------------
+    await inPairWindow(diff.id, '[data-ev="agent-job-walks-open"]');
+    await untilPair(diff.id, 'the walk list', (reading) => reading.text.includes('Code walks ·'));
+    await inPairWindow(diff.id, '[data-ev="pair-walk-0"]');
+    const walk = await untilWindow('the generated walk window', (rows) => rows.find((row) => row.view === 'walk'));
+    const walkOpen = await untilPair(walk.id, 'the generated walk', (reading) => reading.walk?.kind === 'opened', 30_000);
+    expect(walkOpen.text.includes('A walk is not a review') || walkOpen.text.includes('SIMULATED'), 'the generated walk does not show its provenance or text');
+    await capture(walk.id, 'walk-normal');
+    await window.dspatch.reviewWindowCheck({ action: 'capture', webContentsId: walk.id, label: 'walk-narrow', width: 1000 });
+    const narrow = (await readPairWindow(walk.id)) as unknown as { rightWidth?: number; codeWidth?: number; overflowX?: boolean };
+    record('walk layout', { normal: { right: (walkOpen as unknown as { rightWidth?: number }).rightWidth, code: (walkOpen as unknown as { codeWidth?: number }).codeWidth }, narrow });
+    expect(narrow.overflowX === false && (narrow.codeWidth ?? 0) > 200, 'the walk window does not leave the code usable in a smaller window');
+
+    // The explanation column: dragged wider with the keyboard, and kept.
+    const before = (await readPairWindow(walk.id)) as unknown as { rightWidth?: number };
+    await window.dspatch.pairWindowCheck({ action: 'key', id: walk.id, selector: '[data-ev="walk-divider"]', key: 'ArrowLeft' });
+    await sleep(400);
+    const widened = (await readPairWindow(walk.id)) as unknown as { rightWidth?: number };
+    record('divider', { before: before.rightWidth, after: widened.rightWidth });
+    expect((widened.rightWidth ?? 0) > (before.rightWidth ?? 0), 'the divider did not widen the explanation');
+
+    // --- 3. Deepen the step, and a selected sentence -------------------------------------------
+    await inPairWindow(walk.id, '[data-ev="step-tell-more"]');
+    const more = await untilPair(walk.id, 'Tell me more answered', (reading) => ((reading as { deepenings?: { state: string }[] }).deepenings ?? []).some((entry) => entry.state === 'done'), 60_000);
+    record('tell me more', { deepenings: (more as { deepenings?: unknown }).deepenings });
+    const chosen = await window.dspatch.pairWindowCheck({ action: 'select-text', id: walk.id, selector: '.rv-step-panel .rv-explanation', length: 24 });
+    record('selected', { text: chosen.detail });
+    await inPairWindow(walk.id, '[data-ev="step-explain-this"]');
+    const explained = await untilPair(walk.id, 'Explain this answered', (reading) => ((reading as { deepenings?: { state: string }[] }).deepenings ?? []).filter((entry) => entry.state === 'done').length === 2, 60_000);
+    const deepenings = (explained as { deepenings?: { text: string }[] }).deepenings ?? [];
+    expect(deepenings.some((entry) => entry.text.startsWith('Explain this') && entry.text.includes(String(chosen.detail).slice(0, 10))), 'Explain this did not carry the selected text');
+    const prompts = await reviewPromptsSent();
+    const deepenPrompt = prompts.find((prompt) => prompt.includes('Tell me more about this step'));
+    expect(deepenPrompt !== undefined && deepenPrompt.includes('Target revision') && deepenPrompt.includes('Step:'), 'the deepening was not sent with the revisions and its step');
+    await inPairWindow(walk.id, '[data-ev="step-continue-discussion"]');
+    const thread = await untilPair(walk.id, 'the discussion with the deepening', (reading) => reading.text.includes('Tell me more about this step'));
+    expect(thread.text.includes('Explain this, in the context of this step'), 'the deepenings are not in the discussion to continue from');
+    await inPairWindow(walk.id, '[data-ev="right-tab-step"]');
+    await capture(walk.id, 'deepened');
+
+    // --- 4. Delegate lines from the diff: an approval and a finding -----------------------------
+    await window.dspatch.pairWindowCheck({ action: 'focus', id: diff.id });
+    await showFile(diff.id, 'src/keep.ts');
+    await untilPair(diff.id, 'keep.ts', (reading) => (reading.pair?.strips?.length ?? 0) === 5);
+    await inPairWindow(diff.id, stripSelector('target', 8));
+    await inPairWindow(diff.id, stripSelector('target', 9), true);
+    const lines = await delegate(diff.id, '[data-ev="pair-delegate-selection"]', 'src/keep.ts lines 8–9');
+    record('delegated lines', { job: lines });
+    expect(lines.state === 'done' && lines.approved.length === 1 && lines.approved[0]?.start === 8 && lines.approved[0]?.end === 8, `the delegated lines did not approve exactly line 8: ${JSON.stringify(lines)}`);
+    expect(lines.findings === 1, 'the finding on line 9 is not recorded');
+    const keep = await untilPair(diff.id, 'the agent strip', (reading) => stripOf(reading, 'target', 8)?.status === 'agent');
+    expect(stripOf(keep, 'target', 9)?.status === 'none', 'a line with a problem was marked as reviewed');
+    expect(((keep.pair as { findingsShown?: string[] }).findingsShown ?? []).some((text) => text.includes('Problem')), 'the finding is not shown at the file');
+    expect((fileReading(keep, 'src/keep.ts')?.percent ?? 0) === 20, `one delegated approval of five lines is not 20%: ${String(fileReading(keep, 'src/keep.ts')?.percent)}`);
+    await capture(diff.id, 'delegated-lines');
+
+    // --- 5. A file with too little material: nothing approved ---------------------------------
+    await showFile(diff.id, 'docs/gone.md');
+    await untilPair(diff.id, 'the deleted file', (reading) => (reading.pair?.strips?.length ?? 0) === 3);
+    const gone = await delegate(diff.id, '[data-ev="pair-delegate-file"]', 'docs/gone.md');
+    record('delegated insufficient', { job: gone });
+    expect(gone.insufficient && gone.approved.length === 0, 'an insufficient review approved something');
+
+    // --- 6. A delegated walk, seen in the diff ---------------------------------------------------
+    await window.dspatch.pairWindowCheck({ action: 'focus', id: walk.id });
+    await inPairWindow(walk.id, '[data-ev="walk-delegate"]');
+    await untilPair(walk.id, 'the walk agent picker', (reading) => reading.text.includes('Delegate this walk'), 15_000);
+    await inPairWindow(walk.id, '[data-ev="walk-delegate-agent-start"]');
+    const walkDelegated = await untilPair(walk.id, 'the walk review', (reading) => {
+      const state = (reading as { walkJob?: string | null }).walkJob;
+      return state === 'done' || state === 'failed' || state === 'unknown';
+    }, 60_000);
+    record('delegated walk', { state: (walkDelegated as { walkJob?: unknown }).walkJob, text: (walkDelegated as { walkJobText?: unknown }).walkJobText });
+    const afterWalk = await untilPair(diff.id, 'the walk review in the diff', (reading) => settledJob(lastJob(reading, 'review', 'walk W1')));
+    expect(lastJob(afterWalk, 'review', 'walk W1')?.state === 'done', 'the delegated walk did not reach the diff window');
+
+    // --- 7. Stop a delegated review: nothing approved --------------------------------------------
+    await window.dspatch.pairWindowCheck({ action: 'focus', id: diff.id });
+    await showFile(diff.id, 'src/added.ts');
+    await untilPair(diff.id, 'added.ts', (reading) => (reading.pair?.strips?.length ?? 0) === 2);
+    await inPairWindow(diff.id, '[data-ev="pair-delegate-file"]');
+    await untilPair(diff.id, 'the agent picker', (reading) => reading.text.includes('Model'), 15_000);
+    await inPairWindow(diff.id, '[data-ev="pair-delegate-agent-start"]');
+    await untilPair(diff.id, 'the review running', (reading) => lastJob(reading, 'review', 'src/added.ts')?.state === 'running');
+    await inPairWindow(diff.id, '[data-ev="agent-job-review-stop"]');
+    const stopped = await untilPair(diff.id, 'the review stopped', (reading) => settledJob(lastJob(reading, 'review', 'src/added.ts')), 60_000);
+    const stoppedJob = lastJob(stopped, 'review', 'src/added.ts');
+    record('stopped review', { job: stoppedJob });
+    expect((stoppedJob?.state === 'cancelled' || stoppedJob?.state === 'unknown') && stoppedJob.approved.length === 0, `a stopped review is not recorded as stopped without approvals: ${JSON.stringify(stoppedJob)}`);
+
+    // --- 8. Close and reopen: read back, nothing asked again ----------------------------------
+    const sentBeforeReopen = (await reviewPromptsSent()).length;
+    await window.dspatch.pairWindowCheck({ action: 'close', id: walk.id });
+    await window.dspatch.pairWindowCheck({ action: 'close', id: diff.id });
+    await click('open-review');
+    const again = await untilWindow('the diff window again', (rows) => rows.find((row) => row.view === 'diff' && row.id !== diff.id));
+    await openApp(again.id);
+    await showFile(again.id, 'src/keep.ts');
+    const reread = await untilPair(again.id, 'the agent review read back', (reading) => ((reading.pair as { agentReviewsShown?: number }).agentReviewsShown ?? 0) > 0);
+    await sleep(1000);
+    const sentAfterReopen = (await reviewPromptsSent()).length;
+    record('reopened', { jobs: jobsOf(reread).length, sentBeforeReopen, sentAfterReopen });
+    expect(sentAfterReopen === sentBeforeReopen, `reopening sent ${String(sentAfterReopen - sentBeforeReopen)} prompt(s) to the agent`);
+    expect(jobsOf(reread).length === jobsOf(stopped).length, 'reopening changed the recorded agent work');
+
+    // --- 9. A review still running when DSpatch closes: phase `again` must find it unknown -----
+    await showFile(again.id, 'src/after.ts');
+    await untilPair(again.id, 'after.ts', (reading) => (reading.pair?.strips?.length ?? 0) > 0);
+    await inPairWindow(again.id, '[data-ev="pair-delegate-file"]');
+    await untilPair(again.id, 'the agent picker', (reading) => reading.text.includes('Model'), 15_000);
+    await inPairWindow(again.id, '[data-ev="pair-delegate-agent-start"]');
+    await untilPair(again.id, 'the last review running', (reading) => lastJob(reading, 'review', 'src/after.ts')?.state === 'running');
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (caught) {
+    failures.push(caught instanceof Error ? caught.message : String(caught));
+    const rows = await pairWindows().catch(() => []);
+    observations['atFailure'] = {
+      windows: rows,
+      readings: await Promise.all(rows.map((row) => readPairWindow(row.id).catch(() => null))),
+    };
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
   }
 }

@@ -30,8 +30,12 @@ import {
   unifiedRowsOf,
   type ChangedLine,
   type DiffLocation,
+  type AgentJob,
+  type DelegationScope,
   type FileProgress,
   type IntralineRanges,
+  type AgentFinding,
+  type LineRange,
   type LineSide,
   type LineStatus,
   type LogCommit,
@@ -46,6 +50,8 @@ import {
   type StripStatus,
 } from '../shared/review-pair';
 import { TokensView } from './review-code';
+import { AgentPicker, type AgentChoice } from './AgentPicker';
+import { changedRangesOf } from '../shared/review-agent';
 
 declare global {
   interface Window {
@@ -461,6 +467,25 @@ function DiffReview({
     [bridge, open.key],
   );
 
+  // DSP-152: agent work over the pair, started only by an explicit action here.
+  const [preparing, setPreparing] = useState(false);
+  const walksJob = [...record.jobs].reverse().find((job) => job.kind === 'walks') ?? null;
+  const startJob = async (request: { kind: 'walks' | 'review'; provider: 'cursor' | 'claude'; model: string; scope?: DelegationScope }): Promise<boolean> => {
+    const answer = await bridge.startJob(open.key, request);
+    if (isPairError(answer)) {
+      setProblem(answer.error);
+      return false;
+    }
+    setProblem(null);
+    return true;
+  };
+  const stopJob = async (job: AgentJob): Promise<void> => {
+    const answer = await bridge.cancelJob(open.key, job.id);
+    if (isPairError(answer)) {
+      setProblem(answer.error);
+    }
+  };
+
   const setRequirement = async (requirement: ReviewRequirement): Promise<void> => {
     const answer = await bridge.setRequirement(open.key, requirement);
     if (!isPairError(answer)) {
@@ -511,6 +536,20 @@ function DiffReview({
           text: word.textContent ?? '',
         })),
         signs: [...document.querySelectorAll<HTMLElement>('.rv-pair-diff td.rv-pair-sign')].map((cell) => cell.textContent ?? '').join(''),
+        jobs: record.jobs.map((job) => ({
+          id: job.id,
+          kind: job.kind,
+          state: job.state,
+          note: job.note,
+          scope: job.scope?.label ?? null,
+          approved: job.result?.approved ?? [],
+          findings: job.result?.findings.length ?? 0,
+          insufficient: job.result?.insufficient ?? false,
+          definitionPath: job.definitionPath,
+          uncovered: job.uncovered.length,
+        })),
+        agentReviewsShown: document.querySelectorAll('[data-ev="agent-review"]').length,
+        findingsShown: [...document.querySelectorAll<HTMLElement>('[data-ev="agent-finding"]')].map((item) => item.textContent ?? ''),
         diffNote: document.querySelector('.rv-pair-nodiff')?.textContent ?? '',
         walksNote: document.querySelector('[data-ev="pair-walks-none"]')?.textContent ?? '',
         targetShown: document.querySelector('.rv-pair-target') !== null,
@@ -543,13 +582,19 @@ function DiffReview({
           </span>
         </h1>
         <div className="rv-pair-tools">
-          <label className="rv-pair-requirement" title="What counts as handled. Exempted lines count under both.">
+          <label
+            className="rv-pair-requirement"
+            title="What counts as handled. Exempted lines count either way. An agent's approval counts only for parts you delegated to it, unless you choose any recorded agent review."
+          >
             Counts as handled
             <select data-ev="pair-requirement" value={record.requirement} onChange={(event) => void setRequirement(event.target.value as ReviewRequirement)}>
-              <option value="manual-or-agent">Your review or a recorded agent review</option>
-              <option value="manual">Your review only</option>
+              <option value="manual">Your review, or the agent's where you delegate</option>
+              <option value="manual-or-agent">Your review or any recorded agent review</option>
             </select>
           </label>
+          <button type="button" data-ev="pair-prepare-walks" disabled={walksJob?.state === 'running' || walksJob?.state === 'cancelling'} onClick={() => setPreparing(true)}>
+            Prepare code walks
+          </button>
           <button type="button" data-ev="pair-walks" aria-expanded={walksOpen} onClick={() => setWalksOpen((value) => !value)}>
             Code walks
           </button>
@@ -558,11 +603,44 @@ function DiffReview({
           </button>
         </div>
       </header>
-      {walksOpen && <WalkList bridge={bridge} pairKey={open.key} onClose={() => setWalksOpen(false)} />}
+      {preparing && (
+        <div className="rv-pair-walks">
+          <p className="rv-pair-muted">
+            The agent reads the two commits and proposes walks around the behaviours the change touches. A walk is not a review and approves nothing.
+          </p>
+          <AgentPicker
+            action="Prepare code walks"
+            busy={false}
+            testId="pair-walks-agent"
+            onCancel={() => setPreparing(false)}
+            onStart={(choice) => {
+              void startJob({ kind: 'walks', ...choice }).then((ok) => {
+                if (ok) {
+                  setPreparing(false);
+                }
+              });
+            }}
+          />
+        </div>
+      )}
+      {walksJob !== null && <JobLine job={walksJob} onStop={() => void stopJob(walksJob)} onOpenWalks={() => setWalksOpen(true)} />}
+      {walksOpen && (
+        <WalkList bridge={bridge} pairKey={open.key} refresh={walksJob?.endedAt ?? ''} onClose={() => setWalksOpen(false)} />
+      )}
       {problem !== null && <p className="rv-pair-error">{problem}</p>}
       <div className={current === null ? 'rv-pair-body' : 'rv-pair-body rv-pair-body-file'}>
         {current === null ? (
-          <FilesChanged files={open.files} progress={progress} totals={totals} onOpen={(file) => setFileKey(file.key)} />
+          <FilesChanged
+            files={open.files}
+            progress={progress}
+            totals={totals}
+            jobs={record.jobs}
+            onOpen={(file) => setFileKey(file.key)}
+            onDelegate={(choice) =>
+              startJob({ kind: 'review', ...choice, scope: { kind: 'file', label: 'the whole change', ranges: changedRangesOf(open.files) } })
+            }
+            onStop={(job) => void stopJob(job)}
+          />
         ) : (
           <>
             <nav className="rv-pair-sidebar" aria-label="Files changed">
@@ -596,6 +674,9 @@ function DiffReview({
               progress={progress.get(current.key) as FileProgress}
               onLayout={setLayout}
               onMark={mark}
+              jobs={record.jobs}
+              onDelegate={(choice, scope) => startJob({ kind: 'review', ...choice, scope })}
+              onStop={(job) => void stopJob(job)}
               onPrevious={currentIndex > 0 ? () => setFileKey(open.files[currentIndex - 1]?.key ?? null) : null}
               onNext={currentIndex < open.files.length - 1 ? () => setFileKey(open.files[currentIndex + 1]?.key ?? null) : null}
             />
@@ -606,18 +687,29 @@ function DiffReview({
   );
 }
 
-function WalkList({ bridge, pairKey, onClose }: { readonly bridge: ReviewPairBridge; readonly pairKey: string; readonly onClose: () => void }): JSX.Element {
+function WalkList({
+  bridge,
+  pairKey,
+  refresh,
+  onClose,
+}: {
+  readonly bridge: ReviewPairBridge;
+  readonly pairKey: string;
+  /** Changes when a preparation ends, so a new walk shows without reopening the list. */
+  readonly refresh: string;
+  readonly onClose: () => void;
+}): JSX.Element {
   const [walks, setWalks] = useState<readonly PairWalk[] | null>(null);
   const [note, setNote] = useState('');
   useEffect(() => {
     void bridge.walks(pairKey).then((answer) => setWalks(isPairError(answer) ? [] : answer));
-  }, [bridge, pairKey]);
+  }, [bridge, pairKey, refresh]);
   return (
     <div className="rv-pair-walks" data-ev="pair-walk-list">
       {walks === null ? (
         <span className="rv-pair-muted">Looking for walks…</span>
       ) : walks.length === 0 ? (
-        <span className="rv-pair-muted" data-ev="pair-walks-none">No code walks for these revisions.</span>
+        <span className="rv-pair-muted" data-ev="pair-walks-none">No code walks for these revisions. Prepare code walks asks the agent for some.</span>
       ) : (
         <ul>
           {walks.map((walk, index) => (
@@ -637,6 +729,7 @@ function WalkList({ bridge, pairKey, onClose }: { readonly bridge: ReviewPairBri
                 }}
               >
                 {walk.title}
+                {walk.note !== '' && <span className="rv-pair-muted"> · {walk.note}</span>}
               </button>
             </li>
           ))}
@@ -689,13 +782,21 @@ function ProgressMark({ progress, compact = false }: { readonly progress: FilePr
           : 'reviewed'
         : progress.exempted === progress.total
           ? 'exempted'
-          : progress.manual === progress.total
-            ? 'reviewed'
-            : 'mixed';
+          : progress.agent === progress.total
+            ? 'agent'
+            : progress.manual === progress.total
+              ? 'reviewed'
+              : 'mixed';
+    const words =
+      how === 'exempted'
+        ? 'exempted'
+        : how === 'agent'
+          ? 'by the agent'
+          : `partly ${[progress.agent > 0 ? 'by the agent' : '', progress.exempted > 0 ? 'exempted' : ''].filter((part) => part !== '').join(', ')}`;
     return (
       <span className={`rv-pair-progress rv-pair-done rv-pair-done-${how}`} title={`Done. ${detail}`}>
         <input type="checkbox" checked readOnly tabIndex={-1} aria-label={`Done. ${detail}`} />
-        {!compact && how !== 'reviewed' && <span className="rv-pair-done-how">{how === 'exempted' ? 'exempted' : 'partly exempted'}</span>}
+        {!compact && how !== 'reviewed' && <span className="rv-pair-done-how">{words}</span>}
       </span>
     );
   }
@@ -706,20 +807,146 @@ function ProgressMark({ progress, compact = false }: { readonly progress: FilePr
   );
 }
 
+
+// --- Agent work (DSP-152) ------------------------------------------------------------------
+
+function agentName(job: AgentJob): string {
+  return `${job.provider === 'claude' ? 'Claude' : 'Cursor'} (${job.model})`;
+}
+
+/** Where one piece of agent work stands, in a line, with Stop while it runs. */
+export function JobLine({ job, onStop, onOpenWalks }: { readonly job: AgentJob; readonly onStop: () => void; readonly onOpenWalks?: () => void }): JSX.Element {
+  const running = job.state === 'running' || job.state === 'cancelling';
+  const what = job.kind === 'walks' ? 'Preparing code walks' : `Reviewing ${job.scope?.label ?? 'the delegated part'}`;
+  return (
+    <div className={`rv-agent-line rv-agent-line-${job.state}`} data-ev={`agent-job-${job.kind}`} data-state={job.state} aria-live="polite">
+      {running ? (
+        <>
+          <span className="rv-agent-spinner" aria-hidden="true" />
+          <span>
+            {job.state === 'cancelling' ? 'Stopping' : what} with {agentName(job)}…
+          </span>
+          {job.state === 'running' && (
+            <button type="button" data-ev={`agent-job-${job.kind}-stop`} onClick={onStop}>
+              Stop
+            </button>
+          )}
+        </>
+      ) : (
+        <>
+          <span>{job.note}</span>
+          {job.kind === 'walks' && job.state === 'done' && onOpenWalks !== undefined && (
+            <button type="button" className="rv-pair-link" data-ev="agent-job-walks-open" onClick={onOpenWalks}>
+              Show the walks
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function rangeWords(range: LineRange): string {
+  return `${range.path} ${range.side === 'base' ? 'removed ' : ''}line${range.start === range.end ? '' : 's'} ${String(range.start)}${range.start === range.end ? '' : `–${String(range.end)}`}`;
+}
+
+const SEVERITY_WORD: Record<AgentFinding['severity'], string> = { problem: 'Problem', question: 'Question', note: 'Note' };
+
+/** A delegated review's outcome: what was reviewed and approved, and every finding and uncertainty. */
+function AgentReviewResult({
+  job,
+  onStop,
+  onShow,
+}: {
+  readonly job: AgentJob;
+  readonly onStop: () => void;
+  readonly onShow: (range: LineRange) => void;
+}): JSX.Element {
+  const result = job.result;
+  const approved = result?.approved.reduce((total, range) => total + range.end - range.start + 1, 0) ?? 0;
+  return (
+    <details className="rv-agent-review" open data-ev="agent-review" data-state={job.state}>
+      <summary>
+        Agent review · {job.scope?.label ?? ''} · {job.state === 'done' ? (result?.insufficient ? 'not enough to judge' : `${String(approved)} line(s) approved`) : job.state}
+      </summary>
+      {job.state === 'running' || job.state === 'cancelling' ? (
+        <JobLine job={job} onStop={onStop} />
+      ) : result === null ? (
+        <p>{job.note}</p>
+      ) : (
+        <div className="rv-agent-review-body">
+          {result.insufficient && <p className="rv-agent-insufficient">The agent found the material not enough to judge this part. Nothing was approved.</p>}
+          {result.assessment !== '' && <p>{result.assessment}</p>}
+          {result.findings.length > 0 && (
+            <ul className="rv-agent-findings">
+              {result.findings.map((finding, index) => (
+                <li key={index} className={`rv-agent-finding-${finding.severity}`} data-ev="agent-finding">
+                  <strong>{SEVERITY_WORD[finding.severity]}.</strong> {finding.text}
+                  {finding.location !== null && (
+                    <button type="button" className="rv-pair-link" onClick={() => onShow(finding.location as LineRange)}>
+                      {rangeWords(finding.location)}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {result.uncertainties.length > 0 && (
+            <div className="rv-agent-uncertain">
+              <span className="rv-pair-muted">Not established:</span>
+              <ul>
+                {result.uncertainties.map((entry, index) => (
+                  <li key={index}>{entry}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <p className="rv-pair-muted">
+            {agentName(job)} · reviewed {result.reviewed.map(rangeWords).join(', ') || 'nothing'}
+            {approved > 0 ? ` · approved ${result.approved.map(rangeWords).join(', ')}` : ''}
+          </p>
+          {result.adjustments.length > 0 && (
+            <details className="rv-agent-adjustments">
+              <summary>What DSpatch did not accept from the answer</summary>
+              <ul>
+                {result.adjustments.map((entry, index) => (
+                  <li key={index}>{entry}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+    </details>
+  );
+}
+
+function touchesFile(job: AgentJob, file: PairFile): boolean {
+  return (job.scope?.ranges ?? []).some((range) => range.path === (range.side === 'base' ? file.oldPath : file.newPath));
+}
+
 function FilesChanged({
   files,
   progress,
   totals,
+  jobs,
   onOpen,
+  onDelegate,
+  onStop,
 }: {
   readonly files: readonly PairFile[];
   readonly progress: ReadonlyMap<string, FileProgress>;
   readonly totals: { readonly total: number; readonly handled: number; readonly done: number };
+  readonly jobs: readonly AgentJob[];
   readonly onOpen: (file: PairFile) => void;
+  readonly onDelegate: (choice: AgentChoice) => Promise<boolean>;
+  readonly onStop: (job: AgentJob) => void;
 }): JSX.Element {
+  const [delegating, setDelegating] = useState(false);
   if (files.length === 0) {
     return <p className="rv-pair-message">The two commits have the same content: there is nothing to review.</p>;
   }
+  const whole = [...jobs].reverse().find((job) => job.kind === 'review' && job.scope?.label === 'the whole change') ?? null;
   return (
     <section className="rv-pair-files" aria-label="Files changed">
       <h2>
@@ -727,7 +954,31 @@ function FilesChanged({
         <span className="rv-pair-summary" data-ev="pair-summary">
           {totals.done} of {files.length} files done · {totals.handled} of {totals.total} changed lines handled
         </span>
+        <button type="button" className="rv-pair-link" data-ev="pair-delegate-all" onClick={() => setDelegating(true)}>
+          Delegate the whole review…
+        </button>
       </h2>
+      {delegating && (
+        <div className="rv-agent-delegate">
+          <p className="rv-pair-muted">
+            The agent reviews every changed line and may approve what it reviewed and found acceptable. Its findings and uncertainties stay visible here and at each file.
+          </p>
+          <AgentPicker
+            action="Delegate"
+            busy={false}
+            testId="pair-delegate-all-agent"
+            onCancel={() => setDelegating(false)}
+            onStart={(choice) => {
+              void onDelegate(choice).then((ok) => {
+                if (ok) {
+                  setDelegating(false);
+                }
+              });
+            }}
+          />
+        </div>
+      )}
+      {whole !== null && <JobLine job={whole} onStop={() => onStop(whole)} />}
       <table>
         <thead>
           <tr>
@@ -823,12 +1074,15 @@ function FileDiff({
   file,
   record,
   layout,
-  target,
+  target: targetProp,
   progress,
   onLayout,
   onMark,
   onPrevious,
   onNext,
+  jobs,
+  onDelegate,
+  onStop,
 }: {
   readonly bridge: ReviewPairBridge;
   readonly pairKey: string;
@@ -841,8 +1095,19 @@ function FileDiff({
   readonly onMark: (op: 'manual' | 'exempt' | 'clear', scopes: Parameters<ReviewPairBridge['mark']>[1]['scopes']) => Promise<void>;
   readonly onPrevious: (() => void) | null;
   readonly onNext: (() => void) | null;
+  readonly jobs: readonly AgentJob[];
+  readonly onDelegate: (choice: AgentChoice, scope: DelegationScope) => Promise<boolean>;
+  readonly onStop: (job: AgentJob) => void;
 }): JSX.Element {
   const [text, setText] = useState<FileText | null>(null);
+  // A place asked for from this file's own agent findings; a walk's Show in diff replaces it.
+  const [ownTarget, setOwnTarget] = useState<{ readonly location: DiffLocation; readonly nonce: number } | null>(null);
+  useEffect(() => {
+    setOwnTarget(null);
+  }, [targetProp]);
+  const target = ownTarget ?? targetProp;
+  const [delegating, setDelegating] = useState<DelegationScope | null>(null);
+  const fileJobs = [...jobs].reverse().filter((job) => job.kind === 'review' && touchesFile(job, file));
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const anchor = useRef<number | null>(null);
@@ -1151,6 +1416,17 @@ function FileDiff({
             <button type="button" data-ev="pair-mark-clear" onClick={() => void applyToSelection('clear')}>
               Clear mark
             </button>
+            <button
+              type="button"
+              data-ev="pair-delegate-selection"
+              onClick={() => {
+                const lines = [...selected].map((key) => byKey.get(key)).filter((line): line is ChangedLine => line !== undefined);
+                const ranges = rangesOf(lines);
+                setDelegating({ kind: 'lines', label: ranges.map((range) => `${range.path} ${range.side === 'base' ? 'removed ' : ''}lines ${String(range.start)}–${String(range.end)}`).join(', '), ranges });
+              }}
+            >
+              Delegate…
+            </button>
             <button type="button" className="rv-pair-link" onClick={() => setSelected(new Set())}>
               Cancel
             </button>
@@ -1169,9 +1445,53 @@ function FileDiff({
             <button type="button" data-ev="pair-file-clear" onClick={() => void markWholeFile('clear')}>
               Clear marks
             </button>
+            {progress.total > 0 && (
+              <button
+                type="button"
+                data-ev="pair-delegate-file"
+                onClick={() => setDelegating({ kind: 'file', label: shownPath(file), ranges: rangesOf(changed) })}
+              >
+                Delegate file…
+              </button>
+            )}
           </>
         )}
       </div>
+      {delegating !== null && (
+        <div className="rv-agent-delegate">
+          <p className="rv-pair-muted">
+            Delegate {delegating.label} to the agent. It may approve only changed lines in this part that it reviewed and found acceptable; findings and uncertainties stay visible here.
+          </p>
+          <AgentPicker
+            action="Delegate"
+            busy={false}
+            testId="pair-delegate-agent"
+            onCancel={() => setDelegating(null)}
+            onStart={(choice) => {
+              const scope = delegating;
+              void onDelegate(choice, scope).then((ok) => {
+                if (ok) {
+                  setDelegating(null);
+                  setSelected(new Set());
+                  anchor.current = null;
+                }
+              });
+            }}
+          />
+        </div>
+      )}
+      {fileJobs.length > 0 && (
+        <div className="rv-agent-reviews">
+          {fileJobs.map((job) => (
+            <AgentReviewResult
+              key={job.id}
+              job={job}
+              onStop={() => onStop(job)}
+              onShow={(range) => setOwnTarget((before) => ({ location: { side: range.side, path: range.path, line: range.start }, nonce: (before?.nonce ?? 0) + 1 }))}
+            />
+          ))}
+        </div>
+      )}
       <div className="rv-pair-diff" ref={scroller}>
         {text === null && <p className="rv-pair-muted">Reading…</p>}
         {text?.error !== null && text?.error !== undefined && <p className="rv-pair-error">{text.error}</p>}

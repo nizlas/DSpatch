@@ -9,6 +9,7 @@ import {
   REVIEW_DISCUSSION_INSTRUCTION,
   adoptDiscussionRecord,
   buildEnvelopePrompt,
+  deepenFrom,
   emptyDiscussionRecord,
   recapFor,
   subjectLine,
@@ -701,6 +702,10 @@ export class ReviewDiscussionService {
         provider,
         dspatchSessionId: session.sessionId,
         toolPolicy: this.policyLine(provider),
+        ...((): { deepen?: NonNullable<DiscussionMessage['deepen']> } => {
+          const deepen = deepenFrom(raw.deepen);
+          return deepen === null ? {} : { deepen };
+        })(),
       };
       this.messages.push(message);
       this.switchNotice = null;

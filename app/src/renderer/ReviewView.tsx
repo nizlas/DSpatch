@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { JSX, ReactNode } from 'react';
+import type { CSSProperties, JSX, ReactNode } from 'react';
 
 import { Markdown } from './Markdown';
 import { ReviewDiscussion } from './ReviewDiscussion';
+import { AgentPicker } from './AgentPicker';
+import { JobLine } from './PairReview';
 import { Inline, TokensView, asLocation, capitalise, fileName, rangeText, useFiles, useRows, type Files } from './review-code';
 import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
 import {
   DEFAULT_PREFERENCES,
+  EXPLANATION_WIDTH,
   computeCoverage,
   currentHunkDecisions,
   placeKey,
@@ -34,7 +37,7 @@ import {
   type Walk,
   type WalkStep,
 } from '../shared/review-model';
-import type { DiscussionRequest } from '../shared/review-discussion';
+import type { DeepenRequest, DiscussionMessage, DiscussionRequest } from '../shared/review-discussion';
 import { isPairError, type PairRecord } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
 
@@ -170,6 +173,7 @@ export function ReviewView(): JSX.Element {
   const bridge = window.dspatchReview;
   const [outcome, setOutcome] = useState<ReviewOpenOutcome | null>(null);
   const [lang, setLangState] = useState<Lang>(DEFAULT_PREFERENCES.language);
+  const [width, setWidthState] = useState<number>(EXPLANATION_WIDTH.initial);
   const [langError, setLangError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -180,6 +184,7 @@ export function ReviewView(): JSX.Element {
     void bridge.getPreferences().then(
       (preferences) => {
         setLangState(preferences.language);
+        setWidthState(preferences.explanationWidth ?? EXPLANATION_WIDTH.initial);
       },
       (error: unknown) => {
         setLangError(String(error));
@@ -192,12 +197,24 @@ export function ReviewView(): JSX.Element {
     (next: Lang) => {
       setLangState(next);
       if (bridge !== undefined) {
-        void bridge.setPreferences({ language: next }).then((result) => {
+        void bridge.setPreferences({ language: next, explanationWidth: width }).then((result) => {
           setLangError(result.saved ? null : (result.error ?? 'not saved'));
         });
       }
     },
-    [bridge],
+    [bridge, width],
+  );
+
+  // DSP-152: the explanation column's width, as the reviewer left it.
+  const setWidth = useCallback(
+    (next: number) => {
+      const clamped = Math.round(Math.min(EXPLANATION_WIDTH.max, Math.max(EXPLANATION_WIDTH.min, next)));
+      setWidthState(clamped);
+      if (bridge !== undefined) {
+        void bridge.setPreferences({ language: lang, explanationWidth: clamped });
+      }
+    },
+    [bridge, lang],
   );
 
   // What the last choice said when it opened nothing here: dismissed, or already
@@ -308,6 +325,8 @@ export function ReviewView(): JSX.Element {
       lang={lang}
       onLang={setLang}
       langError={langError}
+      explanationWidth={width}
+      onExplanationWidth={setWidth}
     />
   );
 }
@@ -319,6 +338,8 @@ function OpenReview({
   lang,
   onLang,
   langError,
+  explanationWidth,
+  onExplanationWidth,
 }: {
   readonly bundle: ReviewBundle;
   readonly bridge: ReviewBridge | undefined;
@@ -326,6 +347,8 @@ function OpenReview({
   readonly lang: Lang;
   readonly onLang: (lang: Lang) => void;
   readonly langError: string | null;
+  readonly explanationWidth: number;
+  readonly onExplanationWidth: (width: number) => void;
 }): JSX.Element {
   const words = WORDS[lang];
   const [state, setState] = useState<ReviewState>(bundle.state);
@@ -468,6 +491,21 @@ function OpenReview({
     [pair, state, bundle],
   );
   const [diffNote, setDiffNote] = useState('');
+
+  /*
+   * DSP-152: deepening a step. Tell me more, Explain more simply and Explain this are
+   * questions in this review's own discussion, sent with the step as their subject so the
+   * envelope carries the revisions, the step and its code; the step shows their answers
+   * beside it, and the discussion goes on from there. Asking for a simpler explanation is
+   * one question: it changes nothing else about the review.
+   */
+  const [discussionMessages, setDiscussionMessages] = useState<readonly DiscussionMessage[]>([]);
+  const [deepenError, setDeepenError] = useState<string | null>(null);
+  const [delegatingWalk, setDelegatingWalk] = useState(false);
+  const [liveWidth, setLiveWidth] = useState(explanationWidth);
+  useEffect(() => {
+    setLiveWidth(explanationWidth);
+  }, [explanationWidth]);
 
   const coverage = useMemo(() => computeCoverage(bundle.definition, bundle.files, shownState), [bundle, shownState]);
   const coverageByHunk = useMemo(() => new Map(coverage.hunks.map((entry) => [entry.hunk.id, entry])), [coverage]);
@@ -752,6 +790,47 @@ function OpenReview({
     [away, current?.walk.id, current?.step.id, place, placeIndex, selection, lang],
   );
 
+  const deepen = useCallback(
+    async (request: DeepenRequest): Promise<void> => {
+      const discussion = window.dspatchReviewDiscussion;
+      if (discussion === undefined || current === null) {
+        return;
+      }
+      setDeepenError(null);
+      // The review's own save first, as the discussion does before any question.
+      await flush();
+      const outcome = await discussion.send({
+        question: deepenQuestion(request, lang),
+        subject: discussionRequest.subject,
+        selection: discussionRequest.selection,
+        language: lang,
+        deepen: request,
+      });
+      if (outcome.kind !== 'sent') {
+        setDeepenError(outcome.error);
+      }
+    },
+    [current, discussionRequest, flush, lang],
+  );
+
+  // The changed lines the current walk covers, for delegating the walk (DSP-152).
+  const walkScope = useMemo(() => {
+    if (current === null) {
+      return null;
+    }
+    const stepIds = new Set(current.walk.steps.map((entry) => entry.id));
+    const ranges = coverage.hunks.filter((entry) => entry.plannedBy.some((id) => stepIds.has(id))).flatMap((entry) => hunkRanges(entry.hunk));
+    return ranges.length === 0 ? null : { kind: 'walk' as const, label: `walk ${current.walk.id} · ${pick(current.walk.title, lang)}`, ranges };
+  }, [current, coverage, lang]);
+  const walkJob =
+    current === null || pair === null
+      ? null
+      : ([...pair.record.jobs].reverse().find((job) => job.kind === 'review' && job.scope?.kind === 'walk' && job.scope.label.startsWith(`walk ${current.walk.id} `)) ?? null);
+
+  // The divider between the code and the explanation: dragged, or moved with the arrow keys.
+  const drag = useRef<{ readonly x: number; readonly width: number } | null>(null);
+  const clampWidth = (value: number): number => Math.round(Math.min(EXPLANATION_WIDTH.max, Math.max(EXPLANATION_WIDTH.min, value)));
+
   return (
     <div className="rv">
       <Header
@@ -778,7 +857,10 @@ function OpenReview({
           </button>
         </div>
       )}
-      <div className={tab === 'coverage' || tab === 'notes' ? 'rv-body rv-body-wide' : 'rv-body'}>
+      <div
+        className={tab === 'coverage' || tab === 'notes' ? 'rv-body rv-body-wide' : 'rv-body'}
+        style={{ '--rv-right-width': `${String(liveWidth)}px` } as CSSProperties}
+      >
         <nav className="rv-left">
           <div className="rv-tabs" role="tablist">
             {(['walks', 'coverage', 'notes', 'search'] as const).map((key) => (
@@ -924,6 +1006,40 @@ function OpenReview({
           )}
         </main>
 
+        <div
+          className="rv-divider"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Width of the explanation"
+          aria-valuenow={liveWidth}
+          aria-valuemin={EXPLANATION_WIDTH.min}
+          aria-valuemax={EXPLANATION_WIDTH.max}
+          tabIndex={0}
+          data-ev="walk-divider"
+          onPointerDown={(event) => {
+            drag.current = { x: event.clientX, width: liveWidth };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (drag.current !== null) {
+              setLiveWidth(clampWidth(drag.current.width + drag.current.x - event.clientX));
+            }
+          }}
+          onPointerUp={(event) => {
+            if (drag.current !== null) {
+              const next = clampWidth(drag.current.width + drag.current.x - event.clientX);
+              drag.current = null;
+              onExplanationWidth(next);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault();
+              onExplanationWidth(clampWidth(liveWidth + (event.key === 'ArrowLeft' ? 40 : -40)));
+            }
+          }}
+        />
+
         <aside className="rv-right">
           <div className="rv-tabs rv-right-tabs" role="tablist">
             {(['step', 'discussion'] as const).map((key) => (
@@ -952,6 +1068,7 @@ function OpenReview({
               setNavRequest((count) => count + 1);
             }}
             onGoToLocation={(location) => goAway(location)}
+            onMessages={setDiscussionMessages}
           />
           {rightTab === 'step' && (
             <>
@@ -971,8 +1088,41 @@ function OpenReview({
                   {diffNote !== '' && <span className="rv-sub">{diffNote}</span>}
                 </div>
               )}
+              {pair !== null && pairBridge !== undefined && current !== null && away === null && walkScope !== null && (
+                <div className="rv-walk-delegate">
+                  {walkJob !== null && <JobLine job={walkJob} onStop={() => void pairBridge.cancelJob(pair.key, walkJob.id)} />}
+                  {delegatingWalk ? (
+                    <AgentPicker
+                      action="Delegate this walk"
+                      busy={false}
+                      testId="walk-delegate-agent"
+                      onCancel={() => setDelegatingWalk(false)}
+                      onStart={(choice) => {
+                        void pairBridge.startJob(pair.key, { kind: 'review', ...choice, scope: walkScope }).then((answer) => {
+                          if (isPairError(answer)) {
+                            setDiffNote(answer.error);
+                          } else {
+                            setDelegatingWalk(false);
+                          }
+                        });
+                      }}
+                    />
+                  ) : (
+                    walkJob?.state !== 'running' &&
+                    walkJob?.state !== 'cancelling' && (
+                      <button type="button" className="rv-quiet" data-ev="walk-delegate" onClick={() => setDelegatingWalk(true)}>
+                        Delegate this walk to the agent…
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
               {current !== null && away === null && place !== null && (
                 <StepPanel
+                  deepenings={deepeningsFor(discussionMessages, current.step.id)}
+                  deepenError={deepenError}
+                  onDeepen={(request) => void deepen(request)}
+                  onContinue={() => setRightTab('discussion')}
                   walk={current.walk}
                   step={current.step}
                   index={current.index}
@@ -1530,6 +1680,98 @@ function Browse({
 
 // --- Right column ---------------------------------------------------------------------
 
+/** The question a deepening action asks, in the review's language. */
+function deepenQuestion(request: DeepenRequest, lang: Lang): string {
+  if (lang === 'sv') {
+    return request.action === 'more'
+      ? 'Berätta mer om det här steget: mekanismen, hur koden hänger ihop och de detaljer som spelar roll.'
+      : request.action === 'simpler'
+        ? 'Förklara det här steget enklare: mer bakgrund, ett tydligare orsakssamband eller ett konkret exempel. Behåll klass- och metodnamnen.'
+        : `Förklara detta i sammanhanget av det här steget: "${request.text ?? ''}"`;
+  }
+  return request.action === 'more'
+    ? 'Tell me more about this step: the mechanism, how the code connects, and the details that matter.'
+    : request.action === 'simpler'
+      ? 'Explain this step more simply: more background, a clearer cause and effect, or a concrete example. Keep the class and method names.'
+      : `Explain this, in the context of this step: "${request.text ?? ''}"`;
+}
+
+/** A step's deepenings: its deepening questions in this discussion, each with its answer. */
+interface Deepening {
+  readonly question: DiscussionMessage;
+  readonly answer: DiscussionMessage | null;
+}
+
+function deepeningsFor(messages: readonly DiscussionMessage[], stepId: string): readonly Deepening[] {
+  return messages
+    .filter((message) => {
+      const subject = message.envelope?.subject;
+      return message.role === 'question' && message.deepen !== undefined && subject?.kind === 'point' && subject.stepId === stepId;
+    })
+    .map((question) => ({ question, answer: messages.find((message) => message.role === 'answer' && message.questionId === question.id) ?? null }));
+}
+
+const DEEPEN_WORD: Record<DeepenRequest['action'], string> = { more: 'Tell me more', simpler: 'Explain more simply', explain: 'Explain this' };
+
+/** The deepening actions of a step, and its deepenings so far, folded under the explanation. */
+function StepDeepening({
+  deepenings,
+  error,
+  onDeepen,
+  onContinue,
+  selectedText,
+}: {
+  readonly deepenings: readonly Deepening[];
+  readonly error: string | null;
+  readonly onDeepen: (request: DeepenRequest) => void;
+  readonly onContinue: () => void;
+  readonly selectedText: string;
+}): JSX.Element {
+  const waiting = deepenings.some((entry) => entry.question.status === 'sending' || entry.answer?.status === 'streaming');
+  return (
+    <div className="rv-deepen">
+      <div className="rv-deepen-actions">
+        <button type="button" data-ev="step-tell-more" disabled={waiting} onClick={() => onDeepen({ action: 'more' })}>
+          Tell me more
+        </button>
+        <button type="button" data-ev="step-explain-simpler" disabled={waiting} onClick={() => onDeepen({ action: 'simpler' })}>
+          Explain more simply
+        </button>
+        <button
+          type="button"
+          data-ev="step-explain-this"
+          disabled={waiting || selectedText.trim() === ''}
+          title={selectedText.trim() === '' ? 'Select a sentence or a term in the explanation first.' : `Explain "${selectedText.slice(0, 80)}"`}
+          onClick={() => onDeepen({ action: 'explain', text: selectedText.trim() })}
+        >
+          Explain this
+        </button>
+      </div>
+      {error !== null && <p className="rv-error">{error}</p>}
+      {deepenings.map((entry, index) => {
+        const status = entry.answer?.status ?? entry.question.status;
+        const last = index === deepenings.length - 1;
+        return (
+          <details key={entry.question.id} className="rv-deepening" open={last} data-ev="step-deepening" data-state={status}>
+            <summary>
+              {DEEPEN_WORD[entry.question.deepen?.action ?? 'more']}
+              {entry.question.deepen?.text !== undefined && <span className="rv-sub"> · “{entry.question.deepen.text.slice(0, 60)}”</span>}
+              {(status === 'sending' || status === 'streaming') && <span className="rv-sub"> · answering…</span>}
+              {(status === 'failed' || status === 'unknown' || status === 'cancelled') && <span className="rv-sub"> · {status}</span>}
+            </summary>
+            {entry.answer !== null && entry.answer.text !== '' ? <Markdown text={entry.answer.text} /> : <p className="rv-sub">…</p>}
+            {last && (
+              <button type="button" className="rv-quiet" data-ev="step-continue-discussion" onClick={onContinue}>
+                Continue in the discussion
+              </button>
+            )}
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
 function StepPanel({
   walk,
   step,
@@ -1541,7 +1783,15 @@ function StepPanel({
   lang,
   onPlace,
   onOpenEvidence,
+  deepenings,
+  deepenError,
+  onDeepen,
+  onContinue,
 }: {
+  readonly deepenings: readonly Deepening[];
+  readonly deepenError: string | null;
+  readonly onDeepen: (request: DeepenRequest) => void;
+  readonly onContinue: () => void;
   readonly walk: Walk;
   readonly step: WalkStep;
   readonly index: number;
@@ -1554,19 +1804,38 @@ function StepPanel({
   readonly onOpenEvidence: (location: CodeLocation) => void;
 }): JSX.Element {
   const [sources, setSources] = useState(false);
+  const [introOpen, setIntroOpen] = useState(false);
+  const [selectedText, setSelectedText] = useState('');
+  const panel = useRef<HTMLElement | null>(null);
   const active = placeIndex;
+  const purpose = pick(walk.purpose, lang);
+  // The walk's introduction, short: its first sentence, the rest on request.
+  const firstSentence = /^[\s\S]*?[.!?](\s|$)/.exec(purpose)?.[0]?.trim() ?? purpose;
   const invalid = new Set(
     referenceProblems.filter((problem) => problem.stepId === step.id).map((problem) => problem.refId.replace(/\.(unit|from)$/, '')),
   );
   const summaryLabels = [...new Set(step.evidence.map((entry) => entry.label))];
   return (
-    <section className="rv-step-panel">
+    <section
+      className="rv-step-panel"
+      ref={panel}
+      onMouseUp={() => {
+        const chosen = window.getSelection();
+        const inside = chosen !== null && chosen.anchorNode !== null && panel.current?.contains(chosen.anchorNode) === true;
+        setSelectedText(inside ? (chosen?.toString() ?? '') : '');
+      }}
+    >
       <div className="rv-walk-title">
         {walk.id} · <Inline text={pick(walk.title, lang)} />
       </div>
-      {pick(walk.purpose, lang) !== '' && (
+      {purpose !== '' && (
         <div className="rv-purpose">
-          <Inline text={pick(walk.purpose, lang)} />
+          <Inline text={introOpen || firstSentence === purpose ? purpose : firstSentence} />
+          {firstSentence !== purpose && (
+            <button type="button" className="rv-quiet rv-more" aria-expanded={introOpen} onClick={() => setIntroOpen(!introOpen)}>
+              {introOpen ? 'Less' : 'More'}
+            </button>
+          )}
         </div>
       )}
       <h2>
@@ -1625,7 +1894,6 @@ function StepPanel({
         </div>
       )}
 
-      <div className="rv-section-title">{words.whatHappens}</div>
       <div className="rv-explanation">
         <Markdown text={pick(step.body, lang)} />
       </div>
@@ -1637,6 +1905,8 @@ function StepPanel({
           </div>
         </>
       )}
+
+      <StepDeepening deepenings={deepenings} error={deepenError} onDeepen={onDeepen} onContinue={onContinue} selectedText={selectedText} />
 
       {step.evidence.length > 0 && (
         <div className="rv-evidence">

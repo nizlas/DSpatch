@@ -259,6 +259,7 @@ export function ReviewDiscussion({
   flush,
   onGoToPoint,
   onGoToLocation,
+  onMessages,
 }: {
   readonly bundle: ReviewBundle;
   readonly request: DiscussionRequest;
@@ -270,6 +271,8 @@ export function ReviewDiscussion({
   readonly flush: () => Promise<string>;
   readonly onGoToPoint: (stepId: string, placeIndex: number) => void;
   readonly onGoToLocation: (location: CodeLocation) => void;
+  /** DSP-152: the thread as it stands, for a step to show its own deepenings beside it. */
+  readonly onMessages?: (messages: readonly DiscussionMessage[]) => void;
 }): JSX.Element {
   const bridge = window.dspatchReviewDiscussion;
   // DSP-149: the agent's models from its SDK; the choice is the same one the chat uses.
@@ -283,6 +286,9 @@ export function ReviewDiscussion({
     [bridge],
   );
   const [messages, setMessages] = useState<readonly DiscussionMessage[]>([]);
+  useEffect(() => {
+    onMessages?.(messages);
+  }, [messages, onMessages]);
   const [status, setStatus] = useState<DiscussionStatusView | null>(null);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);

@@ -1538,14 +1538,23 @@ export const REVIEW_CHANNELS = {
 /** The reviewer's own preferences, across reviews. */
 export interface ReviewPreferences {
   readonly language: Lang;
+  /** DSP-152: the width of the walk window's explanation column, as the reviewer left it, in pixels. */
+  readonly explanationWidth?: number;
 }
 
 export const DEFAULT_PREFERENCES: ReviewPreferences = { language: 'en' };
 
+/** The widths the explanation column may be given. */
+export const EXPLANATION_WIDTH = { min: 300, max: 1100, initial: 520 } as const;
+
 export function adoptPreferences(raw: unknown): ReviewPreferences {
-  return isRecord(raw) && (raw['language'] === 'sv' || raw['language'] === 'en')
-    ? { language: raw['language'] }
-    : DEFAULT_PREFERENCES;
+  if (!isRecord(raw) || (raw['language'] !== 'sv' && raw['language'] !== 'en')) {
+    return DEFAULT_PREFERENCES;
+  }
+  const width = raw['explanationWidth'];
+  return Number.isInteger(width) && (width as number) >= EXPLANATION_WIDTH.min && (width as number) <= EXPLANATION_WIDTH.max
+    ? { language: raw['language'], explanationWidth: width as number }
+    : { language: raw['language'] };
 }
 
 /** Validate a renderer-supplied revision side and repository path before git sees them. */

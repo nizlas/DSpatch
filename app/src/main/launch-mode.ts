@@ -80,6 +80,8 @@ export const chatRunScenario: ScriptedScenario =
                                 ? 'editor-joins-run'
                                 : chatRunValue === 'pair-review'
                                 ? 'pair-review'
+                                : chatRunValue === 'code-walks'
+                                ? 'code-walks'
                                 : chatRunValue === 'switch'
                                   ? 'workspace-switch'
                                   : chatRunValue === 'resume-choice'
@@ -172,6 +174,8 @@ export const presentationMode =
   chatRunScenario === 'editor-joins-run' ||
   // DSP-150: review of a chosen revision pair; nothing in it sends to a provider.
   chatRunScenario === 'pair-review' ||
+  // DSP-152: walk preparation and delegated review answered by the presentation adapter (SIMULATED).
+  chatRunScenario === 'code-walks' ||
   // DSP-121: the refused and failed resume states through the real choice panel. The
   // refusal is the presentation adapter's own, simulated on this machine; the one
   // message the scenario sends after choosing a new session is answered locally.
