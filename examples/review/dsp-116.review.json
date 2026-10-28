@@ -17,8 +17,8 @@
     "en": "The change has one purpose: DSpatch must not claim that a run has stopped when that is not proven, and must not give up too early.\n\n1. **Cancellation** (W1): the chat service now waits at least as long as the adapter says it needs to end a cancelled run, and tells stopped, forced and unconfirmed ends apart.\n2. **Closing** (W2): when the Claude adapter closes it waits a bounded time, kills processes that do not exit, and records what happened to each process.\n3. **A waiting turn** (W3): a turn waiting for the previous one starts no new process when the adapter closes.\n\nOutside the walks: the adapter interface (`AgentAdapter`) gains an optional `cancelEndBoundMs`. The tests cover the bounds and races with injected timers (`ManualTimers`), the chat service’s window and its reading of `end`, and two cases where `dispose` must see a real process exit: those use a local substitute process (`app/tests/support/claude-substitute-process.mjs`, started with Node), never Claude. That test file is registered as heavy in `scripts/run-tests.mjs`, so the fast group starts no processes. The DSP-116 task file is included: status Review, the criteria ticked, and a list of what only a real Claude Code process can settle.\n\nAt this revision the app’s chat does not use the Claude adapter yet. The change shows in the experiment command and in the tests."
   },
   "provenance": {
-    "sv": "Förberedda walks för första användningsprovet (DSP-15-beslut 2026-10-23). Version 2: omskrivna efter första användarobservationen, med precisa fokusställen. Version 4: innehållet kontrollerat steg för steg mot koden inför det andra användarprovet. Testuppgifterna bygger på förberedelsens körning på 73aaddc (provider 63/63, chat 300/300) utan live-anrop. Provider-gruppen innehåller två test som startar en lokal ersättningsprocess med Node; det är inte Claude. Ingen riktig Claude Code-process har körts. Kodbasen är bekant för granskaren, ändringen är redan godkänd av projektets Reviewer, och inga fel är planterade.",
-    "en": "Prepared walks for the first usage trial (DSP-15 decision, 23 October 2026). Version 2: rewritten after the first user observation, with precise focus places. Version 4: the content checked step by step against the code before the second user trial. The test information comes from the preparation’s run at 73aaddc (provider 63/63, chat 300/300) without live calls. The provider group includes two tests that start a local substitute process with Node; that is not Claude. No real Claude Code process was run. The codebase is familiar to the reviewer, the change was already accepted by the project’s Reviewer, and no defects are planted."
+    "sv": "Förberedda walks för första användningsprovet (DSP-15-beslut 2026-10-23). Version 2: omskrivna efter första användarobservationen, med precisa fokusställen. Version 4: innehållet kontrollerat steg för steg mot koden inför det andra användarprovet. Testuppgifterna bygger på förberedelsens körning på 73aaddc (provider 63/63, chat 300/300) utan live-anrop. Provider-gruppen innehåller två test som startar en lokal ersättningsprocess med Node; det är inte Claude. Ingen riktig Claude Code-process har körts. Kodbasen är bekant för granskaren, ändringen är redan godkänd av projektets Reviewer, och inga fel är planterade. Version 5 (DSP-152, 29 oktober 2026): förklaringarna omskrivna efter skrivreglerna i planen för code walks; varje sakuppgift, kodställe, belägg och revisionsparet är oförändrade och kontrollerade mot koden vid 73aaddc.",
+    "en": "Prepared walks for the first usage trial (DSP-15 decision, 23 October 2026). Version 2: rewritten after the first user observation, with precise focus places. Version 4: the content checked step by step against the code before the second user trial. The test information comes from the preparation’s run at 73aaddc (provider 63/63, chat 300/300) without live calls. The provider group includes two tests that start a local substitute process with Node; that is not Claude. No real Claude Code process was run. The codebase is familiar to the reviewer, the change was already accepted by the project’s Reviewer, and no defects are planted. Version 5 (DSP-152, 29 October 2026): the explanations rewritten to the code-walks plan's writing rules; every fact, place, piece of evidence and the revision pair are unchanged and were checked against the code at 73aaddc."
   },
   "walks": [
     {
@@ -28,8 +28,8 @@
         "en": "The user cancels a run"
       },
       "purpose": {
-        "sv": "Visar hur ett avbrott går från begäran till ett registrerat utfall, och att DSpatch inte ger upp innan den tid adaptern säger sig behöva har gått ut. Den visar också hur de tre sorternas slut – stoppat, framtvingat och obekräftat – registreras. På den här revisionen anger Claude-adaptern en gräns på 15 s (W1.5), men appens chatt använder ännu inte Claude-adaptern: den skapar Cursor-adaptern, eller Presentation-adaptern i presentationsläge, och ingen av dem anger någon gräns. Den längre väntetiden gäller därför ännu inte i appen (W1.7).",
-        "en": "Shows how a cancellation goes from request to a recorded outcome, and that DSpatch does not give up before the time the adapter says it needs has passed. It also shows how the three kinds of end – stopped, forced and unconfirmed – are recorded. At this revision the Claude adapter declares a bound of 15 s (W1.5), but the app’s chat does not use the Claude adapter yet: it creates the Cursor adapter, or the Presentation adapter in presentation mode, and neither declares a bound. So the longer wait does not yet apply in the app (W1.7)."
+        "en": "Follows a cancellation from your press on Cancel to the outcome DSpatch records, and shows that DSpatch now waits at least as long as the adapter says it needs before calling the outcome unknown. It ends with how the three kinds of end – stopped, forced and unconfirmed – are recorded. W1.7 explains why the longer wait does not yet apply in the app's chat.",
+        "sv": "Följer ett avbrott från att du trycker Cancel till det utfall DSpatch registrerar, och visar att DSpatch nu väntar minst så länge som adaptern säger att den behöver innan utfallet kallas okänt. Den slutar med hur de tre sorternas slut – stoppat, framtvingat och obekräftat – registreras. W1.7 förklarar varför den längre väntan ännu inte gäller i appens chatt."
       },
       "question": {
         "sv": "Kan DSpatch ge upp och skriva ”outcome unknown” medan adaptern fortfarande är på väg att leverera ett slut? Och vad betyder de olika sluten när de kommer?",
@@ -43,16 +43,16 @@
             "en": "The cancellation is requested"
           },
           "summary": {
-            "sv": "Två olika situationer slutar i en avbrottsbegäran till adaptern: du trycker på Cancel, eller du har slutat vänta och en körning dyker upp ändå. Ändringen är densamma i båda: adaptern skickas med till väntan på bekräftelse.",
-            "en": "Two different situations end in a cancellation request to the adapter: you press Cancel, or you stopped waiting and a run turns up anyway. The change is the same in both: the adapter is passed on to the wait for confirmation."
+            "en": "When you press Cancel, or the provider starts a run after you had stopped waiting for it, the chat service asks the adapter to cancel and starts waiting for proof that the run has ended. The change: that wait now gets the adapter.",
+            "sv": "När du trycker Cancel, eller providern startar en körning efter att du redan slutat vänta på den, ber chattjänsten adaptern att avbryta och börjar vänta på bevis för att körningen har slutat. Ändringen: väntan får nu adaptern."
           },
           "body": {
-            "sv": "Båda vägarna gör samma tre saker: markerar försöket `cancel-requested`, ber adaptern avbryta med `adapter.cancel(...)` och startar väntan på bekräftelse med `armCancelConfirmation(...)`.\n\n**Varför adaptern måste med i båda:** `armCancelConfirmation` räknar nu ut hur länge den väntar med `cancelConfirmWindow(adapter)` – aldrig kortare än adapterns egen deklarerade gräns för att avsluta en avbruten körning (`cancelEndBoundMs`) plus en marginal (W1.3). Väntan måste därför få den adapter som fick avbrottsbegäran. Utan den i den ena vägen skulle den vägen ge upp efter standardtiden och kalla utfallet okänt, fast adaptern fortfarande är inom sin gräns.\n\nPå den här revisionen deklarerar Claude-adaptern en sådan gräns, 15 s (W1.5). Appens chatt använder ännu inte Claude-adaptern utan Cursor-adaptern, som inte deklarerar någon gräns (W1.7). I appen blir väntan därför ännu inte längre.",
-            "en": "Both paths do the same three things: mark the attempt `cancel-requested`, ask the adapter to cancel with `adapter.cancel(...)`, and start waiting for confirmation with `armCancelConfirmation(...)`.\n\n**Why both need the adapter:** `armCancelConfirmation` now works out how long to wait with `cancelConfirmWindow(adapter)` – never shorter than the adapter's own declared bound for ending a cancelled run (`cancelEndBoundMs`) plus a margin (W1.3). The wait must therefore get the adapter that received the cancellation. Without it in one path, that path would give up after the default time and call the outcome unknown while the adapter is still within its bound.\n\nAt this revision the Claude adapter declares such a bound, 15 s (W1.5). The app’s chat does not use the Claude adapter yet but the Cursor adapter, which declares no bound (W1.7). So in the app the wait does not get longer yet."
+            "en": "In both cases the chat service does three things in order:\n\n1. marks the attempt `cancel-requested`;\n2. asks the adapter to cancel with `adapter.cancel(...)`;\n3. starts the wait for confirmation with `armCancelConfirmation(...)`.\n\nThe wait needs the adapter because it now asks the adapter how long a cancelled run may take to end (`cancelEndBoundMs`, W1.3–W1.4). If one of the two paths left the adapter out, that path would fall back to the default 10 s and could call the outcome unknown while the adapter was still within its own bound.",
+            "sv": "I båda fallen gör chattjänsten tre saker i tur och ordning:\n\n1. markerar försöket `cancel-requested`;\n2. ber adaptern avbryta med `adapter.cancel(...)`;\n3. startar väntan på bekräftelse med `armCancelConfirmation(...)`.\n\nVäntan behöver adaptern eftersom den nu frågar adaptern hur lång tid en avbruten körning kan ta på sig att sluta (`cancelEndBoundMs`, W1.3–W1.4). Om den ena vägen lämnade adaptern utanför skulle den vägen falla tillbaka på standardtiden 10 s och kunna kalla utfallet okänt medan adaptern fortfarande var inom sin egen gräns."
           },
           "why": {
-            "sv": "Här går gränsen mellan att *begära* ett avbrott och att *veta* att körningen har slutat. Hur länge DSpatch väntar på beviset avgörs i W1.2 och W1.3.",
-            "en": "This is the line between *requesting* a cancellation and *knowing* the run has ended. How long DSpatch waits for that evidence is decided in W1.2 and W1.3."
+            "en": "This is where *asking* to cancel and *knowing* that the run has ended part ways. How long DSpatch waits for that knowledge is W1.2 and W1.3.",
+            "sv": "Här skiljs *begäran* om avbrott från *vetskapen* om att körningen har slutat. Hur länge DSpatch väntar på den vetskapen är W1.2 och W1.3."
           },
           "places": [
             {
@@ -183,16 +183,16 @@
             "en": "The timer that waits for confirmation"
           },
           "summary": {
-            "sv": "`armCancelConfirmation` startar en timer. Om ingen bekräftelse har kommit när den löper ut, registreras utfallet som okänt.",
-            "en": "`armCancelConfirmation` starts a timer. If no confirmation has arrived when it expires, the outcome is recorded as unknown."
+            "en": "`armCancelConfirmation` starts a timer. If no confirmed end has arrived when it runs out, the chat service records the outcome as unknown rather than stopped.",
+            "sv": "`armCancelConfirmation` startar en timer. Har inget bekräftat slut kommit när den löper ut, registrerar chattjänsten utfallet som okänt i stället för stoppat."
           },
           "body": {
-            "sv": "`const window = this.cancelConfirmWindow(adapter)`\nRäknar ut hur länge timern ska vänta. **Ny rad.** Förut användes alltid samma värde.\n\nNär tiden går ut och försöket fortfarande är `cancel-requested`:\n1. Försöket markeras `outcome-unknown`.\n2. Texten skiljer nu på två fall: om adaptern har angett en gräns nämns adaptern, gränsen och respittiden; annars gäller den gamla texten.\n3. Loggraden anger samma tider (gräns och respittid i millisekunder), men inte adapterns namn.\n\n`formatSeconds(ms)`\nNy hjälpfunktion: hela sekunder skrivs som heltal, annars med en decimal.",
-            "en": "`const window = this.cancelConfirmWindow(adapter)`\nWorks out how long the timer waits. **New line.** Before, the same value was always used.\n\nWhen the time runs out and the attempt is still `cancel-requested`:\n1. The attempt is marked `outcome-unknown`.\n2. The text now distinguishes two cases: if the adapter has declared a bound, it names the adapter, the bound and the grace period; otherwise the old text applies.\n3. The log line gives the same times (bound and grace in milliseconds), but not the adapter’s name.\n\n`formatSeconds(ms)`\nNew helper: whole seconds are written as integers, otherwise with one decimal."
+            "en": "The timer's length now comes from `cancelConfirmWindow(adapter)` (W1.3); before, it was always the same value.\n\nWhen the timer runs out and the attempt is still `cancel-requested`, the chat service:\n\n1. marks the attempt `outcome-unknown`;\n2. writes one of two texts: when the adapter declared a bound, the text names the adapter, the bound and the grace period; otherwise the earlier text is kept;\n3. logs the same times in milliseconds, without the adapter's name.\n\nThe new helper `formatSeconds(ms)` writes whole seconds as integers and other values with one decimal.",
+            "sv": "Timerns längd kommer nu från `cancelConfirmWindow(adapter)` (W1.3); tidigare var den alltid samma värde.\n\nNär timern löper ut och försöket fortfarande är `cancel-requested` gör chattjänsten så här:\n\n1. markerar försöket `outcome-unknown`;\n2. skriver en av två texter: har adaptern angett en gräns, nämner texten adaptern, gränsen och marginalen; annars behålls den tidigare texten;\n3. loggar samma tider i millisekunder, utan adapterns namn.\n\nDen nya hjälpfunktionen `formatSeconds(ms)` skriver hela sekunder som heltal och andra värden med en decimal."
           },
           "why": {
-            "sv": "”Okänt” betyder inte ”stoppat”. Medan försöket är okänt startar DSpatch inte något nytt meddelande på egen hand.",
-            "en": "“Unknown” does not mean “stopped”. While the attempt is unknown, DSpatch does not start a new message on its own."
+            "en": "Unknown is not the same as stopped: while the outcome is unknown, DSpatch does not send a new message on its own.",
+            "sv": "Okänt är inte detsamma som stoppat: så länge utfallet är okänt skickar DSpatch inget nytt meddelande på egen hand."
           },
           "places": [
             {
@@ -314,16 +314,16 @@
             "en": "How long the wait is"
           },
           "summary": {
-            "sv": "Väntetiden är 10 sekunder, om inte adaptern anger att den själv kan behöva längre tid för att avsluta.",
-            "en": "The wait is 10 seconds, unless the adapter declares that it may itself need longer to finish."
+            "en": "DSpatch waits 10 seconds, or longer when the adapter declares that it may itself need longer to end a cancelled run.",
+            "sv": "DSpatch väntar 10 sekunder, eller längre när adaptern anger att den själv kan behöva längre tid för att avsluta en avbruten körning."
           },
           "body": {
-            "sv": "`cancelConfirmWindow(adapter)`\n- Ingen gräns angiven, eller ett värde som inte är ett ändligt tal ≥ 0: väntetiden är `cancelConfirmMs` (10 s).\n- Annars: `max(cancelConfirmMs, gränsen + respittid)`.\n\n`CANCEL_CONFIRM_GRACE_MS = 1_000`\nRespittiden: en sekund extra för att slutet ska hinna levereras till chattjänsten.\n\nEn kortare angiven gräns kan alltså aldrig korta väntetiden under 10 s.\n\nTesterna kan ersätta både väntetiden och respittiden (`timings`), så att de inte behöver vänta i verklig tid.",
-            "en": "`cancelConfirmWindow(adapter)`\n- No bound declared, or a value that is not a finite number ≥ 0: the wait is `cancelConfirmMs` (10 s).\n- Otherwise: `max(cancelConfirmMs, bound + grace)`.\n\n`CANCEL_CONFIRM_GRACE_MS = 1_000`\nThe grace period: one extra second for the end to reach the chat service.\n\nSo a shorter declared bound can never make the wait shorter than 10 s.\n\nTests can replace both the wait and the grace (`timings`) so they need not wait in real time."
+            "en": "`cancelConfirmWindow(adapter)` decides the wait:\n\n- When the adapter declares no bound, or a value that is not a finite number ≥ 0, the wait is `cancelConfirmMs`, 10 s.\n- Otherwise the wait is the larger of 10 s and the bound plus `CANCEL_CONFIRM_GRACE_MS` (1 s), the time the end needs to reach the chat service.\n\nSo a declared bound can make the wait longer, **never shorter** than 10 s. Tests can replace both values through `timings`, so they need not wait in real time.",
+            "sv": "`cancelConfirmWindow(adapter)` bestämmer väntan:\n\n- Anger adaptern ingen gräns, eller ett värde som inte är ett ändligt tal ≥ 0, är väntan `cancelConfirmMs`, 10 s.\n- Annars är väntan det största av 10 s och gränsen plus `CANCEL_CONFIRM_GRACE_MS` (1 s), den tid slutet behöver för att nå chattjänsten.\n\nEn angiven gräns kan alltså göra väntan längre, **aldrig kortare** än 10 s. Testerna kan byta ut båda värdena via `timings` och behöver då inte vänta i realtid."
           },
           "why": {
-            "sv": "Det här är svaret på walkens fråga: DSpatch ger inte upp före den tid adaptern säger att den behöver.",
-            "en": "This answers the walk’s question: DSpatch does not give up before the time the adapter says it needs."
+            "en": "This answers the walk's question: DSpatch no longer gives up before the time the adapter says it needs.",
+            "sv": "Detta svarar på walkens fråga: DSpatch ger inte längre upp innan den tid adaptern säger sig behöva har gått."
           },
           "places": [
             {
@@ -489,16 +489,16 @@
             "en": "Where the bound comes from"
           },
           "summary": {
-            "sv": "Gränsen är ett nytt, valfritt fält i adapterkontraktet.",
-            "en": "The bound is a new, optional field in the adapter contract."
+            "en": "The bound is a new, optional field of the adapter contract: an adapter that sets it promises how long a cancelled run can take to end.",
+            "sv": "Gränsen är ett nytt, valfritt fält i adapterkontraktet: en adapter som sätter det lovar hur lång tid en avbruten körning kan ta på sig att sluta."
           },
           "body": {
-            "sv": "`AgentAdapter.cancelEndBoundMs?: number`\nLängsta tid från att löftet från `cancel()` har uppfyllts till körningens sista händelse, `run.finished`, som adaptern garanterar med sina egna timers.\n\n`ChatAdapter.cancelEndBoundMs?: number`\nSamma fält i den del av kontraktet som chattjänsten använder.\n\nSaknas fältet har adaptern inte lovat någon gräns, och väntetiden blir standardvärdet.",
-            "en": "`AgentAdapter.cancelEndBoundMs?: number`\nThe longest time from the promise returned by `cancel()` resolving to the run’s last event, `run.finished`, that the adapter guarantees with its own timers.\n\n`ChatAdapter.cancelEndBoundMs?: number`\nThe same field in the part of the contract the chat service uses.\n\nIf the field is absent the adapter has promised no bound, and the wait is the default."
+            "en": "`AgentAdapter.cancelEndBoundMs` is the longest time, guaranteed by the adapter's own timers, from the moment the promise from `cancel()` resolves until the run's last event, `run.finished`.\n\n`ChatAdapter` repeats the field in the part of the contract the chat service uses. An adapter that leaves it out has promised nothing, and the chat service uses its default.",
+            "sv": "`AgentAdapter.cancelEndBoundMs` är den längsta tid, garanterad av adapterns egna timers, från att löftet från `cancel()` uppfylls till körningens sista händelse, `run.finished`.\n\n`ChatAdapter` upprepar fältet i den del av kontraktet chattjänsten använder. En adapter som utelämnar det har inte lovat något, och chattjänsten använder sin standardtid."
           },
           "why": {
-            "sv": "Fältet är additivt: adaptrar som inte anger det beter sig som förut.",
-            "en": "The field is additive: adapters that do not declare it behave as before."
+            "en": "The field is additive, so adapters that do not declare it behave exactly as before.",
+            "sv": "Fältet är ett tillägg, så adaptrar som inte anger det beter sig precis som förut."
           },
           "places": [
             {
@@ -580,16 +580,16 @@
             "en": "The Claude adapter declares its bound"
           },
           "summary": {
-            "sv": "Claude-adaptern anger 15 sekunder, härlett ur sina egna väntetider.",
-            "en": "The Claude adapter declares 15 seconds, derived from its own waits."
+            "en": "The Claude adapter declares 15 seconds, computed from its own timers.",
+            "sv": "Claude-adaptern anger 15 sekunder, beräknat från sina egna timers."
           },
           "body": {
-            "sv": "`readonly cancelEndBoundMs = CANCEL_END_BOUND_MS`\nClaude-adaptern anger gränsen.\n\n`CANCEL_END_BOUND_MS = Math.max(...)`\nDet största av två värden:\n1. Stoppsekvensens tre väntetider tillsammans: 3 + 10 + 2 = 15 s.\n2. Väntan på föregående tur i `send`: 15 s.\n\nResultatet blir 15 s. Om Claude-adaptern används i chatten väntar chattjänsten då 16 s (W1.3).",
-            "en": "`readonly cancelEndBoundMs = CANCEL_END_BOUND_MS`\nThe Claude adapter declares the bound.\n\n`CANCEL_END_BOUND_MS = Math.max(...)`\nThe larger of two values:\n1. The stop sequence’s three waits together: 3 + 10 + 2 = 15 s.\n2. The wait for the previous turn in `send`: 15 s.\n\nThe result is 15 s. If the Claude adapter is used in the chat, the chat service then waits 16 s (W1.3)."
+            "en": "`CANCEL_END_BOUND_MS` is the larger of two waits the adapter can be in after a cancellation:\n\n1. the stop sequence's three waits added together: 3 + 10 + 2 = 15 s (W1.6);\n2. the wait in `send` for the previous turn: 15 s (W3.1).\n\nBoth give 15 s. With this adapter the chat service would wait 15 + 1 = 16 s (W1.3).",
+            "sv": "`CANCEL_END_BOUND_MS` är den största av två väntetider adaptern kan befinna sig i efter ett avbrott:\n\n1. stoppsekvensens tre väntetider tillsammans: 3 + 10 + 2 = 15 s (W1.6);\n2. väntan i `send` på föregående tur: 15 s (W3.1).\n\nBåda ger 15 s. Med den här adaptern skulle chattjänsten vänta 15 + 1 = 16 s (W1.3)."
           },
           "why": {
-            "sv": "Gränsen räknas fram ur de faktiska timrarna i stället för att skrivas in som ett eget tal, så den följer med om timrarna ändras.",
-            "en": "The bound is computed from the actual timers rather than written down as a separate number, so it follows if the timers change."
+            "en": "Because the bound is computed from the timers rather than written as its own number, it follows them if they change.",
+            "sv": "Eftersom gränsen räknas fram ur timrarna i stället för att skrivas som ett eget tal följer den med om de ändras."
           },
           "places": [
             {
@@ -719,16 +719,16 @@
             "en": "Unchanged code the bound relies on"
           },
           "summary": {
-            "sv": "Gränsen i W1.5 bygger på stoppsekvensen och väntan på föregående tur. Den koden är inte ändrad. Hjälpfunktionen `settlesWithinBound`, som `send` väntar med, är ändrad (den avslutas också när `dispose` börjar, W3.2), men 15-sekundersgränsen är densamma.",
-            "en": "The bound in W1.5 relies on the stop sequence and the wait for the previous turn. That code has not changed. The helper `send` waits with, `settlesWithinBound`, did change (it now also ends when `dispose` begins, W3.2), but the 15 s bound is the same."
+            "en": "The 15 s bound rests on two pieces of code this change leaves as they were: the three-step stop sequence and the wait for the previous turn.",
+            "sv": "Gränsen på 15 s vilar på två delar av koden som ändringen lämnar som de var: stoppsekvensen i tre steg och väntan på föregående tur."
           },
           "body": {
-            "sv": "Stoppsekvensen trappar upp i tre steg:\n1. `interrupt()`, sedan vänta upp till 3 s (eller gå vidare direkt om `interrupt()` misslyckas).\n2. `abort()`, sedan vänta upp till 10 s.\n3. `kill('SIGKILL')` på processen om den lever, sedan vänta upp till 2 s.\n\nHar inget bekräftat slut kommit då, avslutas körningen som `unconfirmed`.\n\n`send` väntar upp till 15 s på att föregående tur blir klar innan en ny tur startar.\n\nDen nya kommentaren vid `CANCEL_END_BOUND_MS` (W1.5, kodställe 3) säger vad gränsen **inte** täcker: den första inläsningen av SDK-modulen.",
-            "en": "The stop sequence escalates in three steps:\n1. `interrupt()`, then wait up to 3 s (or move on at once if `interrupt()` fails).\n2. `abort()`, then wait up to 10 s.\n3. `kill('SIGKILL')` on the process if it is alive, then wait up to 2 s.\n\nIf no confirmed end has arrived by then, the run ends as `unconfirmed`.\n\n`send` waits up to 15 s for the previous turn to finish before starting a new one.\n\nThe new comment at `CANCEL_END_BOUND_MS` (W1.5, place 3) says what the bound does **not** cover: the first load of the SDK module."
+            "en": "When a run is cancelled, the Claude adapter escalates in three steps and waits after each:\n\n1. `interrupt()`, then up to 3 s (straight on to the next step if `interrupt()` fails);\n2. `abort()`, then up to 10 s;\n3. `kill('SIGKILL')` on the process if it is still alive, then up to 2 s.\n\nIf no confirmed end has arrived after that, the run ends as `unconfirmed`. Separately, `send` waits up to 15 s for the previous turn before it starts a new one.\n\n`settlesWithinBound`, the helper `send` waits with, did change (it now also ends when `dispose` begins, W3.2), but the 15 s it waits is the same. The new comment at `CANCEL_END_BOUND_MS` names what the bound does **not** cover: the first load of the SDK module.",
+            "sv": "När en körning avbryts trappar Claude-adaptern upp i tre steg och väntar efter varje:\n\n1. `interrupt()`, sedan upp till 3 s (direkt till nästa steg om `interrupt()` misslyckas);\n2. `abort()`, sedan upp till 10 s;\n3. `kill('SIGKILL')` på processen om den lever, sedan upp till 2 s.\n\nHar inget bekräftat slut kommit efter det slutar körningen som `unconfirmed`. Därutöver väntar `send` upp till 15 s på föregående tur innan den startar en ny.\n\n`settlesWithinBound`, hjälpfunktionen som `send` väntar med, har ändrats (den slutar nu också när `dispose` börjar, W3.2), men de 15 s den väntar är desamma. Den nya kommentaren vid `CANCEL_END_BOUND_MS` säger vad gränsen **inte** täcker: den första inläsningen av SDK-modulen."
           },
           "why": {
-            "sv": "Om de här väntetiderna ändras utan att gränsen följer med, kan chattjänsten ge upp för tidigt igen.",
-            "en": "If these waits were changed without the bound following them, the chat service could again give up too early."
+            "en": "If these waits changed without the bound following them, the chat service could again give up too early.",
+            "sv": "Om de här väntetiderna ändrades utan att gränsen följde med kunde chattjänsten åter ge upp för tidigt."
           },
           "places": [
             {
@@ -900,16 +900,16 @@
             "en": "Which adapters the chat uses today"
           },
           "summary": {
-            "sv": "På den här revisionen använder chattjänsten Cursor- eller Presentation-adaptern, inte Claude-adaptern.",
-            "en": "At this revision the chat service uses the Cursor or Presentation adapter, not the Claude adapter."
+            "en": "At this revision the app's chat uses the Cursor adapter, or the Presentation adapter in presentation mode — not the Claude adapter.",
+            "sv": "På den här revisionen använder appens chatt Cursor-adaptern, eller Presentation-adaptern i presentationsläge – inte Claude-adaptern."
           },
           "body": {
-            "sv": "`ensureAdapter()`\nSkapar adaptern via `createAdapter`, och annars `CursorSdkAdapter`.\n\n`main.ts`\nAnger `PresentationAdapter` i presentationsläge. Annars används standardvalet.\n\nIngen av dessa anger `cancelEndBoundMs`. Den här koden är oförändrad.",
-            "en": "`ensureAdapter()`\nCreates the adapter through `createAdapter`, otherwise `CursorSdkAdapter`.\n\n`main.ts`\nSupplies `PresentationAdapter` in presentation mode. Otherwise the default is used.\n\nNone of these declares `cancelEndBoundMs`. This code is unchanged."
+            "en": "`ensureAdapter()` in the chat service builds the adapter with `createAdapter` when one is supplied, and otherwise a `CursorSdkAdapter`. `main.ts` supplies a `PresentationAdapter` in presentation mode and nothing otherwise.\n\nNeither adapter declares `cancelEndBoundMs`, and this code is unchanged.",
+            "sv": "`ensureAdapter()` i chattjänsten bygger adaptern med `createAdapter` när en sådan ges, och annars en `CursorSdkAdapter`. `main.ts` ger en `PresentationAdapter` i presentationsläge och annars ingenting.\n\nIngen av adaptrarna anger `cancelEndBoundMs`, och den här koden är oförändrad."
           },
           "why": {
-            "sv": "Den längre väntetiden har alltså ingen effekt i appens chatt ännu. Den gäller först när en adapter som anger en gräns, som Claude-adaptern, kopplas in.",
-            "en": "So the longer wait has no effect in the app’s chat yet. It applies once an adapter that declares a bound, such as the Claude adapter, is wired in."
+            "en": "So the longer wait has no effect in the app's chat yet. It applies once an adapter that declares a bound, such as the Claude adapter, is wired in; the experiment command and the tests already use it.",
+            "sv": "Den längre väntan har alltså ännu ingen effekt i appens chatt. Den gäller när en adapter som anger en gräns, som Claude-adaptern, kopplas in; experimentkommandot och testerna använder den redan."
           },
           "places": [
             {
@@ -991,16 +991,16 @@
             "en": "When the end arrives"
           },
           "summary": {
-            "sv": "När stoppsekvensen är klar skickar adaptern ett avslutande `run.finished` med fältet `end`.",
-            "en": "When the stop sequence is done, the adapter sends a final `run.finished` with the field `end`."
+            "en": "When the stop sequence is over, the adapter sends a last `run.finished` whose `end` says how the local process ended.",
+            "sv": "När stoppsekvensen är klar skickar adaptern ett sista `run.finished` vars `end` säger hur den lokala processen slutade."
           },
           "body": {
-            "sv": "`end?: RunEnd` i `types.ts`\nSaknas `end` betyder det ”inte rapporterat”, aldrig `stopped`. Typen är oförändrad.\n\n`finishCancelled(state, run, end, evidence)`\nSkickar `run.finished` med status `cancelled` och ett av tre värden i `end`:\n- `stopped`: körningen slutade efter `interrupt()`. (En körning som aldrig hann starta får också `stopped`, men via `finishNotStarted`.)\n- `forced`: det krävdes `abort()` eller `kill('SIGKILL')`.\n- `unconfirmed`: inget bevis för att den lokala processen slutat.",
-            "en": "`end?: RunEnd` in `types.ts`\nA missing `end` means “not reported”, never `stopped`. The type is unchanged.\n\n`finishCancelled(state, run, end, evidence)`\nSends `run.finished` with status `cancelled` and one of three values in `end`:\n- `stopped`: the run ended after `interrupt()`. (A run that never got started also gets `stopped`, but through `finishNotStarted`.)\n- `forced`: it took `abort()` or `kill('SIGKILL')`.\n- `unconfirmed`: no evidence that the local process ended."
+            "en": "`finishCancelled(state, run, end, evidence)` sends `run.finished` with status `cancelled` and one of three values in `end`:\n\n- `stopped`: the run ended after `interrupt()`;\n- `forced`: it took `abort()` or `kill('SIGKILL')`;\n- `unconfirmed`: nothing shows that the local process ended.\n\nA run that never got started also ends as `stopped`, through `finishNotStarted`. In `types.ts`, a missing `end` means *not reported*, never `stopped`; that type is unchanged.",
+            "sv": "`finishCancelled(state, run, end, evidence)` skickar `run.finished` med status `cancelled` och ett av tre värden i `end`:\n\n- `stopped`: körningen slutade efter `interrupt()`;\n- `forced`: det krävdes `abort()` eller `kill('SIGKILL')`;\n- `unconfirmed`: inget visar att den lokala processen slutade.\n\nEn körning som aldrig kom igång slutar också som `stopped`, via `finishNotStarted`. I `types.ts` betyder ett saknat `end` *inte rapporterat*, aldrig `stopped`; den typen är oförändrad."
           },
           "why": {
-            "sv": "`end` säger bara något om den lokala processen. Huruvida leverantören fortsatte arbeta med redan skickade förfrågningar är fortfarande okänt.",
-            "en": "`end` only tells us about the local process. Whether the provider kept working on requests already sent is still unknown."
+            "en": "`end` describes only the local process. Whether the provider went on working on what it had already been sent remains unknown.",
+            "sv": "`end` beskriver bara den lokala processen. Om providern fortsatte arbeta med det den redan fått är fortfarande okänt."
           },
           "places": [
             {
@@ -1112,16 +1112,16 @@
             "en": "How the chat service reads the end"
           },
           "summary": {
-            "sv": "Chattjänsten tolkar nu `end` och registrerar ett av tre utfall.",
-            "en": "The chat service now reads `end` and records one of three outcomes."
+            "en": "The chat service now reads `end` and records one of three outcomes, instead of treating every cancelled run as stopped.",
+            "sv": "Chattjänsten läser nu `end` och registrerar ett av tre utfall, i stället för att behandla varje avbruten körning som stoppad."
           },
           "body": {
-            "sv": "`cancelled` + `unconfirmed` → `markOutcomeUnknown`\n**Nytt.** Körningen räknas som slut, så att inget väntar för evigt, men inte som stoppad.\n\n`cancelled` + `stopped` eller `forced` → `markStopped`\n**Nytt.** Ett bekräftat *lokalt* slut. Texten säger att leverantörens fortsatta arbete är okänt.\n\n`cancelled` utan `end` → `markStopped`\nSom förut: leverantören rapporterade slutet. Grenen är oförändrad; bara villkorsraden blev ett `else if`.",
-            "en": "`cancelled` + `unconfirmed` → `markOutcomeUnknown`\n**New.** The run counts as ended, so nothing waits forever, but not as stopped.\n\n`cancelled` + `stopped` or `forced` → `markStopped`\n**New.** A confirmed *local* end. The text says the provider’s further work is unknown.\n\n`cancelled` without `end` → `markStopped`\nAs before: the provider reported the end. The branch is unchanged; only the condition line became an `else if`."
+            "en": "- `cancelled` with `unconfirmed` → `markOutcomeUnknown`. **New.** The run counts as ended, so nothing waits for it forever, but not as stopped.\n- `cancelled` with `stopped` or `forced` → `markStopped`. **New.** A confirmed *local* end; the text says the provider's further work is unknown.\n- `cancelled` without `end` → `markStopped`, as before: the provider itself reported the end. Only the condition line changed, to an `else if`.",
+            "sv": "- `cancelled` med `unconfirmed` → `markOutcomeUnknown`. **Nytt.** Körningen räknas som avslutad, så inget väntar på den för evigt, men inte som stoppad.\n- `cancelled` med `stopped` eller `forced` → `markStopped`. **Nytt.** Ett bekräftat *lokalt* slut; texten säger att providerns fortsatta arbete är okänt.\n- `cancelled` utan `end` → `markStopped`, som förut: providern rapporterade själv slutet. Bara villkorsraden ändrades, till en `else if`."
           },
           "why": {
-            "sv": "Före ändringen räknades varje `cancelled` som ett bekräftat stopp, även när adaptern inte hade bevis.",
-            "en": "Before the change every `cancelled` counted as a confirmed stop, even when the adapter had no evidence."
+            "en": "Before the change, every `cancelled` counted as a confirmed stop, even when the adapter had no evidence of one.",
+            "sv": "Före ändringen räknades varje `cancelled` som ett bekräftat stopp, även när adaptern saknade belägg för det."
           },
           "places": [
             {
@@ -1279,16 +1279,16 @@
             "en": "What the attempt ledger (`AttemptLedger`) does with the outcome"
           },
           "summary": {
-            "sv": "Försöksloggen skriver aldrig om ett avgjort försök. `outcome-unknown` räknas inte som avgjort.",
-            "en": "The ledger never rewrites a settled attempt. `outcome-unknown` does not count as settled."
+            "en": "The attempt ledger never rewrites a settled attempt, and `outcome-unknown` does not count as settled — so a late end can still be recorded.",
+            "sv": "Försöksliggaren skriver aldrig om ett avgjort försök, och `outcome-unknown` räknas inte som avgjort – så ett sent slut kan fortfarande registreras."
           },
           "body": {
-            "sv": "`SETTLED`\nAvgjorda tillstånd: `stopped-confirmed`, `completed`, `failed`.\n\n`transition(record, next, note)`\nVägrar ändra ett avgjort försök. Den vägrade ändringen sparas ändå i historiken.\n\n`markOutcomeUnknown(...)`\nSätter `outcome-unknown`, som inte är avgjort. Ett senare slut kan därför fortfarande registreras.\n\nAll den här koden är oförändrad.",
-            "en": "`SETTLED`\nSettled states: `stopped-confirmed`, `completed`, `failed`.\n\n`transition(record, next, note)`\nRefuses to change a settled attempt. The refused change is still kept in the history.\n\n`markOutcomeUnknown(...)`\nSets `outcome-unknown`, which is not settled. A later end can therefore still be recorded.\n\nAll of this code is unchanged."
+            "en": "`SETTLED` lists the settled states: `stopped-confirmed`, `completed` and `failed`. `transition(record, next, note)` refuses to change a settled attempt and still keeps the refused change in its history. `markOutcomeUnknown(...)` sets `outcome-unknown`, which is not in `SETTLED`.\n\nAll of this is unchanged code; it is here because W1.2 and W1.9 depend on it.",
+            "sv": "`SETTLED` räknar upp de avgjorda tillstånden: `stopped-confirmed`, `completed` och `failed`. `transition(record, next, note)` vägrar ändra ett avgjort försök men behåller den vägrade ändringen i historiken. `markOutcomeUnknown(...)` sätter `outcome-unknown`, som inte finns i `SETTLED`.\n\nAllt detta är oförändrad kod; den finns med eftersom W1.2 och W1.9 bygger på den."
           },
           "why": {
-            "sv": "Att ”okänt” inte är avgjort är det som gör att ett sent slut fortfarande kan rätta registreringen.",
-            "en": "That “unknown” is not settled is what lets a late end still correct the record."
+            "en": "That unknown is not settled is what lets a late end correct the record.",
+            "sv": "Att okänt inte är avgjort är det som låter ett sent slut rätta registreringen."
           },
           "places": [
             {
@@ -1427,16 +1427,16 @@
             "en": "Where closing starts in the app"
           },
           "summary": {
-            "sv": "När appen stängs väntar `main.ts` högst 8 sekunder på att adaptern stängs. Den här koden är oförändrad.",
-            "en": "When the app closes, `main.ts` waits at most 8 seconds for the adapter to close. This code is unchanged."
+            "en": "When the app closes, `main.ts` gives the adapter at most 8 seconds to close, then ends the app anyway. This code is unchanged.",
+            "sv": "När appen stängs ger `main.ts` adaptern högst 8 sekunder att stänga och avslutar sedan appen ändå. Den här koden är oförändrad."
           },
           "body": {
-            "sv": "`DISPOSE_TIMEOUT_MS = 8_000`\nLängsta väntan innan appen stänger ändå.\n\n`disposeThenEnd(end, path)`\nStartar en timer på 8 s och anropar `disposeAdapterOnce()`. Det som kommer först avslutar appen. `chatService.dispose()` stänger först sessionen och sedan adaptern; båda ryms i de 8 sekunderna.\n\n`disposeAdapterOnce()` → `chatService.dispose()` → `adapter.dispose()`\nVägen fram till adaptern.",
-            "en": "`DISPOSE_TIMEOUT_MS = 8_000`\nThe longest wait before the app closes anyway.\n\n`disposeThenEnd(end, path)`\nStarts an 8 s timer and calls `disposeAdapterOnce()`. Whichever finishes first ends the app. `chatService.dispose()` closes the session first and then the adapter; both must fit within the 8 seconds.\n\n`disposeAdapterOnce()` → `chatService.dispose()` → `adapter.dispose()`\nThe path down to the adapter."
+            "en": "`disposeThenEnd(end, path)` starts an 8 s timer (`DISPOSE_TIMEOUT_MS`) and calls `disposeAdapterOnce()`; whichever finishes first ends the app.\n\nThe call goes on to `chatService.dispose()`, which closes the session first and then calls `adapter.dispose()`. Both have to fit inside the 8 seconds.",
+            "sv": "`disposeThenEnd(end, path)` startar en timer på 8 s (`DISPOSE_TIMEOUT_MS`) och anropar `disposeAdapterOnce()`; det som blir klart först avslutar appen.\n\nAnropet går vidare till `chatService.dispose()`, som först stänger sessionen och sedan anropar `adapter.dispose()`. Båda måste rymmas inom de 8 sekunderna."
           },
           "why": {
-            "sv": "Den här gränsen är anledningen till att Claude-adapterns `dispose` måste bli klar inom 7 s (W2.8).",
-            "en": "This limit is why the Claude adapter’s `dispose` must finish within 7 s (W2.8)."
+            "en": "This limit is why the Claude adapter's `dispose` must finish within 7 s (W2.8).",
+            "sv": "Den här gränsen är skälet till att Claude-adapterns `dispose` måste bli klar inom 7 s (W2.8)."
           },
           "places": [
             {
@@ -1598,16 +1598,16 @@
             "en": "Where closing starts in the experiment command"
           },
           "summary": {
-            "sv": "Experimentkommandot stänger nu adaptern via `disposeAndRecord`, som också sparar vad som hände med Claude Code-processen.",
-            "en": "The experiment command now closes the adapter through `disposeAndRecord`, which also records what happened to the Claude Code process."
+            "en": "The experiment command now closes the adapter through `disposeAndRecord`, which also writes down what happened to each Claude Code process.",
+            "sv": "Experimentkommandot stänger nu adaptern via `disposeAndRecord`, som också skriver ner vad som hände med varje Claude Code-process."
           },
           "body": {
-            "sv": "`disposeAndRecord(adapter, record)`\n**Ny funktion.**\n1. Anropar `adapter.dispose()`.\n2. För Claude-adaptern: skriver `claudeDisposal` i körposten med gränsen och en post per körning.\n3. Loggar varje körnings utfall.\n\nDen ersätter `adapter.dispose()` på tre ställen i experimentkommandot.",
-            "en": "`disposeAndRecord(adapter, record)`\n**New function.**\n1. Calls `adapter.dispose()`.\n2. For the Claude adapter: writes `claudeDisposal` into the run record, with the bound and one entry per run.\n3. Logs each run’s outcome.\n\nIt replaces `adapter.dispose()` in three places in the experiment command."
+            "en": "`disposeAndRecord(adapter, record)` is new. It:\n\n1. calls `adapter.dispose()`;\n2. for the Claude adapter, writes `claudeDisposal` into the run record: the bound and one entry per run;\n3. logs each run's outcome.\n\nIt replaces a plain `adapter.dispose()` in the three places shown.",
+            "sv": "`disposeAndRecord(adapter, record)` är ny. Den:\n\n1. anropar `adapter.dispose()`;\n2. skriver för Claude-adaptern in `claudeDisposal` i körningsposten: gränsen och en post per körning;\n3. loggar varje körnings utfall.\n\nDen ersätter ett vanligt `adapter.dispose()` på de tre ställen som visas."
           },
           "why": {
-            "sv": "Experimentkommandot är i dag det som faktiskt kör Claude-adaptern. Därför sparas utfallet just där.",
-            "en": "The experiment command is what actually runs the Claude adapter today, which is why the outcome is recorded there."
+            "en": "Today the experiment command is what actually runs the Claude adapter, so that is where the outcome is recorded.",
+            "sv": "I dag är det experimentkommandot som faktiskt kör Claude-adaptern, så det är där utfallet registreras."
           },
           "places": [
             {
@@ -1771,16 +1771,16 @@
             "en": "One `dispose` at a time"
           },
           "summary": {
-            "sv": "Ett andra anrop till `dispose()` väntar nu på samma pågående stängning.",
-            "en": "A second call to `dispose()` now waits for the same ongoing close."
+            "en": "A second call to `dispose()` now waits for the close already under way, instead of returning at once.",
+            "sv": "Ett andra anrop till `dispose()` väntar nu på stängningen som redan pågår, i stället för att returnera direkt."
           },
           "body": {
-            "sv": "`dispose()`\n`this.disposing ??= this.disposeOnce()` och returnerar samma löfte.\n\n**Förut:** `dispose()` returnerade direkt om `disposed` redan var satt, alltså även medan den första stängningen pågick.\n\n`private disposing`\nNytt fält som håller den pågående stängningen.",
-            "en": "`dispose()`\n`this.disposing ??= this.disposeOnce()` and returns the same promise.\n\n**Before:** `dispose()` returned at once if `disposed` was already set, even while the first close was still running.\n\n`private disposing`\nNew field holding the ongoing close."
+            "en": "`dispose()` now does `this.disposing ??= this.disposeOnce()` and returns that promise; the new field `disposing` holds the close in progress.\n\n**Before**, `dispose()` returned at once when `disposed` was already set, even if the first close was still running (shown at the base revision).",
+            "sv": "`dispose()` gör nu `this.disposing ??= this.disposeOnce()` och returnerar det löftet; det nya fältet `disposing` håller stängningen som pågår.\n\n**Tidigare** returnerade `dispose()` direkt när `disposed` redan var satt, även om den första stängningen fortfarande pågick (visas vid basrevisionen)."
           },
           "why": {
-            "sv": "Den som anropar `dispose()` en andra gång får nu veta när stängningen faktiskt är klar.",
-            "en": "A second caller of `dispose()` now learns when the close has actually finished."
+            "en": "A second caller of `dispose()` now learns when the close has really finished.",
+            "sv": "Den som anropar `dispose()` en andra gång får nu veta när stängningen verkligen är klar."
           },
           "places": [
             {
@@ -1920,16 +1920,16 @@
             "en": "What `dispose` takes care of"
           },
           "summary": {
-            "sv": "`disposeOnce` bestämmer vilka körningar som ska bevakas och avbryter alla som fortfarande är öppna.",
-            "en": "`disposeOnce` decides which runs to watch and aborts every run that is still open."
+            "en": "`disposeOnce` marks that closing has begun, decides which runs to watch, and aborts every run that is still open.",
+            "sv": "`disposeOnce` markerar att stängningen har börjat, bestämmer vilka körningar som ska bevakas och avbryter varje körning som fortfarande är öppen."
           },
           "body": {
-            "sv": "`this.disposed = true` och `this.signalDisposeBegun()`\nMarkerar att stängningen har börjat och väcker väntande turer (se W3).\n\n`watched`\nKörningar där `run.handle` finns men processen inte har setts avslutas. Även körningar utan någon observerad process räknas, eftersom en saknad observation inte bevisar att inget körs.\n\n`abort()` och `close()`\nKörs för varje körning vars ström inte är klar. Ett misslyckat anrop hindrar inte resten.",
-            "en": "`this.disposed = true` and `this.signalDisposeBegun()`\nMark that closing has begun and wake turns that are waiting (see W3).\n\n`watched`\nRuns where `run.handle` exists but the process has not been seen to exit. Runs with no observed process count too, because a missing observation does not prove nothing is running.\n\n`abort()` and `close()`\nCalled for every run whose stream has not finished. A failed call does not stop the rest."
+            "en": "First `this.disposed = true` and `this.signalDisposeBegun()`: closing has begun, and turns waiting in `send` are woken (W3).\n\n`watched` is the set of runs that have a `run.handle` but whose process has not been seen to exit. A run with no observed process is watched too, because not having seen a process does not prove that nothing is running.\n\n`abort()` and `close()` are then called for every run whose stream has not finished; one failing does not stop the rest.",
+            "sv": "Först `this.disposed = true` och `this.signalDisposeBegun()`: stängningen har börjat, och turer som väntar i `send` väcks (W3).\n\n`watched` är de körningar som har ett `run.handle` men vars process inte har setts avslutas. En körning utan observerad process bevakas också, eftersom att ingen process har setts inte bevisar att inget körs.\n\nSedan anropas `abort()` och `close()` för varje körning vars ström inte är klar; ett anrop som misslyckas stoppar inte resten."
           },
           "why": {
-            "sv": "Det är `watched` som avgör vilka processer `dispose` sedan kan döda och redovisa.",
-            "en": "`watched` decides which processes `dispose` can later kill and report on."
+            "en": "`watched` decides which processes `dispose` can later kill and report on.",
+            "sv": "`watched` avgör vilka processer `dispose` senare kan döda och rapportera om."
           },
           "places": [
             {
@@ -2051,16 +2051,16 @@
             "en": "First wait: at most 5 seconds"
           },
           "summary": {
-            "sv": "`dispose` väntar högst 5 s på att strömmar och processer slutar av sig själva.",
-            "en": "`dispose` waits at most 5 s for streams and processes to end on their own."
+            "en": "`dispose` then waits at most 5 seconds for the streams to finish and the watched processes to exit on their own.",
+            "sv": "`dispose` väntar sedan högst 5 sekunder på att strömmarna blir klara och de bevakade processerna avslutas av sig själva."
           },
           "body": {
-            "sv": "`await this.waitForAll(involved, ..., DISPOSE_EXIT_WAIT_MS)`\nVäntar tills alla strömmar är klara och inga bevakade processer lever, men högst 5 s.\n\n`waitForAll(runs, condition, ms)`\n**Ny hjälpfunktion.** Prövar villkoret igen varje gång en körning väcks, och en sista gång när tiden gått ut.\n\n`this.wake(run)` i `markPumpFinished`\n**Ny rad.** Väcker väntare när en ström blir klar. Processens utgång väckte redan förut.",
-            "en": "`await this.waitForAll(involved, ..., DISPOSE_EXIT_WAIT_MS)`\nWaits until every stream has finished and no watched process is alive, for at most 5 s.\n\n`waitForAll(runs, condition, ms)`\n**New helper.** Checks the condition again whenever a run wakes, and a last time when time runs out.\n\n`this.wake(run)` in `markPumpFinished`\n**New line.** Wakes waiters when a stream finishes. A process exit already woke them before."
+            "en": "`waitForAll(runs, condition, ms)` is a new helper. It checks its condition again each time a run wakes, and a last time when the 5 s (`DISPOSE_EXIT_WAIT_MS`) run out.\n\nA run wakes waiters when its process exits (as before) and, **new**, when its stream finishes: `this.wake(run)` in `markPumpFinished`.",
+            "sv": "`waitForAll(runs, condition, ms)` är en ny hjälpfunktion. Den prövar sitt villkor igen varje gång en körning väcks, och en sista gång när de 5 s (`DISPOSE_EXIT_WAIT_MS`) har gått.\n\nEn körning väcker de som väntar när dess process avslutas (som förut) och, **nytt**, när dess ström blir klar: `this.wake(run)` i `markPumpFinished`."
           },
           "why": {
-            "sv": "Utan väckningen i `markPumpFinished` kunde `dispose` vänta hela 5 s i onödan.",
-            "en": "Without the wake in `markPumpFinished`, `dispose` could wait the full 5 s for nothing."
+            "en": "Without that new wake, `dispose` could wait the full 5 s even though everything had already ended.",
+            "sv": "Utan det nya väckandet kunde `dispose` vänta hela 5 s fast allt redan hade slutat."
           },
           "places": [
             {
@@ -2264,16 +2264,16 @@
             "en": "The process is killed, but never twice"
           },
           "summary": {
-            "sv": "Processer som fortfarande lever efter 5 s dödas. En process som stoppsekvensen redan har dödat får inget andra `kill('SIGKILL')`.",
-            "en": "Processes still alive after 5 s are killed. A process the stop sequence already killed gets no second kill."
+            "en": "Processes still alive after the 5 seconds are killed — except one the stop sequence has already killed, which never gets a second kill.",
+            "sv": "Processer som lever efter de 5 sekunderna dödas – utom en som stoppsekvensen redan har dödat, som aldrig får en andra kill."
           },
           "body": {
-            "sv": "`run.process.child.kill('SIGKILL')`\nSkickas till varje bevakad process som fortfarande lever, **utom** om `cancellation.killRequestedAt` redan är satt.\n\n`killRequestedAt`\nSätts av stoppsekvensen när den skickar sitt `kill('SIGKILL')` (oförändrad kod).\n\nDärefter väntar `dispose` högst 2 s till på att processerna avslutas.",
-            "en": "`run.process.child.kill('SIGKILL')`\nSent to every watched process that is still alive, **except** when `cancellation.killRequestedAt` is already set.\n\n`killRequestedAt`\nSet by the stop sequence when it sends its kill (unchanged code).\n\nAfter that, `dispose` waits at most 2 s more for the processes to exit."
+            "en": "`run.process.child.kill('SIGKILL')` goes to every watched process that is still alive, unless `cancellation.killRequestedAt` is already set. The stop sequence sets that field when it sends its own kill (unchanged code).\n\nAfter the kills, `dispose` waits at most 2 s more for the processes to exit.",
+            "sv": "`run.process.child.kill('SIGKILL')` skickas till varje bevakad process som fortfarande lever, utom när `cancellation.killRequestedAt` redan är satt. Stoppsekvensen sätter det fältet när den skickar sin egen kill (oförändrad kod).\n\nEfter kill-anropen väntar `dispose` högst 2 s till på att processerna avslutas."
           },
           "why": {
-            "sv": "Det här är den del som faktiskt kan avsluta en Claude Code-process som inte lyssnar.",
-            "en": "This is the part that can actually end a Claude Code process that does not listen."
+            "en": "This is the step that can actually end a Claude Code process that does not respond to anything else.",
+            "sv": "Det här är steget som faktiskt kan avsluta en Claude Code-process som inte reagerar på något annat."
           },
           "places": [
             {
@@ -2425,16 +2425,16 @@
             "en": "What is recorded"
           },
           "summary": {
-            "sv": "`dispose` sparar en post per bevakad körning: vem som dödade processen och om utgången sågs.",
-            "en": "`dispose` keeps one entry per watched run: who killed the process and whether its exit was seen."
+            "en": "For each watched run, `dispose` keeps one entry: who killed the process, and whether its exit was seen.",
+            "sv": "För varje bevakad körning sparar `dispose` en post: vem som dödade processen och om dess avslut sågs."
           },
           "body": {
-            "sv": "`killedBy`\n`dispose`, `stop-sequence` eller ingen.\n\n`outcome`\n- `exited`: processen avslutades utan `kill('SIGKILL')`.\n- `killed-and-exited`: den avslutades efter `kill('SIGKILL')`.\n- `unconfirmed`: ingen utgång sågs, eller ingen process observerades.\n\n`providerWorkAfterEnd: 'unknown'`\nAlltid okänt: att processen avslutats säger inget om leverantörens arbete.\n\n`disposals()`\nLäser posterna när `dispose` är klar. `dispose` kastar aldrig.",
-            "en": "`killedBy`\n`dispose`, `stop-sequence` or nobody.\n\n`outcome`\n- `exited`: the process exited without a kill.\n- `killed-and-exited`: it exited after a kill.\n- `unconfirmed`: no exit was seen, or no process was observed.\n\n`providerWorkAfterEnd: 'unknown'`\nAlways unknown: the process exiting says nothing about the provider’s work.\n\n`disposals()`\nReads the entries once `dispose` is done. `dispose` never throws."
+            "en": "- `killedBy`: `dispose`, `stop-sequence`, or nobody.\n- `outcome`: `exited` (it exited without a kill), `killed-and-exited` (it exited after a kill), or `unconfirmed` (no exit was seen, or no process was observed).\n- `providerWorkAfterEnd: 'unknown'`, always: a process exiting says nothing about work the provider was still doing.\n\n`disposals()` returns the entries once `dispose` is done; `dispose` itself never throws.",
+            "sv": "- `killedBy`: `dispose`, `stop-sequence` eller ingen.\n- `outcome`: `exited` (avslutades utan kill), `killed-and-exited` (avslutades efter en kill) eller `unconfirmed` (inget avslut sågs, eller ingen process observerades).\n- `providerWorkAfterEnd: 'unknown'`, alltid: att en process avslutas säger inget om arbete providern fortfarande gjorde.\n\n`disposals()` returnerar posterna när `dispose` är klar; `dispose` själv kastar aldrig."
           },
           "why": {
-            "sv": "Posten säger ärligt vad som är bekräftat och vad som är okänt, i stället för att anta att allt stoppade.",
-            "en": "The entry says honestly what is confirmed and what is unknown, instead of assuming everything stopped."
+            "en": "The entry states what is confirmed and what is unknown, instead of assuming that everything stopped.",
+            "sv": "Posten anger vad som är bekräftat och vad som är okänt, i stället för att anta att allt stoppade."
           },
           "places": [
             {
@@ -2584,16 +2584,16 @@
             "en": "The time budget"
           },
           "summary": {
-            "sv": "`dispose` tar som mest 5 + 2 = 7 sekunder, under de 8 sekunder appen ger den.",
-            "en": "`dispose` takes at most 5 + 2 = 7 seconds, under the 8 seconds the app allows it."
+            "en": "`dispose` takes at most 5 + 2 = 7 seconds, under the 8 seconds the app allows (W2.1).",
+            "sv": "`dispose` tar högst 5 + 2 = 7 sekunder, under de 8 sekunder appen tillåter (W2.1)."
           },
           "body": {
-            "sv": "`DISPOSE_BOUND_MS = DISPOSE_EXIT_WAIT_MS + CANCEL_KILL_WAIT_MS`\n5 s väntan plus 2 s efter `kill('SIGKILL')`.\n\n`DISPOSE_TIMEOUT_MS = 8_000` i `main.ts`\nAppens gräns (W2.1).",
-            "en": "`DISPOSE_BOUND_MS = DISPOSE_EXIT_WAIT_MS + CANCEL_KILL_WAIT_MS`\n5 s of waiting plus 2 s after kill.\n\n`DISPOSE_TIMEOUT_MS = 8_000` in `main.ts`\nThe app’s limit (W2.1)."
+            "en": "`DISPOSE_BOUND_MS` is `DISPOSE_EXIT_WAIT_MS` (5 s of waiting) plus `CANCEL_KILL_WAIT_MS` (2 s after the kill). `main.ts` allows 8 s through `DISPOSE_TIMEOUT_MS`.",
+            "sv": "`DISPOSE_BOUND_MS` är `DISPOSE_EXIT_WAIT_MS` (5 s väntan) plus `CANCEL_KILL_WAIT_MS` (2 s efter kill). `main.ts` tillåter 8 s via `DISPOSE_TIMEOUT_MS`."
           },
           "why": {
-            "sv": "Jämför med W1.7: chattjänsten använder ännu inte Claude-adaptern, så relationen 7 s < 8 s påverkar inte appens stängning på den här revisionen.",
-            "en": "Compare with W1.7: the chat service does not use the Claude adapter yet, so the 7 s < 8 s relation does not affect the app’s closing at this revision."
+            "en": "As W1.7 says, the app's chat does not use the Claude adapter yet, so at this revision the 7 s < 8 s relation does not yet affect closing the app.",
+            "sv": "Som W1.7 säger använder appens chatt ännu inte Claude-adaptern, så på den här revisionen påverkar förhållandet 7 s < 8 s ännu inte när appen stängs."
           },
           "places": [
             {
@@ -2692,16 +2692,16 @@
             "en": "The wait in `send`"
           },
           "summary": {
-            "sv": "En ny tur väntar på att föregående tur blir klar. Väntan kan sluta på två sätt. Hela väntan i `send` är oförändrad; det som ändrats är `settlesWithinBound` (W3.2) och exporten.",
-            "en": "A new turn waits for the previous one to finish. The wait can end in two ways. The whole wait in `send` is unchanged; what changed is `settlesWithinBound` (W3.2) and the export."
+            "en": "A new turn waits for the previous one before it starts, and the wait can end in two ways. The wait itself is unchanged; what changed is the helper it uses (W3.2).",
+            "sv": "En ny tur väntar på föregående innan den startar, och väntan kan sluta på två sätt. Själva väntan är oförändrad; det som ändrats är hjälpfunktionen den använder (W3.2)."
           },
           "body": {
-            "sv": "`await this.settlesWithinBound(previous.pump, PREVIOUS_TURN_EXIT_MS)`\nVäntar högst 15 s. Den här raden är oförändrad.\n\nOm instansen stängdes under väntan:\nTuren avslutas som `cancelled` och `send` kastar ett fel. Inget når lyssnarna, eftersom de redan är bortkopplade.\n\nOm väntan tog slut:\nTuren tas bort och `send` kastar ett fel. Ingen `run.finished` skickas för turen.\n\n`PREVIOUS_TURN_EXIT_MS`\nNu exporterad, så att testet kan kontrollera hur `CANCEL_END_BOUND_MS` härleds (`app/tests/claude-agent-sdk-adapter.test.ts:1395`).",
-            "en": "`await this.settlesWithinBound(previous.pump, PREVIOUS_TURN_EXIT_MS)`\nWaits at most 15 s. This line is unchanged.\n\nIf the instance was closed during the wait:\nThe turn ends as `cancelled` and `send` throws. Nothing reaches listeners, because they are already removed.\n\nIf the wait timed out:\nThe turn is removed and `send` throws. No `run.finished` is sent for the turn.\n\n`PREVIOUS_TURN_EXIT_MS`\nNow exported, so that the test can check how `CANCEL_END_BOUND_MS` is derived (`app/tests/claude-agent-sdk-adapter.test.ts:1395`)."
+            "en": "`send` waits with `settlesWithinBound(previous.pump, PREVIOUS_TURN_EXIT_MS)`, at most 15 s (unchanged line). Then:\n\n- **The instance was closed while it waited:** the turn ends as `cancelled` and `send` throws. No event reaches listeners, because they have already been removed.\n- **The wait timed out:** the turn is removed and `send` throws, with no `run.finished` for it.\n\n`PREVIOUS_TURN_EXIT_MS` is now exported, so that the test can check how `CANCEL_END_BOUND_MS` is derived (`app/tests/claude-agent-sdk-adapter.test.ts:1395`).",
+            "sv": "`send` väntar med `settlesWithinBound(previous.pump, PREVIOUS_TURN_EXIT_MS)`, högst 15 s (oförändrad rad). Sedan:\n\n- **Instansen stängdes medan den väntade:** turen slutar som `cancelled` och `send` kastar. Ingen händelse når lyssnarna, eftersom de redan är borttagna.\n- **Väntan tog slut:** turen tas bort och `send` kastar, utan något `run.finished` för den.\n\n`PREVIOUS_TURN_EXIT_MS` exporteras nu, så att testet kan kontrollera hur `CANCEL_END_BOUND_MS` räknas fram (`app/tests/claude-agent-sdk-adapter.test.ts:1395`)."
           },
           "why": {
-            "sv": "Ingen ny Claude-process startas efter att instansen stängts.",
-            "en": "No new Claude process is started after the instance has closed."
+            "en": "So no new Claude process is started after the instance has closed.",
+            "sv": "Så startas ingen ny Claude-process efter att instansen har stängts."
           },
           "places": [
             {
@@ -2858,16 +2858,16 @@
             "en": "The wait ends when `dispose` begins"
           },
           "summary": {
-            "sv": "`settlesWithinBound` svarar nu direkt när `dispose` börjar, i stället för att vänta ut sin tid.",
-            "en": "`settlesWithinBound` now answers at once when `dispose` begins, instead of waiting out its time."
+            "en": "`settlesWithinBound` now answers as soon as `dispose` begins, instead of waiting out its time.",
+            "sv": "`settlesWithinBound` svarar nu så fort `dispose` börjar, i stället för att vänta ut sin tid."
           },
           "body": {
-            "sv": "`this.disposeBegun.then(() => settled)`\n**Ny rad i `Promise.race`.** När `dispose` börjar svarar väntan direkt, med om löftet redan hann bli klart. Raden ovanför, `promise.then(markSettled, markSettled)`, ersätter basens två `() => true`.\n\n`markSettled`\nHåller reda på om löftet blev klart (uppfyllt eller avvisat) före `dispose`.\n\n`disposeBegun`\nEtt löfte som skapas i konstruktorn och avgörs av `signalDisposeBegun()` (W2.4).",
-            "en": "`this.disposeBegun.then(() => settled)`\n**New line in the race.** When `dispose` begins, the wait answers whether the promise had already settled.\n\n`markSettled`\nKeeps track of whether the promise settled before `dispose`.\n\n`disposeBegun`\nA promise created in the constructor and resolved by `signalDisposeBegun()` (W2.4)."
+            "en": "A new entry in its `Promise.race`, `this.disposeBegun.then(() => settled)`, answers when closing begins, with whether the awaited promise had already settled. `markSettled` keeps track of that.\n\n`disposeBegun` is a promise created in the constructor and resolved by `signalDisposeBegun()` (W2.4).",
+            "sv": "En ny post i dess `Promise.race`, `this.disposeBegun.then(() => settled)`, svarar när stängningen börjar, med huruvida det väntade löftet redan hade avgjorts. `markSettled` håller reda på det.\n\n`disposeBegun` är ett löfte som skapas i konstruktorn och uppfylls av `signalDisposeBegun()` (W2.4)."
           },
           "why": {
-            "sv": "Så blir ingen timer kvar efter instansen, och den väntande turen startar aldrig.",
-            "en": "So no timer outlives the instance, and the waiting turn never starts."
+            "en": "So no timer outlives the instance, and the waiting turn never starts.",
+            "sv": "Så överlever ingen timer instansen, och den väntande turen startar aldrig."
           },
           "places": [
             {
@@ -3027,16 +3027,16 @@
             "en": "Removed: `settlesWithin`"
           },
           "summary": {
-            "sv": "Den fristående `settlesWithin` är borttagen. Den använde Nodes riktiga `setTimeout` i stället för instansens timers. Metoden `settlesWithinBound` med det snarlika namnet finns kvar (W3.2).",
-            "en": "The free-standing `settlesWithin` has been removed. It used Node’s real `setTimeout` instead of the instance’s timers. The method `settlesWithinBound`, with the similar name, remains (W3.2)."
+            "en": "The free-standing `settlesWithin` is gone. It used Node's own `setTimeout` instead of the instance's timers. The method with the similar name, `settlesWithinBound`, stays (W3.2).",
+            "sv": "Den fristående `settlesWithin` är borta. Den använde Nodes egen `setTimeout` i stället för instansens timers. Metoden med det liknande namnet, `settlesWithinBound`, finns kvar (W3.2)."
           },
           "body": {
-            "sv": "`async function settlesWithin(promise, ms)`\nBorttagen funktion.\n\n`await settlesWithin(Promise.allSettled(pumps).then(() => undefined), 5_000)`\nI basen användes den bara av `dispose` för väntan på strömmarna. Nu sköts den väntan av `waitForAll` (W2.5).",
-            "en": "`async function settlesWithin(promise, ms)`\nRemoved function.\n\n`await settlesWithin(Promise.allSettled(pumps).then(() => undefined), 5_000)`\nIn the base it was used only by `dispose` to wait for the streams. That wait is now done by `waitForAll` (W2.5)."
+            "en": "At the base revision `settlesWithin(promise, ms)` was used in one place: by `dispose`, to wait up to 5 s for the streams. `waitForAll` now does that wait (W2.5).",
+            "sv": "Vid basrevisionen användes `settlesWithin(promise, ms)` på ett ställe: av `dispose`, för att vänta upp till 5 s på strömmarna. Den väntan gör nu `waitForAll` (W2.5)."
           },
           "why": {
-            "sv": "`waitForAll` använder instansens egna timers, så testerna kan styra tiden. Den prövar också villkoret igen varje gång en körning väcks.",
-            "en": "`waitForAll` uses the instance’s own timers, so tests can control time. It also checks its condition again whenever a run wakes."
+            "en": "`waitForAll` uses the instance's timers, so tests can control time, and it checks its condition again whenever a run wakes.",
+            "sv": "`waitForAll` använder instansens timers, så testerna kan styra tiden, och den prövar sitt villkor igen när en körning väcks."
           },
           "places": [
             {
@@ -3124,16 +3124,16 @@
             "en": "The link to W1"
           },
           "summary": {
-            "sv": "Väntan i W3.1 är den andra termen i gränsen från W1.5.",
-            "en": "The wait in W3.1 is the second term of the bound from W1.5."
+            "en": "The wait in W3.1 is the second term of the bound in W1.5.",
+            "sv": "Väntan i W3.1 är den andra termen i gränsen från W1.5."
           },
           "body": {
-            "sv": "`CANCEL_END_BOUND_MS = Math.max(..., PREVIOUS_TURN_EXIT_MS)`\nGränsen täcker också en tur som väntar på föregående tur.\n\n`if (!ended)`\nOm väntan tar slut skickas ingen `run.finished` för turen.",
-            "en": "`CANCEL_END_BOUND_MS = Math.max(..., PREVIOUS_TURN_EXIT_MS)`\nThe bound also covers a turn that waits for the previous one.\n\n`if (!ended)`\nIf the wait times out, no `run.finished` is sent for the turn."
+            "en": "`CANCEL_END_BOUND_MS = Math.max(..., PREVIOUS_TURN_EXIT_MS)`: the bound also covers a turn that is waiting for the previous one. If that wait times out (`if (!ended)`), no `run.finished` is sent for the turn.",
+            "sv": "`CANCEL_END_BOUND_MS = Math.max(..., PREVIOUS_TURN_EXIT_MS)`: gränsen täcker också en tur som väntar på föregående. Tar den väntan slut (`if (!ended)`) skickas inget `run.finished` för turen."
           },
           "why": {
-            "sv": "En tur som aldrig startade får alltså inget slut att bekräfta. Medan en tur fortfarande väntar i `send` avbryter chattjänsten den inte via adaptern: den som slutar vänta får utfallet okänt (`chat-service.ts:1669–1677`), och ett avvisat `send` registreras som misslyckat (`1534–1539`). Först om en körning ändå startar för det övergivna försöket avbryts den via adaptern (`stopAbandonedRun`), och då gäller W1.3. Chatten använder dessutom inte Claude-adaptern ännu.",
-            "en": "A turn that never started has no end to confirm. While a turn is still waiting in `send`, the chat service does not cancel it through the adapter: stopping the wait records the outcome as unknown (`chat-service.ts:1669–1677`), and a rejected `send` is recorded as failed (`1534–1539`). Only if a run starts after all for the abandoned attempt is it cancelled through the adapter (`stopAbandonedRun`), and then W1.3 applies. The chat does not use the Claude adapter yet, either."
+            "en": "A turn that never started has no end to confirm.\n\nWhile a turn is still waiting in `send`, the chat service does not cancel it through the adapter: stopping the wait records the outcome as unknown (`chat-service.ts:1669–1677`), and a rejected `send` is recorded as failed (`1534–1539`). Only if a run then starts for the abandoned attempt is it cancelled through the adapter (`stopAbandonedRun`), and W1.3 applies.",
+            "sv": "En tur som aldrig startade har inget slut att bekräfta.\n\nMedan en tur fortfarande väntar i `send` avbryter chattjänsten den inte via adaptern: att sluta vänta registrerar utfallet som okänt (`chat-service.ts:1669–1677`), och ett `send` som avvisas registreras som misslyckat (`1534–1539`). Bara om en körning ändå startar för det övergivna försöket avbryts den via adaptern (`stopAbandonedRun`), och då gäller W1.3."
           },
           "places": [
             {

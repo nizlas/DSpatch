@@ -52,12 +52,13 @@ test('the bundled definition is the DSP-116 walk and names the clone it is in as
   const definitionPath = located.kind === 'found' ? located.definitionPath : '';
   const text = fs.readFileSync(definitionPath, 'utf8');
 
-  // The content as bundled: the original (sha256 9c6119d8…) with only `repository`
-  // changed from "repo" to "../..". Hashed with LF line ends, so a clone with either
-  // checkout convention gives the same answer.
+  // The content as bundled: the original (sha256 9c6119d8…) with `repository` changed
+  // from "repo" to "../..", and the explanations reworked for readability in DSP-152
+  // (README). Hashed with LF line ends, so a clone with either checkout convention gives
+  // the same answer.
   assert.equal(
     createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex'),
-    'e05d684f6f1d0ec201f86bf66a412cdf6795c4a2ca47e9f6f718fdbd20e54873',
+    'e3743de0082ce699b101ad1a6e0bfd98a5f4eca112891c9018454cda4cee7d85',
   );
 
   const { definition, problems } = parseReviewDefinition(JSON.parse(text));

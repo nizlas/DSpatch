@@ -12,11 +12,21 @@ opens any `*.review.json` definition, and nothing in DSpatch depends on this fil
 - **The one change.** `repository` went from `"repo"` to `"../.."`, the clone root
   relative to this file, so the review reads the two revisions from whichever clone it is
   opened in. Every other field, including the Swedish and English explanations, the code
-  references and the walks, is unchanged. SHA-256 of the bundled file:
+  references and the walks, was unchanged. SHA-256 of that bundled file:
   `5290652ed25562ffe9b74d3bb1702196473ce19b6d9a2f26dfb3ad63d796ad56` with CRLF line ends
   (as the original, and a Windows checkout with `core.autocrlf=true`),
   `e05d684f6f1d0ec201f86bf66a412cdf6795c4a2ca47e9f6f718fdbd20e54873` with LF line ends
   (as stored in git, and a checkout without line-end conversion).
+- **Readability rework (DSP-152, 29 October 2026).** The Swedish and English `summary`,
+  `body` and `why` of every step, and W1's `purpose`, were rewritten to the writing rules
+  of the [code-walks plan](../../docs/plans/DSpatch-code-walks-plan-original.md): what
+  happens first, short paragraphs and lists, less repetition. Every factual statement was
+  checked against the code at the target revision, not against today's DSpatch.
+  `base`, `target`, `repository`, the walks, step ids, places and evidence are unchanged,
+  and `provenance` keeps its earlier text with a Version 5 sentence appended. SHA-256 of
+  the bundled file now:
+  `c63ea9b03780af6a369571f2e18f2a210ba790f730b50254c654c14580460fd1` with CRLF line ends,
+  `e3743de0082ce699b101ad1a6e0bfd98a5f4eca112891c9018454cda4cee7d85` with LF line ends.
 - **What it needs.** A full clone of the DSpatch repository holding both revisions. A
   shallow clone or a copy without its history does not have them; review then says so
   and shows nothing in their place.

@@ -394,12 +394,30 @@ Niclas decided the review flow on 28 October 2026 (DSP-150). It is a decision, n
 - **Way in.** Review opens from the main chat and from the loop editor. A workspace with several Git repositories lists them by folder name, each once and without folders that have no Git; one repository goes straight to its log.
 - **Revision pair.** A traditional Git log; a click on a commit chooses From, the next chooses To, and the two can be swapped. The review is of exactly those two commits and never substitutes working-copy content. A diff review needs no review definition and no provider call.
 - **Diff window.** Its own window, starting with *Files changed*; a file opens side by side or unified, with the file overview at hand. Added, deleted and renamed files and files without a text diff read plainly.
-- **Walk windows.** Existing code walks over the same repository and pair open from the diff review in further windows. The windows share review state but navigate independently; only an explicit *Show in diff* moves the diff view. Opening a walk or showing a step is not review. Automatic generation of walks is not specified yet and is not built; without walks the diff review still works and says so briefly. The DSP-116 example stays available.
+- **Walk windows.** Existing code walks over the same repository and pair open from the diff review in further windows. The windows share review state but navigate independently; only an explicit *Show in diff* moves the diff view. Opening a walk or showing a step is not review. Generating walks with an agent is specified below (DSP-152); without walks the diff review still works and says so briefly. The DSP-116 example stays available.
 - **Status and coverage.** Changed lines and ranges can be marked as reviewed by the person or explicitly exempted, and withdrawn. Agent review counts only from a recorded agent review. A requirement decides what counts as handled, and agent review alone is not enough where manual review is required. *Files changed* shows the percentage of handled changed lines, deleted lines included and context excluded, and a checkbox once every changed line is handled; reviewed and exempted stay distinguishable. A file with nothing to count is done only after a decision about the whole file. Marks, requirement and position are kept per revision pair, count a change once however many walks pass it, and never pass to changed code.
 - **In the diff.** The red and green backgrounds stay. Status sits in a narrow strip beside the line numbers: blue reviewed by the person, violet agent-reviewed, grey dashed exempted, nothing not yet handled, on both sides and in the unified view, with status text on hover and keyboard focus. Manual review is drawn over agent review, and both stay in the details.
 - **Boundaries.** Repository access, Git, revision identity and the persistent review state belong to the host; the windows use the contracts. The review discussion stays tool-free.
 
 This decision authorises that flow. It does not decide the order of the DSP-13 experiments, review depth or teaching modes, or how agent reviews are produced.
+
+#### Agent-generated code walks (Niclas's decision, 29 October 2026)
+
+The requirements for generating walks, explaining them and delegating review are Niclas's original [code-walks plan](plans/DSpatch-code-walks-plan-original.md) (Swedish, verbatim), carried by DSP-152. With it he decided that:
+
+- **Manual review is the default** for a new review. The person can explicitly delegate a part of the review, or all of it, to an agent; only such a delegated, recorded and validated agent review counts as handled where manual review is required. Earlier review records keep their requirement and meaning.
+- **A walk or an explanation is never an approval**, and walked through is not reviewed. An exemption is the person's explicit decision. Insufficient, cancelled or failed agent work approves nothing.
+- **The agent does not change code.** Preparing walks and reviewing are read-only, with no fix loop; the working copy and branch stay as they are, and the two chosen commits are the only material.
+- **Existing parts are reused:** the provider factory, model choice and session handling, the provider's permission rules and the tool-free review discussion, which does not gain tools.
+
+What DSP-152 implemented within that decision, and the choices it made that Niclas can change after trying them, are recorded in the story; in short:
+
+- *Prepare code walks* in the diff window asks a chosen agent and model for walks over the pair. The host gives the agent the diff and excerpts of the two commits in the prompt, runs it tool-free from an empty folder, validates every reference against the commits, repairs at most once, drops places that stay invalid and shows changed lines no walk covers. The walks are saved as a review definition with a provenance note and open like any other.
+- In a walk the step panel shows a short explanation with more on request; *Tell me more*, *Explain more simply* and *Explain this* (on selected text) are asked through the review discussion with the step as context, kept collapsible with the step and continued in the discussion. Asking for a simpler explanation does not change the level of the review.
+- *Delegate* reviews selected lines, a file, a walk's changed lines or the whole review. The result records the assessment, findings and uncertainties; approvals count only inside the delegated scope at the reviewed revisions and show violet in the strip.
+- The host owns agent jobs: a job is saved before its prompt is sent, can be stopped, and reopening or restarting never resends it; a job that was running when DSpatch closed is shown with an unknown outcome.
+
+The walk content and the explanations come from the model and have not been evaluated on real changes; the pilot questions in this section still apply.
 
 <a id="4-maestro-och-agentnätverket"></a>
 
