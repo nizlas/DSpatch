@@ -334,6 +334,14 @@ export function LoopEditor(): React.JSX.Element {
    * opinion for them to disagree about.
    */
   const runFoldRef = useRef<RunView | null>(null);
+  /**
+   * Run events that arrived while the opening read was out, or `null` once it answered.
+   *
+   * A window opening mid-run subscribes and then asks the host for the run as it stands
+   * (`currentLoopRunView`). The answer already holds every event sent before it, so
+   * these are dropped when it comes, and only applied if it never does.
+   */
+  const heldBeforeViewRef = useRef<LoopRunEvent[] | null>(null);
 
   /**
    * One run event in, and everything this window holds about the run out.
@@ -888,7 +896,17 @@ export function LoopEditor(): React.JSX.Element {
     // the drawing (DSP-86), so there is nothing here for an offer to take — which is what
     // lets the Ready pulse come back after a run without the person toggling `Use loop`
     // off and on (#6).
-    return window.dspatch.onLoopRunEvent(receiveRunEvent);
+    return window.dspatch.onLoopRunEvent((event) => {
+      // Before the opening read has answered, an event is already in that answer: both
+      // travel one ordered path from the host. Applying it as well would append a reply
+      // fragment twice, so it waits, and is dropped once the answer arrives.
+      const waiting = heldBeforeViewRef.current;
+      if (waiting !== null) {
+        waiting.push(event);
+        return;
+      }
+      receiveRunEvent(event);
+    });
   }, [receiveRunEvent]);
 
   useEffect(() => {
@@ -918,23 +936,38 @@ export function LoopEditor(): React.JSX.Element {
    */
   useEffect(() => {
     let cancelled = false;
-    void window.dspatch.currentLoopRun().then(
-      (run) => {
-        if (cancelled || run === null || runFoldRef.current !== null) {
+    heldBeforeViewRef.current = [];
+    void window.dspatch.currentLoopRunView().then(
+      (view) => {
+        heldBeforeViewRef.current = null;
+        // A dry run this window began itself before the answer stays; nothing else has
+        // been applied yet, because events wait above until now.
+        if (cancelled || view === null || runFoldRef.current !== null) {
           return;
         }
-        const adopted = runViewFor(run);
-        runFoldRef.current = adopted;
-        setWatch(adopted);
+        // The run as it stands, not replayed: the marks and the motion are those of the
+        // current state, so a step that finished before the window opened is drawn
+        // finished and only the step working now moves.
+        runFoldRef.current = view;
+        setWatch(view);
       },
       () => {
-        /* Nothing to watch is the ordinary case and not an error. */
+        // Nothing to watch is the ordinary case and not an error. Without an answer the
+        // held events are all this window knows, so they are applied as they came.
+        const held = heldBeforeViewRef.current ?? [];
+        heldBeforeViewRef.current = null;
+        if (!cancelled) {
+          for (const event of held) {
+            receiveRunEvent(event);
+          }
+        }
       },
     );
     return () => {
       cancelled = true;
+      heldBeforeViewRef.current = null;
     };
-  }, []);
+  }, [receiveRunEvent]);
 
   const showRun = useCallback(
     (result: RunResult, extra?: string) => {

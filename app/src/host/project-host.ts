@@ -2521,6 +2521,8 @@ function registerLoopMethods(): void {
    * next run. Nothing here starts a run, and asking twice is the same as asking once.
    */
   handle('loop.currentRun', (): LiveRunAnnouncement | null => runAudience.current());
+  // The same read with the run's progress folded in, for a graph view opening mid-step.
+  handle('loop.currentRunView', () => runAudience.currentView());
 
   /**
    * Which agent the graph editor's Run would use now, as one line (DSP-138).

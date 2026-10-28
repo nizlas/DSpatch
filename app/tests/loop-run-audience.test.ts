@@ -23,7 +23,11 @@ import {
   LoopRunAudience,
   type RunAudienceWindow,
 } from '../src/main/loop-run-audience';
-import type { LiveRunAnnouncement, LoopRunEvent } from '../src/shared/loop-run-view';
+import {
+  nodeRunStates,
+  type LiveRunAnnouncement,
+  type LoopRunEvent,
+} from '../src/shared/loop-run-view';
 
 interface FakeWindow extends RunAudienceWindow {
   readonly heard: LoopRunEvent[];
@@ -223,6 +227,89 @@ describe('the run that has ended', () => {
       next,
       'the ending of an earlier run must not be able to say that the current one is over',
     );
+  });
+});
+
+/**
+ * A graph view opened halfway through a step.
+ *
+ * Niclas started a loop from the chat with the editor closed and opened the editor
+ * during a step: nothing on the drawing moved. The window asked what was running and
+ * was told which drawing, but not where the run was in it, so no node was active until
+ * the next step began. The run as it stands is now a read of its own, folded by the
+ * same `applyRunEvent` a watching window uses.
+ */
+describe('a window that opens mid-step is handed the run as it stands', () => {
+  function activity(text: string | null): LoopRunEvent {
+    return {
+      kind: 'activity',
+      runId: run.runId,
+      graphVersionId: run.graphVersionId,
+      activity: {
+        runId: run.runId,
+        nodeId: 'implementer',
+        occurrence: 1,
+        atUtc: '2026-09-18T06:00:02.000Z',
+        ...(text === null
+          ? { kind: 'step-started', roleId: null, roleSourcePath: null }
+          : { kind: 'reply-text', text }),
+      },
+    } as LoopRunEvent;
+  }
+
+  it('holds the journal and the step activity a watching window would hold', () => {
+    const audience = new LoopRunAudience();
+    const chat = fakeWindow();
+    audience.add(chat);
+    audience.start(run);
+    audience.broadcast(journalEvent());
+    audience.broadcast(activity(null));
+    audience.broadcast(activity('Reading the files'));
+
+    const view = audience.currentView();
+    assert.notEqual(view, null);
+    assert.equal(
+      nodeRunStates(view).get('implementer'),
+      'active',
+      'the step working when the window opens must be drawn active at once, not after the next step begins',
+    );
+    assert.deepEqual(view?.entries, [journalEvent().entry]);
+    assert.equal(view?.steps.length, 1, "and the step's activity, which is what moves on the drawing");
+    assert.equal(view?.ended, false);
+  });
+
+  it('leaves the view alone for an event addressed to another run', () => {
+    const audience = new LoopRunAudience();
+    audience.start(run);
+    const before = audience.currentView();
+    audience.broadcast({ ...journalEvent(), runId: 'chat-live-0' } as LoopRunEvent);
+    assert.equal(audience.currentView(), before, 'a late entry from an earlier run changes nothing held');
+  });
+
+  it('has nothing to hand over once the run has ended or a stand-by offer is withdrawn', () => {
+    const audience = new LoopRunAudience();
+    audience.start(run);
+    audience.broadcast(journalEvent());
+    audience.end({ runId: run.runId, graphVersionId: run.graphVersionId, status: 'cancelled', note: 'stopped' });
+    assert.equal(
+      audience.currentView(),
+      null,
+      'a window opened after the run ended must not be shown a run that looks active',
+    );
+
+    audience.prepare({ ...run, runId: 'chat-ready-2', phase: 'ready' });
+    assert.equal(audience.currentView()?.run.phase, 'ready');
+    audience.standDown();
+    assert.equal(audience.currentView(), null);
+  });
+
+  it('keeps the view of the run that came after a slow ending from an earlier one', () => {
+    const audience = new LoopRunAudience();
+    audience.start(run);
+    const next: LiveRunAnnouncement = { ...run, runId: 'chat-live-2', graphVersionId: 'graph-2222' };
+    audience.start(next);
+    audience.end({ runId: run.runId, graphVersionId: run.graphVersionId, status: null, note: 'cancelled' });
+    assert.equal(audience.currentView()?.run.runId, next.runId);
   });
 });
 

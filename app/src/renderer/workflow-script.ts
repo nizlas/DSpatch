@@ -1,5 +1,6 @@
 import type { ScriptedRunPlan, ScriptedRunReport } from '../shared/bridge';
 import type { WorkspaceView } from '../shared/workspace-folders';
+import { nodeRunStates } from '../shared/loop-run-view';
 import {
   checkAnswerGrewWhileStreaming,
   checkDeletedProseIsGone,
@@ -804,6 +805,8 @@ export async function runScriptedWorkflow(
       return runEditorUncertainScenario(plan);
     case 'steering-placement':
       return runSteeringPlacementScenario(plan);
+    case 'editor-joins-run':
+      return runEditorJoinsRunScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -11285,6 +11288,251 @@ async function runSteeringPlacementScenario(plan: ScriptedRunPlan): Promise<Scri
       })),
       actionError: textOf('action-error'),
       composerNote: textOf('composer-note'),
+    };
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-28 follow-up: the loop editor opened while a chat loop is walking      */
+/* ------------------------------------------------------------------------- */
+
+/** One node of the editor's drawing as `readLiveness` reads it. */
+interface EditorNodeReading {
+  readonly id: string;
+  readonly state: string;
+  readonly working: boolean;
+  readonly animations: number;
+}
+
+/** What the client read of the loop editor's own window, or `null` when none is open. */
+async function readEditorWindow(): Promise<{ drawn: string[]; nodes: EditorNodeReading[] } | null> {
+  const answer = await window.dspatch.editorWindowCheck({ action: 'read' });
+  if (!answer.ok) {
+    return null;
+  }
+  const detail = answer.detail as {
+    hooked: boolean;
+    drawn: string[];
+    liveness: EditorNodeReading[] | null;
+  };
+  if (!detail.hooked || detail.drawn.length === 0 || detail.liveness === null) {
+    return null;
+  }
+  return { drawn: detail.drawn, nodes: detail.liveness };
+}
+
+/** The host's own account of the run: which run, how far, and which step is active. */
+async function hostRunReading(): Promise<{
+  runId: string;
+  phase: string;
+  ended: boolean;
+  entries: number;
+  active: string[];
+  nodes: string[];
+} | null> {
+  const view = await window.dspatch.currentLoopRunView();
+  if (view === null) {
+    return null;
+  }
+  let nodes: string[] = [];
+  try {
+    nodes = ((JSON.parse(view.run.graphText) as { nodes?: { id: string }[] }).nodes ?? []).map((node) => node.id);
+  } catch {
+    nodes = [];
+  }
+  return {
+    runId: view.run.runId,
+    phase: view.run.phase ?? 'running',
+    ended: view.ended,
+    entries: view.entries.length,
+    active: [...nodeRunStates(view)].filter(([, state]) => state === 'active').map(([id]) => id).sort(),
+    nodes: nodes.sort(),
+  };
+}
+
+/** Poll an async reading until it satisfies `done`, and give back the last reading. */
+async function pollUntil<T>(read: () => Promise<T>, done: (value: T) => boolean, timeoutMs: number): Promise<T> {
+  const until = performance.now() + timeoutMs;
+  let value = await read();
+  while (!done(value) && performance.now() < until) {
+    await sleep(100);
+    value = await read();
+  }
+  return value;
+}
+
+function activeIn(reading: { nodes: EditorNodeReading[] } | null): string[] {
+  return (reading?.nodes ?? []).filter((node) => node.state === 'active').map((node) => node.id).sort();
+}
+
+function lookedActive(reading: { nodes: EditorNodeReading[] } | null): EditorNodeReading[] {
+  return (reading?.nodes ?? []).filter((node) => node.state === 'active' || node.working);
+}
+
+/**
+ * The loop editor opened while a chat loop is walking (DSP-28 follow-up).
+ *
+ * Niclas started a loop from the chat with the editor closed, opened the editor, and saw
+ * no motion on the drawing. A window opening mid-step asked the host which run was walking
+ * and was told the drawing but not how far the run had got, so no node was active until the
+ * next step began. This opens the real editor window with the chat's own button in the
+ * middle of a step and reads it through the client, beside the host's own account.
+ *
+ * SIMULATED provider (presentation adapter, `[[very-slow]]` pacing). The window, host,
+ * runner and the editor's second window are real.
+ */
+async function runEditorJoinsRunScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const observations: Record<string, unknown> = {
+    plan,
+    limits:
+      'SIMULATED provider (presentation adapter). The chat window, the loop editor window, ' +
+      'the host and the runner are real; the editor window is read by the client through ' +
+      "the editor's own check hook.",
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const same = (left: readonly string[], right: readonly string[]): boolean =>
+    JSON.stringify(left) === JSON.stringify(right);
+
+  try {
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await window.dspatch.pressMenuItem('new-sample-project');
+    await waitFor('a session to open', () => textOf('session-id') !== '' && element('prompt') !== null, 30_000);
+    await setCheckbox('use-loop', true);
+    await sleep(300);
+
+    // --- 1. The loop starts from the chat, with the editor closed ----------------------
+    const runsBefore = countEntries('loop-turn');
+    const at = `loop-turn-${String(runsBefore)}`;
+    expect((await readEditorWindow()) === null, 'an editor window was open before the run started');
+    await typeInto('prompt', '[[very-slow]] Report what the project is for, mark-join.');
+    await sendFromComposer();
+    await waitFor('a step to be writing', () => rawTextOf(`${at}-live-text`).trim().length > 20, 60_000, 50);
+    const before = await hostRunReading();
+    record('run started, editor closed', { host: before });
+    expect(before !== null && before.active.length === 1, `the host has no single active step: ${JSON.stringify(before)}`);
+
+    // --- 2. Open the editor in the middle of the step ----------------------------------
+    await click('edit-agent-loops');
+    const joined = await pollUntil(readEditorWindow, (reading) => activeIn(reading).length > 0, 10_000);
+    const hostAtJoin = await hostRunReading();
+    const joinedActive = activeIn(joined);
+    const stillSameStep =
+      before !== null && hostAtJoin !== null && hostAtJoin.runId === before.runId && hostAtJoin.entries === before.entries;
+    record('editor opened mid-step', { editor: joined, host: hostAtJoin, stillSameStep });
+    expect(joined !== null, 'the editor window did not draw a graph');
+    expect(
+      stillSameStep,
+      'the step changed before the editor was read, so this reading cannot tell the opening read from a later event',
+    );
+    expect(
+      hostAtJoin !== null && same(joinedActive, hostAtJoin.active),
+      `the editor did not show the step the host says is active: editor ${JSON.stringify(joinedActive)}, host ${JSON.stringify(hostAtJoin?.active)}`,
+    );
+    expect(
+      hostAtJoin !== null && same([...(joined?.drawn ?? [])].sort(), hostAtJoin.nodes),
+      "the editor did not draw the run's graph",
+    );
+    const working = (joined?.nodes ?? []).find((node) => node.state === 'active');
+    expect(working?.working === true && (working?.animations ?? 0) > 0, `the active step does not move: ${JSON.stringify(working)}`);
+    await window.dspatch.captureWindow('editor-joins-run-chat');
+
+    // --- 3. The next step --------------------------------------------------------------
+    const firstActive = hostAtJoin?.active ?? [];
+    const moved = await pollUntil(
+      hostRunReading,
+      (host) => host === null || host.ended || (host.active.length > 0 && !same(host.active, firstActive)),
+      120_000,
+    );
+    const followed = await pollUntil(
+      readEditorWindow,
+      (reading) => moved !== null && same(activeIn(reading), moved.active),
+      5_000,
+    );
+    record('next step', { host: moved, editor: followed });
+    expect(
+      moved !== null && !moved.ended && moved.active.length > 0 && same(activeIn(followed), moved.active),
+      `the editor did not follow the run to its next step: editor ${JSON.stringify(activeIn(followed))}, host ${JSON.stringify(moved?.active)}`,
+    );
+
+    // --- 4. Close and reopen during the run --------------------------------------------
+    const runIdAtClose = moved?.runId ?? '';
+    await window.dspatch.editorWindowCheck({ action: 'close' });
+    const afterClose = await hostRunReading();
+    expect(
+      afterClose !== null && afterClose.runId === runIdAtClose && !afterClose.ended,
+      'closing the editor touched the run',
+    );
+    await click('edit-agent-loops');
+    const reopened = await pollUntil(readEditorWindow, (reading) => activeIn(reading).length > 0, 10_000);
+    const hostAtReopen = await hostRunReading();
+    record('editor reopened during the run', { editor: reopened, host: hostAtReopen });
+    expect(
+      hostAtReopen !== null && hostAtReopen.runId === runIdAtClose && same(activeIn(reopened), hostAtReopen.active),
+      `the reopened editor did not show the active step: editor ${JSON.stringify(activeIn(reopened))}, host ${JSON.stringify(hostAtReopen?.active)}`,
+    );
+    const reopenedWorking = (reopened?.nodes ?? []).find((node) => node.state === 'active');
+    expect((reopenedWorking?.animations ?? 0) > 0, 'the active step does not move in the reopened editor');
+
+    // --- 5a. An ended run is not shown as active ---------------------------------------
+    await waitFor('the loop run to end', () => loopRunEnded(runsBefore), 300_000, 100);
+    const endedOpen = await pollUntil(readEditorWindow, (reading) => lookedActive(reading).length === 0, 5_000);
+    await window.dspatch.editorWindowCheck({ action: 'close' });
+    await click('edit-agent-loops');
+    const endedReopened = await pollUntil(readEditorWindow, (reading) => reading !== null, 10_000);
+    await sleep(500);
+    const endedSettled = await readEditorWindow();
+    record('run ended', { open: endedOpen, reopened: endedSettled, host: await hostRunReading() });
+    expect(endedReopened !== null, 'the editor did not draw after the run ended');
+    expect(lookedActive(endedOpen).length === 0, `the open editor still shows the ended run as active: ${JSON.stringify(lookedActive(endedOpen))}`);
+    expect(
+      lookedActive(endedSettled).length === 0,
+      `the editor reopened after the end shows the run as active: ${JSON.stringify(lookedActive(endedSettled))}`,
+    );
+
+    // --- 5b. A stopped run is not shown as active --------------------------------------
+    const stopAt = `loop-turn-${String(runsBefore + 1)}`;
+    await typeInto('prompt', '[[very-slow]] Report what the project is for, mark-join-stop.');
+    await sendFromComposer();
+    await waitFor('the second run to be writing', () => rawTextOf(`${stopAt}-live-text`).trim().length > 20, 60_000, 50);
+    const stopping = await pollUntil(readEditorWindow, (reading) => activeIn(reading).length > 0, 10_000);
+    expect(activeIn(stopping).length > 0, 'the open editor did not take up the second run');
+    await click('cancel');
+    await waitFor('the stopped run to end', () => loopRunEnded(runsBefore + 1), 120_000, 100);
+    const stopped = await pollUntil(readEditorWindow, (reading) => lookedActive(reading).length === 0, 5_000);
+    await window.dspatch.editorWindowCheck({ action: 'close' });
+    await click('edit-agent-loops');
+    await pollUntil(readEditorWindow, (reading) => reading !== null, 10_000);
+    await sleep(500);
+    const stoppedReopened = await readEditorWindow();
+    record('run stopped', { open: stopped, reopened: stoppedReopened, host: await hostRunReading() });
+    expect(lookedActive(stopped).length === 0, `the open editor still shows the stopped run as active: ${JSON.stringify(lookedActive(stopped))}`);
+    expect(
+      lookedActive(stoppedReopened).length === 0,
+      `the editor reopened after the stop shows the run as active: ${JSON.stringify(lookedActive(stoppedReopened))}`,
+    );
+
+    // Opening, closing and reopening started nothing.
+    const runs = countEntries('loop-turn');
+    record('runs', { before: runsBefore, after: runs });
+    expect(runs === runsBefore + 2, `opening the editor changed how many runs there were: ${String(runs - runsBefore)} instead of 2`);
+    await window.dspatch.editorWindowCheck({ action: 'close' });
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (caught) {
+    failures.push(caught instanceof Error ? caught.message : String(caught));
+    observations['atFailure'] = {
+      editor: await readEditorWindow().catch(() => null),
+      host: await hostRunReading().catch(() => null),
     };
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
   }

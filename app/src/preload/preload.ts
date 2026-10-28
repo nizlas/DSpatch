@@ -60,6 +60,8 @@ import type {
   TurnUsage,
   ReviewWindowCheckAnswer,
   ReviewWindowCheckRequest,
+  EditorWindowCheckAnswer,
+  EditorWindowCheckRequest,
   UiAgentEvent,
   WorkspaceReport,
 } from '../shared/bridge';
@@ -67,7 +69,7 @@ import type { StepActivity } from '../shared/loop-activity';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
 import type { RoleReference } from '../shared/loop-graph';
 import type { RunJournalEntry } from '../shared/loop-run';
-import type { LiveRunAnnouncement, LoopRunEvent } from '../shared/loop-run-view';
+import type { LiveRunAnnouncement, LoopRunEvent, RunView } from '../shared/loop-run-view';
 import type { LoopRunAgentInfo, LoopRunAgentQuery } from '../shared/loop-run-agent-text';
 import type { DirectoryPage, FileView, WorkspaceView } from '../shared/workspace-folders';
 
@@ -121,10 +123,12 @@ const OPEN_LOOP_EDITOR: BridgeChannel = 'dspatch:open-loop-editor';
 const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
 const OPEN_EXAMPLE_REVIEW: BridgeChannel = 'dspatch:open-example-review';
 const CHECK_REVIEW_WINDOWS: BridgeChannel = 'dspatch:check-review-windows';
+const CHECK_EDITOR_WINDOW: BridgeChannel = 'dspatch:check-editor-window';
 const START_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:start-editor-loop-run';
 const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
 const LOOP_RUN_EVENT: BridgeChannel = 'dspatch:loop-run-event';
 const CURRENT_LOOP_RUN: BridgeChannel = 'dspatch:current-loop-run';
+const CURRENT_LOOP_RUN_VIEW: BridgeChannel = 'dspatch:current-loop-run-view';
 const READ_LOOP_RUN_AGENT: BridgeChannel = 'dspatch:read-loop-run-agent';
 const START_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:start-chat-loop-run';
 const CANCEL_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:cancel-chat-loop-run';
@@ -291,6 +295,8 @@ const bridge: DspatchBridge = {
   openExampleReview: () => ipcRenderer.invoke(OPEN_EXAMPLE_REVIEW) as Promise<LoopEditorWindowOutcome>,
   reviewWindowCheck: (request: ReviewWindowCheckRequest) =>
     ipcRenderer.invoke(CHECK_REVIEW_WINDOWS, request) as Promise<ReviewWindowCheckAnswer>,
+  editorWindowCheck: (request: EditorWindowCheckRequest) =>
+    ipcRenderer.invoke(CHECK_EDITOR_WINDOW, request) as Promise<EditorWindowCheckAnswer>,
   onLoopRunEvent: (listener: (event: LoopRunEvent) => void) => {
     const handler = (_event: unknown, payload: LoopRunEvent): void => {
       listener(payload);
@@ -302,6 +308,8 @@ const bridge: DspatchBridge = {
   },
   currentLoopRun: () =>
     ipcRenderer.invoke(CURRENT_LOOP_RUN) as Promise<LiveRunAnnouncement | null>,
+  currentLoopRunView: () =>
+    ipcRenderer.invoke(CURRENT_LOOP_RUN_VIEW) as Promise<RunView | null>,
   startChatLoopRun: (request: ChatLoopRunRequest) =>
     ipcRenderer.invoke(START_CHAT_LOOP_RUN, request) as Promise<ChatLoopRunOutcome>,
   cancelChatLoopRun: () =>

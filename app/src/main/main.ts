@@ -38,6 +38,8 @@ import type {
   ResolvedRoleEntry,
   ReviewWindowCheckAnswer,
   ReviewWindowCheckRequest,
+  EditorWindowCheckAnswer,
+  EditorWindowCheckRequest,
   SampleProjectsView,
   ScriptedRunPlan,
   ScriptedRunReport,
@@ -131,9 +133,11 @@ const OPEN_LOOP_EDITOR: BridgeChannel = 'dspatch:open-loop-editor';
 const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
 const OPEN_EXAMPLE_REVIEW: BridgeChannel = 'dspatch:open-example-review';
 const CHECK_REVIEW_WINDOWS: BridgeChannel = 'dspatch:check-review-windows';
+const CHECK_EDITOR_WINDOW: BridgeChannel = 'dspatch:check-editor-window';
 const START_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:start-editor-loop-run';
 const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
 const CURRENT_LOOP_RUN: BridgeChannel = 'dspatch:current-loop-run';
+const CURRENT_LOOP_RUN_VIEW: BridgeChannel = 'dspatch:current-loop-run-view';
 const READ_LOOP_RUN_AGENT: BridgeChannel = 'dspatch:read-loop-run-agent';
 const START_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:start-chat-loop-run';
 const CANCEL_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:cancel-chat-loop-run';
@@ -2539,6 +2543,39 @@ function startPanelTrial(): void {
 /* DSP-126: the review windows, read and driven for the scripted scenarios     */
 /* ------------------------------------------------------------------------- */
 
+/** Read the loop editor's window through its check hook, or close it like its X does. */
+async function editorWindowCheck(request: EditorWindowCheckRequest): Promise<EditorWindowCheckAnswer> {
+  const window = editorWindow;
+  if (window === null || window.isDestroyed()) {
+    return { ok: request.action === 'close', detail: 'no loop editor window is open' };
+  }
+  if (request.action === 'close') {
+    const closed = new Promise<void>((resolve) => {
+      window.once('closed', () => {
+        resolve();
+      });
+    });
+    window.close();
+    await closed;
+    return { ok: true, detail: 'closed' };
+  }
+  try {
+    const detail = (await window.webContents.executeJavaScript(
+      `(() => {
+        const hook = window.__dspatchEditorCheck;
+        return {
+          hooked: hook !== undefined,
+          drawn: [...document.querySelectorAll('svg g.node')].map((node) => node.getAttribute('data-node-id') ?? ''),
+          liveness: hook && hook.readLiveness ? hook.readLiveness() : null,
+        };
+      })()`,
+    )) as unknown;
+    return { ok: true, detail };
+  } catch (error) {
+    return { ok: false, detail: String(error) };
+  }
+}
+
 /** Every request the review scenarios made of the main process, and its answer. */
 const reviewCheckLog: unknown[] = [];
 
@@ -3125,6 +3162,13 @@ function registerIpc(): void {
       (event, request: ReviewWindowCheckRequest): Promise<ReviewWindowCheckAnswer> =>
         reviewWindowCheck(request, event.sender),
     );
+    // The loop editor's own window is another renderer too. Read through the hook the
+    // editor already installs; closed the way its X closes it. Nothing here touches a run.
+    ipcMain.handle(
+      CHECK_EDITOR_WINDOW,
+      (_event, request: EditorWindowCheckRequest): Promise<EditorWindowCheckAnswer> =>
+        editorWindowCheck(request),
+    );
     // Only the client can resize a window, and "the chat does not follow the
     // window's width" is a claim about a window being resized. Answers the content
     // width the renderer ended up with, so the trial reads the window it got.
@@ -3431,6 +3475,7 @@ function registerLoopGraphIpc(): void {
    * next run.
    */
   ipcMain.handle(CURRENT_LOOP_RUN, (): Promise<LiveRunAnnouncement | null> => hostCall('loop.currentRun', NO_SENDER));
+  ipcMain.handle(CURRENT_LOOP_RUN_VIEW, () => hostCall('loop.currentRunView', NO_SENDER));
   ipcMain.handle(READ_LOOP_RUN_AGENT, (_event, query: unknown): Promise<LoopRunAgentInfo> =>
     hostCall('loop.readRunAgent', NO_SENDER, query),
   );

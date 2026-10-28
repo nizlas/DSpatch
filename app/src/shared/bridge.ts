@@ -25,7 +25,7 @@ import type { DefinitionRowDisplay } from './loop-definition';
 import type { ResolvedRole, RoleReference } from './loop-graph';
 import type { ParsedRunRecord, RecordedRunEnding } from './loop-record';
 import type { RunJournalEntry, RunResult } from './loop-run';
-import type { LiveRunAnnouncement, LoopRunEvent } from './loop-run-view';
+import type { LiveRunAnnouncement, LoopRunEvent, RunView } from './loop-run-view';
 import type { LoopRunAgentInfo, LoopRunAgentQuery } from './loop-run-agent-text';
 import type { UnsavedDrawingAnswer, UnsavedDrawingOccasion } from './unsaved-drawing';
 import type { DirectoryPage, FileView, WorkspaceView } from './workspace-folders';
@@ -1781,6 +1781,8 @@ export type ScriptedScenario =
   | 'editor-uncertain'
   /** DSP-147: where a steering message sits in the conversation, live and read back after a restart. */
   | 'steering-placement'
+  /** DSP-28 follow-up: the loop editor opened, closed and reopened while a chat loop walks. */
+  | 'editor-joins-run'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2037,6 +2039,15 @@ export type ScriptedScenario =
   | 'review-hold';
 
 /** What the `review-window` scenario asks the main process to read or do. Scripted runs only. */
+/** What the `editor-joins-run` scenario asks of the loop editor's own window. */
+export type EditorWindowCheckRequest = { readonly action: 'read' } | { readonly action: 'close' };
+
+export interface EditorWindowCheckAnswer {
+  /** Whether a loop editor window is open (for `read`) or closed now (for `close`). */
+  readonly ok: boolean;
+  readonly detail: unknown;
+}
+
 export type ReviewWindowCheckRequest =
   | { readonly action: 'read' }
   | { readonly action: 'choose'; readonly webContentsId: number }
@@ -2475,6 +2486,12 @@ export interface DspatchBridge {
    */
   reviewWindowCheck(request: ReviewWindowCheckRequest): Promise<ReviewWindowCheckAnswer>;
   /**
+   * Read or close the loop editor's own window, for the scenario that opens it during a
+   * run. The chat window's script cannot see another renderer, so the client reads the
+   * editor's check hook for it. Registered only during a scripted run.
+   */
+  editorWindowCheck(request: EditorWindowCheckRequest): Promise<EditorWindowCheckAnswer>;
+  /**
    * Every addressed thing that happens to a loop run, in any window.
    *
    * **Addressed to a run, not sent to a sender.** The journal used to go to whichever
@@ -2492,6 +2509,16 @@ export interface DspatchBridge {
    * asking once. Returns `null` when no run is in progress.
    */
   currentLoopRun(): Promise<LiveRunAnnouncement | null>;
+  /**
+   * The run that is walking now **and how far it has got**: its journal so far and what
+   * each step has been seen doing, folded exactly as a window that watched from the
+   * start folded it. For the graph view opening halfway through a step, which with the
+   * bare announcement could show no active node until the next step began.
+   *
+   * **A read**, like `currentLoopRun`. Events this window received before the answer
+   * are already in it; see `LoopRunAudience.currentView`.
+   */
+  currentLoopRunView(): Promise<RunView | null>;
   /**
    * Which agent the graph editor's Run would use now, as one line, or why no run would
    * start (DSP-138). **A read**: it starts, records and constructs nothing. `target` is
@@ -3250,10 +3277,12 @@ export type BridgeChannel =
   | 'dspatch:open-review'
   | 'dspatch:open-example-review'
   | 'dspatch:check-review-windows'
+  | 'dspatch:check-editor-window'
   | 'dspatch:start-editor-loop-run'
   | 'dspatch:cancel-editor-loop-run'
   | 'dspatch:loop-run-event'
   | 'dspatch:current-loop-run'
+  | 'dspatch:current-loop-run-view'
   | 'dspatch:read-loop-run-agent'
   | 'dspatch:start-chat-loop-run'
   | 'dspatch:cancel-chat-loop-run'

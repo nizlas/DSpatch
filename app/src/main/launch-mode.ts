@@ -76,6 +76,8 @@ export const chatRunScenario: ScriptedScenario =
                                 ? 'editor-uncertain'
                                 : chatRunValue === 'steering-placement'
                                 ? 'steering-placement'
+                                : chatRunValue === 'editor-joins-run'
+                                ? 'editor-joins-run'
                                 : chatRunValue === 'switch'
                                   ? 'workspace-switch'
                                   : chatRunValue === 'resume-choice'
@@ -164,6 +166,8 @@ export const presentationMode =
   chatRunScenario === 'steering' ||
   chatRunScenario === 'editor-uncertain' ||
   chatRunScenario === 'steering-placement' ||
+  // DSP-28 follow-up: the editor window opened during a chat loop; every step is simulated.
+  chatRunScenario === 'editor-joins-run' ||
   // DSP-121: the refused and failed resume states through the real choice panel. The
   // refusal is the presentation adapter's own, simulated on this machine; the one
   // message the scenario sends after choosing a new session is answered locally.

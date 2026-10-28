@@ -501,7 +501,13 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // `[[steer-late]]` answers a steering message as a turn that ended at that instant;
     // `[[steer-declined]]` as a runtime that declines it. Read from the whole prompt, so a
     // loop's mandate sets them for every step.
-    const deltaMs = prompt.includes('[[slow]]') ? Math.max(this.deltaMs, 300) : this.deltaMs;
+    // `[[very-slow]]` (DSP-28 follow-up) holds a loop step open long enough for a window
+    // to be opened in the middle of it.
+    const deltaMs = prompt.includes('[[very-slow]]')
+      ? Math.max(this.deltaMs, 1_200)
+      : prompt.includes('[[slow]]')
+        ? Math.max(this.deltaMs, 300)
+        : this.deltaMs;
     state.steerMode = prompt.includes('[[steer-late]]')
       ? 'late'
       : prompt.includes('[[steer-declined]]')

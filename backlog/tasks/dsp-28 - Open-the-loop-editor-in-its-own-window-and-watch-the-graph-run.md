@@ -4,7 +4,7 @@ title: Open the loop editor in its own window and watch the graph run
 status: Review
 assignee: []
 created_date: '2026-09-17 18:45'
-updated_date: '2026-09-18 09:42'
+updated_date: '2026-10-28 20:00'
 labels: []
 dependencies:
   - DSP-26
@@ -76,4 +76,27 @@ An asymmetry the Verifier checked before deciding it was correct: an editor-star
 **Carried as [DSP-36](dsp-36%20-%20Decide-what-a-finished-run-in-the-editor-does-when-a-new-run-starts.md):** the `started` event deliberately bypasses the addressing rule, which is right while a run is live and reads differently once the watched run has ended and the view stays locked. Two intended decisions interacting in a way neither call considered.
 
 **Two smaller findings, not carded.** The handoff trail's word ban constrains `handoffTrail`'s own template but not the node labels interpolated into it, so a graph node labelled `Bypassed` would put `passed` into a sentence with no test failing — latent, not reachable with the current five roles. And `loop-editor.css` carries around 40 raw hex colours rather than palette properties: most arrived with DSP-22 and call 005 added its five run-state colours in the same style. The approved palette itself is untouched and `styles.css` is byte-identical on every palette definition, but the editor window will show Niclas colours that are not among the approved ones. **His eye during the trial, not a correctness defect.**
+---
+
+28 Oct 2026, follow-up of Niclas's manual trial (local commit, not pushed). He started a loop from the chat with the editor closed, then opened the editor: no motion on the drawing.
+
+**Cause, established by a revert in the real window.** A window opening mid-run asked the host `currentLoopRun`, which answers the *announcement* only: which run and which drawing, but no journal and no step activity. The editor folded that into an empty view, so no node was active and nothing moved until the next journal entry (the next step) arrived as an event. With the editor's adoption put back to the announcement alone, the scenario below fails on exactly that: `editor [] host ["work"]` on opening and `editor [] host ["check"]` on reopening.
+
+**Fix.**
+- The host's `LoopRunAudience` now keeps the run as a watching window would hold it, folded from the events it broadcasts by the same `applyRunEvent` (one derivation). It is cleared with the announcement: on `end` for that run, on `standDown`, and replaced on `start`/`prepare`.
+- New read `currentLoopRunView` (host `loop.currentRunView`) returns that `RunView`. `currentLoopRun` is unchanged for its other callers.
+- The editor subscribes first, then asks for the view, and holds events that arrive while the answer is out. The answer and the events travel one ordered path (host connection, then the window's IPC), so the held events are already in the answer and are dropped; they are applied only if the read fails. A `reply-text` fragment is appended, so applying it twice would duplicate text.
+- Nothing is replayed: the view is adopted as it stands, so a step finished before the window opened is drawn finished and only the working step moves.
+- No change to steering, the runner, the run events or the unsaved-drawing handling. The scripted-only `editorWindowCheck` channel lets the chat window's scenario read and close the real editor window; the presentation adapter gained `[[very-slow]]` pacing (simulated only).
+
+**Verified, SIMULATED provider, isolated userData** (`DSPATCH_CHAT_RUN=editor-joins-run`, real editor window opened with the chat's **Edit agent loops** button, passed):
+1. Loop started from the chat with no editor window open.
+2. Editor opened mid-step, with the host still at the same journal position (2 entries): `work` active and working, 25 running animations, the run's graph drawn.
+3. Next step followed: `work` finished, `check` active and working.
+4. Editor closed and reopened during the run: the run was untouched, and the reopened window showed `work` finished, `check` active and moving.
+5. After the run ended, and after a run stopped with **Cancel**, both the open editor and a reopened one showed no active or working node, only the Ready pulse of the stand-by offer. Two runs in total: opening and closing started nothing.
+
+Unit tests for the audience's view (mid-step state, misaddressed events, ended/stood-down, slow ending of an earlier run); test groups loop and host, steering, presentation-resume, host boundary and review-discussion provider pass; typechecks clean.
+
+**Not established.** The look of the joined view is Niclas's to judge (#1 and the visual half of #3 remain HUMAN_PENDING). An editor-started run reaching a second editor is not reachable (one editor window). A real provider was not used.
 <!-- SECTION:NOTES:END -->

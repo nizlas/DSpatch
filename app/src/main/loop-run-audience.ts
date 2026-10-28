@@ -23,7 +23,13 @@
  */
 
 import type { BridgeChannel } from '../shared/bridge';
-import type { LiveRunAnnouncement, LoopRunEvent } from '../shared/loop-run-view';
+import {
+  applyRunEvent,
+  runViewFor,
+  type LiveRunAnnouncement,
+  type LoopRunEvent,
+  type RunView,
+} from '../shared/loop-run-view';
 
 /**
  * The part of a `BrowserWindow` this needs.
@@ -41,6 +47,18 @@ export class LoopRunAudience {
   private readonly windows = new Set<RunAudienceWindow>();
 
   private active: LiveRunAnnouncement | null = null;
+
+  /**
+   * The active run as a window watching it from the start would hold it.
+   *
+   * Folded from the same events this broadcasts, by the same `applyRunEvent` every
+   * window uses, so a window that opens halfway through a step is handed the step it
+   * would have seen rather than a bare announcement with no journal. Without it the
+   * graph view opened during a chat loop showed no active node and no motion until the
+   * next step began: the announcement says which drawing, and only the entries say
+   * where the run is in it.
+   */
+  private view: RunView | null = null;
 
   /**
    * A window that should hear about runs from now on.
@@ -91,6 +109,7 @@ export class LoopRunAudience {
    */
   start(run: LiveRunAnnouncement): void {
     this.active = run;
+    this.view = runViewFor(run);
     this.broadcast({ kind: 'started', run });
   }
 
@@ -114,6 +133,7 @@ export class LoopRunAudience {
       return false;
     }
     this.active = run;
+    this.view = runViewFor(run);
     this.broadcast({ kind: 'started', run });
     return true;
   }
@@ -132,6 +152,7 @@ export class LoopRunAudience {
       return;
     }
     this.active = null;
+    this.view = null;
     this.broadcast({
       kind: 'stood-down',
       runId: current.runId,
@@ -150,6 +171,7 @@ export class LoopRunAudience {
     this.broadcast({ kind: 'ended', ...ended });
     if (this.active?.runId === ended.runId) {
       this.active = null;
+      this.view = null;
     }
   }
 
@@ -163,6 +185,19 @@ export class LoopRunAudience {
   }
 
   /**
+   * What is running now and how far it has got, for a window that has just opened.
+   *
+   * A read, like {@link current}. Everything broadcast before this answer is in it, and
+   * everything after reaches the window as an event, because the answer and the events
+   * travel one ordered path from here to the window (host connection, then the window's
+   * IPC). So a window drops the events it received before the answer instead of
+   * applying them twice: a `reply-text` fragment appended again would duplicate text.
+   */
+  currentView(): RunView | null {
+    return this.view;
+  }
+
+  /**
    * Send one event to every live window.
    *
    * Not to a sender, and not only to the window that started the run. A window that
@@ -171,6 +206,10 @@ export class LoopRunAudience {
    * wrong, silently, the first time a user rearranged their windows.
    */
   broadcast(event: LoopRunEvent): void {
+    // A misaddressed event leaves the view as it was; `applyRunEvent` guarantees it.
+    if (event.kind !== 'started' && event.kind !== 'stood-down') {
+      this.view = applyRunEvent(this.view, event);
+    }
     this.broadcastOn(LOOP_RUN_EVENT_CHANNEL, event);
   }
 
