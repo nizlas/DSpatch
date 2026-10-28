@@ -11,6 +11,7 @@ import type {
   UsageReading,
 } from '../adapter/types';
 import type { AgentAdapter } from '../adapter/agent-adapter';
+import { simulatedReviewTask } from './presentation-review-tasks';
 import type { AuthStatusReading, ChatAdapter } from './chat-service';
 
 /**
@@ -526,6 +527,8 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       declared === null
         ? presentationReply(token)
         : `${presentationReply(token)}\n\nRESULT: ${declared}`;
+    // DSP-152, SIMULATED: a review task (walks, a delegated review) answered from its prompt.
+    answer = simulatedReviewTask(prompt) ?? answer;
     // Chunked on whitespace, so what arrives is the partial text a real stream
     // produces — including a fence that is open for several frames, which is the
     // case the reader has to survive.

@@ -28,8 +28,10 @@ import {
   isPairError,
   LOG_FORMAT_ARGS,
   pairFilesFrom,
+  shownPath,
   parseLog,
   scopeFrom,
+  type LineSide,
   type LogCommit,
   type MarkScope,
   type OpenPair,
@@ -42,6 +44,7 @@ import {
   type ReviewRequirement,
   type RevisionPairIdentity,
 } from '../shared/review-pair';
+import { EXCERPT_CONTEXT, MATERIAL_CHAR_BUDGET, type AnalysisMaterial, type MaterialFile } from '../shared/review-agent';
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -97,6 +100,18 @@ function folderIdentity(folder: string): string {
     // A folder that cannot be resolved keeps its spelling.
   }
   return process.platform === 'win32' ? real.toLowerCase() : real;
+}
+
+/** A repository-relative path that cannot leave the repository or name something odd. */
+function safeRepositoryPath(filePath: string): boolean {
+  return (
+    filePath !== '' &&
+    !filePath.includes('\0') &&
+    !filePath.includes('\\') &&
+    !filePath.startsWith('/') &&
+    !/^[A-Za-z]:/.test(filePath) &&
+    !filePath.split('/').some((segment) => segment === '..' || segment === '')
+  );
 }
 
 export function pairKeyOf(pair: RevisionPairIdentity): string {
@@ -500,13 +515,105 @@ export class ReviewPairs {
               : typeof title === 'object' && title !== null
                 ? String((title as Record<string, unknown>)['en'] ?? (title as Record<string, unknown>)['sv'] ?? path.basename(resolved))
                 : path.basename(resolved);
-          walks.push({ definitionPath: resolved, title: text });
+          const provenance = raw['provenance'];
+          const note =
+            raw['teachingMode'] === 'Generated' && typeof provenance === 'object' && provenance !== null
+              ? String((provenance as Record<string, unknown>)['en'] ?? '').split('. ')[0] ?? ''
+              : '';
+          walks.push({ definitionPath: resolved, title: text, note });
         }
       } catch {
         // Not a readable walk definition.
       }
     }
     return walks;
+  }
+
+  /**
+   * A file's lines at one of the pair's commits, for checking a reference (DSP-152): any
+   * file of that commit, not only a changed one, since a walk may lead through unchanged
+   * code. `null` when the path does not exist there or is not text.
+   */
+  async linesAt(key: string, side: LineSide, filePath: string): Promise<readonly string[] | null> {
+    const opened = this.openOf(key);
+    if (opened === null || !safeRepositoryPath(filePath)) {
+      return null;
+    }
+    try {
+      const commit = side === 'base' ? opened.pair.base : opened.pair.target;
+      const buffer = await gitBuffer(opened.pair.repository, ['cat-file', 'blob', `${commit}:${filePath}`]);
+      if (buffer.subarray(0, 8000).includes(0)) {
+        return null;
+      }
+      const lines = buffer.toString('utf8').split('\n');
+      if (lines.at(-1) === '') {
+        lines.pop();
+      }
+      return lines.map((line) => line.replace(/\r$/, ''));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * What the agent is given about the pair (DSP-152): every changed file's text at both
+   * commits, excerpted around the changes and then left out when the size bound is reached.
+   *
+   * Read with `git cat-file` at the two commits only. This is where repository bytes
+   * become model context for walks and delegated reviews, the same kind of place as the
+   * discussion's envelope; a content-exclusion check belongs here, before material exists.
+   * Nothing is excluded today, as there.
+   */
+  async material(key: string): Promise<PairAnswer<AnalysisMaterial>> {
+    const opened = this.openOf(key);
+    if (opened === null) {
+      return { error: 'That review is not open.' };
+    }
+    const files: MaterialFile[] = [];
+    const omitted: string[] = [];
+    let used = 0;
+    const readText = async (side: LineSide, filePath: string | null): Promise<string | null> => {
+      if (filePath === null) {
+        return null;
+      }
+      const answer = await this.readFile(key, side, filePath);
+      return isPairError(answer) || answer.binary ? null : answer.text;
+    };
+    for (const file of opened.files) {
+      const baseText = file.binary ? null : await readText('base', file.oldPath);
+      const targetText = file.binary ? null : await readText('target', file.newPath);
+      const whole = (baseText?.length ?? 0) + (targetText?.length ?? 0);
+      if (used + whole <= MATERIAL_CHAR_BUDGET) {
+        files.push({ file, baseText, targetText, excerpted: false });
+        used += whole;
+        continue;
+      }
+      // Too large whole: the changes and their surroundings, if those fit.
+      const excerpt = file.hunks.reduce((total, hunk) => total + (hunk.baseCount + hunk.targetCount + 4 * EXCERPT_CONTEXT) * 100, 0);
+      if (used + excerpt <= MATERIAL_CHAR_BUDGET) {
+        files.push({ file, baseText, targetText, excerpted: true });
+        used += excerpt;
+      } else {
+        omitted.push(shownPath(file));
+      }
+    }
+    return {
+      pair: opened.pair,
+      repositoryName: opened.repositoryName,
+      baseSubject: opened.base.subject,
+      targetSubject: opened.target.subject,
+      files,
+      omitted,
+    };
+  }
+
+  /** Change a pair's record and tell every window over it. */
+  update(key: string, change: (record: PairRecord) => PairRecord): PairAnswer<PairRecord> {
+    const opened = this.openOf(key);
+    if (opened === null) {
+      return { error: 'That review is not open.' };
+    }
+    return this.write(opened.key, change(this.readRecord(opened.key, opened.pair)), true);
   }
 
   /** The pair key of a walk definition's repository and revisions, for matching walks to a pair. */

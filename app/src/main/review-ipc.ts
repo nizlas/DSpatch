@@ -271,6 +271,17 @@ export function registerReviewIpc(
     const chosen = await windows.pickWalkFile(entry);
     return chosen === null ? { ok: false, note: '' } : openWalk(entry, pairKey, chosen);
   });
+  // DSP-152: agent work over the pair. The host checks the request; a window names only its own pair.
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.agents, async (event) => {
+    entryOf(event);
+    return pairs.call('reviewPair.agents');
+  });
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.startJob, async (event, key: unknown, request: unknown) =>
+    pairs.call('reviewPair.startJob', keyOf(entryOf(event), key), request),
+  );
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.cancelJob, async (event, key: unknown, jobId: unknown) =>
+    pairs.call('reviewPair.cancelJob', keyOf(entryOf(event), key), jobId),
+  );
   ipcMain.handle(REVIEW_PAIR_CHANNELS.showInDiff, async (event, raw: unknown) => {
     const entry = entryOf(event);
     const location = locationFrom(raw);

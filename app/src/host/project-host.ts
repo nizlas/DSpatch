@@ -153,6 +153,7 @@ import type { SampleProjectListing } from '../main/sample-projects';
 import { readDirectoryPage, readFileForViewing } from '../main/workspace-tree';
 import { ReviewHost } from './review-host';
 import { ReviewPairs } from './review-pairs';
+import { ReviewAgentJobs } from './review-agent-jobs';
 import { REVIEW_PAIR_CHANGED } from '../shared/review-pair';
 
 /*
@@ -1249,7 +1250,11 @@ async function disposeAdapterOnce(): Promise<void> {
   serviceDisposed = true;
   // The chat's adapter and every review discussion's, side by side, inside the one
   // bounded shutdown. A review answer still arriving is recorded as unknown.
-  const results = await Promise.allSettled([chatService.dispose(), reviewDiscussions?.dispose() ?? Promise.resolve()]);
+  const results = await Promise.allSettled([
+    chatService.dispose(),
+    reviewDiscussions?.dispose() ?? Promise.resolve(),
+    reviewAgentJobs?.dispose() ?? Promise.resolve(),
+  ]);
   const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
   if (failed !== undefined) {
     throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason));
@@ -3607,6 +3612,63 @@ let reviewHost: ReviewHost | null = null;
 let reviewDiscussions: ReviewDiscussions | null = null;
 /** Reviews of a chosen revision pair (DSP-150): the log, the diff and the decisions. */
 let reviewPairs: ReviewPairs | null = null;
+/** Walk preparation and delegated review over a revision pair (DSP-152). */
+let reviewAgentJobs: ReviewAgentJobs | null = null;
+
+function requireReviewAgentJobs(): ReviewAgentJobs {
+  if (reviewAgentJobs === null) {
+    throw new Error('Review is not ready in the host yet.');
+  }
+  return reviewAgentJobs;
+}
+
+/** The pair as a window opens it, with jobs the last host left running settled first. */
+function reconciled<T>(answer: T): T {
+  const key = typeof answer === 'object' && answer !== null ? (answer as { key?: unknown }).key : undefined;
+  if (typeof key === 'string' && reviewAgentJobs !== null) {
+    reviewAgentJobs.reconcile(key);
+    const state = requireReviewPairs().state(key);
+    if (typeof state === 'object' && state !== null && !('error' in state)) {
+      return { ...answer, record: state } as T;
+    }
+  }
+  return answer;
+}
+
+/** The agents review can use in this launch, each with the model it would use now. */
+function reviewAgentOptions(): readonly { readonly provider: 'cursor' | 'claude'; readonly choosable: boolean; readonly reason: string | null; readonly model: string }[] {
+  return (['cursor', 'claude'] as const).map((provider) => {
+    const availability = providerAvailability(provider, {
+      claudeAuthorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,
+      claudeInstalled: CLAUDE_SUPPORT.installed,
+    });
+    return { provider, choosable: availability.choosable, reason: availability.reason, model: reviewModelFor(provider) };
+  });
+}
+
+/** The model review asks for of each agent: the same choice as the chat and the discussion. */
+function reviewModelFor(provider: 'cursor' | 'claude'): string {
+  return provider === 'claude'
+    ? chatService.modelFor('claude')
+    : (modelChoiceStore.read('cursor') ?? process.env['DSPATCH_CHAT_MODEL'] ?? REVIEW_DISCUSSION_DEFAULT_MODEL);
+}
+
+/** Walk definitions prepared for one pair (DSP-152), newest first. */
+function generatedWalkDefinitions(key: unknown): readonly string[] {
+  if (typeof key !== 'string' || !/^[0-9a-f]{24}$/.test(key)) {
+    return [];
+  }
+  const folder = path.join(userDataDir(), 'reviews', 'generated', key);
+  try {
+    return fs
+      .readdirSync(folder)
+      .filter((name) => name.endsWith('.review.json'))
+      .map((name) => path.join(folder, name))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  } catch {
+    return [];
+  }
+}
 
 function requireReviewPairs(): ReviewPairs {
   if (reviewPairs === null) {
@@ -3702,8 +3764,8 @@ function registerReviewMethods(): void {
     const page = await pairs.log(repository, skip);
     return 'error' in page ? page : { ...page, last: pairs.lastPair(repository) };
   });
-  handle('reviewPair.open', (_event, request: unknown) => requireReviewPairs().openPair(request));
-  handle('reviewPair.openForWalk', (_event, pair) => requireReviewPairs().openForWalk(pair));
+  handle('reviewPair.open', async (_event, request: unknown) => reconciled(await requireReviewPairs().openPair(request)));
+  handle('reviewPair.openForWalk', async (_event, pair) => reconciled(await requireReviewPairs().openForWalk(pair)));
   handle('reviewPair.readFile', (_event, key: unknown, side: unknown, filePath: unknown) =>
     requireReviewPairs().readFile(key, side, filePath),
   );
@@ -3716,8 +3778,15 @@ function registerReviewMethods(): void {
     requireReviewPairs().savePosition(key, position),
   );
   handle('reviewPair.walks', async (_event, key: unknown, also: readonly string[]) =>
-    requireReviewPairs().walksFor(key, await knownWalkDefinitions(Array.isArray(also) ? also.filter((entry) => typeof entry === 'string') : [])),
+    requireReviewPairs().walksFor(key, [
+      ...generatedWalkDefinitions(key),
+      ...(await knownWalkDefinitions(Array.isArray(also) ? also.filter((entry) => typeof entry === 'string') : [])),
+    ]),
   );
+  // DSP-152: preparing walks and delegated review, started only by an explicit request.
+  handle('reviewPair.agents', () => reviewAgentOptions());
+  handle('reviewPair.startJob', (_event, key: unknown, request: unknown) => requireReviewAgentJobs().start(key, request));
+  handle('reviewPair.cancelJob', (_event, key: unknown, jobId: unknown) => requireReviewAgentJobs().cancel(key, jobId));
 
   handle('discussion.load', (_event, target: DiscussionTarget, request: unknown) =>
     discussionOf(target).load(
@@ -4173,6 +4242,27 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
     recordsDir: path.join(userDataDir(), 'reviews', 'pairs'),
     changed: (key, record) => {
       emitEvent({ kind: 'review-pair', key }, REVIEW_PAIR_CHANGED, { key, record });
+    },
+  });
+  reviewAgentJobs = new ReviewAgentJobs({
+    recordsDir: path.join(userDataDir(), 'reviews'),
+    // The shared factory, for the review purpose only; the jobs check the policy themselves.
+    createAdapter: (provider) => {
+      log(`[review] building a ${provider} review agent adapter${presentationMode ? ' (presentation, simulated)' : ''}`);
+      return adapterFactory.createAdapter({ provider, purpose: 'review' });
+    },
+    availability: (provider) =>
+      providerAvailability(provider, {
+        claudeAuthorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,
+        claudeInstalled: CLAUDE_SUPPORT.installed,
+      }),
+    pairs: reviewPairs,
+    language: async () => {
+      const preferences = await requireReviewHost().getPreferences();
+      return 'language' in preferences && preferences.language === 'sv' ? 'sv' : 'en';
+    },
+    log: (message) => {
+      log(`[review] ${message}`);
     },
   });
   reviewDiscussions = new ReviewDiscussions({

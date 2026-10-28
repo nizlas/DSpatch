@@ -69,6 +69,24 @@ export interface OpenPair {
 export interface PairWalk {
   readonly definitionPath: string;
   readonly title: string;
+  /** Where it came from, in a line: who prepared it and when, for a generated one. */
+  readonly note: string;
+}
+
+/** An agent review can use in this launch (DSP-152), with the model it would use now. */
+export interface ReviewAgentOption {
+  readonly provider: 'cursor' | 'claude';
+  readonly choosable: boolean;
+  readonly reason: string | null;
+  readonly model: string;
+}
+
+/** What a window asks of the host to start agent work over the pair. */
+export interface AgentJobRequestInput {
+  readonly kind: 'walks' | 'review';
+  readonly provider: 'cursor' | 'claude';
+  readonly model: string;
+  readonly scope?: DelegationScope;
 }
 
 /** A host answer, or why there is none. */
@@ -349,12 +367,79 @@ export interface AgentReview {
   readonly reviewer: string;
   readonly recordedAt: string;
   readonly summary: string;
+  /**
+   * The delegated review this approval came from (DSP-152): the person's explicit mandate
+   * for exactly this part. Absent on a record written before delegation existed.
+   */
+  readonly jobId?: string;
 }
 
-/** What counts as handled. Exempted lines are handled under both. */
+// --- Agent work over a pair (DSP-152) ----------------------------------------------------
+
+/** Where a delegated review or a walk preparation stands. */
+export type AgentJobState = 'running' | 'cancelling' | 'done' | 'failed' | 'cancelled' | 'unknown';
+
+/** What the person delegated: lines of a file, a whole file, or the changed lines a walk covers. */
+export interface DelegationScope {
+  readonly kind: 'lines' | 'file' | 'walk';
+  /** How the scope reads to a person: "src/keep.ts lines 8–9", "walk W1 · The user cancels". */
+  readonly label: string;
+  readonly ranges: readonly LineRange[];
+}
+
+/** Something the agent found, where it found it when it said. */
+export interface AgentFinding {
+  readonly severity: 'problem' | 'question' | 'note';
+  readonly text: string;
+  readonly location: LineRange | null;
+}
+
+/** What a delegated review reported, after DSpatch checked it against the scope. */
+export interface DelegationResult {
+  readonly assessment: string;
+  /** The changed lines the agent says it reviewed, within the scope. */
+  readonly reviewed: readonly LineRange[];
+  /** The changed lines approved under the mandate, within the scope and reviewed. */
+  readonly approved: readonly LineRange[];
+  readonly findings: readonly AgentFinding[];
+  readonly uncertainties: readonly string[];
+  /** The agent said the material was not enough to judge; nothing is approved then. */
+  readonly insufficient: boolean;
+  /** What DSpatch changed in the agent's answer before recording it, in plain words. */
+  readonly adjustments: readonly string[];
+}
+
+/** One piece of agent work over the pair, from the press to its recorded outcome. */
+export interface AgentJob {
+  readonly id: string;
+  readonly kind: 'walks' | 'review';
+  readonly state: AgentJobState;
+  readonly provider: 'cursor' | 'claude';
+  readonly model: string;
+  readonly startedAt: string;
+  readonly endedAt: string | null;
+  /** A plain sentence about the outcome, for the window. */
+  readonly note: string;
+  /** For a delegated review. */
+  readonly scope: DelegationScope | null;
+  readonly result: DelegationResult | null;
+  /** For a walk preparation: the definition written, when one was. */
+  readonly definitionPath: string | null;
+  /** For a walk preparation: changed lines no walk covers, and references left out. */
+  readonly uncovered: readonly LineRange[];
+}
+
+/**
+ * What counts as handled. Exempted lines are handled under both.
+ *
+ * `manual` (the default since DSP-152, Niclas's decision of 29 October 2026): the person's
+ * review, or an agent's approval where the person explicitly delegated that part.
+ * `manual-or-agent`: the DSP-150 default, kept as stored for a record that has it, so an
+ * older review keeps its meaning; any recorded agent review counts there.
+ */
 export type ReviewRequirement = 'manual' | 'manual-or-agent';
 
-export const DEFAULT_REQUIREMENT: ReviewRequirement = 'manual-or-agent';
+export const DEFAULT_REQUIREMENT: ReviewRequirement = 'manual';
 
 /** Where the diff window was, so reopening puts the reviewer back. */
 export interface PairPosition {
@@ -373,6 +458,8 @@ export interface PairRecord {
   readonly requirement: ReviewRequirement;
   readonly marks: readonly PairMark[];
   readonly agentReviews: readonly AgentReview[];
+  /** Walk preparations and delegated reviews, newest last (DSP-152). */
+  readonly jobs: readonly AgentJob[];
   readonly position: PairPosition;
   readonly savedAt: string;
 }
@@ -384,6 +471,7 @@ export function emptyRecord(pair: RevisionPairIdentity): PairRecord {
     requirement: DEFAULT_REQUIREMENT,
     marks: [],
     agentReviews: [],
+    jobs: [],
     position: START_POSITION,
     savedAt: new Date(0).toISOString(),
   };
@@ -405,6 +493,68 @@ function rangeFrom(raw: unknown): LineRange | null {
     return null;
   }
   return { kind: 'lines', side, path, start: start as number, end: end as number };
+}
+
+function rangesFrom(raw: unknown): LineRange[] {
+  const out: LineRange[] = [];
+  for (const entry of Array.isArray(raw) ? raw : []) {
+    const range = rangeFrom(entry);
+    if (range !== null) {
+      out.push(range);
+    }
+  }
+  return out;
+}
+
+function stringsFrom(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((entry): entry is string => typeof entry === 'string') : [];
+}
+
+const JOB_STATES: readonly AgentJobState[] = ['running', 'cancelling', 'done', 'failed', 'cancelled', 'unknown'];
+
+/** A stored job, or `null` for one too broken to show. */
+export function jobFrom(raw: unknown): AgentJob | null {
+  if (!isRecordObject(raw) || typeof raw['id'] !== 'string' || (raw['kind'] !== 'walks' && raw['kind'] !== 'review')) {
+    return null;
+  }
+  const state = JOB_STATES.includes(raw['state'] as AgentJobState) ? (raw['state'] as AgentJobState) : 'unknown';
+  const scopeRaw = raw['scope'];
+  const scope: DelegationScope | null =
+    isRecordObject(scopeRaw) && (scopeRaw['kind'] === 'lines' || scopeRaw['kind'] === 'file' || scopeRaw['kind'] === 'walk')
+      ? { kind: scopeRaw['kind'], label: typeof scopeRaw['label'] === 'string' ? scopeRaw['label'] : '', ranges: rangesFrom(scopeRaw['ranges']) }
+      : null;
+  const resultRaw = raw['result'];
+  const result: DelegationResult | null = isRecordObject(resultRaw)
+    ? {
+        assessment: typeof resultRaw['assessment'] === 'string' ? resultRaw['assessment'] : '',
+        reviewed: rangesFrom(resultRaw['reviewed']),
+        approved: rangesFrom(resultRaw['approved']),
+        findings: (Array.isArray(resultRaw['findings']) ? resultRaw['findings'] : [])
+          .filter(isRecordObject)
+          .map((finding) => ({
+            severity: finding['severity'] === 'problem' || finding['severity'] === 'question' ? finding['severity'] : 'note',
+            text: typeof finding['text'] === 'string' ? finding['text'] : '',
+            location: rangeFrom(finding['location']),
+          })),
+        uncertainties: stringsFrom(resultRaw['uncertainties']),
+        insufficient: resultRaw['insufficient'] === true,
+        adjustments: stringsFrom(resultRaw['adjustments']),
+      }
+    : null;
+  return {
+    id: raw['id'],
+    kind: raw['kind'],
+    state,
+    provider: raw['provider'] === 'claude' ? 'claude' : 'cursor',
+    model: typeof raw['model'] === 'string' ? raw['model'] : '',
+    startedAt: typeof raw['startedAt'] === 'string' ? raw['startedAt'] : '',
+    endedAt: typeof raw['endedAt'] === 'string' ? raw['endedAt'] : null,
+    note: typeof raw['note'] === 'string' ? raw['note'] : '',
+    scope,
+    result,
+    definitionPath: typeof raw['definitionPath'] === 'string' ? raw['definitionPath'] : null,
+    uncovered: rangesFrom(raw['uncovered']),
+  };
 }
 
 export function scopeFrom(raw: unknown): MarkScope | null {
@@ -479,12 +629,22 @@ export function adoptPairRecord(raw: unknown, pair: RevisionPairIdentity): PairR
       reviewer: typeof entry['reviewer'] === 'string' ? entry['reviewer'] : '',
       recordedAt: entry['recordedAt'],
       summary: typeof entry['summary'] === 'string' ? entry['summary'] : '',
+      ...(typeof entry['jobId'] === 'string' ? { jobId: entry['jobId'] } : {}),
     });
+  }
+  const jobs: AgentJob[] = [];
+  for (const entry of Array.isArray(raw['jobs']) ? raw['jobs'] : []) {
+    const job = jobFrom(entry);
+    if (job !== null) {
+      jobs.push(job);
+    }
   }
   return {
     version: 1,
     pair,
-    requirement: raw['requirement'] === 'manual' ? 'manual' : DEFAULT_REQUIREMENT,
+    // A stored requirement is kept as stored; a record without one takes today's default.
+    requirement: raw['requirement'] === 'manual-or-agent' ? 'manual-or-agent' : raw['requirement'] === 'manual' ? 'manual' : DEFAULT_REQUIREMENT,
+    jobs,
     marks,
     agentReviews,
     position: positionFrom(raw['position']),
@@ -521,7 +681,9 @@ export function isHandled(status: LineStatus, requirement: ReviewRequirement): b
   if (status.decision !== null) {
     return true;
   }
-  return requirement === 'manual-or-agent' && status.agent.length > 0;
+  // An agent approval counts where the person delegated that part (it carries the job of
+  // that mandate), or anywhere under the older `manual-or-agent` requirement.
+  return status.agent.some((review) => requirement === 'manual-or-agent' || review.jobId !== undefined);
 }
 
 /** What has been decided about one line: the latest decision over it, and agent reviews. */
@@ -824,6 +986,9 @@ export const REVIEW_PAIR_CHANNELS = {
   openWalk: 'dspatch:review-pair-open-walk',
   chooseWalk: 'dspatch:review-pair-choose-walk',
   showInDiff: 'dspatch:review-pair-show-in-diff',
+  agents: 'dspatch:review-pair-agents',
+  startJob: 'dspatch:review-pair-start-job',
+  cancelJob: 'dspatch:review-pair-cancel-job',
 } as const;
 
 /** A pair's record changed; sent to every review window over that pair. */
@@ -858,6 +1023,10 @@ export interface ReviewPairBridge {
   openWalk(key: string, definitionPath: string): Promise<{ readonly ok: boolean; readonly note: string }>;
   chooseWalk(key: string): Promise<{ readonly ok: boolean; readonly note: string }>;
   showInDiff(location: DiffLocation): Promise<{ readonly ok: boolean; readonly note: string }>;
+  /** DSP-152: the agents that can prepare walks or review a delegated part here. */
+  agents(): Promise<readonly ReviewAgentOption[]>;
+  startJob(key: string, request: AgentJobRequestInput): Promise<PairAnswer<AgentJob>>;
+  cancelJob(key: string, jobId: string): Promise<PairAnswer<{ readonly note: string }>>;
   onChanged(listener: (event: PairChangedEvent) => void): () => void;
   onNavigate(listener: (location: DiffLocation) => void): () => void;
 }

@@ -258,10 +258,15 @@ describe('requirements and agent review', () => {
     summary: 'fine',
   };
 
-  it('counts a recorded agent review only when the requirement allows it', () => {
+  it('counts an agent review where the person delegated it, or anywhere under the older requirement', () => {
+    // DSP-152: manual is the default; an approval from a delegated review carries its job.
     const withAgent: PairRecord = { ...emptyRecord(pair), agentReviews: [agent] };
-    assert.equal(fileProgressOf(file, withAgent).handled, 2);
-    assert.equal(fileProgressOf(file, { ...withAgent, requirement: 'manual' }).handled, 0);
+    assert.equal(withAgent.requirement, 'manual');
+    assert.equal(fileProgressOf(file, withAgent).handled, 0, 'an agent review without a mandate does not count under manual review');
+    assert.equal(fileProgressOf(file, { ...withAgent, agentReviews: [{ ...agent, jobId: 'job-1' }] }).handled, 2);
+    // A DSP-150 record that stored the older requirement keeps its meaning.
+    assert.equal(fileProgressOf(file, { ...withAgent, requirement: 'manual-or-agent' }).handled, 2);
+    assert.equal(adoptPairRecord({ ...withAgent, requirement: 'manual-or-agent' }, pair).requirement, 'manual-or-agent');
   });
 
   it('draws manual over agent in the strip, and keeps both in the details', () => {

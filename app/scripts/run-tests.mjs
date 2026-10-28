@@ -122,6 +122,7 @@ const AREAS = {
     files: ['review-model.test.ts', 'review-discussion.test.ts', 'example-review.test.ts', 'review-host-boundary.test.ts', { file: 'review-service.test.ts', heavy: true },
       { file: 'review-host.test.ts', heavy: true },
       { file: 'review-pairs.test.ts', heavy: true },
+      { file: 'review-agent-jobs.test.ts', heavy: true },
       { file: 'review-discussion-service.test.ts', heavy: true },
       { file: 'review-discussion-provider.test.ts', heavy: true },
     ],

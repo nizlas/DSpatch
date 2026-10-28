@@ -28,6 +28,8 @@ import type {
 } from './review-discussion';
 import type { ReviewHostApi } from './review-host-contract';
 import type {
+  AgentJob,
+  ReviewAgentOption,
   LogCommit,
   OpenPair,
   PairAnswer,
@@ -187,6 +189,9 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'reviewPair.setRequirement': (key: unknown, requirement: unknown) => PairAnswer<PairRecord>;
   readonly 'reviewPair.savePosition': (key: unknown, position: unknown) => PairAnswer<{ readonly saved: true }>;
   readonly 'reviewPair.walks': (key: unknown, also: readonly string[]) => PairAnswer<readonly PairWalk[]>;
+  readonly 'reviewPair.agents': () => readonly ReviewAgentOption[];
+  readonly 'reviewPair.startJob': (key: unknown, request: unknown) => PairAnswer<AgentJob>;
+  readonly 'reviewPair.cancelJob': (key: unknown, jobId: unknown) => PairAnswer<{ readonly note: string }>;
   readonly 'discussion.load': (target: DiscussionTarget, request: unknown) => DiscussionLoadOutcome;
   readonly 'discussion.send': (target: DiscussionTarget, input: unknown) => DiscussionSendOutcome;
   readonly 'discussion.cancel': (target: DiscussionTarget) => DiscussionCancelOutcome;
@@ -324,6 +329,9 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'reviewPair.setRequirement': true,
   'reviewPair.savePosition': true,
   'reviewPair.walks': true,
+  'reviewPair.agents': true,
+  'reviewPair.startJob': true,
+  'reviewPair.cancelJob': true,
   'review.exampleDefinition': true,
   'discussion.load': true,
   'discussion.send': true,
