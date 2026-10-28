@@ -1,5 +1,6 @@
 import type {
   AddLoopInstructionRequest,
+  SteerTurnRequest,
   AttemptAcknowledgement,
   ChatLoopRunOutcome,
   ChatLoopRunRequest,
@@ -87,6 +88,8 @@ export type ProjectHostMethods = ReviewMethods & {
     prompt: string,
     acknowledgedAttemptIds: readonly AttemptAcknowledgement[],
   ) => BridgeAnswer<'sendPrompt'>;
+  /** DSP-147: steering of the ordinary turn that is working. */
+  readonly 'chat.steerTurn': (request: SteerTurnRequest) => BridgeAnswer<'steerTurn'>;
   readonly 'chat.cancelRun': () => BridgeAnswer<'cancelRun'>;
   readonly 'chat.abandonSend': () => BridgeAnswer<'abandonSend'>;
   readonly 'chat.cancelObservations': () => BridgeAnswer<'getCancelObservations'>;
@@ -234,6 +237,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'chat.startSession': true,
   'chat.discardPendingRecap': true,
   'chat.sendPrompt': true,
+  'chat.steerTurn': true,
   'chat.cancelRun': true,
   'chat.abandonSend': true,
   'chat.cancelObservations': true,

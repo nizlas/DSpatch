@@ -104,6 +104,7 @@ const AREAS = {
       'workspace-folders.test.ts',
       'workspace-tools.test.ts',
       'model-choice.test.ts',
+      'steering.test.ts',
       'run-record-store.test.ts',
       'command-start.test.ts',
       'test-command.test.ts',

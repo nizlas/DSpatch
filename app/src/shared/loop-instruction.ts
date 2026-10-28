@@ -38,7 +38,7 @@
  * something. Nothing the user reads calls it that: to them it is their message.
  */
 
-import type { AttemptRef } from './bridge';
+import type { AttemptRef, StoredSteering } from './bridge';
 
 /** Which step took a message, recorded after it happened rather than predicted. */
 export interface LoopInstructionDelivery {
@@ -48,6 +48,12 @@ export interface LoopInstructionDelivery {
   /** 1 for the first time that node ran in this run, 2 for the second, and so on. */
   readonly occurrence: number;
   readonly atUtc: string;
+  /**
+   * DSP-147: given to the work **while it ran**, through the runtime's own steering, on
+   * the runtime's evidence that the turn took it in. Absent or `false`: put in front of
+   * the step's prompt when it started (DSP-32), or for a chat turn sent as the next message.
+   */
+  readonly during?: boolean;
 }
 
 export interface LoopInstruction {
@@ -62,23 +68,92 @@ export interface LoopInstruction {
   readonly delivered: LoopInstructionDelivery | null;
   /** The run finished, and this had still reached nobody. */
   readonly runEnded: boolean;
+  /**
+   * DSP-147: what the message was sent into. `loop` (absent in entries written before
+   * DSP-147): a loop run, `runId` is the run's. `chat`: an ordinary agent turn, `runId`
+   * is the turn's run.
+   */
+  readonly scope?: 'loop' | 'chat';
+  /**
+   * DSP-147: the agent's runtime has taken it for the running work. Not evidence that
+   * the work took it in; that is `delivered` with `during`.
+   */
+  readonly accepted?: boolean;
+  /**
+   * DSP-147: the runtime had it and the work ended without evidence that it was taken
+   * in. It may still have reached the agent, so it is never handed over again.
+   */
+  readonly unconfirmed?: boolean;
+  /**
+   * DSP-147: the running work could not take it (no steering in this runtime, or the
+   * runtime declined), so it waits for this handover instead: the run's next step, or
+   * the end of the chat turn, when it is sent as the next message.
+   */
+  readonly waitingFor?: 'next-step' | 'end-of-turn' | null;
 }
 
 /**
- * The three things that can be true of a message, and there is no fourth.
+ * What can be true of a message.
  *
  * `never-delivered` is its own state rather than a variant of `pending`, because
  * the difference is the whole of §4.4's last sentence: a message still waiting may
  * yet be used, and one whose run has ended never will be. Collapsing them would
  * leave someone waiting for an effect that can no longer happen.
+ *
+ * DSP-147 adds two between them. `accepted`: the runtime has it for the running work
+ * and has not yet said the work took it in. `unconfirmed`: the runtime had it and the
+ * work ended without saying so; it is not handed over again, because a second copy
+ * could deliver it twice.
  */
-export type LoopInstructionState = 'pending' | 'delivered' | 'never-delivered';
+export type LoopInstructionState =
+  | 'pending'
+  | 'accepted'
+  | 'delivered'
+  | 'unconfirmed'
+  | 'never-delivered';
+
+/**
+ * DSP-147: a chat turn's saved steering message, read back, as the entry the window
+ * draws. A `received` or `accepted` one in a file means nothing more was learned before
+ * DSpatch stopped: it is shown as not confirmed, never as waiting for something that is
+ * no longer coming.
+ */
+export function storedSteeringAsInstruction(entry: StoredSteering, runId: string): LoopInstruction {
+  const delivered =
+    entry.state === 'delivered' || entry.state === 'sent-as-next-message'
+      ? {
+          nodeId: '',
+          nodeLabel: '',
+          occurrence: 0,
+          atUtc: entry.settledAtUtc ?? entry.receivedAtUtc,
+          ...(entry.state === 'delivered' ? { during: true } : {}),
+        }
+      : null;
+  return {
+    id: entry.id,
+    runId,
+    text: entry.text,
+    receivedAtUtc: entry.receivedAtUtc,
+    delivered,
+    runEnded: entry.state === 'not-delivered' || entry.state === 'waiting-end-of-turn',
+    scope: 'chat',
+    ...(entry.state === 'unconfirmed' || entry.state === 'accepted' || entry.state === 'received'
+      ? { unconfirmed: true }
+      : {}),
+  };
+}
 
 export function loopInstructionState(instruction: LoopInstruction): LoopInstructionState {
   if (instruction.delivered !== null) {
     return 'delivered';
   }
-  return instruction.runEnded ? 'never-delivered' : 'pending';
+  if (instruction.unconfirmed === true) {
+    return 'unconfirmed';
+  }
+  if (instruction.runEnded) {
+    return 'never-delivered';
+  }
+  return instruction.accepted === true ? 'accepted' : 'pending';
 }
 
 /**
@@ -101,22 +176,44 @@ export function loopInstructionState(instruction: LoopInstruction): LoopInstruct
  * and the reasoning around it is not.
  */
 export function loopInstructionStatusText(instruction: LoopInstruction): string {
+  const chat = instruction.scope === 'chat';
   const delivered = instruction.delivered;
   if (delivered !== null) {
+    if (delivered.during === true) {
+      // DSP-147: the runtime's evidence that the running turn took it in. Not "read".
+      return chat || delivered.nodeLabel === ''
+        ? 'Delivered to the running work.'
+        : `Delivered to “${delivered.nodeLabel}” while it worked.`;
+    }
+    if (chat) {
+      return 'Sent as your next message when the turn ended.';
+    }
     return (
       `Given to “${delivered.nodeLabel}” when that step started` +
       `${delivered.occurrence > 1 ? `, on its ${ordinal(delivered.occurrence)} turn` : ''}, ` +
       `before its own task.`
     );
   }
-  if (instruction.runEnded) {
-    return 'The run ended first, so no agent ever received it.';
+  if (instruction.unconfirmed === true) {
+    return 'Delivery not confirmed: the work ended without saying it took this in. It is not sent again.';
   }
-  // Still says *next*, because that is the limit: a provider turn already running
-  // cannot be told anything mid-way, and a person who reads this as "it has been
-  // passed on" will expect an effect that is not coming. And still says no agent
-  // has it, because that is §4.4: receipt by the window is not receipt by an agent.
-  return 'Waiting. No agent has it yet; it goes to the next step the run starts.';
+  if (instruction.runEnded) {
+    return chat
+      ? 'The turn stopped first, so the agent never received it.'
+      : 'The run ended first, so no agent ever received it.';
+  }
+  if (instruction.accepted === true) {
+    return 'Sent to the running work; not yet taken in.';
+  }
+  if (instruction.waitingFor === 'end-of-turn') {
+    return 'Waiting. The agent cannot take it while it works; it is sent when this turn ends.';
+  }
+  if (instruction.waitingFor === 'next-step' || !chat) {
+    // Says no agent has it, because that is §4.4: receipt by the window is not
+    // receipt by an agent.
+    return 'Waiting. No agent has it yet; it goes to the next step the run starts.';
+  }
+  return 'Waiting for delivery.';
 }
 
 /**
@@ -132,8 +229,14 @@ export function loopInstructionBadgeText(instruction: LoopInstruction): string {
       return 'reached the agent';
     case 'never-delivered':
       return 'never reached an agent';
+    case 'unconfirmed':
+      return 'delivery not confirmed';
+    case 'accepted':
+      return 'sent';
     case 'pending':
-      return 'waiting for the next step';
+      return instruction.scope === 'chat' || instruction.waitingFor === 'end-of-turn'
+        ? 'waiting'
+        : 'waiting for the next step';
   }
 }
 
@@ -158,6 +261,21 @@ export type LoopInstructionEvent =
    * message that sits on `pending` for ever.
    */
   | { readonly kind: 'run-ended'; readonly runId: string }
+  /** DSP-147: the runtime took these for the running work. */
+  | { readonly kind: 'accepted'; readonly runId: string; readonly instructionIds: readonly string[] }
+  /** DSP-147: the runtime had these and the work ended without saying it took them in. */
+  | { readonly kind: 'unconfirmed'; readonly runId: string; readonly instructionIds: readonly string[] }
+  /** DSP-147: the running work could not take these; they wait for this handover. */
+  | {
+      readonly kind: 'waiting';
+      readonly runId: string;
+      readonly instructionIds: readonly string[];
+      readonly waitingFor: 'next-step' | 'end-of-turn';
+    }
+  /** DSP-147: these were not given to the agent, and nothing will give them now. */
+  | { readonly kind: 'not-delivered'; readonly runId: string; readonly instructionIds: readonly string[] }
+  /** DSP-147: a chat turn's steering, read back from a saved conversation. */
+  | { readonly kind: 'restored'; readonly instructions: readonly LoopInstruction[] }
   /** A different project, a new session, or a saved conversation read back. */
   | { readonly kind: 'conversation-replaced' };
 
@@ -192,10 +310,42 @@ export function loopInstructionsAfter(
     }
     case 'run-ended':
       return instructions.map((instruction) =>
-        instruction.runId === event.runId && instruction.delivered === null
+        instruction.runId === event.runId &&
+        instruction.delivered === null &&
+        instruction.unconfirmed !== true
           ? { ...instruction, runEnded: true }
           : instruction,
       );
+    case 'accepted':
+    case 'unconfirmed':
+    case 'not-delivered':
+    case 'waiting': {
+      const ids = new Set(event.instructionIds);
+      return instructions.map((instruction) => {
+        if (
+          instruction.runId !== event.runId ||
+          !ids.has(instruction.id) ||
+          instruction.delivered !== null ||
+          instruction.runEnded
+        ) {
+          return instruction;
+        }
+        if (event.kind === 'accepted') {
+          return { ...instruction, accepted: true };
+        }
+        if (event.kind === 'unconfirmed') {
+          return { ...instruction, unconfirmed: true };
+        }
+        if (event.kind === 'not-delivered') {
+          return { ...instruction, runEnded: true };
+        }
+        return { ...instruction, accepted: false, waitingFor: event.waitingFor };
+      });
+    }
+    case 'restored': {
+      const known = new Set(instructions.map((instruction) => instruction.id));
+      return [...instructions, ...event.instructions.filter((instruction) => !known.has(instruction.id))];
+    }
   }
 }
 
@@ -282,6 +432,42 @@ export function instructionPreamble(texts: readonly string[]): string {
 }
 
 /**
+ * DSP-147: the messages an **earlier** step of this run was given while it worked, as
+ * part of a later step's brief.
+ *
+ * Steering reaches the step that is running, and that step's session alone. A later step
+ * runs in a session of its own (DSP-79) and would otherwise judge the work against the
+ * assignment as first written, so the verifier would check the implementer against a
+ * task the person had since changed. AGENT_BEHAVIOUR_AND_ORCHESTRATION.md §2: the user's
+ * task and explicit constraints survive handoffs. The same precedence rule as
+ * {@link instructionPreamble}, by reusing it; the opening sentence says these were
+ * already given to the step they were sent to, so they are context and not a request
+ * to redo that step's work.
+ *
+ * `''` when there are none, so every run without steering keeps its prompts byte for byte.
+ */
+export function earlierInstructionsContext(texts: readonly string[]): string {
+  const said = texts.map((text) => text.trim()).filter((text) => text !== '');
+  if (said.length === 0) {
+    return '';
+  }
+  const body = instructionPreamble(said);
+  const firstBreak = body.indexOf('\n');
+  // Not "that step received it": a message the runtime had without confirming that the
+  // turn took it in is carried too, and the brief does not claim more than is known.
+  const opening =
+    said.length === 1
+      ? 'Earlier in this run, the person who gave the assignment sent a message to the work ' +
+        'while an earlier step was doing it. It is part of the assignment as it now stands: ' +
+        'do your step, and judge earlier work, against the assignment with it applied.'
+      : `Earlier in this run, the person who gave the assignment sent ${String(said.length)} ` +
+        'messages to the work while earlier steps were doing it. They are part of the ' +
+        'assignment as it now stands: do your step, and judge earlier work, against the ' +
+        'assignment with them applied.';
+  return `${opening}${body.slice(firstBreak)}`;
+}
+
+/**
  * The markers around the user's own words, so the agent can tell them from the task.
  *
  * Fenceless and unusual for the reason the role block's are: a message may contain
@@ -317,8 +503,13 @@ export type ComposerRoute =
   | { readonly kind: 'loop-run' }
   /** An ordinary single-agent turn. */
   | { readonly kind: 'agent-turn' }
-  /** Into the run already walking, as a message for a step that has not started. */
+  /**
+   * Into the run already walking (DSP-32, DSP-147): to the step that is working, through
+   * its runtime's steering where it has it, and otherwise to the next step.
+   */
   | { readonly kind: 'instruction'; readonly runId: string }
+  /** DSP-147: into the ordinary agent turn that is working, as steering of that turn. */
+  | { readonly kind: 'steer' }
   | {
       readonly kind: 'blocked';
       readonly reason: string;
@@ -429,6 +620,26 @@ export function composerSendRoute(
   if (state.noProviderSession !== null && !state.useLoop && !state.loopRunning) {
     return { kind: 'blocked', reason: state.noProviderSession };
   }
+  // DSP-147: a message while work is running is steering of that work (INTERACTION_MODEL
+  // §3.1). It is part of the work already going, not a new attempt, so the gate on earlier
+  // attempts with no known outcome below does not apply to it. A run in flight takes the
+  // message whatever the toggle says, so there is no path from here to a second walk in
+  // the same working copy.
+  if (state.loopRunning) {
+    if (state.loopRunId === null) {
+      return {
+        kind: 'blocked',
+        reason:
+          'A loop run is working but DSpatch has lost track of which one, so it cannot ' +
+          'say where this message would go. Your text is kept. Cancel the run, or wait ' +
+          'for it to report an end.',
+      };
+    }
+    return { kind: 'instruction', runId: state.loopRunId };
+  }
+  if (state.outstandingTurn) {
+    return { kind: 'steer' };
+  }
   const acknowledgedHere = state.useLoop || state.loopRunning ? [] : acknowledged;
   const labels = attemptRefLabels(state.unresolvedAttempts);
   const unnamed = labels.filter((_label, position) => {
@@ -445,29 +656,6 @@ export function composerSendRoute(
         `${unnamed.length === 1 ? 'An earlier attempt has' : `${String(unnamed.length)} earlier attempts have`} ` +
         `no known outcome (${unnamed.join(', ')}), so DSpatch will not send ` +
         'another message by itself. Your text stays where it is.',
-    };
-  }
-  // Before the `useLoop` branch, and that order is the guard. A run in flight takes
-  // the message whatever the toggle says, so there is no path from here to a second
-  // walk in the same working copy.
-  if (state.loopRunning) {
-    if (state.loopRunId === null) {
-      return {
-        kind: 'blocked',
-        reason:
-          'A loop run is working but DSpatch has lost track of which one, so it cannot ' +
-          'say where this message would go. Your text is kept. Cancel the run, or wait ' +
-          'for it to report an end.',
-      };
-    }
-    return { kind: 'instruction', runId: state.loopRunId };
-  }
-  if (state.outstandingTurn) {
-    return {
-      kind: 'blocked',
-      reason:
-        'The agent is still working on the previous message and has not been asked to ' +
-        'stop. Your text is kept. Cancel that turn, or wait for it to answer.',
     };
   }
   return state.useLoop ? { kind: 'loop-run' } : { kind: 'agent-turn' };
@@ -497,6 +685,7 @@ export function composerRouteNote(route: ComposerRoute): string | null {
     case 'blocked':
       return route.quiet === true ? null : route.reason;
     case 'instruction':
+    case 'steer':
     case 'loop-run':
     case 'agent-turn':
       return null;

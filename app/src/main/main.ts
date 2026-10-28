@@ -7,6 +7,7 @@ import { BrowserWindow, Menu, app, clipboard, dialog, ipcMain, shell, utilityPro
 import type {
   AddLoopInstructionOutcome,
   AddLoopInstructionRequest,
+  SteerTurnRequest,
   AttemptAcknowledgement,
   BridgeChannel,
   BuildIdentity,
@@ -151,6 +152,7 @@ const GRAPH_TO_EDIT: BridgeChannel = 'dspatch:graph-to-edit';
 const NOTE_UNSAVED_DRAWING: BridgeChannel = 'dspatch:note-unsaved-drawing';
 const GRAPH_SAVED_ELSEWHERE: BridgeChannel = 'dspatch:graph-saved-elsewhere';
 const ADD_LOOP_INSTRUCTION: BridgeChannel = 'dspatch:add-loop-instruction';
+const STEER_TURN: BridgeChannel = 'dspatch:steer-turn';
 const LIST_RUN_RECORDS: BridgeChannel = 'dspatch:list-run-records';
 const READ_LOOP_CONTROL: BridgeChannel = 'dspatch:read-loop-control';
 const REQUEST_LOOP_PAUSE: BridgeChannel = 'dspatch:request-loop-pause';
@@ -2962,6 +2964,8 @@ function registerIpc(): void {
     (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) =>
       hostCall('chat.sendPrompt', NO_SENDER, prompt, acknowledgedAttemptIds ?? []),
   );
+  // DSP-147: steering of the ordinary turn that is working.
+  ipcMain.handle(STEER_TURN, (_event, request: SteerTurnRequest) => hostCall('chat.steerTurn', NO_SENDER, request));
   ipcMain.handle(CANCEL_RUN, () => hostCall('chat.cancelRun', NO_SENDER));
   ipcMain.handle(ABANDON_SEND, () => hostCall('chat.abandonSend', NO_SENDER));
   ipcMain.handle(CANCEL_OBSERVATIONS, () => hostCall('chat.cancelObservations', NO_SENDER));

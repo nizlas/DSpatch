@@ -47,7 +47,7 @@ The first external user trial runs on a work computer, where Claude must not be 
   - There is no silent fallback to another provider, and none to separately billed API use.
   - A session is never resumed through another provider.
 - **Content exclusion.** The [content-exclusion contract](../../docs/DSPATCH_CONTENT_EXCLUSION_CONTRACT.md) (a draft, scoped to the Copilot runtime) and roadmap §5 P4A. See the section below.
-- **Steering is later.** INTERACTION_MODEL.md §3.1: steering and separate manual command runs are DSP-147, which comes after this story and does not block the first trial.
+- **Steering is DSP-147.** INTERACTION_MODEL.md §3.1: steering and separate manual command runs are DSP-147, which Niclas prioritised before this story on 28 Oct 2026. This story establishes what the Copilot runtime offers for steering and implements `AgentAdapter.steer` for it where it exists (DSP-147 AC #7); without it, a message during work waits for the next step or the end of the turn, as for any runtime without steering. Not a blocker for the first trial.
 
 ### Content exclusion, anchored in the existing contract
 
@@ -128,7 +128,7 @@ Existing cards checked: none covered the Copilot integration. Roadmap P3/P4A exi
 - DSP-1 lists outstanding VS Code/Copilot compatibility tests and is not reopened.
 - DSP-110 (AHP) is an independent investigation and not a dependency. The roadmap's P4B decision gate (direct SDK, AHP for Copilot only, or broader AHP) comes after this direct baseline.
 
-Order: after DSP-111 in the agreed sequence (roadmap §1.2), but not dependent on it. Developed at work, so it can proceed in parallel with home work. DSP-147 follows it. The first external user trial (DSP-129's example) needs it.
+Order: after DSP-111 in the agreed sequence (roadmap §1.2), but not dependent on it. Developed at work, so it can proceed in parallel with home work. DSP-147 was prioritised before it (Niclas, 28 Oct 2026). The first external user trial (DSP-129's example) needs it.
 
 Open decisions, to settle before or during planning:
 1. **Gate for the first external trial.** Does the first trial require the content-exclusion enablement gate? The trial uses only DSpatch's own public example material. The alternative is to run it under the work environment's existing mandatory controls, not disabled, with no content-exclusion claim. This depends partly on what the responsible tooling team requires for any SDK-based application. Needs Niclas's decision, informed by that team.

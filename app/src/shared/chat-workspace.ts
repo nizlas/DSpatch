@@ -299,8 +299,19 @@ export type SendOutcomeKind = 'accepted' | 'refused' | 'failed' | 'superseded';
 export function composerTextAfterSend(
   typed: string,
   outcome: SendOutcomeKind,
+  sent: string = typed,
 ): string {
-  return outcome === 'accepted' ? '' : typed;
+  if (outcome !== 'accepted') {
+    return typed;
+  }
+  // DSP-147: `typed` is the box **now**, which may hold more than was sent: a person
+  // writes on while a loop start or a steering message is being accepted. Only what was
+  // sent leaves the box; anything typed after it stays. A box changed in a way that no
+  // longer starts with what was sent is left alone rather than guessed at.
+  if (typed === sent || typed.trim() === sent.trim()) {
+    return '';
+  }
+  return typed.startsWith(sent) ? typed.slice(sent.length).replace(/^\s+/, '') : typed;
 }
 
 /**

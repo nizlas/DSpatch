@@ -4,6 +4,7 @@ import path from 'node:path';
 import type {
   AddLoopInstructionOutcome,
   AddLoopInstructionRequest,
+  SteerTurnRequest,
   AttemptAcknowledgement,
   BridgeChannel,
   ChatLoopCancelOutcome,
@@ -59,7 +60,7 @@ import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/
 import { describeLiveBinding } from '../shared/loop-editor-run';
 import { formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
 import type { LoopGraph, LoopNode, LoopTarget, RoleReference, RoleResolver } from '../shared/loop-graph';
-import { instructionPreamble } from '../shared/loop-instruction';
+import { earlierInstructionsContext, instructionPreamble } from '../shared/loop-instruction';
 import {
   describeRunOutcome,
   runOutcomeFrom,
@@ -116,7 +117,8 @@ import {
   resolvedRolesWith,
 } from '../main/loop-graph-open';
 import { createFileRoleResolver } from '../main/loop-graph-roles';
-import { refuseLiveWorkingRoots, type LiveInspection } from '../main/loop-live';
+import { refuseLiveWorkingRoots, type LiveInspection, type SteerableStep } from '../main/loop-live';
+import { WORKING_COPY_LOCK } from '../main/working-copy-lock';
 import { defaultLiveModel, runLiveGraph } from '../main/loop-live-run';
 import { LoopRunAudience } from '../main/loop-run-audience';
 import { loopRunAgentInfo, prepareLoopRun, type LoopRunAgentRequest } from '../main/loop-run-agent';
@@ -511,6 +513,10 @@ function createChatService(): ChatService {
   ownRepoRoot,
   send: (event) => {
     sendToMainWindow(AGENT_EVENT, event);
+  },
+  // DSP-147: steering of a chat turn, on the loop's message channel.
+  sendSteering: (payload) => {
+    sendToMainWindow(LOOP_INSTRUCTION_EVENT, payload);
   },
   log: (message) => {
     log(`[chat] ${message}`);
@@ -1924,6 +1930,21 @@ function registerLoopMethods(): void {
   const chatLoopInstructions = new InstructionQueue();
   /** The chat-loop run now walking, so a message can be checked against it. */
   let chatLoopRunId: string | null = null;
+  /**
+   * DSP-147: the run's agent step whose turn is working, offered by the executor for
+   * steering, with its label from the walked graph; `null` between steps.
+   */
+  let chatLoopSteerable: { readonly step: SteerableStep; readonly nodeLabel: string } | null = null;
+  /**
+   * DSP-147: the run's messages that have reached the work so far, by steering or at a
+   * step's start, oldest first. Later steps are briefed with them, so a verifier judges
+   * the work against the assignment as the person has since changed it.
+   */
+  let chatLoopGiven: string[] = [];
+  /** DSP-147: what became of each steering message in this run, for its ending note. */
+  let chatLoopSteered: { readonly text: string; readonly outcome: string }[] = [];
+  /** DSP-147: the window that started the run hears what happens to its messages. */
+  let chatLoopInstructionEvents: ((payload: LoopInstructionEventPayload) => void) | null = null;
 
   /**
    * Whether a loop run is already walking, asked once for both run handlers.
@@ -2600,6 +2621,16 @@ function registerLoopMethods(): void {
         return { kind: 'refused', reason: agent.reason };
       }
       const modelRequested = agent.modelRequested;
+      // DSP-147: no loop run while the person's own command runs in a folder of this
+      // run's. Before the record is opened, so a refusal leaves nothing behind.
+      const workClaim = WORKING_COPY_LOCK.claim({
+        kind: 'agent-work',
+        folders: workingRoots.map((root) => root.path),
+        label: 'a loop run',
+      });
+      if (!workClaim.ok) {
+        return { kind: 'refused', reason: `${workClaim.reason} The loop was not started.` };
+      }
       // Opened before the walk starts and appended to as it happens, because DSP-25
       // #4 says an interrupted run must still leave understandable history — which
       // rules out assembling anything at the end. `graphVersionIdFor` hashes the
@@ -2628,6 +2659,11 @@ function registerLoopMethods(): void {
 
       chatLoopAbort = new AbortController();
       chatLoopRunId = request.runId;
+      chatLoopGiven = [];
+      chatLoopSteered = [];
+      chatLoopInstructionEvents = (payload) => {
+        sendToSender(LOOP_INSTRUCTION_EVENT, payload);
+      };
       const abort = chatLoopAbort;
       /**
        * How many times each node has been handed a waiting message.
@@ -2648,6 +2684,7 @@ function registerLoopMethods(): void {
       let endedTerminal: string | null = null;
       const began = loopControl.beginRun(request.runId, abort.signal);
       if (!began.started) {
+        workClaim.release();
         chatLoopAbort = null;
         closeChatLoopRecord(record, {
           kind: 'failed',
@@ -2735,10 +2772,14 @@ function registerLoopMethods(): void {
             // next asks for its prompt, and that is the step that gets the
             // message — the following node on an ordinary handover, or the same
             // node again when a step is repeated.
+            // DSP-147: what earlier steps were given, before anything new, so this step
+            // works and judges against the assignment as it now stands.
+            const earlier = earlierInstructionsContext(chatLoopGiven);
             const taken = chatLoopInstructions.takeFor(request.runId);
             if (taken.length === 0) {
-              return prompt;
+              return `${earlier}${prompt}`;
             }
+            chatLoopGiven = [...chatLoopGiven, ...taken.map((entry) => entry.text)];
             const nodeLabel = lookup.node(node.id)?.label ?? node.id;
             const atUtc = new Date().toISOString();
             deliveredCounts.set(node.id, (deliveredCounts.get(node.id) ?? 0) + 1);
@@ -2765,7 +2806,12 @@ function registerLoopMethods(): void {
             // A message no step ever took has no prompt to live in, and that case is
             // carried on the run's ending note instead. See `undeliveredNote`.
             sendToSender(LOOP_INSTRUCTION_EVENT, payload);
-            return `${instructionPreamble(taken.map((entry) => entry.text))}${prompt}`;
+            return `${earlier}${instructionPreamble(taken.map((entry) => entry.text))}${prompt}`;
+          },
+          // DSP-147: the step that is working, for steering from the conversation.
+          onSteerableStep: (step) => {
+            chatLoopSteerable =
+              step === null ? null : { step, nodeLabel: lookup.node(step.nodeId)?.label ?? step.nodeId };
           },
           // Written the moment a command settles rather than read out of the
           // inspection afterwards. The chat loop no longer starts a gate command;
@@ -2853,7 +2899,8 @@ function registerLoopMethods(): void {
         });
         const workspaceNote =
           `workspace ${delivery.workspacePath} (open project; files were not reset)` +
-          undeliveredNote(chatLoopInstructions.peekFor(request.runId));
+          undeliveredNote(chatLoopInstructions.peekFor(request.runId)) +
+          steeredNote(chatLoopSteered);
         const cancelled = abort.signal.aborted;
         const recorded = closeChatLoopRecord(record, {
           kind: cancelled ? 'cancelled' : 'finished',
@@ -2905,6 +2952,9 @@ function registerLoopMethods(): void {
         // editor handler's `finally` gives: this one now covers the claim too.
         chatLoopAbort = null;
         chatLoopRunId = null;
+        chatLoopSteerable = null;
+        // DSP-147: the run's agent work has ended; a manual command may start.
+        workClaim.release();
         // Every path out of the handler, including the throwing one, for the same
         // reason the control is released here: a message left in the queue after
         // its run has gone would sit on `pending` for ever, and §4.4 asks for the
@@ -2996,12 +3046,78 @@ function registerLoopMethods(): void {
         };
       }
       const entry = chatLoopInstructions.add(request.runId, text, new Date().toISOString());
-      return {
+      const received: AddLoopInstructionOutcome = {
         kind: 'received',
         instructionId: entry.id,
         receivedAtUtc: entry.receivedAtUtc,
         waiting: chatLoopInstructions.peekFor(request.runId).length,
       };
+      // DSP-147: into the step that is working, through its runtime's own steering, where
+      // it has it. Withdrawn from the queue while offered, so the next step's prompt
+      // cannot take it as well; put back only if the runtime never took it.
+      const target = chatLoopSteerable;
+      const emit = chatLoopInstructionEvents;
+      const steer = target?.step.steer;
+      if (target === null || steer === undefined) {
+        emit?.({ kind: 'waiting', runId: request.runId, instructionIds: [entry.id], waitingFor: 'next-step' });
+        return received;
+      }
+      chatLoopInstructions.withdraw(entry.id);
+      let accepted = false;
+      const runId = request.runId;
+      const ids = [entry.id];
+      void steer(text, (update) => {
+        if (update.state === 'accepted' && !accepted) {
+          accepted = true;
+          emit?.({ kind: 'accepted', runId, instructionIds: ids });
+        }
+      })
+        .then((final) => {
+          const sameRun = chatLoopRunId === runId;
+          if (final.state === 'delivered') {
+            if (sameRun) {
+              chatLoopGiven = [...chatLoopGiven, text];
+              chatLoopSteered = [...chatLoopSteered, { text, outcome: `delivered to “${target.nodeLabel}” while it worked` }];
+            }
+            emit?.({
+              kind: 'delivered',
+              runId,
+              instructionIds: ids,
+              nodeId: target.step.nodeId,
+              nodeLabel: target.nodeLabel,
+              occurrence: target.step.occurrence,
+              atUtc: new Date().toISOString(),
+              during: true,
+            });
+            return;
+          }
+          if (accepted || final.reason === 'failed') {
+            // The runtime had it; it may have reached the agent, so it is never handed
+            // over again. Later steps are still briefed with it, without a claim of receipt.
+            if (sameRun) {
+              chatLoopGiven = [...chatLoopGiven, text];
+              chatLoopSteered = [...chatLoopSteered, { text, outcome: `delivery to “${target.nodeLabel}” not confirmed` }];
+            }
+            emit?.({ kind: 'unconfirmed', runId, instructionIds: ids });
+            return;
+          }
+          if (sameRun) {
+            // Never reached the runtime: the next step gets it, as before steering existed.
+            chatLoopInstructions.restore(entry);
+            emit?.({ kind: 'waiting', runId, instructionIds: ids, waitingFor: 'next-step' });
+            return;
+          }
+          emit?.({ kind: 'not-delivered', runId, instructionIds: ids });
+        })
+        .catch(() => {
+          if (chatLoopRunId === runId && !accepted) {
+            chatLoopInstructions.restore(entry);
+            emit?.({ kind: 'waiting', runId, instructionIds: ids, waitingFor: 'next-step' });
+          } else {
+            emit?.({ kind: accepted ? 'unconfirmed' : 'not-delivered', runId, instructionIds: ids });
+          }
+        });
+      return received;
     },
   );
 
@@ -3171,6 +3287,21 @@ function undeliveredNote(
     `another step started: ${each}. No agent received ${undelivered.length === 1 ? 'it' : 'them'} ` +
     `and nothing was done about ${undelivered.length === 1 ? 'it' : 'them'}.`
   );
+}
+
+/**
+ * DSP-147: the run's steering messages and what became of each, on the ending note, so
+ * the record keeps a message the runtime took into a running step (which no prompt
+ * holds) beside the prompts that hold the ones given at a step's start. `''` when there
+ * were none, so a run without steering keeps its note byte for byte.
+ */
+function steeredNote(steered: readonly { readonly text: string; readonly outcome: string }[]): string {
+  if (steered.length === 0) {
+    return '';
+  }
+  return ` Steering sent while steps worked: ${steered
+    .map((entry) => `“${entry.text}” (${entry.outcome})`)
+    .join('; ')}.`;
 }
 
 /**
@@ -3602,6 +3733,8 @@ function registerCoreMethods(): void {
   // DSP-121: the user removing the recap. Sends nothing; the service answers with
   // the continuity the window shows from then on.
   handle('chat.discardPendingRecap', () => chatService.discardPendingRecap());
+  // DSP-147: steering of the turn that is working; it never starts a turn.
+  handle('chat.steerTurn', (_event, request: SteerTurnRequest) => chatService.steerTurn(request.text));
   handle(
     'chat.sendPrompt',
     async (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) => {

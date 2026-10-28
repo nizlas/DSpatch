@@ -26,6 +26,7 @@ import type {
   RunReference,
   SessionConfig,
   SessionHandle,
+  SteerUpdate,
   Unsubscribe,
   UsageQuery,
   UsageReading,
@@ -76,9 +77,13 @@ import type {
   TurnUsage,
   UiAgentEvent,
   FolderChangeReport,
+  LoopInstructionEventPayload,
+  SteerTurnOutcome,
+  StoredSteering,
   WorkspaceChange,
   WorkspaceReport,
 } from '../shared/bridge';
+import { WORKING_COPY_LOCK, type WorkingCopyLock } from './working-copy-lock';
 import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
 import {
   CLAUDE_CHAT_MODEL,
@@ -836,7 +841,15 @@ interface TurnRecord {
    * `command.finished`, with the snapshots DSpatch took when it saw the start and the end.
    */
   readonly commands: AgentCommandRecord[];
+  /** DSP-147: steering messages sent into this turn while it worked. */
+  readonly steering: SteeringRecord[];
 }
+
+/** DSP-147: a steering message as this window holds it; written down as a {@link StoredSteering}. */
+type SteeringRecord = { -readonly [K in keyof StoredSteering]: StoredSteering[K] } & {
+  /** The runtime has taken it, so it is never handed over again. */
+  everAccepted: boolean;
+};
 
 interface CancelState {
   attempted: boolean;
@@ -945,6 +958,8 @@ export interface ChatAdapter {
   setWorkspaceRoots?(sessionId: string, roots: readonly string[]): void;
   /** DSP-149: see {@link AgentAdapter.setSessionModel}. */
   setSessionModel?(sessionId: string, modelId: string): void;
+  /** DSP-147: see {@link AgentAdapter.steer}. */
+  steer?(sessionId: string, text: string, onUpdate?: (update: SteerUpdate) => void): Promise<SteerUpdate>;
   cancel(sessionId: string): Promise<void>;
   readUsage(scope: UsageQuery): Promise<readonly UsageReading[]>;
   providerMessageTypes(sessionId: string): Record<string, number>;
@@ -1110,6 +1125,17 @@ export interface ChatServiceOptions {
    * passes its own.
    */
   readonly commandSlots?: WorkspaceCommandSlots;
+  /**
+   * DSP-147: agent work and a manual command exclude each other in overlapping folders.
+   * Defaults to the process-wide lock, which the project host's loop runs share; a test
+   * passes its own.
+   */
+  readonly workingCopyLock?: WorkingCopyLock;
+  /**
+   * DSP-147: where steering events go: the same channel as a loop run's messages, so one
+   * model in the window follows both. Absent in tests that do not listen.
+   */
+  readonly sendSteering?: (payload: LoopInstructionEventPayload) => void;
   /**
    * Overrides for the two waiting periods, so a test does not spend 100 seconds
    * establishing a rule about them. Production passes nothing.
@@ -1356,6 +1382,15 @@ export class ChatService {
   private unsubscribe: (() => void) | null = null;
 
   private currentTurn: TurnRecord | null = null;
+
+  /**
+   * DSP-147: the working-copy lock each of this window's agent turns holds, by run id,
+   * from the send until its run has ended (or, after an unconfirmed cancel, until its
+   * session is closed).
+   */
+  private readonly agentWorkClaims = new Map<string, () => void>();
+
+  private steeringCounter = 0;
 
   private readonly turns: TurnRecord[] = [];
 
@@ -3200,6 +3235,16 @@ export class ChatService {
     if (!decision.allowed) {
       throw new Error(decision.reason);
     }
+    // DSP-147: agent work does not start while the person's own command runs in a folder
+    // this session works in. Taken before anything is recorded, so a refusal leaves no trace.
+    const lockClaim = this.workingCopyLock().claim({
+      kind: 'agent-work',
+      folders: this.workspaceFolders.length > 0 ? this.workspaceFolders : [session.workspacePath],
+      label: "the agent's turn",
+    });
+    if (!lockClaim.ok) {
+      throw new Error(`${lockClaim.reason} Nothing was sent.`);
+    }
     this.acknowledgeInWorkingCopy(
       ledger,
       sharing,
@@ -3240,8 +3285,15 @@ export class ChatService {
           ? ''
           : ` with ${String(resent.length)} characters of resent conversation record`),
     );
+    let lockHandedOver = false;
     try {
       const reference = await adapter.send(session.dspatchSessionId, sentText);
+      // DSP-147: the lock is held until this run ends (see `holdUntilRunEnds`).
+      this.holdUntilRunEnds(reference.dspatchRunId, lockClaim.release);
+      lockHandedOver = true;
+      // DSP-147: a steering message that waited for the previous turn to end went in as
+      // this message; it is recorded and shown as sent that way, now that it was taken.
+      this.noteSteeringSentAsNextMessage(prompt);
       // Only once the provider has taken it. A send that was refused resent
       // nothing, so the next attempt must carry the recap again.
       this.pendingResendContext = null;
@@ -3269,6 +3321,9 @@ export class ChatService {
       }
       throw error;
     } finally {
+      if (!lockHandedOver) {
+        lockClaim.release();
+      }
       if (this.pendingAttemptId === attempt.attemptId) {
         this.pendingAttemptId = null;
       }
@@ -3277,6 +3332,185 @@ export class ChatService {
       // keeps a send that threw before any run existed from attaching its recap to
       // somebody else's turn.
       this.pendingResentContext = null;
+    }
+  }
+
+  /** DSP-147: the lock agent work and manual commands share. */
+  private workingCopyLock(): WorkingCopyLock {
+    return this.options.workingCopyLock ?? WORKING_COPY_LOCK;
+  }
+
+  /**
+   * DSP-147: hold an agent turn's working-copy lock until its run ends. A run whose end
+   * has already been seen is released at once, unless that end was an unconfirmed cancel.
+   */
+  private holdUntilRunEnds(runId: string, release: () => void): void {
+    const ran = this.turns.find((turn) => turn.dspatchRunId === runId);
+    if (ran !== undefined && ran.terminalStatus !== null && !this.unconfirmedRuns.has(runId)) {
+      release();
+      return;
+    }
+    this.agentWorkClaims.set(runId, release);
+  }
+
+  /** DSP-147: runs whose cancel ended unconfirmed; their lock is kept until the session closes. */
+  private readonly unconfirmedRuns = new Set<string>();
+
+  /**
+   * DSP-147: send the person's message into the turn that is working, as steering of that
+   * same turn through its runtime's own support (`AgentAdapter.steer`). Never starts a
+   * turn, and so is never refused by the working-copy lock: it is part of the work that
+   * already holds it.
+   *
+   * What the window is told, on the loop's message channel: `accepted` when the runtime
+   * has it, `delivered` on its evidence that the turn took it in, `unconfirmed` when the
+   * runtime had it and the turn ended without saying so (never resent: a second copy
+   * could deliver it twice), `waiting` when the runtime could not take it for the running
+   * turn (it then goes in as the next message when the turn ends, which the window sends
+   * through its ordinary send), and `not-delivered` when the turn stopped first.
+   */
+  async steerTurn(text: string): Promise<SteerTurnOutcome> {
+    const { adapter, session } = this.requireSession();
+    const said = text.trim();
+    if (said === '') {
+      return { kind: 'refused', reason: 'There was nothing in the message to send.' };
+    }
+    const turn = this.currentTurn;
+    if (turn === null || turn.terminalStatus !== null) {
+      return { kind: 'no-running-turn' };
+    }
+    const receivedAtUtc = nowIso();
+    this.steeringCounter += 1;
+    const entry: SteeringRecord = {
+      id: `steer-${String(this.steeringCounter)}-${receivedAtUtc}`,
+      text: said,
+      receivedAtUtc,
+      state: 'received',
+      settledAtUtc: null,
+      providerMessageId: null,
+      detail: null,
+      everAccepted: false,
+    };
+    turn.steering.push(entry);
+    this.saveConversation(turn.conversationId);
+    const runId = turn.dspatchRunId;
+    const emit = (payload: LoopInstructionEventPayload): void => {
+      this.options.sendSteering?.(payload);
+    };
+    const ids = [entry.id];
+    const settle = (state: StoredSteering['state'], detail: string | null): void => {
+      entry.state = state;
+      entry.detail = detail;
+      entry.settledAtUtc = nowIso();
+      this.saveConversation(turn.conversationId);
+    };
+    this.options.log(`steering ${entry.id} for ${runId}: received (${String(said.length)} characters)`);
+    const steer = adapter.steer?.bind(adapter);
+    if (steer === undefined) {
+      settle('waiting-end-of-turn', 'This agent adapter has no steering.');
+      emit({ kind: 'waiting', runId, instructionIds: ids, waitingFor: 'end-of-turn' });
+      return { kind: 'received', instructionId: entry.id, runId, receivedAtUtc };
+    }
+    void steer(session.dspatchSessionId, said, (update) => {
+      if (update.state === 'accepted' && entry.state === 'received') {
+        entry.state = 'accepted';
+        entry.everAccepted = true;
+        entry.providerMessageId = update.providerMessageId ?? null;
+        this.saveConversation(turn.conversationId);
+        this.options.log(`steering ${entry.id}: accepted by the runtime`);
+        emit({ kind: 'accepted', runId, instructionIds: ids });
+      }
+    })
+      .then((final) => {
+        entry.providerMessageId = final.providerMessageId ?? entry.providerMessageId;
+        this.options.log(
+          `steering ${entry.id}: ${final.state}${final.reason === undefined ? '' : ` (${final.reason})`}` +
+            `${final.detail === undefined ? '' : ` - ${final.detail}`}`,
+        );
+        if (final.state === 'delivered') {
+          settle('delivered', final.detail ?? null);
+          emit({
+            kind: 'delivered',
+            runId,
+            instructionIds: ids,
+            nodeId: '',
+            nodeLabel: '',
+            occurrence: 0,
+            atUtc: entry.settledAtUtc ?? nowIso(),
+            during: true,
+          });
+          return;
+        }
+        if (entry.everAccepted || final.reason === 'failed') {
+          settle('unconfirmed', final.detail ?? null);
+          emit({ kind: 'unconfirmed', runId, instructionIds: ids });
+          return;
+        }
+        if (final.reason === 'cancelled') {
+          settle('not-delivered', final.detail ?? null);
+          emit({ kind: 'not-delivered', runId, instructionIds: ids });
+          return;
+        }
+        // Never reached the runtime: it can be handed over at the end of the turn.
+        if (turn.terminalStatus !== null && turn.terminalStatus !== 'finished') {
+          settle('not-delivered', final.detail ?? null);
+          emit({ kind: 'not-delivered', runId, instructionIds: ids });
+          return;
+        }
+        settle('waiting-end-of-turn', final.detail ?? null);
+        emit({ kind: 'waiting', runId, instructionIds: ids, waitingFor: 'end-of-turn' });
+      })
+      .catch((error: unknown) => {
+        settle(entry.everAccepted ? 'unconfirmed' : 'not-delivered', describeError(error));
+        emit({ kind: entry.everAccepted ? 'unconfirmed' : 'not-delivered', runId, instructionIds: ids });
+      });
+    return { kind: 'received', instructionId: entry.id, runId, receivedAtUtc };
+  }
+
+  /**
+   * DSP-147: a turn ended. Steering still waiting for its end is not delivered when the
+   * turn did not finish normally: a stopped or failed turn has no "next message" coming
+   * by itself, and the person decides what to send.
+   */
+  private settleSteeringAtTurnEnd(turn: TurnRecord): void {
+    if (turn.terminalStatus === 'finished') {
+      return;
+    }
+    const ended = turn.steering.filter((entry) => entry.state === 'waiting-end-of-turn');
+    for (const entry of ended) {
+      entry.state = 'not-delivered';
+      entry.settledAtUtc = nowIso();
+    }
+    if (ended.length > 0) {
+      this.options.sendSteering?.({
+        kind: 'not-delivered',
+        runId: turn.dspatchRunId,
+        instructionIds: ended.map((entry) => entry.id),
+      });
+    }
+  }
+
+  /** DSP-147: the message being sent now is a steering message that waited for the turn to end. */
+  private noteSteeringSentAsNextMessage(prompt: string): void {
+    const said = prompt.trim();
+    for (const turn of this.turns) {
+      for (const entry of turn.steering) {
+        if (entry.state === 'waiting-end-of-turn' && entry.text === said) {
+          entry.state = 'sent-as-next-message';
+          entry.settledAtUtc = nowIso();
+          this.saveConversation(turn.conversationId);
+          this.options.sendSteering?.({
+            kind: 'delivered',
+            runId: turn.dspatchRunId,
+            instructionIds: [entry.id],
+            nodeId: '',
+            nodeLabel: '',
+            occurrence: 0,
+            atUtc: entry.settledAtUtc,
+          });
+          return;
+        }
+      }
     }
   }
 
@@ -3689,8 +3923,18 @@ export class ChatService {
       throw new Error(check.message ?? 'The command could not be run.');
     }
 
+    // DSP-147: not while agent work is going in a folder this command's folder meets.
+    const lockClaim = this.workingCopyLock().claim({
+      kind: 'manual-command',
+      folders: [cwd],
+      label: command,
+    });
+    if (!lockClaim.ok) {
+      throw new Error(lockClaim.reason);
+    }
     const slot = slots.claim(session.workspacePath, { by: 'person', line: command });
     if (!slot.ok) {
+      lockClaim.release();
       throw new Error(describeRunRefused(slot.holder));
     }
     // R2: whatever happens from here on, the working copy's command slot is given back,
@@ -3851,6 +4095,7 @@ export class ChatService {
       return outcome;
     } finally {
       slot.release();
+      lockClaim.release();
     }
   }
 
@@ -5366,6 +5611,12 @@ export class ChatService {
     this.dirtyAtStart = new Set<string>();
     this.dirtyFilesAtStart = [];
     this.currentTurn = null;
+    // DSP-147: a turn whose cancel was never confirmed held the working copy until now;
+    // with its session closed, nothing of DSpatch's is left working there.
+    for (const release of this.agentWorkClaims.values()) {
+      release();
+    }
+    this.agentWorkClaims.clear();
     // The result belonged to the previous working copy and its snapshots. Kept
     // across a session change it would be a green tick beside unrelated code.
     this.lastTest = null;
@@ -5546,6 +5797,7 @@ export class ChatService {
         usageEvents: [],
         rawEventTypes: {},
         commands: [],
+        steering: [],
       };
       this.turns.push(turn);
       this.currentTurn = turn;
@@ -5561,6 +5813,15 @@ export class ChatService {
       setTimeout(() => {
         this.options.onTurnSettled?.();
       }, 0);
+      // DSP-147: the turn's agent work has ended, so a manual command may start. Not
+      // after an unconfirmed cancel: its local work may still be going (DSP-116), so the
+      // lock is kept until the session is closed.
+      if (event.status === 'cancelled' && event.end === 'unconfirmed') {
+        this.unconfirmedRuns.add(event.dspatchRunId);
+      } else {
+        this.agentWorkClaims.get(event.dspatchRunId)?.();
+        this.agentWorkClaims.delete(event.dspatchRunId);
+      }
       const owner = this.attemptByRunId.get(event.dspatchRunId);
       if (owner !== undefined) {
         const { ledger, attemptId } = owner;
@@ -5705,6 +5966,7 @@ export class ChatService {
           turn.finishedAtUtc = event.at;
           turn.errorMessage = event.error?.message ?? null;
           this.terminalSeenForTurn = true;
+          this.settleSteeringAtTurnEnd(turn);
           break;
         }
         default:
@@ -5865,6 +6127,19 @@ function toStoredMessage(turn: TurnRecord): StoredMessage {
     startedAtUtc: turn.startedAtUtc,
     finishedAtUtc: turn.finishedAtUtc,
     ...(turn.commands.length === 0 ? {} : { commands: [...turn.commands] }),
+    ...(turn.steering.length === 0
+      ? {}
+      : {
+          steering: turn.steering.map((entry) => ({
+            id: entry.id,
+            text: entry.text,
+            receivedAtUtc: entry.receivedAtUtc,
+            state: entry.state,
+            settledAtUtc: entry.settledAtUtc,
+            providerMessageId: entry.providerMessageId,
+            detail: entry.detail,
+          })),
+        }),
   };
 }
 

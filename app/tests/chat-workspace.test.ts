@@ -286,6 +286,16 @@ describe('the composer (DSP-27 #2)', () => {
     assert.equal(composerTextAfterSend('rework the verifier report', 'accepted'), '');
   });
 
+  // DSP-147: a loop start or a steering message is accepted while the person writes on.
+  it('takes out only what was sent, never what was typed after it', () => {
+    const sent = 'Fix the failing build.';
+    assert.equal(composerTextAfterSend(sent, 'accepted', sent), '');
+    assert.equal(composerTextAfterSend(`${sent}\nAlso the docs.`, 'accepted', sent), 'Also the docs.');
+    // A box rewritten so it no longer starts with what was sent is left alone.
+    assert.equal(composerTextAfterSend('Something else', 'accepted', sent), 'Something else');
+    assert.equal(composerTextAfterSend(`${sent} more`, 'refused', sent), `${sent} more`);
+  });
+
   it('leaves the text in place on a refusal or a failed handover', () => {
     const typed = 'Walk the loop over DSP-27 and report what it finds.';
     for (const outcome of ['refused', 'failed', 'superseded'] as const) {

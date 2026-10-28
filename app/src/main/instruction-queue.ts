@@ -73,6 +73,36 @@ export class InstructionQueue {
   }
 
   /**
+   * DSP-147: take one message out while it is offered to the step that is working, so
+   * the next step's prompt cannot take it as well. Returns it, or `null` when it is
+   * no longer waiting.
+   */
+  withdraw(id: string): QueuedInstruction | null {
+    const at = this.waiting.findIndex((entry) => entry.id === id);
+    if (at === -1) {
+      return null;
+    }
+    const [entry] = this.waiting.splice(at, 1);
+    return entry ?? null;
+  }
+
+  /**
+   * DSP-147: put back a message the working step's runtime never took, in its place by
+   * arrival, so the next step gets it as before.
+   */
+  restore(entry: QueuedInstruction): void {
+    if (this.waiting.some((waiting) => waiting.id === entry.id)) {
+      return;
+    }
+    const at = this.waiting.findIndex((waiting) => waiting.receivedAtUtc > entry.receivedAtUtc);
+    if (at === -1) {
+      this.waiting.push(entry);
+    } else {
+      this.waiting.splice(at, 0, entry);
+    }
+  }
+
+  /**
    * Forget a finished run's undelivered messages, and say which they were.
    *
    * The caller reports them as never delivered. Dropping them silently is the

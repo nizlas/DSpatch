@@ -7,6 +7,7 @@ import type {
   RunReference,
   SessionConfig,
   SessionHandle,
+  SteerUpdate,
   Unsubscribe,
   UsageQuery,
   UsageReading,
@@ -84,6 +85,25 @@ export interface AgentAdapter {
    * "stopped".
    */
   cancel(sessionId: DspatchSessionId): Promise<void>;
+
+  /**
+   * DSP-147: add the person's message to the session's **running** turn, through the
+   * runtime's own support for input during work. Never starts a run of its own.
+   *
+   * `onUpdate` hears `accepted` when the runtime has taken the message (and before it
+   * has necessarily reached the model); the promise settles with the final word:
+   * `delivered` only on the runtime's own evidence that the turn took the message in,
+   * `not-delivered` otherwise, with the reason. A `not-delivered` message was not given
+   * to the agent by this call and may be handed over by other means; the adapter never
+   * resends it. Settles before the run's terminal `run.finished`.
+   *
+   * Optional: an adapter without it cannot steer, and its callers say so.
+   */
+  steer?(
+    sessionId: DspatchSessionId,
+    text: string,
+    onUpdate?: (update: SteerUpdate) => void,
+  ): Promise<SteerUpdate>;
 
   /**
    * DSP-149: the session's folders changed (a folder was added to its workspace). The

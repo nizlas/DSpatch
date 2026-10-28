@@ -1433,6 +1433,11 @@ export interface StoredMessage {
    * DSP-145 and in turns that ran none.
    */
   readonly commands?: readonly AgentCommandRecord[];
+  /**
+   * DSP-147: the steering messages sent into this turn while it worked, and what became
+   * of each. Absent in files written before DSP-147 and in turns that had none.
+   */
+  readonly steering?: readonly StoredSteering[];
 }
 
 /**
@@ -1764,6 +1769,8 @@ export type ScriptedScenario =
   | 'model-start'
   /** DSP-149: the model choice through the real app and SDK, in phases; no message is sent. */
   | 'model-flow'
+  /** DSP-147: steering a chat turn and a loop step, the start prompt, and the lock with Run. */
+  | 'steering'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2596,6 +2603,11 @@ export interface DspatchBridge {
    * press of Send during a run to a second walk in the same working copy.
    */
   addLoopInstruction(request: AddLoopInstructionRequest): Promise<AddLoopInstructionOutcome>;
+  /**
+   * DSP-147: send a message into the ordinary agent turn that is working, as steering of
+   * that turn through its runtime's own support. Never starts a turn.
+   */
+  steerTurn(request: SteerTurnRequest): Promise<SteerTurnOutcome>;
   /** Which step took a message, or that the run ended before any did. */
   onLoopInstruction(listener: (event: LoopInstructionEventPayload) => void): () => void;
   /**
@@ -3074,7 +3086,12 @@ export type AddLoopInstructionOutcome =
       readonly reason: string;
     };
 
-/** A message reaching a step, or failing to before the run ended. */
+/**
+ * A message reaching a step, or failing to before the run ended.
+ *
+ * DSP-147: the same events carry steering of an ordinary chat turn, with the turn's run
+ * id as `runId` and an empty `nodeId` and `nodeLabel`.
+ */
 export type LoopInstructionEventPayload =
   | {
       readonly kind: 'delivered';
@@ -3084,13 +3101,74 @@ export type LoopInstructionEventPayload =
       readonly nodeLabel: string;
       readonly occurrence: number;
       readonly atUtc: string;
+      /** DSP-147: taken into the running work through its runtime's steering. */
+      readonly during?: boolean;
     }
   | {
       readonly kind: 'run-ended';
       readonly runId: string;
       /** Ids that never reached a step. Empty when everything was delivered. */
       readonly undelivered: readonly string[];
-    };
+    }
+  /** DSP-147: the runtime took these for the running work; not yet evidence they were taken in. */
+  | { readonly kind: 'accepted'; readonly runId: string; readonly instructionIds: readonly string[] }
+  /** DSP-147: the runtime had these and the work ended without saying it took them in. Never resent. */
+  | { readonly kind: 'unconfirmed'; readonly runId: string; readonly instructionIds: readonly string[] }
+  /** DSP-147: the running work could not take these; they wait for this handover. */
+  | {
+      readonly kind: 'waiting';
+      readonly runId: string;
+      readonly instructionIds: readonly string[];
+      readonly waitingFor: 'next-step' | 'end-of-turn';
+    }
+  /** DSP-147: these were not given to the agent, and nothing will give them now. */
+  | { readonly kind: 'not-delivered'; readonly runId: string; readonly instructionIds: readonly string[] };
+
+/** DSP-147: a steering message for the ordinary chat turn that is working. */
+export interface SteerTurnRequest {
+  readonly text: string;
+}
+
+/**
+ * DSP-147: what became of it, decided in the project host. `received` says only that
+ * DSpatch holds it; what the runtime does with it follows on
+ * {@link DspatchBridge.onLoopInstruction}. `no-running-turn`: the turn had already
+ * ended, nothing was sent, and the text is the person's to send as an ordinary message.
+ */
+export type SteerTurnOutcome =
+  | {
+      readonly kind: 'received';
+      readonly instructionId: string;
+      /** The run of the turn it was sent into. */
+      readonly runId: string;
+      readonly receivedAtUtc: string;
+    }
+  | { readonly kind: 'no-running-turn' }
+  | { readonly kind: 'refused'; readonly reason: string };
+
+/**
+ * DSP-147: a steering message as a conversation keeps it, on the turn it was sent into.
+ * `state` is the last thing established about it; `received` and `accepted` in a file
+ * read back after a restart mean nothing further was learned before DSpatch stopped.
+ */
+export interface StoredSteering {
+  readonly id: string;
+  readonly text: string;
+  readonly receivedAtUtc: string;
+  readonly state:
+    | 'received'
+    | 'accepted'
+    | 'delivered'
+    | 'waiting-end-of-turn'
+    | 'sent-as-next-message'
+    | 'unconfirmed'
+    | 'not-delivered';
+  readonly settledAtUtc: string | null;
+  /** The runtime's identifier for it, where it has one (Claude: the uuid). */
+  readonly providerMessageId: string | null;
+  /** The adapter's technical account, for Session details. */
+  readonly detail: string | null;
+}
 
 /**
  * Channel names. Preload must write these as literals: a shared constant would
@@ -3165,6 +3243,7 @@ export type BridgeChannel =
   | 'dspatch:graph-saved-elsewhere'
   | 'dspatch:add-loop-instruction'
   | 'dspatch:loop-instruction-event'
+  | 'dspatch:steer-turn'
   | 'dspatch:list-run-records'
   | 'dspatch:loop-control'
   | 'dspatch:read-loop-control'

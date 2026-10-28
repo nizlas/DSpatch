@@ -4,7 +4,7 @@ title: Keep the composer usable while a loop is running
 status: In Progress
 assignee: []
 created_date: '2026-09-19 08:48'
-updated_date: '2026-10-27 14:10'
+updated_date: '2026-10-28 14:03'
 labels: []
 dependencies:
   - DSP-27
@@ -38,6 +38,8 @@ The hazard stays: a message during a run must not start a competing run in the s
 
 <!-- SECTION:NOTES:BEGIN -->
 27 Oct 2026: DSP-147 records Niclas's decision that a message sent during agent work steers that same work and never starts a competing run (INTERACTION_MODEL.md §3.1). This card's #2 stays as written; DSP-147 builds on the composer being usable during a run.
+
+28 Oct 2026, DSP-147: the composer stays usable during a run and an ordinary turn. A message then steers the working step or turn (button **Steering**, or Enter) and never starts a second run; the loop's start prompt now leaves the box once the start is accepted, not when the run ends.
 <!-- SECTION:NOTES:END -->
 
 ## Widened by INTERACTION_MODEL v1.3

@@ -76,6 +76,10 @@ interface Call {
   child: any;
   /** Set by a script to keep the process running after the script ends. */
   holdProcess: boolean;
+  /** DSP-147: every message written through the handle's streamInput(), in order. */
+  readonly streamed: unknown[];
+  /** DSP-147: resolves with the first message written through streamInput(). */
+  readonly firstStreamed: Promise<unknown>;
 }
 
 type Script = (call: Call, index: number) => AsyncGenerator<unknown, void>;
@@ -124,6 +128,7 @@ function fakeSdk(
   const queryFn = (params: { prompt: AsyncIterable<unknown>; options: Record<string, any> }) => {
     let markInterrupted: () => void = () => undefined;
     let markClosed: () => void = () => undefined;
+    let markStreamed: (message: unknown) => void = () => undefined;
     const call: Call = {
       prompt: '',
       promptMessages: [],
@@ -137,6 +142,10 @@ function fakeSdk(
       }),
       child: null,
       holdProcess: false,
+      streamed: [],
+      firstStreamed: new Promise<unknown>((resolve) => {
+        markStreamed = resolve;
+      }),
     };
     calls.push(call);
     const index = calls.length - 1;
@@ -171,6 +180,15 @@ function fakeSdk(
     return Object.assign(
       generator,
       { close: () => markClosed() },
+      {
+        // DSP-147: like the SDK, writes each message and asks for the next.
+        streamInput: async (stream: AsyncIterable<unknown>) => {
+          for await (const message of stream) {
+            call.streamed.push(message);
+            markStreamed(message);
+          }
+        },
+      },
       info === undefined
         ? {}
         : { accountInfo: () => (info instanceof Error ? Promise.reject(info) : Promise.resolve(info)) },
@@ -3583,6 +3601,120 @@ test('a chosen model reaches the next turn and not the one before (DSP-149)', as
     await adapter.send(handle.dspatchSessionId, 'second');
     await finished;
     assert.equal(calls[1]?.options['model'], 'claude-opus-5-5');
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+// --- Steering (DSP-147) ---------------------------------------------------------
+//
+// Against a substituted query(): what the adapter writes through `streamInput`, how it
+// reads `user_message_uuids` and when the run ends. Whether Claude Code folds a message
+// into a running turn, and when the model reads it, only a live run can show.
+
+/** The uuid DSpatch gave the first steering message it wrote. */
+function streamedUuid(call: Call): string {
+  return (call.streamed[0] as { uuid?: string } | undefined)?.uuid ?? '';
+}
+
+test('steering goes in through streamInput with a uuid, and is delivered when the result lists it', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield delta(call, 'Working… ');
+    await call.firstStreamed;
+    yield delta(call, 'adjusted.');
+    yield result(call, { user_message_uuids: ['u-prompt', streamedUuid(call)] });
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('steer-fold')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'Fix the build');
+    await until(() => seen.events.some((event) => event.type === 'assistant.delta'), 'the first delta');
+    const updates: string[] = [];
+    const outcome = await adapter.steer(handle.dspatchSessionId, 'Change nothing yet.', (update) => {
+      updates.push(update.state);
+    });
+    await finished;
+    assert.deepEqual(updates, ['accepted']);
+    assert.equal(outcome.state, 'delivered');
+    assert.equal(outcome.providerMessageId, streamedUuid(calls[0]!));
+    const written = calls[0]!.streamed[0] as Record<string, any>;
+    assert.equal(written['type'], 'user');
+    assert.equal(written['parent_tool_use_id'], null);
+    assert.deepEqual(written['message'], { role: 'user', content: 'Change nothing yet.' });
+    assert.equal(calls.length, 1, 'no second query: steering is not a new turn');
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('a steering message Claude Code runs as a following turn keeps the run open until that turn', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    await call.firstStreamed;
+    yield assistant(call, [{ type: 'text', text: 'First part.' }]);
+    yield result(call, { user_message_uuids: ['u-prompt'], queued_turn_count: 1 });
+    yield assistant(call, [{ type: 'text', text: ' Second part.' }]);
+    yield result(call, { user_message_uuids: [streamedUuid(call)] });
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('steer-next-turn')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'Fix the build');
+    const outcome = await adapter.steer(handle.dspatchSessionId, 'Also the docs.');
+    await finished;
+    assert.equal(outcome.state, 'delivered');
+    assert.equal(seen.events.filter((event) => event.type === 'run.finished').length, 1);
+    const message = seen.events.find((event) => event.type === 'assistant.message');
+    assert.equal(message?.type === 'assistant.message' ? message.text : '', 'First part. Second part.');
+    assert.equal(calls.length, 1);
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('a steering message no result lists is not confirmed, and the run ends with the result it held', async () => {
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    await call.firstStreamed;
+    yield result(call, { user_message_uuids: ['u-prompt'] });
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('steer-unconfirmed')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'Fix the build');
+    const updates: string[] = [];
+    const outcome = await adapter.steer(handle.dspatchSessionId, 'Stop after the tests.', (update) => {
+      updates.push(update.state);
+    });
+    await finished;
+    assert.deepEqual(updates, ['accepted']);
+    assert.equal(outcome.state, 'not-delivered');
+    const terminal = seen.events.find((event) => event.type === 'run.finished');
+    assert.equal(terminal?.type === 'run.finished' ? terminal.status : null, 'finished');
+  } finally {
+    await adapter.dispose();
+  }
+});
+
+test('steering with no running turn writes nothing and says so', async () => {
+  const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield result(call);
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('steer-idle')));
+    const outcome = await adapter.steer(handle.dspatchSessionId, 'Anything');
+    assert.equal(outcome.state, 'not-delivered');
+    assert.equal(outcome.reason, 'no-running-turn');
+    assert.equal(calls.length, 0);
   } finally {
     await adapter.dispose();
   }

@@ -90,7 +90,7 @@ If the current agent cannot receive an instruction during its ongoing work, show
 
 ### 3.1 Steering and separate command runs (decision, 27 October 2026)
 
-Niclas decided the following on 27 October 2026. It is a direction for [DSP-147](../backlog/tasks/dsp-147%20-%20Steer-the-running-work-from-the-chat-kept-apart-from-running-a-command-yourself.md), not a description of today's application.
+Niclas decided the following on 27 October 2026. [DSP-147](../backlog/tasks/dsp-147%20-%20Steer-the-running-work-from-the-chat-kept-apart-from-running-a-command-yourself.md) implements it; what each runtime was established to offer for steering, and what has not yet been tried with a real model, is recorded there.
 
 - A new chat message sent while an agent is working is **steering of that same work**, delivered through the runtime's own support for adding input to a running session. It does not start a competing run.
 - **Running a separate command manually** is clearly distinct from steering. It is not a way of talking to the agent, and a message is not a way of starting it.

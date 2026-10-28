@@ -316,6 +316,45 @@ interface AgentEventBase {
  */
 export type RunEnd = 'stopped' | 'forced' | 'unconfirmed';
 
+// --- Steering (DSP-147) -------------------------------------------------------------
+
+/**
+ * Where a steering message has got to, as far as the runtime has said.
+ *
+ * - `accepted`: the runtime has taken it for the running turn (for Claude, written to
+ *   the CLI's input; its queue folds it in between tool rounds). Not yet evidence that
+ *   the model has it.
+ * - `delivered`: the runtime's own evidence that the turn took it in (Claude: the turn's
+ *   result lists its uuid in `user_message_uuids`; Cursor: `Run.steer` answered
+ *   `complete_delivered`). Says nothing about whether the agent read or followed it.
+ * - `not-delivered`: this route did not give it to the agent; `reason` says why.
+ */
+export type SteerState = 'accepted' | 'delivered' | 'not-delivered';
+
+export type SteerNotDeliveredReason =
+  /** The adapter has no way to steer this session's runtime. */
+  | 'unsupported'
+  /** The session has no running turn to add it to, or the turn ended before taking it. */
+  | 'no-running-turn'
+  /** The runtime declined it for the running turn (Cursor: `revert_to_followup`). */
+  | 'declined'
+  /** The turn was cancelled before it took the message in. */
+  | 'cancelled'
+  /** Writing it to the runtime failed. */
+  | 'failed';
+
+export interface SteerUpdate {
+  readonly state: SteerState;
+  /** For `not-delivered`. */
+  readonly reason?: SteerNotDeliveredReason;
+  /** Technical detail for Session details; never shown as the conversation's sentence. */
+  readonly detail?: string;
+  /** The run the message was added to, when there was one. */
+  readonly dspatchRunId?: DspatchRunId;
+  /** The runtime's identifier for the message, where it has one (Claude: the uuid). */
+  readonly providerMessageId?: string;
+}
+
 export type AgentEvent =
   | (AgentEventBase & { readonly type: 'run.started' })
   /**

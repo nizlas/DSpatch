@@ -16,6 +16,7 @@ import type {
   StoredConversation,
   StoredSession,
   StoredSessionProvider,
+  StoredSteering,
 } from '../shared/bridge';
 
 /**
@@ -814,6 +815,7 @@ function parseMessages(value: unknown): StoredConversation['messages'] {
       finishedAtUtc:
         typeof entry['finishedAtUtc'] === 'string' ? entry['finishedAtUtc'] : null,
       ...commandsOf(entry['commands']),
+      ...steeringOf(entry['steering']),
     }));
   return messages.sort((left, right) => left.ordinal - right.ordinal);
 }
@@ -887,6 +889,55 @@ function commandsOf(value: unknown): { readonly commands?: readonly AgentCommand
     });
   }
   return records.length === 0 ? {} : { commands: records };
+}
+
+const STEERING_STATES: readonly StoredSteering['state'][] = [
+  'received',
+  'accepted',
+  'delivered',
+  'waiting-end-of-turn',
+  'sent-as-next-message',
+  'unconfirmed',
+  'not-delivered',
+];
+
+/**
+ * DSP-147: the steering messages a turn recorded, read back. An entry without an id, a
+ * text or a known state is dropped rather than guessed at.
+ */
+function steeringOf(value: unknown): { readonly steering?: readonly StoredSteering[] } {
+  if (!Array.isArray(value)) {
+    return {};
+  }
+  const entries: StoredSteering[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const id = entry['id'];
+    const text = entry['text'];
+    const state = entry['state'];
+    if (
+      typeof id !== 'string' ||
+      typeof text !== 'string' ||
+      typeof state !== 'string' ||
+      !STEERING_STATES.includes(state as StoredSteering['state'])
+    ) {
+      continue;
+    }
+    const optional = (key: string): string | null =>
+      typeof entry[key] === 'string' ? (entry[key] as string) : null;
+    entries.push({
+      id,
+      text,
+      receivedAtUtc: optional('receivedAtUtc') ?? '',
+      state: state as StoredSteering['state'],
+      settledAtUtc: optional('settledAtUtc'),
+      providerMessageId: optional('providerMessageId'),
+      detail: optional('detail'),
+    });
+  }
+  return entries.length === 0 ? {} : { steering: entries };
 }
 
 function asNumber(value: unknown, fallback: number): number {

@@ -21,6 +21,8 @@ import type {
   AddLoopInstructionOutcome,
   AddLoopInstructionRequest,
   LoopInstructionEventPayload,
+  SteerTurnOutcome,
+  SteerTurnRequest,
   EditorLoopCancelOutcome,
   EditorLoopRunOutcome,
   EditorLoopRunRequest,
@@ -137,6 +139,7 @@ const GRAPH_TO_EDIT: BridgeChannel = 'dspatch:graph-to-edit';
 const NOTE_UNSAVED_DRAWING: BridgeChannel = 'dspatch:note-unsaved-drawing';
 const GRAPH_SAVED_ELSEWHERE: BridgeChannel = 'dspatch:graph-saved-elsewhere';
 const ADD_LOOP_INSTRUCTION: BridgeChannel = 'dspatch:add-loop-instruction';
+const STEER_TURN: BridgeChannel = 'dspatch:steer-turn';
 const LOOP_INSTRUCTION_EVENT: BridgeChannel = 'dspatch:loop-instruction-event';
 const LIST_RUN_RECORDS: BridgeChannel = 'dspatch:list-run-records';
 const LOOP_CONTROL: BridgeChannel = 'dspatch:loop-control';
@@ -360,6 +363,8 @@ const bridge: DspatchBridge = {
       ipcRenderer.removeListener(GRAPH_SAVED_ELSEWHERE, handler);
     };
   },
+  steerTurn: (request: SteerTurnRequest) =>
+    ipcRenderer.invoke(STEER_TURN, request) as Promise<SteerTurnOutcome>,
   addLoopInstruction: (request: AddLoopInstructionRequest) =>
     ipcRenderer.invoke(ADD_LOOP_INSTRUCTION, request) as Promise<AddLoopInstructionOutcome>,
   onLoopInstruction: (listener: (event: LoopInstructionEventPayload) => void) => {

@@ -31,6 +31,7 @@ import type {
   RunStatus,
   SessionConfig,
   SessionHandle,
+  SteerUpdate,
   TerminalRunStatus,
   Timestamp,
   Unsubscribe,
@@ -544,6 +545,60 @@ export class CursorSdkAdapter implements AgentAdapter {
       removed = true;
       state.listeners.delete(onEvent);
     };
+  }
+
+  /**
+   * DSP-147: add a message to the running turn with the SDK's own `Run.steer()` (run.d.ts
+   * 1.0.31). It settles `complete_delivered` ("the turn has it") or `revert_to_followup`
+   * ("send it as an ordinary follow-up"; a cloud run and a 15 s acknowledgement timeout
+   * both answer this in the installed code). Only the first is `delivered`; the second is
+   * `declined`, and this adapter sends no follow-up of its own. Optional in the SDK's
+   * type, so a run without it is `unsupported`. Not exercised against a live Cursor
+   * account.
+   */
+  async steer(
+    sessionId: DspatchSessionId,
+    text: string,
+    onUpdate?: (update: SteerUpdate) => void,
+  ): Promise<SteerUpdate> {
+    this.assertUsable();
+    const state = this.requireSession(sessionId);
+    const activeRun = state.activeRun;
+    if (activeRun === null || activeRun.run === null || activeRun.status !== 'running') {
+      return {
+        state: 'not-delivered',
+        reason: 'no-running-turn',
+        detail: 'The session had no running turn to add the message to.',
+      };
+    }
+    const run = activeRun.run;
+    if (typeof run.steer !== 'function') {
+      return {
+        state: 'not-delivered',
+        reason: 'unsupported',
+        dspatchRunId: activeRun.dspatchRunId,
+        detail: 'This Cursor run has no steer().',
+      };
+    }
+    void onUpdate;
+    try {
+      const answer = await run.steer(text);
+      return answer === 'complete_delivered'
+        ? { state: 'delivered', dspatchRunId: activeRun.dspatchRunId, detail: `Run.steer: ${answer}` }
+        : {
+            state: 'not-delivered',
+            reason: 'declined',
+            dspatchRunId: activeRun.dspatchRunId,
+            detail: `Run.steer: ${answer}`,
+          };
+    } catch (error) {
+      return {
+        state: 'not-delivered',
+        reason: 'failed',
+        dspatchRunId: activeRun.dspatchRunId,
+        detail: toAdapterError('steer', error).message,
+      };
+    }
   }
 
   /**

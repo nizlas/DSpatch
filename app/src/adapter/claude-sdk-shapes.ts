@@ -25,11 +25,17 @@ export interface SDKMessage {
   readonly type: string;
 }
 
-/** The one user message DSpatch sends per turn (streaming input). */
+/**
+ * A user message DSpatch writes to the SDK (streaming input): the turn's prompt, and
+ * since DSP-147 a steering message added to the running turn through
+ * `Query.streamInput()`, which carries a `uuid` so the turn's result can say it took it.
+ */
 export interface SDKUserMessage {
   readonly type: 'user';
   readonly message: { readonly role: 'user'; readonly content: string };
   readonly parent_tool_use_id: string | null;
+  /** Node's `crypto.UUID`, as the SDK types it. */
+  readonly uuid?: `${string}-${string}-${string}-${string}-${string}`;
 }
 
 /** What the SDK's `getSessionInfo` returns, as far as DSpatch reads it. */

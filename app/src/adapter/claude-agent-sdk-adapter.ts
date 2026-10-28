@@ -33,6 +33,7 @@ import type {
   RunStatus,
   SessionConfig,
   SessionHandle,
+  SteerUpdate,
   TerminalRunStatus,
   Timestamp,
   Unsubscribe,
@@ -627,6 +628,16 @@ export interface ClaudeQueryHandle extends AsyncIterable<SDKMessage> {
    * Optional so a substitute may leave it out.
    */
   supportedModels?(): Promise<readonly ClaudeModelInfo[]>;
+  /**
+   * DSP-147: the SDK's `Query.streamInput()` (sdk.d.ts 0.3.306: "Stream input messages
+   * to the query"). A user message written while a turn runs is queued by Claude Code
+   * and, per the SDK's type documentation of `SDKResultMessage.user_message_uuids`,
+   * "folded into the running turn between tool rounds" or run as a following turn; the
+   * result lists the uuids the turn consumed. In the installed SDK (sdk.mjs, code, not
+   * contract) the promise settles only once the run ends, so it is never awaited as an
+   * acceptance. Optional so a substitute may leave it out; then steering is unsupported.
+   */
+  streamInput?(stream: AsyncIterable<SDKUserMessage>): Promise<void>;
 }
 
 /** The fields of the SDK's `ModelInfo` DSpatch reads (sdk.d.ts 0.3.306). */
@@ -1250,6 +1261,31 @@ interface ClaudeRun {
   readonly openCommands: Map<string, OpenShellCommand>;
   /** Every command record this run produced, in order. */
   readonly commands: AgentCommandRecord[];
+  /**
+   * DSP-147: steering messages added to this run and not yet settled, by uuid. The run's
+   * terminal waits while one Claude Code has taken is still pending (`finishOrAwaitSteers`).
+   */
+  readonly steers: Map<string, PendingSteer>;
+  /**
+   * DSP-147: a result that would have ended the run while a steering message was still
+   * pending, kept so the run ends with it if Claude Code never takes the message in.
+   */
+  deferredResult: HeldResult | null;
+}
+
+/** DSP-147: a result held back while a steering message is pending. */
+interface HeldResult {
+  readonly status: TerminalRunStatus;
+  readonly error?: AdapterError;
+  readonly message: unknown;
+}
+
+/** DSP-147: one steering message on its way into a running turn. */
+interface PendingSteer {
+  readonly uuid: string;
+  accepted: boolean;
+  readonly onUpdate: ((update: SteerUpdate) => void) | undefined;
+  readonly settle: (update: SteerUpdate) => void;
 }
 
 /** The mutable side of a {@link CancellationRecord}. */
@@ -1832,6 +1868,8 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       startFailed: false,
       openCommands: new Map(),
       commands: [],
+      steers: new Map(),
+      deferredResult: null,
     };
     const previous = state.lastRun;
     state.activeRun = run;
@@ -1931,6 +1969,90 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       removed = true;
       state.listeners.delete(onEvent);
     };
+  }
+
+  /**
+   * DSP-147: add a steering message to the session's running turn through the SDK's own
+   * `Query.streamInput()`, with a uuid. `accepted` is heard once the SDK has taken the
+   * message from DSpatch's input and written it to Claude Code; `delivered` only when a
+   * result of the turn lists the uuid in `user_message_uuids` (the SDK's evidence that
+   * the turn consumed it). The run's terminal waits while the message is pending, so a
+   * message Claude Code runs as a following turn stays inside this run. Nothing is ever
+   * resent: a message Claude Code has may still enter the conversation, and a second
+   * copy would deliver it twice (TypeScript reference, `interrupt()`, read 28 Oct 2026).
+   */
+  async steer(
+    sessionId: DspatchSessionId,
+    text: string,
+    onUpdate?: (update: SteerUpdate) => void,
+  ): Promise<SteerUpdate> {
+    this.assertUsable();
+    const state = this.requireSession(sessionId);
+    const run = state.activeRun;
+    if (run === null || run.terminalEmitted || run.handle === null || run.status !== 'running') {
+      return {
+        state: 'not-delivered',
+        reason: 'no-running-turn',
+        detail: 'The session had no running turn to add the message to.',
+      };
+    }
+    if (run.cancelRequested) {
+      return {
+        state: 'not-delivered',
+        reason: 'cancelled',
+        dspatchRunId: run.dspatchRunId,
+        detail: 'The running turn had been asked to stop.',
+      };
+    }
+    const handle = run.handle;
+    if (typeof handle.streamInput !== 'function') {
+      return {
+        state: 'not-delivered',
+        reason: 'unsupported',
+        dspatchRunId: run.dspatchRunId,
+        detail: 'This query handle has no streamInput().',
+      };
+    }
+    const uuid = randomUUID();
+    let settled = false;
+    let resolveSettled: (update: SteerUpdate) => void = () => undefined;
+    const outcome = new Promise<SteerUpdate>((resolve) => {
+      resolveSettled = resolve;
+    });
+    const pending: PendingSteer = {
+      uuid,
+      accepted: false,
+      onUpdate,
+      settle: (update) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        run.steers.delete(uuid);
+        resolveSettled({ ...update, dspatchRunId: run.dspatchRunId, providerMessageId: uuid });
+      },
+    };
+    run.steers.set(uuid, pending);
+    const message: SDKUserMessage = {
+      type: 'user',
+      message: { role: 'user', content: text },
+      parent_tool_use_id: null,
+      uuid,
+    };
+    const input = (async function* () {
+      yield message;
+      // The SDK asks for the next message only after writing this one to Claude Code.
+      if (!settled) {
+        pending.accepted = true;
+        pending.onUpdate?.({ state: 'accepted', dspatchRunId: run.dspatchRunId, providerMessageId: uuid });
+      }
+    })();
+    void handle.streamInput(input).catch((error: unknown) => {
+      if (!pending.accepted) {
+        pending.settle({ state: 'not-delivered', reason: 'failed', detail: errorText(error) });
+      }
+    });
+    return outcome;
   }
 
   /**
@@ -2563,6 +2685,11 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         if (run.cancelRequested) {
           // Only `dispose` cancels without the stop sequence; nobody is listening.
           this.finishRun(state, run, 'cancelled');
+        } else if (run.deferredResult !== null && failure === null) {
+          // DSP-147: the stream ended while a steering message was still pending. The run
+          // ends with the result it was holding; `finishRun` reports the message undelivered.
+          const held = run.deferredResult;
+          this.finishRun(state, run, held.status, held.error, held.message);
         } else if (failure !== null) {
           const adapterError = toAdapterError('query', failure);
           const tail = stderrTailOf(run.process);
@@ -2712,6 +2839,13 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         const existing = state.runReadings.get(run.dspatchRunId) ?? [];
         state.runReadings.set(run.dspatchRunId, [...existing, ...readings]);
         this.emitForRun(state, run, { ...base, type: 'usage', readings });
+        // DSP-147: the steering messages this turn consumed, on the SDK's own evidence.
+        const consumed = Array.isArray(raw['user_message_uuids'])
+          ? raw['user_message_uuids'].filter((entry): entry is string => typeof entry === 'string')
+          : [];
+        for (const uuid of consumed) {
+          run.steers.get(uuid)?.settle({ state: 'delivered' });
+        }
 
         if (run.cancellation !== null) {
           // S1: recorded with its usage, but not the end. The terminal waits for
@@ -2732,7 +2866,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           return;
         }
         if (subtype === 'success' && raw['is_error'] !== true) {
-          this.finishRun(state, run, 'finished', undefined, message);
+          this.finishOrAwaitSteers(state, run, { status: 'finished', message });
           return;
         }
         const errors = Array.isArray(raw['errors'])
@@ -2740,21 +2874,34 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           : [];
         const resultText = typeof raw['result'] === 'string' ? raw['result'] : '';
         const detail = errors.length > 0 ? errors.join('; ') : resultText;
-        this.finishRun(
-          state,
-          run,
-          'error',
-          {
+        this.finishOrAwaitSteers(state, run, {
+          status: 'error',
+          error: {
             message: `Claude reported ${subtype ?? 'an error'}${detail === '' ? '' : `: ${detail}`}`,
             ...(subtype === null ? {} : { providerCode: subtype }),
           },
           message,
-        );
+        });
         return;
       }
       default:
         return;
     }
+  }
+
+  /**
+   * DSP-147: end the run with this result, unless a steering message Claude Code has
+   * taken is still pending. Claude Code runs a message it did not fold into the turn as a
+   * following turn of the same query, so the run stays open for it: the next result
+   * settles it, and if the stream ends first the run ends with this result.
+   */
+  private finishOrAwaitSteers(state: SessionState, run: ClaudeRun, result: HeldResult): void {
+    if ([...run.steers.values()].some((steer) => steer.accepted)) {
+      run.deferredResult = result;
+      return;
+    }
+    run.deferredResult = null;
+    this.finishRun(state, run, result.status, result.error, result.message);
   }
 
   private tokenReadings(usage: unknown, observedAt: Timestamp): UsageReading[] {
@@ -2791,6 +2938,16 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       state.activeRun = null;
     }
     run.status = status;
+    // DSP-147: a steering message the turn never consumed is settled before the terminal.
+    for (const steer of [...run.steers.values()]) {
+      steer.settle({
+        state: 'not-delivered',
+        reason: run.cancelRequested ? 'cancelled' : 'no-running-turn',
+        detail: steer.accepted
+          ? 'Claude Code had the message, and no result of this turn listed it as consumed.'
+          : 'The turn ended before the message was written to Claude Code.',
+      });
+    }
     this.recordFirstTurnEnd(state, run, status, error);
     // DSP-146: a shell command whose end Claude Code never reported is recorded now, as
     // not reported or stopped, so every `command.finished` comes before `run.finished`.

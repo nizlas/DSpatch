@@ -798,6 +798,8 @@ export async function runScriptedWorkflow(
       return runModelStartScenario(plan);
     case 'model-flow':
       return runModelFlowScenario(plan);
+    case 'steering':
+      return runSteeringScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -10540,4 +10542,338 @@ function finish(
     failures,
     observations,
   };
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-147: steering the running work, the composer, and the lock with Run    */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Steering through the real window, host and loop, against the presentation adapter's
+ * SIMULATED steering (shaped like the Claude adapter's: accepted at once, delivered when
+ * the turn folds it in at its next step; `[[steer-late]]` answers as a turn that had just
+ * ended). Every press is a real click on a control or Enter in the box.
+ *
+ * In order: a chat turn steered by the Steering button and by Enter, one turn and one
+ * run; Run refused while the agent works; a message and a loop start refused while the
+ * person's command runs, with the draft kept; a loop start that clears only what was
+ * sent; steering into the working loop step, with Pause between; the later step briefed
+ * with it; a second run where the step has ended as the message arrives, so the next
+ * step takes it; and Stop. What it cannot show is when a real model reads a message.
+ */
+async function runSteeringScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const observations: Record<string, unknown> = {
+    plan,
+    limits:
+      'SIMULATED provider and SIMULATED steering (presentation adapter). The window, the ' +
+      'host, the loop runner, the lock, the stores and the run records are real. When a real ' +
+      'model reads a steering message is not shown here.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const box = (): string => (element('prompt') as HTMLTextAreaElement | null)?.value ?? '';
+  const entries = (): HTMLElement[] => [
+    ...document.querySelectorAll<HTMLElement>('[data-ev^="instruction-"][data-state]'),
+  ];
+  const entryWith = (text: string): HTMLElement | null =>
+    entries().find((entry) => (entry.textContent ?? '').includes(text)) ?? null;
+  const stateOf = (text: string): string => entryWith(text)?.dataset['state'] ?? 'absent';
+  const accountOf = (text: string): string =>
+    entryWith(text)?.querySelector('[data-ev$="-account"]')?.textContent ?? '';
+  const chatWorking = (): boolean =>
+    element('active-answer') !== null && rawTextOf('active-answer').length > 0;
+
+  try {
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await window.dspatch.pressMenuItem('new-sample-project');
+    await waitFor(
+      'a session to open',
+      () => textOf('session-id') !== '' && element('prompt') !== null,
+      30_000,
+    );
+
+    // --- 1. A chat turn, steered by the button and by Enter ---------------------
+    await typeInto('prompt', '[[slow]] Look at the build, mark-chat.');
+    await sendFromComposer();
+    await waitFor('the chat turn to be working', chatWorking, 30_000, 25);
+    expect(box() === '', `the sent message stayed in the box: "${box()}"`);
+    expect(element('steer') !== null, 'no Steering button while the agent works');
+    await typeInto('prompt', 'Change nothing yet; investigate first.');
+    await click('steer');
+    await waitFor('the steering entry', () => entryWith('Change nothing yet') !== null, 10_000, 25);
+    expect(box() === '', 'the steering message stayed in the box after it was accepted');
+    await typeInto('prompt', 'Also look at the second folder.');
+    await sendFromComposer();
+    await waitFor(
+      'the second steering entry',
+      () => entryWith('Also look at the second folder') !== null,
+      10_000,
+      25,
+    );
+    await window.dspatch.captureWindow('steering-chat-sent');
+    await waitFor(
+      'the chat turn to end',
+      () => element('active-answer') === null && element('turn-0-answer') !== null,
+      60_000,
+    );
+    await waitFor(
+      'both to be delivered',
+      () =>
+        stateOf('Change nothing yet') === 'delivered' &&
+        stateOf('Also look at the second folder') === 'delivered',
+      10_000,
+      25,
+    );
+    const chatAnswer = textOf('turn-0-answer');
+    record('chat turn steered', {
+      first: { state: stateOf('Change nothing yet'), account: accountOf('Change nothing yet') },
+      second: {
+        state: stateOf('Also look at the second folder'),
+        account: accountOf('Also look at the second folder'),
+      },
+      answerMentions: chatAnswer.includes('Steering taken into this turn: Change nothing yet'),
+    });
+    expect(
+      chatAnswer.includes('Steering taken into this turn: Change nothing yet'),
+      'the turn did not take the first message in',
+    );
+    expect(
+      chatAnswer.includes('Steering taken into this turn: Also look at the second folder'),
+      'the turn did not take the second message in',
+    );
+    expect(element('turn-1-answer') === null, 'steering started a second turn');
+    expect(
+      accountOf('Change nothing yet') === 'Delivered to the running work.',
+      `wrong account: ${accountOf('Change nothing yet')}`,
+    );
+    expect(element('steer') === null, 'the Steering button stayed after the work ended');
+    await window.dspatch.captureWindow('steering-chat-delivered');
+
+    // --- 2. Run while the agent works is refused --------------------------------
+    await typeIntoField('test-command-input', 'node --version');
+    await typeInto('prompt', '[[slow]] A second task, mark-lock.');
+    await sendFromComposer();
+    await waitFor('the second turn to be working', chatWorking, 30_000, 25);
+    await click('run-test');
+    await waitFor(
+      'the Run refusal',
+      () => textOf('test-error').includes('agent is working in this folder'),
+      10_000,
+      25,
+    );
+    record('run refused while the agent works', { error: textOf('test-error') });
+    await waitFor(
+      'the second turn to end',
+      () => element('active-answer') === null && element('turn-1-answer') !== null,
+      60_000,
+    );
+
+    // --- 3. A message and a loop start are refused while the person's command runs
+    await typeIntoField('test-command-input', 'node -e "setTimeout(() => {}, 7000)"');
+    await click('run-test');
+    await waitFor('the command to be running', () => element('test-pending') !== null, 10_000, 25);
+    await typeInto('prompt', 'Fix it now.');
+    await sendFromComposer();
+    // The window holds a message back while its own command runs, and says why.
+    await waitFor(
+      'the composer to say why it holds the message',
+      () => textOf('composer-note').includes('running a command') || textOf('composer-route-note').includes('running a command'),
+      10_000,
+      25,
+    );
+    expect(box() === 'Fix it now.', `the held message did not stay in the box: "${box()}"`);
+    await setCheckbox('use-loop', true);
+    await sleep(300);
+    const loopTurnsBeforeRefusal = countEntries('loop-turn');
+    await sendFromComposer();
+    await sleep(500);
+    expect(countEntries('loop-turn') === loopTurnsBeforeRefusal, 'a loop started beside the command');
+    expect(box() === 'Fix it now.', `the held loop start did not leave the draft: "${box()}"`);
+    // The host's own lock, asked directly over the bridge (not a click): it refuses too,
+    // so the rule does not depend on this window's composer.
+    let hostSend = 'sent';
+    try {
+      await window.dspatch.sendPrompt('Fix it now.');
+    } catch (error) {
+      hostSend = error instanceof Error ? error.message : String(error);
+    }
+    const hostLoop = await window.dspatch.startChatLoopRun({
+      runId: 'chat-loop-lock-check',
+      mandate: 'Fix it now.',
+      definitionKey: null,
+    });
+    record('agent work refused while the command runs', {
+      composerNote: textOf('composer-note') || textOf('composer-route-note'),
+      box: box(),
+      hostSend,
+      hostLoop,
+    });
+    expect(hostSend.includes('Your command is running in this folder'), `the host sent beside the command: ${hostSend}`);
+    expect(
+      hostLoop.kind === 'refused' && hostLoop.reason.includes('loop was not started'),
+      `the host started a loop beside the command: ${JSON.stringify(hostLoop)}`,
+    );
+    await window.dspatch.captureWindow('steering-lock-refused');
+    await waitFor('the command to end', () => element('test-pending') === null, 30_000);
+
+    // --- 4. An accepted loop start clears only what was sent ---------------------
+    const mandate = '[[slow]] Read the project and report what it is for, mark-loop.';
+    const typedAfter = 'A thought typed while starting.';
+    await typeInto('prompt', mandate);
+    const loopTurnsBefore = countEntries('loop-turn');
+    await sendFromComposer();
+    await typeInto('prompt', `${mandate}\n${typedAfter}`);
+    await waitFor('the start to be accepted', () => box() === typedAfter, 30_000, 25);
+    record('loop start accepted', { box: box() });
+    const at = `loop-turn-${String(loopTurnsBefore)}`;
+    await waitFor(
+      'a loop step to be working',
+      () => element(`${at}-live-status`) !== null,
+      60_000,
+      25,
+    );
+    await sleep(400);
+
+    // --- 5. Steering into the working step, with Pause pressed meanwhile ---------
+    await typeInto('prompt', 'Ta även hänsyn till den andra mappen.');
+    await click('steer');
+    await waitFor('the loop steering entry', () => entryWith('Ta även hänsyn') !== null, 10_000, 25);
+    expect(box() === '', 'the loop steering message stayed in the box');
+    const pauseOffered = element('loop-pause') !== null;
+    if (pauseOffered) {
+      await click('loop-pause');
+    }
+    await waitFor(
+      'the loop steering to be delivered',
+      () => stateOf('Ta även hänsyn') === 'delivered',
+      30_000,
+      25,
+    );
+    record('loop step steered', { account: accountOf('Ta även hänsyn'), pauseOffered });
+    expect(
+      /while it worked\.$/.test(accountOf('Ta även hänsyn')),
+      `not delivered into the working step: ${accountOf('Ta även hänsyn')}`,
+    );
+    await window.dspatch.captureWindow('steering-loop-delivered');
+    if (pauseOffered) {
+      // Pause holds the run before its next step; it does not stop the step working
+      // now, which is the one the steering went to.
+      await waitFor(
+        'the run to be paused before its next step',
+        () => (element('loop-control')?.className ?? '').includes('loop-control--paused'),
+        60_000,
+        50,
+      );
+      const pausedReplies = countEntries(`${at}-reply`);
+      await sleep(1_500);
+      record('paused', {
+        phase: textOf('loop-control-phase'),
+        repliesWhilePaused: [pausedReplies, countEntries(`${at}-reply`)],
+      });
+      expect(
+        countEntries(`${at}-reply`) === pausedReplies,
+        'the run went on to its next step while paused',
+      );
+      await click('loop-continue');
+    }
+    await waitFor('the loop run to end', () => loopRunEnded(loopTurnsBefore), 180_000, 100);
+    expect(countEntries('loop-turn') === loopTurnsBefore + 1, 'steering started another loop run');
+
+    // --- 6. The later step was briefed with the message ---------------------------
+    const conversations = await window.dspatch.listConversations();
+    const newest = [...conversations.entries].sort((a, b) =>
+      a.savedAtUtc < b.savedAtUtc ? 1 : -1,
+    )[0];
+    const records =
+      newest === undefined ? [] : await window.dspatch.listRunRecords(newest.conversationId);
+    const run = records.find((entry) =>
+      (entry.record?.identity?.mandate ?? '').includes('mark-loop'),
+    );
+    const replies = run?.record?.replies ?? [];
+    const steered = 'Ta även hänsyn till den andra mappen.';
+    const briefed = replies.filter((reply) => (reply.prompt ?? '').includes(steered));
+    const endingNote = run?.record?.ending?.note ?? '';
+    record('later steps briefed', {
+      steps: replies.map((reply) => reply.nodeId),
+      briefed: briefed.map((reply) => reply.nodeId),
+      earlierWording: briefed.some((reply) => (reply.prompt ?? '').includes('Earlier in this run')),
+      endingNote,
+    });
+    expect(
+      replies.length >= 2,
+      `the loop ran ${String(replies.length)} agent step(s); a later step is needed to show the brief`,
+    );
+    expect(
+      briefed.length >= 1 &&
+        briefed.every((reply) => (reply.prompt ?? '').includes('Earlier in this run')),
+      'no later step was briefed with the steering',
+    );
+    expect(!(replies[0]?.prompt ?? '').includes(steered), 'the steered step was also given it in its prompt');
+    expect(endingNote.includes('Steering sent while steps worked'), 'the run record does not keep the steering');
+
+    // --- 7. A message as the step ends goes to the next step; then Stop -----------
+    const lateBefore = countEntries('loop-turn');
+    await typeInto('prompt', '[[slow]] [[steer-late]] Once more, mark-late.');
+    await sendFromComposer();
+    const late = `loop-turn-${String(lateBefore)}`;
+    await waitFor(
+      'a step of the second run to be working',
+      () => element(`${late}-live-status`) !== null,
+      60_000,
+      25,
+    );
+    await typeInto('prompt', 'Check the tests too.');
+    await sendFromComposer();
+    await waitFor(
+      'the message to wait for the next step',
+      () => accountOf('Check the tests too.').includes('next step'),
+      10_000,
+      25,
+    );
+    record('step ended as the message came', {
+      state: stateOf('Check the tests too.'),
+      account: accountOf('Check the tests too.'),
+    });
+    await waitFor(
+      'the next step to take it',
+      () => stateOf('Check the tests too.') === 'delivered',
+      120_000,
+      50,
+    );
+    record('taken by the next step', { account: accountOf('Check the tests too.') });
+    expect(
+      /when that step started/.test(accountOf('Check the tests too.')),
+      `not handed to the next step: ${accountOf('Check the tests too.')}`,
+    );
+    await click('cancel');
+    await waitFor('the second run to stop', () => loopRunEnded(lateBefore), 60_000, 50);
+    record('stopped', { badge: textOf(`${late}-status`), account: textOf(`${late}-account`) });
+    expect(countEntries('loop-turn') === lateBefore + 1, 'a message started another loop run');
+    await window.dspatch.captureWindow('steering-stopped');
+
+    return finish(
+      failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed,
+      steps,
+      failures,
+      observations,
+    );
+  } catch (caught) {
+    failures.push(caught instanceof Error ? caught.message : String(caught));
+    observations['atFailure'] = {
+      box: box(),
+      entries: entries().map((entry) => ({ state: entry.dataset['state'], text: entry.textContent })),
+      actionError: textOf('action-error'),
+      testError: textOf('test-error'),
+    };
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
 }

@@ -133,6 +133,7 @@ import {
   activityLine,
   chatHeaderView,
   composerKeyAction,
+  composerTextAfterSend,
   handoffTrail,
   type ChatHeaderView,
   type TrailReply,
@@ -146,6 +147,7 @@ import {
   loopInstructionState,
   loopInstructionStatusText,
   loopInstructionsAfter,
+  storedSteeringAsInstruction,
   type LoopInstruction,
   type LoopInstructionEvent,
 } from '../shared/loop-instruction';
@@ -484,6 +486,11 @@ function Workbench({
   const detailsWereOpen = useRef(false);
 
   const pendingPrompt = useRef('');
+  /**
+   * DSP-147: a loop start whose mandate is still in the box, until the host has accepted
+   * it (its first journal entry) or refused it. `typed` is the box as it was sent.
+   */
+  const pendingLoopStart = useRef<{ readonly runId: string; readonly typed: string } | null>(null);
   const scriptStarted = useRef(false);
   /**
    * The scripted plan this window runs under, or `null` for an ordinary launch. Kept
@@ -1075,13 +1082,46 @@ function Workbench({
     setLoopTurns((previous) => loopTurnsAfter(previous, event));
   }, []);
 
+  /**
+   * DSP-147: what the host said about a message before the window had it. The host's
+   * events and the answer to the send travel on different channels, so `accepted` (or
+   * even `delivered`) can arrive before the `received` that adds the message; they are
+   * kept here by id and applied once it is added, rather than dropped.
+   */
+  const earlyInstructionEvents = useRef(new Map<string, LoopInstructionEvent[]>());
+
   /** The same discipline for the user's own messages into a run. */
   const applyLoopInstructionEvent = useCallback((event: LoopInstructionEvent): void => {
-    setLoopInstructions((previous) => loopInstructionsAfter(previous, event));
+    setLoopInstructions((previous) => {
+      if ('instructionIds' in event) {
+        const unknown = event.instructionIds.filter((id) => !previous.some((entry) => entry.id === id));
+        for (const id of unknown) {
+          const held = earlyInstructionEvents.current.get(id) ?? [];
+          if (!held.includes(event)) {
+            earlyInstructionEvents.current.set(id, [...held, event]);
+          }
+        }
+      }
+      let next = loopInstructionsAfter(previous, event);
+      if (event.kind === 'received') {
+        const held = earlyInstructionEvents.current.get(event.instruction.id) ?? [];
+        for (const early of held) {
+          next = loopInstructionsAfter(next, early);
+        }
+      }
+      return next;
+    });
   }, []);
 
   useEffect(() => {
     return window.dspatch.onChatLoopJournal((journalEntry) => {
+      // DSP-147: the run has started, so its mandate leaves the box: only what was sent,
+      // never what has been typed since.
+      const started = pendingLoopStart.current;
+      if (started !== null && started.runId === loopRunId.current) {
+        pendingLoopStart.current = null;
+        setPrompt((current) => composerTextAfterSend(current, 'accepted', started.typed));
+      }
       const line = formatChatLiveLogLine(journalEntry, CHAT_LOOP_WINDOW_LOOKUP);
       if (line !== null) {
         setLoopLines((previous) => [...previous, line]);
@@ -1139,11 +1179,17 @@ function Workbench({
             nodeLabel: payload.nodeLabel,
             occurrence: payload.occurrence,
             atUtc: payload.atUtc,
+            ...(payload.during === true ? { during: true } : {}),
           },
         });
         return;
       }
-      applyLoopInstructionEvent({ kind: 'run-ended', runId: payload.runId });
+      if (payload.kind === 'run-ended') {
+        applyLoopInstructionEvent({ kind: 'run-ended', runId: payload.runId });
+        return;
+      }
+      // DSP-147: accepted, unconfirmed, waiting and not-delivered map one to one.
+      applyLoopInstructionEvent(payload);
     });
   }, [applyLoopInstructionEvent]);
 
@@ -2011,21 +2057,69 @@ function Workbench({
    * a run is walking, and `loop-run` is unreachable from there.
    */
   const send = useCallback(
-    async (acknowledgedAttemptIds?: readonly AttemptRef[]): Promise<void> => {
-      const text = prompt.trim();
+    async (acknowledgedAttemptIds?: readonly AttemptRef[], heldText?: string): Promise<void> => {
+      // DSP-147: `heldText` is a steering message that waited for its turn to end and now
+      // goes in as the next message; otherwise the box. What leaves the box once a send is
+      // accepted is what was sent, never what was typed after it (`composerTextAfterSend`).
+      const typedAtSend = heldText ?? prompt;
+      const text = typedAtSend.trim();
       if (text === '') {
         return;
       }
+      const clearSent = (): void => {
+        if (heldText === undefined) {
+          setPrompt((current) => composerTextAfterSend(current, 'accepted', typedAtSend));
+        }
+      };
       // The attempts this press names are not in its way (DSP-124): *Send anyway* is
       // the acknowledgement, and computing the route without it blocked the button on
       // the very attempts it acknowledges. Enter names none, so it still stops here.
-      const route = composerSendRoute(composerState, acknowledgedAttemptIds ?? []);
+      // A held steering message belongs to the chat turn it was sent into, never to a loop.
+      const route = composerSendRoute(
+        { ...composerState, text, ...(heldText === undefined ? {} : { useLoop: false }) },
+        acknowledgedAttemptIds ?? [],
+      );
       if (route.kind === 'blocked') {
         setComposerNote(route.reason);
         return;
       }
       // Their own message is what they want to see, wherever they had scrolled to.
       scrollReason.current = 'sent';
+      if (route.kind === 'steer') {
+        // DSP-147: into the turn that is working. No `busy` and no new turn: the turn it
+        // joins is what is working, and the message is shown with where it has got to.
+        setActionError(null);
+        try {
+          const outcome = await window.dspatch.steerTurn({ text });
+          if (outcome.kind === 'refused') {
+            setComposerNote(outcome.reason);
+            return;
+          }
+          if (outcome.kind === 'no-running-turn') {
+            // The turn ended as this was sent. Nothing went anywhere; the text stays,
+            // and the next press sends it as an ordinary message.
+            setComposerNote('The agent had just finished, so nothing was sent. Send it again as a new message.');
+            return;
+          }
+          applyLoopInstructionEvent({
+            kind: 'received',
+            instruction: {
+              id: outcome.instructionId,
+              runId: outcome.runId,
+              text,
+              receivedAtUtc: outcome.receivedAtUtc,
+              delivered: null,
+              runEnded: false,
+              scope: 'chat',
+            },
+          });
+          setComposerNote(null);
+          clearSent();
+        } catch (error) {
+          setActionError(describeBridgeFailure(error));
+        }
+        return;
+      }
       if (route.kind === 'instruction') {
         // Into the run that is walking. No generation, no loop-busy flag and no
         // `busy`: this send does not wait for a provider turn and must not make
@@ -2052,10 +2146,11 @@ function Workbench({
               receivedAtUtc: outcome.receivedAtUtc,
               delivered: null,
               runEnded: false,
+              scope: 'loop',
             },
           });
           setComposerNote(null);
-          setPrompt('');
+          clearSent();
         } catch (error) {
           setActionError(describeBridgeFailure(error));
         }
@@ -2104,6 +2199,10 @@ function Workbench({
               id: chosenRow?.definitionId ?? null,
             },
           });
+          // DSP-147: the mandate leaves the box once the host has accepted the start, which
+          // the run's first journal entry shows (see `onChatLoopJournal`), not when the
+          // whole run ends. A refused or failed start leaves it where it is.
+          pendingLoopStart.current = { runId, typed: typedAtSend };
           let outcome: Awaited<ReturnType<typeof window.dspatch.startChatLoopRun>>;
           try {
             outcome = await window.dspatch.startChatLoopRun({
@@ -2121,7 +2220,14 @@ function Workbench({
               runId,
               message: describeBridgeFailure(error).message,
             });
+            if (pendingLoopStart.current?.runId === runId) {
+              pendingLoopStart.current = null;
+            }
             throw error;
+          }
+          const startStillPending = pendingLoopStart.current?.runId === runId;
+          if (startStillPending) {
+            pendingLoopStart.current = null;
           }
           // Not guarded by the generation: a run whose wait was abandoned still ends,
           // and its ending belongs on the entry that echoed its mandate.
@@ -2133,14 +2239,15 @@ function Workbench({
                   new Error(outcome.kind === 'refused' ? outcome.reason : outcome.note),
                 ),
               );
-            } else {
-              setPrompt('');
+            } else if (startStillPending) {
+              // A run that ended without a journal entry the window heard was still started.
+              clearSent();
             }
           }
         } else {
           await window.dspatch.sendPrompt(text, acknowledgedAttemptIds);
           if (sendGeneration.current === generation) {
-            setPrompt('');
+            clearSent();
           }
         }
       } catch (error) {
@@ -2193,6 +2300,34 @@ function Workbench({
     ],
   );
   sendRef.current = () => send();
+
+  /**
+   * DSP-147: a steering message the running turn could not take (its runtime has no
+   * steering, or declined it) waits for the end of that turn and then goes in as the next
+   * message, through the ordinary send, once the window is free. Only after a turn that
+   * finished: a stopped or failed turn leaves the decision to the person. Each message is
+   * tried once; the host records it as sent that way when the send is accepted.
+   */
+  const heldSteeringSent = useRef(new Set<string>());
+  useEffect(() => {
+    if (blockingTurn || loopBusy || busy !== null) {
+      return;
+    }
+    const due = loopInstructions.find(
+      (instruction) =>
+        instruction.scope === 'chat' &&
+        instruction.waitingFor === 'end-of-turn' &&
+        instruction.delivered === null &&
+        !instruction.runEnded &&
+        !heldSteeringSent.current.has(instruction.id) &&
+        chat.turns.some((turn) => turn.dspatchRunId === instruction.runId && turn.status === 'finished'),
+    );
+    if (due === undefined) {
+      return;
+    }
+    heldSteeringSent.current.add(due.id);
+    void send(undefined, due.text);
+  }, [blockingTurn, loopBusy, busy, loopInstructions, chat.turns, send]);
 
   /**
    * What to say beside the composer about a stop the window has just asked for.
@@ -3002,7 +3137,11 @@ function Workbench({
                   was empty, which is a lesson rather than a prompt — and the tick it
                   explained is directly beside the box.
                 */
-                placeholder="Describe the task. Enter sends, Shift+Enter starts a new line."
+                placeholder={
+                  blockingTurn || loopBusy
+                    ? 'Steer the running work. Enter sends it, Shift+Enter starts a new line.'
+                    : 'Describe the task. Enter sends, Shift+Enter starts a new line.'
+                }
                 value={prompt}
                 onChange={(event) => {
                   setPrompt(event.target.value);
@@ -3061,6 +3200,27 @@ function Workbench({
                   <span className="pending" data-ev="sending">
                     Sending …
                   </span>
+                )}
+                {/*
+                  DSP-147: while the agent or a loop step is working, the box's text goes to
+                  that work as steering, and this is its button: discreet, shown only then,
+                  and the same send as Enter. It is not Stop and not Run: Stop asks the work
+                  to end, Pause holds the loop before its next step, and Run is the person's
+                  own command, which waits until the agent's work has ended.
+                */}
+                {(blockingTurn || loopBusy) && (
+                  <button
+                    type="button"
+                    className="button button--quiet composer__steer"
+                    data-ev="steer"
+                    disabled={!(sendRoute.kind === 'steer' || sendRoute.kind === 'instruction')}
+                    title="Send this to the work that is running now"
+                    onClick={() => {
+                      void send();
+                    }}
+                  >
+                    Steering
+                  </button>
                 )}
                 {/* DSP-149: a loop runs in a workspace; without one there is nothing to run it on. */}
                 {session.origin !== 'no-workspace' && (
@@ -4635,6 +4795,21 @@ function RestoredMessage({
         }))}
         testId={`${at}-commands`}
       />
+      {/* DSP-147: steering sent into this turn, and the last thing known about each. */}
+      {(message.steering ?? []).map((entry, position) => {
+        const instruction = storedSteeringAsInstruction(entry, message.dspatchRunId);
+        return (
+          <div key={entry.id} className="turn__steering" data-ev={`${at}-steering-${String(position)}`}>
+            <UserMessage text={entry.text} testId={`${at}-steering-${String(position)}-text`} />
+            <p className="turn__meta">
+              <span className={`badge badge--${loopInstructionState(instruction) === 'delivered' ? 'unknown' : 'unsupported'}`}>
+                {loopInstructionBadgeText(instruction)}
+              </span>{' '}
+              <span>{loopInstructionStatusText(instruction)}</span>
+            </p>
+          </div>
+        );
+      })}
       {message.errorMessage !== null && (
         <p className="app__error" data-ev={`${at}-error`}>
           {message.errorMessage}
@@ -6651,11 +6826,14 @@ function InstructionEntry({
   const state = loopInstructionState(instruction);
   // Never the positive tone. A message that reached an agent is not a result, and
   // the three tones here say how far it got, not whether it did any good.
-  const badge = state === 'delivered' ? 'unknown' : state === 'pending' ? 'unknown' : 'unsupported';
+  const badge =
+    state === 'unconfirmed' || state === 'never-delivered' ? 'unsupported' : 'unknown';
   return (
-    <article className="turn turn--instruction" data-ev={at}>
+    <article className="turn turn--instruction" data-ev={at} data-state={state} data-scope={instruction.scope ?? 'loop'}>
       <p className="turn__loop-mark" data-ev={`${at}-mark`}>
-        Your message, sent while the loop was working
+        {instruction.scope === 'chat'
+          ? 'Steering, sent while the agent was working'
+          : 'Steering, sent while the loop was working'}
       </p>
       <UserMessage text={instruction.text} testId={`${at}-text`} />
       <p className="turn__meta">

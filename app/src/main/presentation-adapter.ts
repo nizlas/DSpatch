@@ -6,6 +6,7 @@ import type {
   RunReference,
   SessionConfig,
   SessionHandle,
+  SteerUpdate,
   Unsubscribe,
   UsageReading,
 } from '../adapter/types';
@@ -298,6 +299,10 @@ interface SessionState {
   runCounter: number;
   activeRun: string | null;
   timers: Set<NodeJS.Timeout>;
+  /** DSP-147: steering messages accepted for the running turn and not yet folded in. */
+  steers: { readonly text: string; readonly settle: (update: SteerUpdate) => void }[];
+  /** DSP-147: how the running turn answers a steering message (from its prompt's directives). */
+  steerMode: 'fold' | 'late' | 'decline';
 }
 
 export class PresentationAdapter implements ChatAdapter, AgentAdapter {
@@ -350,6 +355,8 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       runCounter: 0,
       activeRun: null,
       timers: new Set(),
+      steers: [],
+      steerMode: 'fold',
     });
     return {
       dspatchSessionId,
@@ -487,6 +494,18 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     state.runCounter += 1;
     const dspatchRunId = `${sessionId}-run-${String(state.runCounter)}`;
     state.activeRun = dspatchRunId;
+    // DSP-147, SIMULATED: `[[slow]]` makes the turn last long enough to be steered;
+    // `[[steer-late]]` answers a steering message as a turn that ended at that instant;
+    // `[[steer-declined]]` as a runtime that declines it. Read from the whole prompt, so a
+    // loop's mandate sets them for every step.
+    const deltaMs = prompt.includes('[[slow]]') ? Math.max(this.deltaMs, 300) : this.deltaMs;
+    state.steerMode = prompt.includes('[[steer-late]]')
+      ? 'late'
+      : prompt.includes('[[steer-declined]]')
+        ? 'decline'
+        : 'fold';
+    state.steers = [];
+    const heard: string[] = [];
 
     const token = (/\b(mark-\w+)\b/.exec(prompt)?.[1] ?? prompt.trim().slice(0, 24)) || 'this';
     // A loop step is answered with a declared outcome; an ordinary chat turn is not.
@@ -531,6 +550,12 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
             if (state.activeRun !== dspatchRunId) {
               return;
             }
+            // DSP-147, SIMULATED: a steering message is folded into the turn at its next
+            // step, as Claude Code folds a queued message in between tool rounds.
+            for (const steer of state.steers.splice(0)) {
+              heard.push(steer.text);
+              steer.settle({ state: 'delivered', dspatchRunId, detail: 'SIMULATED: folded into the turn.' });
+            }
             emit({
               ...base,
               type: 'assistant.delta',
@@ -538,6 +563,9 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
               text: chunk,
             });
             if (index === chunks.length - 1) {
+              if (heard.length > 0) {
+                answer = `${answer}\n\n${heard.map((text) => `Steering taken into this turn: ${text}`).join('\n\n')}`;
+              }
               state.activeRun = null;
               // The whole answer once, the way the real adapter ends a turn.
               //
@@ -564,7 +592,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
               });
             }
           },
-          this.deltaMs * (index + 1),
+          deltaMs * (index + 1),
         );
         state.timers.add(timer);
       });
@@ -595,6 +623,35 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     return Promise.resolve({ dspatchRunId });
   }
 
+  /**
+   * DSP-147, SIMULATED steering, shaped like the Claude adapter's: accepted at once for a
+   * running turn, delivered when the turn folds it in at its next step, not delivered when
+   * the turn ends or is cancelled first. Nothing here is a provider.
+   */
+  steer(sessionId: string, text: string, onUpdate?: (update: SteerUpdate) => void): Promise<SteerUpdate> {
+    const state = this.sessions.get(sessionId);
+    const dspatchRunId = state?.activeRun ?? null;
+    if (state === undefined || dspatchRunId === null || state.steerMode === 'late') {
+      return Promise.resolve({
+        state: 'not-delivered',
+        reason: 'no-running-turn',
+        detail: 'SIMULATED: the turn had ended.',
+      });
+    }
+    if (state.steerMode === 'decline') {
+      return Promise.resolve({
+        state: 'not-delivered',
+        reason: 'declined',
+        dspatchRunId,
+        detail: 'SIMULATED: the runtime declined the message for the running turn.',
+      });
+    }
+    return new Promise<SteerUpdate>((resolve) => {
+      state.steers.push({ text, settle: resolve });
+      onUpdate?.({ state: 'accepted', dspatchRunId });
+    });
+  }
+
   cancel(sessionId: string): Promise<void> {
     const state = this.sessions.get(sessionId);
     if (state === undefined || state.activeRun === null) {
@@ -602,6 +659,9 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     }
     const dspatchRunId = state.activeRun;
     state.activeRun = null;
+    for (const steer of state.steers.splice(0)) {
+      steer.settle({ state: 'not-delivered', reason: 'cancelled', dspatchRunId, detail: 'SIMULATED: cancelled first.' });
+    }
     for (const timer of state.timers) {
       clearTimeout(timer);
     }

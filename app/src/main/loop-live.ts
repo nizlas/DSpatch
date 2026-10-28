@@ -33,6 +33,7 @@ import type {
   DspatchSessionId,
   ProviderId,
   SessionHandle,
+  SteerUpdate,
   UsageReading,
 } from '../adapter/types';
 import {
@@ -369,8 +370,19 @@ export interface LivePromptStep {
  */
 export type LoopStepAdapter = Pick<
   AgentAdapter,
-  'startSession' | 'subscribe' | 'send' | 'cancel' | 'readUsage' | 'dispose'
+  'startSession' | 'subscribe' | 'send' | 'cancel' | 'readUsage' | 'dispose' | 'steer'
 >;
+
+/**
+ * DSP-147: the agent step that is working, offered for steering while its turn runs.
+ * `steer` is the step's adapter's own (`AgentAdapter.steer`) bound to the step's session;
+ * absent when the adapter has none.
+ */
+export interface SteerableStep {
+  readonly nodeId: string;
+  readonly occurrence: number;
+  readonly steer?: (text: string, onUpdate?: (update: SteerUpdate) => void) => Promise<SteerUpdate>;
+}
 
 export interface LiveExecutorOptions {
   readonly workspacePath: string;
@@ -457,6 +469,12 @@ export interface LiveExecutorOptions {
    * must still have recorded the commands it had already run.
    */
   readonly onCommand?: (command: LiveCommandRecord) => void;
+  /**
+   * DSP-147: called with the agent step whose turn is being sent and run, and with
+   * `null` once that turn has ended, so a caller can steer the step that is working.
+   * Never called for a gate or a human node.
+   */
+  readonly onSteerableStep?: (step: SteerableStep | null) => void;
 }
 
 function snapshotRef(snapshot: TreeSnapshot): LiveSnapshotRef {
@@ -2102,6 +2120,19 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     options.abortSignal?.addEventListener('abort', onAbort, { once: true });
 
     try {
+      // DSP-147: offered before the send, so a message typed as the step starts reaches
+      // it if its runtime already has a running turn, and otherwise the adapter says so.
+      const steer = options.adapter.steer?.bind(options.adapter);
+      options.onSteerableStep?.({
+        nodeId: node.id,
+        occurrence: context.occurrence,
+        ...(steer === undefined
+          ? {}
+          : {
+              steer: (text: string, onUpdate?: (update: SteerUpdate) => void) =>
+                steer(openSession.dspatchSessionId, text, onUpdate),
+            }),
+      });
       await options.adapter.send(openSession.dspatchSessionId, prompt);
       await Promise.race([
         turn.finished,
@@ -2138,6 +2169,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         clearTimeout(timer);
       }
       options.abortSignal?.removeEventListener('abort', onAbort);
+      options.onSteerableStep?.(null);
     }
     if (timedOut && commandRunning()) {
       // DSP-145 (B2): the adapter stops a running command on cancel and sends its record

@@ -21,6 +21,7 @@ import {
   composerCanSend,
   composerRouteNote,
   composerSendRoute,
+  earlierInstructionsContext,
   instructionPreamble,
   INSTRUCTION_BLOCK_CLOSE,
   INSTRUCTION_BLOCK_OPEN,
@@ -29,6 +30,7 @@ import {
   loopInstructionStatusText,
   loopInstructionsAfter,
   pendingInstructionsFor,
+  storedSteeringAsInstruction,
   type ComposerState,
   type LoopInstruction,
 } from '../src/shared/loop-instruction';
@@ -122,7 +124,6 @@ describe('where a press of Send goes', () => {
 
   it('still blocks for the things that are genuinely the window being elsewhere', () => {
     assert.equal(composerSendRoute(composer({ otherWorkInProgress: true })).kind, 'blocked');
-    assert.equal(composerSendRoute(composer({ outstandingTurn: true })).kind, 'blocked');
     assert.equal(composerSendRoute(composer({ sessionOpen: false })).kind, 'blocked');
     assert.equal(composerSendRoute(composer({ text: '   ' })).kind, 'blocked');
   });
@@ -232,10 +233,6 @@ describe('where a press of Send goes', () => {
         { kind: 'blocked', reason: note },
       );
       assert.equal(
-        composerSendRoute(composer({ outstandingTurn: true, unresolvedAttempts: [a5] }), [a5]).kind,
-        'blocked',
-      );
-      assert.equal(
         composerSendRoute(composer({ otherWorkInProgress: true, unresolvedAttempts: [a5] }), [a5]).kind,
         'blocked',
       );
@@ -247,7 +244,9 @@ describe('where a press of Send goes', () => {
 
     // The acknowledgement travels with `sendPrompt` only; a loop run or a message into
     // a running walk carries none, so it must not be let through by one.
-    it('does not let an acknowledgement start a loop run or join a walk', () => {
+    // DSP-147: a message into a running walk is steering of work already going, not a new
+    // attempt, so earlier attempts with no known outcome do not hold it back either way.
+    it('does not let an acknowledgement start a loop run, and does not hold back steering', () => {
       assert.equal(
         composerSendRoute(composer({ useLoop: true, unresolvedAttempts: [a5] }), [a5]).kind,
         'blocked',
@@ -257,7 +256,7 @@ describe('where a press of Send goes', () => {
           composer({ loopRunning: true, loopRunId: 'chat-loop-1', unresolvedAttempts: [a5] }),
           [a5],
         ).kind,
-        'blocked',
+        'instruction',
       );
     });
   });
@@ -304,7 +303,7 @@ describe('where a press of Send goes', () => {
 
   // The reasons that are not obvious from the screen are still said.
   it('still explains a block the person cannot see the cause of', () => {
-    assert.notEqual(composerRouteNote(composerSendRoute(composer({ outstandingTurn: true }))), null);
+    assert.notEqual(composerRouteNote(composerSendRoute(composer({ otherWorkInProgress: true }))), null);
     assert.notEqual(composerRouteNote(composerSendRoute(composer({ sessionOpen: false }))), null);
   });
 });
@@ -485,6 +484,116 @@ describe('what the next step is actually told', () => {
     assert.doesNotMatch(
       truncated(['also check the **Linux** build']),
       /also check the \*\*Linux\*\* build/,
+    );
+  });
+});
+
+/**
+ * DSP-147: a message while work runs is steering of that work, delivered through the
+ * runtime's own steering, and the window says how far it got and no further.
+ */
+describe('steering the running work (DSP-147)', () => {
+  it('sends a message during an ordinary turn into that turn, never as a new one', () => {
+    assert.deepEqual(composerSendRoute(composer({ outstandingTurn: true })), { kind: 'steer' });
+    assert.deepEqual(composerSendRoute(composer({ outstandingTurn: true, useLoop: true })), { kind: 'steer' });
+    assert.equal(composerRouteNote({ kind: 'steer' }), null);
+  });
+
+  it('is not held back by earlier attempts with no known outcome: it is part of the work going', () => {
+    const a5 = { attemptId: 'dsp-attempt-0005', conversationId: 'c1' };
+    assert.equal(composerSendRoute(composer({ outstandingTurn: true, unresolvedAttempts: [a5] })).kind, 'steer');
+  });
+
+  it('says accepted, delivered into the step, not confirmed and not delivered apart', () => {
+    let list = loopInstructionsAfter([], { kind: 'received', instruction: received() });
+    list = loopInstructionsAfter(list, { kind: 'accepted', runId: 'chat-loop-1', instructionIds: ['msg-1'] });
+    assert.equal(loopInstructionState(list[0]!), 'accepted');
+    assert.match(loopInstructionStatusText(list[0]!), /not yet taken in/);
+    const delivered = loopInstructionsAfter(list, {
+      kind: 'delivered',
+      runId: 'chat-loop-1',
+      instructionIds: ['msg-1'],
+      delivery: {
+        nodeId: 'impl',
+        nodeLabel: 'Implement',
+        occurrence: 1,
+        atUtc: '2026-10-28T10:00:00.000Z',
+        during: true,
+      },
+    });
+    assert.equal(loopInstructionStatusText(delivered[0]!), 'Delivered to “Implement” while it worked.');
+    assert.doesNotMatch(loopInstructionStatusText(delivered[0]!), /read|applied|followed/i);
+    const unconfirmed = loopInstructionsAfter(list, {
+      kind: 'unconfirmed',
+      runId: 'chat-loop-1',
+      instructionIds: ['msg-1'],
+    });
+    assert.equal(loopInstructionState(unconfirmed[0]!), 'unconfirmed');
+    assert.match(loopInstructionStatusText(unconfirmed[0]!), /not sent again/);
+    // The run ending afterwards does not turn a message the runtime had into one no agent got.
+    const ended = loopInstructionsAfter(unconfirmed, { kind: 'run-ended', runId: 'chat-loop-1' });
+    assert.equal(loopInstructionState(ended[0]!), 'unconfirmed');
+  });
+
+  it('falls back to the next step, or to the end of a chat turn, and says which', () => {
+    const loop = loopInstructionsAfter([received()], {
+      kind: 'waiting',
+      runId: 'chat-loop-1',
+      instructionIds: ['msg-1'],
+      waitingFor: 'next-step',
+    });
+    assert.match(loopInstructionStatusText(loop[0]!), /next step/);
+    const chat = loopInstructionsAfter([received({ scope: 'chat', runId: 'run-7' })], {
+      kind: 'waiting',
+      runId: 'run-7',
+      instructionIds: ['msg-1'],
+      waitingFor: 'end-of-turn',
+    });
+    assert.match(loopInstructionStatusText(chat[0]!), /sent when this turn ends/);
+    const stopped = loopInstructionsAfter(chat, {
+      kind: 'not-delivered',
+      runId: 'run-7',
+      instructionIds: ['msg-1'],
+    });
+    assert.equal(
+      loopInstructionStatusText(stopped[0]!),
+      'The turn stopped first, so the agent never received it.',
+    );
+  });
+
+  it('briefs later steps with what earlier ones were sent, and adds nothing when there was none', () => {
+    assert.equal(earlierInstructionsContext([]), '');
+    const brief = earlierInstructionsContext(['Ändra inget ännu, undersök först.']);
+    assert.match(brief, /assignment as it now stands/);
+    assert.ok(brief.includes(INSTRUCTION_BLOCK_OPEN) && brief.includes(INSTRUCTION_BLOCK_CLOSE));
+    assert.ok(brief.includes('Ändra inget ännu, undersök först.'));
+    // The same precedence rule as the preamble a step gets for a message given to it.
+    assert.ok(brief.includes('it governs'));
+    // No claim that the earlier step received it: one the runtime had unconfirmed is carried too.
+    assert.doesNotMatch(brief, /received it/);
+  });
+
+  it('reads a saved chat steering message back as no more than the file establishes', () => {
+    const base = {
+      id: 's1',
+      text: 'x',
+      receivedAtUtc: '2026-10-28T10:00:00.000Z',
+      settledAtUtc: null,
+      providerMessageId: null,
+      detail: null,
+    };
+    assert.equal(
+      loopInstructionState(storedSteeringAsInstruction({ ...base, state: 'delivered' }, 'r')),
+      'delivered',
+    );
+    // Accepted when DSpatch stopped: nothing more was learned, so it is not confirmed.
+    assert.equal(
+      loopInstructionState(storedSteeringAsInstruction({ ...base, state: 'accepted' }, 'r')),
+      'unconfirmed',
+    );
+    assert.equal(
+      loopInstructionState(storedSteeringAsInstruction({ ...base, state: 'not-delivered' }, 'r')),
+      'never-delivered',
     );
   });
 });

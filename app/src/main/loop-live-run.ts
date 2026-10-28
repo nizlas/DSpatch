@@ -30,6 +30,7 @@ import {
   type LiveInspection,
   type LivePromptStep,
   type LoopStepAdapter,
+  type SteerableStep,
 } from './loop-live';
 import type { StepActivity } from '../shared/loop-activity';
 import { chatPromptFor, describeChosenLoopBinding } from '../shared/loop-chat';
@@ -123,6 +124,8 @@ export interface LiveCliOptions {
    * only for a run that reaches "afterwards".
    */
   readonly onCommand?: (command: LiveCommandRecord) => void;
+  /** DSP-147: see {@link LiveExecutorOptions.onSteerableStep}. */
+  readonly onSteerableStep?: (step: SteerableStep | null) => void;
   /**
    * Who decides that the next work step starts (DSP-29, DSP-30). Left out — as the
    * CLI leaves it out — the run is autonomous and never waits.
@@ -368,6 +371,7 @@ async function driveLive(
           ? {}
           : { onStepActivity: options.onStepActivity }),
         ...(options.onCommand === undefined ? {} : { onCommand: options.onCommand }),
+        ...(options.onSteerableStep === undefined ? {} : { onSteerableStep: options.onSteerableStep }),
       }),
     });
 
