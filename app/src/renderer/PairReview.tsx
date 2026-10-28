@@ -19,6 +19,7 @@ import { highlightLines, type Token } from '../shared/review-model';
 import {
   changedLinesOf,
   fileProgressOf,
+  intralineRanges,
   isPairError,
   lineKey,
   lineStatusesOf,
@@ -30,6 +31,7 @@ import {
   type ChangedLine,
   type DiffLocation,
   type FileProgress,
+  type IntralineRanges,
   type LineSide,
   type LineStatus,
   type LogCommit,
@@ -506,6 +508,12 @@ function DiffReview({
           label: cell.getAttribute('aria-label') ?? '',
         })),
         rowsDrawn: document.querySelectorAll('.rv-pair-diff tr').length,
+        // The changed words marked inside edited lines, by side.
+        words: [...document.querySelectorAll<HTMLElement>('.rv-pair-diff .rv-pair-word')].map((word) => ({
+          side: word.closest('.rv-pair-old') !== null ? 'base' : 'target',
+          text: word.textContent ?? '',
+        })),
+        signs: [...document.querySelectorAll<HTMLElement>('.rv-pair-diff td.rv-pair-sign')].map((cell) => cell.textContent ?? '').join(''),
         diffNote: document.querySelector('.rv-pair-nodiff')?.textContent ?? '',
         walksNote: document.querySelector('[data-ev="pair-walks-none"]')?.textContent ?? '',
         targetShown: document.querySelector('.rv-pair-target') !== null,
@@ -1033,9 +1041,10 @@ function FileDiff({
   const number = (side: LineSide, line: number | null, changedRow: boolean): JSX.Element => {
     const path = side === 'base' ? file.oldPath : file.newPath;
     const key = line === null || path === null ? null : lineKey({ side, path, line });
+    const tint = !changedRow ? '' : line === null ? ' rv-pair-num-empty' : side === 'base' ? ' rv-pair-num-old' : ' rv-pair-num-new';
     return (
       <td
-        className={changedRow && key !== null ? 'rv-pair-num rv-pair-num-pick' : 'rv-pair-num'}
+        className={(changedRow && key !== null ? 'rv-pair-num rv-pair-num-pick' : 'rv-pair-num') + tint}
         onClick={changedRow && key !== null ? (event: ReactMouseEvent) => pick(key, event.shiftKey) : undefined}
       >
         {line ?? ''}
@@ -1045,6 +1054,41 @@ function FileDiff({
 
   const code = (side: LineSide, line: number | null): Token[] | undefined =>
     line === null ? undefined : (side === 'base' ? tokens.base : tokens.target)[line - 1];
+
+  /*
+   * The words that changed inside an edited line. A removed line and an added line are
+   * paired the way the side-by-side view pairs them, the same in both layouts; a line
+   * with no partner is a pure addition or deletion and is marked by its colour alone.
+   */
+  const wordRanges = useMemo(() => {
+    const ranges = new Map<string, IntralineRanges['base']>();
+    if (text === null || text.base === null || text.target === null) {
+      return ranges;
+    }
+    for (const row of splitRowsOf(file, text.base.length, text.target.length, new Set(['*']))) {
+      if (row.kind !== 'change' || row.base === null || row.target === null) {
+        continue;
+      }
+      const found = intralineRanges(text.base[row.base - 1] ?? '', text.target[row.target - 1] ?? '');
+      if (found !== null) {
+        ranges.set(`base:${String(row.base)}`, found.base);
+        ranges.set(`target:${String(row.target)}`, found.target);
+      }
+    }
+    return ranges;
+  }, [file, text]);
+
+  const codeView = (side: LineSide, line: number | null, changedRow: boolean): JSX.Element => {
+    const ranges = changedRow && line !== null ? wordRanges.get(`${side}:${String(line)}`) : undefined;
+    return ranges === undefined ? <TokensView tokens={code(side, line)} /> : <MarkedTokens tokens={code(side, line)} ranges={ranges} />;
+  };
+
+  /** The column of − and +, apart from the review strip and the numbers. */
+  const sign = (kind: 'old' | 'new' | 'none' | 'empty'): JSX.Element => (
+    <td className={`rv-pair-sign rv-pair-sign-${kind}`} aria-hidden="true">
+      {kind === 'old' ? '−' : kind === 'new' ? '+' : ''}
+    </td>
+  );
 
   const selectedOnRow = (side: LineSide, line: number | null): boolean => {
     const path = side === 'base' ? file.oldPath : file.newPath;
@@ -1148,11 +1192,12 @@ function FileDiff({
             <tbody>
               {split.map((row, index) =>
                 row.kind === 'gap' && row.gap !== undefined ? (
-                  gapRow(row.gap.id, row.gap.count, 6)
+                  gapRow(row.gap.id, row.gap.count, 8)
                 ) : (
                   <tr key={index} className={row.kind === 'change' ? 'rv-pair-row-change' : 'rv-pair-row-context'}>
                     {strip('base', row.base, row.kind === 'change')}
                     {number('base', row.base, row.kind === 'change')}
+                    {sign(row.kind !== 'change' ? 'none' : row.base === null ? 'empty' : 'old')}
                     <td
                       className={[
                         'rv-pair-code',
@@ -1162,10 +1207,11 @@ function FileDiff({
                         selectedOnRow('base', row.base) ? 'rv-pair-selected' : '',
                       ].join(' ')}
                     >
-                      <TokensView tokens={code('base', row.base)} />
+                      {codeView('base', row.base, row.kind === 'change')}
                     </td>
                     {strip('target', row.target, row.kind === 'change')}
                     {number('target', row.target, row.kind === 'change')}
+                    {sign(row.kind !== 'change' ? 'none' : row.target === null ? 'empty' : 'new')}
                     <td
                       className={[
                         'rv-pair-code',
@@ -1175,7 +1221,7 @@ function FileDiff({
                         selectedOnRow('target', row.target) ? 'rv-pair-selected' : '',
                       ].join(' ')}
                     >
-                      <TokensView tokens={code('target', row.target)} />
+                      {codeView('target', row.target, row.kind === 'change')}
                     </td>
                   </tr>
                 ),
@@ -1188,7 +1234,7 @@ function FileDiff({
             <tbody>
               {unified.map((row, index) => {
                 if (row.kind === 'gap') {
-                  return gapRow(row.id, row.count, 4);
+                  return gapRow(row.id, row.count, 5);
                 }
                 const side: LineSide = row.kind === 'deleted' ? 'base' : 'target';
                 const line = row.kind === 'deleted' ? row.base : row.target;
@@ -1197,8 +1243,13 @@ function FileDiff({
                   <Fragment key={index}>
                     <tr className={changedRow ? 'rv-pair-row-change' : 'rv-pair-row-context'}>
                       {strip(side, line, changedRow)}
-                      <td className="rv-pair-num">{row.kind === 'added' ? '' : row.base}</td>
-                      <td className="rv-pair-num">{row.kind === 'deleted' ? '' : row.target}</td>
+                      <td className={`rv-pair-num${row.kind === 'deleted' ? ' rv-pair-num-old' : row.kind === 'added' ? ' rv-pair-num-new' : ''}`}>
+                        {row.kind === 'added' ? '' : row.base}
+                      </td>
+                      <td className={`rv-pair-num${row.kind === 'deleted' ? ' rv-pair-num-old' : row.kind === 'added' ? ' rv-pair-num-new' : ''}`}>
+                        {row.kind === 'deleted' ? '' : row.target}
+                      </td>
+                      {sign(row.kind === 'deleted' ? 'old' : row.kind === 'added' ? 'new' : 'none')}
                       <td
                         className={[
                           'rv-pair-code',
@@ -1207,8 +1258,7 @@ function FileDiff({
                           selectedOnRow(side, line) ? 'rv-pair-selected' : '',
                         ].join(' ')}
                       >
-                        <span className="rv-pair-sign" aria-hidden="true">{row.kind === 'deleted' ? '−' : row.kind === 'added' ? '+' : ' '}</span>
-                        <TokensView tokens={code(side, line)} />
+                        {codeView(side, line, changedRow)}
                       </td>
                     </tr>
                   </Fragment>
@@ -1220,4 +1270,50 @@ function FileDiff({
       </div>
     </section>
   );
+}
+
+/**
+ * Highlighted tokens with the changed words of an edited line marked.
+ *
+ * The syntax colours stay: a token is cut where a changed range starts or ends, and the
+ * changed pieces get a stronger shade of the line's own colour around them.
+ */
+function MarkedTokens({
+  tokens,
+  ranges,
+}: {
+  readonly tokens: readonly Token[] | undefined;
+  readonly ranges: IntralineRanges['base'];
+}): JSX.Element {
+  if (tokens === undefined) {
+    return <></>;
+  }
+  const pieces: JSX.Element[] = [];
+  let at = 0;
+  tokens.forEach((token, tokenIndex) => {
+    let start = 0;
+    while (start < token.text.length) {
+      const offset = at + start;
+      const inside = ranges.find(([from, to]) => offset >= from && offset < to);
+      const nextEdge = inside !== undefined
+        ? inside[1]
+        : Math.min(...ranges.map(([from]) => from).filter((from) => from > offset), Number.POSITIVE_INFINITY);
+      const end = Math.min(token.text.length, nextEdge - at);
+      const piece = token.text.slice(start, end);
+      const kind = token.kind === 'plain' ? '' : `rv-tk-${token.kind}`;
+      const className = [kind, inside !== undefined ? 'rv-pair-word' : ''].filter((name) => name !== '').join(' ');
+      pieces.push(
+        className === '' ? (
+          <Fragment key={`${String(tokenIndex)}-${String(start)}`}>{piece}</Fragment>
+        ) : (
+          <span key={`${String(tokenIndex)}-${String(start)}`} className={className}>
+            {piece}
+          </span>
+        ),
+      );
+      start = end;
+    }
+    at += token.text.length;
+  });
+  return <>{pieces}</>;
 }

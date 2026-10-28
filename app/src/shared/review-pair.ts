@@ -11,6 +11,8 @@
  * draw what these functions derive. Nothing here reads the working copy.
  */
 
+import { diffWordsWithSpace } from 'diff';
+
 // --- Identity ------------------------------------------------------------------------
 
 /** One Git repository found in the workspace, named by its folder. */
@@ -858,4 +860,51 @@ export interface ReviewPairBridge {
   showInDiff(location: DiffLocation): Promise<{ readonly ok: boolean; readonly note: string }>;
   onChanged(listener: (event: PairChangedEvent) => void): () => void;
   onNavigate(listener: (location: DiffLocation) => void): () => void;
+}
+
+// --- Changes inside a line -------------------------------------------------------------
+
+/** Character ranges `[start, end)` that changed inside a paired removed and added line. */
+export interface IntralineRanges {
+  readonly base: readonly (readonly [number, number])[];
+  readonly target: readonly (readonly [number, number])[];
+}
+
+/**
+ * Which words changed between a removed line and the added line it is paired with.
+ *
+ * Only for a line that was edited, not replaced: when most of both lines changed, a word
+ * mark would say nothing the line colour does not, so there is none. Pure additions and
+ * deletions have no partner and are marked by their line alone.
+ */
+export function intralineRanges(before: string, after: string): IntralineRanges | null {
+  if (before === after) {
+    return null;
+  }
+  const base: [number, number][] = [];
+  const target: [number, number][] = [];
+  let atBase = 0;
+  let atTarget = 0;
+  let changedBase = 0;
+  let changedTarget = 0;
+  for (const part of diffWordsWithSpace(before, after)) {
+    const length = part.value.length;
+    if (part.added) {
+      target.push([atTarget, atTarget + length]);
+      atTarget += length;
+      changedTarget += length;
+    } else if (part.removed) {
+      base.push([atBase, atBase + length]);
+      atBase += length;
+      changedBase += length;
+    } else {
+      atBase += length;
+      atTarget += length;
+    }
+  }
+  const mostlyChanged = (changed: number, total: number): boolean => total === 0 || changed / total > 0.6;
+  if (mostlyChanged(changedBase, before.length) && mostlyChanged(changedTarget, after.length)) {
+    return null;
+  }
+  return { base, target };
 }

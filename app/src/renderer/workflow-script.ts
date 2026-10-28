@@ -11586,6 +11586,8 @@ interface PairReading {
   readonly diffNote?: string;
   readonly walksNote?: string;
   readonly targetShown?: boolean;
+  readonly words?: readonly { side: string; text: string }[];
+  readonly signs?: string;
 }
 
 interface PairWindowReading {
@@ -11867,6 +11869,40 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     await inPairWindow(diff.id, `[data-ev="pair-file-${String(renamedIndex)}"]`);
     const renamed = await untilPair(diff.id, 'the pure rename', (reading) => (reading.pair?.diffNote ?? '') !== '');
     expect((renamed.pair?.diffNote ?? '').startsWith('Renamed without changes'), `a pure rename is not explained: ${String(renamed.pair?.diffNote)}`);
+
+    // Small changes inside long, wrapping lines: the changed words are marked, in both layouts.
+    const afterIndex = (listed.pair?.files ?? []).findIndex((file) => file.path === 'src/after.ts');
+    await inPairWindow(diff.id, '[data-ev="pair-files"]');
+    await inPairWindow(diff.id, `[data-ev="pair-file-${String(afterIndex)}"]`);
+    for (const layout of ['split', 'unified'] as const) {
+      await inPairWindow(diff.id, `[data-ev="pair-layout-${layout}"]`);
+      const words = await untilPair(diff.id, `the changed words, ${layout}`, (reading) => reading.pair?.layout === layout && (reading.pair.words?.length ?? 0) > 0);
+      const marked = (words.pair?.words ?? []).map((word) => `${word.side}:${word.text}`).sort();
+      record(`changed words, ${layout}`, { marked, signs: words.pair?.signs });
+      expect(
+        JSON.stringify(marked) === JSON.stringify(['base:5', 'base:line', 'target:five', 'target:range']),
+        `the changed words are not marked in the ${layout} diff: ${JSON.stringify(marked)}`,
+      );
+      expect((words.pair?.signs ?? '').replace(/\s/g, '') === '−−++' || (words.pair?.signs ?? '').replace(/\s/g, '').split('').sort().join('') === '++−−', `the − and + column is wrong in the ${layout} diff: ${String(words.pair?.signs)}`);
+      await capture(diff.id, `words-${layout}`);
+    }
+    // keep.ts: the edited line has its changed characters; pure additions and the deletion none.
+    const keepAgain = (listed.pair?.files ?? []).findIndex((file) => file.path === 'src/keep.ts');
+    await inPairWindow(diff.id, '[data-ev="pair-files"]');
+    await inPairWindow(diff.id, `[data-ev="pair-file-${String(keepAgain)}"]`);
+    const keepWords = await untilPair(diff.id, 'keep.ts words', (reading) => (reading.pair?.words?.length ?? 0) > 0);
+    const keepMarked = (keepWords.pair?.words ?? []).map((word) => `${word.side}:${word.text}`).sort();
+    expect(JSON.stringify(keepMarked) === JSON.stringify(['base:3', 'target:30']), `pure additions or deletions carry word marks: ${JSON.stringify(keepMarked)}`);
+    await capture(diff.id, 'keep-unified-marked');
+    await inPairWindow(diff.id, '[data-ev="pair-layout-split"]');
+    await untilPair(diff.id, 'keep.ts side by side', (reading) => reading.pair?.layout === 'split');
+    // A selected line and keyboard focus on a strip of a red row, for the picture.
+    await inPairWindow(diff.id, stripSelector('target', 3));
+    await window.dspatch.pairWindowCheck({ action: 'key', id: diff.id, selector: stripSelector('base', 10), key: 'Shift' });
+    await capture(diff.id, 'keep-split-selected');
+    await inPairWindow(diff.id, stripSelector('target', 3));
+    await capture(diff.id, 'keep-split-marked');
+    await inPairWindow(diff.id, '[data-ev="pair-layout-unified"]');
 
     // --- A walk beside the diff ------------------------------------------------------
     await inPairWindow(diff.id, '[data-ev="pair-walks"]');

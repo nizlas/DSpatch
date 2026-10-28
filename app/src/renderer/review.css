@@ -1624,6 +1624,15 @@
   --rv-mark-manual: #5b8fd6;
   --rv-mark-agent: var(--unknown);
   --rv-mark-exempt: var(--muted);
+  /* The diff's own colours: a removed or added line, its gutter, and its changed words.
+     Mixed from the palette's red and green, strong enough to see at once and still dark
+     enough for the text on them. */
+  --rv-pair-del: color-mix(in srgb, var(--no) 30%, var(--bg));
+  --rv-pair-add: color-mix(in srgb, var(--ok) 27%, var(--bg));
+  --rv-pair-del-gutter: color-mix(in srgb, var(--no) 40%, var(--bg));
+  --rv-pair-add-gutter: color-mix(in srgb, var(--ok) 36%, var(--bg));
+  --rv-pair-del-word: color-mix(in srgb, var(--no) 62%, var(--bg));
+  --rv-pair-add-word: color-mix(in srgb, var(--ok) 56%, var(--bg));
   height: 100vh;
   overflow: hidden;
 }
@@ -2145,9 +2154,12 @@
 /* The strip: a narrow cell beside the numbers. Adjacent cells of one status join
    into one band, because the rows have no gap between them. */
 .rv-pair-table td.rv-pair-strip {
-  width: 8px;
+  width: 10px;
   padding: 0;
   border-left: 2px solid transparent;
+  /* A dark gap to the numbers, so the band reads on a red or green row too. */
+  border-right: 2px solid var(--bg);
+  background-color: var(--bg);
 }
 
 .rv-pair-table td.rv-pair-strip[role="button"] {
@@ -2205,28 +2217,59 @@
 }
 
 .rv-pair-old {
-  background: var(--rv-old-faint);
+  background: var(--rv-pair-del);
 }
 
 .rv-pair-new {
-  background: var(--rv-new-faint);
+  background: var(--rv-pair-add);
 }
 
 .rv-pair-empty {
   background: color-mix(in srgb, var(--panel) 60%, var(--bg));
 }
 
+/* The gutter of a changed line: its numbers and its sign, a shade deeper than the line. */
+.rv-pair-table td.rv-pair-num-old,
+.rv-pair-table td.rv-pair-sign-old {
+  background: var(--rv-pair-del-gutter);
+  color: var(--text);
+}
+
+.rv-pair-table td.rv-pair-num-new,
+.rv-pair-table td.rv-pair-sign-new {
+  background: var(--rv-pair-add-gutter);
+  color: var(--text);
+}
+
+.rv-pair-table td.rv-pair-num-empty,
+.rv-pair-table td.rv-pair-sign-empty {
+  background: color-mix(in srgb, var(--panel) 60%, var(--bg));
+}
+
+/* The words that changed inside an edited line. */
+.rv-pair-old .rv-pair-word {
+  background: var(--rv-pair-del-word);
+  border-radius: 2px;
+}
+
+.rv-pair-new .rv-pair-word {
+  background: var(--rv-pair-add-word);
+  border-radius: 2px;
+}
+
 .rv-pair-selected {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 70%, transparent);
 }
 
 .rv-pair-target {
   box-shadow: inset 3px 0 0 var(--rv-gold);
 }
 
-.rv-pair-sign {
-  display: inline-block;
-  width: 1.1em;
+/* − and +, in a column of their own between the numbers and the code. */
+.rv-pair-table td.rv-pair-sign {
+  width: 1.6rem;
+  padding: 0;
+  text-align: center;
   color: var(--muted);
   user-select: none;
 }

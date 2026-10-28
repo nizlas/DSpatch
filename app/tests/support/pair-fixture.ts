@@ -66,7 +66,12 @@ const KEEP_BASE = Array.from({ length: 12 }, (_, index) => `export const v${Stri
 
 const MOVED = 'export function moved(): number {\n  return 42;\n}\n';
 
-const RENAMED_BASE = Array.from({ length: 10 }, (_, index) => `// line ${String(index + 1)}`).join('\n') + '\n';
+const LONG_LINE =
+  '// A long line of prose that wraps in the diff view: the review reads the change between two commits, ' +
+  'never the working copy, and marks what a person decided about each changed line, one line at a time.';
+
+const RENAMED_BASE =
+  Array.from({ length: 10 }, (_, index) => `// line ${String(index + 1)}`).join('\n') + `\n${LONG_LINE}\n`;
 
 export function makePairFixture(workspace: string = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-pair-'))): PairFixture {
   const app = path.join(workspace, 'app');
@@ -90,7 +95,7 @@ export function makePairFixture(workspace: string = fs.mkdtempSync(path.join(os.
   write(app, 'src/keep.ts', keep.join('\n'));
   fs.renameSync(path.join(app, 'src/old-name.ts'), path.join(app, 'src/new-name.ts'));
   fs.rmSync(path.join(app, 'src/before.ts'));
-  write(app, 'src/after.ts', RENAMED_BASE.replace('// line 5', '// line five'));
+  write(app, 'src/after.ts', RENAMED_BASE.replace('// line 5', '// line five').replace('one line at a time', 'one range at a time'));
   write(app, 'src/added.ts', 'export const fresh = true;\nexport const again = false;\n');
   fs.rmSync(path.join(app, 'docs/gone.md'));
   write(app, 'assets/logo.bin', Buffer.from([0, 9, 8, 7, 0, 1, 2, 0, 5]));

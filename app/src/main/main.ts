@@ -2589,6 +2589,17 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
     return { ok: true, detail: 'focused' };
   }
   if (request.action === 'capture') {
+    // Two frames painted first: a capture taken at once can return the frame before the
+    // last change.
+    entry.contents.invalidate();
+    // A hidden or covered window paints no frames, so the wait is bounded.
+    await entry.contents.executeJavaScript(
+      'new Promise((resolve) => { setTimeout(() => resolve(false), 400); requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))); })',
+    );
+    // The first capture can still hand back the previous frame; the second, a moment
+    // later, is the one kept.
+    await entry.contents.capturePage();
+    await new Promise((resolve) => setTimeout(resolve, 300));
     const image = await entry.contents.capturePage();
     const shot = process.env['DSPATCH_CHAT_SHOT'];
     if (shot === undefined || shot === '') {

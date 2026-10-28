@@ -19,6 +19,7 @@ import {
   changedLinesOf,
   emptyRecord,
   fileProgressOf,
+  intralineRanges,
   isPairError,
   lineStatusesOf,
   lineKey,
@@ -113,7 +114,7 @@ describe('the diff between exactly two commits', () => {
         ['modified', 'assets/logo.bin', 'assets/logo.bin', true, 0, 0],
         ['deleted', 'docs/gone.md', null, false, 0, 3],
         ['added', null, 'src/added.ts', false, 2, 0],
-        ['renamed', 'src/before.ts', 'src/after.ts', false, 1, 1],
+        ['renamed', 'src/before.ts', 'src/after.ts', false, 2, 2],
         ['modified', 'src/keep.ts', 'src/keep.ts', false, 3, 2],
         ['renamed', 'src/old-name.ts', 'src/new-name.ts', false, 0, 0],
         ['modified', 'tools/run.sh', 'tools/run.sh', false, 0, 0],
@@ -349,4 +350,16 @@ it('keys a pair by its repository and both commits', () => {
   const pair = { repository: 'C:\\x', base: 'a'.repeat(40), target: 'b'.repeat(40) };
   assert.equal(pairKeyOf(pair), pairKeyOf({ ...pair }));
   assert.notEqual(pairKeyOf(pair), pairKeyOf({ ...pair, target: 'c'.repeat(40) }));
+});
+
+describe('changes inside a line', () => {
+  it('marks the changed words of an edited line on both sides', () => {
+    const found = intralineRanges('export const v3 = 3;', 'export const v3 = 30;');
+    assert.deepEqual(found, { base: [[18, 19]], target: [[18, 20]] });
+  });
+
+  it('marks nothing when the line was replaced rather than edited', () => {
+    assert.equal(intralineRanges('alpha beta gamma', 'one two three'), null);
+    assert.equal(intralineRanges('same', 'same'), null);
+  });
 });

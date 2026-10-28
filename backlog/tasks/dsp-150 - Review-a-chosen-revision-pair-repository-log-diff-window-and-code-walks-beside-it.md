@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-10-28 20:21'
-updated_date: '2026-10-28 21:10'
+updated_date: '2026-10-28 21:39'
 labels:
   - review
 dependencies: []
@@ -68,4 +68,6 @@ The DSP-126 and DSP-127 walk scenarios (`review-window`, `review-discussion`) we
 - **Older walk records.** Hunk decisions saved in a walk's own record before this change are kept there as history and are not imported into the pair record.
 - **Walk generation.** Not specified, and not built.
 - **Look and feel.** Agent-run readings only. The look, including the one added colour (blue for reviewed), is Niclas's to judge.
+
+28 Oct 2026, diff readability (follow-up, local commit). The removed and added line colours are stronger, mixed from the palette's red and green (30% and 27% over the background), and the numbers and sign of a changed line a shade deeper. Words changed inside an edited line are marked with a stronger shade: the removed and added lines are paired as the side-by-side view pairs them, compared with diffWordsWithSpace from the existing `diff` dependency (`intralineRanges` in shared/review-pair.ts), and left unmarked when most of both lines changed. Pure additions and deletions carry the line colour only. − and + have a column of their own between the numbers and the code. The review strip keeps a dark gap and background of its own, so the blue, violet and dashed grey bands read on red and green rows. The same applies in both layouts, with wrapping text, selection and keyboard focus. Review rules, counting, record format and layout are unchanged. Verified with pair-review in the real windows, with isolated userData and pictures of a long wrapped line with a one-word change in both layouts, keep.ts with an edited line, pure additions and a deletion, marks, a selected line and strip focus. The scenario asserts which words are marked in each layout and that pure additions carry none. The fixture's renamed file gained a long line, so after.ts counts +2 −2. The scripted capture now repaints and takes a second frame, because the first could be the frame before the last change.
 <!-- SECTION:NOTES:END -->
