@@ -129,6 +129,9 @@ export function PairReview(): JSX.Element {
         phase: phase.kind,
         repositories: [...document.querySelectorAll<HTMLElement>('[data-ev^="pair-repo-"]')].map((row) => row.textContent ?? ''),
         heading: document.querySelector('.rv-pair-head h1')?.textContent ?? '',
+        // Commits chosen as From or To in the log, and how many the log shows.
+        chosen: document.querySelectorAll('.rv-pair-commit[aria-pressed="true"]').length,
+        commits: document.querySelectorAll('.rv-pair-commit').length,
       }),
     };
     return () => {
@@ -229,14 +232,8 @@ function CommitLog({
       }
       setCommits((before) => (skip === 0 ? page.commits : [...before, ...page.commits]));
       setMore(page.more);
-      if (skip === 0 && page.last !== null) {
-        // The pair opened last time, offered again; nothing opens until it is asked for.
-        const hashes = new Set(page.commits.map((commit) => commit.hash));
-        if (hashes.has(page.last.base) && hashes.has(page.last.target)) {
-          setFrom(page.last.base);
-          setTo(page.last.target);
-        }
-      }
+      // From and To start empty every time the log opens: the person chooses the
+      // comparison. Choosing a pair reviewed before brings its marks back from its record.
       setLoaded(true);
     },
     [bridge, repository.path],

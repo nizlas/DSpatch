@@ -9509,7 +9509,7 @@ async function runReviewWindowScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     const chatAfterClose = chatState();
     record('chat after review closed', chatAfterClose);
 
-    // DSP-150: reopened the decided way - the log offers the last pair, Code walks lists the walk.
+    // DSP-150: reopened the decided way - the pair chosen again in the log, Code walks lists the walk.
     const reopenDiff = await openDiffFromChat();
     const reopenNote = reopenDiff.note;
     await choosePairInDiff(reopenDiff.id);
@@ -11578,6 +11578,8 @@ interface PairReading {
   readonly phase: string;
   readonly repositories?: readonly string[];
   readonly heading?: string;
+  readonly chosen?: number;
+  readonly commits?: number;
   readonly key?: string;
   readonly fileKey?: string | null;
   readonly layout?: string;
@@ -11728,15 +11730,14 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       expect(JSON.stringify(editorRepos.pair?.repositories) === JSON.stringify(['app', 'lib']), 'review from the loop editor does not list the workspace repositories');
       await window.dspatch.editorWindowCheck({ action: 'close' });
 
-      // --- After a restart: the last pair is offered, and everything is where it was ---
+      // --- After a restart: nothing is chosen; the same pair chosen again comes back as it was ---
       const diffAgain = fromEditor;
       await inPairWindow(diffAgain.id, '[data-ev="pair-repo-0"]');
-      await untilPair(diffAgain.id, 'the log', (reading) => reading.text.includes('Rework the app'));
-      const offered = await readPairWindow(diffAgain.id);
-      expect(
-        (offered?.text ?? '').includes('From') && (offered?.text ?? '').includes('Start the app') && !(offered?.text ?? '').includes('click a commit'),
-        'the last pair is not offered again after the restart',
-      );
+      const offered = await untilPair(diffAgain.id, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
+      record('log after restart', { chosen: offered.pair?.chosen, picked: offered.text.slice(0, 120) });
+      expect(offered.pair?.chosen === 0 && offered.text.includes('click a commit'), 'the log after the restart has commits chosen before anyone clicked');
+      await inPairWindow(diffAgain.id, '[data-ev="pair-commit-1"]');
+      await inPairWindow(diffAgain.id, '[data-ev="pair-commit-0"]');
       await inPairWindow(diffAgain.id, '[data-ev="pair-open"]');
       const back = await untilPair(diffAgain.id, 'the review back', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
       record('after restart', { fileKey: back.pair?.fileKey, layout: back.pair?.layout, files: back.pair?.files });
@@ -11951,12 +11952,29 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     const reopened = await untilWindow('the diff window again', (rows) => rows.find((row) => row.view === 'diff' && row.id !== diff.id));
     await untilPair(reopened.id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
     await inPairWindow(reopened.id, '[data-ev="pair-repo-0"]');
-    await untilPair(reopened.id, 'the log with the last pair', (reading) => reading.text.includes('Rework the app') && !reading.text.includes('click a commit'));
+    // Nothing is chosen when the log opens again; the person chooses the same pair.
+    const emptyLog = await untilPair(reopened.id, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
+    record('log reopened', { chosen: emptyLog.pair?.chosen });
+    expect(emptyLog.pair?.chosen === 0 && emptyLog.text.includes('click a commit'), 'the reopened log has commits chosen before anyone clicked');
+    await inPairWindow(reopened.id, '[data-ev="pair-commit-1"]');
+    await inPairWindow(reopened.id, '[data-ev="pair-commit-0"]');
     await inPairWindow(reopened.id, '[data-ev="pair-open"]');
     const again = await untilPair(reopened.id, 'the reopened review', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
     record('reopened', { fileKey: again.pair?.fileKey, layout: again.pair?.layout, keep: fileReading(again, 'src/keep.ts') });
     expect(again.pair?.layout === 'unified' && (again.pair.fileKey ?? '').includes('src/keep.ts'), 'the reopened diff did not come back where it was');
     expect(fileReading(again, 'src/keep.ts')?.done === true, 'the marks did not survive reopening the diff');
+
+    // Change revisions: the log again starts empty, and the same pair chosen again keeps its marks.
+    await inPairWindow(reopened.id, '[data-ev="pair-change-revisions"]');
+    const changeLog = await untilPair(reopened.id, 'the log from Change revisions', (reading) => reading.pair?.phase === 'log' && (reading.pair.commits ?? 0) === 2);
+    record('log from Change revisions', { chosen: changeLog.pair?.chosen });
+    expect(changeLog.pair?.chosen === 0, 'Change revisions opens the log with commits already chosen');
+    await capture(reopened.id, 'log-empty');
+    await inPairWindow(reopened.id, '[data-ev="pair-commit-1"]');
+    await inPairWindow(reopened.id, '[data-ev="pair-commit-0"]');
+    await inPairWindow(reopened.id, '[data-ev="pair-open"]');
+    const samePair = await untilPair(reopened.id, 'the same pair again', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
+    expect(fileReading(samePair, 'src/keep.ts')?.done === true, 'choosing the same pair again lost its marks');
     // A late window still hears the other: a withdrawal in the walk reaches the new diff.
     await inPairWindow(walk.id, '.rv-decision-actions button');
     await untilPair(reopened.id, 'the reopened diff to hear the walk', (reading) => fileReading(reading, 'src/keep.ts')?.done === false);
@@ -11984,7 +12002,7 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
 /**
  * DSP-150: from the chat to a walk. *Open review* opens a diff window; the scenario
  * chooses the pair in its log (the only two commits of the review fixture, From the
- * older) unless the log already offers the last pair, and opens the review.
+ * older), and opens the review.
  */
 async function openDiffFromChat(): Promise<{ readonly id: number; readonly note: string | null }> {
   const before = new Set((await pairWindows()).map((row) => row.id));
