@@ -72,6 +72,8 @@ export const chatRunScenario: ScriptedScenario =
                                 ? 'model-flow'
                                 : chatRunValue === 'steering'
                                 ? 'steering'
+                                : chatRunValue === 'editor-uncertain'
+                                ? 'editor-uncertain'
                                 : chatRunValue === 'switch'
                                   ? 'workspace-switch'
                                   : chatRunValue === 'resume-choice'
@@ -158,6 +160,7 @@ export const presentationMode =
   // DSP-147: steering, the composer and the lock. The steering is the presentation
   // adapter's SIMULATED steering; what is checked is DSpatch's routing, records and window.
   chatRunScenario === 'steering' ||
+  chatRunScenario === 'editor-uncertain' ||
   // DSP-121: the refused and failed resume states through the real choice panel. The
   // refusal is the presentation adapter's own, simulated on this machine; the one
   // message the scenario sends after choosing a new session is answered locally.

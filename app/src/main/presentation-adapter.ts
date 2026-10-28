@@ -679,7 +679,11 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       status: 'cancelled',
       // DSP-147, SIMULATED: `[[cancel-unconfirmed]]` reports the end as the Claude adapter
       // does when it stops waiting without seeing its process exit.
-      ...(state.cancelUnconfirmed ? { end: 'unconfirmed' as const } : {}),
+      // `DSPATCH_PRESENTATION_UNCONFIRMED_STOP=1` does so for every cancel, for a run whose
+      // prompts come from a drawing and cannot carry the directive (the graph editor's).
+      ...(state.cancelUnconfirmed || process.env['DSPATCH_PRESENTATION_UNCONFIRMED_STOP'] === '1'
+        ? { end: 'unconfirmed' as const }
+        : {}),
     });
     return Promise.resolve();
   }

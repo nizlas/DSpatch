@@ -246,3 +246,94 @@ test('a loop run ending is not evidence that its stopped steps ended; a seen exi
   );
   assert.deepEqual(uncertainLoopWork('run-9', [], []), []);
 });
+
+/** A chat service over a workspace, with an uncertain-work file of its own. */
+function editorHarness(name: string, file: string, workspace: string) {
+  const root = tempRoot(`steering-editor-${name}`);
+  const store = new ConversationStore(path.join(root, 'userdata', 'conversations'));
+  const events: UiAgentEvent[] = [];
+  const service = new ChatService({
+    repoRoot: path.join(root, 'repo-root'),
+    sampleProjectsRoot: path.join(root, 'samples'),
+    send: (event) => {
+      events.push(event);
+    },
+    log: () => undefined,
+    conversations: () => store,
+    readAuthStatus: () => Promise.resolve({ status: 'logged-in', backendUrl: 'https://example.invalid' }),
+    claudeAuthorizationReference: null,
+    agentChoiceStore: { read: () => 'cursor', write: () => undefined },
+    workingCopyLock: new WorkingCopyLock(),
+    uncertainWorkFile: file,
+    createAdapter: () => new PresentationAdapter({ deltaMs: 5 }),
+    timings: { cancelConfirmMs: 40, cancelWatchMs: 60 },
+  });
+  services.push(service);
+  void workspace;
+  return { service, events };
+}
+
+test('a graph editor run with no confirmed end holds back overlapping work, after a restart too, and only there', async () => {
+  const root = tempRoot('steering-editor-store');
+  const file = path.join(root, 'userdata', 'dspatch-uncertain-work.json');
+  const temp = path.join(root, 'temp');
+  const editorFolder = path.join(temp, 'dspatch-live-run-1', 'duration-repo');
+  const unrelated = path.join(root, 'elsewhere');
+  for (const folder of [editorFolder, unrelated]) {
+    fs.mkdirSync(folder, { recursive: true });
+  }
+
+  // The editor's run is stopped without a confirmed end, and recorded with its folder.
+  const first = editorHarness('record', file, unrelated);
+  first.service.recordUncertainEditorWork('editor-run-1', [editorFolder], 'graph editor loop run editor-run-1, step "Work"', 'Stopped; end not confirmed.');
+  assert.ok(fs.existsSync(file));
+
+  // After a restart: a new service reads the same file.
+  const again = editorHarness('restart', file, unrelated);
+  await again.service.startChatSession({ kind: 'folder', path: unrelated });
+  // An unrelated folder is not held back: neither messages nor Run there.
+  assert.equal(again.service.uncertainAgentWorkRefusal(), null);
+  assert.equal(again.service.agentWorkGateFor([unrelated]), null);
+  const ran = await again.service.runWorkspaceTest({ command: 'node --version', cwd: unrelated });
+  assert.equal(ran.exitCode, 0);
+  // Run in a folder that contains the editor's: held back, and the report names it.
+  await assert.rejects(
+    again.service.runWorkspaceTest({ command: 'node --version', cwd: temp }),
+    /no confirmed end/,
+  );
+  const forRun = again.service.getRunState().needsAcknowledgement.agentWorkForRun ?? [];
+  assert.equal(forRun.length, 1);
+  assert.equal(forRun[0]?.conversationId, 'editor-run:editor-run-1');
+  // The chat's own gate is not raised by work outside its working copy.
+  assert.deepEqual(again.service.getRunState().needsAcknowledgement.agentTurn, []);
+  // New agent work over it (an editor run's or a loop's folders) is refused with the names.
+  const gate = again.service.agentWorkGateFor([temp]);
+  assert.ok(gate !== null && gate.acknowledgeable.length === 1);
+  // The existing explicit naming: Run anyway.
+  const named = await again.service.runWorkspaceTest({ command: 'node --version', cwd: temp, acknowledgedAttemptIds: forRun });
+  assert.equal(named.exitCode, 0);
+  assert.equal(again.service.agentWorkGateFor([temp]), null, 'named once, not asked again');
+
+  // Named on disk: a third start does not ask again, and the attempt stays unresolved.
+  const third = editorHarness('third', file, unrelated);
+  await third.service.startChatSession({ kind: 'folder', path: editorFolder });
+  assert.equal(third.service.uncertainAgentWorkRefusal(), null);
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as { entries: { attempts: { state: string; acknowledgedAtUtc: string | null }[] }[] };
+  assert.equal(saved.entries[0]?.attempts[0]?.state, 'outcome-unknown');
+  assert.notEqual(saved.entries[0]?.attempts[0]?.acknowledgedAtUtc, null);
+});
+
+test('a chat over the editor run\'s folder meets the same gate and names it with Send anyway', async () => {
+  const root = tempRoot('steering-editor-chat');
+  const file = path.join(root, 'userdata', 'dspatch-uncertain-work.json');
+  const editorFolder = path.join(root, 'temp', 'dspatch-live-run-2', 'duration-repo');
+  fs.mkdirSync(editorFolder, { recursive: true });
+  const h = editorHarness('chat', file, editorFolder);
+  h.service.recordUncertainEditorWork('editor-run-2', [editorFolder], 'graph editor loop run editor-run-2, step "Work"', 'Stopped; end not confirmed.');
+  await h.service.startChatSession({ kind: 'folder', path: editorFolder });
+  const needs = h.service.getRunState().needsAcknowledgement.agentTurn;
+  assert.equal(needs.length, 1);
+  await assert.rejects(h.service.sendPrompt('Go on.'), /not been named/);
+  await h.service.sendPrompt('Go on.', needs);
+  assert.equal(h.service.uncertainAgentWorkRefusal(), null);
+});

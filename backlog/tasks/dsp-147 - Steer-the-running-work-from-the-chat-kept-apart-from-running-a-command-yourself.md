@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-10-27 14:09'
-updated_date: '2026-10-28 16:30'
+updated_date: '2026-10-28 17:30'
 labels: []
 dependencies: []
 priority: high
@@ -143,4 +143,19 @@ Not established:
 - Cursor steering.
 - Copilot.
 - An editor run whose own stop ends unconfirmed is not recorded, because the editor has no conversation ledger. Its lock is released when its run ends.
+
+28 Oct 2026, the gap after ff3ce19 is closed: a graph editor run whose stop ends unconfirmed (local commit, not pushed).
+- **The record.** It is now kept by the same rule as the chat: an `agent-turn` attempt with an unknown outcome in an `AttemptLedger`, with no conversation invented for it. The attempt is stored with the editor run's id and the folders that run gave its agents, in `dspatch-uncertain-work.json` in user data (`UncertainWorkStore`). It is written on change and reconciled on read after a restart, exactly as a conversation's attempts are. As before, the run ending does not count, and a stop that `dispose` saw exit is not recorded.
+- **What it holds back.** The chat service treats these entries like another conversation's ledger over an overlapping working copy. So a chat or chat loop whose folders overlap the run's is held back, and so is a Run whose folder contains it. They are held back until the person names the attempt, and stay held back across a restart. The Run panel's list now also covers the folder Run was last asked to use (`needsAcknowledgement.agentWorkForRun`), so "Run anyway" is offered there too. A new editor run is gated the same way for its own folders (`agentWorkGateFor`).
+- **The way on.** The existing naming: "Send anyway" or "Run anyway", and from the editor's run path "Run anyway, leaving … unresolved" beside the refusal (`acknowledgedAttemptIds` on the editor run). A named attempt stays unresolved on disk and is not asked about again. Folders that do not overlap are not held back. A confirmed stop leaves no record.
+- **Test support.** The Open Project chooser answers from `DSPATCH_PICK_FILE` in a scripted run, as the editor's choosers already did. `DSPATCH_PRESENTATION_UNCONFIRMED_STOP=1` makes the simulated provider's stops unconfirmed. Steering, process stopping and other UI are unchanged.
+
+Verified, SIMULATED provider and isolated userData, `DSPATCH_CHAT_RUN=editor-uncertain`, three processes over one userData, all passed:
+1. `first`: an editor run with a confirmed stop left no record, and Run in its folder ran.
+2. `again`: an unconfirmed stop was recorded with its folder, and Run there was refused.
+3. `retry`: after a restart, Run in an unrelated folder ran. A chat opened on the editor run's folder held its message back, and Run there was disabled with "Run anyway". Naming it ran the command. The held message then went without asking again. The file kept the attempt as `outcome-unknown` with its acknowledgement.
+
+Unit tests (steering.test.ts) cover the same rules, plus the gate a new editor run meets. The steering scenario, the test groups chat, loop and host, and the typechecks also pass.
+
+Not shown in the window: an editor run refused by earlier unconfirmed work. Its fresh folder can only overlap a workspace that contains the temp folder. The gate and its naming are unit-tested, and the editor's button is typechecked only. The real steering trial with Claude stays open (AC #1).
 <!-- SECTION:NOTES:END -->

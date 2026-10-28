@@ -3655,7 +3655,7 @@ function Workbench({
                 setTestCwd(session.suggestedTestCwd);
               }}
               needsAcknowledgement={commandNeedsAcknowledgement}
-              agentWorkNeedsAcknowledgement={turnNeedsAcknowledgement}
+              agentWorkNeedsAcknowledgement={runState?.needsAcknowledgement.agentWorkForRun ?? turnNeedsAcknowledgement}
               onRun={(acknowledgedAttemptId) => {
                 void runTest(acknowledgedAttemptId);
               }}

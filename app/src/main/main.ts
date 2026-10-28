@@ -2871,6 +2871,11 @@ function registerIpc(): void {
    * it cannot be lost behind it.
    */
   ipcMain.handle(PICK_PROJECT, async (): Promise<ProjectPickOutcome> => {
+    // A scripted run answers from its queue, as the editor's choosers do (DSP-147's trial).
+    if (chatRunMode) {
+      const scripted = scriptedFilePick('Open Project…');
+      return scripted === null ? { kind: 'cancelled' } : { kind: 'chosen', path: scripted };
+    }
     const window = liveMainWindow();
     const options = {
       title: 'Choose a project folder',
@@ -3073,7 +3078,7 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
-      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow'
+      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain'
         ? {
             flowPhase: ((): 'first' | 'again' | 'retry' | 'switch' => {
               const named = process.env['DSPATCH_FLOW_PHASE'];

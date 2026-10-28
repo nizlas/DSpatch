@@ -81,6 +81,7 @@ import {
   nextMandateLoopFrom,
 } from '../shared/loop-choice-view';
 import type {
+  AttemptRef,
   LoopDefinitionListing,
   LoopGraphOpenRequest,
   OpenedLoopDefinition,
@@ -211,6 +212,8 @@ export function LoopEditor(): React.JSX.Element {
   const [roles, setRoles] = useState<ReadonlyMap<string, ResolvedRole | null>>(new Map());
   const [refusal, setRefusal] = useState<readonly Finding[] | null>(null);
   const [note, setNote] = useState('Choosing a loop above draws it here.');
+  /** DSP-147: the attempts a refused live run waits for someone to name. */
+  const [runNeedsAcknowledgement, setRunNeedsAcknowledgement] = useState<readonly AttemptRef[] | null>(null);
   /**
    * The loops that can be chosen, and which one is — the main process's answer.
    *
@@ -1011,7 +1014,7 @@ export function LoopEditor(): React.JSX.Element {
     }
   }, [graph, currentText, index.errors, runBusy, showRun, receiveRunEvent]);
 
-  const liveRunCanvas = useCallback(async () => {
+  const liveRunCanvas = useCallback(async (acknowledgedAttemptIds?: readonly AttemptRef[]) => {
     if (graph === null || currentText === null || index.errors > 0 || runBusy) {
       return;
     }
@@ -1025,6 +1028,7 @@ export function LoopEditor(): React.JSX.Element {
     setRunKind('live');
     setRunSummary(null);
     setRunRefuse(null);
+    setRunNeedsAcknowledgement(null);
     setNote(
       'Live-running the canvas graph on an isolated experiment repository. ' +
         'The first agent step can take minutes. The journal below updates as nodes are entered.',
@@ -1033,11 +1037,18 @@ export function LoopEditor(): React.JSX.Element {
       const outcome = await window.dspatch.startEditorLoopRun({
         runId: newEditorRunId('live'),
         text: currentText,
+        ...(acknowledgedAttemptIds === undefined ? {} : { acknowledgedAttemptIds }),
       });
       if (outcome.kind === 'refused') {
         setRunSummary(null);
         setRunRefuse(outcome.reason);
         setNote(outcome.reason);
+        // DSP-147: earlier agent work with no confirmed end; offered to be named, as the chat does.
+        setRunNeedsAcknowledgement(
+          outcome.needsAcknowledgement !== undefined && outcome.needsAcknowledgement.length > 0
+            ? outcome.needsAcknowledgement
+            : null,
+        );
         return;
       }
       if (outcome.kind === 'failed') {
@@ -2876,6 +2887,22 @@ export function LoopEditor(): React.JSX.Element {
       */}
       <footer className="editor-note" data-ev="editor-note">
         {note}
+        {runNeedsAcknowledgement !== null && (
+          <>
+            {' '}
+            <button
+              type="button"
+              className="button"
+              data-ev="editor-run-anyway"
+              disabled={runBusy}
+              onClick={() => {
+                void liveRunCanvas(runNeedsAcknowledgement);
+              }}
+            >
+              {`Run anyway, leaving ${runNeedsAcknowledgement.map((ref) => ref.attemptId).join(', ')} unresolved`}
+            </button>
+          </>
+        )}
       </footer>
 
       {pendingTarget === null || graph === null ? null : (

@@ -40,6 +40,7 @@ import type {
   AttemptAcknowledgement,
   AttemptInfo,
   AttemptKind,
+  AttemptRef,
   AttemptReconciliation,
   BaselineInfo,
   CancelObservations,
@@ -84,6 +85,7 @@ import type {
   WorkspaceReport,
 } from '../shared/bridge';
 import { WORKING_COPY_LOCK, type WorkingCopyLock } from './working-copy-lock';
+import { UncertainWorkStore } from './uncertain-work-store';
 import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
 import {
   CLAUDE_CHAT_MODEL,
@@ -1132,6 +1134,11 @@ export interface ChatServiceOptions {
    */
   readonly workingCopyLock?: WorkingCopyLock;
   /**
+   * DSP-147: where agent work with no confirmed end that belongs to no conversation (a
+   * graph editor run's) is kept. Absent: such work is not recorded (tests that need none).
+   */
+  readonly uncertainWorkFile?: string;
+  /**
    * DSP-147: where steering events go: the same channel as a loop run's messages, so one
    * model in the window follows both. Absent in tests that do not listen.
    */
@@ -1167,6 +1174,15 @@ export interface ChatServiceOptions {
  * raising its unknown outcomes a second time or saying "carried across a restart"
  * when no restart happened.
  */
+/**
+ * DSP-147: an attempt ledger over the same working copy as the one being gated, and how
+ * to save it: another conversation's, or a graph editor run's (`UncertainWorkStore`).
+ */
+interface SharedLedger {
+  readonly ledger: AttemptLedger;
+  save(): void;
+}
+
 interface HeldConversation {
   readonly conversationId: string;
   /** The working copy the conversation is about. */
@@ -3922,7 +3938,11 @@ export class ChatService {
     // neutral act and is not done on DSpatch's own initiative.
     const acknowledged = wellFormedAcknowledgements(request.acknowledgedAttemptIds ?? []);
     const ledger = this.currentLedger();
-    const sharing = this.conversationsSharingWorkingCopy();
+    // DSP-147: the folder the command will run in counts too: an editor run's folder can
+    // lie inside it without lying inside this conversation's working copy.
+    const runFolder = path.resolve(request.cwd.trim() === '' ? session.workspacePath : request.cwd.trim());
+    this.lastRunFolder = runFolder;
+    const sharing = this.conversationsSharingWorkingCopy([runFolder]);
     const decision = AttemptLedger.mayRepeatAcross(
       [ledger, ...sharing.map((held) => held.ledger)],
       'command',
@@ -4640,16 +4660,116 @@ export class ChatService {
    * Their unresolved attempts block the same kind of work here (WS-1 #11), and only
    * here: a conversation in an unrelated folder is never in this list.
    */
-  private conversationsSharingWorkingCopy(): HeldConversation[] {
+  private conversationsSharingWorkingCopy(also: readonly string[] = []): SharedLedger[] {
     const here = this.session?.workspacePath ?? this.current()?.projectPath ?? null;
     if (here === null) {
       return [];
     }
-    return [...this.held.values()].filter(
-      (held) =>
-        held.conversationId !== this.conversationId &&
-        workingCopiesOverlap(held.projectPath, here),
+    const conversations = [...this.held.values()]
+      .filter(
+        (held) =>
+          held.conversationId !== this.conversationId &&
+          workingCopiesOverlap(held.projectPath, here),
+      )
+      .map((held): SharedLedger => ({
+        ledger: held.ledger,
+        save: () => {
+          this.saveConversation(held.conversationId);
+        },
+      }));
+    // DSP-147: and the graph editor's runs with no confirmed end whose folders meet this
+    // working copy, its other folders, or the folder a command is about to run in. They
+    // are the same kind of record and are gated, reported and named the same way.
+    return [...conversations, ...this.uncertainEditorWorkOver([here, ...this.workspaceFolders, ...also])];
+  }
+
+  /** DSP-147: the editor runs' entries over these folders, as ledgers that save to their file. */
+  private uncertainEditorWorkOver(folders: readonly string[]): SharedLedger[] {
+    const store = this.uncertainWork();
+    if (store === null) {
+      return [];
+    }
+    return store.overlapping(folders).map((entry): SharedLedger => ({
+      ledger: entry.ledger,
+      save: () => {
+        store.save();
+      },
+    }));
+  }
+
+  /** DSP-147: the store of agent work with no confirmed end that belongs to no conversation. */
+  private uncertainWorkStore: UncertainWorkStore | null = null;
+
+  private uncertainWork(): UncertainWorkStore | null {
+    const file = this.options.uncertainWorkFile;
+    if (file === undefined) {
+      return null;
+    }
+    this.uncertainWorkStore ??= new UncertainWorkStore(file, this.attemptSequence, (message) => {
+      this.options.log(message);
+    });
+    return this.uncertainWorkStore;
+  }
+
+  /**
+   * DSP-147: a graph editor run's agent work with no confirmed end, recorded with that run
+   * and the folders it gave its agents. It holds back overlapping work, after a restart
+   * too, until the person names it, exactly as an unknown outcome in a conversation does.
+   */
+  recordUncertainEditorWork(runId: string, folders: readonly string[], label: string, note: string): void {
+    const store = this.uncertainWork();
+    if (store === null) {
+      return;
+    }
+    const attemptId = store.record(runId, folders, label, note);
+    this.options.log(`${attemptId}: ${label} - outcome unknown: ${note}`);
+  }
+
+  /**
+   * DSP-147: may new agent work start in these folders, given earlier agent work with no
+   * confirmed end there (in a conversation over them, or an editor run's)? `null` when it
+   * may. Names given in `acknowledged` are recorded, as a send records them, and then
+   * count; the refusal lists the attempts that can be named, for the caller to offer.
+   */
+  agentWorkGateFor(
+    folders: readonly string[],
+    acknowledged: readonly AttemptAcknowledgement[] = [],
+  ): { readonly reason: string; readonly acknowledgeable: readonly AttemptRef[] } | null {
+    const conversations = [...this.held.values()]
+      .filter((held) => folders.some((folder) => workingCopiesOverlap(held.projectPath, folder)))
+      .map((held): SharedLedger => ({
+        ledger: held.ledger,
+        save: () => {
+          this.saveConversation(held.conversationId);
+        },
+      }));
+    const shared = [...conversations, ...this.uncertainEditorWorkOver(folders)];
+    if (shared.length === 0) {
+      return null;
+    }
+    const names = wellFormedAcknowledgements(acknowledged);
+    const decision = AttemptLedger.mayRepeatAcross(
+      shared.map((entry) => entry.ledger),
+      'agent-turn',
+      names,
     );
+    if (!decision.allowed && decision.acknowledgeable.length > 0) {
+      return { reason: decision.reason, acknowledgeable: decision.acknowledgeable };
+    }
+    if (names.length > 0) {
+      const [first, ...rest] = shared;
+      if (first !== undefined) {
+        this.acknowledgeInWorkingCopy(
+          first.ledger,
+          rest,
+          'agent-turn',
+          names,
+          `Named when starting agent work in ${folders.join(', ')}. ${decision.reason}`,
+        );
+        first.save();
+      }
+    }
+    return null;
   }
 
   /**
@@ -4658,7 +4778,7 @@ export class ChatService {
    */
   private acknowledgeInWorkingCopy(
     ledger: AttemptLedger,
-    sharing: readonly HeldConversation[],
+    sharing: readonly SharedLedger[],
     kind: AttemptKind,
     acknowledgements: readonly AttemptAcknowledgement[],
     note: string,
@@ -4670,9 +4790,9 @@ export class ChatService {
       acknowledgements,
       note,
     );
-    for (const held of sharing) {
-      if (touched.includes(held.ledger)) {
-        this.saveConversation(held.conversationId);
+    for (const shared of sharing) {
+      if (touched.includes(shared.ledger)) {
+        shared.save();
       }
     }
   }
@@ -5007,11 +5127,25 @@ export class ChatService {
 
   /** Every attempt and its explicit state. In memory only: nothing is hashed. */
   getRunState(): RunStateReport {
-    return AttemptLedger.reportAcross(
+    const report = AttemptLedger.reportAcross(
       this.currentLedger(),
       this.conversationsSharingWorkingCopy().map((held) => held.ledger),
     );
+    // DSP-147: what Run waits for, over the folder it was last asked to use as well.
+    const forRun = AttemptLedger.mayRepeatAcross(
+      [
+        this.currentLedger(),
+        ...this.conversationsSharingWorkingCopy(this.lastRunFolder === null ? [] : [this.lastRunFolder]).map(
+          (held) => held.ledger,
+        ),
+      ],
+      'agent-turn',
+    ).acknowledgeable;
+    return { ...report, needsAcknowledgement: { ...report.needsAcknowledgement, agentWorkForRun: forRun } };
   }
+
+  /** DSP-147: the folder the Run command was last asked to use, for {@link getRunState}. */
+  private lastRunFolder: string | null = null;
 
   /** The attempts, for the run record. */
   attempts(): readonly AttemptInfo[] {

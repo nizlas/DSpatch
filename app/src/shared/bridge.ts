@@ -1260,6 +1260,12 @@ export interface RunStateReport {
   readonly needsAcknowledgement: {
     readonly agentTurn: readonly AttemptRef[];
     readonly command: readonly AttemptRef[];
+    /**
+     * DSP-147: agent work with no confirmed end that holds back the Run command: this
+     * working copy's, and a graph editor run's whose folder lies in the folder Run was last
+     * asked to use. Absent from reports that do not compute it; read as `agentTurn` then.
+     */
+    readonly agentWorkForRun?: readonly AttemptRef[];
   };
   readonly observedAtUtc: string;
 }
@@ -1771,6 +1777,8 @@ export type ScriptedScenario =
   | 'model-flow'
   /** DSP-147: steering a chat turn and a loop step, the start prompt, and the lock with Run. */
   | 'steering'
+  /** DSP-147: a graph editor run stopped without a confirmed end, across a restart. */
+  | 'editor-uncertain'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2920,10 +2928,20 @@ export interface GraphSavedElsewhere {
 export interface EditorLoopRunRequest {
   readonly runId: string;
   readonly text: string;
+  /**
+   * DSP-147: earlier agent work with no confirmed end in the run's folders that the person
+   * has named, so the run may start with it left unresolved.
+   */
+  readonly acknowledgedAttemptIds?: readonly AttemptAcknowledgement[];
 }
 
 export type EditorLoopRunOutcome =
-  | { readonly kind: 'refused'; readonly reason: string }
+  | {
+      readonly kind: 'refused';
+      readonly reason: string;
+      /** DSP-147: the attempts that, once named, let the run start. */
+      readonly needsAcknowledgement?: readonly AttemptRef[];
+    }
   | {
       readonly kind: 'finished';
       readonly result: RunResult;

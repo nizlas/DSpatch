@@ -6,6 +6,7 @@ import type {
   AddLoopInstructionRequest,
   SteerTurnRequest,
   AttemptAcknowledgement,
+  AttemptRef,
   BridgeChannel,
   ChatLoopCancelOutcome,
   ChatLoopPrepareOutcome,
@@ -515,6 +516,8 @@ function createChatService(): ChatService {
   send: (event) => {
     sendToMainWindow(AGENT_EVENT, event);
   },
+  // DSP-147: agent work with no confirmed end that belongs to no conversation.
+  uncertainWorkFile: path.join(userDataDir(), 'dspatch-uncertain-work.json'),
   // DSP-147: steering of a chat turn, on the loop's message channel.
   sendSteering: (payload) => {
     sendToMainWindow(LOOP_INSTRUCTION_EVENT, payload);
@@ -2325,6 +2328,12 @@ function registerLoopMethods(): void {
 
       editorLoopAbort = new AbortController();
       const abort = editorLoopAbort;
+      // DSP-147: what the run gave its agents, its stopped steps, and a refusal over
+      // earlier agent work with no confirmed end, for the record and the answer.
+      let editorRoots: string[] = [];
+      const editorUnconfirmed: { readonly sessionId: string; readonly nodeLabel: string }[] = [];
+      const editorAdapter: { current: { disposals?: () => readonly DisposalRecord[] } | null } = { current: null };
+      let uncertainRefusal: readonly AttemptRef[] | null = null;
       // `graphVersionIdFor` hashes the bytes that were validated above and are about
       // to be walked, which is what makes "exactly the graph version being executed"
       // (DSP-28 #2) a claim rather than a hope: the author may edit the canvas a
@@ -2390,15 +2399,39 @@ function registerLoopMethods(): void {
           // DSP-147: the editor's run works in a new folder of its own, which a workspace
           // containing it (the temp folder, a whole drive) still overlaps; so it takes the
           // same working-copy lock as every other run, for the folders it actually gives.
-          claimWorkingRoots: (paths) =>
-            WORKING_COPY_LOCK.claim({ kind: 'agent-work', folders: paths, label: 'a run from the graph editor' }),
+          //
+          // And, as for every other agent work, not over earlier agent work with no
+          // confirmed end in those folders until the person names it (`acknowledgedAttemptIds`).
+          claimWorkingRoots: (paths) => {
+            const gate = chatService.agentWorkGateFor(paths, request.acknowledgedAttemptIds ?? []);
+            if (gate !== null) {
+              uncertainRefusal = gate.acknowledgeable;
+              return {
+                ok: false,
+                holder: { kind: 'agent-work', folders: paths, label: 'agent work with no confirmed end' },
+                reason: gate.reason,
+              };
+            }
+            editorRoots = [...paths];
+            return WORKING_COPY_LOCK.claim({ kind: 'agent-work', folders: paths, label: 'a run from the graph editor' });
+          },
           abortSignal: abort.signal,
           control: loopControl,
           // The chosen agent's adapter from the shared factory (DSP-138), which in
           // presentation mode is the presentation adapter: the same seam as the chat's
           // loop run, so the editor's Run builds no real adapter in it.
           provider: agent.provider,
-          createAdapter: agent.createAdapter,
+          createAdapter: () => {
+            const built = agent.createAdapter();
+            editorAdapter.current = built as { disposals?: () => readonly DisposalRecord[] };
+            return built;
+          },
+          // DSP-147: a step whose stop ended unconfirmed, for the record after the run.
+          onAgentReply: (reply) => {
+            if (reply.terminalEnd === 'unconfirmed') {
+              editorUnconfirmed.push({ sessionId: reply.sessionId, nodeLabel: loaded.graph.nodes.find((node) => node.id === reply.nodeId)?.label ?? reply.nodeId });
+            }
+          },
           onJournalEntry: (entry) => {
             // To the run's audience, not to `event.sender`. The sender was whichever
             // window pressed Run, which is not necessarily — and with two windows,
@@ -2444,8 +2477,18 @@ function registerLoopMethods(): void {
       } catch (error) {
         const note = error instanceof Error ? error.message : String(error);
         endedNote = `The run could not be completed: ${note}`;
+        if (uncertainRefusal !== null) {
+          // DSP-147: refused over agent work with no confirmed end; the editor offers to
+          // name it and run anyway, as the chat's Send anyway does.
+          return { kind: 'refused', reason: note, needsAcknowledgement: uncertainRefusal };
+        }
         return { kind: 'failed', note };
       } finally {
+        // DSP-147: the run having ended is not evidence that a stopped step's work did.
+        // Recorded with this run and its folders unless `dispose` saw the process exit.
+        for (const work of uncertainLoopWork(request.runId, editorUnconfirmed, editorAdapter.current?.disposals?.() ?? [])) {
+          chatService.recordUncertainEditorWork(request.runId, editorRoots, `graph editor ${work.label}`, work.note);
+        }
         // The run's identity rather than the announcement's, because this `finally`
         // now covers the claim and must still release it on a path that never got as
         // far as announcing. `runAudience.end` guards on the run id, so an ending for

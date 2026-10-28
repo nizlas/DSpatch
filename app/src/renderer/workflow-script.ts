@@ -800,6 +800,8 @@ export async function runScriptedWorkflow(
       return runModelFlowScenario(plan);
     case 'steering':
       return runSteeringScenario(plan);
+    case 'editor-uncertain':
+      return runEditorUncertainScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -10886,6 +10888,152 @@ async function runSteeringScenario(plan: ScriptedRunPlan): Promise<ScriptedRunRe
       actionError: textOf('action-error'),
       testError: textOf('test-error'),
       runNote: textOf('run-needs-agent-acknowledgement'),
+    };
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-147: a graph editor run stopped without a confirmed end, across a restart */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Three processes over one isolated user-data folder (`flowPhase`), SIMULATED provider:
+ *
+ * - `first`: an editor run is stopped with a confirmed end; Run in its folder is not held.
+ * - `again`: with `DSPATCH_PRESENTATION_UNCONFIRMED_STOP=1`, an editor run is stopped and
+ *   the end is not confirmed; Run in its folder is refused. The folder is logged.
+ * - `retry`: after a restart, with that folder as `flowRoot`: Run in an unrelated folder
+ *   runs; a chat opened on the folder holds its message back; Run there is refused and
+ *   "Run anyway" names it; the message then goes without asking again.
+ *
+ * The editor runs are started over the bridge (`startEditorLoopRun`), as the editor's Run
+ * button does; everything else is a real click, Enter or menu item.
+ */
+async function runEditorUncertainScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const phase = plan.flowPhase ?? 'first';
+  const observations: Record<string, unknown> = {
+    plan,
+    phase,
+    limits:
+      'SIMULATED provider and SIMULATED unconfirmed stop. The window, host, loop runner, ' +
+      'attempt ledgers, the uncertain-work file and the restart are real.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const runCommand = async (cwd: string): Promise<{ exit: string; error: string }> => {
+    await typeIntoField('test-command-input', 'node --version');
+    await typeIntoField('test-cwd-input', cwd);
+    const before = textOf('test-result');
+    await click('run-test');
+    await waitFor(
+      'Run to answer',
+      () =>
+        element('test-pending') === null &&
+        (textOf('test-error') !== '' || (element('test-exit-code') !== null && textOf('test-result') !== before)),
+      30_000,
+      50,
+    );
+    return { exit: textOf('test-exit-code'), error: textOf('test-error') };
+  };
+  const editorRun = async (): Promise<string> => {
+    const ownRoot = plan.ownRepositoryPath ?? '';
+    const sep = ownRoot.includes('\\') ? '\\' : '/';
+    const opened = await window.dspatch.openLoopGraph({
+      kind: 'path',
+      path: [ownRoot, 'docs', 'loop', 'graphs', 'dspatch-live-duration.graph.json'].join(sep),
+    });
+    if (opened.kind !== 'read') {
+      throw new Error('could not read the duration graph');
+    }
+    const running = window.dspatch.startEditorLoopRun({ runId: `editor-${phase}-${String(Date.now())}`, text: opened.text });
+    let walking: unknown = null;
+    const deadline = performance.now() + 20_000;
+    while (walking === null && performance.now() < deadline) {
+      walking = await window.dspatch.currentLoopRun();
+      if (walking === null) {
+        await sleep(100);
+      }
+    }
+    await sleep(500);
+    await window.dspatch.cancelEditorLoopRun();
+    const outcome = await running;
+    const note = outcome.kind === 'cancelled' || outcome.kind === 'finished' ? outcome.workspaceNote : JSON.stringify(outcome);
+    const folder = /workspace (.+) \((left on disk|deleted)\)/.exec(note)?.[1] ?? '';
+    record('editor run stopped', { kind: outcome.kind, folder });
+    expect(outcome.kind === 'cancelled' && folder !== '', `the editor run did not stop as asked: ${note.slice(0, 200)}`);
+    return folder;
+  };
+
+  try {
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await window.dspatch.pressMenuItem('new-sample-project');
+    await waitFor('a session to open', () => textOf('session-id') !== '' && element('prompt') !== null, 30_000);
+    const sample = textOf('test-cwd');
+
+    if (phase === 'first' || phase === 'again') {
+      const folder = await editorRun();
+      await sleep(500);
+      const after = await runCommand(folder);
+      record('Run in the editor run\'s folder', { folder, ...after, error: after.error.slice(0, 160) });
+      if (phase === 'first') {
+        expect(after.exit === '0' && after.error === '', 'a confirmed stop left Run held back');
+      } else {
+        expect(after.error.includes('no confirmed end'), `Run went beside an unconfirmed stop: ${after.error.slice(0, 160)}`);
+        observations['uncertainFolder'] = folder;
+      }
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    // retry: after the restart.
+    const folder = plan.flowRoot ?? '';
+    expect(folder !== '', 'no folder from the earlier phase');
+    const unrelated = await runCommand(sample);
+    record('Run in an unrelated folder', { ...unrelated, error: unrelated.error.slice(0, 160) });
+    expect(unrelated.exit === '0' && unrelated.error === '', 'an unrelated folder was held back');
+
+    // A chat over the folder: the message waits to be named.
+    await window.dspatch.pressMenuItem('open-project');
+    await waitFor('the folder to open', () => textOf('test-cwd').toLowerCase() === folder.toLowerCase(), 30_000, 100);
+    await typeInto('prompt', 'Go on with the work.');
+    await sendFromComposer();
+    await waitFor('the message to be held', () => element('send-needs-acknowledgement') !== null, 10_000, 50);
+    expect((element('prompt') as HTMLTextAreaElement | null)?.value === 'Go on with the work.', 'the held message left the box');
+    record('message held after the restart', { note: textOf('send-needs-acknowledgement').slice(0, 200) });
+    await window.dspatch.captureWindow('editor-uncertain-held');
+
+    // Run there: held back before it is pressed, and offered to be named.
+    await typeIntoField('test-command-input', 'node --version');
+    await waitFor('Run to offer naming it', () => element('run-anyway-agent') !== null, 10_000, 50);
+    expect((element('run-test') as HTMLButtonElement | null)?.disabled === true, 'Run stayed available beside the unconfirmed stop');
+    record('Run held after the restart', { note: textOf('run-needs-agent-acknowledgement').slice(0, 200) });
+    const offered = textOf('run-anyway-agent');
+    await click('run-anyway-agent');
+    await waitFor('the named command to run', () => element('test-pending') === null && textOf('test-exit-code') === '0' && element('run-anyway-agent') === null, 30_000, 50);
+    record('named with Run anyway', { offered });
+
+    // Named once: the held message now goes without asking again.
+    await waitFor('the message gate to lift', () => element('send-needs-acknowledgement') === null, 10_000, 50);
+    await sendFromComposer();
+    await waitFor('the message to be answered', () => element('active-answer') === null && element('turn-0-answer') !== null, 30_000, 50);
+    record('message sent once named', { answered: textOf('turn-0-answer').slice(0, 80) });
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (caught) {
+    failures.push(caught instanceof Error ? caught.message : String(caught));
+    observations['atFailure'] = {
+      testError: textOf('test-error'),
+      actionError: textOf('action-error'),
+      cwd: textOf('test-cwd'),
+      routeNote: textOf('composer-route-note'),
     };
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
   }
