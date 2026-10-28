@@ -22,6 +22,8 @@
 
 import path from 'node:path';
 
+import type { DisposalRecord } from '../adapter/claude-agent-sdk-adapter';
+
 export type WorkingCopyHolderKind = 'agent-work' | 'manual-command';
 
 export interface WorkingCopyHolder {
@@ -108,3 +110,51 @@ export class WorkingCopyLock {
 
 /** The process-wide lock the project host uses. Tests make their own. */
 export const WORKING_COPY_LOCK = new WorkingCopyLock();
+
+/**
+ * DSP-147: which of a loop run's agent work has no confirmed end, as labels and notes for
+ * the attempt ledger. A step's unconfirmed stop counts unless the adapter's `dispose` saw
+ * that step's process exit afterwards; a process `dispose` could not see exit counts too.
+ * Pure, so the rule can be checked without a run.
+ */
+export function uncertainLoopWork(
+  runId: string,
+  unconfirmedSteps: readonly { readonly sessionId: string; readonly nodeLabel: string }[],
+  disposals: readonly Pick<DisposalRecord, 'dspatchSessionId' | 'outcome' | 'pid'>[],
+): readonly { readonly label: string; readonly note: string }[] {
+  const exited = (sessionId: string): boolean =>
+    disposals.some(
+      (record) =>
+        record.dspatchSessionId === sessionId &&
+        (record.outcome === 'exited' || record.outcome === 'killed-and-exited'),
+    );
+  const found: { label: string; note: string }[] = [];
+  const named = new Set<string>();
+  for (const step of unconfirmedSteps) {
+    if (exited(step.sessionId) || named.has(step.sessionId)) {
+      continue;
+    }
+    named.add(step.sessionId);
+    found.push({
+      label: `loop run ${runId}, step "${step.nodeLabel}"`,
+      note:
+        'The step was asked to stop and its end was not confirmed: the adapter stopped ' +
+        'waiting without seeing its local work end. The loop run has ended, which says ' +
+        'nothing about whether that work has.',
+    });
+  }
+  for (const record of disposals) {
+    if (record.outcome !== 'unconfirmed' || named.has(record.dspatchSessionId)) {
+      continue;
+    }
+    named.add(record.dspatchSessionId);
+    found.push({
+      label: `loop run ${runId}, session ${record.dspatchSessionId}`,
+      note:
+        `When the run ended, DSpatch could not see its agent's local process ${
+          record.pid === null ? '' : `(pid ${String(record.pid)}) `
+        }exit within its bounds, so that work may still be going.`,
+    });
+  }
+  return found;
+}

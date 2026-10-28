@@ -144,6 +144,7 @@ import {
   composerRouteNote,
   composerSendRoute,
   loopInstructionBadgeText,
+  loopInstructionInline,
   loopInstructionState,
   loopInstructionStatusText,
   loopInstructionsAfter,
@@ -3614,6 +3615,7 @@ function Workbench({
         />
         {session !== null && <AgentCommandsSection report={agentCommands} />}
         {session !== null && <TurnFactsSection turns={chat.turns} />}
+        {session !== null && <SteeringFactsSection instructions={loopInstructions} />}
 
         {session !== null && (
           <>
@@ -3653,6 +3655,7 @@ function Workbench({
                 setTestCwd(session.suggestedTestCwd);
               }}
               needsAcknowledgement={commandNeedsAcknowledgement}
+              agentWorkNeedsAcknowledgement={turnNeedsAcknowledgement}
               onRun={(acknowledgedAttemptId) => {
                 void runTest(acknowledgedAttemptId);
               }}
@@ -3872,6 +3875,41 @@ function AppBarProblems({
  * DSP-149: how each turn of this session arrived, and what DSpatch sent in front of a
  * message: the technical side of the conversation, kept out of it and shown here.
  */
+/**
+ * DSP-147: every steering message in this window and the full account of what became
+ * of it, which the conversation itself shows only when something needs attention.
+ */
+function SteeringFactsSection({
+  instructions,
+}: {
+  readonly instructions: readonly LoopInstruction[];
+}): JSX.Element | null {
+  if (instructions.length === 0) {
+    return null;
+  }
+  return (
+    <Section title="Steering">
+      <ul className="files" data-ev="steering-facts">
+        {instructions.map((instruction) => (
+          <li className="files__row" key={instruction.id} data-state={loopInstructionState(instruction)}>
+            <div>
+              <p className="files__path">
+                {instruction.text.length > 80 ? `${instruction.text.slice(0, 80)}…` : instruction.text}
+              </p>
+              <p className="files__meta">
+                {loopInstructionStatusText(instruction)} · {instruction.scope === 'chat' ? 'chat turn' : 'loop run'}{' '}
+                {instruction.runId} · received {instruction.receivedAtUtc}
+                {instruction.delivered === null ? '' : ` · delivered ${instruction.delivered.atUtc}`}
+                {instruction.delivered?.during === true ? ' · by the runtime’s steering' : ''}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
 function TurnFactsSection({ turns }: { readonly turns: readonly TurnState[] }): JSX.Element {
   return (
     <Section title="Turns">
@@ -4798,15 +4836,19 @@ function RestoredMessage({
       {/* DSP-147: steering sent into this turn, and the last thing known about each. */}
       {(message.steering ?? []).map((entry, position) => {
         const instruction = storedSteeringAsInstruction(entry, message.dspatchRunId);
+        const inline = loopInstructionInline(instruction);
         return (
           <div key={entry.id} className="turn__steering" data-ev={`${at}-steering-${String(position)}`}>
+            <p className="turn__loop-mark">Steering</p>
             <UserMessage text={entry.text} testId={`${at}-steering-${String(position)}-text`} />
-            <p className="turn__meta">
-              <span className={`badge badge--${loopInstructionState(instruction) === 'delivered' ? 'unknown' : 'unsupported'}`}>
-                {loopInstructionBadgeText(instruction)}
-              </span>{' '}
-              <span>{loopInstructionStatusText(instruction)}</span>
-            </p>
+            {inline !== null && (
+              <p className={inline.tone === 'quiet' ? 'turn__meta turn__meta--quiet' : 'turn__meta'}>
+                {inline.tone === 'attention' && (
+                  <span className="badge badge--unsupported">{loopInstructionBadgeText(instruction)}</span>
+                )}{' '}
+                {inline.text}
+              </p>
+            )}
           </div>
         );
       })}
@@ -5441,6 +5483,7 @@ function TestPanel({
   cwd,
   busy,
   needsAcknowledgement,
+  agentWorkNeedsAcknowledgement,
   onCommandChange,
   onCwdChange,
   onResetCommand,
@@ -5457,6 +5500,12 @@ function TestPanel({
   readonly cwd: string;
   readonly busy: Busy;
   readonly needsAcknowledgement: readonly AttemptRef[];
+  /**
+   * DSP-147: the agent's earlier work in this working copy with no confirmed end (an
+   * unconfirmed stop of a turn or a loop step) that nobody has named. A command is not
+   * started beside it until the person names it here, as for an earlier command.
+   */
+  readonly agentWorkNeedsAcknowledgement: readonly AttemptRef[];
   readonly onCommandChange: (value: string) => void;
   readonly onCwdChange: (value: string) => void;
   readonly onResetCommand: () => void;
@@ -5521,7 +5570,10 @@ function TestPanel({
             onRun();
           }}
           disabled={
-            busy !== null || command.trim() === '' || needsAcknowledgement.length > 0
+            busy !== null ||
+            command.trim() === '' ||
+            needsAcknowledgement.length > 0 ||
+            agentWorkNeedsAcknowledgement.length > 0
           }
         >
           {running ? 'Running …' : 'Run it'}
@@ -5579,7 +5631,7 @@ function TestPanel({
             className="button"
             data-ev="run-anyway"
             onClick={() => {
-              onRun(needsAcknowledgement);
+              onRun([...needsAcknowledgement, ...agentWorkNeedsAcknowledgement]);
             }}
             disabled={busy !== null || command.trim() === ''}
           >
@@ -5588,6 +5640,26 @@ function TestPanel({
               : `Run again, leaving all ${String(
                   needsAcknowledgement.length,
                 )} unresolved (${attemptRefLabels(needsAcknowledgement).join(', ')})`}
+          </button>
+        </div>
+      )}
+      {agentWorkNeedsAcknowledgement.length > 0 && needsAcknowledgement.length === 0 && (
+        <div className="app__error" data-ev="run-needs-agent-acknowledgement">
+          <p>
+            The agent&apos;s earlier work here has no confirmed end (
+            {attemptRefLabels(agentWorkNeedsAcknowledgement).join(', ')}), so DSpatch will not run a
+            command beside it by itself. Its details are in &quot;Execution state&quot; above.
+          </p>
+          <button
+            type="button"
+            className="button"
+            data-ev="run-anyway-agent"
+            onClick={() => {
+              onRun(agentWorkNeedsAcknowledgement);
+            }}
+            disabled={busy !== null || command.trim() === ''}
+          >
+            {`Run anyway, leaving ${attemptRefLabels(agentWorkNeedsAcknowledgement).join(', ')} unresolved`}
           </button>
         </div>
       )}
@@ -6824,24 +6896,29 @@ function InstructionEntry({
 }): JSX.Element {
   const at = `instruction-${String(index)}`;
   const state = loopInstructionState(instruction);
-  // Never the positive tone. A message that reached an agent is not a result, and
-  // the three tones here say how far it got, not whether it did any good.
-  const badge =
-    state === 'unconfirmed' || state === 'never-delivered' ? 'unsupported' : 'unknown';
+  // DSP-147: nothing under a delivered message, a quiet word while it waits, and a
+  // visible line only when delivery was not confirmed or did not happen. The full
+  // account is in Session details.
+  const inline = loopInstructionInline(instruction);
   return (
     <article className="turn turn--instruction" data-ev={at} data-state={state} data-scope={instruction.scope ?? 'loop'}>
       <p className="turn__loop-mark" data-ev={`${at}-mark`}>
-        {instruction.scope === 'chat'
-          ? 'Steering, sent while the agent was working'
-          : 'Steering, sent while the loop was working'}
+        Steering
       </p>
       <UserMessage text={instruction.text} testId={`${at}-text`} />
-      <p className="turn__meta">
-        <span className={`badge badge--${badge}`} data-ev={`${at}-status`}>
-          {loopInstructionBadgeText(instruction)}
-        </span>{' '}
-        <span data-ev={`${at}-account`}>{loopInstructionStatusText(instruction)}</span>
-      </p>
+      {inline !== null &&
+        (inline.tone === 'quiet' ? (
+          <p className="turn__meta turn__meta--quiet" data-ev={`${at}-account`}>
+            {inline.text}
+          </p>
+        ) : (
+          <p className="turn__meta" data-ev={`${at}-account`}>
+            <span className="badge badge--unsupported" data-ev={`${at}-status`}>
+              {loopInstructionBadgeText(instruction)}
+            </span>{' '}
+            {inline.text}
+          </p>
+        ))}
     </article>
   );
 }

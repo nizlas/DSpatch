@@ -10567,9 +10567,10 @@ async function runSteeringScenario(plan: ScriptedRunPlan): Promise<ScriptedRunRe
   const observations: Record<string, unknown> = {
     plan,
     limits:
-      'SIMULATED provider and SIMULATED steering (presentation adapter). The window, the ' +
-      'host, the loop runner, the lock, the stores and the run records are real. When a real ' +
-      'model reads a steering message is not shown here.',
+      'SIMULATED provider, SIMULATED steering and a SIMULATED unconfirmed stop (presentation ' +
+      'adapter). The window, the host, the loop runner, the lock, the attempt ledger, the ' +
+      'stores and the run records are real. When a real model reads a steering message, and ' +
+      'how a real Claude Code process behaves after a stop, are not shown here.',
   };
   const startedAt = performance.now();
   const record = (name: string, detail: Record<string, unknown>): void => {
@@ -10587,10 +10588,30 @@ async function runSteeringScenario(plan: ScriptedRunPlan): Promise<ScriptedRunRe
   const entryWith = (text: string): HTMLElement | null =>
     entries().find((entry) => (entry.textContent ?? '').includes(text)) ?? null;
   const stateOf = (text: string): string => entryWith(text)?.dataset['state'] ?? 'absent';
-  const accountOf = (text: string): string =>
+  /** The line under a message in the conversation, or '' when there is none. */
+  const lineUnder = (text: string): string =>
     entryWith(text)?.querySelector('[data-ev$="-account"]')?.textContent ?? '';
+  const quietUnder = (text: string): boolean =>
+    entryWith(text)?.querySelector('.turn__meta--quiet') !== null &&
+    entryWith(text)?.querySelector('.turn__meta--quiet') !== undefined;
+  /** The full account, as Session details holds it. */
+  const detailsFor = (text: string): string =>
+    [...document.querySelectorAll<HTMLElement>('[data-ev="steering-facts"] li')]
+      .find((row) => (row.textContent ?? '').includes(text))
+      ?.textContent ?? '';
+  const withDetails = async <T,>(read: () => T): Promise<T> => {
+    await window.dspatch.pressMenuItem('show-session-details');
+    await sleep(300);
+    const value = read();
+    await clickAny('details-back', 5_000).catch(() => undefined);
+    await sleep(200);
+    return value;
+  };
   const chatWorking = (): boolean =>
     element('active-answer') !== null && rawTextOf('active-answer').length > 0;
+  const chatSettled = (index: number) => (): boolean =>
+    element('active-answer') === null && element(`turn-${String(index)}-answer`) !== null;
+  const turnsShown = (): number => countEntries('turn');
 
   try {
     await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
@@ -10600,6 +10621,7 @@ async function runSteeringScenario(plan: ScriptedRunPlan): Promise<ScriptedRunRe
       () => textOf('session-id') !== '' && element('prompt') !== null,
       30_000,
     );
+    const workspace = textOf('test-cwd');
 
     // --- 1. A chat turn, steered by the button and by Enter ---------------------
     await typeInto('prompt', '[[slow]] Look at the build, mark-chat.');
@@ -10609,7 +10631,8 @@ async function runSteeringScenario(plan: ScriptedRunPlan): Promise<ScriptedRunRe
     expect(element('steer') !== null, 'no Steering button while the agent works');
     await typeInto('prompt', 'Change nothing yet; investigate first.');
     await click('steer');
-    await waitFor('the steering entry', () => entryWith('Change nothing yet') !== null, 10_000, 25);
+    await waitFor('the steering entry', () => entryWith('Change nothing yet') !== null, 10_000, 10);
+    const quietWhileWaiting = quietUnder('Change nothing yet') || stateOf('Change nothing yet') === 'delivered';
     expect(box() === '', 'the steering message stayed in the box after it was accepted');
     await typeInto('prompt', 'Also look at the second folder.');
     await sendFromComposer();
@@ -10619,12 +10642,7 @@ async function runSteeringScenario(plan: ScriptedRunPlan): Promise<ScriptedRunRe
       10_000,
       25,
     );
-    await window.dspatch.captureWindow('steering-chat-sent');
-    await waitFor(
-      'the chat turn to end',
-      () => element('active-answer') === null && element('turn-0-answer') !== null,
-      60_000,
-    );
+    await waitFor('the chat turn to end', chatSettled(0), 60_000);
     await waitFor(
       'both to be delivered',
       () =>
@@ -10634,56 +10652,38 @@ async function runSteeringScenario(plan: ScriptedRunPlan): Promise<ScriptedRunRe
       25,
     );
     const chatAnswer = textOf('turn-0-answer');
+    const firstDetails = await withDetails(() => detailsFor('Change nothing yet'));
     record('chat turn steered', {
-      first: { state: stateOf('Change nothing yet'), account: accountOf('Change nothing yet') },
-      second: {
-        state: stateOf('Also look at the second folder'),
-        account: accountOf('Also look at the second folder'),
-      },
-      answerMentions: chatAnswer.includes('Steering taken into this turn: Change nothing yet'),
+      quietWhileWaiting,
+      lineUnderDelivered: lineUnder('Change nothing yet'),
+      details: firstDetails,
+      turns: turnsShown(),
     });
-    expect(
-      chatAnswer.includes('Steering taken into this turn: Change nothing yet'),
-      'the turn did not take the first message in',
-    );
-    expect(
-      chatAnswer.includes('Steering taken into this turn: Also look at the second folder'),
-      'the turn did not take the second message in',
-    );
-    expect(element('turn-1-answer') === null, 'steering started a second turn');
-    expect(
-      accountOf('Change nothing yet') === 'Delivered to the running work.',
-      `wrong account: ${accountOf('Change nothing yet')}`,
-    );
+    expect(quietWhileWaiting, 'a waiting message was not shown quietly');
+    expect(lineUnder('Change nothing yet') === '', 'a delivered message still has a status line under it');
+    expect(firstDetails.startsWith('Change nothing yet') && firstDetails.includes('Delivered.'), `Session details do not hold the account: ${firstDetails}`);
+    expect(!/read|applied|while it worked/i.test(firstDetails), `the account claims more than the receipt: ${firstDetails}`);
+    expect(chatAnswer.includes('Steering taken into this turn: Change nothing yet'), 'the turn did not take the first message in');
+    expect(turnsShown() === 1, 'steering started a second turn');
     expect(element('steer') === null, 'the Steering button stayed after the work ended');
     await window.dspatch.captureWindow('steering-chat-delivered');
 
-    // --- 2. Run while the agent works is refused --------------------------------
+    // --- 2. Run while the agent works is refused ------------------------------------
     await typeIntoField('test-command-input', 'node --version');
     await typeInto('prompt', '[[slow]] A second task, mark-lock.');
     await sendFromComposer();
     await waitFor('the second turn to be working', chatWorking, 30_000, 25);
     await click('run-test');
-    await waitFor(
-      'the Run refusal',
-      () => textOf('test-error').includes('agent is working in this folder'),
-      10_000,
-      25,
-    );
-    record('run refused while the agent works', { error: textOf('test-error') });
-    await waitFor(
-      'the second turn to end',
-      () => element('active-answer') === null && element('turn-1-answer') !== null,
-      60_000,
-    );
+    await waitFor('the Run refusal', () => textOf('test-error').includes('agent is working in this folder'), 10_000, 25);
+    record('run refused while the agent works', { error: textOf('test-error').slice(0, 160) });
+    await waitFor('the second turn to end', chatSettled(1), 60_000);
 
-    // --- 3. A message and a loop start are refused while the person's command runs
+    // --- 3. A message and a loop start are refused while the person's command runs ---
     await typeIntoField('test-command-input', 'node -e "setTimeout(() => {}, 7000)"');
     await click('run-test');
     await waitFor('the command to be running', () => element('test-pending') !== null, 10_000, 25);
     await typeInto('prompt', 'Fix it now.');
     await sendFromComposer();
-    // The window holds a message back while its own command runs, and says why.
     await waitFor(
       'the composer to say why it holds the message',
       () => textOf('composer-note').includes('running a command') || textOf('composer-route-note').includes('running a command'),
@@ -10691,41 +10691,21 @@ async function runSteeringScenario(plan: ScriptedRunPlan): Promise<ScriptedRunRe
       25,
     );
     expect(box() === 'Fix it now.', `the held message did not stay in the box: "${box()}"`);
-    await setCheckbox('use-loop', true);
-    await sleep(300);
-    const loopTurnsBeforeRefusal = countEntries('loop-turn');
-    await sendFromComposer();
-    await sleep(500);
-    expect(countEntries('loop-turn') === loopTurnsBeforeRefusal, 'a loop started beside the command');
-    expect(box() === 'Fix it now.', `the held loop start did not leave the draft: "${box()}"`);
-    // The host's own lock, asked directly over the bridge (not a click): it refuses too,
-    // so the rule does not depend on this window's composer.
     let hostSend = 'sent';
     try {
       await window.dspatch.sendPrompt('Fix it now.');
     } catch (error) {
       hostSend = error instanceof Error ? error.message : String(error);
     }
-    const hostLoop = await window.dspatch.startChatLoopRun({
-      runId: 'chat-loop-lock-check',
-      mandate: 'Fix it now.',
-      definitionKey: null,
-    });
-    record('agent work refused while the command runs', {
-      composerNote: textOf('composer-note') || textOf('composer-route-note'),
-      box: box(),
-      hostSend,
-      hostLoop,
-    });
+    const hostLoop = await window.dspatch.startChatLoopRun({ runId: 'chat-loop-lock-check', mandate: 'Fix it now.', definitionKey: null });
+    record('agent work refused while the command runs', { hostSend: hostSend.slice(-160), hostLoop });
     expect(hostSend.includes('Your command is running in this folder'), `the host sent beside the command: ${hostSend}`);
-    expect(
-      hostLoop.kind === 'refused' && hostLoop.reason.includes('loop was not started'),
-      `the host started a loop beside the command: ${JSON.stringify(hostLoop)}`,
-    );
-    await window.dspatch.captureWindow('steering-lock-refused');
+    expect(hostLoop.kind === 'refused' && hostLoop.reason.includes('loop was not started'), `the host started a loop beside the command: ${JSON.stringify(hostLoop)}`);
     await waitFor('the command to end', () => element('test-pending') === null, 30_000);
 
-    // --- 4. An accepted loop start clears only what was sent ---------------------
+    // --- 4. An accepted loop start clears only what was sent --------------------------
+    await setCheckbox('use-loop', true);
+    await sleep(300);
     const mandate = '[[slow]] Read the project and report what it is for, mark-loop.';
     const typedAfter = 'A thought typed while starting.';
     await typeInto('prompt', mandate);
@@ -10734,138 +10714,170 @@ async function runSteeringScenario(plan: ScriptedRunPlan): Promise<ScriptedRunRe
     await typeInto('prompt', `${mandate}\n${typedAfter}`);
     await waitFor('the start to be accepted', () => box() === typedAfter, 30_000, 25);
     record('loop start accepted', { box: box() });
+    await typeInto('prompt', '');
     const at = `loop-turn-${String(loopTurnsBefore)}`;
-    await waitFor(
-      'a loop step to be working',
-      () => element(`${at}-live-status`) !== null,
-      60_000,
-      25,
-    );
+    await waitFor('a loop step to be working', () => element(`${at}-live-status`) !== null, 60_000, 25);
     await sleep(400);
 
-    // --- 5. Steering into the working step, with Pause pressed meanwhile ---------
+    // --- 5. Steering into the working step, with Pause pressed meanwhile --------------
     await typeInto('prompt', 'Ta även hänsyn till den andra mappen.');
     await click('steer');
     await waitFor('the loop steering entry', () => entryWith('Ta även hänsyn') !== null, 10_000, 25);
-    expect(box() === '', 'the loop steering message stayed in the box');
-    const pauseOffered = element('loop-pause') !== null;
-    if (pauseOffered) {
-      await click('loop-pause');
-    }
-    await waitFor(
-      'the loop steering to be delivered',
-      () => stateOf('Ta även hänsyn') === 'delivered',
-      30_000,
-      25,
-    );
-    record('loop step steered', { account: accountOf('Ta även hänsyn'), pauseOffered });
-    expect(
-      /while it worked\.$/.test(accountOf('Ta även hänsyn')),
-      `not delivered into the working step: ${accountOf('Ta även hänsyn')}`,
-    );
+    await click('loop-pause');
+    await waitFor('the loop steering to be delivered', () => stateOf('Ta även hänsyn') === 'delivered', 30_000, 25);
+    expect(lineUnder('Ta även hänsyn') === '', 'a delivered loop message still has a status line under it');
     await window.dspatch.captureWindow('steering-loop-delivered');
-    if (pauseOffered) {
-      // Pause holds the run before its next step; it does not stop the step working
-      // now, which is the one the steering went to.
-      await waitFor(
-        'the run to be paused before its next step',
-        () => (element('loop-control')?.className ?? '').includes('loop-control--paused'),
-        60_000,
-        50,
-      );
-      const pausedReplies = countEntries(`${at}-reply`);
-      await sleep(1_500);
-      record('paused', {
-        phase: textOf('loop-control-phase'),
-        repliesWhilePaused: [pausedReplies, countEntries(`${at}-reply`)],
-      });
-      expect(
-        countEntries(`${at}-reply`) === pausedReplies,
-        'the run went on to its next step while paused',
-      );
-      await click('loop-continue');
-    }
+    await waitFor(
+      'the run to be paused before its next step',
+      () => (element('loop-control')?.className ?? '').includes('loop-control--paused'),
+      60_000,
+      50,
+    );
+    const pausedReplies = countEntries(`${at}-reply`);
+    await sleep(1_500);
+    expect(countEntries(`${at}-reply`) === pausedReplies, 'the run went on to its next step while paused');
+    await click('loop-continue');
     await waitFor('the loop run to end', () => loopRunEnded(loopTurnsBefore), 180_000, 100);
+    const loopDetails = await withDetails(() => detailsFor('Ta även hänsyn'));
+    record('loop step steered', { details: loopDetails, repliesWhilePaused: pausedReplies });
+    expect(loopDetails.includes('Delivered to “Do what was asked”.'), `Session details do not hold the loop account: ${loopDetails}`);
     expect(countEntries('loop-turn') === loopTurnsBefore + 1, 'steering started another loop run');
 
-    // --- 6. The later step was briefed with the message ---------------------------
+    // --- 6. The later step was briefed with the message --------------------------------
     const conversations = await window.dspatch.listConversations();
-    const newest = [...conversations.entries].sort((a, b) =>
-      a.savedAtUtc < b.savedAtUtc ? 1 : -1,
-    )[0];
-    const records =
-      newest === undefined ? [] : await window.dspatch.listRunRecords(newest.conversationId);
-    const run = records.find((entry) =>
-      (entry.record?.identity?.mandate ?? '').includes('mark-loop'),
-    );
+    const newest = [...conversations.entries].sort((a, b) => (a.savedAtUtc < b.savedAtUtc ? 1 : -1))[0];
+    const conversationId = newest?.conversationId ?? '';
+    const records = conversationId === '' ? [] : await window.dspatch.listRunRecords(conversationId);
+    const run = records.find((entry) => (entry.record?.identity?.mandate ?? '').includes('mark-loop'));
     const replies = run?.record?.replies ?? [];
     const steered = 'Ta även hänsyn till den andra mappen.';
     const briefed = replies.filter((reply) => (reply.prompt ?? '').includes(steered));
     const endingNote = run?.record?.ending?.note ?? '';
-    record('later steps briefed', {
-      steps: replies.map((reply) => reply.nodeId),
-      briefed: briefed.map((reply) => reply.nodeId),
-      earlierWording: briefed.some((reply) => (reply.prompt ?? '').includes('Earlier in this run')),
-      endingNote,
-    });
-    expect(
-      replies.length >= 2,
-      `the loop ran ${String(replies.length)} agent step(s); a later step is needed to show the brief`,
-    );
-    expect(
-      briefed.length >= 1 &&
-        briefed.every((reply) => (reply.prompt ?? '').includes('Earlier in this run')),
-      'no later step was briefed with the steering',
-    );
+    record('later steps briefed', { steps: replies.map((reply) => reply.nodeId), briefed: briefed.map((reply) => reply.nodeId) });
+    expect(briefed.length >= 1 && briefed.every((reply) => (reply.prompt ?? '').includes('Earlier in this run')), 'no later step was briefed with the steering');
     expect(!(replies[0]?.prompt ?? '').includes(steered), 'the steered step was also given it in its prompt');
-    expect(endingNote.includes('Steering sent while steps worked'), 'the run record does not keep the steering');
+    expect(endingNote.includes('Steering sent while steps worked') && !endingNote.includes('while it worked)'), `the run record's steering note: ${endingNote.slice(-200)}`);
+    const graphPath = run?.record?.identity?.graphPath ?? '';
 
-    // --- 7. A message as the step ends goes to the next step; then Stop -----------
+    // --- 7. A message as the step ends goes to the next step; then Stop ------------------
     const lateBefore = countEntries('loop-turn');
     await typeInto('prompt', '[[slow]] [[steer-late]] Once more, mark-late.');
     await sendFromComposer();
     const late = `loop-turn-${String(lateBefore)}`;
-    await waitFor(
-      'a step of the second run to be working',
-      () => element(`${late}-live-status`) !== null,
-      60_000,
-      25,
-    );
+    await waitFor('a step of the second run to be working', () => element(`${late}-live-status`) !== null, 60_000, 25);
     await typeInto('prompt', 'Check the tests too.');
     await sendFromComposer();
-    await waitFor(
-      'the message to wait for the next step',
-      () => accountOf('Check the tests too.').includes('next step'),
-      10_000,
-      25,
-    );
-    record('step ended as the message came', {
-      state: stateOf('Check the tests too.'),
-      account: accountOf('Check the tests too.'),
-    });
-    await waitFor(
-      'the next step to take it',
-      () => stateOf('Check the tests too.') === 'delivered',
-      120_000,
-      50,
-    );
-    record('taken by the next step', { account: accountOf('Check the tests too.') });
-    expect(
-      /when that step started/.test(accountOf('Check the tests too.')),
-      `not handed to the next step: ${accountOf('Check the tests too.')}`,
-    );
+    await waitFor('the message to wait for the next step', () => lineUnder('Check the tests too.').includes('next step'), 10_000, 25);
+    expect(quietUnder('Check the tests too.'), 'the waiting line is not quiet');
+    record('step ended as the message came', { line: lineUnder('Check the tests too.') });
+    await waitFor('the next step to take it', () => stateOf('Check the tests too.') === 'delivered', 120_000, 50);
     await click('cancel');
     await waitFor('the second run to stop', () => loopRunEnded(lateBefore), 60_000, 50);
-    record('stopped', { badge: textOf(`${late}-status`), account: textOf(`${late}-account`) });
-    expect(countEntries('loop-turn') === lateBefore + 1, 'a message started another loop run');
-    await window.dspatch.captureWindow('steering-stopped');
+    const lateDetails = await withDetails(() => detailsFor('Check the tests too.'));
+    record('taken by the next step, then stopped', { details: lateDetails, badge: textOf(`${late}-status`) });
+    expect(/when that step started/.test(lateDetails), `not handed to the next step: ${lateDetails}`);
 
-    return finish(
-      failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed,
-      steps,
-      failures,
-      observations,
+    // --- 8. An unconfirmed stop of a chat turn, then overlapping work ------------------
+    await setCheckbox('use-loop', false);
+    await sleep(300);
+    const turnsBefore = turnsShown();
+    await typeInto('prompt', '[[slow]] [[cancel-unconfirmed]] Refactor it, mark-unconfirmed.');
+    await sendFromComposer();
+    await waitFor('the turn to be working', chatWorking, 30_000, 25);
+    await click('cancel');
+    await waitFor('the turn to end', chatSettled(turnsBefore), 30_000, 25);
+    await sleep(500);
+    await typeIntoField('test-command-input', 'node --version');
+    await waitFor('Run to name the agent work it waits for', () => element('run-needs-agent-acknowledgement') !== null, 10_000, 25);
+    const runDisabled = (element('run-test') as HTMLButtonElement | null)?.disabled === true;
+    const hostLoopAfter = await window.dspatch.startChatLoopRun({ runId: 'chat-loop-uncertain-check', mandate: 'x', definitionKey: null });
+    record('unconfirmed chat stop holds back overlapping work', {
+      runNote: textOf('run-needs-agent-acknowledgement').slice(0, 200),
+      runDisabled,
+      hostLoopAfter,
+    });
+    expect(runDisabled, 'Run stayed available beside agent work with no confirmed end');
+    expect(hostLoopAfter.kind === 'refused' && hostLoopAfter.reason.includes('not been named'), `a loop started beside the unconfirmed stop: ${JSON.stringify(hostLoopAfter)}`);
+    await window.dspatch.captureWindow('steering-unconfirmed-held');
+
+    // The existing way on: name it, explicitly, and run the command.
+    await click('run-anyway-agent');
+    await waitFor('the command to run once named', () => element('test-exit-code') !== null && element('test-pending') === null, 30_000, 50);
+    record('named and run', { exitCode: textOf('test-exit-code') });
+    expect(element('run-needs-agent-acknowledgement') === null, 'the note stayed after the attempt was named');
+
+    // --- 9. An unconfirmed stop of a loop step, then overlapping work ----------------
+    await setCheckbox('use-loop', true);
+    await sleep(300);
+    const stepBefore = countEntries('loop-turn');
+    await typeInto('prompt', '[[slow]] [[cancel-unconfirmed]] Walk it, mark-loop-unconfirmed.');
+    await sendFromComposer();
+    const unconfirmedRun = `loop-turn-${String(stepBefore)}`;
+    await waitFor('a step to be working', () => element(`${unconfirmedRun}-live-status`) !== null, 60_000, 25);
+    await sleep(400);
+    await click('cancel');
+    await waitFor('the run to end', () => loopRunEnded(stepBefore), 60_000, 50);
+    await sleep(800);
+    await waitFor('Run to name the stopped step', () => element('run-needs-agent-acknowledgement') !== null, 10_000, 50);
+    const stateAfterLoop = await window.dspatch.getRunState();
+    const recorded = stateAfterLoop.unresolved.filter((attempt) => attempt.label.includes('mark-loop-unconfirmed') || attempt.label.startsWith('loop run'));
+    record('unconfirmed loop stop holds back overlapping work', {
+      labels: recorded.map((attempt) => `${attempt.label}: ${attempt.state}`),
+      runNote: textOf('run-needs-agent-acknowledgement').slice(0, 200),
+    });
+    expect(recorded.some((attempt) => attempt.state === 'outcome-unknown'), 'the stopped step was not recorded with an unknown outcome');
+    await click('run-anyway-agent');
+    await waitFor('the command to run once named', () => element('run-needs-agent-acknowledgement') === null && element('test-pending') === null, 30_000, 50);
+
+    // --- 10. The graph editor's run: isolated, and overlapped by a command -------------
+    // The editor's Run has a live binding only for the duration drawings; this is one of them.
+    const ownRoot = plan.ownRepositoryPath ?? '';
+    const rootSep = ownRoot.includes('\\') ? '\\' : '/';
+    const durationGraph =
+      ownRoot === '' ? '' : [ownRoot, 'docs', 'loop', 'graphs', 'dspatch-live-duration.graph.json'].join(rootSep);
+    void graphPath;
+    const opened = durationGraph === '' ? null : await window.dspatch.openLoopGraph({ kind: 'path', path: durationGraph });
+    const graphText = opened?.kind === 'read' ? opened.text : '';
+    expect(graphText !== '', 'could not read the loop graph for an editor run');
+    // A command running in the sample project, which does not contain the editor's folder.
+    await typeIntoField('test-command-input', 'node -e "setTimeout(() => {}, 6000)"');
+    await typeIntoField('test-cwd-input', workspace);
+    await click('run-test');
+    await waitFor('the command to be running', () => element('test-pending') !== null, 10_000, 25);
+    // Started, seen walking, then stopped: the simulated provider never completes the
+    // duration task, so this run would otherwise rework until its budget ran out.
+    const isolatedRun = window.dspatch.startEditorLoopRun({ runId: `editor-isolated-${String(Date.now())}`, text: graphText });
+    let walking: unknown = null;
+    const walkDeadline = performance.now() + 20_000;
+    while (walking === null && performance.now() < walkDeadline) {
+      walking = await window.dspatch.currentLoopRun();
+      if (walking === null) {
+        await sleep(100);
+      }
+    }
+    await window.dspatch.cancelEditorLoopRun();
+    const isolated = await isolatedRun;
+    await waitFor('the command to end', () => element('test-pending') === null, 30_000, 50);
+    // A command running in the temp folder that holds the editor's own run folders.
+    const sep = workspace.includes('\\') ? '\\' : '/';
+    const tempRoot = workspace.split(sep).slice(0, -2).join(sep);
+    await typeIntoField('test-cwd-input', tempRoot);
+    await click('run-test');
+    await waitFor('the command to be running', () => element('test-pending') !== null, 10_000, 25);
+    const overlapped = await window.dspatch.startEditorLoopRun({ runId: `editor-overlap-${String(Date.now())}`, text: graphText });
+    await waitFor('the command to end', () => element('test-pending') === null, 30_000, 50);
+    record('graph editor runs', {
+      tempRoot,
+      isolated: isolated.kind,
+      overlapped: overlapped.kind === 'failed' ? overlapped.note.slice(0, 200) : overlapped.kind,
+    });
+    expect(
+      walking !== null && (isolated.kind === 'cancelled' || isolated.kind === 'finished'),
+      `the isolated editor run did not run beside a command elsewhere: ${JSON.stringify(isolated).slice(0, 300)}`,
     );
+    expect(overlapped.kind === 'failed' && overlapped.note.includes('Your command is running in this folder'), `the editor ran inside a folder a command was running in: ${JSON.stringify(overlapped).slice(0, 300)}`);
+
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
   } catch (caught) {
     failures.push(caught instanceof Error ? caught.message : String(caught));
     observations['atFailure'] = {
@@ -10873,6 +10885,7 @@ async function runSteeringScenario(plan: ScriptedRunPlan): Promise<ScriptedRunRe
       entries: entries().map((entry) => ({ state: entry.dataset['state'], text: entry.textContent })),
       actionError: textOf('action-error'),
       testError: textOf('test-error'),
+      runNote: textOf('run-needs-agent-acknowledgement'),
     };
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
   }

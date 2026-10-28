@@ -49,9 +49,12 @@ export interface LoopInstructionDelivery {
   readonly occurrence: number;
   readonly atUtc: string;
   /**
-   * DSP-147: given to the work **while it ran**, through the runtime's own steering, on
-   * the runtime's evidence that the turn took it in. Absent or `false`: put in front of
-   * the step's prompt when it started (DSP-32), or for a chat turn sent as the next message.
+   * DSP-147: delivered through the runtime's own steering into the work that was running,
+   * on the runtime's receipt. For Claude that receipt is the uuid in a result's
+   * `user_message_uuids`, which the SDK also gives when Claude Code ran the message as a
+   * following turn of the same query, so it says the work took the message in, not when
+   * or that the agent acted on it during its step. Absent or `false`: put in front of the
+   * step's prompt when it started (DSP-32), or for a chat turn sent as the next message.
    */
   readonly during?: boolean;
 }
@@ -180,10 +183,11 @@ export function loopInstructionStatusText(instruction: LoopInstruction): string 
   const delivered = instruction.delivered;
   if (delivered !== null) {
     if (delivered.during === true) {
-      // DSP-147: the runtime's evidence that the running turn took it in. Not "read".
+      // DSP-147: the runtime's receipt, and no more: not "read", not "applied", and not
+      // "while it worked", because the receipt is also given for a following turn.
       return chat || delivered.nodeLabel === ''
-        ? 'Delivered to the running work.'
-        : `Delivered to “${delivered.nodeLabel}” while it worked.`;
+        ? 'Delivered.'
+        : `Delivered to “${delivered.nodeLabel}”.`;
     }
     if (chat) {
       return 'Sent as your next message when the turn ended.';
@@ -214,6 +218,38 @@ export function loopInstructionStatusText(instruction: LoopInstruction): string 
     return 'Waiting. No agent has it yet; it goes to the next step the run starts.';
   }
   return 'Waiting for delivery.';
+}
+
+/**
+ * DSP-147: what the conversation shows under a message, if anything.
+ *
+ * Nothing once it is delivered: a person reads their message, not a standing receipt
+ * under each one; the account is in Session details ({@link loopInstructionStatusText}).
+ * A quiet word while it waits. A visible line when delivery was not confirmed or did not
+ * happen, because that is the case where the person may need to act.
+ */
+export function loopInstructionInline(
+  instruction: LoopInstruction,
+): { readonly tone: 'quiet' | 'attention'; readonly text: string } | null {
+  switch (loopInstructionState(instruction)) {
+    case 'delivered':
+      return null;
+    case 'pending':
+    case 'accepted':
+      return {
+        tone: 'quiet',
+        text:
+          instruction.waitingFor === 'end-of-turn'
+            ? 'Waiting for this turn to end…'
+            : instruction.waitingFor === 'next-step' ||
+                (instruction.scope !== 'chat' && instruction.accepted !== true)
+              ? 'Waiting for the next step…'
+              : 'Waiting for delivery…',
+      };
+    case 'unconfirmed':
+    case 'never-delivered':
+      return { tone: 'attention', text: loopInstructionStatusText(instruction) };
+  }
 }
 
 /**

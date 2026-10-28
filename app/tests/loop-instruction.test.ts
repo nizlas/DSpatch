@@ -26,6 +26,7 @@ import {
   INSTRUCTION_BLOCK_CLOSE,
   INSTRUCTION_BLOCK_OPEN,
   loopInstructionBadgeText,
+  loopInstructionInline,
   loopInstructionState,
   loopInstructionStatusText,
   loopInstructionsAfter,
@@ -521,7 +522,8 @@ describe('steering the running work (DSP-147)', () => {
         during: true,
       },
     });
-    assert.equal(loopInstructionStatusText(delivered[0]!), 'Delivered to “Implement” while it worked.');
+    assert.equal(loopInstructionStatusText(delivered[0]!), 'Delivered to “Implement”.');
+    assert.equal(loopInstructionInline(delivered[0]!), null, 'nothing under a delivered message');
     assert.doesNotMatch(loopInstructionStatusText(delivered[0]!), /read|applied|followed/i);
     const unconfirmed = loopInstructionsAfter(list, {
       kind: 'unconfirmed',
@@ -595,5 +597,27 @@ describe('steering the running work (DSP-147)', () => {
       loopInstructionState(storedSteeringAsInstruction({ ...base, state: 'not-delivered' }, 'r')),
       'never-delivered',
     );
+  });
+});
+
+describe('what the conversation shows under a steering message (DSP-147)', () => {
+  it('shows nothing once delivered, a quiet word while waiting, and a visible line when it needs attention', () => {
+    const delivered = received({
+      delivered: { nodeId: 'w', nodeLabel: 'Work', occurrence: 1, atUtc: '2026-10-28T10:00:00.000Z', during: true },
+    });
+    assert.equal(loopInstructionInline(delivered), null);
+    assert.equal(loopInstructionInline(received({ scope: 'chat', accepted: true }))?.tone, 'quiet');
+    assert.equal(loopInstructionInline(received({ waitingFor: 'next-step' }))?.text, 'Waiting for the next step…');
+    const unconfirmed = loopInstructionInline(received({ unconfirmed: true }));
+    assert.equal(unconfirmed?.tone, 'attention');
+    assert.match(unconfirmed?.text ?? '', /not confirmed/);
+    assert.equal(loopInstructionInline(received({ runEnded: true }))?.tone, 'attention');
+  });
+
+  it('never says read, applied or during the step for a delivery', () => {
+    const delivered = received({
+      delivered: { nodeId: 'w', nodeLabel: 'Work', occurrence: 1, atUtc: '2026-10-28T10:00:00.000Z', during: true },
+    });
+    assert.doesNotMatch(loopInstructionStatusText(delivered), /read|applied|while it worked|during/i);
   });
 });

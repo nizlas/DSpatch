@@ -118,7 +118,8 @@ import {
 } from '../main/loop-graph-open';
 import { createFileRoleResolver } from '../main/loop-graph-roles';
 import { refuseLiveWorkingRoots, type LiveInspection, type SteerableStep } from '../main/loop-live';
-import { WORKING_COPY_LOCK } from '../main/working-copy-lock';
+import { uncertainLoopWork, WORKING_COPY_LOCK } from '../main/working-copy-lock';
+import type { DisposalRecord } from '../adapter/claude-agent-sdk-adapter';
 import { defaultLiveModel, runLiveGraph } from '../main/loop-live-run';
 import { LoopRunAudience } from '../main/loop-run-audience';
 import { loopRunAgentInfo, prepareLoopRun, type LoopRunAgentRequest } from '../main/loop-run-agent';
@@ -1943,6 +1944,16 @@ function registerLoopMethods(): void {
   let chatLoopGiven: string[] = [];
   /** DSP-147: what became of each steering message in this run, for its ending note. */
   let chatLoopSteered: { readonly text: string; readonly outcome: string }[] = [];
+  /** DSP-147: a loop run's agent work with no confirmed end, into the attempt ledger. */
+  const recordUncertainLoopWork = (
+    runId: string,
+    steps: readonly { readonly sessionId: string; readonly nodeLabel: string }[],
+    disposals: readonly DisposalRecord[],
+  ): void => {
+    for (const work of uncertainLoopWork(runId, steps, disposals)) {
+      chatService.recordUncertainAgentWork(work.label, work.note);
+    }
+  };
   /** DSP-147: the window that started the run hears what happens to its messages. */
   let chatLoopInstructionEvents: ((payload: LoopInstructionEventPayload) => void) | null = null;
 
@@ -2376,6 +2387,11 @@ function registerLoopMethods(): void {
           resultsDir: runResultsDir(request.runId),
           modelRequested: agent.modelRequested,
           keepWorkspace: true,
+          // DSP-147: the editor's run works in a new folder of its own, which a workspace
+          // containing it (the temp folder, a whole drive) still overlaps; so it takes the
+          // same working-copy lock as every other run, for the folders it actually gives.
+          claimWorkingRoots: (paths) =>
+            WORKING_COPY_LOCK.claim({ kind: 'agent-work', folders: paths, label: 'a run from the graph editor' }),
           abortSignal: abort.signal,
           control: loopControl,
           // The chosen agent's adapter from the shared factory (DSP-138), which in
@@ -2621,6 +2637,12 @@ function registerLoopMethods(): void {
         return { kind: 'refused', reason: agent.reason };
       }
       const modelRequested = agent.modelRequested;
+      // DSP-147: nor while earlier agent work here has no confirmed end and nobody has
+      // named it (an unconfirmed stop of a turn or a loop step). The rule a message meets.
+      const uncertain = chatService.uncertainAgentWorkRefusal();
+      if (uncertain !== null) {
+        return { kind: 'refused', reason: `${uncertain} The loop was not started.` };
+      }
       // DSP-147: no loop run while the person's own command runs in a folder of this
       // run's. Before the record is opened, so a refusal leaves nothing behind.
       const workClaim = WORKING_COPY_LOCK.claim({
@@ -2664,6 +2686,13 @@ function registerLoopMethods(): void {
       chatLoopInstructionEvents = (payload) => {
         sendToSender(LOOP_INSTRUCTION_EVENT, payload);
       };
+      /**
+       * DSP-147: steps whose stop ended unconfirmed, and the run's adapter, whose
+       * `dispose` may yet see their local process exit. Read after the walk, before the
+       * working-copy lock is released: the loop having ended is not evidence that they did.
+       */
+      const unconfirmedSteps: { readonly sessionId: string; readonly nodeLabel: string }[] = [];
+      const runAdapter: { current: { disposals?: () => readonly DisposalRecord[] } | null } = { current: null };
       const abort = chatLoopAbort;
       /**
        * How many times each node has been handed a waiting message.
@@ -2744,7 +2773,11 @@ function registerLoopMethods(): void {
           // adapter - the same seam the direct chat has had since DSP-1 - so a scripted
           // run walks a real loop in the real window with no provider call.
           provider: agent.provider,
-          createAdapter: agent.createAdapter,
+          createAdapter: () => {
+            const built = agent.createAdapter();
+            runAdapter.current = built as { disposals?: () => readonly DisposalRecord[] };
+            return built;
+          },
           promptFor: (node, step) => {
             const prompt = chatPromptFor(node, {
               entryId: loaded.graph.entry,
@@ -2865,6 +2898,9 @@ function registerLoopMethods(): void {
           // it as the answer to the mandate, so it is forwarded as it was written.
           onAgentReply: (reply) => {
             const nodeLabel = lookup.node(reply.nodeId)?.label ?? reply.nodeId;
+            if (reply.terminalEnd === 'unconfirmed') {
+              unconfirmedSteps.push({ sessionId: reply.sessionId, nodeLabel });
+            }
             record.reply({
               atUtc: new Date().toISOString(),
               nodeId: reply.nodeId,
@@ -2953,7 +2989,11 @@ function registerLoopMethods(): void {
         chatLoopAbort = null;
         chatLoopRunId = null;
         chatLoopSteerable = null;
-        // DSP-147: the run's agent work has ended; a manual command may start.
+        // DSP-147: a step whose stop was unconfirmed is recorded as agent work with an
+        // unknown outcome unless `dispose` then saw its process exit; so is a process
+        // `dispose` itself could not see exit. That record, not this run's ending, decides
+        // whether more work may start here. Then the run's own lock is released.
+        recordUncertainLoopWork(request.runId, unconfirmedSteps, runAdapter.current?.disposals?.() ?? []);
         workClaim.release();
         // Every path out of the handler, including the throwing one, for the same
         // reason the control is released here: a message left in the queue after
@@ -3077,7 +3117,7 @@ function registerLoopMethods(): void {
           if (final.state === 'delivered') {
             if (sameRun) {
               chatLoopGiven = [...chatLoopGiven, text];
-              chatLoopSteered = [...chatLoopSteered, { text, outcome: `delivered to “${target.nodeLabel}” while it worked` }];
+              chatLoopSteered = [...chatLoopSteered, { text, outcome: `delivered to “${target.nodeLabel}” by the runtime’s steering` }];
             }
             emit?.({
               kind: 'delivered',

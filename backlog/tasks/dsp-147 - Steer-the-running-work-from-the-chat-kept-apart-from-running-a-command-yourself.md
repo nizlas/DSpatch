@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-10-27 14:09'
-updated_date: '2026-10-28 15:30'
+updated_date: '2026-10-28 16:30'
 labels: []
 dependencies: []
 priority: high
@@ -112,4 +112,35 @@ Verified, SIMULATED provider, through the real window, host and loop. Scripted r
 Also run: the test groups loop, chat, provider, host and presentation; all typechecks (including `typecheck:claude` against the installed SDK); the build; and the presentation scenario.
 
 Not verified: when a real Claude model reads a steering message, and whether Claude Code folds it in mid-turn as its type docs say. That needs a home trial with the existing login. Cursor steering was not tried (closed account), and Copilot is unknown. The editor's own loop run works in a workspace of its own and does not take the lock. A loop step's cancel that ends unconfirmed releases the lock at the end of the run.
+
+28 Oct 2026, cleanup after cd0aaec (local commit, not pushed). This corrects three statements above.
+
+1. **What a delivery means.** For Claude, a uuid in `user_message_uuids` is the SDK's receipt that the query consumed the message. The SDK gives the same receipt when Claude Code folded the message into the running turn and when it ran the message as a following turn. So it does not show that the message changed the step while the step worked. The window now says at most "Delivered" (loop: "Delivered to "Step""). It does not say "read", "applied" or "while it worked", and neither does the run record's ending note.
+   - In the conversation, a delivered message has no status line.
+   - A waiting message gets one quiet word.
+   - Delivery not confirmed, or not delivered, gets a visible line.
+   - The full account is in Session details under **Steering**.
+   - Persistence and the no-resend rule are unchanged.
+2. **Uncertain end of agent work.** This now reuses the attempt ledger's existing rule (DSP-4, DSP-6, DSP-116).
+   - **What is recorded:** an unconfirmed stop is an `agent-turn` attempt with an unknown outcome, saved and kept across a restart. For a chat turn the existing code already recorded it. A loop step whose stop ended unconfirmed is now recorded too, unless the adapter's `dispose` then saw its process exit. So is a process `dispose` itself could not see exit (`uncertainLoopWork`). The loop run ending is not counted as the work ending.
+   - **What it holds back:** until the person names the attempt, it holds back the next message (existing gate) and the next loop start (host and composer). It also holds back the next Run in the same working copy or a nested one: new, the same rule applied to the agent's attempts.
+   - **The way on:** the existing explicit acknowledgement, "Send anyway, leaving … unresolved" for a message, and now "Run anyway, leaving … unresolved" in the Run panel. The attempt then stays on record as unresolved, as before.
+   - **The working-copy lock itself** is now released when its run ends. The earlier hold until the session closed had no recovery path of its own.
+   - **Unchanged:** process stopping.
+3. **The graph editor's run** gives its agents one new `mkdtemp` folder under the system temp folder, as `cwd` and as the only root (`additionalDirectories` / `local.dirs`). It has no other working roots; its results folder is under userData and is not given to the agent. That is not isolation: a workspace or a Run folder that contains the temp folder (or a whole drive) overlaps it. The editor's run now takes the same lock through `runLiveGraph`'s `claimWorkingRoots`, for the folders it actually gives.
+
+Verified, SIMULATED provider (presentation, including a SIMULATED unconfirmed stop), isolated userData, real window, host and loop: `DSPATCH_CHAT_RUN=steering`, all phases passed.
+- No line under a delivered message; the quiet waiting line; the Session details account.
+- An unconfirmed chat-turn stop: Run disabled with its note; loop start refused by the host; "Run anyway" names it and the command runs.
+- An unconfirmed loop-step stop recorded as outcome-unknown after the run ended, and Run held back again.
+- An editor run beside a command in the sample project started. One beside a command in the temp folder that contains its run folder was refused by the lock.
+
+Tests: steering, loop-instruction, chat-workspace, workflow-gates; groups chat, host and presentation; loop group with the one structural test adapted. Typechecks pass, including `typecheck:claude`; the build passes.
+
+Not established:
+- When a real Claude model reads a steering message, and whether Claude Code folds it in mid-turn (open for the manual home trial; AC #1 stays open).
+- How a real Claude Code process behaves after an unconfirmed stop.
+- Cursor steering.
+- Copilot.
+- An editor run whose own stop ends unconfirmed is not recorded, because the editor has no conversation ledger. Its lock is released when its run ends.
 <!-- SECTION:NOTES:END -->

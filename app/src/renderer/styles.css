@@ -1202,6 +1202,13 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* DSP-147: a steering message still waiting for delivery, said without drawing the eye. */
+.turn__meta--quiet {
+  margin-top: 0.25rem;
+  font-style: italic;
+  opacity: 0.8;
+}
+
 .composer {
   margin-top: 1rem;
   flex: 0 1 auto;

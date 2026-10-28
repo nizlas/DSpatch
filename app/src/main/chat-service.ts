@@ -3340,21 +3340,45 @@ export class ChatService {
     return this.options.workingCopyLock ?? WORKING_COPY_LOCK;
   }
 
-  /**
-   * DSP-147: hold an agent turn's working-copy lock until its run ends. A run whose end
-   * has already been seen is released at once, unless that end was an unconfirmed cancel.
-   */
+  /** DSP-147: hold an agent turn's working-copy lock until its run ends. */
   private holdUntilRunEnds(runId: string, release: () => void): void {
     const ran = this.turns.find((turn) => turn.dspatchRunId === runId);
-    if (ran !== undefined && ran.terminalStatus !== null && !this.unconfirmedRuns.has(runId)) {
+    if (ran !== undefined && ran.terminalStatus !== null) {
       release();
       return;
     }
     this.agentWorkClaims.set(runId, release);
   }
 
-  /** DSP-147: runs whose cancel ended unconfirmed; their lock is kept until the session closes. */
-  private readonly unconfirmedRuns = new Set<string>();
+  /**
+   * DSP-147: agent work whose end was not confirmed, recorded where the product already
+   * keeps such things: an `agent-turn` attempt in the open conversation's ledger, marked
+   * outcome-unknown. A loop step whose stop ended unconfirmed is recorded here, because a
+   * loop run ending says nothing about whether that step's local work has stopped. The
+   * attempt is saved, survives a restart, and holds back the next message and the next
+   * Run in this working copy and the ones nested in it until the person names it.
+   */
+  recordUncertainAgentWork(label: string, note: string): void {
+    const ledger = this.currentLedger();
+    const attempt = ledger.open('agent-turn', label, { adapterProcess: this.adapter?.runsLocalProcess === true });
+    ledger.markOutcomeUnknown(attempt.attemptId, note);
+    this.options.log(`${attempt.attemptId}: ${label} - outcome unknown: ${note}`);
+    this.saveConversation();
+  }
+
+  /**
+   * DSP-147: why new agent work may not start here now because earlier agent work has no
+   * confirmed end and nobody has named it, or `null`. The same rule a message meets; a
+   * loop start cannot name attempts (`composerSendRoute`), so it is refused until a
+   * message or a Run has.
+   */
+  uncertainAgentWorkRefusal(): string | null {
+    const decision = AttemptLedger.mayRepeatAcross(
+      [this.currentLedger(), ...this.conversationsSharingWorkingCopy().map((held) => held.ledger)],
+      'agent-turn',
+    );
+    return !decision.allowed && decision.acknowledgeable.length > 0 ? decision.reason : null;
+  }
 
   /**
    * DSP-147: send the person's message into the turn that is working, as steering of that
@@ -3907,6 +3931,27 @@ export class ChatService {
     if (!decision.allowed) {
       throw new Error(decision.reason);
     }
+    // DSP-147: nor beside agent work whose end was never confirmed (an unconfirmed stop of
+    // a chat turn or of a loop step), until the person names it: the same rule and the
+    // same naming as above, applied to the agent's attempts. Work confirmed running is the
+    // working-copy lock's to refuse, below.
+    const agentDecision = AttemptLedger.mayRepeatAcross(
+      [ledger, ...sharing.map((held) => held.ledger)],
+      'agent-turn',
+      acknowledged,
+    );
+    if (!agentDecision.allowed && agentDecision.acknowledgeable.length > 0) {
+      throw new Error(
+        `The agent's earlier work here has no confirmed end, so DSpatch will not run a command beside it by itself. ${agentDecision.reason}`,
+      );
+    }
+    this.acknowledgeInWorkingCopy(
+      ledger,
+      sharing,
+      'agent-turn',
+      acknowledged,
+      `A command was run with this attempt left unresolved. ${agentDecision.reason}`,
+    );
     this.acknowledgeInWorkingCopy(
       ledger,
       sharing,
@@ -5813,15 +5858,12 @@ export class ChatService {
       setTimeout(() => {
         this.options.onTurnSettled?.();
       }, 0);
-      // DSP-147: the turn's agent work has ended, so a manual command may start. Not
-      // after an unconfirmed cancel: its local work may still be going (DSP-116), so the
-      // lock is kept until the session is closed.
-      if (event.status === 'cancelled' && event.end === 'unconfirmed') {
-        this.unconfirmedRuns.add(event.dspatchRunId);
-      } else {
-        this.agentWorkClaims.get(event.dspatchRunId)?.();
-        this.agentWorkClaims.delete(event.dspatchRunId);
-      }
+      // DSP-147: the turn's run has ended, so its working-copy lock is released. An
+      // unconfirmed cancel is not thereby taken as an end of the agent's work: its attempt
+      // is marked outcome-unknown just below (DSP-116), and that record, not this lock,
+      // holds back the next message and the next Run until the person names it.
+      this.agentWorkClaims.get(event.dspatchRunId)?.();
+      this.agentWorkClaims.delete(event.dspatchRunId);
       const owner = this.attemptByRunId.get(event.dspatchRunId);
       if (owner !== undefined) {
         const { ledger, attemptId } = owner;

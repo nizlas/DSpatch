@@ -32,6 +32,7 @@ import type {
   AgentEvent,
   DspatchSessionId,
   ProviderId,
+  RunEnd,
   SessionHandle,
   SteerUpdate,
   UsageReading,
@@ -289,6 +290,11 @@ export interface LiveAgentReply {
   readonly text: string;
   /** The run's own terminal status, or `null` if it never reported one. */
   readonly terminalStatus: string | null;
+  /**
+   * DSP-147: how the adapter said the step's run ended locally (`RunEnd`), or `null` when
+   * it said nothing. `unconfirmed` means the step's local work may still be going.
+   */
+  readonly terminalEnd?: RunEnd | null;
   /**
    * What the agent was actually sent, whole.
    *
@@ -1154,6 +1160,7 @@ interface TurnWait {
   readonly finished: Promise<void>;
   readonly assistantText: () => string;
   readonly terminalStatus: () => string | null;
+  readonly terminalEnd: () => RunEnd | null;
   readonly terminalError: () => string | null;
   readonly runId: () => string;
   readonly readings: () => UsageReading[];
@@ -1185,6 +1192,7 @@ function waitForTurn(
 ): TurnWait {
   let assistantText = '';
   let terminalStatus: string | null = null;
+  let terminalEnd: RunEnd | null = null;
   let terminalError: string | null = null;
   let runId = '';
   const readings: UsageReading[] = [];
@@ -1218,6 +1226,7 @@ function waitForTurn(
     }
     if (event.type === 'run.finished') {
       terminalStatus = event.status;
+      terminalEnd = event.end ?? null;
       terminalError = event.error?.message ?? null;
       unsubscribe();
       resolveFinished?.();
@@ -1228,6 +1237,7 @@ function waitForTurn(
     finished,
     assistantText: () => assistantText,
     terminalStatus: () => terminalStatus,
+    terminalEnd: () => terminalEnd,
     terminalError: () => terminalError,
     runId: () => runId,
     readings: () => readings,
@@ -2204,6 +2214,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       occurrence: context.occurrence,
       text: turn.assistantText(),
       terminalStatus: turn.terminalStatus(),
+      terminalEnd: turn.terminalEnd(),
       prompt,
       role:
         node.role === undefined

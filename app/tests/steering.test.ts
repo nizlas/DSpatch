@@ -17,7 +17,7 @@ import { ChatService } from '../src/main/chat-service.ts';
 import { ConversationStore } from '../src/main/conversation-store.ts';
 import { InstructionQueue } from '../src/main/instruction-queue.ts';
 import { PresentationAdapter } from '../src/main/presentation-adapter.ts';
-import { WorkingCopyLock, foldersOverlap } from '../src/main/working-copy-lock.ts';
+import { WorkingCopyLock, foldersOverlap, uncertainLoopWork } from '../src/main/working-copy-lock.ts';
 import type { LoopInstructionEventPayload, UiAgentEvent } from '../src/shared/bridge.ts';
 import { tempRoot } from './support/fixtures.ts';
 
@@ -53,6 +53,7 @@ function harness(name: string) {
     agentChoiceStore: { read: () => 'cursor', write: () => undefined },
     workingCopyLock: lock,
     createAdapter: () => new PresentationAdapter({ deltaMs: 5 }),
+    timings: { cancelConfirmMs: 40, cancelWatchMs: 60 },
   });
   services.push(service);
   return { service, workspace, store, lock, events, steering };
@@ -186,4 +187,62 @@ test('a message offered to the working step is out of the queue meanwhile, and g
   queue.restore(first);
   queue.restore(first);
   assert.deepEqual(queue.takeFor('run-1').map((entry) => entry.id), [first.id, second.id]);
+});
+
+test('an unconfirmed stop holds back Run and a loop start until the person names it, and naming it is the way on', async () => {
+  const h = harness('unconfirmed');
+  await h.service.startChatSession({ kind: 'folder', path: h.workspace });
+  await h.service.sendPrompt('[[slow]] [[cancel-unconfirmed]] Work on it.');
+  await until(() => h.events.some((event) => event.type === 'assistant.delta'), 'the turn to be working');
+  await h.service.cancelRun();
+  await until(() => finishedRuns(h.events) === 1, 'the turn to end');
+  // The run ended, so its lock is gone; the unknown outcome is what holds the folder.
+  assert.equal(h.lock.holders().length, 0);
+  await assert.rejects(
+    h.service.runWorkspaceTest({ command: 'node --version', cwd: path.join(h.workspace, 'src') }),
+    /agent's earlier work here has no confirmed end/,
+  );
+  assert.match(h.service.uncertainAgentWorkRefusal() ?? '', /not been named/);
+  const named = h.service.getRunState().needsAcknowledgement.agentTurn;
+  assert.equal(named.length, 1);
+  const ran = await h.service.runWorkspaceTest({
+    command: 'node --version',
+    cwd: h.workspace,
+    acknowledgedAttemptIds: named,
+  });
+  assert.equal(ran.exitCode, 0);
+  assert.equal(h.service.uncertainAgentWorkRefusal(), null, 'named once, not asked again');
+  // Still on the record as unresolved, never marked stopped.
+  assert.equal(h.service.getRunState().unresolved.filter((attempt) => attempt.kind === 'agent-turn').length, 1);
+});
+
+test('a loop step recorded with no confirmed end holds back the next work in the same way', async () => {
+  const h = harness('loop-unconfirmed');
+  await h.service.startChatSession({ kind: 'folder', path: h.workspace });
+  const [work] = uncertainLoopWork('chat-loop-1', [{ sessionId: 's-1', nodeLabel: 'Do it' }], []);
+  assert.ok(work !== undefined);
+  h.service.recordUncertainAgentWork(work.label, work.note);
+  assert.match(h.service.uncertainAgentWorkRefusal() ?? "", /outcome-unknown.*loop run has ended/);
+  assert.ok(h.service.getRunState().unresolved.some((attempt) => attempt.label === work.label));
+  await assert.rejects(
+    h.service.runWorkspaceTest({ command: 'node --version', cwd: h.workspace }),
+    /no confirmed end/,
+  );
+});
+
+test('a loop run ending is not evidence that its stopped steps ended; a seen exit is', () => {
+  const steps = [
+    { sessionId: 's-1', nodeLabel: 'Do it' },
+    { sessionId: 's-2', nodeLabel: 'Check it' },
+  ];
+  const disposals = [
+    { dspatchSessionId: 's-1', outcome: 'killed-and-exited' as const, pid: 10 },
+    { dspatchSessionId: 's-3', outcome: 'unconfirmed' as const, pid: 30 },
+  ];
+  const found = uncertainLoopWork('run-9', steps, disposals);
+  assert.deepEqual(
+    found.map((work) => work.label),
+    ['loop run run-9, step "Check it"', 'loop run run-9, session s-3'],
+  );
+  assert.deepEqual(uncertainLoopWork('run-9', [], []), []);
 });

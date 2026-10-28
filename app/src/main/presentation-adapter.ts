@@ -303,6 +303,8 @@ interface SessionState {
   steers: { readonly text: string; readonly settle: (update: SteerUpdate) => void }[];
   /** DSP-147: how the running turn answers a steering message (from its prompt's directives). */
   steerMode: 'fold' | 'late' | 'decline';
+  /** DSP-147, SIMULATED: a cancel of the running turn ends without a confirmed local end. */
+  cancelUnconfirmed: boolean;
 }
 
 export class PresentationAdapter implements ChatAdapter, AgentAdapter {
@@ -357,6 +359,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       timers: new Set(),
       steers: [],
       steerMode: 'fold',
+      cancelUnconfirmed: false,
     });
     return {
       dspatchSessionId,
@@ -505,6 +508,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
         ? 'decline'
         : 'fold';
     state.steers = [];
+    state.cancelUnconfirmed = prompt.includes('[[cancel-unconfirmed]]');
     const heard: string[] = [];
 
     const token = (/\b(mark-\w+)\b/.exec(prompt)?.[1] ?? prompt.trim().slice(0, 24)) || 'this';
@@ -673,6 +677,9 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       type: 'run.finished',
       at: new Date().toISOString(),
       status: 'cancelled',
+      // DSP-147, SIMULATED: `[[cancel-unconfirmed]]` reports the end as the Claude adapter
+      // does when it stops waiting without seeing its process exit.
+      ...(state.cancelUnconfirmed ? { end: 'unconfirmed' as const } : {}),
     });
     return Promise.resolve();
   }

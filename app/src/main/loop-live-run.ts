@@ -32,6 +32,7 @@ import {
   type LoopStepAdapter,
   type SteerableStep,
 } from './loop-live';
+import type { WorkingCopyClaim } from './working-copy-lock';
 import type { StepActivity } from '../shared/loop-activity';
 import { chatPromptFor, describeChosenLoopBinding } from '../shared/loop-chat';
 import {
@@ -124,6 +125,12 @@ export interface LiveCliOptions {
    * only for a run that reaches "afterwards".
    */
   readonly onCommand?: (command: LiveCommandRecord) => void;
+  /**
+   * DSP-147: take the working-copy lock for the folders this run gives its agents, once
+   * they are known and before anything starts; released when the run has ended. A
+   * refusal rejects the run with its reason.
+   */
+  readonly claimWorkingRoots?: (paths: readonly string[]) => WorkingCopyClaim;
   /** DSP-147: see {@link LiveExecutorOptions.onSteerableStep}. */
   readonly onSteerableStep?: (step: SteerableStep | null) => void;
   /**
@@ -217,7 +224,32 @@ export function runLiveGraph(graph: LoopGraph, options: Omit<LiveCliOptions, 'gr
     return Promise.reject(new Error(refusal.message));
   }
 
-  return driveLive(graph, workspacePath, roots, generated, withEditorBinding(graph, bindingKind, options));
+  // DSP-147: the folders the run will actually give its agents, offered to the caller's
+  // working-copy lock. A folder of its own is not proof of isolation: a workspace that
+  // contains it (the temp folder, or a whole drive) overlaps it all the same.
+  let releaseClaim: (() => void) | null = null;
+  if (options.claimWorkingRoots !== undefined) {
+    const claim = options.claimWorkingRoots(roots.map((root) => root.path));
+    if (!claim.ok) {
+      if (generated) {
+        // Best effort: on Windows the fresh repository can still be held open briefly, and
+        // a leftover folder in the temp directory must not hide why the run was refused.
+        try {
+          fs.rmSync(path.dirname(workspacePath), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        } catch {
+          // Left in the temp folder.
+        }
+      }
+      return Promise.reject(new Error(claim.reason));
+    }
+    releaseClaim = claim.release;
+  }
+
+  return driveLive(graph, workspacePath, roots, generated, withEditorBinding(graph, bindingKind, options)).finally(
+    () => {
+      releaseClaim?.();
+    },
+  );
 }
 
 /**

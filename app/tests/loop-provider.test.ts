@@ -400,7 +400,9 @@ describe('both run handlers decide the agent before anything is recorded or clai
         assert.ok(prepare < record, 'the agent is decided before the record is opened');
       }
       assert.equal(body.includes("connectedTargets: ['cursor']"), false);
-      assert.match(body, /createAdapter: agent\.createAdapter/);
+      // The shared factory's adapter, passed on or built in a wrapper that keeps a reference
+      // to it (DSP-147: the chat loop reads its disposal record after the run).
+      assert.match(body, /createAdapter: (agent\.createAdapter|\(\) => \{\s*const built = agent\.createAdapter\(\);)/);
       assert.match(body, /provider: agent\.provider/);
     });
   }
