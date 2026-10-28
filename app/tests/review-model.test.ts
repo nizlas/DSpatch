@@ -430,12 +430,23 @@ test('the review preload repeats every review channel name exactly, and the chat
     assert.ok(preload.includes(`'${channel}'`), channel);
   }
   // The discussion's channels are compared with their own constant in review-discussion.test.ts.
-  const literal = (preload.match(/'dspatch:review-[a-z-]+'/g) ?? []).filter((channel) => !channel.startsWith("'dspatch:review-discussion-"));
+  const literal = (preload.match(/'dspatch:review-[a-z-]+'/g) ?? []).filter(
+    (channel) => !channel.startsWith("'dspatch:review-discussion-") && !channel.startsWith("'dspatch:review-pair-"),
+  );
   assert.deepEqual([...new Set(literal)].sort(), Object.values(REVIEW_CHANNELS).map((channel) => `'${channel}'`).sort());
   // The chat and editor windows' preload exposes no review bridge and no review channel.
   const chatPreload = fs.readFileSync(new URL('../src/preload/preload.ts', import.meta.url), 'utf8');
   assert.equal(chatPreload.match(/'dspatch:review-[a-z-]+'/g), null);
   assert.ok(!chatPreload.includes('dspatchReview'));
+});
+
+test('the review preload repeats every review-pair channel name exactly (DSP-150)', async () => {
+  const fs = await import('node:fs');
+  const { REVIEW_PAIR_CHANNELS, REVIEW_PAIR_CHANGED, REVIEW_PAIR_NAVIGATE } = await import('../src/shared/review-pair');
+  const preload = fs.readFileSync(new URL('../src/preload/review-preload.ts', import.meta.url), 'utf8');
+  const expected = [...Object.values(REVIEW_PAIR_CHANNELS), REVIEW_PAIR_CHANGED, REVIEW_PAIR_NAVIGATE].map((channel) => `'${channel}'`).sort();
+  const literal = [...new Set(preload.match(/'dspatch:review-pair-[a-z-]+'/g) ?? [])].sort();
+  assert.deepEqual(literal, expected);
 });
 
 test('a review is identified by its repository folder name and both short revisions', () => {

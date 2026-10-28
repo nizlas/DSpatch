@@ -385,7 +385,21 @@ A useful first pilot can use one fixed change with a file overview, a small set 
 
 The pilot should test whether the person can explain the behavioural change, locate a relevant risk and identify what remains unreviewed. Compare with a conventional diff. Time saved is useful, but apparent speed without understanding is not success. Automatic preservation of coverage across new revisions, separate packaging and a complete graph workflow are later decisions.
 
-This describes a possible pilot, not a priority or an authorisation. The vision permits a prepared-walk pilot but does not rank it above the [planted-defect probe](research/dsp-13-comprehension-research.md#12-assessing-comprehension-orientation-and-confidence-with-one-user-ac4) that the DSP-13 research ranks as the highest-value cheap experiment. DSP-14 makes a recommendation and Niclas decides the direction in DSP-15. No pilot is authorised now.
+This describes a possible pilot, not a priority or an authorisation. The vision permits a prepared-walk pilot but does not rank it above the [planted-defect probe](research/dsp-13-comprehension-research.md#12-assessing-comprehension-orientation-and-confidence-with-one-user-ac4) that the DSP-13 research ranks as the highest-value cheap experiment. DSP-14 makes a recommendation and Niclas decides the direction in DSP-15.
+
+#### The decided review flow (Niclas's decision, 28 October 2026)
+
+Niclas decided the review flow on 28 October 2026 (DSP-150). It is a decision, not a candidate:
+
+- **Way in.** Review opens from the main chat and from the loop editor. A workspace with several Git repositories lists them by folder name, each once and without folders that have no Git; one repository goes straight to its log.
+- **Revision pair.** A traditional Git log; a click on a commit chooses From, the next chooses To, and the two can be swapped. The review is of exactly those two commits and never substitutes working-copy content. A diff review needs no review definition and no provider call.
+- **Diff window.** Its own window, starting with *Files changed*; a file opens side by side or unified, with the file overview at hand. Added, deleted and renamed files and files without a text diff read plainly.
+- **Walk windows.** Existing code walks over the same repository and pair open from the diff review in further windows. The windows share review state but navigate independently; only an explicit *Show in diff* moves the diff view. Opening a walk or showing a step is not review. Automatic generation of walks is not specified yet and is not built; without walks the diff review still works and says so briefly. The DSP-116 example stays available.
+- **Status and coverage.** Changed lines and ranges can be marked as reviewed by the person or explicitly exempted, and withdrawn. Agent review counts only from a recorded agent review. A requirement decides what counts as handled, and agent review alone is not enough where manual review is required. *Files changed* shows the percentage of handled changed lines, deleted lines included and context excluded, and a checkbox once every changed line is handled; reviewed and exempted stay distinguishable. A file with nothing to count is done only after a decision about the whole file. Marks, requirement and position are kept per revision pair, count a change once however many walks pass it, and never pass to changed code.
+- **In the diff.** The red and green backgrounds stay. Status sits in a narrow strip beside the line numbers: blue reviewed by the person, violet agent-reviewed, grey dashed exempted, nothing not yet handled, on both sides and in the unified view, with status text on hover and keyboard focus. Manual review is drawn over agent review, and both stay in the details.
+- **Boundaries.** Repository access, Git, revision identity and the persistent review state belong to the host; the windows use the contracts. The review discussion stays tool-free.
+
+This decision authorises that flow. It does not decide the order of the DSP-13 experiments, review depth or teaching modes, or how agent reviews are produced.
 
 <a id="4-maestro-och-agentnätverket"></a>
 

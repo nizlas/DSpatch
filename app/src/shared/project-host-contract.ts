@@ -27,6 +27,15 @@ import type {
   DiscussionTarget,
 } from './review-discussion';
 import type { ReviewHostApi } from './review-host-contract';
+import type {
+  LogCommit,
+  OpenPair,
+  PairAnswer,
+  PairRecord,
+  PairWalk,
+  ReviewRepository,
+  RevisionPairIdentity,
+} from './review-pair';
 
 /*
  * The project host's methods (DSP-111): what the client may ask of the host, by name,
@@ -160,6 +169,24 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'review.exampleDefinition': () =>
     | { readonly kind: 'found'; readonly definitionPath: string; readonly repositoryRoot: string }
     | { readonly kind: 'unavailable'; readonly note: string };
+  // --- Review of a chosen revision pair (DSP-150) -----------------------------------------
+  readonly 'reviewPair.repositories': () => readonly ReviewRepository[];
+  readonly 'reviewPair.log': (
+    repository: unknown,
+    skip: unknown,
+  ) => PairAnswer<{
+    readonly commits: readonly LogCommit[];
+    readonly more: boolean;
+    readonly last: { readonly base: string; readonly target: string } | null;
+  }>;
+  readonly 'reviewPair.open': (request: unknown) => PairAnswer<OpenPair>;
+  readonly 'reviewPair.openForWalk': (pair: RevisionPairIdentity) => PairAnswer<OpenPair>;
+  readonly 'reviewPair.readFile': (key: unknown, side: unknown, path: unknown) => PairAnswer<{ readonly text: string | null; readonly binary: boolean }>;
+  readonly 'reviewPair.state': (key: unknown) => PairAnswer<PairRecord>;
+  readonly 'reviewPair.mark': (key: unknown, request: unknown) => PairAnswer<PairRecord>;
+  readonly 'reviewPair.setRequirement': (key: unknown, requirement: unknown) => PairAnswer<PairRecord>;
+  readonly 'reviewPair.savePosition': (key: unknown, position: unknown) => PairAnswer<{ readonly saved: true }>;
+  readonly 'reviewPair.walks': (key: unknown, also: readonly string[]) => PairAnswer<readonly PairWalk[]>;
   readonly 'discussion.load': (target: DiscussionTarget, request: unknown) => DiscussionLoadOutcome;
   readonly 'discussion.send': (target: DiscussionTarget, input: unknown) => DiscussionSendOutcome;
   readonly 'discussion.cancel': (target: DiscussionTarget) => DiscussionCancelOutcome;
@@ -287,6 +314,16 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'loop.prepareChatLoop': true,
   'loop.cancelChatRun': true,
   'review.openContext': true,
+  'reviewPair.repositories': true,
+  'reviewPair.log': true,
+  'reviewPair.open': true,
+  'reviewPair.openForWalk': true,
+  'reviewPair.readFile': true,
+  'reviewPair.state': true,
+  'reviewPair.mark': true,
+  'reviewPair.setRequirement': true,
+  'reviewPair.savePosition': true,
+  'reviewPair.walks': true,
   'review.exampleDefinition': true,
   'discussion.load': true,
   'discussion.send': true,

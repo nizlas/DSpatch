@@ -1612,3 +1612,642 @@
   border-radius: 4px;
   padding: 0.4rem;
 }
+
+/* --- DSP-150: the diff review of a chosen revision pair ---------------------------
+   One calm window: choose a repository and two commits, then Files changed and a
+   file's diff. The review status lives in a narrow strip beside the line numbers and
+   never replaces the diff's own red and green: blue is reviewed by you, violet a
+   recorded agent review, grey dashed an explicit exemption, nothing is not yet handled.
+   Blue is the one colour added for this, by Niclas's decision of 28 October 2026. */
+
+.rv-pair {
+  --rv-mark-manual: #5b8fd6;
+  --rv-mark-agent: var(--unknown);
+  --rv-mark-exempt: var(--muted);
+  height: 100vh;
+  overflow: hidden;
+}
+
+.rv-pair-message {
+  margin: 3rem auto;
+  max-width: 38rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.rv-pair-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.rv-pair-head h1 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.rv-pair-revs {
+  margin-left: 0.8rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.rv-pair-revs code,
+.rv-pair-hash,
+.rv-pair-slot code {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.85em;
+}
+
+.rv-pair .rv-pair-link {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 0.2rem 0.3rem;
+}
+
+.rv-pair .rv-pair-link:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.rv-pair-muted {
+  color: var(--muted);
+}
+
+.rv-pair-error {
+  margin: 0.5rem 1.2rem;
+  color: var(--no);
+}
+
+.rv-pair-hint {
+  margin: 0.3rem 1.2rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.rv-pair-choose {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.rv-pair-repos,
+.rv-pair-log {
+  list-style: none;
+  margin: 0;
+  padding: 0.4rem 0;
+  overflow: auto;
+  min-height: 0;
+}
+
+.rv-pair .rv-pair-row,
+.rv-pair .rv-pair-commit {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.45rem 1.2rem;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 0;
+  border-left: 3px solid transparent;
+}
+
+.rv-pair .rv-pair-row:hover,
+.rv-pair .rv-pair-commit:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.rv-pair .rv-pair-row:focus-visible,
+.rv-pair .rv-pair-commit:focus-visible {
+  outline: 1px solid var(--muted);
+  outline-offset: -1px;
+}
+
+.rv-pair .rv-pair-commit-from,
+.rv-pair .rv-pair-commit-from:hover:not(:disabled),
+.rv-pair .rv-pair-commit-to,
+.rv-pair .rv-pair-commit-to:hover:not(:disabled) {
+  background: var(--raised);
+  border-left-color: var(--text);
+}
+
+/* A commit as `git log` writes it: commit line, author, date, the message indented.
+   The whole block is one button. */
+.rv-pair .rv-pair-commit {
+  flex-direction: column;
+  text-align: left;
+  align-items: stretch;
+  gap: 0;
+  padding: 0.7rem 1.2rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.rv-pair-commit-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+}
+
+.rv-pair-commit .rv-pair-hash {
+  color: color-mix(in srgb, #f0b429 75%, var(--text));
+  font-size: inherit;
+}
+
+.rv-pair-role {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--bg);
+  background: var(--text);
+  border-radius: 3px;
+  padding: 0 0.4rem;
+}
+
+.rv-pair-meta {
+  white-space: pre;
+  color: var(--text);
+}
+
+.rv-pair-commit-message {
+  margin-top: 0.85em;
+  padding-left: 4ch;
+  text-align: left;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rv-pair-picked {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.6rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.rv-pair-slot {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 14rem;
+  max-width: 34rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rv-pair-slot-empty {
+  color: var(--muted);
+}
+
+.rv-pair-slot-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.rv-pair-arrow {
+  color: var(--muted);
+}
+
+.rv-pair .rv-pair-primary:not(:disabled) {
+  border-color: var(--muted);
+  background: var(--raised);
+}
+
+.rv-pair-more {
+  margin: 0.5rem 1.2rem 1rem;
+  align-self: flex-start;
+}
+
+/* The review itself. */
+
+.rv-pair-review {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.rv-pair-review-head {
+  justify-content: space-between;
+}
+
+.rv-pair-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.rv-pair-requirement {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.rv-pair-walks {
+  padding: 0.5rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.rv-pair-walks ul {
+  list-style: none;
+  margin: 0 0 0.3rem;
+  padding: 0;
+}
+
+.rv-pair-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.rv-pair-body-file {
+  display: grid;
+  grid-template-columns: minmax(11rem, 15rem) 1fr;
+  overflow: hidden;
+}
+
+.rv-pair-files {
+  padding: 0.8rem 1.2rem 2rem;
+}
+
+.rv-pair-files h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.rv-pair-summary {
+  margin-left: auto;
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.rv-pair-files table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.rv-pair-files th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.rv-pair-files td {
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.rv-pair-files tbody tr:hover {
+  background: var(--panel);
+}
+
+.rv-pair-col-status {
+  width: 7rem;
+}
+
+.rv-pair-col-num {
+  width: 7rem;
+  text-align: right;
+  white-space: nowrap;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.85em;
+}
+
+.rv-pair-col-progress {
+  width: 9rem;
+  text-align: right;
+}
+
+.rv-pair .rv-pair-file {
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.88em;
+}
+
+.rv-pair .rv-pair-file:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+
+.rv-pair-add {
+  color: var(--ok);
+}
+
+.rv-pair-del {
+  color: var(--no);
+}
+
+.rv-pair-status {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.rv-pair-status-added {
+  color: var(--ok);
+}
+
+.rv-pair-status-deleted {
+  color: var(--no);
+}
+
+.rv-pair-status-renamed,
+.rv-pair-status-copied {
+  color: var(--unknown);
+}
+
+.rv-pair-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.rv-pair-done input {
+  margin: 0;
+  accent-color: var(--rv-mark-manual);
+  pointer-events: none;
+}
+
+.rv-pair-done-exempted input {
+  accent-color: var(--muted);
+}
+
+.rv-pair-done-how {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.78rem;
+}
+
+.rv-pair-sidebar {
+  border-right: 1px solid var(--line);
+  overflow: auto;
+  padding: 0.5rem 0;
+}
+
+.rv-pair-sidebar ul {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+}
+
+.rv-pair .rv-pair-side-file {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.25rem 0.8rem;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.rv-pair .rv-pair-side-file-on,
+.rv-pair .rv-pair-side-file-on:hover:not(:disabled) {
+  background: var(--raised);
+}
+
+.rv-pair-side-file .rv-pair-progress {
+  flex: 0 0 2.6rem;
+  font-size: 0.78rem;
+}
+
+.rv-pair-side-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rv-pair-file-view {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.rv-pair-file-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.rv-pair-file-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  min-width: 0;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.88rem;
+}
+
+.rv-pair-file-tools {
+  display: flex;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+
+.rv-pair-toggle {
+  display: inline-flex;
+}
+
+.rv-pair .rv-pair-toggle button {
+  border-radius: 0;
+}
+
+.rv-pair .rv-pair-toggle button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.rv-pair .rv-pair-toggle button:last-child {
+  border-radius: 0 4px 4px 0;
+  border-left: none;
+}
+
+.rv-pair .rv-pair-toggle button[aria-pressed="true"] {
+  background: var(--raised);
+}
+
+.rv-pair-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 1rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+  min-height: 2.3rem;
+}
+
+.rv-pair-actions > span {
+  margin-right: auto;
+}
+
+.rv-pair-diff {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+}
+
+.rv-pair-nodiff {
+  margin: 2rem 1.2rem;
+  color: var(--muted);
+}
+
+.rv-pair-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.rv-pair-table td {
+  padding: 0 0.4rem;
+  vertical-align: top;
+}
+
+/* The strip: a narrow cell beside the numbers. Adjacent cells of one status join
+   into one band, because the rows have no gap between them. */
+.rv-pair-table td.rv-pair-strip {
+  width: 8px;
+  padding: 0;
+  border-left: 2px solid transparent;
+}
+
+.rv-pair-table td.rv-pair-strip[role="button"] {
+  cursor: pointer;
+  background: color-mix(in srgb, var(--line) 55%, transparent);
+  background-clip: content-box;
+}
+
+.rv-pair-table td.rv-pair-strip-manual[role="button"] {
+  background: var(--rv-mark-manual);
+  background-clip: content-box;
+}
+
+.rv-pair-table td.rv-pair-strip-agent[role="button"] {
+  background: var(--rv-mark-agent);
+  background-clip: content-box;
+}
+
+.rv-pair-table td.rv-pair-strip-exempt[role="button"] {
+  background: repeating-linear-gradient(to bottom, var(--rv-mark-exempt) 0 3px, transparent 3px 6px);
+  background-clip: content-box;
+}
+
+.rv-pair-table td.rv-pair-strip:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+}
+
+.rv-pair-table td.rv-pair-strip-selected {
+  border-left-color: var(--text);
+}
+
+.rv-pair-table td.rv-pair-num {
+  width: 3.4rem;
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+
+.rv-pair-num-pick {
+  cursor: pointer;
+}
+
+.rv-pair-num-pick:hover {
+  color: var(--text);
+}
+
+.rv-pair-code {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.rv-pair-table-split .rv-pair-code {
+  border-right: 1px solid var(--line);
+}
+
+.rv-pair-old {
+  background: var(--rv-old-faint);
+}
+
+.rv-pair-new {
+  background: var(--rv-new-faint);
+}
+
+.rv-pair-empty {
+  background: color-mix(in srgb, var(--panel) 60%, var(--bg));
+}
+
+.rv-pair-selected {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 45%, transparent);
+}
+
+.rv-pair-target {
+  box-shadow: inset 3px 0 0 var(--rv-gold);
+}
+
+.rv-pair-sign {
+  display: inline-block;
+  width: 1.1em;
+  color: var(--muted);
+  user-select: none;
+}
+
+.rv-pair-gap td {
+  padding: 0;
+  background: var(--panel);
+}
+
+.rv-pair .rv-pair-gap button {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  text-align: left;
+  padding: 0.1rem 1rem;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.8rem;
+}
+
+.rv-pair .rv-pair-gap button:hover {
+  color: var(--text);
+}

@@ -62,6 +62,7 @@ import type {
   ReviewWindowCheckRequest,
   EditorWindowCheckAnswer,
   EditorWindowCheckRequest,
+  PairWindowCheckRequest,
   UiAgentEvent,
   WorkspaceReport,
 } from '../shared/bridge';
@@ -124,6 +125,7 @@ const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
 const OPEN_EXAMPLE_REVIEW: BridgeChannel = 'dspatch:open-example-review';
 const CHECK_REVIEW_WINDOWS: BridgeChannel = 'dspatch:check-review-windows';
 const CHECK_EDITOR_WINDOW: BridgeChannel = 'dspatch:check-editor-window';
+const CHECK_PAIR_WINDOWS: BridgeChannel = 'dspatch:check-pair-windows';
 const START_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:start-editor-loop-run';
 const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
 const LOOP_RUN_EVENT: BridgeChannel = 'dspatch:loop-run-event';
@@ -297,6 +299,8 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(CHECK_REVIEW_WINDOWS, request) as Promise<ReviewWindowCheckAnswer>,
   editorWindowCheck: (request: EditorWindowCheckRequest) =>
     ipcRenderer.invoke(CHECK_EDITOR_WINDOW, request) as Promise<EditorWindowCheckAnswer>,
+  pairWindowCheck: (request: PairWindowCheckRequest) =>
+    ipcRenderer.invoke(CHECK_PAIR_WINDOWS, request) as Promise<EditorWindowCheckAnswer>,
   onLoopRunEvent: (listener: (event: LoopRunEvent) => void) => {
     const handler = (_event: unknown, payload: LoopRunEvent): void => {
       listener(payload);

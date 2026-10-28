@@ -40,6 +40,7 @@ import type {
   ReviewWindowCheckRequest,
   EditorWindowCheckAnswer,
   EditorWindowCheckRequest,
+  PairWindowCheckRequest,
   SampleProjectsView,
   ScriptedRunPlan,
   ScriptedRunReport,
@@ -134,6 +135,7 @@ const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
 const OPEN_EXAMPLE_REVIEW: BridgeChannel = 'dspatch:open-example-review';
 const CHECK_REVIEW_WINDOWS: BridgeChannel = 'dspatch:check-review-windows';
 const CHECK_EDITOR_WINDOW: BridgeChannel = 'dspatch:check-editor-window';
+const CHECK_PAIR_WINDOWS: BridgeChannel = 'dspatch:check-pair-windows';
 const START_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:start-editor-loop-run';
 const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
 const CURRENT_LOOP_RUN: BridgeChannel = 'dspatch:current-loop-run';
@@ -516,6 +518,15 @@ function deliverHostEvent(to: HostEventTarget, channel: string, payload: unknown
         } catch {
           // A window that went away between the check and the send is not an error
           // worth stopping anything for. The others still get the event.
+        }
+      }
+      return;
+    case 'review-pair':
+      // DSP-150: a pair's record changed. Every review window over that pair reads it
+      // again — the diff window and each walk over the same revisions.
+      for (const entry of reviewWindows?.windowsOverPair(to.key) ?? []) {
+        if (!entry.contents.isDestroyed()) {
+          entry.contents.send(channel, payload);
         }
       }
       return;
@@ -2543,6 +2554,100 @@ function startPanelTrial(): void {
 /* DSP-126: the review windows, read and driven for the scripted scenarios     */
 /* ------------------------------------------------------------------------- */
 
+/** The review windows for the `pair-review` scenario: listed, read, clicked, closed. */
+async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorWindowCheckAnswer> {
+  const windows = requireReviewWindows();
+  if (request.action === 'windows') {
+    return {
+      ok: true,
+      detail: windows.list().map((entry) => ({
+        id: entry.contents.id,
+        view: entry.view,
+        pairKey: entry.pairKey,
+        title: entry.window.getTitle(),
+        focused: entry.window.isFocused(),
+      })),
+    };
+  }
+  const entry = windows.list().find((candidate) => candidate.contents.id === request.id);
+  if (entry === undefined || entry.contents.isDestroyed()) {
+    return { ok: false, detail: `no review window ${String(request.id)}` };
+  }
+  if (request.action === 'close') {
+    const closed = new Promise<void>((resolve) => {
+      entry.window.once('closed', () => {
+        resolve();
+      });
+    });
+    entry.window.close();
+    await closed;
+    return { ok: true, detail: 'closed' };
+  }
+  if (request.action === 'focus') {
+    entry.window.show();
+    entry.window.focus();
+    return { ok: true, detail: 'focused' };
+  }
+  if (request.action === 'capture') {
+    const image = await entry.contents.capturePage();
+    const shot = process.env['DSPATCH_CHAT_SHOT'];
+    if (shot === undefined || shot === '') {
+      return { ok: false, detail: 'no DSPATCH_CHAT_SHOT' };
+    }
+    const file = shot.replace(/[.]png$/i, `-${request.label}.png`);
+    fs.writeFileSync(file, image.toPNG());
+    return { ok: true, detail: file };
+  }
+  const shift = 'shift' in request && request.shift === true ? 'true' : 'false';
+  const selector = 'selector' in request ? JSON.stringify(request.selector) : 'null';
+  let script: string;
+  if (request.action === 'read') {
+    script = READ_PAIR_WINDOW;
+  } else if (request.action === 'go-to-step') {
+    script = `(() => window.__dspatchReviewCheck ? window.__dspatchReviewCheck.goToStep(${JSON.stringify(request.stepId)}) : false)()`;
+  } else if (request.action === 'select') {
+    script = `(() => {
+      const element = document.querySelector(${selector});
+      if (!(element instanceof HTMLSelectElement)) { return false; }
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+      setter.call(element, ${JSON.stringify(request.value)});
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`;
+  } else if (request.action === 'key') {
+    script = `(() => {
+      const element = document.querySelector(${selector});
+      if (!(element instanceof HTMLElement)) { return false; }
+      element.focus();
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(request.key)}, shiftKey: ${shift}, bubbles: true }));
+      return document.activeElement === element;
+    })()`;
+  } else {
+    script = `(() => {
+      const element = document.querySelector(${selector});
+      if (!(element instanceof HTMLElement)) { return false; }
+      if (element instanceof HTMLButtonElement && element.disabled) { return 'disabled'; }
+      element.scrollIntoView({ block: 'center' });
+      element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, detail: 1, shiftKey: ${shift} }));
+      return true;
+    })()`;
+  }
+  try {
+    return { ok: true, detail: (await entry.contents.executeJavaScript(script)) as unknown };
+  } catch (error) {
+    return { ok: false, detail: String(error) };
+  }
+}
+
+/** A review window as the `pair-review` scenario reads it: the pair view, the walk, the text. */
+const READ_PAIR_WINDOW = String.raw`(() => ({
+          pair: window.__dspatchPairCheck ? window.__dspatchPairCheck.read() : null,
+          walk: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read() : null,
+          decisions: [...document.querySelectorAll('.rv-decision')].map((node) => (node.textContent || '').replace(/\s+/g, ' ').trim()),
+          showInDiff: document.querySelector('[data-ev="walk-show-in-diff"]') !== null,
+          text: (document.body.textContent || '').replace(/\s+/g, ' ').slice(0, 4000),
+        }))()`;
+
 /** Read the loop editor's window through its check hook, or close it like its X does. */
 async function editorWindowCheck(request: EditorWindowCheckRequest): Promise<EditorWindowCheckAnswer> {
   const window = editorWindow;
@@ -2558,6 +2663,21 @@ async function editorWindowCheck(request: EditorWindowCheckRequest): Promise<Edi
     window.close();
     await closed;
     return { ok: true, detail: 'closed' };
+  }
+  if (request.action === 'click') {
+    try {
+      const clicked = (await window.webContents.executeJavaScript(
+        `(() => {
+          const element = document.querySelector(${JSON.stringify(request.selector)});
+          if (!(element instanceof HTMLElement)) { return false; }
+          element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, detail: 1 }));
+          return true;
+        })()`,
+      )) as unknown;
+      return { ok: clicked === true, detail: clicked };
+    } catch (error) {
+      return { ok: false, detail: String(error) };
+    }
   }
   try {
     const detail = (await window.webContents.executeJavaScript(
@@ -3115,7 +3235,7 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
-      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement'
+      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review'
         ? {
             flowPhase: ((): 'first' | 'again' | 'retry' | 'switch' => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
@@ -3164,6 +3284,11 @@ function registerIpc(): void {
     );
     // The loop editor's own window is another renderer too. Read through the hook the
     // editor already installs; closed the way its X closes it. Nothing here touches a run.
+    // DSP-150: the review windows over a revision pair, read and operated element by element.
+    ipcMain.handle(
+      CHECK_PAIR_WINDOWS,
+      (_event, request: PairWindowCheckRequest): Promise<EditorWindowCheckAnswer> => pairWindowCheck(request),
+    );
     ipcMain.handle(
       CHECK_EDITOR_WINDOW,
       (_event, request: EditorWindowCheckRequest): Promise<EditorWindowCheckAnswer> =>
@@ -3453,12 +3578,12 @@ function registerLoopGraphIpc(): void {
       'review.openContext',
       NO_SENDER,
     );
-    return requireReviewWindows().open({
-      repository: context.repository,
-      definitionPath: null,
-      // DSP-132: the main window's agent is the default for a new review discussion.
-      defaultProvider: context.defaultProvider,
-    });
+    // DSP-150: review starts by choosing a repository and two commits, in a diff
+    // window of its own. Walk definitions are opened from there, over the same pair.
+    // DSP-132: the main window's agent is the default for a new review discussion.
+    return requireReviewWindows().openDiff(
+      context.defaultProvider === 'cursor' || context.defaultProvider === 'claude' ? context.defaultProvider : null,
+    );
   });
   ipcMain.handle(OPEN_EXAMPLE_REVIEW, (): Promise<LoopEditorWindowOutcome> => openExampleReview());
 
@@ -3686,16 +3811,18 @@ function main(): void {
     reviewWindows = new ReviewWindows({
       host: reviewHost,
       preloadPath: path.join(__dirname, '..', 'preload', 'review-preload.js'),
-      load: (window) => {
-        // `window=review` makes the renderer mount review alone (`renderer/main.tsx`).
+      load: (window, view) => {
+        // `window=review` makes the renderer mount review alone (`renderer/main.tsx`);
+        // `view=diff` (DSP-150) mounts the diff review of a chosen revision pair.
+        const search = view === 'diff' ? 'window=review&view=diff' : 'window=review';
         if (rendererUrl === undefined) {
           void window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), {
             hash: 'review',
-            search: 'window=review',
+            search,
           });
         } else {
           const base = rendererUrl.split('#')[0] ?? rendererUrl;
-          void window.loadURL(`${base}${base.includes('?') ? '&' : '?'}window=review#review`);
+          void window.loadURL(`${base}${base.includes('?') ? '&' : '?'}${search}#review`);
         }
       },
       development: !app.isPackaged,
@@ -3705,7 +3832,9 @@ function main(): void {
         log(`[review] ${message}`);
       },
     });
-    registerReviewIpc(reviewWindows, reviewHost, reviewDiscussionClient);
+    registerReviewIpc(reviewWindows, reviewHost, reviewDiscussionClient, {
+      call: (method, ...args) => host.call<unknown>(method, NO_SENDER, ...args),
+    });
     registerIpc();
     if (reviewAskedAtStart && !directReviewMode) {
       log(

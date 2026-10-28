@@ -807,6 +807,8 @@ export async function runScriptedWorkflow(
       return runSteeringPlacementScenario(plan);
     case 'editor-joins-run':
       return runEditorJoinsRunScenario(plan);
+    case 'pair-review':
+      return runPairReviewScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -9439,35 +9441,33 @@ async function runReviewWindowScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     expect(CHAT_EXIT.reviewBoundaryWrong, (window as { dspatchReview?: unknown }).dspatchReview === undefined, 'the chat window has a review bridge (window.dspatchReview)');
     expect(CHAT_EXIT.reviewWindowWrong, mainBefore.reviewWindows.length === 0, 'a review window existed before Open review was pressed');
 
-    // --- (b) no earlier review: the chooser, naming P1, nothing opened -----------------
-    const firstNote = await pressOpenReview('first, no earlier review');
-    const opened = await readUntil('one review window settled', (reading) => reading.reviewWindows.length === 1 && reading.reviewWindows.every(settled));
-    const chooser = opened.reviewWindows[0];
-    expect(CHAT_EXIT.reviewWindowWrong, firstNote === null, `the first Open review drew a note: ${String(firstNote)}`);
-    expect(CHAT_EXIT.reviewWindowWrong, chooser?.view?.kind === 'chooser', `with no earlier review the window is not the chooser: ${String(chooser?.view?.kind)}`);
-    expect(CHAT_EXIT.reviewWindowWrong, (chooser?.view?.emptyText ?? '').includes(projectOne), `the chooser does not name P1: "${chooser?.view?.emptyText ?? ''}"`);
-    expect(CHAT_EXIT.reviewWindowWrong, chooser?.identity === null && chooser.view?.base === null, 'the chooser has a review identity before anything was chosen');
+    // --- (b) Open review: a diff window over P1's one repository, nothing opened ---------
+    // DSP-150: review starts by choosing a revision pair; a walk opens from there.
+    const first = await openDiffFromChat();
+    const firstLog = await untilPair(first.id, 'P1\'s log', (reading) => reading.pair?.phase === 'log');
+    record('pressed Open review: first', { note: first.note, heading: firstLog.pair?.heading ?? null });
+    expect(CHAT_EXIT.reviewWindowWrong, first.note === null, `the first Open review drew a note: ${String(first.note)}`);
+    expect(CHAT_EXIT.reviewWindowWrong, (await read('with the diff window open')).reviewWindows.length === 0, 'a walk opened before anything was chosen');
+
+    // --- (a) asked again while it is choosing: the same window, brought to the front -----
+    const secondNote = await pressOpenReview('second, same project');
+    const diffRows = (await pairWindows()).filter((row) => row.view === 'diff');
+    expect(CHAT_EXIT.reviewWindowWrong, diffRows.length === 1, `a second press made ${String(diffRows.length)} diff windows`);
+    expect(CHAT_EXIT.reviewWindowWrong, (secondNote ?? '').includes('brought to the front'), `the repeated press did not say it focused the window: ${String(secondNote)}`);
+
+    // --- Choose the pair, then the walk file, in the review windows ----------------------
+    await choosePairInDiff(first.id);
+    await openWalkFromDiff(first.id, false);
+    const chosen = await readUntil('the chosen review open', (reading) => reading.reviewWindows.length === 1 && reading.reviewWindows[0]?.view?.kind === 'opened');
+    const shown = chosen.reviewWindows[0];
+    const reviewId = shown?.webContentsId ?? -1;
 
     // --- (g) the boundary, from both sides ------------------------------------------
-    expect(CHAT_EXIT.reviewBoundaryWrong, chooser?.view?.hasChatBridge === false, 'the review window has the chat bridge (window.dspatch)');
-    expect(CHAT_EXIT.reviewBoundaryWrong, chooser?.view?.hasReviewBridge === true, 'the review window has no review bridge');
+    expect(CHAT_EXIT.reviewBoundaryWrong, shown?.view?.hasChatBridge === false, 'the review window has the chat bridge (window.dspatch)');
+    expect(CHAT_EXIT.reviewBoundaryWrong, shown?.view?.hasReviewBridge === true, 'the review window has no review bridge');
     const refusal = await window.dspatch.reviewWindowCheck({ action: 'refuse-chat-sender' });
     record('review IPC asked with the chat window as sender', { answer: refusal.detail });
     expect(CHAT_EXIT.reviewBoundaryWrong, refusal.ok, `the review IPC guard did not refuse the chat window: ${JSON.stringify(refusal.detail)}`);
-
-    // --- (a) asked again: the same window, brought to the front once -----------------
-    const secondNote = await pressOpenReview('second, same project');
-    const again = await read('after the second press');
-    expect(CHAT_EXIT.reviewWindowWrong, again.reviewWindows.length === 1, `a second press made ${String(again.reviewWindows.length)} review windows`);
-    expect(CHAT_EXIT.reviewWindowWrong, again.reviewWindows[0]?.focusCount === 1, `the focus count after one repeated press is ${String(again.reviewWindows[0]?.focusCount)}`);
-    expect(CHAT_EXIT.reviewWindowWrong, (secondNote ?? '').includes('brought to the front'), `the repeated press did not say it focused the window: ${String(secondNote)}`);
-
-    // --- Choose the definition in the review window ----------------------------------
-    const reviewId = chooser?.webContentsId ?? -1;
-    const chose = await window.dspatch.reviewWindowCheck({ action: 'choose', webContentsId: reviewId });
-    record('pressed the review window\'s own chooser button', { answer: chose.detail });
-    const chosen = await readUntil('the chosen review open', (reading) => reading.reviewWindows[0]?.view?.kind === 'opened');
-    const shown = chosen.reviewWindows[0];
     const label = shown?.identityLabel ?? '';
     expect(CHAT_EXIT.reviewWindowWrong, /^repo · [0-9a-f]{7}→[0-9a-f]{7}$/.test(shown?.view?.identity ?? ''), `the header identity reads "${shown?.view?.identity ?? ''}"`);
     expect(CHAT_EXIT.reviewWindowWrong, shown?.view?.identity === label && label !== '', 'the header identity differs from the main process\'s');
@@ -9509,7 +9509,11 @@ async function runReviewWindowScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     const chatAfterClose = chatState();
     record('chat after review closed', chatAfterClose);
 
-    const reopenNote = await pressOpenReview('reopen, last review known');
+    // DSP-150: reopened the decided way - the log offers the last pair, Code walks lists the walk.
+    const reopenDiff = await openDiffFromChat();
+    const reopenNote = reopenDiff.note;
+    await choosePairInDiff(reopenDiff.id);
+    await openWalkFromDiff(reopenDiff.id, true);
     const reopened = await readUntil('the last review reopened', (reading) => reading.reviewWindows.length === 1 && reading.reviewWindows.every(settled));
     const back = reopened.reviewWindows[0];
     expect(CHAT_EXIT.reviewWindowWrong, reopenNote === null, `reopening drew a note: ${String(reopenNote)}`);
@@ -9540,25 +9544,26 @@ async function runReviewWindowScenario(plan: ScriptedRunPlan): Promise<ScriptedR
       `the P1 review window changed identity after the switch: ${JSON.stringify(kept?.view)}`,
     );
     expect(CHAT_EXIT.reviewIdentityLost, samePath(switched.chat.workspacePath, projectTwo), 'the chat did not move to P2');
-    const fromTwo = await pressOpenReview('from P2');
-    const two = await readUntil('a second review window', (reading) => reading.reviewWindows.length === 2 && reading.reviewWindows.every(settled));
-    const other = two.reviewWindows.find((entry) => entry.webContentsId !== back?.webContentsId);
+    const fromTwoDiff = await openDiffFromChat();
+    const fromTwo = fromTwoDiff.note;
+    const twoLog = await untilPair(fromTwoDiff.id, 'P2\'s log', (reading) => reading.pair?.phase === 'log' && reading.text.includes('target commit'));
+    const two = await read('with P2\'s diff window open');
     const stillOne = two.reviewWindows.find((entry) => entry.webContentsId === back?.webContentsId);
     expect(CHAT_EXIT.reviewIdentityLost, fromTwo === null, `Open review from P2 drew a note: ${String(fromTwo)}`);
-    expect(CHAT_EXIT.reviewIdentityLost, other?.view?.kind === 'chooser' && (other.view.emptyText ?? '').includes(projectTwo), `the window opened from P2 is not P2's chooser: ${JSON.stringify(other?.view)}`);
+    expect(CHAT_EXIT.reviewIdentityLost, twoLog.pair?.heading === 'other', `the window opened from P2 is not over P2's repository: ${String(twoLog.pair?.heading)}`);
     expect(
       CHAT_EXIT.reviewIdentityLost,
       JSON.stringify(stillOne?.view) === JSON.stringify(kept?.view) && stillOne?.focusCount === kept?.focusCount,
       'the P1 review window changed when review was opened from P2',
     );
-    if (other !== undefined) {
-      record('P2 chooser picture', (await window.dspatch.reviewWindowCheck({ action: 'capture', webContentsId: other.webContentsId, label: 'review-chooser-p2', width: null })).detail as Record<string, unknown>);
-    }
+    record('P2 diff picture', (await window.dspatch.pairWindowCheck({ action: 'capture', id: fromTwoDiff.id, label: 'review-p2-log' })).detail as Record<string, unknown>);
+    await closeDiffWindows();
 
     // --- Close both the ordinary way; (h) nothing about loops moved --------------------
     for (const entry of two.reviewWindows) {
       await window.dspatch.reviewWindowCheck({ action: 'close', webContentsId: entry.webContentsId });
     }
+    await closeDiffWindows();
     const end = await read('after both review windows closed');
     expect(CHAT_EXIT.reviewWindowWrong, end.reviewWindows.length === 0, 'a review window was left open');
     expect(CHAT_EXIT.reviewTouchedLoops, end.loops.current === null && mainBefore.loops.current === null, 'a loop run was announced during the scenario');
@@ -9804,13 +9809,6 @@ async function runReviewDiscussionScenario(plan: ScriptedRunPlan): Promise<Scrip
       60_000,
     );
   };
-  const pressOpenReview = async (label: string): Promise<string | null> => {
-    await click('open-review');
-    await sleep(800);
-    const note = element('review-window-note') === null ? null : textOf('review-window-note');
-    record(`pressed Open review: ${label}`, { note });
-    return note;
-  };
   /** Type a question into the review composer and press Enter `times` times. */
   const ask = async (id: number, text: string, times = 1): Promise<void> => {
     await operate(id, 'type', { text });
@@ -9845,10 +9843,13 @@ async function runReviewDiscussionScenario(plan: ScriptedRunPlan): Promise<Scrip
     const chatSent0 = chatSent(main0);
     expect(CHAT_EXIT.reviewDiscussionSentWrong, reviewSent(main0) === 0, 'the review adapters were sent something before review opened');
 
-    expect(CHAT_EXIT.reviewWindowWrong, (await pressOpenReview('first')) === null, 'the first Open review drew a note');
-    const chooser = (await readUntil('the chooser', (reading) => reading.reviewWindows.length === 1 && reading.reviewWindows.every(settled))).reviewWindows[0];
+    // DSP-150: Open review opens a diff window; the walk opens from its Code walks.
+    const firstDiff = await openDiffFromChat();
+    expect(CHAT_EXIT.reviewWindowWrong, firstDiff.note === null, 'the first Open review drew a note');
+    await choosePairInDiff(firstDiff.id);
+    await openWalkFromDiff(firstDiff.id, false);
+    const chooser = (await readUntil('the walk window', (reading) => reading.reviewWindows.length === 1 && reading.reviewWindows.every(settled))).reviewWindows[0];
     const id = chooser?.webContentsId ?? -1;
-    await window.dspatch.reviewWindowCheck({ action: 'choose', webContentsId: id });
     const opened = await readUntil('the review open', (reading) => windowOf(reading, id)?.view?.kind === 'opened');
     const stepIds = windowOf(opened, id)?.view?.stepIds ?? [];
     const [stepA, stepB] = stepIds;
@@ -9856,12 +9857,14 @@ async function runReviewDiscussionScenario(plan: ScriptedRunPlan): Promise<Scrip
       throw new Error(`the walk needs two steps: ${JSON.stringify(stepIds)}`);
     }
 
-    // --- DSP-126 S1: Open review while the opened review is open focuses it --------------
-    const again = await pressOpenReview('again, with the opened review open');
-    const focusedReading = await read('after Open review on the opened review');
-    expect(CHAT_EXIT.reviewWindowWrong, focusedReading.reviewWindows.length === 1, `Open review on the opened review made ${String(focusedReading.reviewWindows.length)} windows`);
+    // --- DSP-126 S1: one window per walk. Opening the same walk again focuses it ------------
+    // DSP-150: walks are opened from the diff review's Code walks, over the same pair.
+    const againDiff = await openDiffFromChat();
+    await choosePairInDiff(againDiff.id);
+    await openWalkFromDiff(againDiff.id, true);
+    const focusedReading = await read('after opening the same walk again');
+    expect(CHAT_EXIT.reviewWindowWrong, focusedReading.reviewWindows.length === 1, `opening the same walk again made ${String(focusedReading.reviewWindows.length)} windows`);
     expect(CHAT_EXIT.reviewWindowWrong, windowOf(focusedReading, id)?.focusCount === 1, `the opened review's focus count is ${String(windowOf(focusedReading, id)?.focusCount)}, not 1`);
-    expect(CHAT_EXIT.reviewWindowWrong, (again ?? '').includes('brought to the front'), `the repeated press did not say it focused the window: ${String(again)}`);
 
     // --- Nothing is sent on open or navigation ----------------------------------------------
     await operate(id, 'tab', { tab: 'discussion' });
@@ -9994,7 +9997,10 @@ async function runReviewDiscussionScenario(plan: ScriptedRunPlan): Promise<Scrip
     await sleep(900);
     const sentBeforeClose = reviewSent(await read('before the close'));
     await window.dspatch.reviewWindowCheck({ action: 'close', webContentsId: id });
-    expect(CHAT_EXIT.reviewWindowWrong, (await pressOpenReview('reopen')) === null, 'reopening drew a note');
+    const reopenDiff = await openDiffFromChat();
+    expect(CHAT_EXIT.reviewWindowWrong, reopenDiff.note === null, 'reopening drew a note');
+    await choosePairInDiff(reopenDiff.id);
+    await openWalkFromDiff(reopenDiff.id, true);
     const reopened = await readUntil('the review reopened', (reading) => reading.reviewWindows.length === 1 && reading.reviewWindows.every((entry) => entry.view?.kind === 'opened') && discussionOf(reading, reading.reviewWindows[0]?.webContentsId ?? -1) !== null);
     const id2 = reopened.reviewWindows[0]?.webContentsId ?? -1;
     await operate(id2, 'tab', { tab: 'discussion' });
@@ -10002,11 +10008,14 @@ async function runReviewDiscussionScenario(plan: ScriptedRunPlan): Promise<Scrip
     expect(CHAT_EXIT.reviewDiscussionSentWrong, reviewSent(back) === sentBeforeClose, 'reopening sent something');
 
     // --- Two review windows keep their own drafts --------------------------------------------
-    await openProject('P2', projectTwo);
-    expect(CHAT_EXIT.reviewWindowWrong, (await pressOpenReview('from P2')) === null, 'Open review from P2 drew a note');
+    // DSP-150: a walk belongs to its repository and revision pair, so the second walk over
+    // P1's pair is opened from P1's diff review; it used to come from P2's chooser.
+    const twoDiff = await openDiffFromChat();
+    expect(CHAT_EXIT.reviewWindowWrong, twoDiff.note === null, 'Open review for the second walk drew a note');
+    await choosePairInDiff(twoDiff.id);
+    await openWalkFromDiff(twoDiff.id, false);
     const two = await readUntil('a second review window', (reading) => reading.reviewWindows.length === 2 && reading.reviewWindows.every(settled));
     const otherId = two.reviewWindows.find((entry) => entry.webContentsId !== id2)?.webContentsId ?? -1;
-    await window.dspatch.reviewWindowCheck({ action: 'choose', webContentsId: otherId });
     await readUntil('the second review open', (reading) => windowOf(reading, otherId)?.view?.kind === 'opened' && discussionOf(reading, otherId) !== null);
     await operate(otherId, 'tab', { tab: 'discussion' });
     const secondDraft = 'A draft in the second review window. mark-i';
@@ -11535,5 +11544,455 @@ async function runEditorJoinsRunScenario(plan: ScriptedRunPlan): Promise<Scripte
       host: await hostRunReading().catch(() => null),
     };
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-150: review a chosen revision pair, its diff and a walk beside it      */
+/* ------------------------------------------------------------------------- */
+
+interface PairWindowRow {
+  readonly id: number;
+  readonly view: 'walk' | 'diff';
+  readonly pairKey: string | null;
+  readonly title: string;
+  readonly focused: boolean;
+}
+
+interface PairFileReading {
+  readonly key: string;
+  readonly path: string;
+  readonly status: string;
+  readonly binary: boolean;
+  readonly total: number;
+  readonly handled: number;
+  readonly manual: number;
+  readonly exempted: number;
+  readonly percent: number;
+  readonly done: boolean;
+  readonly shown: string;
+  readonly checkbox: boolean;
+}
+
+interface PairReading {
+  readonly phase: string;
+  readonly repositories?: readonly string[];
+  readonly heading?: string;
+  readonly key?: string;
+  readonly fileKey?: string | null;
+  readonly layout?: string;
+  readonly files?: readonly PairFileReading[];
+  readonly strips?: readonly { side: string; line: number; status: string; label: string }[];
+  readonly diffNote?: string;
+  readonly walksNote?: string;
+  readonly targetShown?: boolean;
+}
+
+interface PairWindowReading {
+  readonly pair: PairReading | null;
+  readonly walk: { readonly kind: string; readonly position: { readonly stepId: string | null } | null } | null;
+  readonly decisions: readonly string[];
+  readonly showInDiff: boolean;
+  readonly text: string;
+}
+
+async function pairWindows(): Promise<readonly PairWindowRow[]> {
+  const answer = await window.dspatch.pairWindowCheck({ action: 'windows' });
+  return answer.ok ? (answer.detail as PairWindowRow[]) : [];
+}
+
+async function readPairWindow(id: number): Promise<PairWindowReading | null> {
+  const answer = await window.dspatch.pairWindowCheck({ action: 'read', id });
+  return answer.ok ? (answer.detail as PairWindowReading) : null;
+}
+
+async function inPairWindow(id: number, selector: string, shift = false): Promise<void> {
+  const answer = await window.dspatch.pairWindowCheck({ action: 'click', id, selector, shift });
+  if (!answer.ok || answer.detail !== true) {
+    throw new Error(`could not click ${selector} in review window ${String(id)}: ${JSON.stringify(answer.detail)}`);
+  }
+  await sleep(150);
+}
+
+/** Poll a review window until `done` holds, and give back the last reading. */
+async function untilPair(id: number, what: string, done: (reading: PairWindowReading) => boolean, timeoutMs = 20_000): Promise<PairWindowReading> {
+  const until = performance.now() + timeoutMs;
+  let last: PairWindowReading | null = null;
+  while (performance.now() < until) {
+    last = await readPairWindow(id);
+    if (last !== null && done(last)) {
+      return last;
+    }
+    await sleep(120);
+  }
+  throw new Error(`timed out waiting for ${what}; last reading: ${JSON.stringify(last?.pair ?? last?.text ?? null).slice(0, 600)}`);
+}
+
+async function untilWindow(what: string, find: (rows: readonly PairWindowRow[]) => PairWindowRow | undefined, timeoutMs = 20_000): Promise<PairWindowRow> {
+  const until = performance.now() + timeoutMs;
+  while (performance.now() < until) {
+    const found = find(await pairWindows());
+    if (found !== undefined) {
+      return found;
+    }
+    await sleep(150);
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+function fileReading(reading: PairWindowReading, path: string): PairFileReading | undefined {
+  return reading.pair?.files?.find((file) => file.path === path);
+}
+
+function stripOf(reading: PairWindowReading, side: string, line: number): { status: string; label: string } | undefined {
+  return reading.pair?.strips?.find((strip) => strip.side === side && strip.line === line);
+}
+
+function stripSelector(side: string, line: number): string {
+  return `.rv-pair-diff [data-strip][data-side="${side}"][data-line="${String(line)}"]`;
+}
+
+/**
+ * DSP-150, in the real windows: a workspace with two Git repositories and a folder
+ * without Git, the review opened from the chat with a real click, a repository and a
+ * revision pair chosen in the log, Files changed, both diff layouts, marks made and
+ * withdrawn, a binary and a deleted file, a walk window beside the diff that shares its
+ * status but not its place, reopening, and (phase `again`) a restart.
+ *
+ * No provider is contacted: review of a diff needs none, and nothing here sends.
+ */
+async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const phase = plan.flowPhase ?? 'first';
+  const observations: Record<string, unknown> = {
+    plan,
+    phase,
+    limits:
+      'No provider call. The chat window is operated through its controls; the review windows are ' +
+      'operated by the client dispatching clicks and keys to their elements and read through their ' +
+      'check hooks. The repository is a local fixture (tests/support/pair-fixture.ts).',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const capture = async (id: number, label: string): Promise<void> => {
+    // A capture taken at once can return the frame before the last change was painted.
+    await sleep(500);
+    await window.dspatch.pairWindowCheck({ action: 'capture', id, label });
+  };
+
+  try {
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await waitFor('a project to be offered in the window', () => element('project-0-path') !== null, 60_000);
+    await click('open-project-0');
+    await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
+
+    // --- Open review from the chat ---------------------------------------------------
+    await click('open-review');
+    const diff = await untilWindow('a diff review window', (rows) => rows.find((row) => row.view === 'diff'));
+    const repos = await untilPair(diff.id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
+    record('repositories', { repositories: repos.pair?.repositories });
+    expect(
+      JSON.stringify(repos.pair?.repositories) === JSON.stringify(['app', 'lib']),
+      `the repository list is not app and lib, once each: ${JSON.stringify(repos.pair?.repositories)}`,
+    );
+
+    if (phase === 'again') {
+      // --- The loop editor is a way in too ----------------------------------------------
+      await window.dspatch.pairWindowCheck({ action: 'close', id: diff.id });
+      await click('edit-agent-loops');
+      const pressed = await (async () => {
+        const until = performance.now() + 30_000;
+        while (performance.now() < until) {
+          const answer = await window.dspatch.editorWindowCheck({ action: 'click', selector: '[data-ev="editor-open-review"]' });
+          if (answer.ok) {
+            return true;
+          }
+          await sleep(300);
+        }
+        return false;
+      })();
+      expect(pressed, 'the loop editor has no way into review');
+      const fromEditor = await untilWindow('a diff window opened from the loop editor', (rows) => rows.find((row) => row.view === 'diff' && row.id !== diff.id));
+      const editorRepos = await untilPair(fromEditor.id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
+      record('opened from the loop editor', { repositories: editorRepos.pair?.repositories });
+      expect(JSON.stringify(editorRepos.pair?.repositories) === JSON.stringify(['app', 'lib']), 'review from the loop editor does not list the workspace repositories');
+      await window.dspatch.editorWindowCheck({ action: 'close' });
+
+      // --- After a restart: the last pair is offered, and everything is where it was ---
+      const diffAgain = fromEditor;
+      await inPairWindow(diffAgain.id, '[data-ev="pair-repo-0"]');
+      await untilPair(diffAgain.id, 'the log', (reading) => reading.text.includes('Rework the app'));
+      const offered = await readPairWindow(diffAgain.id);
+      expect(
+        (offered?.text ?? '').includes('From') && (offered?.text ?? '').includes('Start the app') && !(offered?.text ?? '').includes('click a commit'),
+        'the last pair is not offered again after the restart',
+      );
+      await inPairWindow(diffAgain.id, '[data-ev="pair-open"]');
+      const back = await untilPair(diffAgain.id, 'the review back', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
+      record('after restart', { fileKey: back.pair?.fileKey, layout: back.pair?.layout, files: back.pair?.files });
+      expect(back.pair?.layout === 'unified', `the layout did not come back: ${String(back.pair?.layout)}`);
+      expect((back.pair?.fileKey ?? '').includes('src/keep.ts'), `the file did not come back: ${String(back.pair?.fileKey)}`);
+      const keep = fileReading(back, 'src/keep.ts');
+      expect(keep?.done === true && keep.checkbox, 'keep.ts is not done after the restart');
+      expect(fileReading(back, 'assets/logo.bin')?.done === true, 'the binary file decision did not survive the restart');
+      expect(stripOf(back, 'target', 8)?.status === 'manual' && stripOf(back, 'base', 3)?.status === 'exempt', 'the strip did not come back as it was');
+
+      // A pair with no walk: the diff review works and says so briefly.
+      await inPairWindow(diffAgain.id, '[data-ev="pair-change-revisions"]');
+      await inPairWindow(diffAgain.id, '[data-ev="pair-back-to-repositories"]');
+      await untilPair(diffAgain.id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
+      await inPairWindow(diffAgain.id, '[data-ev="pair-repo-1"]');
+      await untilPair(diffAgain.id, 'the lib log', (reading) => reading.text.includes('Bump the library'));
+      await inPairWindow(diffAgain.id, '[data-ev="pair-commit-1"]');
+      await inPairWindow(diffAgain.id, '[data-ev="pair-commit-0"]');
+      await inPairWindow(diffAgain.id, '[data-ev="pair-open"]');
+      await untilPair(diffAgain.id, 'the lib review', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) === 1);
+      await inPairWindow(diffAgain.id, '[data-ev="pair-walks"]');
+      const none = await untilPair(diffAgain.id, 'the walk list', (reading) => (reading.pair?.walksNote ?? '') !== '');
+      record('no walks', { note: none.pair?.walksNote, files: none.pair?.files });
+      expect(none.pair?.walksNote === 'No code walks for these revisions.', `the absence of walks is not said: ${String(none.pair?.walksNote)}`);
+      await inPairWindow(diffAgain.id, '[data-ev="pair-file-0"]');
+      const lib = await untilPair(diffAgain.id, 'the lib diff', (reading) => (reading.pair?.strips?.length ?? 0) === 2);
+      expect(fileReading(lib, 'index.ts')?.percent === 0, 'a pair without walks does not review normally');
+      await capture(diffAgain.id, 'no-walks');
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    // --- Choose the repository and the revision pair ---------------------------------
+    await inPairWindow(diff.id, '[data-ev="pair-repo-0"]');
+    await untilPair(diff.id, 'the log', (reading) => reading.text.includes('Rework the app'));
+    await inPairWindow(diff.id, '[data-ev="pair-commit-1"]');
+    let picked = await readPairWindow(diff.id);
+    expect((picked?.text ?? '').includes('click a second commit'), 'the first click did not choose From');
+    await inPairWindow(diff.id, '[data-ev="pair-commit-0"]');
+    picked = await readPairWindow(diff.id);
+    const fromFirst = (picked?.text ?? '').indexOf('Start the app');
+    const toFirst = (picked?.text ?? '').indexOf('Rework the app');
+    expect(fromFirst >= 0 && toFirst > fromFirst, 'From and To are not shown as chosen');
+    await inPairWindow(diff.id, '[data-ev="pair-swap"]');
+    const swapped = await readPairWindow(diff.id);
+    expect((swapped?.text ?? '').includes('From is newer than To'), 'a swap that makes From newer is not pointed out');
+    await inPairWindow(diff.id, '[data-ev="pair-swap"]');
+    await capture(diff.id, 'log');
+    await inPairWindow(diff.id, '[data-ev="pair-open"]');
+
+    // --- Files changed ---------------------------------------------------------------
+    const files = await untilPair(diff.id, 'Files changed', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
+    record('files changed', { files: files.pair?.files });
+    expect(files.pair?.files?.length === 7, `Files changed does not list the seven changes: ${String(files.pair?.files?.length)}`);
+    expect(fileReading(files, 'src/keep.ts')?.shown === '0%', 'keep.ts does not start at 0%');
+    expect(fileReading(files, 'assets/logo.bin')?.shown === '–' && fileReading(files, 'assets/logo.bin')?.done === false, 'a binary file reads as done or counted');
+    expect((files.pair?.files ?? []).every((file) => !file.checkbox), 'a file is done before anything was marked');
+    await capture(diff.id, 'files-changed');
+
+    // --- One file, side by side ------------------------------------------------------
+    const keepIndex = (files.pair?.files ?? []).findIndex((file) => file.path === 'src/keep.ts');
+    await inPairWindow(diff.id, `[data-ev="pair-file-${String(keepIndex)}"]`);
+    let keep = await untilPair(diff.id, 'the keep.ts diff', (reading) => (reading.pair?.strips?.length ?? 0) === 5);
+    expect(keep.pair?.layout === 'split', 'the diff does not start side by side');
+    expect(
+      JSON.stringify((keep.pair?.strips ?? []).map((strip) => `${strip.side}${String(strip.line)}`).sort()) ===
+        JSON.stringify(['base10', 'base3', 'target3', 'target8', 'target9'].sort()),
+      `the strip is not on exactly the changed lines: ${JSON.stringify(keep.pair?.strips)}`,
+    );
+    expect((keep.pair?.strips ?? []).every((strip) => strip.status === 'none' && strip.label.includes('Not yet handled')), 'an unmarked line has a status');
+
+    // Mark two added lines with a click and a Shift-click on the strip.
+    await inPairWindow(diff.id, stripSelector('target', 8));
+    await inPairWindow(diff.id, stripSelector('target', 9), true);
+    await inPairWindow(diff.id, '[data-ev="pair-mark-manual"]');
+    keep = await untilPair(diff.id, 'the mark', (reading) => stripOf(reading, 'target', 9)?.status === 'manual');
+    record('marked 8-9', { strips: keep.pair?.strips, keep: fileReading(keep, 'src/keep.ts') });
+    expect(stripOf(keep, 'target', 8)?.label.includes('Reviewed by you') === true, 'the strip has no status text for a reviewed line');
+    expect(fileReading(keep, 'src/keep.ts')?.percent === 40, `two of five lines is not 40%: ${String(fileReading(keep, 'src/keep.ts')?.percent)}`);
+    await capture(diff.id, 'split-marked');
+
+    // Unified: the same marks on the same lines.
+    await inPairWindow(diff.id, '[data-ev="pair-layout-unified"]');
+    keep = await untilPair(diff.id, 'the unified diff', (reading) => reading.pair?.layout === 'unified' && (reading.pair.strips?.length ?? 0) === 5);
+    expect(stripOf(keep, 'target', 8)?.status === 'manual' && stripOf(keep, 'target', 9)?.status === 'manual', 'the marks are not in the unified diff');
+
+    // Withdraw one by keyboard: focus its strip, Enter selects, then Clear mark.
+    await window.dspatch.pairWindowCheck({ action: 'key', id: diff.id, selector: stripSelector('target', 9), key: 'Enter' });
+    await sleep(150);
+    await inPairWindow(diff.id, '[data-ev="pair-mark-clear"]');
+    keep = await untilPair(diff.id, 'the withdrawal', (reading) => stripOf(reading, 'target', 9)?.status === 'none');
+    expect(fileReading(keep, 'src/keep.ts')?.percent === 20, 'withdrawing did not lower the percentage');
+
+    // Exempt the two deleted lines, review the rest: done, with exemptions visible.
+    for (const [side, line, action] of [
+      ['base', 3, 'pair-mark-exempt'],
+      ['base', 10, 'pair-mark-exempt'],
+      ['target', 3, 'pair-mark-manual'],
+      ['target', 9, 'pair-mark-manual'],
+    ] as const) {
+      await inPairWindow(diff.id, stripSelector(side, line));
+      await inPairWindow(diff.id, `[data-ev="${action}"]`);
+      await untilPair(diff.id, `${side} ${String(line)} marked`, (reading) => stripOf(reading, side, line)?.status !== 'none');
+    }
+    keep = await untilPair(diff.id, 'keep.ts done', (reading) => fileReading(reading, 'src/keep.ts')?.done === true);
+    const keepFile = fileReading(keep, 'src/keep.ts');
+    record('keep.ts done', { keep: keepFile, strips: keep.pair?.strips });
+    expect(keepFile?.manual === 3 && keepFile.exempted === 2, `reviewed and exempted are not kept apart: ${JSON.stringify(keepFile)}`);
+    expect(stripOf(keep, 'base', 3)?.status === 'exempt' && (stripOf(keep, 'base', 3)?.label ?? '').includes('Exempted'), 'an exempted deleted line has no exempt strip');
+    await capture(diff.id, 'unified-done');
+
+    // --- A binary file and a deleted file --------------------------------------------
+    await inPairWindow(diff.id, '[data-ev="pair-files"]');
+    const listed = await untilPair(diff.id, 'Files changed again', (reading) => reading.pair?.fileKey === null);
+    expect(fileReading(listed, 'src/keep.ts')?.checkbox === true, 'Files changed shows no checkbox for a done file');
+    const goneIndex = (listed.pair?.files ?? []).findIndex((file) => file.path === 'docs/gone.md');
+    await inPairWindow(diff.id, `[data-ev="pair-file-${String(goneIndex)}"]`);
+    const gone = await untilPair(diff.id, 'the deleted file', (reading) => (reading.pair?.strips?.length ?? 0) === 3);
+    expect((gone.pair?.strips ?? []).every((strip) => strip.side === 'base'), 'a deleted file shows lines that are not deletions');
+    await inPairWindow(diff.id, '[data-ev="pair-files"]');
+    await untilPair(diff.id, 'Files changed', (reading) => reading.pair?.fileKey === null);
+    const logoIndex = (listed.pair?.files ?? []).findIndex((file) => file.path === 'assets/logo.bin');
+    await inPairWindow(diff.id, `[data-ev="pair-file-${String(logoIndex)}"]`);
+    const logo = await untilPair(diff.id, 'the binary file', (reading) => (reading.pair?.diffNote ?? '') !== '');
+    expect((logo.pair?.diffNote ?? '').startsWith('Binary file'), `a binary file is not explained: ${String(logo.pair?.diffNote)}`);
+    expect(fileReading(logo, 'assets/logo.bin')?.done === false, 'a binary file is done with nothing decided');
+    await inPairWindow(diff.id, '[data-ev="pair-file-manual"]');
+    await untilPair(diff.id, 'the binary decision', (reading) => fileReading(reading, 'assets/logo.bin')?.done === true);
+    const renamedIndex = (listed.pair?.files ?? []).findIndex((file) => file.path === 'src/new-name.ts');
+    await inPairWindow(diff.id, '[data-ev="pair-files"]');
+    await inPairWindow(diff.id, `[data-ev="pair-file-${String(renamedIndex)}"]`);
+    const renamed = await untilPair(diff.id, 'the pure rename', (reading) => (reading.pair?.diffNote ?? '') !== '');
+    expect((renamed.pair?.diffNote ?? '').startsWith('Renamed without changes'), `a pure rename is not explained: ${String(renamed.pair?.diffNote)}`);
+
+    // --- A walk beside the diff ------------------------------------------------------
+    await inPairWindow(diff.id, '[data-ev="pair-walks"]');
+    const noneYet = await untilPair(diff.id, 'the walk list', (reading) => reading.text.includes('Open a walk file'));
+    record('walks before any is opened', { note: noneYet.pair?.walksNote });
+    await inPairWindow(diff.id, '[data-ev="pair-walk-file"]');
+    const walk = await untilWindow('a walk window', (rows) => rows.find((row) => row.view === 'walk'));
+    const walkReading = await untilPair(walk.id, 'the walk to open and join the pair', (reading) => reading.walk?.kind === 'opened' && reading.showInDiff, 30_000);
+    const walkRows = await pairWindows();
+    expect(walkRows.find((row) => row.id === walk.id)?.pairKey === walkRows.find((row) => row.id === diff.id)?.pairKey, 'the walk is not over the same pair as the diff');
+    expect(walkRows.some((row) => row.id === diff.id), 'opening the walk closed the diff');
+
+    // Independent navigation: a step change in the walk does not move the diff.
+    const diffBefore = await readPairWindow(diff.id);
+    await window.dspatch.pairWindowCheck({ action: 'go-to-step', id: walk.id, stepId: 'W1.2' });
+    await sleep(600);
+    const diffAfterStep = await readPairWindow(diff.id);
+    record('walk step changed', { before: diffBefore?.pair?.fileKey, after: diffAfterStep?.pair?.fileKey, walk: walkReading.walk?.position });
+    expect(diffAfterStep?.pair?.fileKey === diffBefore?.pair?.fileKey, 'a step in the walk moved the diff');
+
+    // Shared status: the walk reads the marks made in the diff, without counting them twice.
+    await inPairWindow(walk.id, '.rv-collapsible-head');
+    const walkSees = await untilPair(walk.id, 'the walk to show the diff marks', (reading) => reading.decisions.length > 0);
+    record('walk decisions', { decisions: walkSees.decisions });
+    expect(walkSees.decisions.some((text) => /accepted|godkänd/i.test(text)), `the walk does not see the marks made in the diff: ${JSON.stringify(walkSees.decisions)}`);
+    expect(fileReading((await readPairWindow(diff.id)) as PairWindowReading, 'src/keep.ts')?.manual === 3, 'the walk opening changed the count');
+
+    // `Show in diff`: the explicit way a walk moves the diff.
+    await inPairWindow(walk.id, '[data-ev="walk-show-in-diff"]');
+    const shown = await untilPair(diff.id, 'the diff to show the walk place', (reading) => reading.pair?.targetShown === true);
+    expect((shown.pair?.fileKey ?? '').includes('src/keep.ts'), 'Show in diff did not open the file the walk is at');
+
+    // A mark withdrawn in the walk reaches the diff.
+    await inPairWindow(walk.id, '.rv-decision-actions button');
+    const fromWalk = await untilPair(diff.id, 'the diff to see the walk withdrawal', (reading) => fileReading(reading, 'src/keep.ts')?.done === false);
+    record('withdrawn in the walk', { keep: fileReading(fromWalk, 'src/keep.ts'), strips: fromWalk.pair?.strips });
+    // Mark the lines again in the diff, which the walk then sees.
+    await inPairWindow(diff.id, '[data-ev="pair-file-manual"]');
+    await untilPair(diff.id, 'keep.ts done again', (reading) => fileReading(reading, 'src/keep.ts')?.done === true);
+    await capture(walk.id, 'walk');
+    await capture(diff.id, 'shown-in-diff');
+
+    // --- Close the diff and open it again: the walk keeps going, the diff comes back --
+    await window.dspatch.pairWindowCheck({ action: 'close', id: diff.id });
+    await click('open-review');
+    const reopened = await untilWindow('the diff window again', (rows) => rows.find((row) => row.view === 'diff' && row.id !== diff.id));
+    await untilPair(reopened.id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
+    await inPairWindow(reopened.id, '[data-ev="pair-repo-0"]');
+    await untilPair(reopened.id, 'the log with the last pair', (reading) => reading.text.includes('Rework the app') && !reading.text.includes('click a commit'));
+    await inPairWindow(reopened.id, '[data-ev="pair-open"]');
+    const again = await untilPair(reopened.id, 'the reopened review', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
+    record('reopened', { fileKey: again.pair?.fileKey, layout: again.pair?.layout, keep: fileReading(again, 'src/keep.ts') });
+    expect(again.pair?.layout === 'unified' && (again.pair.fileKey ?? '').includes('src/keep.ts'), 'the reopened diff did not come back where it was');
+    expect(fileReading(again, 'src/keep.ts')?.done === true, 'the marks did not survive reopening the diff');
+    // A late window still hears the other: a withdrawal in the walk reaches the new diff.
+    await inPairWindow(walk.id, '.rv-decision-actions button');
+    await untilPair(reopened.id, 'the reopened diff to hear the walk', (reading) => fileReading(reading, 'src/keep.ts')?.done === false);
+    await inPairWindow(reopened.id, '[data-ev="pair-file-manual"]');
+    await untilPair(reopened.id, 'keep.ts done for the restart', (reading) => fileReading(reading, 'src/keep.ts')?.done === true);
+    const strips = await untilPair(reopened.id, 'the strips for the restart', (reading) => stripOf(reading, 'base', 3)?.status === 'manual');
+    // Leave keep.ts as the restart phase expects it: base 3 exempted again.
+    void strips;
+    await inPairWindow(reopened.id, stripSelector('base', 3));
+    await inPairWindow(reopened.id, '[data-ev="pair-mark-exempt"]');
+    await untilPair(reopened.id, 'base 3 exempted', (reading) => stripOf(reading, 'base', 3)?.status === 'exempt');
+    await sleep(600);
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (caught) {
+    failures.push(caught instanceof Error ? caught.message : String(caught));
+    const rows = await pairWindows().catch(() => []);
+    observations['atFailure'] = {
+      windows: rows,
+      readings: await Promise.all(rows.map((row) => readPairWindow(row.id).catch(() => null))),
+    };
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/**
+ * DSP-150: from the chat to a walk. *Open review* opens a diff window; the scenario
+ * chooses the pair in its log (the only two commits of the review fixture, From the
+ * older) unless the log already offers the last pair, and opens the review.
+ */
+async function openDiffFromChat(): Promise<{ readonly id: number; readonly note: string | null }> {
+  const before = new Set((await pairWindows()).map((row) => row.id));
+  await click('open-review');
+  await sleep(800);
+  const note = element('review-window-note') === null ? null : textOf('review-window-note');
+  const diff = await untilWindow('a new diff window', (rows) => rows.find((row) => row.view === 'diff' && !before.has(row.id)));
+  return { id: diff.id, note };
+}
+
+async function choosePairInDiff(id: number): Promise<PairWindowReading> {
+  const log = await untilPair(id, 'the log', (reading) => reading.pair?.phase === 'log' && reading.text.includes('base commit') && reading.text.includes('target commit'));
+  if (log.text.includes('click a commit')) {
+    await inPairWindow(id, '[data-ev="pair-commit-1"]');
+    await inPairWindow(id, '[data-ev="pair-commit-0"]');
+  }
+  await inPairWindow(id, '[data-ev="pair-open"]');
+  return untilPair(id, 'the diff review', (reading) => reading.pair?.phase === 'review');
+}
+
+/**
+ * Open a walk over the diff window's pair through *Code walks*: the first walk listed
+ * when `listed`, otherwise the walk file the scripted pick names. The diff window is
+ * closed afterwards, so the walk scenarios go on with the windows they had before.
+ */
+async function openWalkFromDiff(id: number, listed: boolean): Promise<void> {
+  await inPairWindow(id, '[data-ev="pair-walks"]');
+  await untilPair(id, 'the walk list', (reading) => reading.text.includes('Open a walk file') && !reading.text.includes('Looking for walks'));
+  await inPairWindow(id, listed ? '[data-ev="pair-walk-0"]' : '[data-ev="pair-walk-file"]');
+  await sleep(500);
+  await window.dspatch.pairWindowCheck({ action: 'close', id });
+  // Closing the diff window hands the focus to whichever window is next; a person would
+  // be looking at the walk they just opened, so it is brought back to the front.
+  const walks = (await pairWindows()).filter((row) => row.view === 'walk');
+  const newest = walks.at(-1);
+  if (newest !== undefined) {
+    await window.dspatch.pairWindowCheck({ action: 'focus', id: newest.id });
+  }
+}
+
+async function closeDiffWindows(): Promise<void> {
+  for (const row of await pairWindows()) {
+    if (row.view === 'diff') {
+      await window.dspatch.pairWindowCheck({ action: 'close', id: row.id });
+    }
   }
 }

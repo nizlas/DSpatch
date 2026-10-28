@@ -152,6 +152,8 @@ import {
 import type { SampleProjectListing } from '../main/sample-projects';
 import { readDirectoryPage, readFileForViewing } from '../main/workspace-tree';
 import { ReviewHost } from './review-host';
+import { ReviewPairs } from './review-pairs';
+import { REVIEW_PAIR_CHANGED } from '../shared/review-pair';
 
 /*
  * The project host (DSP-111): the services that do a project's work, in a process of
@@ -3603,6 +3605,37 @@ let reviewHost: ReviewHost | null = null;
  * never the chat's `presentationResume`.
  */
 let reviewDiscussions: ReviewDiscussions | null = null;
+/** Reviews of a chosen revision pair (DSP-150): the log, the diff and the decisions. */
+let reviewPairs: ReviewPairs | null = null;
+
+function requireReviewPairs(): ReviewPairs {
+  if (reviewPairs === null) {
+    throw new Error('Review is not ready in the host yet.');
+  }
+  return reviewPairs;
+}
+
+/** The walk definitions the host knows of: the bundled example and every one opened before. */
+async function knownWalkDefinitions(also: readonly string[]): Promise<readonly string[]> {
+  const out: string[] = [...also];
+  const example = locateExampleReview(ownRepoRoot);
+  if (example.kind === 'found') {
+    out.push(example.definitionPath);
+  }
+  const recent = await requireReviewHost().recentIndex();
+  const index = 'index' in recent ? recent.index : null;
+  const repositories =
+    typeof index === 'object' && index !== null ? (index as { repositories?: unknown }).repositories : undefined;
+  if (typeof repositories === 'object' && repositories !== null) {
+    for (const entry of Object.values(repositories as Record<string, unknown>)) {
+      const definition = typeof entry === 'object' && entry !== null ? (entry as { definitionPath?: unknown }).definitionPath : undefined;
+      if (typeof definition === 'string') {
+        out.push(definition);
+      }
+    }
+  }
+  return out;
+}
 
 function requireReviewHost(): ReviewHost {
   if (reviewHost === null) {
@@ -3657,6 +3690,34 @@ function registerReviewMethods(): void {
    * the window with it. Outside a clone it names nothing and says why.
    */
   handle('review.exampleDefinition', () => locateExampleReview(ownRepoRoot));
+
+  /*
+   * Review of a chosen revision pair (DSP-150). The repositories are those of the open
+   * session's folders, found here; the windows name a repository only from that list,
+   * and every read is at one of two named commits.
+   */
+  handle('reviewPair.repositories', () => requireReviewPairs().repositories(chatService.sessionFolders()));
+  handle('reviewPair.log', async (_event, repository: unknown, skip: unknown) => {
+    const pairs = requireReviewPairs();
+    const page = await pairs.log(repository, skip);
+    return 'error' in page ? page : { ...page, last: pairs.lastPair(repository) };
+  });
+  handle('reviewPair.open', (_event, request: unknown) => requireReviewPairs().openPair(request));
+  handle('reviewPair.openForWalk', (_event, pair) => requireReviewPairs().openForWalk(pair));
+  handle('reviewPair.readFile', (_event, key: unknown, side: unknown, filePath: unknown) =>
+    requireReviewPairs().readFile(key, side, filePath),
+  );
+  handle('reviewPair.state', (_event, key: unknown) => requireReviewPairs().state(key));
+  handle('reviewPair.mark', (_event, key: unknown, request: unknown) => requireReviewPairs().mark(key, request));
+  handle('reviewPair.setRequirement', (_event, key: unknown, requirement: unknown) =>
+    requireReviewPairs().setRequirement(key, requirement),
+  );
+  handle('reviewPair.savePosition', (_event, key: unknown, position: unknown) =>
+    requireReviewPairs().savePosition(key, position),
+  );
+  handle('reviewPair.walks', async (_event, key: unknown, also: readonly string[]) =>
+    requireReviewPairs().walksFor(key, await knownWalkDefinitions(Array.isArray(also) ? also.filter((entry) => typeof entry === 'string') : [])),
+  );
 
   handle('discussion.load', (_event, target: DiscussionTarget, request: unknown) =>
     discussionOf(target).load(
@@ -4106,6 +4167,12 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
     recordsDir: path.join(userDataDir(), 'reviews'),
     log: (message) => {
       log(`[review host] ${message}`);
+    },
+  });
+  reviewPairs = new ReviewPairs({
+    recordsDir: path.join(userDataDir(), 'reviews', 'pairs'),
+    changed: (key, record) => {
+      emitEvent({ kind: 'review-pair', key }, REVIEW_PAIR_CHANGED, { key, record });
     },
   });
   reviewDiscussions = new ReviewDiscussions({

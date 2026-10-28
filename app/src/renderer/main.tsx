@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
 import { LoopEditor } from './LoopEditor';
+import { PairReview } from './PairReview';
 import { ReviewView } from './ReviewView';
 import './styles.css';
 import './loop-editor.css';
@@ -38,6 +39,9 @@ function chosenView(): 'editor' | 'chat' {
  * window; it is no longer a view the chat window can switch to.
  */
 const isReviewWindow = new URLSearchParams(window.location.search).get('window') === 'review';
+
+/** A review window over a chosen revision pair (DSP-150): the diff review, not a walk. */
+const isDiffReview = isReviewWindow && new URLSearchParams(window.location.search).get('view') === 'diff';
 
 /** The hash the window was opened on, which decides whether it has a chat to keep. */
 const initialView = chosenView();
@@ -94,4 +98,6 @@ function Surfaces(): JSX.Element {
   );
 }
 
-createRoot(host).render(<StrictMode>{isReviewWindow ? <ReviewView /> : <Surfaces />}</StrictMode>);
+createRoot(host).render(
+  <StrictMode>{isDiffReview ? <PairReview /> : isReviewWindow ? <ReviewView /> : <Surfaces />}</StrictMode>,
+);

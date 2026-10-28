@@ -9,6 +9,7 @@ import type {
   RevisionSide,
 } from '../shared/review-model';
 import type { ReviewDiscussionBridge, ReviewDiscussionEvent } from '../shared/review-discussion';
+import type { DiffLocation, PairChangedEvent, ReviewPairBridge } from '../shared/review-pair';
 
 /**
  * The review window's preload, and the only bridge a review window has.
@@ -72,5 +73,48 @@ const discussionBridge: ReviewDiscussionBridge = {
 };
 
 // The renderer has no Node access and no other Electron access.
+// DSP-150: a chosen revision pair. The literals repeat `REVIEW_PAIR_CHANNELS`, which the
+// sandboxed preload cannot import; a test compares the two.
+const pairBridge: ReviewPairBridge = {
+  start: () => ipcRenderer.invoke('dspatch:review-pair-start') as ReturnType<ReviewPairBridge['start']>,
+  repositories: () => ipcRenderer.invoke('dspatch:review-pair-repositories') as ReturnType<ReviewPairBridge['repositories']>,
+  log: (repository, skip) => ipcRenderer.invoke('dspatch:review-pair-log', repository, skip) as ReturnType<ReviewPairBridge['log']>,
+  open: (pair) => ipcRenderer.invoke('dspatch:review-pair-open', pair) as ReturnType<ReviewPairBridge['open']>,
+  forWalk: () => ipcRenderer.invoke('dspatch:review-pair-for-walk') as ReturnType<ReviewPairBridge['forWalk']>,
+  readFile: (key, side, filePath) =>
+    ipcRenderer.invoke('dspatch:review-pair-read-file', key, side, filePath) as ReturnType<ReviewPairBridge['readFile']>,
+  state: (key) => ipcRenderer.invoke('dspatch:review-pair-state', key) as ReturnType<ReviewPairBridge['state']>,
+  mark: (key, request) => ipcRenderer.invoke('dspatch:review-pair-mark', key, request) as ReturnType<ReviewPairBridge['mark']>,
+  setRequirement: (key, requirement) =>
+    ipcRenderer.invoke('dspatch:review-pair-set-requirement', key, requirement) as ReturnType<ReviewPairBridge['setRequirement']>,
+  savePosition: (key, position) =>
+    ipcRenderer.invoke('dspatch:review-pair-save-position', key, position) as ReturnType<ReviewPairBridge['savePosition']>,
+  walks: (key) => ipcRenderer.invoke('dspatch:review-pair-walks', key) as ReturnType<ReviewPairBridge['walks']>,
+  openWalk: (key, definitionPath) =>
+    ipcRenderer.invoke('dspatch:review-pair-open-walk', key, definitionPath) as ReturnType<ReviewPairBridge['openWalk']>,
+  chooseWalk: (key) => ipcRenderer.invoke('dspatch:review-pair-choose-walk', key) as ReturnType<ReviewPairBridge['chooseWalk']>,
+  showInDiff: (location) =>
+    ipcRenderer.invoke('dspatch:review-pair-show-in-diff', location) as ReturnType<ReviewPairBridge['showInDiff']>,
+  onChanged: (listener) => {
+    const handler = (_event: unknown, payload: PairChangedEvent): void => {
+      listener(payload);
+    };
+    ipcRenderer.on('dspatch:review-pair-changed', handler);
+    return () => {
+      ipcRenderer.removeListener('dspatch:review-pair-changed', handler);
+    };
+  },
+  onNavigate: (listener) => {
+    const handler = (_event: unknown, payload: DiffLocation): void => {
+      listener(payload);
+    };
+    ipcRenderer.on('dspatch:review-pair-navigate', handler);
+    return () => {
+      ipcRenderer.removeListener('dspatch:review-pair-navigate', handler);
+    };
+  },
+};
+
 contextBridge.exposeInMainWorld('dspatchReview', reviewBridge);
+contextBridge.exposeInMainWorld('dspatchReviewPair', pairBridge);
 contextBridge.exposeInMainWorld('dspatchReviewDiscussion', discussionBridge);

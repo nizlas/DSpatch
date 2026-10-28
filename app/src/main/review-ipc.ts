@@ -21,6 +21,17 @@ import {
   type RevisionSide,
 } from '../shared/review-model';
 import type { ModelListing } from '../shared/bridge';
+import {
+  REVIEW_PAIR_CHANNELS,
+  isPairError,
+  type DiffLocation,
+  type OpenPair,
+  type PairAnswer,
+  type PairOpenOutcome,
+  type PairWalk,
+  type PairWindowStart,
+  type ReviewRepository,
+} from '../shared/review-pair';
 import type { ReviewWindowEntry, ReviewWindows } from './review-windows';
 
 /*
@@ -71,6 +82,32 @@ export interface ReviewDiscussionClient {
 }
 
 /** Why a sender is refused, or `null` when it is a review window. */
+/**
+ * The host's review-pair methods (DSP-150), called for a window.
+ *
+ * Each window names its pair by key only after the host opened it for that window, and
+ * the repository it may name comes from the host's own list; the checks are the host's.
+ */
+export interface ReviewPairClient {
+  call(method: string, ...args: unknown[]): Promise<unknown>;
+}
+
+function locationFrom(raw: unknown): DiffLocation | null {
+  if (typeof raw !== 'object' || raw === null) {
+    return null;
+  }
+  const value = raw as Record<string, unknown>;
+  return (value['side'] === 'base' || value['side'] === 'target') &&
+    typeof value['path'] === 'string' &&
+    Number.isInteger(value['line'])
+    ? { side: value['side'], path: value['path'], line: value['line'] as number }
+    : null;
+}
+
+function pairLabel(open: OpenPair): string {
+  return `${open.repositoryName} · ${open.base.hash.slice(0, 7)}→${open.target.hash.slice(0, 7)}`;
+}
+
 export function reviewSenderRefusal(windows: ReviewWindows, sender: WebContents): string | null {
   return windows.entryFor(sender) === null
     ? 'Refused: this window is not a review window, and review answers only its own windows.'
@@ -85,7 +122,12 @@ function discussionIdentityOf(entry: ReviewWindowEntry): DiscussionIdentity | nu
     : { key: identity.key, repository: identity.repository, base: identity.base, target: identity.target, definitionPath: identity.definitionPath };
 }
 
-export function registerReviewIpc(windows: ReviewWindows, host: ReviewHostApi, discussions: ReviewDiscussionClient): void {
+export function registerReviewIpc(
+  windows: ReviewWindows,
+  host: ReviewHostApi,
+  discussions: ReviewDiscussionClient,
+  pairs: ReviewPairClient,
+): void {
   const entryOf = (event: IpcMainInvokeEvent): ReviewWindowEntry => {
     const refusal = reviewSenderRefusal(windows, event.sender);
     const entry = windows.entryFor(event.sender);
@@ -135,6 +177,110 @@ export function registerReviewIpc(windows: ReviewWindows, host: ReviewHostApi, d
   // --- The review discussion (DSP-127) ---------------------------------------------
 
   /** Windows already told to detach when they go. */
+  // --- A chosen revision pair (DSP-150) ---------------------------------------------------
+
+  const keyOf = (entry: ReviewWindowEntry, key: unknown): string => {
+    if (typeof key !== 'string' || key !== entry.pairKey) {
+      throw new Error('Refused: this window is not over that revision pair.');
+    }
+    return key;
+  };
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.start, (event): PairWindowStart => entryOf(event).pairStart);
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.repositories, async (event): Promise<readonly ReviewRepository[]> => {
+    entryOf(event);
+    return (await pairs.call('reviewPair.repositories')) as readonly ReviewRepository[];
+  });
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.log, async (event, repository: unknown, skip: unknown) => {
+    entryOf(event);
+    return pairs.call('reviewPair.log', repository, skip);
+  });
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.open, async (event, request: unknown): Promise<PairOpenOutcome> => {
+    const entry = entryOf(event);
+    if (entry.view !== 'diff') {
+      return { kind: 'failed', error: 'Only a diff window chooses a revision pair.' };
+    }
+    const opened = (await pairs.call('reviewPair.open', request)) as PairAnswer<OpenPair>;
+    if (isPairError(opened)) {
+      return { kind: 'failed', error: opened.error };
+    }
+    const other = windows.claimPair(entry, opened.key, pairLabel(opened));
+    if (other !== null) {
+      return { kind: 'focused', note: 'This change is already open in another review window, which has been brought to the front.' };
+    }
+    return { kind: 'opened', open: opened };
+  });
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.forWalk, async (event): Promise<PairAnswer<OpenPair>> => {
+    const entry = entryOf(event);
+    const identity = entry.identity;
+    if (entry.view !== 'walk' || identity === null) {
+      return { error: 'No walk is open in this window.' };
+    }
+    const opened = (await pairs.call('reviewPair.openForWalk', {
+      repository: identity.repository,
+      base: identity.base,
+      target: identity.target,
+    })) as PairAnswer<OpenPair>;
+    if (!isPairError(opened)) {
+      windows.joinPair(entry, opened.key);
+    }
+    return opened;
+  });
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.readFile, async (event, key: unknown, side: unknown, filePath: unknown) =>
+    pairs.call('reviewPair.readFile', keyOf(entryOf(event), key), side, filePath),
+  );
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.state, async (event, key: unknown) => pairs.call('reviewPair.state', keyOf(entryOf(event), key)));
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.mark, async (event, key: unknown, request: unknown) =>
+    pairs.call('reviewPair.mark', keyOf(entryOf(event), key), request),
+  );
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.setRequirement, async (event, key: unknown, requirement: unknown) =>
+    pairs.call('reviewPair.setRequirement', keyOf(entryOf(event), key), requirement),
+  );
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.savePosition, async (event, key: unknown, position: unknown) => {
+    const entry = entryOf(event);
+    if (entry.view !== 'diff') {
+      return { error: 'Only the diff window keeps a position in the pair record.' };
+    }
+    return pairs.call('reviewPair.savePosition', keyOf(entry, key), position);
+  });
+  const openWalkDefinitions = (): readonly string[] =>
+    windows
+      .list()
+      .map((other) => other.identity?.definitionPath ?? null)
+      .filter((definition): definition is string => definition !== null);
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.walks, async (event, key: unknown) =>
+    pairs.call('reviewPair.walks', keyOf(entryOf(event), key), openWalkDefinitions()),
+  );
+  const openWalk = async (entry: ReviewWindowEntry, key: string, definitionPath: string): Promise<{ ok: boolean; note: string }> => {
+    const matching = (await pairs.call('reviewPair.walks', key, [definitionPath])) as PairAnswer<readonly PairWalk[]>;
+    if (isPairError(matching) || !matching.some((walk) => walk.definitionPath.toLowerCase() === definitionPath.toLowerCase() || walk.definitionPath === definitionPath)) {
+      return { ok: false, note: 'That walk is over another repository or other revisions, so it is not about this change.' };
+    }
+    const outcome = await windows.open({ repository: null, definitionPath, defaultProvider: entry.defaultProvider });
+    return { ok: outcome.kind !== 'failed', note: outcome.note };
+  };
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.openWalk, async (event, key: unknown, definitionPath: unknown) => {
+    const entry = entryOf(event);
+    if (typeof definitionPath !== 'string') {
+      return { ok: false, note: 'No walk was named.' };
+    }
+    return openWalk(entry, keyOf(entry, key), definitionPath);
+  });
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.chooseWalk, async (event, key: unknown) => {
+    const entry = entryOf(event);
+    const pairKey = keyOf(entry, key);
+    const chosen = await windows.pickWalkFile(entry);
+    return chosen === null ? { ok: false, note: '' } : openWalk(entry, pairKey, chosen);
+  });
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.showInDiff, async (event, raw: unknown) => {
+    const entry = entryOf(event);
+    const location = locationFrom(raw);
+    const identity = entry.identity;
+    if (location === null || identity === null) {
+      return { ok: false, note: 'Nothing to show.' };
+    }
+    return windows.showInDiff(entry, { repository: identity.repository, base: identity.base, target: identity.target }, location);
+  });
+
   const watched = new Set<number>();
   /**
    * The discussion target for this window: the review it shows, or `null` while it is

@@ -2486,6 +2486,29 @@ export function LoopEditor(): React.JSX.Element {
               ))}
             </select>
           </label>
+          {/*
+            DSP-150: review is reached from here as from the chat. It opens the review
+            window, which chooses a repository and two commits; nothing here changes.
+          */}
+          <button
+            type="button"
+            data-ev="editor-open-review"
+            title="Opens a separate window to review a change between two commits. The editor and any run are unaffected."
+            onClick={() => {
+              void window.dspatch.openReview().then(
+                (outcome) => {
+                  if (outcome.kind === 'failed') {
+                    setNote(outcome.note);
+                  }
+                },
+                () => {
+                  setNote('The review window could not be opened, and DSpatch did not get a reason.');
+                },
+              );
+            }}
+          >
+            Review changes
+          </button>
         </div>
 
         <div className="editor-state">

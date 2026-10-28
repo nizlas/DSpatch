@@ -35,6 +35,8 @@ import {
   type WalkStep,
 } from '../shared/review-model';
 import type { DiscussionRequest } from '../shared/review-discussion';
+import { isPairError, type PairRecord } from '../shared/review-pair';
+import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
 
 declare global {
   interface Window {
@@ -435,7 +437,39 @@ function OpenReview({
     setState((current) => change(current));
   }, []);
 
-  const coverage = useMemo(() => computeCoverage(bundle.definition, bundle.files, state), [bundle, state]);
+  /*
+   * DSP-150: the pair this walk is over, and the decisions kept for it. The diff window and
+   * every walk over the same two commits read and write that one record, so a change two
+   * walks pass counts once and a mark made in one window is seen in the others. Without a
+   * pair connection (a window that has none) the walk keeps its own decisions as before.
+   */
+  const pairBridge = window.dspatchReviewPair;
+  const [pair, setPair] = useState<{ readonly key: string; readonly record: PairRecord } | null>(null);
+  useEffect(() => {
+    if (pairBridge === undefined) {
+      return;
+    }
+    let live = true;
+    void pairBridge.forWalk().then((answer) => {
+      if (live && !isPairError(answer)) {
+        setPair({ key: answer.key, record: answer.record });
+      }
+    });
+    const stop = pairBridge.onChanged((event) => {
+      setPair((current) => (current !== null && current.key === event.key ? { key: current.key, record: event.record } : current));
+    });
+    return () => {
+      live = false;
+      stop();
+    };
+  }, [pairBridge]);
+  const shownState = useMemo(
+    () => (pair === null ? state : { ...state, decisions: hunkDecisionsFromPair(bundle.files, pair.record, state.revisions) }),
+    [pair, state, bundle],
+  );
+  const [diffNote, setDiffNote] = useState('');
+
+  const coverage = useMemo(() => computeCoverage(bundle.definition, bundle.files, shownState), [bundle, shownState]);
   const coverageByHunk = useMemo(() => new Map(coverage.hunks.map((entry) => [entry.hunk.id, entry])), [coverage]);
 
   const current = findStep(bundle, state.position.stepId);
@@ -631,6 +665,18 @@ function OpenReview({
 
   const decide = useCallback(
     (decision: Omit<ReviewDecision, 'id' | 'at' | 'by' | 'revisions'>) => {
+      if (pair !== null && pairBridge !== undefined && decision.scope.kind === 'hunk') {
+        const hunkId = decision.scope.hunkId;
+        const hunk = bundle.files.flatMap((file) => file.hunks).find((candidate) => candidate.id === hunkId);
+        if (hunk !== undefined) {
+          void pairBridge.mark(pair.key, { op: pairOpFor(decision.outcome), scopes: hunkRanges(hunk), reason: decision.reason }).then((answer) => {
+            if (!isPairError(answer)) {
+              setPair({ key: pair.key, record: answer });
+            }
+          });
+          return;
+        }
+      }
       record((value) => ({
         ...value,
         decisions: [
@@ -639,7 +685,7 @@ function OpenReview({
         ],
       }));
     },
-    [record],
+    [record, pair, pairBridge, bundle],
   );
 
   const addNote = useCallback(
@@ -787,7 +833,7 @@ function OpenReview({
             )}
             {tab === 'coverage' && <CoverageTable coverage={coverage} words={words} onOpen={(hunk) => goAway(hunkLocation(hunk))} />}
             {tab === 'notes' && (
-              <NotesList state={state} bundle={bundle} words={words} lang={lang} onOpen={goAway} onStatus={setNoteStatus} />
+              <NotesList state={shownState} bundle={bundle} words={words} lang={lang} onOpen={goAway} onStatus={setNoteStatus} />
             )}
             {tab === 'search' && bridge !== undefined && <Browse bridge={bridge} words={words} onOpen={goAway} />}
           </div>
@@ -909,6 +955,22 @@ function OpenReview({
           />
           {rightTab === 'step' && (
             <>
+              {pair !== null && pairBridge !== undefined && focus !== null && (
+                <div className="rv-show-in-diff">
+                  <button
+                    type="button"
+                    data-ev="walk-show-in-diff"
+                    onClick={() => {
+                      void pairBridge
+                        .showInDiff({ side: focus.side, path: focus.path, line: focus.start })
+                        .then((answer) => setDiffNote(answer.ok ? '' : answer.note));
+                    }}
+                  >
+                    Show in diff
+                  </button>
+                  {diffNote !== '' && <span className="rv-sub">{diffNote}</span>}
+                </div>
+              )}
               {current !== null && away === null && place !== null && (
                 <StepPanel
                   walk={current.walk}
@@ -948,7 +1010,7 @@ function OpenReview({
                   diffFile={diffFile}
                   files={files}
                   coverage={coverageByHunk}
-                  decisions={state.decisions}
+                  decisions={shownState.decisions}
                   onDecide={decide}
                   revisionText={revisionText}
                   words={words}

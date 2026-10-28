@@ -2902,11 +2902,12 @@ function Workbench({
                   type="button"
                   className="button button--quiet"
                   data-ev="open-review"
-                  title="Opens review in a separate window: the last review opened for this project, or a chooser. This conversation is unaffected."
+                  title="Opens review in a separate window: choose a repository and two commits, then review the change. This conversation is unaffected."
                   onClick={() => {
-                    // Review is its own module in its own window (DSP-126). The main
-                    // process hands it this project's folder and nothing else of the
-                    // chat; asking again focuses the window that already has it.
+                    // Review is its own module in its own window (DSP-126). Since DSP-150
+                    // it starts by choosing a repository of this workspace and a revision
+                    // pair; the host finds the repositories, and nothing else of the chat
+                    // goes to review. Asking again focuses a window still choosing.
                     void window.dspatch.openReview().then(
                       (outcome) => {
                         setReviewWindowNote(outcome.kind === 'opened' ? null : outcome.note);

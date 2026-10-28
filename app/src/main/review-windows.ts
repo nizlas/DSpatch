@@ -15,6 +15,8 @@ import {
   type ReviewWindowInput,
   type ReviewWindowOutcome,
 } from '../shared/review-model';
+import type { DiffLocation, PairWindowStart, RevisionPairIdentity } from '../shared/review-pair';
+import { REVIEW_PAIR_NAVIGATE } from '../shared/review-pair';
 
 /*
  * Review windows: the review module's own windows, and the only way into it.
@@ -48,7 +50,7 @@ export interface ReviewWindowsOptions {
   /** The compiled review preload. */
   readonly preloadPath: string;
   /** Load the renderer into a new review window (`?window=review#review`). */
-  readonly load: (window: BrowserWindow) => void;
+  readonly load: (window: BrowserWindow, view: 'walk' | 'diff') => void;
   /** Development builds get reload and developer tools in the View menu. */
   readonly development: boolean;
   /**
@@ -83,6 +85,14 @@ export interface ReviewWindowEntry {
   focusCount: number;
   /** Set once the view has been asked to save before the window goes. */
   flushedForClose: boolean;
+  /** A walk window (a review definition) or a diff window (a chosen revision pair, DSP-150). */
+  readonly view: 'walk' | 'diff';
+  /** The revision pair this window is over, once known: chosen in a diff window, or a walk's own pair. */
+  pairKey: string | null;
+  /** What a diff window starts with. */
+  pairStart: PairWindowStart;
+  /** A short label for the title of a diff window over a pair. */
+  pairLabel: string | null;
 }
 
 /** What the scripted scenario reads of a window, beside what its view reports. */
@@ -106,7 +116,10 @@ export function openFailureOf(error: ReviewHostError): ReviewOpenOutcome {
     : { kind: 'failed', error: error.message, detail: error.detail };
 }
 
-function titleFor(entry: Pick<ReviewWindowEntry, 'identity' | 'startFolder'>): string {
+function titleFor(entry: Pick<ReviewWindowEntry, 'identity' | 'startFolder'> & { readonly view?: 'walk' | 'diff'; readonly pairLabel?: string | null }): string {
+  if (entry.view === 'diff') {
+    return entry.pairLabel === null || entry.pairLabel === undefined ? 'DSpatch — review' : `DSpatch — review · ${entry.pairLabel}`;
+  }
   if (entry.identity !== null) {
     return `DSpatch — review · ${reviewIdentityLabel(entry.identity.repository, entry.identity.base, entry.identity.target)}`;
   }
@@ -339,9 +352,128 @@ export class ReviewWindows {
   }
 
   /** Readings for the scripted scenario: what main knows about each window, and its record on the host. */
+  // --- Diff windows over a chosen revision pair (DSP-150) ---------------------------------
+
+  /**
+   * Open review from the chat or the loop editor: a diff window that starts by choosing a
+   * repository and two commits. One such window waiting for a choice is enough, so a
+   * second press brings it to the front.
+   */
+  async openDiff(defaultProvider: 'cursor' | 'claude' | null): Promise<ReviewWindowOutcome> {
+    try {
+      const waiting = this.list().find((entry) => entry.view === 'diff' && entry.pairKey === null);
+      if (waiting !== undefined) {
+        this.focus(waiting);
+        return { kind: 'focused', note: 'A review window waiting for a choice is already open. It has been brought to the front.' };
+      }
+      this.create({
+        sessionId: await this.newSession(),
+        startFolder: null,
+        defaultProvider,
+        initial: { kind: 'none', note: '', repository: null },
+        identity: null,
+        chooserKey: null,
+        view: 'diff',
+        pairStart: { kind: 'choose' },
+      });
+      return { kind: 'opened', note: 'Review opened in its own window. The chat is unaffected.' };
+    } catch (error) {
+      return { kind: 'failed', note: `The review window could not be opened: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  /** The diff window showing a pair, if one is open. */
+  diffWindowFor(key: string): ReviewWindowEntry | null {
+    return this.list().find((entry) => entry.view === 'diff' && entry.pairKey === key) ?? null;
+  }
+
+  /** Every window over a pair: its diff window and the walks over it. */
+  windowsOverPair(key: string): readonly ReviewWindowEntry[] {
+    return this.list().filter((entry) => entry.pairKey === key);
+  }
+
+  /**
+   * A diff window takes a pair. One diff window per pair, like one window per walk: a
+   * second window over the same pair is the first one brought to the front.
+   */
+  claimPair(entry: ReviewWindowEntry, key: string, label: string): ReviewWindowEntry | null {
+    const other = this.diffWindowFor(key);
+    if (other !== null && other !== entry) {
+      this.focus(other);
+      return other;
+    }
+    entry.pairKey = key;
+    entry.pairLabel = label;
+    if (!entry.window.isDestroyed()) {
+      entry.window.setTitle(titleFor(entry));
+    }
+    return null;
+  }
+
+  /** A walk window learned which pair it is over. */
+  joinPair(entry: ReviewWindowEntry, key: string): void {
+    entry.pairKey = key;
+  }
+
+  /**
+   * `Show in diff` from a walk: the diff window over the pair goes to the place, opened
+   * first when none is. This is the one way a walk moves the diff view, and it is asked
+   * for explicitly; showing a walk step never does it.
+   */
+  async showInDiff(
+    from: ReviewWindowEntry,
+    pair: RevisionPairIdentity,
+    location: DiffLocation,
+  ): Promise<{ readonly ok: boolean; readonly note: string }> {
+    const key = from.pairKey;
+    if (key === null) {
+      return { ok: false, note: 'This walk is not tied to a revision pair yet.' };
+    }
+    const existing = this.diffWindowFor(key);
+    if (existing !== null) {
+      existing.contents.send(REVIEW_PAIR_NAVIGATE, location);
+      this.focus(existing);
+      return { ok: true, note: 'Shown in the diff.' };
+    }
+    try {
+      this.create({
+        sessionId: await this.newSession(),
+        startFolder: null,
+        defaultProvider: from.defaultProvider,
+        initial: { kind: 'none', note: '', repository: null },
+        identity: null,
+        chooserKey: null,
+        view: 'diff',
+        pairStart: { kind: 'pair', pair, at: location },
+      });
+      return { ok: true, note: 'The diff opened at that place.' };
+    } catch (error) {
+      return { ok: false, note: `The diff could not be opened: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  /** Ask where to find a walk definition (the existing chooser's dialog, or the scripted pick). */
+  async pickWalkFile(entry: ReviewWindowEntry): Promise<string | null> {
+    if (this.options.scriptedPick !== null) {
+      const chosen = this.options.scriptedPick();
+      this.options.log(`walk file answered by the scripted pick: ${chosen ?? '(dismissed)'}`);
+      return chosen;
+    }
+    const dialogOptions = {
+      title: 'Open a code walk',
+      properties: ['openFile' as const],
+      filters: [{ name: 'Review definition', extensions: ['json'] }],
+    };
+    const parent = entry.window.isDestroyed() ? null : entry.window;
+    const result = parent === null ? await dialog.showOpenDialog(dialogOptions) : await dialog.showOpenDialog(parent, dialogOptions);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  }
+
   async readings(): Promise<readonly ReviewWindowReading[]> {
     const readings: ReviewWindowReading[] = [];
-    for (const entry of this.list()) {
+    // Walk windows only: a diff window over a revision pair (DSP-150) has no walk record
+    // and is read through its own check, so the walk scenarios count what they did before.
+    for (const entry of this.list().filter((candidate) => candidate.view === 'walk')) {
       let recordPath: string | null = null;
       let recordPosition: unknown = null;
       if (entry.identity !== null) {
@@ -455,6 +587,8 @@ export class ReviewWindows {
     readonly initial: ReviewOpenOutcome;
     readonly identity: ReviewIdentity | null;
     readonly chooserKey: string | null;
+    readonly view?: 'walk' | 'diff';
+    readonly pairStart?: PairWindowStart;
   }): ReviewWindowEntry {
     const window = new BrowserWindow({
       width: 1400,
@@ -483,6 +617,10 @@ export class ReviewWindows {
       chooserKey: init.chooserKey,
       focusCount: 0,
       flushedForClose: false,
+      view: init.view ?? 'walk',
+      pairKey: null,
+      pairStart: init.pairStart ?? { kind: 'choose' },
+      pairLabel: null,
     };
     this.entries.add(entry);
 
@@ -524,7 +662,7 @@ export class ReviewWindows {
         `review window did-fail-load url=${validatedURL} code=${String(errorCode)} description=${errorDescription}`,
       );
     });
-    this.options.load(window);
+    this.options.load(window, entry.view);
     this.options.log(`review window opened: ${window.getTitle()}`);
     return entry;
   }

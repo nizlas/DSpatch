@@ -1783,6 +1783,8 @@ export type ScriptedScenario =
   | 'steering-placement'
   /** DSP-28 follow-up: the loop editor opened, closed and reopened while a chat loop walks. */
   | 'editor-joins-run'
+  /** DSP-150: a revision pair chosen and reviewed in its diff window, a walk beside it, and a restart. */
+  | 'pair-review'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2039,8 +2041,24 @@ export type ScriptedScenario =
   | 'review-hold';
 
 /** What the `review-window` scenario asks the main process to read or do. Scripted runs only. */
+/** What the `pair-review` scenario asks of the review windows (DSP-150). */
+export type PairWindowCheckRequest =
+  | { readonly action: 'windows' }
+  | { readonly action: 'read'; readonly id: number }
+  | { readonly action: 'click'; readonly id: number; readonly selector: string; readonly shift?: boolean }
+  | { readonly action: 'key'; readonly id: number; readonly selector: string; readonly key: string; readonly shift?: boolean }
+  | { readonly action: 'select'; readonly id: number; readonly selector: string; readonly value: string }
+  | { readonly action: 'go-to-step'; readonly id: number; readonly stepId: string }
+  | { readonly action: 'capture'; readonly id: number; readonly label: string }
+  | { readonly action: 'focus'; readonly id: number }
+  | { readonly action: 'close'; readonly id: number };
+
 /** What the `editor-joins-run` scenario asks of the loop editor's own window. */
-export type EditorWindowCheckRequest = { readonly action: 'read' } | { readonly action: 'close' };
+export type EditorWindowCheckRequest =
+  | { readonly action: 'read' }
+  | { readonly action: 'close' }
+  /** DSP-150: press a control of the editor's own window, as a person's click would. */
+  | { readonly action: 'click'; readonly selector: string };
 
 export interface EditorWindowCheckAnswer {
   /** Whether a loop editor window is open (for `read`) or closed now (for `close`). */
@@ -2491,6 +2509,12 @@ export interface DspatchBridge {
    * editor's check hook for it. Registered only during a scripted run.
    */
   editorWindowCheck(request: EditorWindowCheckRequest): Promise<EditorWindowCheckAnswer>;
+  /**
+   * Read and operate the review windows for the `pair-review` scenario (DSP-150): a click
+   * or key goes to an element of that window as a person's would. Registered only during
+   * a scripted run.
+   */
+  pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorWindowCheckAnswer>;
   /**
    * Every addressed thing that happens to a loop run, in any window.
    *
@@ -3278,6 +3302,7 @@ export type BridgeChannel =
   | 'dspatch:open-example-review'
   | 'dspatch:check-review-windows'
   | 'dspatch:check-editor-window'
+  | 'dspatch:check-pair-windows'
   | 'dspatch:start-editor-loop-run'
   | 'dspatch:cancel-editor-loop-run'
   | 'dspatch:loop-run-event'

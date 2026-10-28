@@ -60,7 +60,9 @@ export type HostEventTarget =
   /** Every window that follows loop runs: the chat window and the graph editor. */
   | { readonly kind: 'run-audience' }
   /** One renderer, named by the id the client gave the host with the call that started the work. */
-  | { readonly kind: 'contents'; readonly id: number };
+  | { readonly kind: 'contents'; readonly id: number }
+  /** Every review window over one revision pair (DSP-150): the diff window and its walks. */
+  | { readonly kind: 'review-pair'; readonly key: string };
 
 export type HostMessage =
   | { readonly t: 'call'; readonly id: number; readonly method: string; readonly args: readonly unknown[] }
