@@ -194,4 +194,31 @@ Unchecked on purpose: #3 and #12 need a real model and Niclas's trial (the writi
 
 **Not established:** a live run with Claude and the real SDK's `opus` alias (the simulated list gained an `opus` entry for this). Once a newer job of the same kind exists, an older failed job is kept in the record but no longer drawn in the window. The tool-free analysis follow-up is unchanged, and DSP-152 as a whole is not done.
 
+### Second live trial, continued (29 Oct 2026): why *Prepare code walks* started nothing
+
+**Established about the trial** (profile read only): no start request reached `ReviewAgentJobs.start`, which writes a job before anything is sent. The app ran from `npm start` (08:22:15) with its output on a console that is not kept, and nothing logged clicks or review IPC, so which control was pressed and whether a request left the window cannot be established afterwards. The picker had read the review's agents from the host (it showed Claude and the model), so the window, its key and the host's review service were working at that moment.
+
+**Reproduced with real input** (new scenario `walk-start`, d5a670b's flow unchanged at the time of the first run), each of which ends with no job and nothing new in the window, as in the trial:
+- Two controls were named *Prepare code walks*: the header one opens the picker and, with the picker open, a press on it does nothing; only the picker's own button starts.
+- A start request that fails on its way (IPC or the host throwing, as against refusing) was a rejected promise nobody caught: no job, no message. The main-process log showed "start request failed before the host answered" while the window showed nothing.
+- A start that cannot be pressed (the model is not in the account's list) was a grey button with no reason beside it.
+- The picker listed the provider's raw list, the `default` alias as a model of its own, instead of the chat's `modelRows`.
+The trial cannot tell which of the first two Niclas met; both are fixed.
+
+**Fix:**
+- While the picker is open, the header's *Prepare code walks…* (now with an ellipsis, as it opens a choice) and *Delegate the whole review…* are not drawn: the picker's button is the only one that starts.
+- A start request that fails on its way is shown in the window: "The code walks could not be started: <reason>" (diff window, whole and file delegation; walk window: walk delegation); a stop request likewise.
+- The picker draws models with `modelRows` (the provider's `default` alias is not a model; the model it resolves to is marked `· default`) and says beside the start why it cannot start ("<model> is not in Claude's list for this account. Choose a model.", "Choose a model.").
+- Transitions are logged by ids, without prompt content: the review window's request in the main process (received, answered, failed before the host answered), the host's request, refusal or registered job id with agent and model, and the session opened.
+- Trials: `pairWindowCheck` presses in the main window (`id` 0) with real input and refuses to click a point covered by another element; the presentation adapter can list models shaped like a Claude account's (`default` alias, `opus`, ...) after a delay (`DSPATCH_PRESENTATION_MODELS=claude`, `DSPATCH_PRESENTATION_LIST_MS`); `DSPATCH_REVIEW_SIM=start-throws` fails a start request in the host (presentation mode only). The window reading's picker and Details text no longer lose the letter s (a broken `\s`).
+
+**Verified** (SIMULATED provider, isolated userData, real mouse and keyboard from the main window on, nothing set by script):
+- `walk-start` `first`: Niclas's stored review (copied, with its failed Cursor job), chat on Claude/`opus`, list arriving after 9 s: the picker shows Claude and `opus (reading Claude's models…)` while it is read and `Opus 5.5 · default` after; no second start control; Start → host log `job request: walks with claude/opus` → `job … registered` → `session opened with claude/opus` → done; *Show the walks* → the walk → the walk window opens with the walk.
+- `clean`: no earlier job; the model changed with the keyboard to `sonnet` after the list arrived; job, session and walk with `sonnet`.
+- `blocked`: a stored model the list does not offer: the picker says so and Start is refused; a model chosen with the keyboard; the host fails the request (SIMULATED): the window says "The code walks could not be started: …", no job, no adapter built.
+- No log line mentions Cursor in any phase; only Claude's model list was read.
+- `review-agent-choice` (four phases) and `code-walks` (two phases) pass after the change; `review-pairs`, `review-agent-jobs` and `model-choice` tests 41/41; typecheck and build clean.
+
+**Not established:** which of the reproduced paths Niclas met; a live run with Claude (whether the real SDK lists `opus` and runs a walk with it). The tool-free analysis follow-up is unchanged, and DSP-152 as a whole is not done.
+
 <!-- SECTION:NOTES:END -->

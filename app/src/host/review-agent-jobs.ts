@@ -197,8 +197,21 @@ export class ReviewAgentJobs {
     };
   }
 
-  /** Start a job from an explicit request. Refused, with a reason, before anything is written if it cannot run. */
+  /**
+   * Start a job from an explicit request. Refused, with a reason, before anything is
+   * written if it cannot run. Each request and its outcome is logged with the job id, the
+   * agent and model and the review's key, never with prompt content.
+   */
   start(key: unknown, raw: unknown): PairAnswer<AgentJob> {
+    const request = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+    const word = (value: unknown): string => (typeof value === 'string' ? value.slice(0, 80) : String(value));
+    this.options.log(`job request: ${word(request['kind'])} with ${word(request['provider'])}/${word(request['model'])} for review ${word(key).slice(0, 12)}`);
+    const answer = this.startChecked(key, raw);
+    this.options.log(isPairError(answer) ? `job refused: ${answer.error}` : `job ${answer.id} registered (${answer.kind}, ${answer.provider}/${answer.model})`);
+    return answer;
+  }
+
+  private startChecked(key: unknown, raw: unknown): PairAnswer<AgentJob> {
     if (typeof key !== 'string') {
       return { error: 'That review is not open.' };
     }
@@ -458,6 +471,7 @@ export class ReviewAgentJobs {
       const language = await this.options.language();
       try {
         await this.openSession(live, job.provider, job.model);
+        this.options.log(`review agent ${live.jobId}: session opened with ${job.provider}/${job.model}`);
       } catch (error) {
         // No other agent or model is tried: what was chosen is what was asked for.
         this.finish(live, 'failed', `${providerName(job.provider)} could not start a session with ${job.model}. Nothing was sent, and nothing was approved.`, { detail: describe(error) });

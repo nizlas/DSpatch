@@ -4,7 +4,7 @@ import type { CSSProperties, JSX, ReactNode } from 'react';
 import { Markdown } from './Markdown';
 import { ReviewDiscussion } from './ReviewDiscussion';
 import { AgentPicker } from './AgentPicker';
-import { isRunning, JobLine } from './PairReview';
+import { isRunning, JobLine, requestFailure } from './PairReview';
 import { Inline, TokensView, asLocation, capitalise, fileName, rangeText, useFiles, useRows, type Files } from './review-code';
 import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
@@ -1101,9 +1101,12 @@ function OpenReview({
                       testId="walk-delegate-agent"
                       onCancel={() => setDelegatingWalk(false)}
                       onStart={(choice) => {
-                        void pairBridge.startJob(pair.key, { kind: 'review', ...choice, scope: walkScope }).then((answer) => {
+                        void pairBridge
+                          .startJob(pair.key, { kind: 'review', ...choice, scope: walkScope })
+                          .catch((error: unknown) => ({ error: requestFailure(error) }))
+                          .then((answer) => {
                           if (isPairError(answer)) {
-                            setDiffNote(answer.error);
+                            setDiffNote(`The review could not be started: ${answer.error}`);
                           } else {
                             setDelegatingWalk(false);
                           }

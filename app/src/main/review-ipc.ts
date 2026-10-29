@@ -127,6 +127,8 @@ export function registerReviewIpc(
   host: ReviewHostApi,
   discussions: ReviewDiscussionClient,
   pairs: ReviewPairClient,
+  /** DSP-152: where a start request's way through the main process is logged (ids, no content). */
+  log: (message: string) => void = () => undefined,
 ): void {
   const entryOf = (event: IpcMainInvokeEvent): ReviewWindowEntry => {
     const refusal = reviewSenderRefusal(windows, event.sender);
@@ -278,9 +280,18 @@ export function registerReviewIpc(
     const entry = entryOf(event);
     return pairs.call('reviewPair.agents', keyOf(entry, key), { provider: entry.defaultProvider, model: entry.defaultModel });
   });
-  ipcMain.handle(REVIEW_PAIR_CHANNELS.startJob, async (event, key: unknown, request: unknown) =>
-    pairs.call('reviewPair.startJob', keyOf(entryOf(event), key), request),
-  );
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.startJob, async (event, key: unknown, request: unknown) => {
+    const from = `review window ${String(event.sender.id)}`;
+    log(`[review] ${from}: start request received`);
+    try {
+      const answer = await pairs.call('reviewPair.startJob', keyOf(entryOf(event), key), request);
+      log(`[review] ${from}: start request answered (${isPairError(answer) ? `refused: ${answer.error}` : 'registered'})`);
+      return answer;
+    } catch (error) {
+      log(`[review] ${from}: start request failed before the host answered: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  });
   ipcMain.handle(REVIEW_PAIR_CHANNELS.cancelJob, async (event, key: unknown, jobId: unknown) =>
     pairs.call('reviewPair.cancelJob', keyOf(entryOf(event), key), jobId),
   );

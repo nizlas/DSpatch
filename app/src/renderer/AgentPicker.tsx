@@ -8,15 +8,18 @@
  * never picks an agent or a model here on its own, and never falls back to another.
  *
  * The models are the chosen agent's own listing, read through the discussion's existing
- * bridge only for that agent, so choosing Claude never asks Cursor anything. A listing
- * that arrives after the agent was changed is ignored. Nothing is started here: the
- * caller starts the work with exactly what is shown.
+ * bridge only for that agent, so choosing Claude never asks Cursor anything, and drawn
+ * as the chat draws them (`modelRows`: the provider's `default` alias is not a model of
+ * its own). A listing that arrives after the agent was changed is ignored. Nothing is
+ * started here: the caller starts the work with exactly what is shown. While the start
+ * cannot be pressed, the picker says why.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 
-import type { ModelChoice } from '../shared/bridge';
+import type { ModelListing } from '../shared/bridge';
+import { modelRows } from '../shared/model-rows';
 import { isPairError, type ReviewAgents } from '../shared/review-pair';
 
 export interface AgentChoice {
@@ -48,7 +51,7 @@ export function AgentPicker({
   const [readError, setReadError] = useState('');
   const [provider, setProvider] = useState<'cursor' | 'claude' | null>(null);
   const [model, setModel] = useState('');
-  const [models, setModels] = useState<readonly ModelChoice[] | null>(null);
+  const [listing, setListing] = useState<ModelListing | null>(null);
   const [listNote, setListNote] = useState('');
   const [startNote, setStartNote] = useState('');
   // Which listing is wanted now: an answer for an agent no longer chosen is dropped.
@@ -56,21 +59,21 @@ export function AgentPicker({
 
   const listModels = (next: 'cursor' | 'claude'): void => {
     wanted.current = next;
-    setModels(null);
+    setListing(null);
     setListNote('');
     void window.dspatchReviewDiscussion?.listModels(next).then(
-      (listing) => {
+      (answer) => {
         if (wanted.current !== next) {
           return;
         }
-        setModels(listing.models);
-        if (listing.error !== null) {
-          setListNote(`${providerName(next)}'s models could not be listed: ${listing.error}`);
+        setListing(answer);
+        if (answer.error !== null) {
+          setListNote(`${providerName(next)}'s models could not be listed: ${answer.error}`);
         }
       },
       () => {
         if (wanted.current === next) {
-          setModels([]);
+          setListing({ provider: next, models: [], chosen: '', error: 'the list could not be read', source: '' });
           setListNote(`${providerName(next)}'s models could not be listed. Type the model's id.`);
         }
       },
@@ -129,9 +132,23 @@ export function AgentPicker({
       </div>
     );
   }
-  const listed = models ?? [];
-  const known = listed.some((entry) => entry.id === model);
+  // The rows the chat shows for this listing, without one for a choice it does not offer.
+  const rows = listing === null || listing.models.length === 0 ? [] : modelRows(listing, '').rows.filter((row) => row.value !== '');
+  const known = rows.some((row) => row.value === model);
   const ready = provider !== null && model.trim() !== '';
+  const offeredOrUnlisted = rows.length === 0 || known;
+  // Why the start cannot be pressed now, said beside it: never a silent grey button.
+  const blocked =
+    busy
+      ? 'This work is already running.'
+      : provider === null
+        ? ''
+        : model.trim() === ''
+          ? 'Choose a model.'
+          : !offeredOrUnlisted
+            ? `${model} is not in ${providerName(provider)}'s list for this account. Choose a model.`
+            : '';
+  const note = startNote !== '' ? startNote : blocked;
   return (
     <div className="rv-agent-picker" data-ev={testId}>
       <label>
@@ -151,7 +168,7 @@ export function AgentPicker({
               listModels(next);
             } else {
               wanted.current = null;
-              setModels(null);
+              setListing(null);
             }
           }}
         >
@@ -167,20 +184,20 @@ export function AgentPicker({
       {provider !== null && (
         <label>
           Model
-          {models === null ? (
+          {listing === null ? (
             <span className="rv-pair-muted" data-ev={`${testId}-model-reading`}>
               {model === '' ? `Reading ${providerName(provider)}'s models…` : `${model} (reading ${providerName(provider)}'s models…)`}
             </span>
-          ) : listed.length > 0 ? (
+          ) : rows.length > 0 ? (
             <select data-ev={`${testId}-model`} value={known ? model : ''} onChange={(event) => setModel(event.target.value)}>
               {!known && (
                 <option value="" disabled>
                   {model === '' ? 'Choose a model' : `${model} (not offered)`}
                 </option>
               )}
-              {listed.map((entry) => (
-                <option key={entry.id} value={entry.id} title={entry.description}>
-                  {entry.displayName}
+              {rows.map((row) => (
+                <option key={row.value} value={row.value} title={row.title}>
+                  {row.label}
                 </option>
               ))}
             </select>
@@ -193,7 +210,7 @@ export function AgentPicker({
         type="button"
         className="rv-pair-primary"
         data-ev={`${testId}-start`}
-        disabled={busy || !ready || (models !== null && listed.length > 0 && !known)}
+        disabled={busy || !ready || !offeredOrUnlisted}
         onClick={() => {
           if (provider !== null && model.trim() !== '') {
             onStart({ provider, model: model.trim() });
@@ -205,7 +222,11 @@ export function AgentPicker({
       <button type="button" className="rv-pair-link" onClick={onCancel}>
         Cancel
       </button>
-      {startNote !== '' && <span className="rv-pair-muted" data-ev={`${testId}-note`}>{startNote}</span>}
+      {note !== '' && (
+        <span className="rv-pair-muted" data-ev={`${testId}-note`} role="status">
+          {note}
+        </span>
+      )}
       {listNote !== '' && <span className="rv-pair-muted">{listNote}</span>}
     </div>
   );

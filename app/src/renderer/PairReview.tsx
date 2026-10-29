@@ -471,16 +471,18 @@ function DiffReview({
   const [preparing, setPreparing] = useState(false);
   const walksJob = [...record.jobs].reverse().find((job) => job.kind === 'walks') ?? null;
   const startJob = async (request: { kind: 'walks' | 'review'; provider: 'cursor' | 'claude'; model: string; scope?: DelegationScope }): Promise<boolean> => {
-    const answer = await bridge.startJob(open.key, request);
+    setProblem(null);
+    // A request that fails on its way (IPC or the host) is said, as a refusal is: a press
+    // that starts nothing must never leave the window as it was.
+    const answer = await bridge.startJob(open.key, request).catch((error: unknown) => ({ error: requestFailure(error) }));
     if (isPairError(answer)) {
-      setProblem(answer.error);
+      setProblem(`${request.kind === 'walks' ? 'The code walks could not be started' : 'The review could not be started'}: ${answer.error}`);
       return false;
     }
-    setProblem(null);
     return true;
   };
   const stopJob = async (job: AgentJob): Promise<void> => {
-    const answer = await bridge.cancelJob(open.key, job.id);
+    const answer = await bridge.cancelJob(open.key, job.id).catch((error: unknown) => ({ error: requestFailure(error) }));
     if (isPairError(answer)) {
       setProblem(answer.error);
     }
@@ -595,9 +597,12 @@ function DiffReview({
               <option value="manual-or-agent">Your review or any recorded agent review</option>
             </select>
           </label>
-          <button type="button" data-ev="pair-prepare-walks" disabled={walksJob?.state === 'running' || walksJob?.state === 'cancelling'} onClick={() => setPreparing(true)}>
-            Prepare code walks
-          </button>
+          {/* While choosing, the picker's own button is the one that starts: no second one by the same name. */}
+          {!preparing && (
+            <button type="button" data-ev="pair-prepare-walks" disabled={walksJob?.state === 'running' || walksJob?.state === 'cancelling'} onClick={() => setPreparing(true)}>
+              Prepare code walks…
+            </button>
+          )}
           <button type="button" data-ev="pair-walks" aria-expanded={walksOpen} onClick={() => setWalksOpen((value) => !value)}>
             Code walks
           </button>
@@ -821,6 +826,12 @@ function agentName(job: AgentJob): string {
   return `${job.provider === 'claude' ? 'Claude' : 'Cursor'} (${job.model})`;
 }
 
+/** A request that failed on its way, in the words of what failed: without Electron's wrapping. */
+export function requestFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/^Error invoking remote method '[^']*': /, '').replace(/^(?:[A-Za-z]*Error: )+/, '');
+}
+
 export function isRunning(job: AgentJob): boolean {
   return job.state === 'running' || job.state === 'cancelling';
 }
@@ -1007,9 +1018,11 @@ function FilesChanged({
         <span className="rv-pair-summary" data-ev="pair-summary">
           {totals.done} of {files.length} files done · {totals.handled} of {totals.total} changed lines handled
         </span>
-        <button type="button" className="rv-pair-link" data-ev="pair-delegate-all" onClick={() => setDelegating(true)}>
-          Delegate the whole review…
-        </button>
+        {!delegating && (
+          <button type="button" className="rv-pair-link" data-ev="pair-delegate-all" onClick={() => setDelegating(true)}>
+            Delegate the whole review…
+          </button>
+        )}
       </h2>
       {delegating && (
         <div className="rv-agent-delegate">

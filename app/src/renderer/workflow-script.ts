@@ -744,7 +744,7 @@ export async function runScriptedWorkflow(
 ): Promise<ScriptedRunReport> {
   // DSP-149: `model-list` chooses Claude itself and must never choose Cursor. DSP-152:
   // `review-agent-choice` starts from the kit's own choice of Claude, usable or not.
-  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow' && plan.scenario !== 'review-agent-choice') {
+  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow' && plan.scenario !== 'review-agent-choice' && plan.scenario !== 'walk-start') {
     await nameScenarioAgent();
   }
   switch (plan.scenario) {
@@ -814,6 +814,8 @@ export async function runScriptedWorkflow(
       return runCodeWalksScenario(plan);
     case 'review-agent-choice':
       return runReviewAgentChoiceScenario(plan);
+    case 'walk-start':
+      return runWalkStartScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -12619,6 +12621,181 @@ async function runReviewAgentChoiceScenario(plan: ScriptedRunPlan): Promise<Scri
     return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/**
+ * DSP-152, after Niclas's second live trial: *Prepare code walks* did not start, and the
+ * window showed an earlier Cursor failure. This follows the person's whole way with real
+ * input (`sendInputEvent`, the main window included): open the project and the review from
+ * the main window, choose the revisions, open the preparation, wait for the agent's model
+ * list (shaped like a Claude account's and arriving after a while, SIMULATED), start, and
+ * open the walk that comes back. Nothing is set by the script: provider, model and form
+ * state are what the windows show.
+ *
+ * Phases, each in a fresh kit whose chat chose Claude:
+ * - `first` (`history`): with `opus`, over Niclas's stored review of the same pair (one
+ *   failed Cursor job, copied from his record).
+ * - `clean`: with `opus`, no earlier job; the model is changed with the keyboard first.
+ * - `blocked`: with a model the account's list does not offer; the picker must say so and
+ *   not start; once a model is chosen with the keyboard, the host fails the request
+ *   (SIMULATED), and the window must say so.
+ */
+async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const phase = plan.flowPhase === undefined || plan.flowPhase === 'first' ? 'history' : plan.flowPhase;
+  const observations: Record<string, unknown> = {
+    plan,
+    phase,
+    limits:
+      'SIMULATED provider: the presentation adapter answers for every agent, its model list is shaped like a Claude ' +
+      "account's and arrives after 1.5 s. The windows, real input, IPC, the host, its job records, the provider factory, " +
+      'walk validation, saving and opening are the product\'s own; no provider was contacted.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const MAIN = 0;
+  const tryPress = async (id: number, selector: string): Promise<{ readonly ok: boolean; readonly detail: unknown }> => {
+    const answer = await window.dspatch.pairWindowCheck({ action: 'press', id, selector });
+    await sleep(250);
+    return answer;
+  };
+  const press = async (id: number, selector: string): Promise<void> => {
+    const answer = await tryPress(id, selector);
+    if (!answer.ok) {
+      throw new Error(`could not press ${selector}: ${JSON.stringify(answer.detail)}`);
+    }
+  };
+  const pressKey = async (id: number, selector: string, key: string): Promise<void> => {
+    const answer = await window.dspatch.pairWindowCheck({ action: 'press-key', id, selector, key });
+    if (!answer.ok) {
+      throw new Error(`could not press ${key} on ${selector}: ${JSON.stringify(answer.detail)}`);
+    }
+    await sleep(300);
+  };
+  const capture = async (id: number, label: string): Promise<void> => {
+    await sleep(300);
+    await window.dspatch.pairWindowCheck({ action: 'capture', id, label });
+  };
+  const shown = (reading: PairWindowReading | null): string => (reading as { visibleText?: string } | null)?.visibleText ?? '';
+  const picker = (reading: PairWindowReading | null): PickerReading | undefined => pickerOf(reading, 'pair-walks-agent');
+
+  try {
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await waitFor('a project to be offered in the window', () => element('project-0-path') !== null, 60_000);
+    // --- The main window, as a person uses it ---------------------------------------------------
+    await press(MAIN, '[data-ev="open-project-0"]');
+    await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
+    await press(MAIN, '[data-ev="open-review"]');
+    const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+    await untilPair(diffId, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
+    await press(diffId, '[data-ev="pair-repo-0"]');
+    await untilPair(diffId, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
+    await press(diffId, '[data-ev="pair-commit-1"]');
+    await press(diffId, '[data-ev="pair-commit-0"]');
+    await press(diffId, '[data-ev="pair-open"]');
+    const opened = await untilPair(diffId, 'the diff review', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
+    const earlier = jobsOf(opened);
+    record('review opened', { jobs: earlier.map((job) => ({ id: job.id, provider: job.provider, model: job.model, state: job.state })) });
+    if (phase === 'history') {
+      expect(earlier.length === 1 && earlier[0]?.provider === 'cursor' && earlier[0].state === 'failed', `the stored Cursor job was not read back: ${JSON.stringify(earlier)}`);
+    } else {
+      expect(earlier.length === 0, 'a fresh review has agent jobs');
+    }
+
+    // --- The preparation opened: the inherited choice, then the account's list -----------------
+    await press(diffId, '[data-ev="pair-prepare-walks"]');
+    const early = await untilPair(diffId, 'the picker', (reading) => picker(reading) !== undefined && !(picker(reading)?.text ?? '').startsWith('Reading the agents'), 20_000);
+    record('picker before the list', { picker: picker(early) });
+    if (phase !== 'blocked') {
+      // The account's list is slow here (SIMULATED, DSPATCH_PRESENTATION_LIST_MS): the
+      // inherited choice is shown while it is read, and is still the choice when it arrives.
+      expect(picker(early)?.modelReading !== null && picker(early)?.provider === 'claude', `the picker did not show the inherited choice while the list was read: ${JSON.stringify(picker(early))}`);
+    }
+    const listed = await untilPair(diffId, "the agent's models", (reading) => picker(reading)?.modelReading === null && picker(reading)?.options !== null, 30_000);
+    const choice = picker(listed);
+    record('picker with the list', { picker: choice, visible: shown(listed).slice(0, 600) });
+    expect(choice?.provider === 'claude', `the picker shows ${String(choice?.provider)}, not the inherited Claude`);
+    expect(!(choice?.options ?? []).includes('default'), "the provider's `default` alias is offered as a model of its own");
+    // One way to start, and it is the picker's: the header control is not a second "Prepare code walks".
+    const header = await tryPress(diffId, '[data-ev="pair-prepare-walks"]');
+    record('the header control while choosing', { header });
+    expect(!header.ok, `the header's Prepare code walks can still be pressed while the picker is open (${JSON.stringify(header.detail)}), and a press there starts nothing`);
+    expect(!shown(listed).includes('could not be asked') && !shown(listed).includes('Last attempt'), 'an earlier failure is drawn beside the new choice');
+    await capture(diffId, 'choosing');
+
+    if (phase === 'blocked') {
+      // --- A model the list does not offer: said, and no start -----------------------------
+      const blockedNote = choice?.note ?? '';
+      expect(choice?.startDisabled === true, 'the picker can start with a model the account does not offer');
+      expect(blockedNote.includes('claude-opus-4-1'), `the picker does not say why it cannot start: "${blockedNote}"`);
+      const refused = await tryPress(diffId, '[data-ev="pair-walks-agent-start"]');
+      record('start pressed while blocked', { refused });
+      expect(!refused.ok, 'a press on a start that cannot start was taken');
+      await capture(diffId, 'blocked');
+      // --- A model chosen with the keyboard; the host then fails the request (SIMULATED) -------
+      await pressKey(diffId, '[data-ev="pair-walks-agent-model"]', 'Down');
+      const chosen = picker(await readPairWindow(diffId));
+      record('model chosen', { picker: chosen });
+      expect(chosen?.startDisabled === false && (chosen.model ?? '') !== '', `choosing a model did not make the start possible: ${JSON.stringify(chosen)}`);
+      await press(diffId, '[data-ev="pair-walks-agent-start"]');
+      const failed = await untilPair(diffId, 'a reason for the failed start', (reading) => shown(reading).includes('could not be started'), 15_000);
+      record('failed start', { visible: shown(failed).slice(0, 600), jobs: jobsOf(failed).length });
+      expect(shown(failed).includes('SIMULATED (DSPATCH_REVIEW_SIM=start-throws)'), 'the reason the start failed is not shown');
+      expect(jobsOf(failed).length === 0, 'a failed request left a job');
+      const adapter = await reviewAdapterRecord();
+      record('adapters', adapter);
+      expect(adapter.built.length === 0 && adapter.starts.length === 0, `an adapter was built for a failed request: ${JSON.stringify(adapter)}`);
+      await capture(diffId, 'start-failed');
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    expect(choice?.model === 'opus' && choice.startDisabled === false, `the inherited Claude/opus cannot be started: ${JSON.stringify(choice)}`);
+    let model = 'opus';
+    if (phase === 'clean') {
+      // An explicit change with the keyboard, after the list arrived.
+      await pressKey(diffId, '[data-ev="pair-walks-agent-model"]', 'Down');
+      const changed = picker(await readPairWindow(diffId));
+      record('model changed', { picker: changed });
+      expect(changed?.provider === 'claude' && changed.model === 'sonnet' && changed.startDisabled === false, `the keyboard did not choose sonnet: ${JSON.stringify(changed)}`);
+      model = changed?.model ?? '';
+    }
+
+    // --- Start: a job, a session with the choice, a valid walk ---------------------------------
+    await press(diffId, '[data-ev="pair-walks-agent-start"]');
+    const done = await untilPair(diffId, 'the walks job', (reading) => jobsOf(reading).length > earlier.length && settledJob(lastJob(reading, 'walks')), 60_000);
+    const job = lastJob(done, 'walks');
+    const adapter = await reviewAdapterRecord();
+    record('walks job', { job, adapter, visible: shown(done).slice(0, 400) });
+    expect(job?.state === 'done' && job.provider === 'claude' && job.model === model, `the walks job did not finish with Claude/${model}: ${JSON.stringify(job)}`);
+    expect(adapter.starts.at(-1)?.provider === 'claude' && adapter.starts.at(-1)?.modelRequested === model, `the adapter's session was not Claude/${model}: ${JSON.stringify(adapter.starts)}`);
+    expect(adapter.built.every((provider) => provider === 'claude'), `an adapter was built for another agent: ${JSON.stringify(adapter.built)}`);
+    expect(job?.definitionPath !== null && job?.definitionPath !== undefined, 'the walks were not saved');
+    await capture(diffId, 'prepared');
+
+    // --- Open the walk that came back ------------------------------------------------------
+    await press(diffId, '[data-ev="agent-job-walks-open"]');
+    await untilPair(diffId, 'the walk list', (reading) => (reading.text ?? '').includes('Code walks ·'), 15_000);
+    await press(diffId, '[data-ev="pair-walk-0"]');
+    const walk = await untilWindow('the walk window', (rows) => rows.find((row) => row.view === 'walk'));
+    const walkOpen = await untilPair(walk.id, 'the walk', (reading) => reading.walk?.kind === 'opened', 30_000);
+    record('walk opened', { walk: walkOpen.walk, visible: shown(walkOpen).slice(0, 300) });
+    expect(walkOpen.walk?.kind === 'opened', 'the prepared walk did not open');
+    await capture(walk.id, 'walk');
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+    const rows = await pairWindows().catch(() => []);
+    observations['atFailure'] = { windows: rows, readings: await Promise.all(rows.map((row) => readPairWindow(row.id).catch(() => null))) };
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
   }
 }

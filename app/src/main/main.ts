@@ -2555,7 +2555,60 @@ function startPanelTrial(): void {
 /* ------------------------------------------------------------------------- */
 
 /** The review windows for the `pair-review` scenario: listed, read, clicked, closed. */
+/**
+ * DSP-152: real input in a window, as a person's mouse or keyboard gives it. The element
+ * is found and scrolled into view; a click lands at its centre only when that point shows
+ * the element itself (or something inside it): a point covered by something else is
+ * reported, not clicked through.
+ */
+async function pressIn(
+  window: BrowserWindow,
+  contents: Electron.WebContents,
+  request: { readonly action: 'press' | 'press-key'; readonly selector: string; readonly key?: string },
+): Promise<EditorWindowCheckAnswer> {
+  const place = (await contents.executeJavaScript(
+    `(() => {
+      const element = document.querySelector(${JSON.stringify(request.selector)});
+      if (!(element instanceof HTMLElement)) { return null; }
+      element.scrollIntoView({ block: 'center' });
+      ${request.action === 'press-key' ? 'element.focus();' : ''}
+      const box = element.getBoundingClientRect();
+      const x = Math.round(box.left + box.width / 2);
+      const y = Math.round(box.top + box.height / 2);
+      const hit = document.elementFromPoint(x, y);
+      const covered = hit === null || element.contains(hit) ? null : (hit.tagName.toLowerCase() + (hit.getAttribute('data-ev') ? '[data-ev=' + hit.getAttribute('data-ev') + ']' : '') + (typeof hit.className === 'string' && hit.className !== '' ? '.' + hit.className.split(' ').join('.') : ''));
+      return { x, y, disabled: (element instanceof HTMLButtonElement || element instanceof HTMLSelectElement) && element.disabled, focused: document.activeElement === element, covered };
+    })()`,
+  )) as { x: number; y: number; disabled: boolean; focused: boolean; covered: string | null } | null;
+  if (place === null) {
+    return { ok: false, detail: `nothing matches ${request.selector}` };
+  }
+  if (place.disabled) {
+    return { ok: false, detail: 'disabled' };
+  }
+  if (request.action === 'press' && place.covered !== null) {
+    return { ok: false, detail: `covered by ${place.covered}` };
+  }
+  window.show();
+  window.focus();
+  contents.focus();
+  if (request.action === 'press') {
+    contents.sendInputEvent({ type: 'mouseDown', x: place.x, y: place.y, button: 'left', clickCount: 1 });
+    contents.sendInputEvent({ type: 'mouseUp', x: place.x, y: place.y, button: 'left', clickCount: 1 });
+  } else {
+    contents.sendInputEvent({ type: 'keyDown', keyCode: request.key ?? '' });
+    contents.sendInputEvent({ type: 'keyUp', keyCode: request.key ?? '' });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  return { ok: true, detail: place };
+}
+
 async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorWindowCheckAnswer> {
+  // DSP-152: id 0 is the main window, for real input from where a person starts.
+  if ((request.action === 'press' || request.action === 'press-key') && request.id === 0) {
+    const main = liveMainWindow();
+    return main === null ? { ok: false, detail: 'no main window' } : pressIn(main, main.webContents, request);
+  }
   const windows = requireReviewWindows();
   if (request.action === 'windows') {
     return {
@@ -2589,35 +2642,7 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
     return { ok: true, detail: 'focused' };
   }
   if (request.action === 'press' || request.action === 'press-key') {
-    // Where the element is, and (for a key) focus on it; the input itself is real.
-    const place = (await entry.contents.executeJavaScript(
-      `(() => {
-        const element = document.querySelector(${JSON.stringify(request.selector)});
-        if (!(element instanceof HTMLElement)) { return null; }
-        element.scrollIntoView({ block: 'center' });
-        ${request.action === 'press-key' ? 'element.focus();' : ''}
-        const box = element.getBoundingClientRect();
-        return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2), disabled: element instanceof HTMLButtonElement && element.disabled, focused: document.activeElement === element };
-      })()`,
-    )) as { x: number; y: number; disabled: boolean; focused: boolean } | null;
-    if (place === null) {
-      return { ok: false, detail: `nothing matches ${request.selector}` };
-    }
-    if (place.disabled) {
-      return { ok: false, detail: 'disabled' };
-    }
-    entry.window.show();
-    entry.window.focus();
-    entry.contents.focus();
-    if (request.action === 'press') {
-      entry.contents.sendInputEvent({ type: 'mouseDown', x: place.x, y: place.y, button: 'left', clickCount: 1 });
-      entry.contents.sendInputEvent({ type: 'mouseUp', x: place.x, y: place.y, button: 'left', clickCount: 1 });
-    } else {
-      entry.contents.sendInputEvent({ type: 'keyDown', keyCode: request.key });
-      entry.contents.sendInputEvent({ type: 'keyUp', keyCode: request.key });
-    }
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    return { ok: true, detail: place };
+    return pressIn(entry.window, entry.contents, request);
   }
   if (request.action === 'capture') {
     // Two frames painted first: a capture taken at once can return the frame before the
@@ -2723,10 +2748,10 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
               options: model && model.tagName === 'SELECT' ? [...model.options].map((option) => option.value) : null,
               startDisabled: start ? start.disabled : null,
               note: (node.querySelector('[data-ev$="-note"]') || { textContent: '' }).textContent,
-              text: (node.textContent || '').replace(/s+/g, ' ').trim(),
+              text: (node.textContent || '').replace(/\s+/g, ' ').trim(),
             };
           }),
-          jobDetails: [...document.querySelectorAll('.rv-agent-detail')].map((node) => ({ open: node.open, text: (node.textContent || '').replace(/s+/g, ' ').trim() })),
+          jobDetails: [...document.querySelectorAll('.rv-agent-detail')].map((node) => ({ open: node.open, text: (node.textContent || '').replace(/\s+/g, ' ').trim() })),
           rightWidth: (document.querySelector('.rv-right') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width,
           codeWidth: (document.querySelector('.rv-code') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width,
           overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -3322,12 +3347,12 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
-      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice'
+      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice' || chatRunScenario === 'walk-start'
         ? {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.
-              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' ? named : 'first';
+              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' ? named : 'first';
             })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }
@@ -3920,9 +3945,15 @@ function main(): void {
         log(`[review] ${message}`);
       },
     });
-    registerReviewIpc(reviewWindows, reviewHost, reviewDiscussionClient, {
-      call: (method, ...args) => host.call<unknown>(method, NO_SENDER, ...args),
-    });
+    registerReviewIpc(
+      reviewWindows,
+      reviewHost,
+      reviewDiscussionClient,
+      {
+        call: (method, ...args) => host.call<unknown>(method, NO_SENDER, ...args),
+      },
+      log,
+    );
     registerIpc();
     if (reviewAskedAtStart && !directReviewMode) {
       log(

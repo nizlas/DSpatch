@@ -39,7 +39,7 @@ import type {
   WorkspaceOpenOutcome,
   WorkspaceOpenRequest,
 } from '../shared/bridge';
-import type { AppTool } from '../adapter/types';
+import type { AppTool, ModelInfo } from '../adapter/types';
 import type { HostEnvironmentFacts, HostEventTarget, HostShutdownAnswer, HostStartConfig } from '../shared/host-protocol';
 import {
   PROJECT_HOST_METHOD_NAMES,
@@ -127,6 +127,7 @@ import { LoopRunAudience } from '../main/loop-run-audience';
 import { loopRunAgentInfo, prepareLoopRun, resolveLoopProvider, type LoopRunAgentRequest } from '../main/loop-run-agent';
 import { ownRepositoryRoot } from '../main/own-repository';
 import {
+  CLAUDE_SHAPED_MODELS,
   PresentationAdapter,
   PresentationResumeBehaviour,
   presentationAuthStatus,
@@ -267,12 +268,18 @@ function sendToContents(contentsId: number, channel: string, payload: unknown): 
 function presentationAdapterOptions(): {
   readonly deltaMs?: number;
   readonly resume: PresentationResumeBehaviour;
+  readonly models?: readonly ModelInfo[];
+  readonly listDelayMs?: number;
 } {
   const raw = process.env['DSPATCH_PRESENTATION_DELTA_MS'] ?? '';
   const parsed = Number.parseInt(raw, 10);
+  // DSP-152: `claude` lists models shaped like a Claude account's, arriving after a while.
+  const claudeShaped = process.env['DSPATCH_PRESENTATION_MODELS'] === 'claude';
+  const listMs = Number.parseInt(process.env['DSPATCH_PRESENTATION_LIST_MS'] ?? '', 10);
   return {
     ...(Number.isFinite(parsed) && parsed > 0 ? { deltaMs: parsed } : {}),
     resume: presentationResume,
+    ...(claudeShaped ? { models: CLAUDE_SHAPED_MODELS, listDelayMs: Number.isFinite(listMs) && listMs > 0 ? listMs : 1500 } : {}),
   };
 }
 
@@ -3776,7 +3783,13 @@ function registerReviewMethods(): void {
   );
   // DSP-152: preparing walks and delegated review, started only by an explicit request.
   handle('reviewPair.agents', (_event, key: unknown, opener: unknown) => requireReviewAgentJobs().agents(key, opener));
-  handle('reviewPair.startJob', (_event, key: unknown, request: unknown) => requireReviewAgentJobs().start(key, request));
+  handle('reviewPair.startJob', (_event, key: unknown, request: unknown) => {
+    // DSP-152: a request that fails in the host before it is answered, as a trial needs it.
+    if (presentationMode && process.env['DSPATCH_REVIEW_SIM'] === 'start-throws') {
+      throw new Error('SIMULATED (DSPATCH_REVIEW_SIM=start-throws): the host could not take the request.');
+    }
+    return requireReviewAgentJobs().start(key, request);
+  });
   handle('reviewPair.cancelJob', (_event, key: unknown, jobId: unknown) => requireReviewAgentJobs().cancel(key, jobId));
 
   handle('discussion.load', (_event, target: DiscussionTarget, request: unknown) =>

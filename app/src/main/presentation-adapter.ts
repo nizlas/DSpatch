@@ -41,8 +41,18 @@ const MODELS: readonly ModelInfo[] = [
   { id: 'claude-haiku-4-5', displayName: 'Claude Haiku 4.5', provider: 'cursor' },
   { id: 'claude-sonnet-4-5', displayName: 'Claude Sonnet 4.5', provider: 'cursor' },
   { id: 'gpt-5-codex', displayName: 'GPT-5 Codex', provider: 'cursor' },
-  // The alias form Claude's own listing uses, as a stored Claude choice can hold it.
-  { id: 'opus', displayName: 'Opus (simulated)', provider: 'claude' },
+];
+
+/**
+ * DSP-152: a stand-in shaped like a Claude account's own listing (`supportedModels()` as
+ * recorded in DSP-149: a `default` alias resolving to a model, then aliases such as
+ * `opus`), for trials of how windows treat aliases. SIMULATED: no account was asked.
+ */
+export const CLAUDE_SHAPED_MODELS: readonly ModelInfo[] = [
+  { id: 'default', displayName: 'Default (recommended)', provider: 'claude', resolvedId: 'claude-opus-5-5' },
+  { id: 'opus', displayName: 'Opus 5.5', provider: 'claude', resolvedId: 'claude-opus-5-5' },
+  { id: 'sonnet', displayName: 'Sonnet 5.5', provider: 'claude', resolvedId: 'claude-sonnet-5-5' },
+  { id: 'haiku', displayName: 'Haiku 5.5', provider: 'claude', resolvedId: 'claude-haiku-5-5' },
 ];
 
 const CAPABILITIES: CapabilityReport = {
@@ -349,13 +359,22 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
   /** How `resume()` answers, and the record of what was asked. `ok` unless given. */
   private readonly behaviour: PresentationResumeBehaviour;
 
+  /** The listing, and how long it takes to arrive, as a real lookup is not immediate. */
+  private readonly models: readonly ModelInfo[];
+
+  private readonly listDelayMs: number;
+
   constructor(
     options: {
       readonly deltaMs?: number;
       readonly resume?: PresentationResumeBehaviour;
+      readonly models?: readonly ModelInfo[];
+      readonly listDelayMs?: number;
     } = {},
   ) {
     this.deltaMs = options.deltaMs ?? 45;
+    this.models = options.models ?? MODELS;
+    this.listDelayMs = options.listDelayMs ?? 0;
     this.behaviour = options.resume ?? new PresentationResumeBehaviour('ok');
   }
 
@@ -364,7 +383,12 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
   }
 
   listModels(): Promise<readonly ModelInfo[]> {
-    return Promise.resolve(MODELS);
+    if (this.listDelayMs === 0) {
+      return Promise.resolve(this.models);
+    }
+    return new Promise((resolve) => {
+      setTimeout(() => resolve(this.models), this.listDelayMs);
+    });
   }
 
   startSession(config: SessionConfig): Promise<SessionHandle> {

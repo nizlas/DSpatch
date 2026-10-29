@@ -84,6 +84,8 @@ export const chatRunScenario: ScriptedScenario =
                                 ? 'code-walks'
                                 : chatRunValue === 'review-agent-choice'
                                 ? 'review-agent-choice'
+                                : chatRunValue === 'walk-start'
+                                ? 'walk-start'
                                 : chatRunValue === 'switch'
                                   ? 'workspace-switch'
                                   : chatRunValue === 'resume-choice'
@@ -180,6 +182,8 @@ export const presentationMode =
   chatRunScenario === 'code-walks' ||
   // DSP-152 fix: the agent and model a review's agent work starts with (SIMULATED).
   chatRunScenario === 'review-agent-choice' ||
+  // DSP-152, second live trial: from the main window to an opened walk with real input (SIMULATED).
+  chatRunScenario === 'walk-start' ||
   // DSP-121: the refused and failed resume states through the real choice panel. The
   // refusal is the presentation adapter's own, simulated on this machine; the one
   // message the scenario sends after choosing a new session is answered locally.

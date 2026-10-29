@@ -1789,6 +1789,8 @@ export type ScriptedScenario =
   | 'code-walks'
   /** DSP-152 fix: the review's agent and model come from its opener and reach the adapter. SIMULATED provider. */
   | 'review-agent-choice'
+  /** DSP-152, second live trial: real clicks from the main window to a prepared, opened walk. SIMULATED provider. */
+  | 'walk-start'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2062,6 +2064,7 @@ export type PairWindowCheckRequest =
    * event: a left click at the element's centre, or (`press-key`) the element focused and
    * a key pressed and released, as the person's mouse and keyboard would.
    */
+  /** `id` 0 is the main window. */
   | { readonly action: 'press'; readonly id: number; readonly selector: string }
   | { readonly action: 'press-key'; readonly id: number; readonly selector: string; readonly key: string }
   | { readonly action: 'close'; readonly id: number };
@@ -2204,7 +2207,7 @@ export interface ScriptedRunPlan {
    */
   readonly resumeHold?: boolean;
   /** DSP-149 `workspace-flow`: which process this is, and the folder its projects are in. */
-  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history';
+  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked';
   readonly flowRoot?: string;
 }
 
