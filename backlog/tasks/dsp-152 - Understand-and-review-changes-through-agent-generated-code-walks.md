@@ -4,7 +4,7 @@ title: Understand and review changes through agent-generated code walks
 status: Review
 assignee: []
 created_date: '2026-10-28 22:32'
-updated_date: '2026-10-29 00:29'
+updated_date: '2026-10-29 10:26'
 labels:
   - review
   - code-walks
@@ -84,7 +84,7 @@ The plan leaves these open, or they arise from existing decisions. Niclas's mand
 - [ ] #6 The explanation column gets more room by default with a draggable divider whose chosen width is kept; the layout follows the plan's points on line length, a short walk introduction, no stacked repeated explanations, code references near their explanation and use in smaller windows; the diff overview and the walk window stay separate with shared status and independent navigation (plan §4)
 - [x] #7 The person can review, discuss, or explicitly delegate a walk, file or line range to the agent, which reports what it actually reviewed, its assessment and evidence, problems and remaining uncertainties, and what can be approved within the given mandate (plan §5)
 - [x] #8 Reading an explanation, showing code or creating a walk never approves anything; an exemption is a separate explicit decision; open findings stay visible when walk coverage is high; review requirements are understandable and choosable (plan §5)
-- [ ] #9 The host owns revision material, validation, review status and history; the agent analyses and explains through the existing provider integration and its own tools, under a bounded assignment without a mandate to change project code; the existing tool-free review discussion gains no permissions silently (plan §6)
+- [x] #9 The host owns revision material, validation, review status and history; the agent analyses and explains through the existing provider integration and its own tools, under a bounded assignment without a mandate to change project code; the existing tool-free review discussion gains no permissions silently (plan §6)
 - [x] #10 Walks, deepenings, findings and decisions are bound to the reviewed version and survive a restart; new revisions never replace the material under review automatically (plan §6)
 - [x] #11 Verification covers function and content: references and coverage match the revision pair, deepenings use the right step and code context, windows, positions and marks work after reopening, and agent approvals require an actual review result and the right mandate (plan §7)
 - [ ] #12 Whether the explanations make the behaviour easier to understand without hiding important detail is judged in a real user trial; simulated answers verify the flow only, not the quality of the agent's explanations (plan §7)
@@ -106,7 +106,7 @@ The plan leaves these open, or they arise from existing decisions. Niclas's mand
 
 ### Design choices within the mandate (changeable after the trial)
 
-1. **Analysis access: tool-free, material in the prompt.** The host reads the two commits (diff with `-M`, excerpts of changed files with 25 lines of context, budget 180 000 characters) and sends them in the prompt. The agent runs with the existing `REVIEW_PERMISSIONS` policy (no tools) from an empty folder `userData/reviews/agent-cwd/<key>`; a job refuses to start if the policy differs. This keeps the working copy out of reach, makes the material exactly the chosen revisions, and adds no permissions. Cost: the agent cannot browse code outside the excerpts. AC #9's "its own tools" is therefore not met as written; widening access is Niclas's decision.
+1. **Analysis access: tool-free, material in the prompt.** *(Superseded on 29 Oct 2026 by the analysis access below.)* The host reads the two commits (diff with `-M`, excerpts of changed files with 25 lines of context, budget 180 000 characters) and sends them in the prompt. The agent runs with the existing `REVIEW_PERMISSIONS` policy (no tools) from an empty folder `userData/reviews/agent-cwd/<key>`; a job refuses to start if the policy differs. This keeps the working copy out of reach, makes the material exactly the chosen revisions, and adds no permissions. Cost: the agent cannot browse code outside the excerpts. AC #9's "its own tools" is therefore not met as written; widening access is Niclas's decision.
 2. **One host function for every way in.** `reviewPair.startJob` in the project host serves preparation and every delegation scope; the windows only call it.
 3. **Validation and repair.** Every place and coverage range is checked against the commits (`walkPlaceProblems`). One repair round is asked for with the problems listed; places still invalid after it are dropped and the walk says so in its note. Uncovered changed lines are counted once, however many walks pass them.
 4. **Recording agent review.** A delegated job stores its scope, revisions, model and result in the pair record (`jobs`); approvals become `AgentReview` entries with `jobId`. An approval counts only if the line is inside the scope, was reported as reviewed and carries no problem; anything else is listed under *adjustments*. An insufficient, cancelled, failed or unknown job approves nothing.
@@ -220,5 +220,58 @@ The trial cannot tell which of the first two Niclas met; both are fixed.
 - `review-agent-choice` (four phases) and `code-walks` (two phases) pass after the change; `review-pairs`, `review-agent-jobs` and `model-choice` tests 41/41; typecheck and build clean.
 
 **Not established:** which of the reproduced paths Niclas met; a live run with Claude (whether the real SDK lists `opus` and runs a walk with it). The tool-free analysis follow-up is unchanged, and DSP-152 as a whole is not done.
+
+29 Oct 2026, analysis access (Niclas's assignment of this date; the decided runtime-tool access, separate from the tool-free discussion): give walk preparation, delegated review and step questions read-only access to both revisions through the provider's own Read/Glob/Grep, from a host-owned snapshot of the two commits; keep host validation, job records and the model choice of b420a3f. Gaps mapped: analysis is tool-free with 25-line excerpts and a 180 000-character cap (design choice 1); no revision material on disk; no read-only policy; deepenings see only the current place; material() named as the only content path.
+### Analysis access (29 Oct 2026): the agent examines the code itself
+
+Assignment of this date: replace the tool-free analysis (design choice 1: 25-line excerpts, a 180 000-character prompt) with the access the plan (§6) decided, the runtime's own tools over the right revisions, and connect it to the flow built so far. This supersedes design choice 1 and the earlier note that `ReviewPairs.material()` is "the single place the agent's material is read".
+
+**What works now**
+- *Prepare code walks*, every delegation (lines, file, walk, whole review) and a new step question (*Look into the code…* under each step) run as analysis jobs. The host writes the two commits to `userData/reviews/revisions/<pair key>/base/` and `target/` and runs the agent there. The prompt opens with the change, its changed lines and the unified diff (whole files' diffs up to 60 000 characters) for orientation, and tells the agent to read whole files, follow calls, definitions and callers, and look at unchanged code and tests with its tools.
+- Results are checked against Git at the two commits, never against the folder: walk places and answer references must exist at their commit (one repair round for walks, invalid references in answers left out and named), findings whose place does not exist lose the place and are named, approvals only inside the scope among reviewed lines, and lines in files the agent could not read are not approved.
+- Each job records what the agent could read (`material`: the commits, file count and anything left out with its reason) and what it read and searched (`investigation`, from the provider's tool reports; refused calls separately). Both are under *Details*, not in the view.
+- The review discussion stays tool-free. A step's deepenings (*Tell me more*, *Explain more simply*, *Explain this*) now get every place of the step as code context and the step's answered code questions as "What the agent found in the code for this step", read by the host from the pair record.
+
+**Design choices (changeable)**
+1. **Revision material: written files, not checkouts.** `RevisionSnapshots` lists each commit with `git ls-tree` and writes every blob from `git cat-file --batch`: no worktree, no index, nothing added to `.git`, the commit's bytes exactly. Considered and not chosen: `git worktree add` (writes into the person's `.git`, needs cleanup there) and a checkout into a temporary index (more moving parts for the same files). Symbolic links, submodules, names the file system cannot hold, case collisions and files beyond 1 GiB per side are left out and named; changed files are never left out for size. Files are written read-only (a guard, not containment).
+2. **Lifecycle.** A job holds the pair's folder from before the session until the session is closed; jobs over one pair share it; the last release deletes it, and folders left by an earlier run are deleted when the host starts. Walks and results name repository paths at a commit, so they open without the folder. Stop, unknown outcomes, no resend on reopening and restart reconciliation are the existing job handling, unchanged.
+3. **Permissions (Claude).** A new purpose `analysis` in the shared factory gives `ANALYSIS_PERMISSIONS`:
+   - `tools: Read, Glob, Grep`; `allowedTools: Read(/**), Glob, Grep`;
+   - every writing, command, web, agent, skill and MCP tool in `disallowedTools`;
+   - `dontAsk`, `settingSources: []`, `strictMcpConfig`, no app tools;
+   - a PreToolUse hook (`confineToFolders`) that denies any other tool, any Read/Glob/Grep path outside the session folder and any absolute or `..` pattern, before allow rules apply.
+
+   A job refuses an adapter without exactly this policy. Technically enforced: what Claude Code's permission system and the hook do. Not enforced: the Claude Code process is not sandboxed; "you cannot change files or run commands" in the prompt is an instruction, not the control. Managed (policy) settings, including hooks an organisation installs there, still apply; DSpatch neither loads nor removes them.
+4. **Cursor does no analysis work.** Its adapter has only "no tools" or the provider's default set (which writes and runs commands); neither is read-only analysis, so the factory and the picker refuse Cursor here with the reason ("Cursor cannot be limited to reading files through DSpatch's Cursor connection…"). This removes the earlier tool-free Cursor walks. Whether Cursor's SDK can be limited to reading is not established (not contacted).
+5. **Step questions** are a fourth action under a step rather than a change to the three deepening actions: the three keep the discussion's tool-free path and the plan's pedagogy; a question that needs the code goes to the analysis path, and its answer becomes context for the discussion.
+
+**Content exclusion.** Repository content now reaches the model by three ways:
+- the opening diff (`ReviewPairs.material`);
+- the agent's own reads of the revision folder, where `RevisionSnapshots` decides what is written and Claude Code's permission path (including managed hooks) sees each read before it happens;
+- the discussion's envelope (`ReviewService.envelopeFor`), now with the step's places and code answers.
+
+DSpatch excludes nothing in any of them today and does not claim to; the content-exclusion contract's controls are not built here.
+
+**Departures closed:** design choice 1 (tool-free analysis with bounded excerpts; AC #9's "its own tools"); `material()` described as the single content path.
+
+**Verified** (no provider contacted, no live calls, isolated user data, the real profile untouched):
+- New `tests/review-analysis.test.ts` (10), over a real Git repository whose changed `total()` calls `findDiscount()`, defined 61 lines down in an unchanged file and able to return null, with an edited, staged and untracked working copy (`tests/support/analysis-fixture.ts`):
+  - the folder holds exactly the commits' bytes, nothing staged or untracked, and the working copy, index, HEAD and worktrees are unchanged;
+  - links and submodules are left out and named; stale folders are swept; a shared folder is removed after its last holder;
+  - the policy's decisions for inside and outside paths, patterns and other tools;
+  - the factory builds `ANALYSIS_PERMISSIONS` for Claude and refuses Cursor before building anything;
+  - the real `ClaudeAgentSdkAdapter` with a substituted SDK whose scripted model calls tools through the adapter's own hooks, reading real files only when allowed: the session ran in the revision folder with the policy's options; reads of the revisions passed, a read of the working copy and a Bash call were refused; the definition was not in the prompt yet the walk points at `src/pricing.ts` line 61; the job recorded what was read and refused; the folder was gone after the job.
+- `review-agent-jobs` (13) updated; the review group (138), the provider group (103), `provider-selection`, `project-host-boundary` and `loop-agent-commands` pass; `npm run typecheck` and `npm run typecheck:claude` pass (the latter checks the tool names and the Read/Glob/Grep input fields against the installed SDK 0.3.306); build clean.
+- New scenario `analysis-access`, real mouse and keyboard from the main window, presentation agent that reads the revision folder from disk:
+  - `first`: walks with Claude/`opus` (a step at the unchanged definition); the walk opened at that place; a typed step question answered with references to `src/pricing.ts` lines 61–66 (To) and the reads under Details only; *Tell me more* sent with the step's answer and the definition's code in its context and no working-copy text; `src/checkout.ts` delegated (a problem at line 4, a note at the definition, line 4 not approved); `README.md` not enough to judge, nothing approved; a delegation stopped, cancelled, nothing approved.
+  - `again` (restart): jobs, walk and the step's answer back, 0 prompts sent.
+  - The runner showed: the working-copy fingerprint unchanged after both phases; every job's recorded commits equal to the kit's; five folders written and five removed; none left; no log line names Cursor.
+- `code-walks` (both phases, now with a Claude kit since Cursor does no analysis), `walk-start` (three phases) and `review-agent-choice` pass (`unavailable` now expects "No agent can be used here" with both reasons).
+
+**Not established**
+- Whether the real Claude Code process honours `tools`, `allowedTools`, `disallowedTools` and the hook's decision as documented, and that `Read(/**)` and bare `Glob`/`Grep` behave as expected on Windows paths: needs the live trial; a denial there fails closed (the agent reads less).
+- What a real model reads and writes, and the quality of its walks, reviews and answers (AC #3, #12).
+- How long writing the folder takes for a large repository (the fixtures are small); Linux.
+- Cursor's ability to read-only analysis.
 
 <!-- SECTION:NOTES:END -->

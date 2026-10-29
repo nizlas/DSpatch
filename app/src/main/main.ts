@@ -2564,14 +2564,14 @@ function startPanelTrial(): void {
 async function pressIn(
   window: BrowserWindow,
   contents: Electron.WebContents,
-  request: { readonly action: 'press' | 'press-key'; readonly selector: string; readonly key?: string },
+  request: { readonly action: 'press' | 'press-key' | 'type'; readonly selector: string; readonly key?: string; readonly text?: string },
 ): Promise<EditorWindowCheckAnswer> {
   const place = (await contents.executeJavaScript(
     `(() => {
       const element = document.querySelector(${JSON.stringify(request.selector)});
       if (!(element instanceof HTMLElement)) { return null; }
       element.scrollIntoView({ block: 'center' });
-      ${request.action === 'press-key' ? 'element.focus();' : ''}
+      ${request.action === 'press-key' || request.action === 'type' ? 'element.focus();' : ''}
       const box = element.getBoundingClientRect();
       const x = Math.round(box.left + box.width / 2);
       const y = Math.round(box.top + box.height / 2);
@@ -2595,6 +2595,10 @@ async function pressIn(
   if (request.action === 'press') {
     contents.sendInputEvent({ type: 'mouseDown', x: place.x, y: place.y, button: 'left', clickCount: 1 });
     contents.sendInputEvent({ type: 'mouseUp', x: place.x, y: place.y, button: 'left', clickCount: 1 });
+  } else if (request.action === 'type') {
+    for (const character of request.text ?? '') {
+      contents.sendInputEvent({ type: 'char', keyCode: character });
+    }
   } else {
     contents.sendInputEvent({ type: 'keyDown', keyCode: request.key ?? '' });
     contents.sendInputEvent({ type: 'keyUp', keyCode: request.key ?? '' });
@@ -2641,7 +2645,7 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
     entry.window.focus();
     return { ok: true, detail: 'focused' };
   }
-  if (request.action === 'press' || request.action === 'press-key') {
+  if (request.action === 'press' || request.action === 'press-key' || request.action === 'type') {
     return pressIn(entry.window, entry.contents, request);
   }
   if (request.action === 'capture') {
@@ -2732,6 +2736,14 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
           decisions: [...document.querySelectorAll('.rv-decision')].map((node) => (node.textContent || '').replace(/\s+/g, ' ').trim()),
           showInDiff: document.querySelector('[data-ev="walk-show-in-diff"]') !== null,
           deepenings: [...document.querySelectorAll('[data-ev="step-deepening"]')].map((node) => ({ state: node.getAttribute('data-state'), text: (node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300) })),
+          // DSP-152: a step's code questions: state, the answer as drawn, its references and Details.
+          investigations: [...document.querySelectorAll('[data-ev="step-investigation"]')].map((node) => ({
+            state: node.getAttribute('data-state'),
+            open: node.open,
+            text: (node.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 1200),
+            references: [...node.querySelectorAll('[data-ev="step-investigation-ref"]')].map((ref) => ((ref.parentElement || ref).textContent || '').replace(/\s+/g, ' ').trim()),
+            details: ((node.querySelector('.rv-agent-detail') || { textContent: '' }).textContent || '').replace(/\s+/g, ' ').trim(),
+          })),
           walkJob: (document.querySelector('.rv-walk-delegate [data-state]') || { getAttribute: () => null }).getAttribute('data-state'),
           walkJobText: (document.querySelector('.rv-walk-delegate') || { textContent: '' }).textContent,
           // DSP-152: what each open agent picker shows, as the person sees it.
@@ -3347,7 +3359,7 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
-      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice' || chatRunScenario === 'walk-start'
+      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice' || chatRunScenario === 'walk-start' || chatRunScenario === 'analysis-access'
         ? {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];

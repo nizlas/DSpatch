@@ -16,6 +16,7 @@ import { after, before, describe, it } from 'node:test';
 
 import { ReviewAgentJobs } from '../src/host/review-agent-jobs';
 import { ReviewPairs } from '../src/host/review-pairs';
+import { RevisionSnapshots } from '../src/host/revision-snapshots';
 import { PresentationAdapter } from '../src/main/presentation-adapter';
 import { parseReviewDefinition } from '../src/shared/review-model';
 import { answerJson, readReviewAnswer, readWalksAnswer, walksPrompt } from '../src/shared/review-agent';
@@ -40,6 +41,7 @@ function jobs(adapterOptions: { readonly deltaMs?: number } = {}): ReviewAgentJo
       };
       return adapter;
     },
+    snapshots: new RevisionSnapshots({ root: path.join(records, 'revisions'), log: () => undefined }),
     availability: () => ({ choosable: true, reason: null }),
     pairs,
     language: () => Promise.resolve('en'),
@@ -84,7 +86,7 @@ describe('the material', () => {
   it('is read from the two commits, never the working copy', async () => {
     const material = await pairs.material(open.key);
     assert.ok(!isPairError(material));
-    const prompt = walksPrompt(material, 'en');
+    const prompt = walksPrompt(material, { base: open.pair.base, target: open.pair.target, files: 0, skipped: [], skippedCount: 0 }, 'en');
     assert.ok(prompt.includes('export const v3 = 30;'));
     assert.ok(!prompt.includes(PAIR_WORKING_TREE_ONLY));
     assert.ok(prompt.includes('Keep apart what the code is meant to do'), 'the plan\'s writing rules are the instruction');
@@ -241,6 +243,7 @@ describe('the agent and model (after the first live trial)', () => {
         }
         return adapter;
       },
+      snapshots: new RevisionSnapshots({ root: path.join(dir, 'revisions'), log: () => undefined }),
       availability: (provider) =>
         provider === 'claude' && options.claude === false
           ? { choosable: false, reason: 'Claude is not enabled for this launch.' }
@@ -282,7 +285,9 @@ describe('the agent and model (after the first live trial)', () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     })();
-    assert.deepEqual(built, ['claude'], 'only the chosen agent was built');
+    // Stopped at once, it may end while the revisions are being written, before any
+    // adapter exists (DSP-152); if one was built, it was the chosen agent's.
+    assert.ok(built.every((provider) => provider === 'claude'), `only the chosen agent was built: ${JSON.stringify(built)}`);
     // The choice made in the review wins over the opener's from now on.
     const later = jobsHere.agents(key, { provider: 'claude', model: 'claude-opus-4-5' });
     assert.ok(!isPairError(later));

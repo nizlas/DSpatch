@@ -9,6 +9,7 @@
  */
 
 import type * as Sdk from '@anthropic-ai/claude-agent-sdk' with { 'resolution-mode': 'import' };
+import type * as SdkTools from '@anthropic-ai/claude-agent-sdk/sdk-tools' with { 'resolution-mode': 'import' };
 
 import type { ClaudeModelInfo, ClaudeQueryFunction, ClaudeQueryHandle } from '../src/adapter/claude-agent-sdk-adapter';
 import type * as Ours from '../src/adapter/claude-sdk-shapes';
@@ -73,3 +74,21 @@ export type PreToolUseKeysTheSdkLacks = MustBeNever<
   Exclude<keyof NonNullable<Ours.HookJSONOutput['hookSpecificOutput']>, keyof Sdk.PreToolUseHookSpecificOutput>
 >;
 export type SpawnOptionsKeysTheSdkLacks = MustBeNever<Exclude<keyof Ours.SpawnOptions, keyof Sdk.SpawnOptions>>;
+
+// DSP-152: the analysis policy names the SDK's own built-in reading tools, and its hook
+// reads the fields the SDK declares for their inputs: a Read's `file_path`, a Glob's
+// `path` and `pattern`, a Grep's `path` and `glob`.
+type BuiltInTool = (typeof Sdk.BUILTIN_TOOL_NAMES)[number];
+fits<readonly BuiltInTool[]>(['Read', 'Glob', 'Grep'] as const);
+fits<readonly BuiltInTool[]>(['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit', 'Agent', 'WebFetch', 'WebSearch', 'Skill'] as const);
+declare const readInput: SdkTools.FileReadInput;
+declare const globInput: SdkTools.GlobInput;
+declare const grepInput: SdkTools.GrepInput;
+fits<string>(readInput.file_path);
+fits<string | undefined>(globInput.path);
+fits<string>(globInput.pattern);
+fits<string | undefined>(grepInput.path);
+fits<string | undefined>(grepInput.glob);
+declare const preToolUse: Sdk.PreToolUseHookInput;
+fits<string>(preToolUse.tool_name);
+fits<unknown>(preToolUse.tool_input);

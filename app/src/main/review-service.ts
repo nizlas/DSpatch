@@ -229,6 +229,11 @@ export interface ReviewServiceOptions {
   /** Where review records are kept: DSpatch's data directory. */
   readonly recordsDir: string;
   readonly log: (message: string) => void;
+  /**
+   * DSP-152: the answers the agent gave to code questions about a step of a walk over a
+   * revision pair, from the pair's record, for the discussion's context. Absent: none.
+   */
+  readonly stepAnalysis?: (definitionPath: string, stepId: string) => readonly { readonly question: string; readonly answer: string }[];
 }
 
 /**
@@ -649,6 +654,12 @@ export class ReviewService {
       for (const context of place.context) {
         ranges.push({ role: 'context', location: context });
       }
+      // DSP-152: the step's other places too, so a deepening has the whole step's code.
+      step.places.forEach((other, index) => {
+        if (index !== placeIndex) {
+          ranges.push({ role: 'context', location: other.focus });
+        }
+      });
       explanation = {
         walkNumber: walkIndex + 1,
         walkTitle: walk.title[language],
@@ -662,6 +673,10 @@ export class ReviewService {
           labelText: EVIDENCE_LABEL_TEXT[language][entry.label],
           text: entry.text[language],
         })),
+        ...((): { analysis?: readonly { readonly question: string; readonly answer: string }[] } => {
+          const analysis = this.options.stepAnalysis?.(open.definitionPath, step.id) ?? [];
+          return analysis.length === 0 ? {} : { analysis };
+        })(),
       };
       relevantNotes = notes.filter((note) => note.stepId === step.id || near(note, place.focus));
     } else if (subjectRaw?.['kind'] === 'away') {

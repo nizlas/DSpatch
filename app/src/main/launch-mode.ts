@@ -86,6 +86,8 @@ export const chatRunScenario: ScriptedScenario =
                                 ? 'review-agent-choice'
                                 : chatRunValue === 'walk-start'
                                 ? 'walk-start'
+                                : chatRunValue === 'analysis-access'
+                                ? 'analysis-access'
                                 : chatRunValue === 'switch'
                                   ? 'workspace-switch'
                                   : chatRunValue === 'resume-choice'
@@ -184,6 +186,8 @@ export const presentationMode =
   chatRunScenario === 'review-agent-choice' ||
   // DSP-152, second live trial: from the main window to an opened walk with real input (SIMULATED).
   chatRunScenario === 'walk-start' ||
+  // DSP-152: the analysis agent reads the revisions the host wrote (SIMULATED answers over real reads).
+  chatRunScenario === 'analysis-access' ||
   // DSP-121: the refused and failed resume states through the real choice panel. The
   // refusal is the presentation adapter's own, simulated on this machine; the one
   // message the scenario sends after choosing a new session is answered locally.

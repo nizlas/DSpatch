@@ -92,6 +92,12 @@ export interface EnvelopeExplanation {
   readonly why: string;
   readonly placeLabel: string;
   readonly evidence: readonly EnvelopeEvidence[];
+  /**
+   * DSP-152: what the agent found when it looked into the code for this step (the step's
+   * finished code questions), so a question in the discussion builds on it. Read by the host
+   * from the pair's record; absent when there is none.
+   */
+  readonly analysis?: readonly { readonly question: string; readonly answer: string }[];
 }
 
 /** The review as a whole, for a question that is not about one point. */
@@ -323,6 +329,13 @@ export function buildEnvelopePrompt(envelope: ContextEnvelope, question: string,
       for (const entry of explanation.evidence) {
         lines.push(`- ${entry.labelText}: ${clip(entry.text.trim(), ENVELOPE_LIMITS.explanationChars)}`);
       }
+    }
+    for (const entry of explanation.analysis ?? []) {
+      lines.push(
+        '',
+        `What the agent found in the code for this step, asked "${clip(entry.question.trim(), 300)}":`,
+        clip(entry.answer.trim(), ENVELOPE_LIMITS.explanationChars),
+      );
     }
     parts.push(lines.join('\n'));
   }

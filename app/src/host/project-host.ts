@@ -135,7 +135,7 @@ import {
   presentationSendMode,
 } from '../main/presentation-adapter';
 import { PROBE_EXIT, runCursorProbe } from '../main/probe-cursor';
-import { providerAdapters } from '../main/provider-adapters';
+import { CURSOR_ANALYSIS_REFUSAL, providerAdapters } from '../main/provider-adapters';
 import { providerAvailability } from '../main/provider-availability';
 import {
   REVIEW_DISCUSSION_DEFAULT_MODEL,
@@ -155,6 +155,7 @@ import { readDirectoryPage, readFileForViewing } from '../main/workspace-tree';
 import { ReviewHost } from './review-host';
 import { ReviewPairs } from './review-pairs';
 import { ReviewAgentJobs } from './review-agent-jobs';
+import { RevisionSnapshots } from './revision-snapshots';
 import { REVIEW_PAIR_CHANGED } from '../shared/review-pair';
 
 /*
@@ -4244,6 +4245,8 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
     log: (message) => {
       log(`[review host] ${message}`);
     },
+    // DSP-152: a step's answered code questions, from the record of the pair its walk is over.
+    stepAnalysis: (definitionPath, stepId) => (reviewPairs === null ? [] : reviewPairs.stepAnswers(definitionPath, stepId)),
   });
   reviewPairs = new ReviewPairs({
     recordsDir: path.join(userDataDir(), 'reviews', 'pairs'),
@@ -4251,18 +4254,31 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
       emitEvent({ kind: 'review-pair', key }, REVIEW_PAIR_CHANGED, { key, record });
     },
   });
+  // DSP-152: the two revisions as files the analysis agent reads; folders left by an earlier
+  // run cannot be in use, so they go now.
+  const revisionSnapshots = new RevisionSnapshots({
+    root: path.join(userDataDir(), 'reviews', 'revisions'),
+    log: (message) => {
+      log(`[review] ${message}`);
+    },
+  });
+  revisionSnapshots.sweep();
   reviewAgentJobs = new ReviewAgentJobs({
     recordsDir: path.join(userDataDir(), 'reviews'),
-    // The shared factory, for the review purpose only; the jobs check the policy themselves.
+    // The shared factory, for the analysis purpose only; the jobs check the policy themselves.
     createAdapter: (provider) => {
-      log(`[review] building a ${provider} review agent adapter${presentationMode ? ' (presentation, simulated)' : ''}`);
-      return adapterFactory.createAdapter({ provider, purpose: 'review' });
+      log(`[review] building a ${provider} analysis adapter${presentationMode ? ' (presentation, simulated)' : ''}`);
+      return adapterFactory.createAdapter({ provider, purpose: 'analysis' });
     },
-    availability: (provider) =>
-      providerAvailability(provider, {
+    snapshots: revisionSnapshots,
+    // The factory's own rule for analysis: Cursor is refused, with its reason, before a start.
+    availability: (provider) => {
+      const availability = providerAvailability(provider, {
         claudeAuthorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,
         claudeInstalled: CLAUDE_SUPPORT.installed,
-      }),
+      });
+      return availability.choosable && provider === 'cursor' ? { ...availability, choosable: false, reason: CURSOR_ANALYSIS_REFUSAL } : availability;
+    },
     pairs: reviewPairs,
     language: async () => {
       const preferences = await requireReviewHost().getPreferences();

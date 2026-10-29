@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { ReviewService, reviewRecordKey } from '../main/review-service';
+import { ReviewService, reviewRecordKey, type ReviewServiceOptions } from '../main/review-service';
 import type { EnvelopeOutcome } from '../shared/review-discussion';
 import type {
   ReviewHostApi,
@@ -45,6 +45,8 @@ export interface ReviewHostOptions {
   /** Where review records live: `userData/reviews` in the local app. */
   readonly recordsDir: string;
   readonly log: (message: string) => void;
+  /** DSP-152: a step's answered code questions, for the discussion's context. */
+  readonly stepAnalysis?: ReviewServiceOptions['stepAnalysis'];
 }
 
 interface RecentEntry {
@@ -103,7 +105,7 @@ export class ReviewHost implements ReviewHostApi {
   createSession(): Promise<{ readonly sessionId: string } | ReviewHostError> {
     return this.guard('createSession', () => {
       const sessionId = randomUUID();
-      this.sessions.set(sessionId, new ReviewService({ recordsDir: this.options.recordsDir, log: this.options.log }));
+      this.sessions.set(sessionId, new ReviewService(this.serviceOptions()));
       return Promise.resolve({ sessionId });
     });
   }
@@ -324,6 +326,14 @@ export class ReviewHost implements ReviewHostApi {
     }
   }
 
+  private serviceOptions(): ReviewServiceOptions {
+    return {
+      recordsDir: this.options.recordsDir,
+      log: this.options.log,
+      ...(this.options.stepAnalysis === undefined ? {} : { stepAnalysis: this.options.stepAnalysis }),
+    };
+  }
+
   private sessionOf(request: unknown): { readonly sessionId: string; readonly service: ReviewService } | ReviewHostError {
     const sessionId = isRecord(request) ? request['sessionId'] : undefined;
     if (typeof sessionId !== 'string') {
@@ -338,7 +348,7 @@ export class ReviewHost implements ReviewHostApi {
 
   /** Preferences are kept beside the records, not per session. */
   private preferenceService(): ReviewService {
-    return new ReviewService({ recordsDir: this.options.recordsDir, log: this.options.log });
+    return new ReviewService(this.serviceOptions());
   }
 
   /** `definition-unreadable` when the file cannot be read at all; `null` when it can. */

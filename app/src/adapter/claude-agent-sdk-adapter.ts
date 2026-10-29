@@ -129,6 +129,16 @@ export interface ClaudePermissionPolicy {
    * where unused.
    */
   readonly denyEveryTool?: true;
+  /**
+   * DSP-152: a PreToolUse hook, with no matcher, that lets through only the reading tools
+   * ({@link ANALYSIS_TOOLS}) and only for paths inside the session's folders: a `Read`
+   * whose file, or a `Glob` or `Grep` whose folder, resolves outside them, and a pattern
+   * that is absolute or climbs with `..`, is denied with {@link ANALYSIS_DENY_REASON}; any
+   * other tool is denied too. The turn continues. DSpatch's own check in the SDK's
+   * permission path, before allow rules and the permission mode; not containment of the
+   * process. Omitted where unused.
+   */
+  readonly confineToFolders?: true;
 }
 
 // --- Claude's own shell tools (DSP-146) ---------------------------------------------
@@ -242,6 +252,103 @@ export const REVIEW_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
   denyEveryTool: true,
 }) as ClaudePermissionPolicy;
 
+/** DSP-152: the tools an analysis agent reads the revisions with. Claude Code's own. */
+export const ANALYSIS_TOOLS: readonly string[] = Object.freeze(['Read', 'Glob', 'Grep']);
+
+/** Why the analysis hook refused a tool call (DSP-152). Sent to the model as the deny reason. */
+export const ANALYSIS_DENY_REASON =
+  'This is read-only analysis of two revisions: only Read, Glob and Grep inside your working ' +
+  'folder (base/ and target/) may be used, and this call was not run. Paths must stay inside ' +
+  'that folder.';
+
+/**
+ * The policy of analysis work over a revision pair (DSP-152): walk preparation, delegated
+ * review and step questions. The agent reads the two revisions, which the host has written
+ * to a folder of their own that is the session's working directory, with Claude Code's own
+ * Read, Glob and Grep, and nothing else:
+ *
+ * - `tools` makes only those three available; `disallowedTools` removes every tool that
+ *   could change files, run commands, reach the web, start agents or use MCP even if
+ *   something made it available.
+ * - `allowedTools` pre-approves `Read(/**)`, anchored at the working directory, and
+ *   `Glob` and `Grep`. Bare `Glob` and `Grep` would be approved anywhere; the
+ *   {@link ClaudePermissionPolicy.confineToFolders} hook is what refuses a search or read
+ *   outside the folder, before allow rules apply.
+ * - `dontAsk`, no settings from disk other than managed policy settings, no MCP servers.
+ *   Managed policy settings, including any hooks an organisation installs there, still
+ *   apply: DSpatch neither loads nor removes them.
+ *
+ * Technically enforced by Claude Code's permission system and DSpatch's hook: no tool that
+ * writes or runs commands exists in the session, and no path outside the folder is read.
+ * Not enforced: the process itself is not sandboxed (types.ts, "Roots, not permissions").
+ * The prompt's "you cannot change code" is an instruction, and is not what keeps it so.
+ */
+export const ANALYSIS_PERMISSIONS: ClaudePermissionPolicy = Object.freeze({
+  tools: ANALYSIS_TOOLS,
+  allowedTools: Object.freeze(['Read(/**)', 'Glob', 'Grep']),
+  disallowedTools: REVIEW_PERMISSIONS.disallowedTools,
+  permissionMode: 'dontAsk',
+  settingSources: Object.freeze([]) as readonly [],
+  strictMcpConfig: true,
+  confineToFolders: true,
+}) as ClaudePermissionPolicy;
+
+/** Whether `candidate` (absolute, or relative to `cwd`) lies inside one of `folders`. */
+export function insideFolders(candidate: string, folders: readonly string[], cwd: string, platform: NodeJS.Platform = process.platform): boolean {
+  const fold = (value: string): string => (platform === 'win32' ? value.toLowerCase() : value);
+  const resolved = fold(path.resolve(cwd, candidate));
+  return folders.some((folder) => {
+    const root = fold(path.resolve(folder));
+    return resolved === root || resolved.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+  });
+}
+
+/** A glob pattern that cannot leave the folder it is applied in: relative, without `..`. */
+function confinedPattern(pattern: unknown): boolean {
+  if (pattern === undefined) {
+    return true;
+  }
+  if (typeof pattern !== 'string') {
+    return false;
+  }
+  return !path.isAbsolute(pattern) && !/^[a-zA-Z]:/.test(pattern) && !pattern.split(/[\\/]/).includes('..');
+}
+
+/**
+ * DSP-152: whether a tool call keeps to the analysis folders. Exported for the checks: the
+ * hook decides with exactly this.
+ */
+export function analysisCallAllowed(toolName: string, input: unknown, folders: readonly string[], cwd: string): boolean {
+  if (!ANALYSIS_TOOLS.includes(toolName)) {
+    return false;
+  }
+  const fields = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
+  if (toolName === 'Read') {
+    return typeof fields['file_path'] === 'string' && insideFolders(fields['file_path'], folders, cwd);
+  }
+  const where = fields['path'];
+  if (where !== undefined && (typeof where !== 'string' || !insideFolders(where, folders, cwd))) {
+    return false;
+  }
+  return toolName === 'Glob' ? confinedPattern(fields['pattern']) : confinedPattern(fields['glob']);
+}
+
+/** What a reading tool was asked about, for `tool.started` (DSP-152): never content. */
+function readingSubject(name: string, input: unknown): string | undefined {
+  if (!ANALYSIS_TOOLS.includes(name) || typeof input !== 'object' || input === null) {
+    return undefined;
+  }
+  const fields = input as Record<string, unknown>;
+  const text = (value: unknown): string => (typeof value === 'string' ? value : '');
+  if (name === 'Read') {
+    return text(fields['file_path']) || undefined;
+  }
+  const where = text(fields['path']);
+  const pattern = text(fields['pattern']);
+  const filter = name === 'Grep' ? text(fields['glob']) : '';
+  return [pattern, filter === '' ? '' : `files ${filter}`, where === '' ? '' : `in ${where}`].filter((part) => part !== '').join(' ').slice(0, 300) || undefined;
+}
+
 /** A permission policy as one line a person can read, for Session details and review Context. */
 export function describePermissionPolicy(policy: ClaudePermissionPolicy): string {
   const tools = policy.tools.length === 0 ? 'no tools' : `tools ${policy.tools.join(', ')}`;
@@ -251,7 +358,12 @@ export function describePermissionPolicy(policy: ClaudePermissionPolicy): string
     policy.disallowedTools === undefined || policy.disallowedTools.length === 0
       ? ''
       : `; disallowed ${policy.disallowedTools.join(', ')}`;
-  const denyAll = policy.denyEveryTool === true ? '; every tool call denied by a hook (the turn continues)' : '';
+  const denyAll =
+    policy.denyEveryTool === true
+      ? '; every tool call denied by a hook (the turn continues)'
+      : policy.confineToFolders === true
+        ? "; a hook denies any other tool and any path outside the session's folders (the turn continues)"
+        : '';
   const servers = policy.strictMcpConfig ? 'no MCP servers' : 'MCP servers from configuration';
   const shells =
     policy.denyEveryTool !== true && policy.tools.some((tool) => SHELL_TOOLS.includes(tool))
@@ -730,7 +842,7 @@ export interface HookFiring {
   /** `pass` leaves the decision to the normal permission rules; `deny` refuses the call. */
   readonly decision: 'pass' | 'deny';
   /** Which hook: the cancellation hook (absent, as before) or DSP-132's deny-all hook. */
-  readonly hook?: 'deny-every-tool';
+  readonly hook?: 'deny-every-tool' | 'confine-to-folders';
 }
 
 /** What happened to the one `interrupt()` call. */
@@ -2628,7 +2740,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     // only DSpatch's app tools; a workspace session gets the policy's tools in every
     // folder, plus the app tools. The review policy (`denyEveryTool`) never gets either.
     const conversationOnly = config.toolScope === 'conversation';
-    const appTools = this.permissions.denyEveryTool === true ? [] : (config.appTools ?? []);
+    const appTools = this.permissions.denyEveryTool === true || this.permissions.confineToFolders === true ? [] : (config.appTools ?? []);
     const appToolNames = appTools.map(claudeAppToolName);
     return {
       cwd: config.workspacePath,
@@ -2679,7 +2791,9 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
             hooks:
               this.permissions.denyEveryTool === true
                 ? [this.cancelHook(state, run), this.denyEveryToolHook(run)]
-                : [this.cancelHook(state, run)],
+                : this.permissions.confineToFolders === true
+                  ? [this.cancelHook(state, run), this.confineHook(state, run)]
+                  : [this.cancelHook(state, run)],
           },
         ],
         ...(this.recordsShellCommands()
@@ -2840,7 +2954,8 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
             const name = typeof block['name'] === 'string' ? block['name'] : 'unknown';
             state.toolNames.set(block['id'], name);
             run.cancellation?.toolUseBlocks.push({ atUtc: base.at, toolUseId: block['id'], name });
-            this.emitForRun(state, run, { ...base, type: 'tool.started', toolCallId: block['id'], name });
+            const subject = readingSubject(name, block['input']);
+            this.emitForRun(state, run, { ...base, type: 'tool.started', toolCallId: block['id'], name, ...(subject === undefined ? {} : { subject }) });
           }
         }
         return;
@@ -3488,6 +3603,42 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           hookEventName: 'PreToolUse',
           permissionDecision: 'deny',
           permissionDecisionReason: REVIEW_DENY_REASON,
+        },
+      };
+      return Promise.resolve(output);
+    };
+  }
+
+  /**
+   * DSP-152: the analysis PreToolUse callback. Records every call; passes a reading tool
+   * whose paths stay inside the session's folders (no decision, so the allow rules apply)
+   * and denies everything else with {@link ANALYSIS_DENY_REASON}, without ending the turn.
+   */
+  private confineHook(state: SessionState, run: ClaudeRun): HookCallback {
+    return (input, toolUseID) => {
+      const fields = asRecord(input);
+      const toolName = typeof fields['tool_name'] === 'string' ? fields['tool_name'] : 'unknown';
+      const reported = fields['tool_use_id'];
+      const toolUseId =
+        typeof reported === 'string' && reported !== '' ? reported : (toolUseID ?? null);
+      const folders = sessionRoots(state.config);
+      const allowed = analysisCallAllowed(toolName, fields['tool_input'], folders, state.config.workspacePath);
+      run.hookFirings.push({
+        dspatchRunId: run.dspatchRunId,
+        atUtc: nowIso(),
+        toolName,
+        toolUseId,
+        decision: allowed ? 'pass' : 'deny',
+        hook: 'confine-to-folders',
+      });
+      if (allowed) {
+        return Promise.resolve({});
+      }
+      const output: HookJSONOutput = {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: ANALYSIS_DENY_REASON,
         },
       };
       return Promise.resolve(output);

@@ -371,6 +371,12 @@ export type AgentEvent =
       readonly type: 'tool.started';
       readonly toolCallId: string;
       readonly name: string;
+      /**
+       * DSP-152: what a reading tool was asked about, as the provider reported the call:
+       * the file a `Read` names, the pattern (and folder) of a `Glob` or `Grep`. Absent for
+       * other tools and where the adapter does not report it. Never the file's content.
+       */
+      readonly subject?: string;
     })
   | (AgentEventBase & {
       readonly type: 'tool.finished';

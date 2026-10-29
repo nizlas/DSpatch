@@ -1791,6 +1791,8 @@ export type ScriptedScenario =
   | 'review-agent-choice'
   /** DSP-152, second live trial: real clicks from the main window to a prepared, opened walk. SIMULATED provider. */
   | 'walk-start'
+  /** DSP-152: the analysis agent reads the two revisions; walk, step question, delegated review, stop and restart. SIMULATED provider. */
+  | 'analysis-access'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2067,6 +2069,8 @@ export type PairWindowCheckRequest =
   /** `id` 0 is the main window. */
   | { readonly action: 'press'; readonly id: number; readonly selector: string }
   | { readonly action: 'press-key'; readonly id: number; readonly selector: string; readonly key: string }
+  /** DSP-152: the element focused, then `text` typed into it one character at a time, as a keyboard does. */
+  | { readonly action: 'type'; readonly id: number; readonly selector: string; readonly text: string }
   | { readonly action: 'close'; readonly id: number };
 
 /** What the `editor-joins-run` scenario asks of the loop editor's own window. */

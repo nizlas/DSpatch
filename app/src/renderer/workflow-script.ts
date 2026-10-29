@@ -744,7 +744,7 @@ export async function runScriptedWorkflow(
 ): Promise<ScriptedRunReport> {
   // DSP-149: `model-list` chooses Claude itself and must never choose Cursor. DSP-152:
   // `review-agent-choice` starts from the kit's own choice of Claude, usable or not.
-  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow' && plan.scenario !== 'review-agent-choice' && plan.scenario !== 'walk-start') {
+  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow' && plan.scenario !== 'review-agent-choice' && plan.scenario !== 'walk-start' && plan.scenario !== 'analysis-access') {
     await nameScenarioAgent();
   }
   switch (plan.scenario) {
@@ -816,6 +816,8 @@ export async function runScriptedWorkflow(
       return runReviewAgentChoiceScenario(plan);
     case 'walk-start':
       return runWalkStartScenario(plan);
+    case 'analysis-access':
+      return runAnalysisAccessScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -12473,13 +12475,13 @@ async function runReviewAgentChoiceScenario(plan: ScriptedRunPlan): Promise<Scri
       const diff = await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'));
       await openPair(diff.id);
       await press(diff.id, '[data-ev="pair-prepare-walks"]');
-      const shown = await untilPair(diff.id, 'the picker', pickerReady('pair-walks-agent'), 20_000);
+      // Since the analysis access (DSP-152) Cursor does no analysis work either, so neither
+      // agent can be used: the picker says why for both and offers no start at all.
+      const shown = await untilPair(diff.id, 'the picker', (reading) => (pickerOf(reading, 'pair-walks-agent')?.text ?? '').startsWith('No agent can be used here'), 20_000);
       const picker = pickerOf(shown, 'pair-walks-agent');
       record('picker unavailable', { picker });
-      expect(picker?.provider === '', `an unusable Claude was preselected or replaced: ${String(picker?.provider)}`);
-      expect((picker?.note ?? '').startsWith('Claude cannot be used here'), `the picker does not say why Claude cannot be used: ${String(picker?.note)}`);
-      expect(picker?.startDisabled === true, 'the picker can start without a usable choice');
-      expect(picker?.model === null, 'a model is offered before an agent is chosen');
+      expect(picker?.provider === null && picker.startDisabled === null, `an agent was offered or a start drawn: ${JSON.stringify(picker)}`);
+      expect((picker?.text ?? '').includes('Claude') && (picker?.text ?? '').includes('Cursor cannot be limited to reading'), `the picker does not say why neither agent can be used: ${String(picker?.text)}`);
       await capture(diff.id, 'picker-unavailable');
       const adapter = await reviewAdapterRecord();
       record('adapters', adapter);
@@ -12791,6 +12793,251 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     record('walk opened', { walk: walkOpen.walk, visible: shown(walkOpen).slice(0, 300) });
     expect(walkOpen.walk?.kind === 'opened', 'the prepared walk did not open');
     await capture(walk.id, 'walk');
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+    const rows = await pairWindows().catch(() => []);
+    observations['atFailure'] = { windows: rows, readings: await Promise.all(rows.map((row) => readPairWindow(row.id).catch(() => null))) };
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/**
+ * DSP-152: the analysis agent examines the code itself. A kit whose repository (`shop`,
+ * `tests/support/analysis-fixture.ts`) changes `total()` to call `findDiscount()`, defined
+ * in a file the change does not touch, 61 lines down, where it can return null; the
+ * working copy says something else (edited, staged and untracked). Real mouse and keyboard
+ * from the main window on; the kit's chat chose Claude with `opus`.
+ *
+ * The provider is SIMULATED (presentation adapter), but its reading is not: it reads the
+ * revision folder the host wrote, from disk, and reports each read as a tool call. So what
+ * this shows is the product's path: the host writes the two commits, the job runs in that
+ * folder, the answers are checked against Git and recorded with what was read, and the
+ * windows show them. What a real model reads and writes is for the live trial.
+ *
+ * Phases, in one kit:
+ * - `first`: prepare walks with Claude/opus; a walk step points at the unchanged definition
+ *   (outside the diff); open the walk and go to that place; ask the agent a question about
+ *   the step (typed); deepen the step in the discussion, whose context now holds the
+ *   answer; delegate `src/checkout.ts` (a problem at the unchecked call, a note in the
+ *   unchanged file, the problem line not approved); delegate `README.md` (not enough to
+ *   judge, nothing approved); delegate again and stop it (nothing approved).
+ * - `again`: DSpatch restarted: jobs, the walk and the step's answer are back and open,
+ *   though the revision folder is gone; nothing is sent.
+ *
+ * The runner checks what the window cannot: the working copy before and after, the commits
+ * against the jobs' records, and that no revision folder is left.
+ */
+async function runAnalysisAccessScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const phase = plan.flowPhase === 'again' ? 'again' : 'first';
+  const observations: Record<string, unknown> = {
+    plan,
+    phase,
+    limits:
+      'SIMULATED provider (presentation adapter): its answers are fixed rules over what it reads, and it reads the ' +
+      'revision folder the host wrote, from disk, reporting each read as a tool call. The windows, real input, IPC, ' +
+      'the host, the revision folder, the job records, validation against Git, saving and opening are the product\'s own.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const MAIN = 0;
+  const press = async (id: number, selector: string): Promise<void> => {
+    const answer = await window.dspatch.pairWindowCheck({ action: 'press', id, selector });
+    if (!answer.ok) {
+      throw new Error(`could not press ${selector}: ${JSON.stringify(answer.detail)}`);
+    }
+    await sleep(250);
+  };
+  const type = async (id: number, selector: string, text: string): Promise<void> => {
+    await press(id, selector);
+    const answer = await window.dspatch.pairWindowCheck({ action: 'type', id, selector, text });
+    if (!answer.ok) {
+      throw new Error(`could not type into ${selector}: ${JSON.stringify(answer.detail)}`);
+    }
+    await sleep(250);
+  };
+  const capture = async (id: number, label: string): Promise<void> => {
+    await sleep(300);
+    await window.dspatch.pairWindowCheck({ action: 'capture', id, label });
+  };
+  const shown = (reading: PairWindowReading | null): string => (reading as { visibleText?: string } | null)?.visibleText ?? '';
+  type Investigation = { readonly state: string; readonly text: string; readonly references: readonly string[]; readonly details: string };
+  const investigations = (reading: PairWindowReading | null): readonly Investigation[] => (reading as { investigations?: Investigation[] } | null)?.investigations ?? [];
+  type Analysed = JobReading & {
+    readonly material: { readonly base: string; readonly target: string; readonly files: number; readonly skippedCount: number } | null;
+    readonly investigation: { readonly reads: readonly string[]; readonly searches: readonly string[]; readonly refused: number } | null;
+    readonly findingPlaces: readonly { readonly severity: string; readonly location: { readonly path: string; readonly start: number; readonly end: number } | null }[];
+  };
+  const analysed = (job: JobReading | undefined): Analysed | undefined => job as Analysed | undefined;
+  const pickerReady = async (id: number, ev: string): Promise<void> => {
+    await untilPair(id, `the ${ev} picker with the account's models`, (reading) => {
+      const picker = pickerOf(reading, ev);
+      return picker !== undefined && picker.modelReading === null && picker.options !== null && picker.provider === 'claude' && picker.startDisabled === false;
+    }, 20_000);
+  };
+  const openReview = async (): Promise<{ readonly diffId: number; readonly opened: PairWindowReading }> => {
+    await press(MAIN, '[data-ev="open-review"]');
+    const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+    // One repository in the workspace: the window goes straight to its log.
+    const first = await untilPair(diffId, 'the repository list or the log', (reading) => reading.pair?.phase === 'repositories' || reading.pair?.phase === 'log');
+    if (first.pair?.phase === 'repositories') {
+      await press(diffId, '[data-ev="pair-repo-0"]');
+    }
+    await untilPair(diffId, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
+    await press(diffId, '[data-ev="pair-commit-1"]');
+    await press(diffId, '[data-ev="pair-commit-0"]');
+    await press(diffId, '[data-ev="pair-open"]');
+    const opened = await untilPair(diffId, 'the diff review', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
+    return { diffId, opened };
+  };
+  const openWalkAtDefinition = async (diffId: number): Promise<{ readonly walkId: number; readonly reading: PairWindowReading }> => {
+    await press(diffId, '[data-ev="pair-walks"]').catch(() => undefined);
+    await untilPair(diffId, 'the walk list', (reading) => (reading.text ?? '').includes('Code walks ·'), 15_000);
+    await press(diffId, '[data-ev="pair-walk-0"]');
+    const walkRow = await untilWindow('the walk window', (rows) => rows.find((row) => row.view === 'walk'));
+    await untilPair(walkRow.id, 'the walk', (reading) => reading.walk?.kind === 'opened', 30_000);
+    // Forward through the walk, as a person would, until the place at the definition is on the strip.
+    const dot = 'button.rv-strip-dot[aria-label*="Where findDiscount is defined"]';
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const here = await window.dspatch.pairWindowCheck({ action: 'press', id: walkRow.id, selector: dot });
+      if (here.ok) {
+        break;
+      }
+      await press(walkRow.id, 'button.rv-nav-next');
+    }
+    const reading = await untilPair(walkRow.id, 'the place at the definition', (entry) => shown(entry).includes('export function findDiscount'), 15_000);
+    return { walkId: walkRow.id, reading };
+  };
+  const delegateFile = async (diffId: number, filePath: string, stop: boolean): Promise<Analysed | undefined> => {
+    await press(diffId, '[data-ev="pair-files"]').catch(() => undefined);
+    const list = await untilPair(diffId, 'Files changed', (reading) => reading.pair?.fileKey === null && (reading.pair.files?.length ?? 0) > 0);
+    const index = (list.pair?.files ?? []).findIndex((file) => file.path === filePath);
+    await press(diffId, `[data-ev="pair-file-${String(index)}"]`);
+    const before = jobsOf(await readPairWindow(diffId)).length;
+    await press(diffId, '[data-ev="pair-delegate-file"]');
+    await pickerReady(diffId, 'pair-delegate-agent');
+    await press(diffId, '[data-ev="pair-delegate-agent-start"]');
+    if (stop) {
+      await untilPair(diffId, 'the review running', (reading) => jobsOf(reading).length > before && lastJob(reading, 'review')?.state === 'running', 10_000);
+      await press(diffId, '[data-ev="agent-job-review-stop"]');
+    }
+    const done = await untilPair(diffId, `the delegated review of ${filePath}`, (reading) => jobsOf(reading).length > before && settledJob(lastJob(reading, 'review', filePath)), 60_000);
+    return analysed(lastJob(done, 'review', filePath));
+  };
+
+  try {
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await waitFor('a project to be offered in the window', () => element('project-0-path') !== null, 60_000);
+    await press(MAIN, '[data-ev="open-project-0"]');
+    await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
+    const { diffId, opened } = await openReview();
+    const earlier = jobsOf(opened);
+    record('review opened', { jobs: earlier.map((job) => ({ id: job.id, kind: job.kind, state: job.state })) });
+
+    if (phase === 'again') {
+      // --- After a restart: everything back, nothing sent ----------------------------------
+      const sentBefore = (await reviewPromptsSent()).length;
+      expect(earlier.some((job) => job.kind === 'walks' && job.state === 'done'), 'the prepared walks are not back');
+      const reviews = earlier.filter((job) => job.kind === 'review');
+      expect(reviews.some((job) => job.state === 'done' && job.findings > 0), 'the delegated review with findings is not back');
+      expect(reviews.every((job) => job.state !== 'running' && job.state !== 'cancelling'), 'a review is still shown running after the restart');
+      const { walkId, reading } = await openWalkAtDefinition(diffId);
+      record('walk reopened', { walk: reading.walk, investigations: investigations(reading) });
+      expect(investigations(reading).some((entry) => entry.state === 'done' && entry.text.includes('findDiscount')), "the step's answer is not back under the step");
+      await capture(walkId, 'again-walk');
+      const sentAfter = (await reviewPromptsSent()).length;
+      expect(sentAfter === sentBefore, `reopening sent ${String(sentAfter - sentBefore)} prompt(s)`);
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    expect(earlier.length === 0, 'a fresh kit has agent jobs');
+
+    // --- 1. Prepare code walks with Claude/opus ----------------------------------------------
+    await press(diffId, '[data-ev="pair-prepare-walks"]');
+    await pickerReady(diffId, 'pair-walks-agent');
+    const choice = pickerOf(await readPairWindow(diffId), 'pair-walks-agent');
+    expect(choice?.provider === 'claude' && choice.model === 'opus', `the picker does not offer the inherited Claude/opus: ${JSON.stringify(choice)}`);
+    await press(diffId, '[data-ev="pair-walks-agent-start"]');
+    const prepared = await untilPair(diffId, 'the walks job', (reading) => settledJob(lastJob(reading, 'walks')), 60_000);
+    const walksJob = analysed(lastJob(prepared, 'walks'));
+    const adapter = await reviewAdapterRecord();
+    record('walks job', { job: walksJob, adapter });
+    expect(walksJob?.state === 'done' && walksJob.provider === 'claude' && walksJob.model === 'opus', `the walks were not prepared with Claude/opus: ${JSON.stringify(walksJob)}`);
+    expect(adapter.starts.at(-1)?.provider === 'claude' && adapter.starts.at(-1)?.modelRequested === 'opus', `the session was not Claude/opus: ${JSON.stringify(adapter.starts)}`);
+    expect(adapter.built.every((provider) => provider === 'claude'), `an adapter was built for another agent: ${JSON.stringify(adapter.built)}`);
+    expect((walksJob?.investigation?.reads ?? []).includes('target/src/pricing.ts'), `the agent did not read the unchanged definition: ${JSON.stringify(walksJob?.investigation)}`);
+    expect((walksJob?.material?.files ?? 0) > 0 && walksJob?.material?.skippedCount === 0, `what the agent could read is not recorded: ${JSON.stringify(walksJob?.material)}`);
+    await capture(diffId, 'prepared');
+
+    // --- 2. The walk: a step points at the unchanged definition -----------------------------
+    const { walkId, reading: atDefinition } = await openWalkAtDefinition(diffId);
+    const walkIdentity = atDefinition.walk as { base?: string; target?: string } | null;
+    record('walk at the definition', { walk: atDefinition.walk, visible: shown(atDefinition).slice(0, 600) });
+    expect(walksJob?.material?.base === walkIdentity?.base && walksJob?.material?.target === walkIdentity?.target, `the job's revisions are not the walk's: ${JSON.stringify({ material: walksJob?.material, walk: walkIdentity })}`);
+    expect(shown(atDefinition).includes('src/pricing.ts lines 61'), 'the step does not explain the dependency at its lines');
+    await capture(walkId, 'walk-definition');
+
+    // --- 3. A question about the step, answered from the code ---------------------------------
+    const sentBeforeQuestion = (await reviewPromptsSent()).length;
+    await press(walkId, '[data-ev="step-question"]');
+    await type(walkId, '[data-ev="step-question-text"]', 'Where does the discount percentage come from?');
+    await pickerReady(walkId, 'step-question-agent');
+    await press(walkId, '[data-ev="step-question-agent-start"]');
+    const answered = await untilPair(walkId, 'the answer under the step', (reading) => investigations(reading).some((entry) => entry.state !== 'running' && entry.state !== 'cancelling'), 60_000);
+    const answer = investigations(answered).at(-1);
+    record('step question', { answer });
+    expect(answer?.state === 'done' && answer.text.includes('findDiscount') && answer.text.includes('Where does the discount percentage come from?'), `the step question was not answered from the code: ${JSON.stringify(answer)}`);
+    expect((answer?.references ?? []).some((entry) => entry.includes('src/pricing.ts lines 61–66 (To)')), `the answer does not point at the definition: ${JSON.stringify(answer?.references)}`);
+    expect((answer?.details ?? '').includes('target/src/pricing.ts'), 'Details do not say what the agent read');
+    expect(!shown(answered).includes('Read: target/'), 'the reads are drawn in the view instead of under Details');
+    await capture(walkId, 'step-question');
+
+    // --- 4. Deepen the step in the discussion: its context holds the code and the answer ----
+    await press(walkId, '[data-ev="step-tell-more"]');
+    await untilPair(walkId, 'the deepening', (reading) => ((reading as { deepenings?: { state: string }[] }).deepenings ?? []).some((entry) => entry.state === 'done'), 30_000);
+    const prompts = await reviewPromptsSent();
+    const deepening = prompts.slice(sentBeforeQuestion).find((prompt) => prompt.includes('Tell me more about this step') || prompt.includes('Berätta mer om det här steget')) ?? '';
+    record('deepening context', { sections: deepening.split('\n').filter((line) => line.startsWith('## ') || line.startsWith('What the agent found')) });
+    expect(deepening.includes('What the agent found in the code for this step'), "the deepening's context does not hold the step's answer");
+    expect(deepening.includes('export function findDiscount'), "the deepening's context does not hold the step's code");
+    expect(!deepening.includes('WORKING COPY ONLY'), 'the working copy reached the discussion');
+
+    // --- 5. Delegated review of src/checkout.ts: a finding in unchanged code -----------------
+    const checkout = await delegateFile(diffId, 'src/checkout.ts', false);
+    record('delegated checkout', { job: checkout });
+    expect(checkout?.state === 'done' && checkout.provider === 'claude', `the delegated review did not finish with Claude: ${JSON.stringify(checkout)}`);
+    const problem = checkout?.findingPlaces.find((finding) => finding.severity === 'problem');
+    expect(problem?.location?.path === 'src/checkout.ts' && problem.location.start === 4, `the unchecked call is not a problem at line 4: ${JSON.stringify(checkout?.findingPlaces)}`);
+    expect((checkout?.findingPlaces ?? []).some((finding) => finding.location?.path === 'src/pricing.ts' && finding.location.start === 61), 'no finding points at the unchanged definition');
+    expect(
+      !(checkout?.approved ?? []).some((range) => (range as { side?: string }).side === 'target' && range.path === 'src/checkout.ts' && range.start <= 4 && range.end >= 4),
+      `the problem line was approved: ${JSON.stringify(checkout?.approved)}`,
+    );
+    expect((checkout?.approved ?? []).length > 0, 'nothing was approved where nothing was wrong');
+    expect((checkout?.investigation?.reads ?? []).includes('target/src/pricing.ts'), 'the reviewer did not read the definition');
+    await capture(diffId, 'delegated-checkout');
+
+    // --- 6. README.md: not enough to judge, nothing approved ---------------------------------
+    const readme = await delegateFile(diffId, 'README.md', false);
+    record('delegated readme', { job: readme });
+    expect(readme?.state === 'done' && readme.insufficient && (readme.approved ?? []).length === 0, `README was not "not enough to judge" with nothing approved: ${JSON.stringify(readme)}`);
+
+    // --- 7. Stopped: nothing approved ---------------------------------------------------------
+    const stopped = await delegateFile(diffId, 'src/checkout.ts', true);
+    record('stopped', { job: stopped });
+    expect(stopped?.state === 'cancelled' || stopped?.state === 'unknown', `the stopped review ended as ${String(stopped?.state)}`);
+    expect((stopped?.approved ?? []).length === 0, 'a stopped review approved lines');
+    await capture(diffId, 'stopped');
+
     return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));

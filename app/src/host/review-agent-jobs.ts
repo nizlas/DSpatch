@@ -1,16 +1,22 @@
 /**
- * Agent work over a revision pair (DSP-152): preparing code walks, and reviewing a part the
- * person explicitly delegated. The host runs it; windows start it, watch it through the
- * pair's record and may stop it.
+ * Agent work over a revision pair (DSP-152): preparing code walks, reviewing a part the
+ * person explicitly delegated, and answering a question about one step by looking into
+ * the code. The host runs it and owns its resources; windows start it, watch it through
+ * the pair's record and may stop it.
  *
- * **The same agent connection as the review discussion.** Each job builds its adapter from
- * the shared factory for the `review` purpose and refuses one that does not hold the
- * review's own policy, exactly as `ReviewDiscussionService.ensureSession` does: no tools,
- * no files, no commands. The material is supplied in the prompt by the host, read from
- * the two commits (`ReviewPairs.material`), so the agent sees exactly the revisions under
- * review and nothing of a working copy, and cannot change anything. Decided within the
- * DSP-152 mandate (29 October 2026): this keeps the tool-free review policy as it is
- * rather than giving review agents file tools, and works the same for Claude and Cursor.
+ * **Analysis with the provider's own tools.** The agent examines the code itself, as the
+ * plan (section 6) decided: the host writes the two commits to a folder of their own
+ * (`RevisionSnapshots`), the session runs there, and the adapter is built from the shared
+ * factory for the `analysis` purpose, whose Claude policy (`ANALYSIS_PERMISSIONS`) offers
+ * only Claude Code's Read, Glob and Grep, inside that folder. A job refuses an adapter that
+ * does not hold exactly that policy. Cursor is refused for this work: DSpatch has no
+ * read-only Cursor policy (`CURSOR_ANALYSIS_REFUSAL`). The prompt opens with the change and
+ * its diff for orientation only. The review discussion is separate and stays tool-free.
+ *
+ * **DSpatch checks what comes back**, against Git at the two commits, never against the
+ * folder: every walk place and answer reference must exist at its commit, approvals must lie
+ * inside the delegated scope among the lines reported as reviewed, and a part the agent
+ * could not read is not approved. What the agent read is recorded with the job, for Details.
  *
  * **Outcomes are recorded, never assumed.** A job is written as running before anything is
  * sent. It ends as done or failed from what the provider reported, as cancelled only on a
@@ -24,20 +30,24 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import { REVIEW_PERMISSIONS } from '../adapter/claude-agent-sdk-adapter';
+import { ANALYSIS_PERMISSIONS } from '../adapter/claude-agent-sdk-adapter';
 import type { AgentEvent, Unsubscribe } from '../adapter/types';
 import type { ChatAdapter } from '../main/chat-service';
 import {
   answerJson,
   definitionFrom,
   readReviewAnswer,
+  readStepAnswer,
   readWalksAnswer,
   repairPrompt,
   reviewPrompt,
+  stepQuestionPrompt,
   uncoveredBy,
   walkPlaceProblems,
   walksPrompt,
+  withCheckedFindings,
   withoutInvalidPlaces,
+  type AnalysisMaterial,
   type ProposedWalks,
 } from '../shared/review-agent';
 import {
@@ -45,7 +55,9 @@ import {
   changedLinesOf,
   isPairError,
   lineKey,
+  type AgentInvestigation,
   type AgentJob,
+  type AgentMaterial,
   type AgentReview,
   type DelegationScope,
   type LineRange,
@@ -53,24 +65,30 @@ import {
   type PairRecord,
   type ReviewAgentChoice,
   type ReviewAgents,
+  type StepQuestion,
 } from '../shared/review-pair';
 import type { ReviewPairs } from './review-pairs';
+import type { RevisionSnapshots, SnapshotManifest } from './revision-snapshots';
 
 export type AgentProvider = 'cursor' | 'claude';
 
 /** What a window asks for. Checked here before anything is written or sent. */
 export interface AgentJobRequest {
-  readonly kind: 'walks' | 'review';
+  readonly kind: 'walks' | 'review' | 'explain';
   readonly provider: AgentProvider;
   readonly model: string;
   readonly scope?: DelegationScope;
+  /** For `explain`: the step, by its walk definition and ids, and the person's question. */
+  readonly question?: { readonly definitionPath: string; readonly walkId: string; readonly stepId: string; readonly question: string };
 }
 
 export interface ReviewAgentJobsOptions {
-  /** `userData/reviews`: generated walks under `generated/`, the agent's empty folder under `agent-cwd/`. */
+  /** `userData/reviews`: generated walks under `generated/`. */
   readonly recordsDir: string;
-  /** The shared factory, bound to the review purpose. */
+  /** The shared factory, bound to the analysis purpose. */
   readonly createAdapter: (provider: AgentProvider) => ChatAdapter;
+  /** The revisions written as files for the agent to read; held while a job runs. */
+  readonly snapshots: RevisionSnapshots;
   readonly availability: (provider: AgentProvider) => { readonly choosable: boolean; readonly reason: string | null };
   readonly pairs: ReviewPairs;
   /** The review language, for what the agent writes. */
@@ -89,10 +107,47 @@ interface Live {
   runId: string | null;
   text: string;
   cancelRequested: boolean;
+  /** The revision folder, once written: what tool subjects are shown relative to. */
+  folder: string | null;
+  readonly reads: Set<string>;
+  readonly searches: string[];
+  refused: number;
+  readonly refusedCalls: string[];
+  /** Each tool call's name and subject, until its result says whether it ran. */
+  readonly calls: Map<string, { readonly name: string; readonly subject: string | null }>;
   finished: ((status: 'finished' | 'failed' | 'cancelled' | 'unconfirmed', error: string | null) => void) | null;
 }
 
 const CANCEL_CONFIRM_MS = 15_000;
+
+/** How many reads and searches a job records for its Details. */
+const INVESTIGATION_LIMIT = 200;
+
+/** How many left-out files a job names (all are counted). */
+const SKIPPED_NAMED = 50;
+
+/** What the agent could read, as the job records it. */
+function materialOf(manifest: SnapshotManifest): AgentMaterial {
+  const skipped = [
+    ...manifest.base.skipped.map((entry) => ({ side: 'base' as const, ...entry })),
+    ...manifest.target.skipped.map((entry) => ({ side: 'target' as const, ...entry })),
+  ];
+  return {
+    base: manifest.base.commit,
+    target: manifest.target.commit,
+    files: manifest.base.files + manifest.target.files,
+    skipped: skipped.slice(0, SKIPPED_NAMED),
+    skippedCount: skipped.length,
+  };
+}
+
+/** The repository paths the diff names on each side: never left out of the folder for size. */
+function changedPaths(material: AnalysisMaterial): { readonly base: Set<string>; readonly target: Set<string> } {
+  return {
+    base: new Set(material.files.flatMap((file) => (file.oldPath === null ? [] : [file.oldPath]))),
+    target: new Set(material.files.flatMap((file) => (file.newPath === null ? [] : [file.newPath]))),
+  };
+}
 
 function providerName(provider: AgentProvider): string {
   return provider === 'claude' ? 'Claude' : 'Cursor';
@@ -100,6 +155,16 @@ function providerName(provider: AgentProvider): string {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function questionRequestFrom(raw: unknown): { definitionPath: string; walkId: string; stepId: string; question: string } | null {
+  if (typeof raw !== 'object' || raw === null) {
+    return null;
+  }
+  const value = raw as Record<string, unknown>;
+  const text = (key: string, limit: number): string => (typeof value[key] === 'string' ? (value[key] as string).trim().slice(0, limit) : '');
+  const request = { definitionPath: text('definitionPath', 4000), walkId: text('walkId', 200), stepId: text('stepId', 200), question: text('question', 4000) };
+  return request.definitionPath === '' || request.walkId === '' || request.stepId === '' || request.question === '' ? null : request;
 }
 
 function scopeFrom(raw: unknown): DelegationScope | null {
@@ -219,7 +284,7 @@ export class ReviewAgentJobs {
     const kind = request['kind'];
     const provider = request['provider'];
     const model = typeof request['model'] === 'string' ? request['model'].trim() : '';
-    if (kind !== 'walks' && kind !== 'review') {
+    if (kind !== 'walks' && kind !== 'review' && kind !== 'explain') {
       return { error: 'Unknown kind of agent work.' };
     }
     if (provider !== 'cursor' && provider !== 'claude') {
@@ -238,6 +303,18 @@ export class ReviewAgentJobs {
     }
     this.reconcile(key);
     let scope: DelegationScope | null = null;
+    let question: StepQuestion | null = null;
+    if (kind === 'explain') {
+      const asked = questionRequestFrom(request['question']);
+      if (asked === null) {
+        return { error: 'Write a question about this step first.' };
+      }
+      const step = this.options.pairs.stepOf(key, asked.definitionPath, asked.walkId, asked.stepId);
+      if (isPairError(step)) {
+        return step;
+      }
+      question = { ...asked, stepTitle: step.stepTitle.en, places: step.places };
+    }
     if (kind === 'review') {
       scope = scopeFrom(request['scope']);
       if (scope === null) {
@@ -263,7 +340,9 @@ export class ReviewAgentJobs {
         error:
           kind === 'walks'
             ? 'Code walks are already being prepared for this change. Wait for them, or stop that first.'
-            : 'A delegated review is already running for this change. Wait for it, or stop it first.',
+            : kind === 'explain'
+              ? 'The agent is already looking into a question about this change. Wait for it, or stop it first.'
+              : 'A delegated review is already running for this change. Wait for it, or stop it first.',
       };
     }
     const job: AgentJob = {
@@ -274,12 +353,18 @@ export class ReviewAgentJobs {
       model,
       startedAt: new Date().toISOString(),
       endedAt: null,
-      note: kind === 'walks' ? 'Preparing code walks.' : `Reviewing ${scope?.label ?? 'the delegated part'}.`,
+      note:
+        kind === 'walks'
+          ? 'Preparing code walks.'
+          : kind === 'explain'
+            ? 'Looking into the code.'
+            : `Reviewing ${scope?.label ?? 'the delegated part'}.`,
       detail: '',
       scope,
       result: null,
       definitionPath: null,
       uncovered: [],
+      ...(question === null ? {} : { question }),
     };
     // Written before anything is sent: a job that never reached the disk could not be
     // reconciled after a restart. The agent and model it was started with become the
@@ -288,7 +373,23 @@ export class ReviewAgentJobs {
     if (isPairError(written)) {
       return written;
     }
-    const live: Live = { key, jobId: job.id, adapter: null, sessionId: null, unsubscribe: null, runId: null, text: '', cancelRequested: false, finished: null };
+    const live: Live = {
+      key,
+      jobId: job.id,
+      adapter: null,
+      sessionId: null,
+      unsubscribe: null,
+      runId: null,
+      text: '',
+      cancelRequested: false,
+      finished: null,
+      folder: null,
+      reads: new Set(),
+      searches: [],
+      refused: 0,
+      refusedCalls: [],
+      calls: new Map(),
+    };
     this.live.set(job.id, live);
     void this.run(live, job).finally(() => {
       this.live.delete(job.id);
@@ -346,8 +447,34 @@ export class ReviewAgentJobs {
     if (job === undefined || (job.state !== 'running' && job.state !== 'cancelling')) {
       return;
     }
-    this.setJob(live, { ...extra, state, note, endedAt: new Date().toISOString() });
+    this.setJob(live, { ...extra, ...this.investigationOf(live), state, note, endedAt: new Date().toISOString() });
     this.options.log(`review agent ${live.jobId}: ${state} - ${note}`);
+  }
+
+  /** What the agent looked at, for the job's Details; nothing when no folder was written. */
+  private investigationOf(live: Live): { investigation?: AgentInvestigation } {
+    if (live.folder === null) {
+      return {};
+    }
+    return { investigation: { reads: [...live.reads], searches: [...live.searches], refused: live.refused, refusedCalls: [...live.refusedCalls] } };
+  }
+
+  /** A tool subject as a place in the revision folder (`target/src/a.ts`), or as reported. */
+  private relative(live: Live, subject: string): string {
+    const folder = live.folder;
+    if (folder === null) {
+      return subject;
+    }
+    const fold = (value: string): string => (process.platform === 'win32' ? value.toLowerCase() : value);
+    let out = subject;
+    for (const spelling of [folder + path.sep, folder.replace(/\\/g, '/') + '/', folder]) {
+      let at = fold(out).indexOf(fold(spelling));
+      while (at >= 0) {
+        out = out.slice(0, at) + out.slice(at + spelling.length);
+        at = fold(out).indexOf(fold(spelling));
+      }
+    }
+    return out.replace(/\\/g, '/');
   }
 
   private armCancelConfirmation(live: Live): void {
@@ -372,15 +499,13 @@ export class ReviewAgentJobs {
     }
   }
 
-  private async openSession(live: Live, provider: AgentProvider, model: string): Promise<void> {
-    const workspacePath = path.join(this.options.recordsDir, 'agent-cwd', live.key);
-    fs.mkdirSync(workspacePath, { recursive: true });
+  private async openSession(live: Live, provider: AgentProvider, model: string, workspacePath: string): Promise<void> {
     const adapter = this.options.createAdapter(provider);
-    // The review's own policy, or nothing is sent (as the discussion: fails closed).
+    // The analysis policy exactly, or nothing is sent (fails closed, as the discussion does).
     const policy = adapter.permissionPolicy?.();
-    if ((adapter.id === 'claude-agent-sdk' && policy === undefined) || (policy !== undefined && !isDeepStrictEqual(policy, REVIEW_PERMISSIONS))) {
+    if ((adapter.id === 'claude-agent-sdk' && policy === undefined) || (policy !== undefined && !isDeepStrictEqual(policy, ANALYSIS_PERMISSIONS))) {
       await adapter.dispose().catch(() => undefined);
-      throw new Error('The adapter built for review does not hold the review policy, so it was not used. Nothing was sent.');
+      throw new Error('The adapter built for analysis does not hold the read-only analysis policy, so it was not used. Nothing was sent.');
     }
     live.adapter = adapter;
     const handle = await adapter.startSession({ provider, modelRequested: model, workspacePath });
@@ -401,7 +526,27 @@ export class ReviewAgentJobs {
     if (live.runId !== null && event.dspatchRunId !== live.runId) {
       return;
     }
-    if (event.type === 'assistant.delta') {
+    if (event.type === 'tool.started') {
+      // Counted as read or searched only once its result says it ran.
+      live.calls.set(event.toolCallId, { name: event.name, subject: event.subject === undefined ? null : this.relative(live, event.subject) });
+    } else if (event.type === 'tool.finished') {
+      const call = live.calls.get(event.toolCallId) ?? { name: event.name, subject: null };
+      live.calls.delete(event.toolCallId);
+      if (event.status === 'error') {
+        live.refused += 1;
+        if (live.refusedCalls.length < INVESTIGATION_LIMIT) {
+          live.refusedCalls.push(call.subject === null ? call.name : `${call.name} ${call.subject}`);
+        }
+      } else if (call.subject !== null) {
+        if (call.name === 'Read') {
+          if (live.reads.size < INVESTIGATION_LIMIT) {
+            live.reads.add(call.subject);
+          }
+        } else if (live.searches.length < INVESTIGATION_LIMIT) {
+          live.searches.push(`${call.name} ${call.subject}`);
+        }
+      }
+    } else if (event.type === 'assistant.delta') {
       live.text += event.text;
     } else if (event.type === 'assistant.message') {
       live.text = event.text;
@@ -462,16 +607,35 @@ export class ReviewAgentJobs {
   }
 
   private async run(live: Live, job: AgentJob): Promise<void> {
+    let held = false;
     try {
       const material = await this.options.pairs.material(live.key);
-      if (isPairError(material)) {
-        this.finish(live, 'failed', material.error);
+      const opened = this.options.pairs.opened(live.key);
+      if (isPairError(material) || opened === null) {
+        this.finish(live, 'failed', isPairError(material) ? material.error : 'That review is not open.');
         return;
       }
       const language = await this.options.language();
+      // The two commits as files the agent reads, held until the session is closed.
+      held = true;
+      let folder: AgentMaterial;
       try {
-        await this.openSession(live, job.provider, job.model);
-        this.options.log(`review agent ${live.jobId}: session opened with ${job.provider}/${job.model}`);
+        const snapshot = await this.options.snapshots.acquire(live.key, opened.pair, changedPaths(material), live.jobId);
+        live.folder = snapshot.folder;
+        folder = materialOf(snapshot.manifest);
+      } catch (error) {
+        this.finish(live, 'failed', 'The two revisions could not be prepared for the agent to read, so nothing was sent. Nothing was approved.', { detail: describe(error) });
+        return;
+      }
+      // What the agent can read is on record before anything is sent.
+      this.setJob(live, { material: folder });
+      if (live.cancelRequested) {
+        this.finish(live, 'cancelled', 'Stopped before anything was sent.');
+        return;
+      }
+      try {
+        await this.openSession(live, job.provider, job.model, live.folder);
+        this.options.log(`review agent ${live.jobId}: session opened with ${job.provider}/${job.model} in the revision folder (${String(folder.files)} files, ${String(folder.skippedCount)} left out)`);
       } catch (error) {
         // No other agent or model is tried: what was chosen is what was asked for.
         this.finish(live, 'failed', `${providerName(job.provider)} could not start a session with ${job.model}. Nothing was sent, and nothing was approved.`, { detail: describe(error) });
@@ -482,24 +646,64 @@ export class ReviewAgentJobs {
         return;
       }
       if (job.kind === 'walks') {
-        await this.prepareWalks(live, job, walksPrompt(material, language));
+        await this.prepareWalks(live, job, walksPrompt(material, folder, language), folder);
+      } else if (job.kind === 'explain' && job.question !== undefined) {
+        const step = this.options.pairs.stepOf(live.key, job.question.definitionPath, job.question.walkId, job.question.stepId);
+        if (isPairError(step)) {
+          this.finish(live, 'failed', `${step.error} Nothing was sent.`);
+          return;
+        }
+        const context = { walkTitle: step.walkTitle[language], stepTitle: step.stepTitle[language], summary: step.summary[language], body: step.body[language] };
+        await this.explain(live, stepQuestionPrompt(material, folder, job.question, context, language));
       } else if (job.scope !== null) {
-        await this.review(live, job, job.scope, reviewPrompt(material, job.scope, language));
+        await this.review(live, job, job.scope, reviewPrompt(material, folder, job.scope, language), folder);
       }
     } catch (error) {
       this.finish(live, 'failed', 'The agent could not be asked. Nothing was approved.', { detail: describe(error) });
     } finally {
       await this.closeSession(live);
+      if (held) {
+        // Only once the session is closed: nothing can read the folder after this.
+        this.options.snapshots.release(live.key, live.jobId);
+      }
     }
   }
 
-  private async prepareWalks(live: Live, job: AgentJob, prompt: string): Promise<void> {
+  /** The line reader every result is checked with: Git at the pair's commits, not the folder. */
+  private reader(live: Live): (side: 'base' | 'target', filePath: string) => Promise<readonly string[] | null> {
+    return (side, filePath) => this.options.pairs.linesAt(live.key, side, filePath);
+  }
+
+  private async explain(live: Live, prompt: string): Promise<void> {
+    const reply = await this.turn(live, prompt);
+    if (this.endedEarly(live, reply)) {
+      return;
+    }
+    const answer = await readStepAnswer(answerJson(reply.text), this.reader(live));
+    if ('error' in answer) {
+      this.finish(live, 'failed', `${answer.error} Nothing was changed.`);
+      return;
+    }
+    if (live.cancelRequested) {
+      this.endedEarly(live, { status: 'finished', error: null });
+      return;
+    }
+    const left = answer.adjustments.length;
+    this.finish(
+      live,
+      'done',
+      (answer.insufficient ? 'The agent could not settle the question from the code it read.' : `Answered, pointing at ${String(answer.references.length)} place(s) in the code.`) +
+        (left > 0 ? ` DSpatch left out ${String(left)} thing(s) it could not check.` : ''),
+      { answer },
+    );
+  }
+
+  private async prepareWalks(live: Live, job: AgentJob, prompt: string, folder: AgentMaterial): Promise<void> {
     const first = await this.turn(live, prompt);
     if (this.endedEarly(live, first)) {
       return;
     }
-    const read = (side: 'base' | 'target', filePath: string): Promise<readonly string[] | null> =>
-      this.options.pairs.linesAt(live.key, side, filePath);
+    const read = this.reader(live);
     let parsed = readWalksAnswer(answerJson(first.text));
     let invalid = parsed.walks === null ? new Map<string, string>() : await walkPlaceProblems(parsed.walks, read);
     // One repair round, naming what was wrong. Never a loop.
@@ -531,9 +735,10 @@ export class ReviewAgentJobs {
     const generatedAt = new Date().toISOString();
     const heading = `Code walks · ${opened?.repositoryName ?? ''} ${opened?.pair.base.slice(0, 7) ?? ''}→${opened?.pair.target.slice(0, 7) ?? ''}`;
     const provenance =
-      `Prepared by ${providerName(job.provider)} (${job.model}) on ${generatedAt} from the two commits. ` +
+      `Prepared by ${providerName(job.provider)} (${job.model}) on ${generatedAt}, reading the two commits with its own read-only tools. ` +
       'DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing.' +
-      (invalid.size > 0 ? ` ${String(invalid.size)} place(s) that did not exist at their commit were left out.` : '');
+      (invalid.size > 0 ? ` ${String(invalid.size)} place(s) that did not exist at their commit were left out.` : '') +
+      (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) of the commits could not be given to the agent to read.` : '');
     fs.mkdirSync(path.dirname(definitionPath), { recursive: true });
     fs.writeFileSync(definitionPath, `${JSON.stringify(definitionFrom(walks, opened?.pair ?? { repository: '', base: '', target: '' }, heading, provenance), null, 2)}\n`, 'utf8');
     const uncoveredLines = uncovered.reduce((total, range) => total + range.end - range.start + 1, 0);
@@ -542,21 +747,35 @@ export class ReviewAgentJobs {
       'done',
       `${String(walks.walks.length)} walk(s), ${String(stepCount)} step(s).` +
         (uncoveredLines === 0 ? ' Every changed line is in a walk.' : ` ${String(uncoveredLines)} changed line(s) are in no walk.`) +
-        (invalid.size > 0 ? ` ${String(invalid.size)} place(s) were left out because they do not exist at their commit.` : ''),
+        (invalid.size > 0 ? ` ${String(invalid.size)} place(s) were left out because they do not exist at their commit.` : '') +
+        (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) could not be given to the agent to read (see Details).` : ''),
       { definitionPath, uncovered },
     );
   }
 
-  private async review(live: Live, job: AgentJob, scope: DelegationScope, prompt: string): Promise<void> {
+  private async review(live: Live, job: AgentJob, scope: DelegationScope, prompt: string, folder: AgentMaterial): Promise<void> {
     const answer = await this.turn(live, prompt);
     if (this.endedEarly(live, answer)) {
       return;
     }
     const files = this.options.pairs.opened(live.key)?.files ?? [];
-    const result = readReviewAnswer(answerJson(answer.text), scope, files);
-    if ('error' in result) {
-      this.finish(live, 'failed', `${result.error} Nothing was approved.`);
+    const read = readReviewAnswer(answerJson(answer.text), scope, files);
+    if ('error' in read) {
+      this.finish(live, 'failed', `${read.error} Nothing was approved.`);
       return;
+    }
+    let result = await withCheckedFindings(read, this.reader(live));
+    // A file the agent could not read is not approved, whatever the answer says. When more
+    // files were left out than are named, none can be told apart, so nothing is approved.
+    const unreadable = new Set(folder.skipped.map((entry) => `${entry.side}:${entry.path}`));
+    const unnamed = folder.skippedCount > folder.skipped.length;
+    const blocked = result.approved.filter((range) => unnamed || unreadable.has(`${range.side}:${range.path}`));
+    if (blocked.length > 0) {
+      result = {
+        ...result,
+        approved: result.approved.filter((range) => !blocked.includes(range)),
+        adjustments: [...result.adjustments, 'Lines in files the agent could not read were not approved.'],
+      };
     }
     const recordedAt = new Date().toISOString();
     const reviews: AgentReview[] = result.approved.map((range) => ({
@@ -584,10 +803,11 @@ export class ReviewAgentJobs {
       return;
     }
     const endedAt = new Date().toISOString();
+    const investigation = this.investigationOf(live);
     this.options.pairs.update(live.key, (record) => ({
       ...record,
       agentReviews: [...record.agentReviews, ...reviews],
-      jobs: record.jobs.map((entry) => (entry.id === live.jobId ? { ...entry, state: 'done', note, result, endedAt } : entry)),
+      jobs: record.jobs.map((entry) => (entry.id === live.jobId ? { ...entry, ...investigation, state: 'done', note, result, endedAt } : entry)),
     }));
     this.options.log(`review agent ${live.jobId}: done - ${note}`);
   }

@@ -1,4 +1,5 @@
 import {
+  ANALYSIS_PERMISSIONS,
   assessAuthentication,
   CHAT_PERMISSIONS,
   ClaudeAgentSdkAdapter,
@@ -24,6 +25,7 @@ import { providerAvailability, providerDisplayName } from './provider-availabili
  * | --- | --- | --- |
  * | \`chat\` | \`toolPolicy: 'provider-default'\` | \`CHAT_PERMISSIONS\` |
  * | \`review\` | \`toolPolicy: 'text-only'\` | \`REVIEW_PERMISSIONS\` (no tools, a deny-all hook) |
+ * | \`analysis\` | refused (see below) | \`ANALYSIS_PERMISSIONS\` (Read, Glob, Grep in the revision folder) |
  * | \`loop\` | \`LOOP_RUN_TOOL_POLICY\` (\`'provider-default'\`) | \`CHAT_PERMISSIONS\`, exactly |
  *
  * A loop step under Claude has the main chat's permissions and nothing more: it can read
@@ -39,7 +41,17 @@ import { providerAvailability, providerDisplayName } from './provider-availabili
  * refused, with its reason, before anything is constructed - in presentation mode too,
  * so what can be chosen is the same.
  */
-export type AdapterPurpose = 'chat' | 'review' | 'loop';
+export type AdapterPurpose = 'chat' | 'review' | 'loop' | 'analysis';
+
+/**
+ * DSP-152: why Cursor does no analysis work. Its SDK adapter offers two tool policies, no
+ * tools or the provider's default set (which writes files and runs commands), and no
+ * read-only one DSpatch has verified; giving it the default set for analysis would give it
+ * a mandate to change code, and giving it none would not be analysis. So it is refused,
+ * with this reason, before anything is built.
+ */
+export const CURSOR_ANALYSIS_REFUSAL =
+  "Cursor cannot be limited to reading files through DSpatch's Cursor connection, so it is not used for walks, delegated review or code questions. Choose Claude.";
 
 export interface AdapterRequest {
   readonly provider: StoredSessionProvider;
@@ -94,12 +106,13 @@ export interface ProviderAdapters {
 
 /** The Claude policy for a purpose. The review path can never receive the chat's. */
 export function claudePermissionsFor(purpose: AdapterPurpose): ClaudePermissionPolicy {
-  return purpose === 'review' ? REVIEW_PERMISSIONS : CHAT_PERMISSIONS;
+  return purpose === 'review' ? REVIEW_PERMISSIONS : purpose === 'analysis' ? ANALYSIS_PERMISSIONS : CHAT_PERMISSIONS;
 }
 
 /** The Cursor tool policy for a purpose. */
 export function cursorToolPolicyFor(purpose: AdapterPurpose): ToolPolicy {
-  if (purpose === 'review') {
+  // `analysis` is refused for Cursor before this is asked; were it asked, nothing is offered.
+  if (purpose === 'review' || purpose === 'analysis') {
     return 'text-only';
   }
   return purpose === 'loop' ? LOOP_RUN_TOOL_POLICY : 'provider-default';
@@ -124,8 +137,11 @@ export function providerAdapters(options: ProviderAdaptersOptions): ProviderAdap
   };
   return {
     reviewPresentationBehaviour: reviewBehaviour,
-    preflight: ({ provider }) => {
+    preflight: ({ provider, purpose }) => {
       const reason = unavailable(provider);
+      if (reason === null && purpose === 'analysis' && provider === 'cursor') {
+        return CURSOR_ANALYSIS_REFUSAL;
+      }
       if (reason !== null || options.presentation || provider !== 'claude') {
         return reason;
       }
@@ -146,8 +162,11 @@ export function providerAdapters(options: ProviderAdaptersOptions): ProviderAdap
       if (reason !== null) {
         throw new Error(reason);
       }
+      if (purpose === 'analysis' && provider === 'cursor') {
+        throw new Error(CURSOR_ANALYSIS_REFUSAL);
+      }
       if (options.presentation) {
-        if (purpose === 'review') {
+        if (purpose === 'review' || purpose === 'analysis') {
           // Which agent was asked for, so a trial can show it is the chosen one.
           reviewBehaviour?.recordBuilt(provider);
           return new PresentationAdapter({

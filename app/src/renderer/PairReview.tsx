@@ -552,6 +552,10 @@ function DiffReview({
           insufficient: job.result?.insufficient ?? false,
           definitionPath: job.definitionPath,
           uncovered: job.uncovered.length,
+          // DSP-152: where findings point, what the agent could read and what it read.
+          findingPlaces: (job.result?.findings ?? []).map((finding) => ({ severity: finding.severity, location: finding.location })),
+          material: job.material ?? null,
+          investigation: job.investigation ?? null,
         })),
         agentReviewsShown: document.querySelectorAll('[data-ev="agent-review"]').length,
         findingsShown: [...document.querySelectorAll<HTMLElement>('[data-ev="agent-finding"]')].map((item) => item.textContent ?? ''),
@@ -842,7 +846,7 @@ export function isRunning(job: AgentJob): boolean {
  * may have been started with another agent long before; the line must not read as the
  * outcome of the choice shown now.
  */
-function attemptLabel(job: AgentJob): string {
+export function attemptLabel(job: AgentJob): string {
   const words = `${job.provider === 'claude' ? 'Claude' : 'Cursor'} · ${job.model} · ${formatDate(job.startedAt)}`;
   return job.state === 'done' ? words : `Last attempt (${words}):`;
 }
@@ -850,7 +854,8 @@ function attemptLabel(job: AgentJob): string {
 /** Where one piece of agent work stands, in a line, with Stop while it runs. */
 export function JobLine({ job, onStop, onOpenWalks }: { readonly job: AgentJob; readonly onStop: () => void; readonly onOpenWalks?: () => void }): JSX.Element {
   const running = job.state === 'running' || job.state === 'cancelling';
-  const what = job.kind === 'walks' ? 'Preparing code walks' : `Reviewing ${job.scope?.label ?? 'the delegated part'}`;
+  const what =
+    job.kind === 'walks' ? 'Preparing code walks' : job.kind === 'explain' ? 'Looking into the code' : `Reviewing ${job.scope?.label ?? 'the delegated part'}`;
   return (
     <div className={`rv-agent-line rv-agent-line-${job.state}`} data-ev={`agent-job-${job.kind}`} data-state={job.state} aria-live="polite">
       {running ? (
@@ -884,13 +889,16 @@ export function JobLine({ job, onStop, onOpenWalks }: { readonly job: AgentJob; 
 }
 
 /**
- * A job that did not finish well, folded away: which job it was, with which agent and
- * model and when, and the provider's own words. The note above says what it means.
+ * A finished job's details, folded away: which job it was, with which agent and model and
+ * when, the provider's own words when it failed, and (DSP-152) what the agent could read
+ * and what it looked at. The note above says what it means; none of this is in the way.
  */
-function JobDetail({ job }: { readonly job: AgentJob }): JSX.Element | null {
-  if (job.state === 'done' || isRunning(job)) {
+export function JobDetail({ job }: { readonly job: AgentJob }): JSX.Element | null {
+  if (isRunning(job) || (job.state === 'done' && job.material === undefined && job.investigation === undefined)) {
     return null;
   }
+  const material = job.material;
+  const investigation = job.investigation;
   return (
     <details className="rv-agent-detail" data-ev={`agent-job-${job.kind}-detail`}>
       <summary>Details</summary>
@@ -898,12 +906,36 @@ function JobDetail({ job }: { readonly job: AgentJob }): JSX.Element | null {
         {job.provider === 'claude' ? 'Claude' : 'Cursor'} · {job.model} · started {formatDate(job.startedAt)}
         {job.endedAt !== null ? `, ended ${formatDate(job.endedAt)}` : ''} · {job.id}
       </p>
+      {material !== undefined && (
+        <p data-ev="agent-job-material">
+          Could read {String(material.files)} files of {material.base.slice(0, 7)} (base/) and {material.target.slice(0, 7)} (target/), with Read, Glob and Grep only.
+          {material.skippedCount > 0 && ` ${String(material.skippedCount)} left out: ${material.skipped.map((entry) => `${entry.side}/${entry.path} (${entry.reason})`).join('; ')}${material.skipped.length < material.skippedCount ? '; …' : ''}.`}
+        </p>
+      )}
+      {investigation !== undefined && (
+        <div data-ev="agent-job-investigation">
+          {investigation.reads.length === 0 && investigation.searches.length === 0 ? (
+            <p>The provider reported no reads.</p>
+          ) : (
+            <>
+              {investigation.reads.length > 0 && <p>Read: {investigation.reads.join(', ')}</p>}
+              {investigation.searches.length > 0 && <p>Searched: {investigation.searches.join('; ')}</p>}
+            </>
+          )}
+          {investigation.refused > 0 && (
+            <p>
+              {String(investigation.refused)} tool call(s) failed or were refused
+              {(investigation.refusedCalls ?? []).length > 0 ? `: ${(investigation.refusedCalls ?? []).join('; ')}` : ''}.
+            </p>
+          )}
+        </div>
+      )}
       {job.detail !== '' && <pre>{job.detail}</pre>}
     </details>
   );
 }
 
-function rangeWords(range: LineRange): string {
+export function rangeWords(range: LineRange): string {
   return `${range.path} ${range.side === 'base' ? 'removed ' : ''}line${range.start === range.end ? '' : 's'} ${String(range.start)}${range.start === range.end ? '' : `–${String(range.end)}`}`;
 }
 
@@ -937,7 +969,7 @@ function AgentReviewResult({
         </>
       ) : (
         <div className="rv-agent-review-body">
-          {result.insufficient && <p className="rv-agent-insufficient">The agent found the material not enough to judge this part. Nothing was approved.</p>}
+          {result.insufficient && <p className="rv-agent-insufficient">The agent could not judge this part from the code it could read. Nothing was approved.</p>}
           {result.assessment !== '' && <p>{result.assessment}</p>}
           {result.findings.length > 0 && (
             <ul className="rv-agent-findings">
@@ -977,6 +1009,7 @@ function AgentReviewResult({
               </ul>
             </details>
           )}
+          <JobDetail job={job} />
         </div>
       )}
     </details>

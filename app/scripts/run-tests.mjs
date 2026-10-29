@@ -123,6 +123,7 @@ const AREAS = {
       { file: 'review-host.test.ts', heavy: true },
       { file: 'review-pairs.test.ts', heavy: true },
       { file: 'review-agent-jobs.test.ts', heavy: true },
+      { file: 'review-analysis.test.ts', heavy: true },
       { file: 'review-discussion-service.test.ts', heavy: true },
       { file: 'review-discussion-provider.test.ts', heavy: true },
     ],

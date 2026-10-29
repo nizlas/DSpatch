@@ -583,8 +583,10 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       declared === null
         ? presentationReply(token)
         : `${presentationReply(token)}\n\nRESULT: ${declared}`;
-    // DSP-152, SIMULATED: a review task (walks, a delegated review) answered from its prompt.
-    answer = simulatedReviewTask(prompt) ?? answer;
+    // DSP-152, SIMULATED: an analysis task (walks, a delegated review, a step question),
+    // answered by reading the revision folder the session runs in, as the real agent does.
+    const task = simulatedReviewTask(prompt, state.config.workspacePath);
+    answer = task?.answer ?? answer;
     // Chunked on whitespace, so what arrives is the partial text a real stream
     // produces — including a fence that is open for several frames, which is the
     // case the reader has to survive.
@@ -610,6 +612,13 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // so in presentation runs no turn recorded the recap that went with it (DSP-121,
     // run 20261024-070000-dsp121-flow). The reply below keeps its timers as before.
     emit({ ...base, type: 'run.started', at: new Date().toISOString() });
+    // DSP-152, SIMULATED: the reads and searches the analysis task made, reported as the
+    // Claude adapter reports its Read and Grep calls, with the path they used.
+    (task?.tools ?? []).forEach((tool, index) => {
+      const toolCallId = `${dspatchRunId}-read-${String(index + 1)}`;
+      emit({ ...base, type: 'tool.started', at: new Date().toISOString(), toolCallId, name: tool.name, subject: tool.subject });
+      emit({ ...base, type: 'tool.finished', at: new Date().toISOString(), toolCallId, name: tool.name, status: tool.ok ? 'ok' : 'error' });
+    });
 
     const reply = (): void => {
       chunks.forEach((chunk, index) => {

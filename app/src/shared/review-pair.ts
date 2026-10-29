@@ -107,10 +107,12 @@ export interface ReviewAgents {
 
 /** What a window asks of the host to start agent work over the pair. */
 export interface AgentJobRequestInput {
-  readonly kind: 'walks' | 'review';
+  readonly kind: 'walks' | 'review' | 'explain';
   readonly provider: 'cursor' | 'claude';
   readonly model: string;
   readonly scope?: DelegationScope;
+  /** DSP-152, `explain`: the step (by its walk definition and ids) and the person's question. */
+  readonly question?: { readonly definitionPath: string; readonly walkId: string; readonly stepId: string; readonly question: string };
 }
 
 /** A host answer, or why there is none. */
@@ -433,10 +435,70 @@ export interface DelegationResult {
   readonly adjustments: readonly string[];
 }
 
+/**
+ * A question about one step of a walk that the agent answers by looking into the code
+ * (DSP-152): the step, the code it points at, and what the person asked.
+ */
+export interface StepQuestion {
+  /** The walk definition the step belongs to. */
+  readonly definitionPath: string;
+  readonly walkId: string;
+  readonly stepId: string;
+  /** The step's title as the person saw it. */
+  readonly stepTitle: string;
+  /** What the person asked, in their words. */
+  readonly question: string;
+  /** The step's places at the pair's commits. */
+  readonly places: readonly LineRange[];
+}
+
+/** A code reference in an answer, checked against its commit. */
+export interface AnswerReference {
+  readonly label: string;
+  readonly range: LineRange;
+}
+
+/** The answer to a step question, after DSpatch checked its references. */
+export interface StepAnswer {
+  /** Markdown: the explanation, written to the plan's rules. */
+  readonly answer: string;
+  /** References that exist at their commit. */
+  readonly references: readonly AnswerReference[];
+  /** The agent could not establish an answer from the code it could read. */
+  readonly insufficient: boolean;
+  /** What DSpatch left out of the answer, in plain words. */
+  readonly adjustments: readonly string[];
+}
+
+/**
+ * What the agent looked at while it worked (DSP-152), as its provider reported the tool
+ * calls: files read and searches made, by their place in the revision folder (`target/…`,
+ * `base/…`). Shown under Details; never content.
+ */
+export interface AgentInvestigation {
+  readonly reads: readonly string[];
+  readonly searches: readonly string[];
+  /** Tool calls the provider reported as failed or refused. */
+  readonly refused: number;
+  /** Those calls, by tool and subject where known: not among `reads` or `searches`. */
+  readonly refusedCalls?: readonly string[];
+}
+
+/** What the agent could read: the two commits as written for it, and what was left out. */
+export interface AgentMaterial {
+  readonly base: string;
+  readonly target: string;
+  readonly files: number;
+  readonly skipped: readonly { readonly side: LineSide; readonly path: string; readonly reason: string }[];
+  /** How many were left out in all; `skipped` names at most the first fifty. */
+  readonly skippedCount: number;
+}
+
 /** One piece of agent work over the pair, from the press to its recorded outcome. */
 export interface AgentJob {
   readonly id: string;
-  readonly kind: 'walks' | 'review';
+  /** Walk preparation, a delegated review, or a question about one step. */
+  readonly kind: 'walks' | 'review' | 'explain';
   readonly state: AgentJobState;
   readonly provider: 'cursor' | 'claude';
   readonly model: string;
@@ -453,6 +515,12 @@ export interface AgentJob {
   readonly definitionPath: string | null;
   /** For a walk preparation: changed lines no walk covers, and references left out. */
   readonly uncovered: readonly LineRange[];
+  /** For a step question: the question, and its checked answer once there is one. */
+  readonly question?: StepQuestion;
+  readonly answer?: StepAnswer;
+  /** What the agent could read, and what it looked at (DSP-152 analysis access). */
+  readonly material?: AgentMaterial;
+  readonly investigation?: AgentInvestigation;
 }
 
 /**
@@ -561,8 +629,71 @@ function splitLegacyNote(note: string, detail: string): { readonly note: string;
   return legacy === undefined ? { note, detail } : { note: legacy.note, detail: note.slice(legacy.prefix.length, note.length - LEGACY_END.length) };
 }
 
+function questionFrom(raw: unknown): StepQuestion | null {
+  if (!isRecordObject(raw)) {
+    return null;
+  }
+  const text = (key: string): string => (typeof raw[key] === 'string' ? (raw[key] as string) : '');
+  if (text('definitionPath') === '' || text('stepId') === '') {
+    return null;
+  }
+  return {
+    definitionPath: text('definitionPath'),
+    walkId: text('walkId'),
+    stepId: text('stepId'),
+    stepTitle: text('stepTitle'),
+    question: text('question'),
+    places: rangesFrom(raw['places']),
+  };
+}
+
+function answerFrom(raw: unknown): StepAnswer | null {
+  if (!isRecordObject(raw) || typeof raw['answer'] !== 'string') {
+    return null;
+  }
+  return {
+    answer: raw['answer'],
+    references: (Array.isArray(raw['references']) ? raw['references'] : []).filter(isRecordObject).flatMap((entry) => {
+      const range = rangeFrom(entry['range']);
+      return range === null ? [] : [{ label: typeof entry['label'] === 'string' ? entry['label'] : '', range }];
+    }),
+    insufficient: raw['insufficient'] === true,
+    adjustments: stringsFrom(raw['adjustments']),
+  };
+}
+
+function materialFrom(raw: unknown): AgentMaterial | null {
+  if (!isRecordObject(raw) || typeof raw['base'] !== 'string' || typeof raw['target'] !== 'string') {
+    return null;
+  }
+  const skipped = (Array.isArray(raw['skipped']) ? raw['skipped'] : []).filter(isRecordObject).flatMap((entry) =>
+    (entry['side'] === 'base' || entry['side'] === 'target') && typeof entry['path'] === 'string'
+      ? [{ side: entry['side'] as LineSide, path: entry['path'], reason: typeof entry['reason'] === 'string' ? entry['reason'] : '' }]
+      : [],
+  );
+  return {
+    base: raw['base'],
+    target: raw['target'],
+    files: Number.isInteger(raw['files']) ? (raw['files'] as number) : 0,
+    skipped,
+    skippedCount: Number.isInteger(raw['skippedCount']) ? (raw['skippedCount'] as number) : skipped.length,
+  };
+}
+
+function investigationFrom(raw: unknown): AgentInvestigation | null {
+  if (!isRecordObject(raw)) {
+    return null;
+  }
+  return {
+    reads: stringsFrom(raw['reads']),
+    searches: stringsFrom(raw['searches']),
+    refused: Number.isInteger(raw['refused']) ? (raw['refused'] as number) : 0,
+    refusedCalls: stringsFrom(raw['refusedCalls']),
+  };
+}
+
 export function jobFrom(raw: unknown): AgentJob | null {
-  if (!isRecordObject(raw) || typeof raw['id'] !== 'string' || (raw['kind'] !== 'walks' && raw['kind'] !== 'review')) {
+  if (!isRecordObject(raw) || typeof raw['id'] !== 'string' || (raw['kind'] !== 'walks' && raw['kind'] !== 'review' && raw['kind'] !== 'explain')) {
     return null;
   }
   // A job is always written with the agent it was started with; one without a known
@@ -607,6 +738,18 @@ export function jobFrom(raw: unknown): AgentJob | null {
     result,
     definitionPath: typeof raw['definitionPath'] === 'string' ? raw['definitionPath'] : null,
     uncovered: rangesFrom(raw['uncovered']),
+    ...((): Partial<AgentJob> => {
+      const question = questionFrom(raw['question']);
+      const answer = answerFrom(raw['answer']);
+      const material = materialFrom(raw['material']);
+      const investigation = investigationFrom(raw['investigation']);
+      return {
+        ...(question === null ? {} : { question }),
+        ...(answer === null ? {} : { answer }),
+        ...(material === null ? {} : { material }),
+        ...(investigation === null ? {} : { investigation }),
+      };
+    })(),
   };
 }
 

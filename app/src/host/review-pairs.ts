@@ -28,9 +28,9 @@ import {
   isPairError,
   LOG_FORMAT_ARGS,
   pairFilesFrom,
-  shownPath,
   parseLog,
   scopeFrom,
+  type LineRange,
   type LineSide,
   type LogCommit,
   type MarkScope,
@@ -44,7 +44,7 @@ import {
   type ReviewRequirement,
   type RevisionPairIdentity,
 } from '../shared/review-pair';
-import { EXCERPT_CONTEXT, MATERIAL_CHAR_BUDGET, type AnalysisMaterial, type MaterialFile } from '../shared/review-agent';
+import { ORIENTATION_DIFF_CHARS, type AnalysisMaterial } from '../shared/review-agent';
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -56,6 +56,15 @@ const SEARCH_DEPTH = 2;
 
 /** How many commits one page of the log holds. */
 export const LOG_PAGE = 200;
+
+/** A walk step as {@link ReviewPairs.stepOf} reads it, in both languages. */
+export interface StepOfWalk {
+  readonly walkTitle: { readonly sv: string; readonly en: string };
+  readonly stepTitle: { readonly sv: string; readonly en: string };
+  readonly summary: { readonly sv: string; readonly en: string };
+  readonly body: { readonly sv: string; readonly en: string };
+  readonly places: readonly LineRange[];
+}
 
 function git(repository: string, args: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -530,6 +539,69 @@ export class ReviewPairs {
   }
 
   /**
+   * One step of a walk definition over exactly this pair (DSP-152), for a question about
+   * it: its texts in both languages and the places it points at. Read here from the file,
+   * never taken from a window; a definition over other commits is refused.
+   */
+  stepOf(key: unknown, definitionPath: unknown, walkId: unknown, stepId: unknown): PairAnswer<StepOfWalk> {
+    const opened = this.openOf(key);
+    if (opened === null) {
+      return { error: 'That review is not open.' };
+    }
+    if (typeof definitionPath !== 'string' || typeof walkId !== 'string' || typeof stepId !== 'string') {
+      return { error: 'That step is not known.' };
+    }
+    let raw: Record<string, unknown>;
+    try {
+      raw = JSON.parse(fs.readFileSync(path.resolve(definitionPath), 'utf8')) as Record<string, unknown>;
+    } catch {
+      return { error: 'The walk this step belongs to could not be read.' };
+    }
+    const repository = typeof raw['repository'] === 'string' ? path.resolve(path.dirname(path.resolve(definitionPath)), raw['repository']) : null;
+    if (repository === null || folderIdentity(repository) !== folderIdentity(opened.pair.repository) || raw['base'] !== opened.pair.base || raw['target'] !== opened.pair.target) {
+      return { error: 'That walk is about other commits than this review.' };
+    }
+    const both = (value: unknown): { readonly sv: string; readonly en: string } => {
+      if (typeof value === 'string') {
+        return { sv: value, en: value };
+      }
+      const entry = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+      const en = typeof entry['en'] === 'string' ? entry['en'] : '';
+      const sv = typeof entry['sv'] === 'string' ? entry['sv'] : '';
+      return { sv: sv || en, en: en || sv };
+    };
+    const walks = Array.isArray(raw['walks']) ? (raw['walks'] as unknown[]) : [];
+    const walk = walks.find((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && (entry as Record<string, unknown>)['id'] === walkId);
+    const steps = walk !== undefined && Array.isArray(walk['steps']) ? (walk['steps'] as unknown[]) : [];
+    const step = steps.find((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && (entry as Record<string, unknown>)['id'] === stepId);
+    if (walk === undefined || step === undefined) {
+      return { error: 'That step is not in its walk.' };
+    }
+    const places: LineRange[] = [];
+    for (const place of Array.isArray(step['places']) ? (step['places'] as unknown[]) : []) {
+      const focus = typeof place === 'object' && place !== null ? (place as Record<string, unknown>)['focus'] : null;
+      const range = typeof focus === 'object' && focus !== null ? (focus as Record<string, unknown>) : null;
+      if (
+        range !== null &&
+        (range['side'] === 'base' || range['side'] === 'target') &&
+        typeof range['path'] === 'string' &&
+        safeRepositoryPath(range['path']) &&
+        Number.isInteger(range['start']) &&
+        Number.isInteger(range['end'])
+      ) {
+        places.push({ kind: 'lines', side: range['side'], path: range['path'], start: range['start'] as number, end: range['end'] as number });
+      }
+    }
+    return {
+      walkTitle: both(walk['title']),
+      stepTitle: both(step['title']),
+      summary: both(step['summary']),
+      body: both(step['body']),
+      places,
+    };
+  }
+
+  /**
    * A file's lines at one of the pair's commits, for checking a reference (DSP-152): any
    * file of that commit, not only a changed one, since a walk may lead through unchanged
    * code. `null` when the path does not exist there or is not text.
@@ -556,45 +628,38 @@ export class ReviewPairs {
   }
 
   /**
-   * What the agent is given about the pair (DSP-152): every changed file's text at both
-   * commits, excerpted around the changes and then left out when the size bound is reached.
+   * What the agent is told about the pair at the start (DSP-152): the change, its changed
+   * lines and the unified diff between the two commits for orientation, each file's diff
+   * whole or not at all, up to {@link ORIENTATION_DIFF_CHARS}. The agent reads the
+   * revisions themselves from the folder `RevisionSnapshots` writes; this bound limits only
+   * the opening diff.
    *
-   * Read with `git cat-file` at the two commits only. This is where repository bytes
-   * become model context for walks and delegated reviews, the same kind of place as the
-   * discussion's envelope; a content-exclusion check belongs here, before material exists.
-   * Nothing is excluded today, as there.
+   * Read with `git diff` between the two commits only. Repository content reaches the model
+   * through this diff and through the agent's own reads of the revision folder; DSpatch
+   * excludes nothing from either today (see `RevisionSnapshots`).
    */
   async material(key: string): Promise<PairAnswer<AnalysisMaterial>> {
     const opened = this.openOf(key);
     if (opened === null) {
       return { error: 'That review is not open.' };
     }
-    const files: MaterialFile[] = [];
-    const omitted: string[] = [];
+    let patch: string;
+    try {
+      patch = await git(opened.pair.repository, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '-M', '-U3', opened.pair.base, opened.pair.target]);
+    } catch (error) {
+      return { error: `The change could not be read: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    const chunks = patch.split(/^(?=diff --git )/m).filter((chunk) => chunk.startsWith('diff --git '));
+    const shown: string[] = [];
+    const diffLeftOut: string[] = [];
     let used = 0;
-    const readText = async (side: LineSide, filePath: string | null): Promise<string | null> => {
-      if (filePath === null) {
-        return null;
-      }
-      const answer = await this.readFile(key, side, filePath);
-      return isPairError(answer) || answer.binary ? null : answer.text;
-    };
-    for (const file of opened.files) {
-      const baseText = file.binary ? null : await readText('base', file.oldPath);
-      const targetText = file.binary ? null : await readText('target', file.newPath);
-      const whole = (baseText?.length ?? 0) + (targetText?.length ?? 0);
-      if (used + whole <= MATERIAL_CHAR_BUDGET) {
-        files.push({ file, baseText, targetText, excerpted: false });
-        used += whole;
-        continue;
-      }
-      // Too large whole: the changes and their surroundings, if those fit.
-      const excerpt = file.hunks.reduce((total, hunk) => total + (hunk.baseCount + hunk.targetCount + 4 * EXCERPT_CONTEXT) * 100, 0);
-      if (used + excerpt <= MATERIAL_CHAR_BUDGET) {
-        files.push({ file, baseText, targetText, excerpted: true });
-        used += excerpt;
+    for (const chunk of chunks) {
+      if (used + chunk.length <= ORIENTATION_DIFF_CHARS) {
+        shown.push(chunk);
+        used += chunk.length;
       } else {
-        omitted.push(shownPath(file));
+        const header = /^diff --git a\/(.*?) b\/(.*)$/m.exec(chunk);
+        diffLeftOut.push(header?.[2] ?? header?.[1] ?? '(a file)');
       }
     }
     return {
@@ -602,9 +667,36 @@ export class ReviewPairs {
       repositoryName: opened.repositoryName,
       baseSubject: opened.base.subject,
       targetSubject: opened.target.subject,
-      files,
-      omitted,
+      files: opened.files,
+      diff: shown.join('').trimEnd(),
+      diffLeftOut,
     };
+  }
+
+  /**
+   * DSP-152: the finished code questions about one step of a walk definition, with their
+   * answers, from the record of whichever open pair holds them. For the discussion's context.
+   */
+  stepAnswers(definitionPath: string, stepId: string): readonly { readonly question: string; readonly answer: string }[] {
+    const wanted = folderIdentity(definitionPath);
+    for (const opened of this.open.values()) {
+      const record = this.readRecord(opened.key, opened.pair);
+      const answers = record.jobs.flatMap((job) =>
+        job.kind === 'explain' &&
+        job.state === 'done' &&
+        job.answer !== undefined &&
+        !job.answer.insufficient &&
+        job.question !== undefined &&
+        job.question.stepId === stepId &&
+        folderIdentity(job.question.definitionPath) === wanted
+          ? [{ question: job.question.question, answer: job.answer.answer }]
+          : [],
+      );
+      if (answers.length > 0) {
+        return answers.slice(-3);
+      }
+    }
+    return [];
   }
 
   /** Change a pair's record and tell every window over it. */

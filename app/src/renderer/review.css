@@ -2363,6 +2363,33 @@
   margin-bottom: 0.3rem;
 }
 
+.rv-code-question {
+  margin: 0 0 0.9rem;
+}
+
+.rv-code-question-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.rv-code-question-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.rv-answer-refs ul {
+  margin: 0.2rem 0 0.4rem;
+  padding-left: 1.1rem;
+}
+
+.rv-agent-detail p {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+
 .rv-walk-delegate {
   display: flex;
   flex-direction: column;

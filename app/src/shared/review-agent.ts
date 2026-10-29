@@ -7,8 +7,9 @@
  * that nothing here is an approval by itself (sections 1 and 5) is what the validation of
  * a delegated review enforces.
  *
- * Pure: the host builds the material from the two commits and runs the agent; this module
- * writes the prompt and checks the answer. Nothing here reads a working copy.
+ * Pure: the host builds the material from the two commits, writes the revisions to a folder
+ * the agent reads with its own tools, and runs the agent; this module writes the prompt and
+ * checks the answer. Nothing here reads a working copy.
  */
 
 import {
@@ -17,6 +18,8 @@ import {
   rangesOf,
   shownPath,
   type AgentFinding,
+  type AgentMaterial,
+  type AnswerReference,
   type ChangedLine,
   type DelegationResult,
   type DelegationScope,
@@ -24,96 +27,66 @@ import {
   type LineSide,
   type PairFile,
   type RevisionPairIdentity,
+  type StepAnswer,
+  type StepQuestion,
 } from './review-pair';
 
 /** The header every task prompt starts with, so a simulated agent can tell them apart. */
 export const TASK_HEADER = 'DSPATCH-REVIEW-TASK:';
 
-/** One changed file as the agent is given it: its diff facts and the text at both commits. */
-export interface MaterialFile {
-  readonly file: PairFile;
-  /** The file at From, or `null` when it does not exist there or is not text. */
-  readonly baseText: string | null;
-  /** The file at To, or `null` when it does not exist there or is not text. */
-  readonly targetText: string | null;
-  /** Only the changed regions and their surroundings were included, to bound the size. */
-  readonly excerpted: boolean;
-}
-
-/** Everything the agent is given about the pair. Built by the host, at the two commits only. */
+/**
+ * What the agent is told about the pair at the start (DSP-152): what the change is, its
+ * changed lines, and the diff for orientation. Built by the host from the two commits.
+ *
+ * Orientation only. The agent reads the two revisions themselves with its provider's own
+ * tools, in the folder the host wrote them to (`base/`, `target/`), so it can read whole
+ * files, follow callers and definitions and look at unchanged code and tests. The size
+ * bound below limits only this opening diff, never what the agent can read.
+ */
 export interface AnalysisMaterial {
   readonly pair: RevisionPairIdentity;
   readonly repositoryName: string;
   readonly baseSubject: string;
   readonly targetSubject: string;
-  readonly files: readonly MaterialFile[];
-  /** Files left out entirely because the material reached its size bound. */
-  readonly omitted: readonly string[];
+  readonly files: readonly PairFile[];
+  /** The unified diff between the commits, whole files' diffs only, up to the bound. */
+  readonly diff: string;
+  /** Files whose diff is not in `diff` for size; their text is in the folder like every other. */
+  readonly diffLeftOut: readonly string[];
 }
 
-/** The size the material is held to; beyond it, files are excerpted, then left out. */
-export const MATERIAL_CHAR_BUDGET = 180_000;
-
-/** Lines of unchanged code kept around a change in an excerpted file. */
-export const EXCERPT_CONTEXT = 25;
-
-function numbered(text: string, keep: ((line: number) => boolean) | null): string {
-  const lines = text.split('\n');
-  if (lines.at(-1) === '') {
-    lines.pop();
-  }
-  const out: string[] = [];
-  let skipped = false;
-  lines.forEach((line, index) => {
-    const number = index + 1;
-    if (keep !== null && !keep(number)) {
-      skipped = true;
-      return;
-    }
-    if (skipped) {
-      out.push('     …');
-      skipped = false;
-    }
-    out.push(`${String(number).padStart(5)} | ${line}`);
-  });
-  if (skipped) {
-    out.push('     …');
-  }
-  return out.join('\n');
-}
-
-function nearChange(file: PairFile, side: LineSide): (line: number) => boolean {
-  const spans = file.hunks.map((hunk) =>
-    side === 'base'
-      ? [hunk.baseStart - EXCERPT_CONTEXT, hunk.baseStart + hunk.baseCount + EXCERPT_CONTEXT]
-      : [hunk.targetStart - EXCERPT_CONTEXT, hunk.targetStart + hunk.targetCount + EXCERPT_CONTEXT],
-  );
-  return (line) => spans.some(([from, to]) => line >= (from as number) && line <= (to as number));
-}
+/** The size of the opening diff; beyond it a file's diff is named, not shown. */
+export const ORIENTATION_DIFF_CHARS = 60_000;
 
 /** The changed lines of every file, as ranges the agent must cover and may name. */
 export function changedRangesOf(files: readonly PairFile[]): readonly LineRange[] {
   return rangesOf(files.flatMap((file) => changedLinesOf(file)));
 }
 
-function describeFile(entry: MaterialFile): string {
-  const file = entry.file;
-  const head =
-    file.status === 'renamed' || file.status === 'copied'
-      ? `${file.status} ${file.oldPath ?? ''} → ${file.newPath ?? ''}`
-      : `${file.status} ${shownPath(file)}`;
-  const parts = [`### ${head}${file.binary ? ' (binary, no text)' : ''}${entry.excerpted ? ' (excerpt around the changes)' : ''}`];
-  if (entry.baseText !== null && file.oldPath !== null && file.status !== 'added') {
-    parts.push(`From (${file.oldPath}):\n\`\`\`\n${numbered(entry.baseText, entry.excerpted ? nearChange(file, 'base') : null)}\n\`\`\``);
+/** The folder section: where the revisions are, what the agent can do there, and what is missing. */
+function folderSection(material: AnalysisMaterial, folder: AgentMaterial): string {
+  const lines = [
+    '## The code, and how to read it',
+    'Your working folder holds the two revisions as files, written by DSpatch from the repository\'s commits:',
+    `- \`base/\` is From, commit ${material.pair.base}`,
+    `- \`target/\` is To, commit ${material.pair.target}`,
+    'Use your Read, Glob and Grep tools there. Read whole files, follow the calls, definitions, imports and callers the change touches across files, look at unchanged code, tests and configuration, and compare base/ with target/ where behaviour changed. Keep looking until you can explain or judge from the code itself; the diff below is a starting point, not everything you may need.',
+    'Only these tools exist here and only inside this folder: you cannot change files, run commands or reach anything else. Nothing here comes from a working copy.',
+    'In your answer, name places by repository path without `base/` or `target/`, with the side ("base" for From, "target" for To) and 1-based lines at that side.',
+  ];
+  if (folder.skippedCount > 0) {
+    lines.push(
+      '',
+      `${String(folder.skippedCount)} file(s) of the commits could not be written to the folder, so you cannot read them${folder.skipped.length < folder.skippedCount ? ' (the first are named)' : ''}:`,
+      ...folder.skipped.map((entry) => `- ${entry.side}/${entry.path}: ${entry.reason}`),
+      'If one of them matters for what you are asked, say so; do not assume what it contains.',
+    );
   }
-  if (entry.targetText !== null && file.newPath !== null && file.status !== 'deleted') {
-    parts.push(`To (${file.newPath}):\n\`\`\`\n${numbered(entry.targetText, entry.excerpted ? nearChange(file, 'target') : null)}\n\`\`\``);
-  }
-  return parts.join('\n\n');
+  return lines.join('\n');
 }
 
-function materialSection(material: AnalysisMaterial): string {
-  const changed = changedRangesOf(material.files.map((entry) => entry.file)).map((range) => ({
+function changeSection(material: AnalysisMaterial): string {
+  const changed = changedRangesOf(material.files).map((range) => ({
     path: range.path,
     side: range.side,
     start: range.start,
@@ -124,18 +97,27 @@ function materialSection(material: AnalysisMaterial): string {
     `Repository: ${material.repositoryName}`,
     `From: ${material.pair.base} (${material.baseSubject})`,
     `To: ${material.pair.target} (${material.targetSubject})`,
-    'Everything below is read from these two commits, never from a working copy. Line numbers are 1-based; "base" is From and "target" is To.',
+    'Line numbers are 1-based; "base" is From and "target" is To.',
     '',
     '## Changed lines (machine-readable)',
     '```json',
     JSON.stringify(changed),
     '```',
     '',
-    '## Files',
-    ...material.files.map(describeFile),
-    ...(material.omitted.length === 0
+    '## Changed files',
+    ...material.files.map((file) =>
+      file.status === 'renamed' || file.status === 'copied'
+        ? `- ${file.status} ${file.oldPath ?? ''} → ${file.newPath ?? ''}${file.binary ? ' (binary)' : ''}`
+        : `- ${file.status} ${shownPath(file)}${file.binary ? ' (binary)' : ''}`,
+    ),
+    '',
+    '## Diff (orientation)',
+    '```diff',
+    material.diff,
+    '```',
+    ...(material.diffLeftOut.length === 0
       ? []
-      : ['', `Left out for size, with no text supplied: ${material.omitted.join(', ')}. Say so if a walk would need them.`]),
+      : ['', `The diff of these files is not shown here for size; read them in the folder: ${material.diffLeftOut.join(', ')}.`]),
   ].join('\n');
 }
 
@@ -151,20 +133,22 @@ export const WRITING_RULES = [
   'Keep the relevant class names, methods and established terms such as inheritance and subclass. Explain them when needed instead of replacing them with vague simplifications.',
   'Use short paragraphs. Use bullets for alternative cases and numbering for an actual order.',
   'Emphasise sparingly: only the central connection or consequence.',
-  "Keep apart what the code is meant to do, your own conclusions, and test results that were actually observed. You have observed no test run here.",
+  "Keep apart what the code is meant to do, your own conclusions, and test results that were actually observed. You have observed no test run here: you can read code, not run it.",
   'No fixed length and no template of mandatory headings: be as short as understanding allows.',
+  'Do not narrate your investigation ("I read…", "Then I searched…"). Give the explanation, and point at the code it rests on.',
 ] as const;
 
 /** Ask for code walks over the pair. */
-export function walksPrompt(material: AnalysisMaterial, language: 'sv' | 'en'): string {
+export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, language: 'sv' | 'en'): string {
   return [
     `${TASK_HEADER} prepare-walks`,
     '',
-    'You prepare code walks that help a person understand and review a change. You cannot change code, run commands or read anything beyond what is supplied here.',
+    'You prepare code walks that help a person understand and review a change. You examine the code yourself with your reading tools, then answer.',
     '',
     '## What to produce',
     'Propose walks around behaviours or questions the change touches, for example "What happens when the user cancels?", not a file-by-file listing.',
     'Each walk has a short description of what the person will understand and why it is relevant, and steps with concrete code references, across files where the behaviour goes.',
+    'A step may point at unchanged code when it is needed to understand the change: the definition a changed line calls, a caller, the test that exercises it, the configuration that switches it on. Point at it where it is, at the side it is read from.',
     'Together the walks should cover every changed line, including error handling, tests, configuration and removed behaviour. A line no walk covers is shown to the person as not covered; do not invent coverage.',
     'A walk is not a review and approves nothing.',
     '',
@@ -172,7 +156,7 @@ export function walksPrompt(material: AnalysisMaterial, language: 'sv' | 'en'): 
     ...WRITING_RULES.map((rule) => `- ${rule}`),
     '',
     '## Answer format',
-    'Answer with one JSON object in a ```json fence and nothing else:',
+    'When you have examined what you need, answer with one JSON object in a ```json fence and nothing else:',
     '```json',
     JSON.stringify(
       {
@@ -198,9 +182,11 @@ export function walksPrompt(material: AnalysisMaterial, language: 'sv' | 'en'): 
       2,
     ),
     '```',
-    'Every place names a path, a side ("base" for From, "target" for To) and 1-based lines that exist at that side. "anchor", when given, is text that occurs on those lines.',
+    'Every place names a path, a side ("base" for From, "target" for To) and 1-based lines that exist at that side. "anchor", when given, is text that occurs on those lines. DSpatch checks every place against the commit.',
     '',
-    materialSection(material),
+    folderSection(material, folder),
+    '',
+    changeSection(material),
   ].join('\n');
 }
 
@@ -212,23 +198,24 @@ export function repairPrompt(problems: readonly string[]): string {
     'DSpatch checked your walks against the two commits and found these problems:',
     ...problems.slice(0, 40).map((problem) => `- ${problem}`),
     '',
-    'Answer again with the complete corrected JSON object in a ```json fence, in the same format. Keep every place that was right.',
+    'Check the places in the folder if you need to, then answer again with the complete corrected JSON object in a ```json fence, in the same format. Keep every place that was right.',
   ].join('\n');
 }
 
 /** Ask for a review of a delegated part, under an explicit mandate for exactly that part. */
-export function reviewPrompt(material: AnalysisMaterial, scope: DelegationScope, language: 'sv' | 'en'): string {
+export function reviewPrompt(material: AnalysisMaterial, folder: AgentMaterial, scope: DelegationScope, language: 'sv' | 'en'): string {
   return [
     `${TASK_HEADER} delegated-review`,
     '',
-    'The person has delegated the review of one part of a change to you. You cannot change code, run commands or read anything beyond what is supplied here.',
+    'The person has delegated the review of one part of a change to you. You examine the code yourself with your reading tools, then answer.',
     '',
     '## Your mandate',
     `Scope: ${scope.label}`,
     'You may approve changed lines inside the scope that you actually reviewed and judge to be correct. Nothing outside the scope, and nothing you did not review.',
-    'Report what you reviewed, your assessment and what it rests on, every problem you found, and what remains uncertain.',
-    'If the material is not enough to judge the scope, say so with "insufficient": true and approve nothing.',
-    'Approval means the reviewed lines are acceptable as far as you can tell from this material; it is not a guarantee of correctness. Do not propose fixes as changes; describe problems.',
+    'Judge the lines in their context: read what they call and what calls them, the types and data they use, and the tests that cover them, at both revisions where behaviour changed. A finding may point at unchanged code when that is where the problem shows.',
+    'Report what you reviewed, your assessment and what it rests on, every problem you found, and what remains uncertain. Name anything you needed but could not read.',
+    'If what you could read is not enough to judge the scope, say so with "insufficient": true and approve nothing.',
+    'Approval means the reviewed lines are acceptable as far as you can tell from the code you read; it is not a guarantee of correctness, and you have run nothing. Do not propose fixes as changes; describe problems.',
     '',
     '## The scope (machine-readable)',
     '```json',
@@ -236,7 +223,7 @@ export function reviewPrompt(material: AnalysisMaterial, scope: DelegationScope,
     '```',
     '',
     `## Answer format (language: ${language === 'sv' ? 'Swedish' : 'English'})`,
-    'Answer with one JSON object in a ```json fence and nothing else:',
+    'When you have examined what you need, answer with one JSON object in a ```json fence and nothing else:',
     '```json',
     JSON.stringify(
       {
@@ -244,19 +231,80 @@ export function reviewPrompt(material: AnalysisMaterial, scope: DelegationScope,
         reviewed: [{ path: 'src/file.ts', side: 'target', start: 10, end: 14 }],
         approved: [{ path: 'src/file.ts', side: 'target', start: 10, end: 12 }],
         findings: [{ severity: 'problem', text: 'What is wrong and why', path: 'src/file.ts', side: 'target', start: 13, end: 13 }],
-        uncertainties: ['What you could not establish from the material'],
+        uncertainties: ['What you could not establish from the code you read'],
         insufficient: false,
       },
       null,
       2,
     ),
     '```',
-    'severity is "problem", "question" or "note". A line with a problem is not approved.',
+    'severity is "problem", "question" or "note". A line with a problem is not approved. Do not narrate your investigation; give the judgement and what it rests on.',
     '',
-    materialSection(material),
+    folderSection(material, folder),
+    '',
+    changeSection(material),
   ].join('\n');
 }
 
+/** A step as the host read it from its walk definition, for a question about it. */
+export interface StepContext {
+  readonly walkTitle: string;
+  readonly stepTitle: string;
+  readonly summary: string;
+  readonly body: string;
+}
+
+/** Ask a question about one step, which the agent answers by examining the code. */
+export function stepQuestionPrompt(
+  material: AnalysisMaterial,
+  folder: AgentMaterial,
+  question: StepQuestion,
+  step: StepContext,
+  language: 'sv' | 'en',
+): string {
+  return [
+    `${TASK_HEADER} step-question`,
+    '',
+    'A person reading a code walk asks a question about one step. Examine the code with your reading tools as far as the question needs, then answer.',
+    '',
+    '## The step',
+    `Walk: ${step.walkTitle}`,
+    `Step: ${step.stepTitle}`,
+    ...(step.summary === '' ? [] : ['', 'Summary:', step.summary]),
+    ...(step.body === '' ? [] : ['', 'The explanation the person has read:', step.body]),
+    '',
+    '## The code the step points at (machine-readable)',
+    '```json',
+    JSON.stringify(question.places.map((range) => ({ path: range.path, side: range.side, start: range.start, end: range.end }))),
+    '```',
+    '',
+    '## The question',
+    question.question,
+    '',
+    `## How to answer (language: ${language === 'sv' ? 'Swedish' : 'English'})`,
+    'Answer this question, for this step. Start with the short answer, then the cause and effect behind it, with the context needed before the details. Do not rewrite the whole walk or change its level.',
+    ...WRITING_RULES.map((rule) => `- ${rule}`),
+    'If the code you could read does not settle the question, say what is missing and set "insufficient": true.',
+    '',
+    'Answer with one JSON object in a ```json fence and nothing else:',
+    '```json',
+    JSON.stringify(
+      {
+        answer: 'The answer in Markdown.',
+        references: [{ label: 'What this place shows', path: 'src/file.ts', side: 'target', start: 10, end: 14 }],
+        insufficient: false,
+      },
+      null,
+      2,
+    ),
+    '```',
+    'Every reference names a path, a side and 1-based lines at that side; DSpatch checks each against the commit.',
+    '',
+    folderSection(material, folder),
+    '',
+    changeSection(material),
+  ].join('\n');
+}
 // --- Reading answers ----------------------------------------------------------------------
 
 /** The JSON object of an answer: a ```json fence, or the whole text when it is one object. */
@@ -584,4 +632,61 @@ export function readReviewAnswer(raw: unknown, scope: DelegationScope, files: re
     insufficient,
     adjustments,
   };
+}
+
+// --- A step question -------------------------------------------------------------------------
+
+/**
+ * The answer to a step question, with every reference checked against its commit: one that
+ * does not exist there is left out and named in `adjustments`, never shown as a link.
+ */
+export async function readStepAnswer(raw: unknown, read: LineReader): Promise<StepAnswer | { readonly error: string }> {
+  if (!isObject(raw)) {
+    return { error: 'The agent did not answer with one JSON object.' };
+  }
+  const answer = text(raw['answer']);
+  const adjustments: string[] = [];
+  const references: AnswerReference[] = [];
+  for (const entry of Array.isArray(raw['references']) ? raw['references'] : []) {
+    const range = rangeOf(entry);
+    if (range === null || !isObject(entry)) {
+      adjustments.push('A reference that did not name a path, a side and lines was left out.');
+      continue;
+    }
+    const problem = await placeProblem({ label: '', range, anchor: null, note: '' }, read);
+    if (problem !== null) {
+      adjustments.push(`A reference was left out: ${problem}`);
+      continue;
+    }
+    references.push({ label: text(entry['label']) || `${range.path}:${String(range.start)}`, range });
+  }
+  let insufficient = raw['insufficient'] === true;
+  if (answer === '') {
+    insufficient = true;
+    adjustments.push('The answer had no text.');
+  }
+  return { answer, references, insufficient, adjustments };
+}
+
+/**
+ * A delegated review's findings with their places checked against the commits: a finding
+ * whose place does not exist keeps its text, loses the place, and is named in `adjustments`.
+ */
+export async function withCheckedFindings(result: DelegationResult, read: LineReader): Promise<DelegationResult> {
+  const adjustments = [...result.adjustments];
+  const findings: AgentFinding[] = [];
+  for (const finding of result.findings) {
+    if (finding.location === null) {
+      findings.push(finding);
+      continue;
+    }
+    const problem = await placeProblem({ label: '', range: finding.location, anchor: null, note: '' }, read);
+    if (problem === null) {
+      findings.push(finding);
+    } else {
+      findings.push({ ...finding, location: null });
+      adjustments.push(`A finding's place was removed: ${problem}`);
+    }
+  }
+  return { ...result, findings, adjustments };
 }

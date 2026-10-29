@@ -4,7 +4,7 @@ import type { CSSProperties, JSX, ReactNode } from 'react';
 import { Markdown } from './Markdown';
 import { ReviewDiscussion } from './ReviewDiscussion';
 import { AgentPicker } from './AgentPicker';
-import { isRunning, JobLine, requestFailure } from './PairReview';
+import { attemptLabel, isRunning, JobDetail, JobLine, requestFailure } from './PairReview';
 import { Inline, TokensView, asLocation, capitalise, fileName, rangeText, useFiles, useRows, type Files } from './review-code';
 import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
@@ -38,7 +38,7 @@ import {
   type WalkStep,
 } from '../shared/review-model';
 import type { DeepenRequest, DiscussionMessage, DiscussionRequest } from '../shared/review-discussion';
-import { isPairError, type PairRecord } from '../shared/review-pair';
+import { isPairError, type AgentJob, type LineRange, type PairRecord, type ReviewPairBridge } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
 
 declare global {
@@ -1125,6 +1125,22 @@ function OpenReview({
               )}
               {current !== null && away === null && place !== null && (
                 <StepPanel
+                  codeQuestion={
+                    pair === null || pairBridge === undefined
+                      ? undefined
+                      : (selectedText) => (
+                          <StepCodeQuestion
+                            pairKey={pair.key}
+                            bridge={pairBridge}
+                            jobs={pair.record.jobs.filter(
+                              (job) => job.kind === 'explain' && job.question?.definitionPath === bundle.definitionPath && job.question.stepId === current.step.id,
+                            )}
+                            step={{ definitionPath: bundle.definitionPath, walkId: current.walk.id, stepId: current.step.id }}
+                            selectedText={selectedText}
+                            onShow={(range) => goAway({ path: range.path, side: range.side, start: range.start, end: range.end })}
+                          />
+                        )
+                  }
                   deepenings={deepeningsFor(discussionMessages, current.step.id)}
                   deepenError={deepenError}
                   onDeepen={(request) => void deepen(request)}
@@ -1778,6 +1794,142 @@ function StepDeepening({
   );
 }
 
+/**
+ * DSP-152: a question about this step that the agent answers by looking into the code of
+ * the two revisions with its read-only tools (the analysis path), not in the tool-free
+ * discussion. Answers stay under the step, folded, with the code they rest on; what the
+ * agent read is under Details. One question at a time for the change.
+ */
+function StepCodeQuestion({
+  pairKey,
+  bridge,
+  jobs,
+  step,
+  selectedText,
+  onShow,
+}: {
+  readonly pairKey: string;
+  readonly bridge: ReviewPairBridge;
+  readonly jobs: readonly AgentJob[];
+  readonly step: { readonly definitionPath: string; readonly walkId: string; readonly stepId: string };
+  readonly selectedText: string;
+  readonly onShow: (range: LineRange) => void;
+}): JSX.Element {
+  const [asking, setAsking] = useState(false);
+  const [text, setText] = useState('');
+  const [problem, setProblem] = useState<string | null>(null);
+  const running = jobs.find(isRunning);
+  const finished = jobs.filter((job) => !isRunning(job));
+  const where = (range: LineRange): string =>
+    `${range.path} ${range.start === range.end ? `line ${String(range.start)}` : `lines ${String(range.start)}–${String(range.end)}`} (${range.side === 'base' ? 'From' : 'To'})`;
+  return (
+    <div className="rv-code-question">
+      {finished.map((job, index) => (
+        <details key={job.id} className="rv-deepening" open={index === finished.length - 1} data-ev="step-investigation" data-state={job.state}>
+          <summary>
+            Looked into the code
+            <span className="rv-sub"> · “{(job.question?.question ?? '').slice(0, 60)}”</span>
+            {job.state !== 'done' && <span className="rv-sub"> · {job.state}</span>}
+          </summary>
+          {job.state === 'done' && job.answer !== undefined ? (
+            <>
+              {job.answer.insufficient && <p className="rv-agent-insufficient">The agent could not settle this from the code it could read.</p>}
+              <Markdown text={job.answer.answer} />
+              {job.answer.references.length > 0 && (
+                <div className="rv-answer-refs">
+                  <span className="rv-sub">The code it rests on:</span>
+                  <ul>
+                    {job.answer.references.map((reference, at) => (
+                      <li key={at}>
+                        <button type="button" className="rv-pair-link" data-ev="step-investigation-ref" onClick={() => onShow(reference.range)}>
+                          {reference.label}
+                        </button>{' '}
+                        <span className="rv-sub">{where(reference.range)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {job.answer.adjustments.length > 0 && (
+                <details className="rv-agent-adjustments">
+                  <summary>What DSpatch did not accept from the answer</summary>
+                  <ul>
+                    {job.answer.adjustments.map((entry, at) => (
+                      <li key={at}>{entry}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </>
+          ) : (
+            <p>
+              <span className="rv-agent-attempt">{attemptLabel(job)}</span> {job.note}
+            </p>
+          )}
+          <JobDetail job={job} />
+        </details>
+      ))}
+      {running !== undefined && <JobLine job={running} onStop={() => void bridge.cancelJob(pairKey, running.id)} />}
+      {problem !== null && <p className="rv-error">{problem}</p>}
+      {asking ? (
+        <div className="rv-code-question-form">
+          <textarea
+            data-ev="step-question-text"
+            rows={3}
+            value={text}
+            placeholder="What should the agent find out in the code? For example: what calls this, or what it depends on."
+            onChange={(event) => setText(event.target.value)}
+          />
+          <AgentPicker
+            pairKey={pairKey}
+            action="Ask"
+            busy={running !== undefined}
+            testId="step-question-agent"
+            onCancel={() => {
+              setAsking(false);
+              setProblem(null);
+            }}
+            onStart={(choice) => {
+              if (text.trim() === '') {
+                setProblem('Write what the agent should find out first.');
+                return;
+              }
+              setProblem(null);
+              void bridge
+                .startJob(pairKey, { kind: 'explain', ...choice, question: { ...step, question: text.trim() } })
+                .catch((error: unknown) => ({ error: requestFailure(error) }))
+                .then((answer) => {
+                  if (isPairError(answer)) {
+                    setProblem(`The question could not be sent: ${answer.error}`);
+                  } else {
+                    setAsking(false);
+                    setText('');
+                  }
+                });
+            }}
+          />
+        </div>
+      ) : (
+        running === undefined && (
+          <button
+            type="button"
+            className="rv-quiet"
+            data-ev="step-question"
+            title="The agent reads the two revisions with read-only tools to answer."
+            onClick={() => {
+              setText(selectedText.trim() === '' ? '' : `“${selectedText.trim()}”: `);
+              setProblem(null);
+              setAsking(true);
+            }}
+          >
+            Look into the code…
+          </button>
+        )
+      )}
+    </div>
+  );
+}
+
 function StepPanel({
   walk,
   step,
@@ -1793,7 +1945,10 @@ function StepPanel({
   deepenError,
   onDeepen,
   onContinue,
+  codeQuestion,
 }: {
+  /** DSP-152: asking the agent to look into the code for this step, when the walk is over a revision pair. */
+  readonly codeQuestion?: (selectedText: string) => JSX.Element;
   readonly deepenings: readonly Deepening[];
   readonly deepenError: string | null;
   readonly onDeepen: (request: DeepenRequest) => void;
@@ -1913,6 +2068,7 @@ function StepPanel({
       )}
 
       <StepDeepening deepenings={deepenings} error={deepenError} onDeepen={onDeepen} onContinue={onContinue} selectedText={selectedText} />
+      {codeQuestion?.(selectedText)}
 
       {step.evidence.length > 0 && (
         <div className="rv-evidence">
