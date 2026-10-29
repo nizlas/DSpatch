@@ -1,4 +1,5 @@
 import type { AttemptKind, AttemptState, AttemptStep, ModelListing, StoredAttempt } from './bridge';
+import { TASK_HEADER } from './review-task';
 import type { CodeLocation, EvidenceLabel, FileChangeStatus, Lang, ReviewNote, RevisionSide } from './review-model';
 
 /**
@@ -29,6 +30,71 @@ export const REVIEW_DISCUSSION_INSTRUCTION =
   'and say what is missing, rather than guessing.';
 
 /**
+ * A place an answer rests on, after DSpatch checked it against its commit: the shape of
+ * `AnswerReference` in `review-pair.ts`, spelt here so the discussion needs nothing of it.
+ */
+export interface CheckedReference {
+  readonly label: string;
+  readonly range: { readonly kind: 'lines'; readonly side: RevisionSide; readonly path: string; readonly start: number; readonly end: number };
+}
+
+/**
+ * The instruction when the agent can read the two revisions (Niclas's decision of 30 October
+ * 2026): a question in the discussion may need code the envelope does not hold, and the
+ * agent looks it up with the read-only analysis access rather than guessing. Sent first
+ * instead of {@link REVIEW_DISCUSSION_INSTRUCTION}, and shown verbatim in the Context.
+ */
+export const REVIEW_DISCUSSION_CODE_INSTRUCTION =
+  'You are helping a person review a code change. Explain and review the code as it is at the revisions named. ' +
+  'You can read both revisions as files with your Read, Glob and Grep tools; you cannot change code, run commands ' +
+  'or reach anything else. When the question is about a type, function or term in the code, find and read its real ' +
+  'definition at the revision that matters, and the uses that show its role here, before you answer. If you cannot ' +
+  'find or read it, say so briefly and say what you looked for: never describe a definition you have not read.';
+
+/** The fence the code an answer rests on is written in, at its end; DSpatch checks it and shows it as links. */
+export const REFERENCES_FENCE = 'dspatch-references';
+
+/**
+ * What the agent is told about its answer when it can read the code. The references go in
+ * one fenced block at the end so the answer streams as readable text.
+ */
+export const CODE_ANSWER_RULES = [
+  'Start with the short answer, then the cause and effect behind it, with real names and concrete connections.',
+  'Use short paragraphs. Use a list for alternatives and a table only when comparing several things side by side truly helps.',
+  'Keep apart what the code shows and what is still uncertain. Name what you could not read or find.',
+  'Do not narrate your search ("I read…", "Then I searched…"); give the explanation.',
+  'Base and target can differ: say which revision a definition or line is from when it matters.',
+  `End with the code your answer rests on, as one block fenced with \`\`\`${REFERENCES_FENCE}, holding a JSON object: ` +
+    '{"references": [{"label": "What this place shows", "path": "src/file.ts", "side": "target", "start": 10, "end": 14}], "insufficient": false}. ' +
+    'A path is the repository path without base/ or target/; "side" is "base" for From and "target" for To; lines are 1-based at that side. ' +
+    'DSpatch checks every reference against its commit and shows it as a link. Set "insufficient": true when the code you could read does not settle the question.',
+] as const;
+
+/**
+ * An answer as written, split at its references block: the text to show, and the block's
+ * JSON when it is there. A block still arriving is cut off too, so it never flickers into view.
+ */
+export function splitCodeAnswer(text: string): { readonly shown: string; readonly block: unknown } {
+  const opener = new RegExp(`\\n?\`\`\`\\s*${REFERENCES_FENCE}[^\\n]*\\n?`);
+  const found = opener.exec(text);
+  if (found === null) {
+    return { shown: text, block: null };
+  }
+  const shown = text.slice(0, found.index).trimEnd();
+  const rest = text.slice(found.index + found[0].length);
+  const close = rest.indexOf('```');
+  const body = (close < 0 ? rest : rest.slice(0, close)).trim();
+  if (close < 0) {
+    return { shown, block: null };
+  }
+  try {
+    return { shown, block: JSON.parse(body) as unknown };
+  } catch {
+    return { shown, block: null };
+  }
+}
+
+/**
  * What DSpatch knows about context the provider may add on its own account. Shown in
  * every Context beside the instruction, because it is part of what the model may see
  * and DSpatch cannot see it.
@@ -39,7 +105,8 @@ export const PROVIDER_ADDED_CONTEXT_LINE = 'provider-added context (user-level r
 
 /** What the person was looking at when they asked. Validated in main against the definition. */
 export type DiscussionSubject =
-  | { readonly kind: 'point'; readonly walkId: string; readonly stepId: string; readonly placeIndex: number }
+  /** `checkId`: asked from a point worth checking that is shown at this step (its reasoning goes along). */
+  | { readonly kind: 'point'; readonly walkId: string; readonly stepId: string; readonly placeIndex: number; readonly checkId?: string }
   | { readonly kind: 'away'; readonly location: CodeLocation }
   | { readonly kind: 'review' };
 
@@ -98,6 +165,8 @@ export interface EnvelopeExplanation {
    * from the pair's record; absent when there is none.
    */
   readonly analysis?: readonly { readonly question: string; readonly answer: string }[];
+  /** A point worth checking the question was asked from: its title, kind and reasoning. */
+  readonly check?: { readonly id: string; readonly kind: string; readonly title: string; readonly reasoning: string };
 }
 
 /** The review as a whole, for a question that is not about one point. */
@@ -291,10 +360,22 @@ function noteLine(note: EnvelopeNote): string {
  * commit, the reviewer's notes, a recap of earlier questions, and the question.
  * Stored on the question before it is sent and shown in its Context.
  */
-export function buildEnvelopePrompt(envelope: ContextEnvelope, question: string, recap: string | null): string {
+/**
+ * The revisions as files, when the agent can read them: what the folder holds and what it
+ * cannot read, written by the host (`folderSection` of the analysis prompts).
+ */
+export interface CodeAccessSection {
+  readonly folder: string;
+}
+
+export function buildEnvelopePrompt(envelope: ContextEnvelope, question: string, recap: string | null, code: CodeAccessSection | null = null): string {
   const parts: string[] = [];
   const identity = envelope.identity;
-  parts.push(REVIEW_DISCUSSION_INSTRUCTION);
+  if (code !== null) {
+    // The analysis tasks' header, so the turn is recognisable as one that reads code.
+    parts.push(`${TASK_HEADER} review-question`);
+  }
+  parts.push(code === null ? REVIEW_DISCUSSION_INSTRUCTION : REVIEW_DISCUSSION_CODE_INSTRUCTION);
   parts.push(
     [
       '## Review',
@@ -335,6 +416,13 @@ export function buildEnvelopePrompt(envelope: ContextEnvelope, question: string,
         '',
         `What the agent found in the code for this step, asked "${clip(entry.question.trim(), 300)}":`,
         clip(entry.answer.trim(), ENVELOPE_LIMITS.explanationChars),
+      );
+    }
+    if (explanation.check !== undefined) {
+      lines.push(
+        '',
+        `The person asks from a point worth checking (${explanation.check.kind}): ${explanation.check.title}`,
+        clip(explanation.check.reasoning.trim(), ENVELOPE_LIMITS.explanationChars),
       );
     }
     parts.push(lines.join('\n'));
@@ -390,6 +478,10 @@ export function buildEnvelopePrompt(envelope: ContextEnvelope, question: string,
     parts.push(`## Earlier in this discussion\n${clip(recap.trim(), ENVELOPE_LIMITS.recapChars)}`);
   }
   parts.push(`## Question\n${clip(question.trim(), ENVELOPE_LIMITS.questionChars)}`);
+  if (code !== null) {
+    parts.push(['## How to answer', ...CODE_ANSWER_RULES.map((rule) => `- ${rule}`)].join('\n'));
+    parts.push(code.folder);
+  }
   return `${parts.join('\n\n')}\n`;
 }
 
@@ -433,6 +525,16 @@ export interface DiscussionMessage {
   readonly dspatchSessionId?: string;
   /** DSP-132: the tool policy the agent was given for this question, as one line. */
   readonly toolPolicy?: string;
+  /** For a question: the agent could read the two revisions with read-only tools (30 October 2026). */
+  readonly codeAccess?: boolean;
+  /** For an answer with code access: the references DSpatch checked against their commits. */
+  readonly references?: readonly CheckedReference[];
+  /** For an answer with code access: the agent said the code it could read does not settle it. */
+  readonly insufficient?: boolean;
+  /** For an answer with code access: what DSpatch left out of it, in plain words. */
+  readonly adjustments?: readonly string[];
+  /** For an answer with code access: the files it read, relative to the revision folder. Kept, not shown. */
+  readonly reads?: readonly string[];
   /**
    * DSP-152: a question asked from a walk step's own actions (Tell me more, Explain more
    * simply, Explain this). It is an ordinary question in the discussion; this says which
@@ -644,6 +746,20 @@ function adoptAttempts(value: unknown): StoredAttempt[] {
   return attempts;
 }
 
+/** A stored reference: written by the service after its check, read back for display only. */
+function isStoredReference(value: unknown): value is CheckedReference {
+  if (!isRecord(value) || typeof value['label'] !== 'string' || !isRecord(value['range'])) {
+    return false;
+  }
+  const range = value['range'];
+  return (
+    (range['side'] === 'base' || range['side'] === 'target') &&
+    typeof range['path'] === 'string' &&
+    Number.isInteger(range['start']) &&
+    Number.isInteger(range['end'])
+  );
+}
+
 function adoptMessages(value: unknown): DiscussionMessage[] {
   if (!Array.isArray(value)) {
     return [];
@@ -701,6 +817,21 @@ function adoptMessages(value: unknown): DiscussionMessage[] {
     const deepen = deepenFrom(entry['deepen']);
     if (deepen !== null) {
       message.deepen = deepen;
+    }
+    if (entry['codeAccess'] === true) {
+      message.codeAccess = true;
+    }
+    if (Array.isArray(entry['references'])) {
+      message.references = entry['references'].filter(isStoredReference);
+    }
+    if (entry['insufficient'] === true) {
+      message.insufficient = true;
+    }
+    if (Array.isArray(entry['adjustments'])) {
+      message.adjustments = entry['adjustments'].filter((item): item is string => typeof item === 'string');
+    }
+    if (Array.isArray(entry['reads'])) {
+      message.reads = entry['reads'].filter((item): item is string => typeof item === 'string');
     }
     messages.push(message);
   }

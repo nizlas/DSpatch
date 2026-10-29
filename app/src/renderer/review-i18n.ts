@@ -113,6 +113,7 @@ export interface ReviewWords {
   readonly walkedNote: string;
   readonly outsideWalk: string;
   readonly backTo: (stepId: string) => string;
+  readonly backToCode: string;
   readonly view: {
     readonly before: string;
     readonly after: string;
@@ -373,6 +374,7 @@ const sv: ReviewWords = {
   walkedNote: 'Genomgånget är din egen markering av framsteg. Det godkänner ingen kod.',
   outsideWalk: 'Utanför walken',
   backTo: (stepId) => `Tillbaka till ${stepId}`,
+  backToCode: 'Tillbaka till koden',
   view: {
     before: 'Före',
     after: 'Efter',
@@ -654,6 +656,7 @@ const en: ReviewWords = {
   walkedNote: 'Walked through is your own mark of progress. It approves no code.',
   outsideWalk: 'Outside the walk',
   backTo: (stepId) => `Back to ${stepId}`,
+  backToCode: 'Back to the code',
   view: {
     before: 'Before',
     after: 'After',

@@ -35,8 +35,9 @@ import {
   type StepQuestion,
 } from './review-pair';
 
-/** The header every task prompt starts with, so a simulated agent can tell them apart. */
-export const TASK_HEADER = 'DSPATCH-REVIEW-TASK:';
+import { TASK_HEADER } from './review-task';
+
+export { TASK_HEADER };
 
 /**
  * What the agent is told about the pair at the start (DSP-152): what the change is, its
@@ -87,6 +88,24 @@ function folderSection(material: AnalysisMaterial, folder: AgentMaterial): strin
     );
   }
   return lines.join('\n');
+}
+
+/**
+ * What a review discussion that can read the code is told about the folder (Niclas's
+ * decision of 30 October 2026): the analysis folder section and the changed files, without
+ * the diff, which the question's own context already orients.
+ */
+export function discussionFolderSection(material: AnalysisMaterial, folder: AgentMaterial): string {
+  return [
+    folderSection(material, folder),
+    '',
+    '## Changed files',
+    ...material.files.map((file) =>
+      file.status === 'renamed' || file.status === 'copied'
+        ? `- ${file.status} ${file.oldPath ?? ''} → ${file.newPath ?? ''}${file.binary ? ' (binary)' : ''}`
+        : `- ${file.status} ${shownPath(file)}${file.binary ? ' (binary)' : ''}`,
+    ),
+  ].join('\n');
 }
 
 function changeSection(material: AnalysisMaterial): string {
@@ -151,7 +170,7 @@ export const WRITING_RULES = [
 export const FORM_RULES = [
   'Choose the form of each item from what changed. A change can get code walks, readings, or both.',
   'A **code walk** ("kind": "walk") follows a relevant execution path from a concrete entry point or event: a button press, a request, a call, a test. Go through calls, conditions and data roughly as the program runs. Include unchanged code where it is needed to understand the change. Show the relevant steps, not every call.',
-  'At each hop of a code walk, say briefly how the step is connected to the one before (what calls it, what data it receives). When a place is reached from a call or reference you show elsewhere, name that place as "from".',
+  'At each hop of a code walk, say briefly how the step is connected to the one before (what calls it, what data it receives). When a place is reached from a call or reference you show elsewhere, give the call or reference as the `from` field of that place.',
   'A code walk describes code you read. You did not run it: never say a flow was executed, observed or verified unless a test result in the material shows it.',
   'A **reading** ("kind": "reading") is for documentation and other text where following execution means nothing. It takes one coherent change of text in its context: what changes, and what it means.',
   'One reading per coherent change, not one per paragraph or diff block. Independent changes of text are separate readings.',
@@ -179,7 +198,15 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
     '## About the change',
     '- "summary": two or three short sentences a person reads first: what the change does and why.',
     '- "background": only when there is more worth knowing (context, history, consequences), in short Markdown paragraphs. Leave it empty rather than repeating the summary.',
-    '- "attention": the few things worth a reviewer\'s attention across the change: contradictions, open questions, risks. One short sentence each, naming where. Leave it empty when there are none.',
+    '',
+    '## Worth checking',
+    'Give the few things worth a reviewer\'s attention across the change as "checks", each an entry into the code. Leave the list empty when there are none; do not repeat what a walk already explains.',
+    '- "kind": "question" for something the reviewer should look into, "uncertainty" for something you could not settle from the code, "finding" for something the code you read shows.',
+    '- "title": a short question or statement understood at a glance, for example "Can restoring lock the track in piano mode?". No file names or line numbers in it.',
+    '- "detail": at most one short sentence more. Optional.',
+    '- "reasoning": why it is worth checking, in short Markdown paragraphs, naming the classes, functions and conditions involved. Keep apart what the code shows and what you could not establish.',
+    '- "places": where it is in the code, as references with a label. Every place must exist at its side.',
+    '- "step": {"walk": the 0-based index of an item in "walks", "step": the 0-based index of its step} when that step shows exactly the context of this check. Leave it out when no step fits: DSpatch then gives the check its own tour through its places. Never link a step only because it is in the same file.',
     '',
     `## How to write (language: ${language === 'sv' ? 'Swedish' : 'English'})`,
     ...WRITING_RULES.map((rule) => `- ${rule}`),
@@ -191,7 +218,16 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
       {
         summary: 'Two or three short sentences: what the change does and why.',
         background: 'Optional: more context, in short Markdown paragraphs. Empty when the summary says it.',
-        attention: ['Optional: a contradiction, open question or risk, and where.'],
+        checks: [
+          {
+            kind: 'question',
+            title: 'Can restoring lock the track in piano mode?',
+            detail: 'Optional: one short sentence.',
+            reasoning: 'Why it is worth checking, in short Markdown paragraphs.',
+            places: [{ label: 'What this place shows', path: 'src/file.ts', side: 'target', start: 20, end: 26 }],
+            step: { walk: 0, step: 1 },
+          },
+        ],
         walks: [
           {
             kind: 'walk',
@@ -625,13 +661,25 @@ export interface ProposedWalk {
   readonly steps: readonly ProposedStep[];
 }
 
+/** A point worth checking, as proposed: its step by index into the proposal, if any. */
+export interface ProposedCheck {
+  readonly kind: 'question' | 'uncertainty' | 'finding';
+  readonly title: string;
+  readonly detail: string;
+  readonly reasoning: string;
+  readonly places: readonly { readonly label: string; readonly range: LineRange }[];
+  readonly step: { readonly walk: number; readonly step: number } | null;
+}
+
 export interface ProposedWalks {
   /** What the person reads first about the change. */
   readonly overview: string;
   /** More context, shown on request; empty when there is none beyond the summary. */
   readonly background: string;
-  /** Contradictions, open questions and risks across the change, one sentence each. */
+  /** Contradictions, open questions and risks as plain sentences: an answer in the older form only. */
   readonly attention: readonly string[];
+  /** Points worth checking with their places and steps (30 October 2026). */
+  readonly checks: readonly ProposedCheck[];
   readonly walks: readonly ProposedWalk[];
 }
 
@@ -705,10 +753,64 @@ export function readWalksAnswer(raw: unknown): { readonly walks: ProposedWalks |
   const attention = (Array.isArray(attentionRaw) ? attentionRaw : typeof attentionRaw === 'string' ? [attentionRaw] : [])
     .map((entry: unknown) => text(entry).replace(/^\s*[-*]\s+/, ''))
     .filter((entry) => entry !== '');
+  const checks: ProposedCheck[] = [];
+  const checksRaw = raw['checks'];
+  for (const [checkIndex, checkRaw] of (Array.isArray(checksRaw) ? checksRaw : []).entries()) {
+    const where = `check ${String(checkIndex + 1)}`;
+    if (!isObject(checkRaw) || text(checkRaw['title']) === '') {
+      problems.push(`${where} has no title.`);
+      continue;
+    }
+    const kind = checkRaw['kind'];
+    const places: { label: string; range: LineRange }[] = [];
+    for (const placeRaw of Array.isArray(checkRaw['places']) ? checkRaw['places'] : []) {
+      const range = rangeOf(placeRaw);
+      if (range === null || !isObject(placeRaw)) {
+        problems.push(`${where} has a place without a path, a side and lines.`);
+        continue;
+      }
+      places.push({ label: text(placeRaw['label']) || `${range.path}:${String(range.start)}`, range });
+    }
+    const stepRaw = checkRaw['step'];
+    const step =
+      isObject(stepRaw) && Number.isInteger(stepRaw['walk']) && Number.isInteger(stepRaw['step'])
+        ? { walk: stepRaw['walk'] as number, step: stepRaw['step'] as number }
+        : null;
+    checks.push({
+      kind: kind === 'uncertainty' || kind === 'finding' ? kind : 'question',
+      title: text(checkRaw['title']),
+      detail: text(checkRaw['detail']),
+      reasoning: text(checkRaw['reasoning']),
+      places,
+      // An index outside the proposal links nothing; it is not guessed at.
+      step: step !== null && walks[step.walk]?.steps[step.step] !== undefined ? step : null,
+    });
+  }
   return {
-    walks: { overview: text(raw['summary']) || text(raw['overview']), background: text(raw['background']), attention, walks },
+    walks: { overview: text(raw['summary']) || text(raw['overview']), background: text(raw['background']), attention, checks, walks },
     problems,
   };
+}
+
+/**
+ * The checks with every place that does not exist at its commit left out, and how many
+ * were. A check keeps its text without places; no place is made up for it.
+ */
+export async function withCheckedChecks(walks: ProposedWalks, read: LineReader): Promise<{ readonly walks: ProposedWalks; readonly left: number }> {
+  let left = 0;
+  const checks: ProposedCheck[] = [];
+  for (const check of walks.checks) {
+    const places: { label: string; range: LineRange }[] = [];
+    for (const place of check.places) {
+      if ((await placeProblem({ label: place.label, range: place.range, anchor: null, note: '' }, read)) === null) {
+        places.push(place);
+      } else {
+        left += 1;
+      }
+    }
+    checks.push({ ...check, places });
+  }
+  return { walks: { ...walks, checks }, left };
 }
 
 /** Reads a file at one side, for checking references: its lines, or `null` when it does not exist there. */
@@ -753,19 +855,26 @@ export async function walkPlaceProblems(walks: ProposedWalks, read: LineReader):
 
 /** The proposal with every invalid place left out, and steps and walks left empty by it. */
 export function withoutInvalidPlaces(walks: ProposedWalks, invalid: ReadonlyMap<string, string>): ProposedWalks {
+  // Where each kept step ends up, so a check's link follows its step, or is dropped with it.
+  const moved = new Map<string, { walk: number; step: number }>();
+  const kept: ProposedWalk[] = [];
+  walks.walks.forEach((walk, walkIndex) => {
+    const steps: ProposedStep[] = [];
+    walk.steps.forEach((step, stepIndex) => {
+      const places = step.places.filter((_, placeIndex) => !invalid.has(`${String(walkIndex)}.${String(stepIndex)}.${String(placeIndex)}`));
+      if (places.length > 0 && step.title !== '' && step.body !== '') {
+        moved.set(`${String(walkIndex)}.${String(stepIndex)}`, { walk: kept.length, step: steps.length });
+        steps.push({ ...step, places });
+      }
+    });
+    if (steps.length > 0) {
+      kept.push({ ...walk, steps });
+    }
+  });
   return {
     ...walks,
-    walks: walks.walks
-      .map((walk, walkIndex) => ({
-        ...walk,
-        steps: walk.steps
-          .map((step, stepIndex) => ({
-            ...step,
-            places: step.places.filter((_, placeIndex) => !invalid.has(`${String(walkIndex)}.${String(stepIndex)}.${String(placeIndex)}`)),
-          }))
-          .filter((step) => step.places.length > 0 && step.title !== '' && step.body !== ''),
-      }))
-      .filter((walk) => walk.steps.length > 0),
+    walks: kept,
+    checks: walks.checks.map((check) => ({ ...check, step: check.step === null ? null : (moved.get(`${String(check.step.walk)}.${String(check.step.step)}`) ?? null) })),
   };
 }
 
@@ -810,7 +919,46 @@ export function definitionFrom(
     // there is more (in Niclas's trial both fields held the same text).
     overviewSummary: lang2(walks.overview),
     overview: lang2(walks.background === '' ? walks.overview : `${walks.overview}\n\n${walks.background}`),
-    ...(walks.attention.length === 0 ? {} : { attention: lang2(walks.attention.map((entry) => `- ${entry}`).join('\n')) }),
+    // The titles as text too, for anything that reads only `attention`; the checks carry the links.
+    ...(walks.attention.length === 0 && walks.checks.length === 0
+      ? {}
+      : { attention: lang2([...walks.attention, ...walks.checks.map((check) => check.title)].map((entry) => `- ${entry}`).join('\n')) }),
+    checks: walks.checks.map((check, checkIndex) => {
+      const id = `C${String(checkIndex + 1)}`;
+      const linked = check.step === null ? undefined : walks.walks[check.step.walk];
+      const ordinal = linked === undefined || check.step === null ? 0 : walks.walks.slice(0, check.step.walk + 1).filter((other) => other.kind === linked.kind).length;
+      const stepId = linked === undefined || check.step === null ? null : `${linked.kind === 'reading' ? 'R' : 'W'}${String(ordinal)}.${String(check.step.step + 1)}`;
+      const places = check.places.map((place) => ({ path: place.range.path, side: place.range.side, start: place.range.start, end: place.range.end, role: 'context', note: lang2(place.label) }));
+      return {
+        id,
+        kind: check.kind,
+        title: lang2(check.title),
+        ...(check.detail === '' ? {} : { detail: lang2(check.detail) }),
+        ...(check.reasoning === '' ? {} : { reasoning: lang2(check.reasoning) }),
+        ...(stepId === null ? {} : { stepId }),
+        places,
+        // No step fits and there is code to show: a tour of its own, one place after another.
+        ...(stepId !== null || check.places.length === 0
+          ? {}
+          : {
+              tour: {
+                steps: [
+                  {
+                    id: `${id}.1`,
+                    title: lang2(check.title),
+                    summary: lang2(check.detail || check.title),
+                    body: lang2(check.reasoning || check.title),
+                    places: check.places.map((place, placeIndex) => ({
+                      id: `P${String(placeIndex + 1)}`,
+                      label: lang2(place.label),
+                      focus: { path: place.range.path, side: place.range.side, start: place.range.start, end: place.range.end, role: 'context' },
+                    })),
+                  },
+                ],
+              },
+            }),
+      };
+    }),
     walks: walks.walks.map((walk, walkIndex) => {
       // Walks and readings are numbered apart: W1, W2 … and R1, R2 … are identifiers.
       const ordinal = walks.walks.slice(0, walkIndex + 1).filter((other) => other.kind === walk.kind).length;

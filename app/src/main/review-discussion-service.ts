@@ -12,6 +12,7 @@ import {
   deepenFrom,
   emptyDiscussionRecord,
   recapFor,
+  splitCodeAnswer,
   subjectLine,
   type DiscussionAgentView,
   type DiscussionCancelOutcome,
@@ -29,6 +30,7 @@ import {
   type EnvelopeOutcome,
   type ReviewDiscussionEvent,
 } from '../shared/review-discussion';
+import type { StepAnswer } from '../shared/review-pair';
 import { AttemptLedger } from './attempt-ledger';
 // DSP-132: the only thing taken from the chat - its adapter interface, as a type. No route
 // to the chat service or the loop runner exists from here (an import scan pins it).
@@ -68,6 +70,17 @@ import type { ChatAdapter } from './chat-service';
  * rules, hooks and ignore files are not loaded either. Cursor's user-level rules and
  * hooks may still apply; what the provider adds is unknown, and every message's
  * Context says so.
+ *
+ * **Reading the code (Niclas's decision of 30 October 2026).** A question may need code
+ * the envelope does not hold — the definition of a type it names, say — and the agent
+ * looks it up rather than guessing. With `codeAccess`, an agent that has a read-only
+ * analysis policy (Claude) gets the analysis access the walk preparation uses: its session
+ * runs in the folder the host writes the two revisions to (`RevisionSnapshots`, held while
+ * the session is open and released when it closes), and its adapter must hold exactly the
+ * analysis policy (Read, Glob and Grep inside that folder), or nothing is sent. Every
+ * reference it gives is checked against Git at its commit before it is shown. Cursor has
+ * no read-only policy and stays tool-free, as before. The gate above still holds: the
+ * folder is DSpatch's own, never the working copy, and nothing in it is written back.
  */
 
 /** Without a declared adapter bound: how long a cancel is given to be confirmed (chat: `CANCEL_CONFIRM_MS`). */
@@ -133,6 +146,33 @@ function defaultPolicyLine(provider: DiscussionProvider): string {
   return provider === 'claude' ? 'the review policy (no tools)' : 'text-only (tools: [])';
 }
 
+/**
+ * The two revisions as files, held for one discussion session (Niclas's decision of 30
+ * October 2026). The host writes and removes the folder; the service only holds it.
+ */
+export interface HeldRevisions {
+  readonly folder: string;
+  /** What the prompt says about the folder: what it holds and what could not be written. */
+  readonly section: string;
+  /** Check an answer's references against Git at the two commits, never against the folder. */
+  readonly check: (raw: unknown) => Promise<StepAnswer | { readonly error: string }>;
+  readonly release: () => void;
+}
+
+/** Read access to the two revisions for a discussion, from the host's analysis machinery. */
+export interface DiscussionCodeAccess {
+  /** Whether this agent can read the revisions: only one with a read-only analysis policy. */
+  readonly offered: (provider: DiscussionProvider) => boolean;
+  /** An adapter built for the analysis purpose. */
+  readonly createAdapter: (provider: DiscussionProvider) => ChatAdapter;
+  /** The analysis policy an adapter must hold exactly; anything else is refused. */
+  readonly policy: unknown;
+  /** The policy as one line, for the window and each question's Context. */
+  readonly policyLine: string;
+  /** Write (or share) the two revisions as files, held by `holder` until released. */
+  readonly hold: (identity: DiscussionIdentity, holder: string) => Promise<HeldRevisions>;
+}
+
 /** What builds the envelope: the asking window's own `ReviewService`. */
 export interface EnvelopeSource {
   envelopeFor(request: unknown): Promise<EnvelopeOutcome>;
@@ -158,6 +198,8 @@ export interface ReviewDiscussionServiceOptions {
   readonly policyFor?: (provider: DiscussionProvider) => string;
   /** Test overrides for the confirmation window. Production passes nothing. */
   readonly timings?: { readonly cancelConfirmMs?: number; readonly cancelConfirmGraceMs?: number };
+  /** Read access to the two revisions, for the agents that can be given it. None in tests that leave it out. */
+  readonly codeAccess?: DiscussionCodeAccess;
 }
 
 type MutableMessage = { -readonly [K in keyof DiscussionMessage]: DiscussionMessage[K] };
@@ -170,6 +212,9 @@ interface Turn {
   /** `adapter.send` has not returned yet: no run exists that `cancel()` could act on. */
   sendPending: boolean;
   stopping: boolean;
+  /** With code access: the files read in this turn, and the tool calls not yet finished. */
+  readonly reads: string[];
+  readonly calls: Map<string, { readonly name: string; readonly subject: string | null }>;
 }
 
 interface Session {
@@ -179,6 +224,8 @@ interface Session {
   readonly unsubscribe: Unsubscribe;
   /** Questions sent in this session; the first of a new session carries the recap. */
   sends: number;
+  /** The revisions the session reads, when it was given code access; released when it closes. */
+  readonly revisions: HeldRevisions | null;
 }
 
 export class ReviewDiscussionService {
@@ -236,6 +283,9 @@ export class ReviewDiscussionService {
   private closedForQuit = false;
 
   private messageCounter = 0;
+
+  /** Sessions started, so each holds the revisions under a name of its own. */
+  private sessionCounter = 0;
 
   /** Events dropped because they named another session. */
   foreignEventsDropped = 0;
@@ -400,7 +450,21 @@ export class ReviewDiscussionService {
   }
 
   private policyLine(provider: DiscussionProvider): string {
+    const access = this.options.codeAccess;
+    if (access !== undefined && access.offered(provider)) {
+      return access.policyLine;
+    }
     return this.options.policyFor?.(provider) ?? defaultPolicyLine(provider);
+  }
+
+  /** Close a session: its adapter first, then the revisions it read, so nothing reads them after. */
+  private async closeSession(session: Session): Promise<void> {
+    session.unsubscribe();
+    try {
+      await session.adapter.dispose();
+    } finally {
+      session.revisions?.release();
+    }
   }
 
   private agentView(): DiscussionAgentView {
@@ -468,8 +532,7 @@ export class ReviewDiscussionService {
       const session = this.session;
       this.session = null;
       if (session !== null) {
-        session.unsubscribe();
-        await session.adapter.dispose().catch((error: unknown) => {
+        await this.closeSession(session).catch((error: unknown) => {
           this.options.log(`review discussion ${this.identity.key}: the previous adapter did not close cleanly (${describeError(error)})`);
         });
       }
@@ -565,18 +628,27 @@ export class ReviewDiscussionService {
       return this.starting;
     }
     const starting = (async (): Promise<Session> => {
-      const workspacePath = discussionWorkingFolder(this.options.recordsDir, this.identity.key);
+      const access = this.options.codeAccess;
+      const reads = access !== undefined && access.offered(provider);
+      // With code access the session runs in the revisions' folder, held until it closes.
+      this.sessionCounter += 1;
+      const revisions = reads ? await access.hold(this.identity, `discussion-${this.identity.key}-${String(this.sessionCounter)}`) : null;
+      const workspacePath = revisions?.folder ?? discussionWorkingFolder(this.options.recordsDir, this.identity.key);
       fs.mkdirSync(workspacePath, { recursive: true });
-      const adapter = this.options.createAdapter(provider);
+      const adapter = reads ? access.createAdapter(provider) : this.options.createAdapter(provider);
       try {
         // Plan review A2: a Claude adapter on the review path holds exactly the review's
         // policy - never the chat's, never the adapter's fixture fallback. A Claude
         // adapter that reports no policy at all is refused too (fails closed, R-1 3b).
+        // With code access the policy is the analysis one, exactly.
+        const expected = reads ? access.policy : REVIEW_PERMISSIONS;
         const policy = adapter.permissionPolicy?.();
         const claudeWithoutPolicy = adapter.id === 'claude-agent-sdk' && policy === undefined;
-        if (claudeWithoutPolicy || (policy !== undefined && !isDeepStrictEqual(policy, REVIEW_PERMISSIONS))) {
+        if (claudeWithoutPolicy || (policy !== undefined && !isDeepStrictEqual(policy, expected))) {
           throw new Error(
-            'The adapter built for the review discussion does not hold the review policy, so it was not used. Nothing was sent.',
+            reads
+              ? 'The adapter built to read the revisions does not hold the read-only analysis policy, so it was not used. Nothing was sent.'
+              : 'The adapter built for the review discussion does not hold the review policy, so it was not used. Nothing was sent.',
           );
         }
         const handle = await adapter.startSession({
@@ -587,10 +659,13 @@ export class ReviewDiscussionService {
         const unsubscribe = adapter.subscribe(handle.dspatchSessionId, (event) => {
           this.onAgentEvent(event);
         });
-        this.options.log(`review discussion ${this.identity.key}: session ${handle.dspatchSessionId} started in ${workspacePath} (adapter ${adapter.id})`);
-        return { adapter, provider, sessionId: handle.dspatchSessionId, unsubscribe, sends: 0 };
+        this.options.log(
+          `review discussion ${this.identity.key}: session ${handle.dspatchSessionId} started in ${reads ? 'the revision folder (read-only analysis access)' : workspacePath} (adapter ${adapter.id})`,
+        );
+        return { adapter, provider, sessionId: handle.dspatchSessionId, unsubscribe, sends: 0, revisions };
       } catch (error) {
         await adapter.dispose().catch(() => undefined);
+        revisions?.release();
         throw error;
       }
     })();
@@ -678,15 +753,14 @@ export class ReviewDiscussionService {
       if (this.closedForQuit) {
         if (this.session === session) {
           this.session = null;
-          session.unsubscribe();
-          await session.adapter.dispose().catch(() => undefined);
+          await this.closeSession(session).catch(() => undefined);
         }
         return closing;
       }
       // A new session has been told nothing: earlier questions and answers go in front, bounded and shown.
       // DSP-132: after a switch the person may have left it out.
       const recap = session.sends === 0 && this.switchNotice?.leftOut !== true ? recapFor(this.messages) : '';
-      prompt = buildEnvelopePrompt(envelope, question, recap === '' ? null : recap);
+      prompt = buildEnvelopePrompt(envelope, question, recap === '' ? null : recap, session.revisions === null ? null : { folder: session.revisions.section });
       const questionId = this.nextId('q');
       const attempt = this.ledger.open('agent-turn', `Review question: ${question.split('\n')[0]?.slice(0, 70) ?? ''}`);
       const message: MutableMessage = {
@@ -702,6 +776,7 @@ export class ReviewDiscussionService {
         provider,
         dspatchSessionId: session.sessionId,
         toolPolicy: this.policyLine(provider),
+        ...(session.revisions === null ? {} : { codeAccess: true }),
         ...((): { deepen?: NonNullable<DiscussionMessage['deepen']> } => {
           const deepen = deepenFrom(raw.deepen);
           return deepen === null ? {} : { deepen };
@@ -709,7 +784,7 @@ export class ReviewDiscussionService {
       };
       this.messages.push(message);
       this.switchNotice = null;
-      turn = { questionId, answerId: null, attemptId: attempt.attemptId, runId: null, sendPending: true, stopping: false };
+      turn = { questionId, answerId: null, attemptId: attempt.attemptId, runId: null, sendPending: true, stopping: false, reads: [], calls: new Map() };
       this.turn = turn;
       // Before the send, not after it: a question that never reached the disk cannot be
       // reconciled as an unknown outcome after a restart (chat: `sendPrompt`).
@@ -946,6 +1021,19 @@ export class ReviewDiscussionService {
       this.emitMessage(answer);
       return;
     }
+    // With code access: what the agent read, counted once its result says it ran.
+    if (event.type === 'tool.started') {
+      turn.calls.set(event.toolCallId, { name: event.name, subject: event.subject ?? null });
+      return;
+    }
+    if (event.type === 'tool.finished') {
+      const call = turn.calls.get(event.toolCallId);
+      turn.calls.delete(event.toolCallId);
+      if (event.status !== 'error' && call !== undefined && call.subject !== null && turn.reads.length < 200) {
+        turn.reads.push(`${call.name} ${this.relativeToRevisions(call.subject)}`);
+      }
+      return;
+    }
     if (event.type !== 'run.finished') {
       return;
     }
@@ -989,7 +1077,60 @@ export class ReviewDiscussionService {
     }
     this.save();
     this.emitStatus();
+    if (answer !== null && settled === 'completed' && this.message(turn.questionId)?.codeAccess === true) {
+      // The references are checked before the session can close: the check reads Git, not the folder.
+      void this.checkReferences(answer, turn).finally(() => void this.closeIdleAdapter());
+      return;
+    }
     void this.closeIdleAdapter();
+  }
+
+  /** A tool subject as a path inside the revision folder (`target/src/x.ts`), when it is one. */
+  private relativeToRevisions(subject: string): string {
+    const folder = this.session?.revisions?.folder ?? null;
+    if (folder === null) {
+      return subject;
+    }
+    const relative = path.relative(folder, subject);
+    return relative.startsWith('..') || path.isAbsolute(relative) ? subject : relative.split(path.sep).join('/');
+  }
+
+  /**
+   * An answer that could read the code: its references block is taken off the text, and
+   * every reference is checked against Git at its commit. One that does not exist there is
+   * left out and named; nothing is shown as a link that was not checked.
+   */
+  private async checkReferences(answer: MutableMessage, turn: Turn): Promise<void> {
+    const split = splitCodeAnswer(answer.text);
+    const block = (typeof split.block === 'object' && split.block !== null ? split.block : {}) as Record<string, unknown>;
+    const revisions = this.session?.revisions ?? null;
+    answer.text = split.shown;
+    answer.reads = [...turn.reads];
+    if (revisions === null) {
+      answer.references = [];
+      answer.adjustments = ['The session that answered had closed, so its references could not be checked and are not shown.'];
+    } else {
+      const checked = await revisions.check({ ...block, answer: split.shown });
+      if ('error' in checked) {
+        answer.references = [];
+        answer.adjustments = [checked.error];
+      } else {
+        answer.references = checked.references;
+        answer.insufficient = checked.insufficient || undefined;
+        answer.adjustments = [
+          ...(split.block === null ? ['The answer named no code it rests on in a form DSpatch could check.'] : []),
+          ...checked.adjustments.filter((entry) => entry !== 'The answer had no text.'),
+        ];
+      }
+    }
+    if (answer.insufficient === undefined) {
+      delete answer.insufficient;
+    }
+    this.options.log(
+      `review discussion ${this.identity.key}: answer ${answer.id} read ${String(turn.reads.length)} file(s) or search(es); ${String(answer.references?.length ?? 0)} reference(s) checked, ${String(answer.adjustments?.length ?? 0)} left out`,
+    );
+    this.emitMessage(answer);
+    this.save();
   }
 
   // --- Closing --------------------------------------------------------------------
@@ -1001,9 +1142,8 @@ export class ReviewDiscussionService {
     }
     const session = this.session;
     this.session = null;
-    session.unsubscribe();
     try {
-      await session.adapter.dispose();
+      await this.closeSession(session);
       this.options.log(`review discussion ${this.identity.key}: adapter closed (no window, no turn)`);
     } catch (error) {
       this.options.log(`review discussion ${this.identity.key}: adapter did not close cleanly (${describeError(error)})`);
@@ -1032,8 +1172,7 @@ export class ReviewDiscussionService {
     const session = this.session;
     this.session = null;
     if (session !== null) {
-      session.unsubscribe();
-      await session.adapter.dispose();
+      await this.closeSession(session);
     }
   }
 

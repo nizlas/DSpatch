@@ -1388,6 +1388,110 @@
   background: color-mix(in srgb, var(--unknown) 10%, var(--bg));
 }
 
+/* What is worth checking, after the walks (30 October 2026): short entries into the code. */
+.rv-checks {
+  margin-top: 0.6rem;
+}
+
+.rv-check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rv .rv-check {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.3rem 0.4rem 0.3rem 0.5rem;
+  font: inherit;
+  color: var(--text);
+  white-space: normal;
+}
+
+.rv .rv-check:hover {
+  background: var(--raised);
+}
+
+.rv .rv-check-on {
+  border-left-color: var(--unknown);
+  background: color-mix(in srgb, var(--unknown) 10%, var(--bg));
+}
+
+.rv-check-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.rv-check-title {
+  overflow-wrap: anywhere;
+}
+
+.rv-check-detail {
+  margin-left: 0.1rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* What a point is: a question to look into, an uncertainty, or a finding the code shows. */
+.rv-check-kind {
+  flex: none;
+  font-size: 0.68rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 0.3rem;
+  color: var(--muted);
+}
+
+.rv-check-kind-uncertainty {
+  border-color: color-mix(in srgb, var(--unknown) 60%, var(--line));
+  color: var(--text);
+}
+
+.rv-check-kind-finding {
+  border-color: var(--rv-gold);
+  color: var(--text);
+}
+
+.rv-check-panel {
+  margin: 0 0 0.8rem;
+  padding: 0.5rem 0.7rem 0.6rem;
+  border-left: 3px solid var(--unknown);
+  background: color-mix(in srgb, var(--unknown) 7%, var(--bg));
+}
+
+.rv-check-panel-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.rv-check-panel-title {
+  margin: 0.3rem 0 0.4rem;
+  font-size: 1rem;
+}
+
+.rv-check-ask {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-end;
+  margin-top: 0.4rem;
+}
+
+.rv-check-ask textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .rv-attention-title {
   font-size: 0.78rem;
   font-weight: 600;

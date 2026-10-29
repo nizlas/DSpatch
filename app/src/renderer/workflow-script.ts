@@ -12996,7 +12996,13 @@ async function runAnalysisAccessScenario(plan: ScriptedRunPlan): Promise<Scripte
       expect(reviews.every((job) => job.state !== 'running' && job.state !== 'cancelling'), 'a review is still shown running after the restart');
       const { walkId, reading } = await openWalkAtDefinition(diffId);
       record('walk reopened', { walk: reading.walk, investigations: investigations(reading) });
-      expect(investigations(reading).some((entry) => entry.state === 'done' && entry.text.includes('findDiscount')), "the step's answer is not back under the step");
+      // Since 30 October 2026 the question was asked in the discussion: it comes back there.
+      await press(walkId, '[data-ev="right-tab-discussion"]');
+      type StoredAnswer = { readonly role: string; readonly text: string; readonly references: readonly string[] };
+      const kept = await untilPair(walkId, 'the answer in the discussion', (entry) =>
+        ((entry as unknown as { discussion?: { messages?: readonly StoredAnswer[] } | null }).discussion?.messages ?? []).some((message) => message.role === 'answer' && message.text.includes('findDiscount') && message.references.includes('target:src/pricing.ts:61-66')),
+      ).catch(() => null);
+      expect(kept !== null, "the question's answer and its reference are not back in the discussion");
       await capture(walkId, 'again-walk');
       const sentAfter = (await reviewPromptsSent()).length;
       expect(sentAfter === sentBefore, `reopening sent ${String(sentAfter - sentBefore)} prompt(s)`);
@@ -13030,22 +13036,25 @@ async function runAnalysisAccessScenario(plan: ScriptedRunPlan): Promise<Scripte
     expect(shown(atDefinition).includes('src/pricing.ts lines 61'), 'the step does not explain the dependency at its lines');
     await capture(walkId, 'walk-definition');
 
-    // --- 3. A question about the step, answered from the code ---------------------------------
+    // --- 3. A question about the step, in the ordinary question field, answered from the code ---
+    // Since Niclas's decision of 30 October 2026 the discussion reads the code itself; there is
+    // no separate "Look into the code" any more.
     const sentBeforeQuestion = (await reviewPromptsSent()).length;
-    await press(walkId, '[data-ev="step-question"]');
-    await type(walkId, '[data-ev="step-question-text"]', 'Where does the discount percentage come from?');
-    await pickerReady(walkId, 'step-question-agent');
-    await press(walkId, '[data-ev="step-question-agent-start"]');
-    const answered = await untilPair(walkId, 'the answer under the step', (reading) => investigations(reading).some((entry) => entry.state !== 'running' && entry.state !== 'cancelling'), 60_000);
-    const answer = investigations(answered).at(-1);
+    await press(walkId, '[data-ev="right-tab-discussion"]');
+    await type(walkId, '[data-ev="discussion-composer"]', 'Where does the discount percentage come from?');
+    await window.dspatch.pairWindowCheck({ action: 'press-key', id: walkId, selector: '[data-ev="discussion-composer"]', key: 'Enter' });
+    type DiscussionAnswerReading = { readonly role: string; readonly status: string; readonly text: string; readonly references: readonly string[]; readonly reads: readonly string[] };
+    const answersIn = (reading: PairWindowReading | null): readonly DiscussionAnswerReading[] =>
+      ((reading as unknown as { discussion?: { messages?: readonly DiscussionAnswerReading[] } | null } | null)?.discussion?.messages ?? []).filter((message) => message.role === 'answer');
+    const answered = await untilPair(walkId, 'the answer in the discussion', (reading) => (answersIn(reading).at(-1)?.references.length ?? 0) > 0, 60_000);
+    const answer = answersIn(answered).at(-1);
     record('step question', { answer });
-    expect(answer?.state === 'done' && answer.text.includes('findDiscount') && answer.text.includes('Where does the discount percentage come from?'), `the step question was not answered from the code: ${JSON.stringify(answer)}`);
-    expect((answer?.references ?? []).some((entry) => entry.includes('src/pricing.ts lines 61–66 (To)')), `the answer does not point at the definition: ${JSON.stringify(answer?.references)}`);
-    // Since Niclas's trial feedback (29 October 2026) what the agent read is kept in the job
-    // record (checked by the runner), not drawn in the review flow.
-    expect((answer?.details ?? '') === '', `the step answer still draws the agent's reads: ${String(answer?.details)}`);
-    expect(!shown(answered).includes('Read: target/'), 'the reads are drawn in the view instead of under Details');
+    expect(answer?.status === 'done' && answer.text.includes('findDiscount') && answer.text.includes('Where does the discount percentage come from?'), `the question was not answered from the code: ${JSON.stringify(answer)}`);
+    expect((answer?.references ?? []).includes('target:src/pricing.ts:61-66'), `the answer does not point at the definition: ${JSON.stringify(answer?.references)}`);
+    expect((answer?.reads ?? []).some((read) => read.includes('target/src/pricing.ts')), `the agent did not read the definition: ${JSON.stringify(answer?.reads)}`);
+    expect(!shown(answered).includes('Read target/'), 'the reads are drawn in the view');
     await capture(walkId, 'step-question');
+    await press(walkId, '[data-ev="right-tab-step"]');
 
     // --- 4. Deepen the step in the discussion: its context holds the code and the answer ----
     await press(walkId, '[data-ev="step-tell-more"]');
@@ -13053,7 +13062,8 @@ async function runAnalysisAccessScenario(plan: ScriptedRunPlan): Promise<Scripte
     const prompts = await reviewPromptsSent();
     const deepening = prompts.slice(sentBeforeQuestion).find((prompt) => prompt.includes('Tell me more about this step') || prompt.includes('Berätta mer om det här steget')) ?? '';
     record('deepening context', { sections: deepening.split('\n').filter((line) => line.startsWith('## ') || line.startsWith('What the agent found')) });
-    expect(deepening.includes('What the agent found in the code for this step'), "the deepening's context does not hold the step's answer");
+    // The deepening reads the code too, in the same session as the question before it.
+    expect(deepening.startsWith('DSPATCH-REVIEW-TASK: review-question'), 'the deepening could not read the code');
     expect(deepening.includes('export function findDiscount'), "the deepening's context does not hold the step's code");
     expect(!deepening.includes('WORKING COPY ONLY'), 'the working copy reached the discussion');
 
@@ -13467,7 +13477,10 @@ async function runSelectionExplainScenario(plan: ScriptedRunPlan): Promise<Scrip
 async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
   const steps: unknown[] = [];
   const failures: string[] = [];
-  const phase = plan.flowPhase === 'again' || plan.flowPhase === 'direction' || plan.flowPhase === 'columns' ? plan.flowPhase : 'first';
+  const phase =
+    plan.flowPhase === 'again' || plan.flowPhase === 'direction' || plan.flowPhase === 'columns' || plan.flowPhase === 'insight' || plan.flowPhase === 'insight-again'
+      ? plan.flowPhase
+      : 'first';
   const observations: Record<string, unknown> = {
     plan,
     phase,
@@ -13596,6 +13609,150 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
     await press(MAIN, '[data-ev="open-review"]');
     const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+
+    if (phase === 'insight' || phase === 'insight-again') {
+      // --- Asking about code the walk does not show; points worth checking (30 October 2026) ---
+      type Msg = { readonly role: string; readonly status: string; readonly text: string; readonly codeAccess: boolean; readonly toolPolicy: string | null; readonly references: readonly string[]; readonly insufficient: boolean; readonly reads: readonly string[]; readonly envelopeSubject: { readonly checkId?: string } | null };
+      type Answer = { readonly text: string; readonly refs: readonly string[]; readonly tables: readonly { readonly rows: number; readonly cells: number; readonly boxWidth: number; readonly columnWidth: number; readonly boxOverflow: boolean; readonly rawPipes: boolean }[] };
+      type Insight = {
+        readonly leftOrder: readonly string[];
+        readonly checks: readonly { readonly id: string; readonly text: string; readonly height: number }[];
+        readonly checkPanel: { readonly id: string; readonly title: string; readonly reasoning: string; readonly places: number; readonly back: string; readonly exchanges: readonly { readonly state: string; readonly text: string }[] } | null;
+        readonly answers: readonly Answer[];
+        readonly away: string;
+        readonly position: { readonly stepId: string | null } | null;
+      };
+      const insightOf = (reading: PairWindowReading | null): Insight | null => ((reading as unknown as { walkView?: Insight | null } | null)?.walkView ?? null);
+      const messagesOf = (reading: PairWindowReading | null): readonly Msg[] => ((reading as unknown as { discussion?: { messages?: readonly Msg[] } | null } | null)?.discussion?.messages ?? []);
+      const answersOf = (reading: PairWindowReading | null): readonly Msg[] => messagesOf(reading).filter((message) => message.role === 'answer');
+      const stepOf = (reading: PairWindowReading | null): string | null => insightOf(reading)?.position?.stepId ?? null;
+      const statusRows = (reading: PairWindowReading | null): string => JSON.stringify(diffOf(reading).files.map((file) => [file.path, file.handled, file.done]));
+
+      if (phase === 'insight-again') {
+        // After a restart: what was asked and answered, and the points, are back without a call.
+        const list = await untilPair(diffId, 'the ongoing reviews', (reading) => diffOf(reading).phase === 'ongoing');
+        const index = (diffOf(list).ongoing ?? []).findIndex((row) => row.startsWith('insight'));
+        await press(diffId, `[data-ev="pair-ongoing-open-${String(index)}"]`);
+        const review = await untilPair(diffId, 'the insight review', (reading) => diffOf(reading).phase === 'review' && diffOf(reading).files.length > 0, 60_000);
+        record('status after restart', { rows: statusRows(review) });
+        await press(diffId, '[data-ev="pair-walks"]');
+        const walkRow = await untilWindow('the walk window', (rows) => rows.find((row) => row.view === 'walk'), 30_000);
+        await press(walkRow.id, '[data-ev="right-tab-discussion"]');
+        const back = await untilPair(walkRow.id, 'the discussion as it was', (reading) => answersOf(reading).length >= 3, 30_000);
+        record('discussion after restart', { answers: answersOf(back).map((answer) => ({ refs: answer.references, insufficient: answer.insufficient })), checks: insightOf(back)?.checks.map((check) => check.id) });
+        expect(answersOf(back).some((answer) => answer.references.some((ref) => ref.startsWith('target:src/workspace.ts'))), 'the checked references are not back after the restart');
+        expect(answersOf(back).some((answer) => answer.insufficient && answer.references.length === 0), 'the answer that found nothing is not back as it was');
+        expect((insightOf(back)?.answers ?? []).some((answer) => answer.tables.length > 0), 'the table is not drawn after the restart');
+        expect((insightOf(back)?.checks.length ?? 0) === 2, 'the points worth checking are not back');
+        await press(walkRow.id, '[data-ev="check-C1"]');
+        const panel = await untilPair(walkRow.id, 'the point with what was asked about it', (reading) => insightOf(reading)?.checkPanel?.id === 'C1');
+        record('point after restart', { panel: insightOf(panel)?.checkPanel });
+        expect((insightOf(panel)?.checkPanel?.exchanges.length ?? 0) > 0, 'what was asked from the point is not back');
+        expect(!/handled":[1-9]/.test(statusRows(review)), `reopening changed the review status: ${statusRows(review)}`);
+        await capture(walkRow.id, 'insight-again');
+        const sent = await reviewPromptsSent();
+        record('prompts after restart', { sent: sent.length });
+        expect(sent.length === 0, `prompts were sent after the restart: ${String(sent.length)}`);
+        return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+      }
+
+      const review = await startReview(diffId, 'insight', null);
+      const before = statusRows(review);
+      await press(diffId, '[data-ev="pair-prepare-walks"]');
+      await untilPair(diffId, 'the agent picker', (reading) => (reading.text ?? '').includes('Model'), 15_000);
+      await press(diffId, '[data-ev="pair-walks-agent-start"]');
+      const walkRow = await untilWindow('the walk window', (rows) => rows.find((row) => row.view === 'walk'), 90_000);
+      await check({ action: 'resize', id: walkRow.id, width: 1500, height: 900 }, 'size the walk window');
+      const walk = await untilPair(walkRow.id, 'the walks and the points', (reading) => (insightOf(reading)?.checks.length ?? 0) > 0, 30_000);
+      record('left column', { order: insightOf(walk)?.leftOrder, checks: insightOf(walk)?.checks });
+      expect(JSON.stringify(insightOf(walk)?.leftOrder) === JSON.stringify(['walk-about', 'walks-heading', 'walk-attention', 'walk-files']), `the left column is not About, walks, Worth checking: ${JSON.stringify(insightOf(walk)?.leftOrder)}`);
+      expect((insightOf(walk)?.checks ?? []).every((entry) => entry.height < 90), 'a point worth checking is a wall of text in the list');
+      await capture(walkRow.id, 'insight-walks-and-points');
+
+      // From another step: a point linked to a step goes there, and back returns.
+      for (let move = 0; move < 6 && stepOf(await readPairWindow(walkRow.id)) !== 'W2.1'; move += 1) {
+        await press(walkRow.id, 'button.rv-nav-next');
+      }
+      const from = stepOf(await readPairWindow(walkRow.id));
+      await press(walkRow.id, '[data-ev="check-C1"]');
+      const linked = await untilPair(walkRow.id, 'the linked point at its step', (reading) => insightOf(reading)?.checkPanel?.id === 'C1');
+      record('linked point', { from, at: stepOf(linked), panel: insightOf(linked)?.checkPanel });
+      expect(from === 'W2.1' && stepOf(linked) === 'W1.1', `the point did not go to its step: ${String(from)} → ${String(stepOf(linked))}`);
+      expect((insightOf(linked)?.checkPanel?.places ?? 0) > 0 && (insightOf(linked)?.checkPanel?.reasoning ?? '') !== '' && (insightOf(linked)?.checkPanel?.back ?? '').includes('W2.1'), 'the point does not show its reasoning, its code and the way back');
+      await capture(walkRow.id, 'insight-point-linked');
+      await press(walkRow.id, '[data-ev="check-back"]');
+      const returned = await untilPair(walkRow.id, 'back where it was', (reading) => insightOf(reading)?.checkPanel === null);
+      expect(stepOf(returned) === 'W2.1', `back did not return to W2.1: ${String(stepOf(returned))}`);
+      await press(walkRow.id, '[data-ev="check-C2"]');
+      const toured = await untilPair(walkRow.id, 'the point with its own tour', (reading) => insightOf(reading)?.checkPanel?.id === 'C2');
+      record('point with its own tour', { at: stepOf(toured), panel: insightOf(toured)?.checkPanel });
+      expect(stepOf(toured) === 'C2.1', `the point without a step did not get its own tour: ${String(stepOf(toured))}`);
+      await capture(walkRow.id, 'insight-point-tour');
+      await press(walkRow.id, '[data-ev="check-back"]');
+      expect(stepOf(await untilPair(walkRow.id, 'back again', (reading) => insightOf(reading)?.checkPanel === null)) === 'W2.1', 'back from the tour did not return');
+
+      // The ordinary question field: a type the step's code does not define.
+      const ask = async (question: string, count: number): Promise<PairWindowReading> => {
+        await check({ action: 'type', id: walkRow.id, selector: '[data-ev="discussion-composer"]', text: question }, `type "${question}"`);
+        await pressKey(walkRow.id, '[data-ev="discussion-composer"]', 'Enter');
+        return untilPair(walkRow.id, `the answer to "${question}"`, (reading) => answersOf(reading).length >= count && answersOf(reading)[count - 1]?.status === 'done' && (answersOf(reading)[count - 1]?.references !== undefined), 60_000);
+      };
+      await press(walkRow.id, '[data-ev="right-tab-discussion"]');
+      const first = await ask('What is `EditorWorkspace`?', 1);
+      // The check of references lands just after the end.
+      const checked = await untilPair(walkRow.id, 'the checked references', (reading) => (answersOf(reading)[0]?.references.length ?? 0) > 0 || (answersOf(reading)[0]?.text ?? '').includes('could not'), 15_000);
+      const question = messagesOf(first).find((message) => message.role === 'question');
+      const answer = answersOf(checked)[0];
+      record('definition asked about', { question: { codeAccess: question?.codeAccess, policy: question?.toolPolicy }, answer, drawn: insightOf(checked)?.answers });
+      expect(question?.codeAccess === true && (question.toolPolicy ?? '').includes('Read'), 'the ordinary question could not read the code');
+      const baseRef = answer?.references.find((ref) => ref.startsWith('base:src/workspace.ts'));
+      const targetRef = answer?.references.find((ref) => ref.startsWith('target:src/workspace.ts'));
+      expect(baseRef !== undefined && targetRef !== undefined && baseRef.split(':')[2] !== targetRef.split(':')[2], `the definition at each revision is not referenced apart: ${JSON.stringify(answer?.references)}`);
+      expect((answer?.reads ?? []).some((read) => read.includes('target/src/workspace.ts')) && (answer?.reads ?? []).some((read) => read.includes('base/src/workspace.ts')), `the agent did not read the definition at both revisions: ${JSON.stringify(answer?.reads)}`);
+      expect(!(answer?.text ?? '').includes('dspatch-references'), 'the references block is shown as text');
+      await capture(walkRow.id, 'insight-definition-answer');
+      await press(walkRow.id, `[data-ev="answer-ref"][data-ref="${targetRef ?? ''}"]`);
+      const opened = await untilPair(walkRow.id, 'the definition opened', (reading) => visibleOf(reading).includes('lane: string'), 15_000).catch(() => null);
+      record('reference opened', { away: insightOf(opened)?.away, shows: visibleOf(opened).includes('lane: string') });
+      expect(opened !== null, 'the To reference did not open the To definition (with its three fields)');
+      await capture(walkRow.id, 'insight-reference-opened');
+
+      // A follow-up with a table, in the same session.
+      const second = await ask('Compare `EditorWorkspace` in From and To in a table', 2);
+      const drawn = insightOf(await untilPair(walkRow.id, 'the table drawn', (reading) => (insightOf(reading)?.answers ?? []).some((entry) => entry.tables.length > 0), 15_000));
+      const table = drawn?.answers.flatMap((entry) => entry.tables)[0];
+      record('table', { table, text: answersOf(second)[1]?.text.slice(0, 300) });
+      expect(table !== undefined && table.rows === 3 && !table.rawPipes && table.boxWidth <= table.columnWidth, `the table is not drawn as a table inside the column: ${JSON.stringify(table)}`);
+      expect((answersOf(second)[1]?.text ?? '').includes('1 question(s) before'), 'the follow-up was not asked in the same session');
+      await capture(walkRow.id, 'insight-table');
+
+      // A name defined nowhere: said so, with no reference made up.
+      const third = await ask('What is `UndoJournal`?', 3);
+      const missing = answersOf(await untilPair(walkRow.id, 'the missing definition answer', (reading) => answersOf(reading)[2]?.insufficient === true, 15_000).catch(() => third))[2];
+      record('missing definition', { missing });
+      expect(missing?.references.length === 0 && missing.insufficient && missing.text.includes('could not find'), `a missing definition was not said plainly: ${JSON.stringify(missing)}`);
+
+      // From the point: Tell me more, with the point's context; and the step's own Explain more simply.
+      await press(walkRow.id, '[data-ev="right-tab-step"]');
+      await press(walkRow.id, '[data-ev="check-C1"]');
+      await untilPair(walkRow.id, 'the point open', (reading) => insightOf(reading)?.checkPanel?.id === 'C1');
+      await press(walkRow.id, '[data-ev="check-tell-more"]');
+      const more = await untilPair(walkRow.id, 'the point\'s answer', (reading) => (insightOf(reading)?.checkPanel?.exchanges ?? []).some((entry) => entry.state === 'done'), 60_000);
+      const pointQuestion = messagesOf(more).filter((message) => message.role === 'question').at(-1);
+      record('point deepened', { exchanges: insightOf(more)?.checkPanel?.exchanges, subject: pointQuestion?.envelopeSubject });
+      expect(pointQuestion?.envelopeSubject?.checkId === 'C1' && pointQuestion.codeAccess, 'Tell me more from the point was not asked with the point and the code');
+      expect((insightOf(more)?.checkPanel?.exchanges.at(-1)?.text ?? '').includes('3 question(s) before'), 'the point\'s question was not asked in the same session');
+      await press(walkRow.id, '[data-ev="step-explain-simpler"]');
+      await untilPair(walkRow.id, 'the step\'s simpler explanation', (reading) => answersOf(reading).length >= 5 && answersOf(reading)[4]?.status === 'done', 60_000);
+      await capture(walkRow.id, 'insight-point-deepened');
+
+      // Nothing of it decided anything in the review.
+      await sleep(1500);
+      const after = statusRows(await readPairWindow(diffId));
+      record('status', { before, after });
+      expect(before === after, `asking and opening points changed the review status: ${before} → ${after}`);
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
 
     if (phase === 'direction') {
       // --- Choosing two commits in any order: Git's ancestry decides From (decision of 29 October 2026) ---
@@ -13867,11 +14024,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       record('shop resumed', { item02, cart: rowOf(shopList, 'src/cart.ts'), guide: rowOf(shopList, 'docs/guide.md') });
       expect(/open finding/.test(item02) && /You/.test(item02) && /Claude · opus/.test(item02), `the mixed status or the finding is gone after the restart: ${item02}`);
       await press(diffId, '[data-ev="pair-walks"]');
-      await sleep(800);
-      const shopWalkRow = (await walkWindows()).find((row) => row.id !== dalWalkRow.id);
-      if (shopWalkRow === undefined) {
-        throw new Error('Code walks did not open the shop walks');
-      }
+      const shopWalkRow = await untilWindow('Code walks to open the shop walks', (rows) => rows.find((row) => row.view === 'walk' && row.id !== dalWalkRow.id), 15_000);
       const shopWalk = await untilPair(shopWalkRow.id, 'the shop walks', (reading) => walkOf(reading)?.position?.stepId != null, 30_000);
       record('shop walks resumed', { position: walkOf(shopWalk)?.position, leftWidth: walkOf(shopWalk)?.leftWidth });
       expect(walkOf(shopWalk)?.position?.stepId === 'R2.1', `the shop walks are not back at R2.1: ${JSON.stringify(walkOf(shopWalk)?.position)}`);

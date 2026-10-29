@@ -14,6 +14,8 @@
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 
 import type {
@@ -536,6 +538,126 @@ test('a quit while a send reads its envelope creates no adapter and sends nothin
     assert.equal(s.adapters.length, 0, 'no adapter was created after the quit');
     assert.equal(service.holdsAdapter(), false);
     assert.equal(fs.existsSync(discussionRecordPath(s.fixture.records, s.identity.key)), false, 'nothing was recorded');
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});
+
+// Niclas's decision of 30 October 2026: a question in the discussion may read the two
+// revisions with the analysis access. SIMULATED: a scripted adapter and a scripted folder.
+test('with code access a question runs in the held revisions under the analysis policy, and its references are checked before they are shown', async () => {
+  const s = await setup();
+  try {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-held-'));
+    const events: string[] = [];
+    const analysis: ScriptedAdapter[] = [];
+    const policy = { mode: 'analysis-test' };
+    const discussions = new ReviewDiscussions({
+      recordsDir: s.fixture.records,
+      log: () => undefined,
+      createAdapter: () => {
+        throw new Error('the tool-free adapter was asked for although the agent can read the code');
+      },
+      codeAccess: {
+        offered: (provider) => provider === 'claude',
+        createAdapter: () => {
+          const adapter = new ScriptedAdapter('scripted-analysis');
+          (adapter as unknown as { permissionPolicy: () => unknown }).permissionPolicy = () => policy;
+          const dispose = adapter.dispose.bind(adapter);
+          adapter.dispose = () => {
+            events.push('adapter closed');
+            return dispose();
+          };
+          analysis.push(adapter);
+          return adapter;
+        },
+        policy,
+        policyLine: 'Read, Glob and Grep in the revisions',
+        hold: (identity, holder) => {
+          events.push(`held ${identity.base.slice(0, 7)}→${identity.target.slice(0, 7)} for ${holder.startsWith('discussion-') ? 'the discussion' : holder}`);
+          return Promise.resolve({
+            folder,
+            section: '## The code, and how to read it\nTEST FOLDER SECTION',
+            check: (raw: unknown) => {
+              const block = raw as { answer: string; references?: { path: string; side: 'base' | 'target'; start: number; end: number; label: string }[] };
+              const references = (block.references ?? []).filter((entry) => entry.path === 'src/real.ts');
+              return Promise.resolve({
+                answer: block.answer,
+                references: references.map((entry) => ({ label: entry.label, range: { kind: 'lines' as const, side: entry.side, path: entry.path, start: entry.start, end: entry.end } })),
+                insufficient: false,
+                adjustments: (block.references ?? []).length > references.length ? ['A reference was left out: src/made-up.ts is not in that revision.'] : [],
+              });
+            },
+            release: () => events.push('released'),
+          });
+        },
+      },
+    });
+    const window = recorder();
+    const service = discussions.attach(1, s.identity, window.send, 'claude');
+    const sent = await service.send({ question: 'What is `Workspace`?', subject: POINT, selection: null }, s.review);
+    assert.equal(sent.kind, 'sent');
+    const adapter = analysis[0];
+    assert.ok(adapter !== undefined, 'an analysis adapter was built');
+    assert.equal(adapter.started[0]?.workspacePath, folder, 'the session runs in the held revisions');
+    const prompt = adapter.sent[0] ?? '';
+    assert.match(prompt, /^DSPATCH-REVIEW-TASK: review-question/);
+    assert.match(prompt, /find and read its real definition/);
+    assert.match(prompt, /TEST FOLDER SECTION/);
+    assert.match(prompt, /```dspatch-references/);
+
+    adapter.emit({ type: 'tool.started', toolCallId: 't1', name: 'Grep', subject: path.join(folder, 'target') } as Partial<AgentEvent> & { type: 'tool.started' });
+    adapter.emit({ type: 'tool.finished', toolCallId: 't1', name: 'Grep', status: 'ok' } as Partial<AgentEvent> & { type: 'tool.finished' });
+    adapter.delta('`Workspace` is the state kept per project.\n\n```dspatch-references\n');
+    adapter.delta(JSON.stringify({ references: [{ label: 'Its definition', path: 'src/real.ts', side: 'target', start: 3, end: 5 }, { label: 'Made up', path: 'src/made-up.ts', side: 'target', start: 1, end: 1 }], insufficient: false }));
+    adapter.delta('\n```');
+    adapter.finish();
+    await until(() => storedMessages(s).some((message) => message.role === 'answer' && message.references !== undefined), 'the checked answer');
+    const answer = storedMessages(s).find((message) => message.role === 'answer');
+    assert.equal(answer?.text, '`Workspace` is the state kept per project.', 'the block is not part of the text shown');
+    assert.deepEqual(answer?.references?.map((entry) => entry.range.path), ['src/real.ts'], 'only a checked reference is kept');
+    assert.equal(answer?.adjustments?.length, 1, 'what was left out is said');
+    assert.deepEqual(answer?.reads, ['Grep target']);
+    const question = storedMessages(s).find((message) => message.role === 'question');
+    assert.equal(question?.codeAccess, true);
+    assert.equal(question?.toolPolicy, 'Read, Glob and Grep in the revisions');
+
+    // Closing the window closes the session: the adapter first, then the revisions.
+    discussions.detach(1);
+    await until(() => events.includes('released'), 'the revisions to be released');
+    assert.deepEqual(events.slice(-2), ['adapter closed', 'released']);
+    assert.equal(events.filter((entry) => entry.startsWith('held')).length, 1);
+    fs.rmSync(folder, { recursive: true, force: true });
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('an analysis adapter without the analysis policy is refused, nothing is sent, and the revisions are released', async () => {
+  const s = await setup();
+  try {
+    const released: string[] = [];
+    const discussions = new ReviewDiscussions({
+      recordsDir: s.fixture.records,
+      log: () => undefined,
+      createAdapter: () => new ScriptedAdapter(),
+      codeAccess: {
+        offered: () => true,
+        createAdapter: () => {
+          const adapter = new ScriptedAdapter('wrong-policy');
+          (adapter as unknown as { permissionPolicy: () => unknown }).permissionPolicy = () => ({ mode: 'chat' });
+          return adapter;
+        },
+        policy: { mode: 'analysis-test' },
+        policyLine: 'analysis',
+        hold: () => Promise.resolve({ folder: s.fixture.records, section: '', check: () => Promise.resolve({ error: 'unused' }), release: () => released.push('released') }),
+      },
+    });
+    const service = discussions.attach(1, s.identity, recorder().send, 'claude');
+    const sent = await service.send({ question: 'What is it?', subject: POINT, selection: null }, s.review);
+    assert.equal(sent.kind, 'refused');
+    assert.match(sent.kind === 'refused' ? sent.error : '', /read-only analysis policy/);
+    assert.deepEqual(released, ['released']);
   } finally {
     fs.rmSync(s.fixture.root, { recursive: true, force: true });
   }

@@ -72,7 +72,19 @@ export type MarkdownBlock =
       readonly items: readonly MarkdownListItem[];
     }
   | { readonly kind: 'quote'; readonly blocks: readonly MarkdownBlock[] }
-  | { readonly kind: 'rule' };
+  | { readonly kind: 'rule' }
+  /**
+   * A GitHub-flavoured table: a header row, a delimiter row of dashes (with colons for
+   * alignment), then body rows. Every row has as many cells as the header; a short row
+   * is filled with empty cells and the cells past the header's count are dropped, as
+   * GitHub does.
+   */
+  | {
+      readonly kind: 'table';
+      readonly align: readonly ('left' | 'center' | 'right' | null)[];
+      readonly header: readonly (readonly MarkdownInline[])[];
+      readonly rows: readonly (readonly (readonly MarkdownInline[])[])[];
+    };
 
 /** Schemes a link may carry. Everything else keeps its text and loses its target. */
 const ALLOWED_LINK_SCHEMES = ['http:', 'https:', 'mailto:'] as const;
@@ -141,6 +153,56 @@ function stripIndent(line: string, width: number): string {
     at += 1;
   }
   return line.slice(at);
+}
+
+/** The cells of a table row, split on unescaped pipes outside inline code; outer pipes optional. */
+function tableCells(line: string): string[] {
+  let text = line.trim();
+  if (text.startsWith('|')) {
+    text = text.slice(1);
+  }
+  if (text.endsWith('|') && !text.endsWith('\\|')) {
+    text = text.slice(0, -1);
+  }
+  const cells: string[] = [];
+  let cell = '';
+  let ticks = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index] ?? '';
+    if (character === '\\' && text[index + 1] === '|') {
+      cell += '|';
+      index += 1;
+    } else if (character === '`') {
+      ticks = ticks === 0 ? 1 : 0;
+      cell += character;
+    } else if (character === '|' && ticks === 0) {
+      cells.push(cell.trim());
+      cell = '';
+    } else {
+      cell += character;
+    }
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+const TABLE_DELIMITER_CELL = /^:?-+:?$/;
+
+/** The alignments of a delimiter row, or `null` when the line is not one for `columns` cells. */
+function tableDelimiter(line: string, columns: number): ('left' | 'center' | 'right' | null)[] | null {
+  if (!line.includes('-') || !/^[\s|:-]+$/.test(line)) {
+    return null;
+  }
+  const cells = tableCells(line);
+  if (cells.length !== columns || !cells.every((cell) => TABLE_DELIMITER_CELL.test(cell))) {
+    return null;
+  }
+  return cells.map((cell) => (cell.startsWith(':') && cell.endsWith(':') ? 'center' : cell.endsWith(':') ? 'right' : cell.startsWith(':') ? 'left' : null));
+}
+
+/** Whether `line` and the next line open a table: a row with a pipe, then its delimiter. */
+function opensTable(line: string, next: string | undefined): boolean {
+  return line.includes('|') && next !== undefined && tableDelimiter(next, tableCells(line).length) !== null;
 }
 
 /** Read Markdown into blocks. Never throws; unknown syntax stays as its own text. */
@@ -223,6 +285,24 @@ function parseBlocks(lines: readonly string[]): readonly MarkdownBlock[] {
       continue;
     }
 
+    if (opensTable(line, lines[at + 1])) {
+      const header = tableCells(line);
+      const align = tableDelimiter(lines[at + 1] ?? '', header.length) ?? [];
+      const rows: (readonly MarkdownInline[])[][] = [];
+      at += 2;
+      while (at < lines.length) {
+        const candidate = lines[at] ?? '';
+        if (candidate.trim() === '' || !candidate.includes('|')) {
+          break;
+        }
+        const cells = tableCells(candidate);
+        rows.push(header.map((_, column) => parseInline(cells[column] ?? '')));
+        at += 1;
+      }
+      blocks.push({ kind: 'table', align, header: header.map((cell) => parseInline(cell)), rows });
+      continue;
+    }
+
     const bullet = BULLET.exec(line);
     const ordered = ORDERED.exec(line);
     if (bullet !== null || ordered !== null) {
@@ -244,7 +324,8 @@ function parseBlocks(lines: readonly string[]): readonly MarkdownBlock[] {
         RULE.test(candidate) ||
         QUOTE.test(candidate) ||
         BULLET.test(candidate) ||
-        ORDERED.test(candidate)
+        ORDERED.test(candidate) ||
+        opensTable(candidate, lines[at + 1])
       ) {
         break;
       }
@@ -583,6 +664,11 @@ export function markdownPlainText(blocks: readonly MarkdownBlock[]): string {
           walk(block.blocks);
           break;
         case 'rule':
+          break;
+        case 'table':
+          for (const row of [block.header, ...block.rows]) {
+            parts.push(row.map((cell) => inline(cell)).join('\t'));
+          }
           break;
       }
     }

@@ -2854,6 +2854,8 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
 const READ_PAIR_WINDOW = String.raw`(() => ({
           pair: window.__dspatchPairCheck ? window.__dspatchPairCheck.read() : null,
           walk: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read() : null,
+          // 30 October 2026: the discussion's messages, with what each answer rests on.
+          discussion: window.__dspatchDiscussionCheck ? window.__dspatchDiscussionCheck.read() : null,
           decisions: [...document.querySelectorAll('.rv-decision')].map((node) => (node.textContent || '').replace(/\s+/g, ' ').trim()),
           showInDiff: document.querySelector('[data-ev="walk-show-in-diff"]') !== null,
           deepenings: [...document.querySelectorAll('[data-ev="step-deepening"]')].map((node) => ({ state: node.getAttribute('data-state'), text: (node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300) })),
@@ -2919,6 +2921,31 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
                 focusRows: [...activePane.querySelectorAll('[data-focus="1"]')].map((row) => ({ line: row.getAttribute('data-line'), height: Math.round(row.getBoundingClientRect().height), numbers: text(row.querySelector('.rv-ln')) })),
               },
               stepTitle: text(document.querySelector('.rv-step-on .rv-step-title')),
+              // 30 October 2026: the left column's order, the points worth checking, an open
+              // point, and the answers as drawn (with their links and tables).
+              leftOrder: [...document.querySelectorAll('.rv-walks-tab [data-ev="walk-about"], .rv-walks-tab [data-ev="walks-heading"], .rv-walks-tab [data-ev="walk-attention"], .rv-walks-tab [data-ev="walk-files"]')].map((node) => node.getAttribute('data-ev')),
+              checks: [...document.querySelectorAll('[data-ev^="check-C"]')].map((node) => ({ id: node.getAttribute('data-ev').slice(6), text: text(node), height: Math.round(node.getBoundingClientRect().height) })),
+              checkPanel: (() => {
+                const panel = document.querySelector('[data-ev="check-panel"]');
+                return panel === null ? null : {
+                  id: panel.getAttribute('data-check'),
+                  title: text(panel.querySelector('.rv-check-panel-title')),
+                  reasoning: text(panel.querySelector('[data-ev="check-reasoning"]')),
+                  places: panel.querySelectorAll('[data-ev="check-place"]').length,
+                  back: text(panel.querySelector('[data-ev="check-back"]')),
+                  exchanges: [...panel.querySelectorAll('[data-ev="check-exchange"]')].map((node) => ({ state: node.getAttribute('data-state'), text: text(node).slice(0, 400) })),
+                };
+              })(),
+              answers: [...document.querySelectorAll('[data-ev="discussion-answer-body"]')].filter((node) => node.offsetParent !== null).map((node) => ({
+                text: text(node).slice(0, 600),
+                refs: [...node.querySelectorAll('[data-ev="answer-ref"]')].map((ref) => ref.getAttribute('data-ref')),
+                tables: [...node.querySelectorAll('table.markdown__table')].map((table) => {
+                  const box = table.closest('.markdown__table-box');
+                  const column = node.closest('.rv-right') || node;
+                  return { rows: table.querySelectorAll('tr').length, cells: table.querySelectorAll('td').length, boxWidth: Math.round(box.getBoundingClientRect().width), columnWidth: Math.round(column.getBoundingClientRect().width), boxOverflow: box.scrollWidth > box.clientWidth + 1, rawPipes: (node.textContent || '').includes('| ---') };
+                }),
+              })),
+              away: (document.querySelector('.rv-code-pane .rv-path') || { title: '' }).title,
               position: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read().position : null,
               chooseOffered: [...document.querySelectorAll('button')].some((button) => /Open another review/.test(button.textContent || '')),
             };
@@ -3550,7 +3577,7 @@ function registerIpc(): void {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.
-              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' ? named : 'first';
+              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' ? named : 'first';
             })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }

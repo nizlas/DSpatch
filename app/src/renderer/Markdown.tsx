@@ -105,6 +105,34 @@ function Block({ block }: { readonly block: MarkdownBlock }): JSX.Element {
       );
     case 'rule':
       return <hr className="markdown__rule" />;
+    case 'table':
+      // In its own scroll box: a wide table scrolls inside a narrow column, never the column.
+      return (
+        <div className="markdown__table-box">
+          <table className="markdown__table">
+            <thead>
+              <tr>
+                {block.header.map((cell, column) => (
+                  <th key={column} style={block.align[column] === null || block.align[column] === undefined ? undefined : { textAlign: block.align[column] }}>
+                    <Inlines nodes={cell} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, index) => (
+                <tr key={index}>
+                  {row.map((cell, column) => (
+                    <td key={column} style={block.align[column] === null || block.align[column] === undefined ? undefined : { textAlign: block.align[column] }}>
+                      <Inlines nodes={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
   }
 }
 

@@ -18,8 +18,8 @@ import { ReviewAgentJobs } from '../src/host/review-agent-jobs';
 import { ReviewPairs } from '../src/host/review-pairs';
 import { RevisionSnapshots } from '../src/host/revision-snapshots';
 import { PresentationAdapter } from '../src/main/presentation-adapter';
-import { parseReviewDefinition } from '../src/shared/review-model';
-import { answerJson, readReviewAnswer, readWalksAnswer, walksPrompt } from '../src/shared/review-agent';
+import { parseReviewDefinition, stepsWalks } from '../src/shared/review-model';
+import { answerJson, definitionFrom, readReviewAnswer, readWalksAnswer, walksPrompt, withoutInvalidPlaces } from '../src/shared/review-agent';
 import { fileProgressOf, isPairError, lineStatusesOf, lineKey, type AgentJob, type OpenPair, type PairRecord } from '../src/shared/review-pair';
 import { makePairFixture, PAIR_WORKING_TREE_ONLY, type PairFixture } from './support/pair-fixture';
 
@@ -119,6 +119,17 @@ describe('preparing code walks', () => {
     assert.notEqual(definition.overview.en, definition.overviewSummary.en);
     assert.ok(definition.overview.en.startsWith(definition.overviewSummary.en));
     assert.match(definition.attention.en, /^- SIMULATED/);
+    // Points worth checking (30 October 2026): one at its step, one with its own tour, both
+    // pointing at code that exists; the tour never counts as walk coverage.
+    const linked = definition.checks.find((check) => check.stepId !== null);
+    const toured = definition.checks.find((check) => check.tour !== null);
+    assert.ok(linked !== undefined && definition.walks.some((walk) => walk.steps.some((step) => step.id === linked.stepId)), JSON.stringify(definition.checks));
+    assert.ok(linked.places.length > 0 && linked.tour === null);
+    assert.ok(toured !== undefined && toured.stepId === null && toured.tour?.steps[0]?.id === `${toured.id}.1`);
+    assert.ok(toured.tour.steps.every((step) => step.refs.every((ref) => ref.role === 'context')));
+    assert.ok(!definition.walks.some((walk) => walk.kind === 'check'), 'a tour is not one of the walks');
+    assert.match(sent[0] ?? '', /"checks"/);
+    assert.match(sent[0] ?? '', /Never link a step only because it is in the same file/);
     assert.match(sent[0] ?? '', /A \*\*reading\*\*/);
     assert.match(sent[0] ?? '', /Never invent a direction or a call chain/);
   });
@@ -200,6 +211,58 @@ describe('after a restart', () => {
     const job = (pairs.state(open.key) as PairRecord).jobs.find((entry) => entry.id === 'job-left');
     assert.equal(job?.state, 'unknown');
     assert.equal(sent.length, 0);
+  });
+});
+
+describe('points worth checking (30 October 2026)', () => {
+  const place = { label: 'p', path: 'src/a.ts', side: 'target', start: 1, end: 1 };
+  const answer = {
+    summary: 's',
+    walks: [
+      { title: 'w1', steps: [{ title: 's1', body: 'b', places: [{ ...place, start: 9999 }] }] },
+      { title: 'w2', steps: [{ title: 's1', body: 'b', places: [place] }, { title: 's2', body: 'b', places: [place] }] },
+    ],
+    checks: [
+      { kind: 'finding', title: 'Linked', places: [place], step: { walk: 1, step: 1 } },
+      { kind: 'question', title: 'Out of range', places: [place], step: { walk: 7, step: 0 } },
+      { kind: 'nonsense', title: 'On a dropped step', places: [place], step: { walk: 0, step: 0 } },
+      { title: '' },
+    ],
+  };
+
+  it('reads them with their kind and step, and links nothing a step index does not name', () => {
+    const read = readWalksAnswer(answer);
+    assert.deepEqual(
+      read.walks?.checks.map((check) => [check.title, check.kind, check.step]),
+      [
+        ['Linked', 'finding', { walk: 1, step: 1 }],
+        ['Out of range', 'question', null],
+        ['On a dropped step', 'question', { walk: 0, step: 0 }],
+      ],
+    );
+    assert.ok(read.problems.some((problem) => problem.includes('check 4 has no title')));
+  });
+
+  it('follows a step when walks are dropped, and drops a link whose step went', () => {
+    const read = readWalksAnswer(answer);
+    assert.ok(read.walks !== null);
+    // The first walk's only place does not exist: that walk goes, and the second becomes W1.
+    const kept = withoutInvalidPlaces(read.walks, new Map([['0.0.0', 'gone']]));
+    assert.deepEqual(kept.checks.map((check) => check.step), [{ walk: 0, step: 1 }, null, null]);
+    const definition = parseReviewDefinition(definitionFrom(kept, { repository: 'r', base: 'a'.repeat(40), target: 'b'.repeat(40) }, 'h', 'p')).definition;
+    assert.ok(definition !== null);
+    assert.equal(definition.checks[0]?.stepId, 'W1.2');
+    assert.equal(definition.checks[0]?.kind, 'finding');
+    assert.equal(definition.checks[1]?.tour?.steps[0]?.places[0]?.focus.role, 'context');
+    assert.deepEqual(stepsWalks(definition).map((walk) => walk.id), ['W1', 'C2', 'C3']);
+  });
+
+  it('keeps an older answer\'s attention as text, and makes no links for it', () => {
+    const read = readWalksAnswer({ summary: 's', attention: ['Something to look at.'], walks: answer.walks.slice(1) });
+    assert.ok(read.walks !== null);
+    const definition = parseReviewDefinition(definitionFrom(read.walks, { repository: 'r', base: 'a'.repeat(40), target: 'b'.repeat(40) }, 'h', 'p')).definition;
+    assert.equal(definition?.attention.en, '- Something to look at.');
+    assert.deepEqual(definition?.checks, []);
   });
 });
 

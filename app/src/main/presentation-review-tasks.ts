@@ -34,6 +34,15 @@
  *   to its definition, and answers with both as references.
  * - An explanation of selected code reads each selected part at its side and answers only
  *   if the selected text is there; it names each part's kind and the definition it calls.
+ * - A walk preparation also proposes points worth checking: one linked to the first code
+ *   walk's first step, and one with its own tour for a changed file no walk covers.
+ * - A question in the review discussion that can read the code (30 October 2026) takes the
+ *   first name it asks about — in backticks, or a CamelCase word — searches both revisions
+ *   for its definition (`struct`, `class`, `interface`, `type`, `enum`, `function`), reads
+ *   the file it is in and one use of it, and answers with what it found at each side,
+ *   as references. Asked to compare, it answers with a table. When the name is defined at
+ *   neither side, it says so, with no reference. It says how many questions came before it
+ *   in the same session, as a session that remembers them would.
  */
 
 import fs from 'node:fs';
@@ -122,6 +131,39 @@ class Reader {
   /** Record a search; the simulation decides what it found by reading. */
   searched(pattern: string, side: 'base' | 'target'): void {
     this.tools.push({ name: 'Grep', subject: `${pattern} in ${path.join(this.folder, side)}`, ok: true });
+  }
+
+  /** The repository paths of every file at one side, as a search would go through them. */
+  files(side: 'base' | 'target'): string[] {
+    const root = path.join(this.folder, side);
+    const found: string[] = [];
+    const walk = (folder: string): void => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(folder, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = path.join(folder, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.isFile() && found.length < 2000) {
+          found.push(path.relative(root, full).split(path.sep).join('/'));
+        }
+      }
+    };
+    walk(root);
+    return found;
+  }
+
+  /** A text file's lines without recording a read: what a search tool scans. */
+  scan(side: 'base' | 'target', repoPath: string): string[] | null {
+    try {
+      return fs.readFileSync(path.join(this.folder, side, ...repoPath.split('/')), 'utf8').split('\n').map((line) => line.replace(/\r$/, ''));
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -304,11 +346,37 @@ function prepareWalks(prompt: string, reader: Reader): string {
     ];
   });
   const readings = walks.filter((walk) => walk.kind === 'reading').length;
+  // Points worth checking: one at the first code walk's first step, one with a tour of its own.
+  const checks: unknown[] = [];
+  const codeWalk = walks.findIndex((walk) => walk.kind === 'walk' && !walk.title.startsWith('What changes in the data'));
+  const linked = codeWalk < 0 ? undefined : (walks[codeWalk]?.steps[0] as { places?: { label: string; path: string; side: string; start: number; end: number }[] } | undefined);
+  if (linked?.places !== undefined && linked.places.length > 0) {
+    checks.push({
+      kind: 'question',
+      title: `SIMULATED: Does every caller handle what ${base(linked.places[linked.places.length - 1]?.path ?? '')} returns?`,
+      detail: 'SIMULATED: a question to look into at this step.',
+      reasoning: 'SIMULATED reasoning: the changed lines depend on code outside the change. A real agent explains why that is worth checking.',
+      places: linked.places.map((place) => ({ label: place.label, path: place.path, side: place.side, start: place.start, end: place.end })),
+      step: { walk: codeWalk, step: 0 },
+    });
+  }
+  for (const filePath of paths.filter((entry) => !kept.includes(entry)).slice(0, 1)) {
+    const first = (byFile.get(filePath) ?? [])[0];
+    if (first !== undefined) {
+      checks.push({
+        kind: 'uncertainty',
+        title: `SIMULATED: ${String(paths.length - kept.length)} changed file(s) are in no walk, among them ${base(filePath)}.`,
+        detail: 'SIMULATED: no step shows it, so it has its own tour.',
+        reasoning: `SIMULATED reasoning: \`${filePath}\` changes, and no walk goes through it.`,
+        places: [{ label: `${base(filePath)} lines ${String(first.start)}–${String(first.end)}`, path: filePath, side: first.side, start: first.start, end: first.end }],
+      });
+    }
+  }
   const answer = {
     summary: `SIMULATED: ${String(walks.length - readings)} code walk(s) and ${String(readings)} reading(s) over ${String(kept.length)} of ${String(paths.length)} changed file(s).`,
     background:
       'SIMULATED background, shown only on request.\n\nThe presentation adapter proposes one item per changed file: a code walk for code and readings for text. A real agent chooses the form from what changed.',
-    attention: kept.length < paths.length ? [`SIMULATED: ${String(paths.length - kept.length)} changed file(s) are in no walk.`] : [],
+    checks,
     walks,
   };
   lastWalks = answer;
@@ -499,11 +567,134 @@ function explainSelection(prompt: string, reader: Reader): string {
   return fence({ answer: `${opening}\n\nWhat was selected:\n${found.join('\n')}\n\n${dependency}`, references, insufficient: false });
 }
 
+interface Found {
+  readonly side: 'base' | 'target';
+  readonly path: string;
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+  readonly use: { readonly path: string; readonly line: number } | null;
+}
+
+/** The definition of `name` at one side, found by a search and read; and one place it is used. */
+function definitionAt(reader: Reader, side: 'base' | 'target', name: string): Found | null {
+  reader.searched(`(struct|class|interface|type|enum|function) ${name}`, side);
+  const pattern = new RegExp(`\\b(?:struct|class|interface|type|enum|function)\\s+${name}\\b`);
+  for (const filePath of reader.files(side)) {
+    const scanned = reader.scan(side, filePath);
+    const at = scanned?.findIndex((line) => pattern.test(line)) ?? -1;
+    if (scanned === null || at < 0) {
+      continue;
+    }
+    const lines = reader.read(side, filePath) ?? scanned;
+    let end = at;
+    while (end < lines.length - 1 && end - at < 40 && !/^\s*};?\s*$/.test(lines[end] ?? '') && !(end > at && /^\S/.test(lines[end] ?? ''))) {
+      end += 1;
+    }
+    reader.searched(`${name}`, side);
+    let use: Found['use'] = null;
+    for (const usePath of reader.files(side)) {
+      const useLines = reader.scan(side, usePath) ?? [];
+      const line = useLines.findIndex((text, index) => text.includes(name) && !(usePath === filePath && index >= at && index <= end));
+      if (line >= 0) {
+        use = { path: usePath, line: line + 1 };
+        break;
+      }
+    }
+    return { side, path: filePath, start: at + 1, end: end + 1, text: lines.slice(at, end + 1).join('\n'), use };
+  }
+  return null;
+}
+
+/** A question in the review discussion, answered by searching and reading both revisions. */
+function reviewQuestion(prompt: string, reader: Reader, asked: string[]): string {
+  const question = /## Question\n([\s\S]*?)(?:\n\n## |\n*$)/.exec(prompt)?.[1]?.trim() ?? '';
+  const before = asked.length;
+  asked.push(question);
+  const session = before === 0 ? 'This is the first question in this session.' : `This session has had ${String(before)} question(s) before this one; the last was “${(asked[before - 1] ?? '').slice(0, 60)}”.`;
+  const name = /`([A-Za-z_][A-Za-z0-9_]*)`/.exec(question)?.[1] ?? /\b([A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+)\b/.exec(question)?.[1] ?? null;
+  const refs = (references: unknown[], insufficient: boolean): string => `\n\n\`\`\`dspatch-references\n${JSON.stringify({ references, insufficient })}\n\`\`\``;
+  if (name === null) {
+    // No name to look up: the code the question is about, and the first function it calls.
+    const focus = /^### focus · (.+?) lines (\d+)(?:–(\d+))? · (base|target) @/m.exec(prompt);
+    const references: unknown[] = [];
+    let found = 'The question names no type or function to look up, so this answer rests on the code sent with it.';
+    if (focus !== null) {
+      const [, focusPath = '', start = '1', end, side = 'target'] = focus;
+      const focusSide = side === 'base' ? 'base' : 'target';
+      const lines = reader.read(focusSide, focusPath);
+      const first = Number(start);
+      const last = Number(end ?? start);
+      const definition = lines === null ? null : followCall(reader, focusSide, focusPath, lines, lines.slice(first - 1, last).join('\n'));
+      references.push({ label: `The code asked about in ${base(focusPath)}`, path: focusPath, side: focusSide, start: first, end: last });
+      const defined = /\b(?:function|class|interface|type|struct)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec((lines ?? []).slice(first - 1, last).join('\n'))?.[1] ?? null;
+      if (definition !== null) {
+        references.push({ label: `${definition.name}, where it is defined`, path: definition.path, side: focusSide, start: definition.start, end: definition.end });
+        found = `The code asked about calls \`${definition.name}\`, defined in \`${definition.path}\` lines ${String(definition.start)}–${String(definition.end)}, outside the change.` + (definition.returnsNull ? ' It can return `null`.' : '');
+      } else if (defined !== null) {
+        found = `The code asked about is where \`${defined}\` is defined, in \`${focusPath}\` lines ${String(first)}–${String(last)}.`;
+      }
+    }
+    return `SIMULATED answer to “${question.slice(0, 90)}”.\n\n${session}\n\n${found}${refs(references, false)}`;
+  }
+  const fromDefinition = definitionAt(reader, 'base', name);
+  const toDefinition = definitionAt(reader, 'target', name);
+  if (fromDefinition === null && toDefinition === null) {
+    return (
+      `SIMULATED: I could not find a definition of \`${name}\` in either revision. I searched both From (\`base/\`) and To (\`target/\`) for a struct, class, interface, type, enum or function of that name.\n\n` +
+      `What it is cannot be said from the code I could read, so I do not describe it.\n\n${session}${refs([], true)}`
+    );
+  }
+  const references: unknown[] = [];
+  const parts: string[] = [`SIMULATED answer about \`${name}\`.`, session];
+  const describe = (found: Found, word: string): void => {
+    references.push({ label: `${name}, defined in ${word}`, path: found.path, side: found.side, start: found.start, end: found.end });
+    if (found.use !== null) {
+      references.push({ label: `${name} in use, in ${word}`, path: found.use.path, side: found.side, start: found.use.line, end: found.use.line });
+    }
+  };
+  if (fromDefinition !== null) {
+    describe(fromDefinition, 'From');
+  }
+  if (toDefinition !== null) {
+    describe(toDefinition, 'To');
+  }
+  const members = (found: Found | null): number => (found === null ? 0 : found.text.split('\n').length - 2);
+  if (fromDefinition !== null && toDefinition !== null && fromDefinition.text === toDefinition.text) {
+    parts.push(`\`${name}\` is defined in \`${toDefinition.path}\` lines ${String(toDefinition.start)}–${String(toDefinition.end)}, the same in From and To.`);
+  } else if (fromDefinition !== null && toDefinition !== null) {
+    parts.push(
+      `\`${name}\` is defined in both revisions, **differently**: in From in \`${fromDefinition.path}\` lines ${String(fromDefinition.start)}–${String(fromDefinition.end)}, in To in \`${toDefinition.path}\` lines ${String(toDefinition.start)}–${String(toDefinition.end)}.`,
+    );
+  } else if (toDefinition !== null) {
+    parts.push(`\`${name}\` is defined only in To, in \`${toDefinition.path}\` lines ${String(toDefinition.start)}–${String(toDefinition.end)}: the change adds it.`);
+  } else if (fromDefinition !== null) {
+    parts.push(`\`${name}\` is defined only in From, in \`${fromDefinition.path}\` lines ${String(fromDefinition.start)}–${String(fromDefinition.end)}: the change removes it.`);
+  }
+  const use = toDefinition?.use ?? fromDefinition?.use ?? null;
+  if (use !== null) {
+    parts.push(`It is used in \`${use.path}\` line ${String(use.line)}.`);
+  }
+  if (/\b(compare|table|jämför|tabell)\b/i.test(question)) {
+    parts.push(
+      [
+        '| Revision | File | Lines | Members |',
+        '| --- | --- | ---: | ---: |',
+        `| From | ${fromDefinition === null ? '–' : `\`${fromDefinition.path}\``} | ${fromDefinition === null ? '–' : `${String(fromDefinition.start)}–${String(fromDefinition.end)}`} | ${String(members(fromDefinition))} |`,
+        `| To | ${toDefinition === null ? '–' : `\`${toDefinition.path}\``} | ${toDefinition === null ? '–' : `${String(toDefinition.start)}–${String(toDefinition.end)}`} | ${String(members(toDefinition))} |`,
+      ].join('\n'),
+    );
+  }
+  parts.push('What it means for the change is for a real agent to explain; this answer only shows where it is.');
+  return `${parts.join('\n\n')}${refs(references, false)}`;
+}
+
 /**
  * The simulated answer to an analysis task prompt, reading the revisions in `folder` (the
- * session's working folder), or `null` for any other prompt.
+ * session's working folder), or `null` for any other prompt. `asked` is what this session
+ * was asked before, kept by the adapter as a session keeps its history.
  */
-export function simulatedReviewTask(prompt: string, folder: string): SimulatedTaskAnswer | null {
+export function simulatedReviewTask(prompt: string, folder: string, asked: string[] = []): SimulatedTaskAnswer | null {
   if (!prompt.startsWith(TASK_HEADER)) {
     return null;
   }
@@ -520,6 +711,8 @@ export function simulatedReviewTask(prompt: string, folder: string): SimulatedTa
     answer = stepQuestion(prompt, reader);
   } else if (task === 'explain-selection') {
     answer = explainSelection(prompt, reader);
+  } else if (task === 'review-question') {
+    answer = reviewQuestion(prompt, reader, asked);
   }
   return answer === null ? null : { answer, tools: reader.tools };
 }

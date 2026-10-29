@@ -1069,6 +1069,35 @@ body {
   color: var(--muted);
 }
 
+/* A table keeps to its column: it scrolls sideways in its own box when it must, and its
+   cells wrap words first. */
+.markdown__table-box {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.4rem 0 0.6rem;
+}
+
+.markdown__table {
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+
+.markdown__table th,
+.markdown__table td {
+  border: 1px solid var(--line);
+  padding: 0.25rem 0.5rem;
+  vertical-align: top;
+  text-align: left;
+  min-width: 4rem;
+  max-width: 28rem;
+  overflow-wrap: break-word;
+}
+
+.markdown__table th {
+  background: var(--panel);
+  font-weight: 600;
+}
+
 .markdown__rule {
   border: none;
   border-top: 1px solid var(--line);

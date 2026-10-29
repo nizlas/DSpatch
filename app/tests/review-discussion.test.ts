@@ -20,11 +20,13 @@ import {
   PROVIDER_ADDED_CONTEXT_LINE,
   REVIEW_DISCUSSION_CHANNELS,
   REVIEW_DISCUSSION_FORMAT_VERSION,
+  REVIEW_DISCUSSION_CODE_INSTRUCTION,
   REVIEW_DISCUSSION_INSTRUCTION,
   adoptDiscussionRecord,
   buildEnvelopePrompt,
   emptyDiscussionRecord,
   recapFor,
+  splitCodeAnswer,
   subjectLine,
   withoutErrorClass,
   type ContextEnvelope,
@@ -293,4 +295,57 @@ test('the error line leaves the class name to the detail, and keeps an ordinary 
   assert.equal(withoutErrorClass('Error: something broke'), 'something broke');
   assert.equal(withoutErrorClass('Refused: this window is not a review window.'), 'Refused: this window is not a review window.');
   assert.equal(withoutErrorClass('An answer is still on its way.'), 'An answer is still on its way.');
+});
+
+// Niclas's decision of 30 October 2026: an answer that read the code ends in a references block.
+test('an answer is split at its references block, also while the block is still arriving', () => {
+  const block = '{"references":[{"label":"Def","path":"src/a.ts","side":"target","start":3,"end":5}],"insufficient":false}';
+  const whole = splitCodeAnswer(`It is a struct.\n\n\`\`\`dspatch-references\n${block}\n\`\`\``);
+  assert.equal(whole.shown, 'It is a struct.');
+  assert.deepEqual(whole.block, JSON.parse(block));
+  const arriving = splitCodeAnswer('It is a struct.\n\n```dspatch-references\n{"refer');
+  assert.equal(arriving.shown, 'It is a struct.');
+  assert.equal(arriving.block, null);
+  assert.deepEqual(splitCodeAnswer('No block.\n\n```ts\nconst a = 1;\n```'), { shown: 'No block.\n\n```ts\nconst a = 1;\n```', block: null });
+});
+
+test('with code access the prompt says the agent can read the revisions, asks for the definition, and keeps the envelope', () => {
+  const prompt = buildEnvelopePrompt(envelope(), 'What is `Workspace`?', null, { folder: '## The code, and how to read it\nFOLDER' });
+  assert.ok(prompt.startsWith('DSPATCH-REVIEW-TASK: review-question\n\n'));
+  assert.ok(prompt.includes(REVIEW_DISCUSSION_CODE_INSTRUCTION));
+  assert.ok(!prompt.includes(REVIEW_DISCUSSION_INSTRUCTION));
+  assert.ok(prompt.includes(`Base revision: ${BASE}`) && prompt.includes('FOLDER') && prompt.includes('```dspatch-references'));
+  // Without code access nothing of it is there.
+  const plain = buildEnvelopePrompt(envelope(), 'What is it?', null);
+  assert.ok(plain.startsWith(REVIEW_DISCUSSION_INSTRUCTION) && !plain.includes('dspatch-references'));
+});
+
+test('a stored answer keeps its checked references, and a malformed one is left out', () => {
+  const record = {
+    ...emptyDiscussionRecord(IDENTITY),
+    messages: [
+      { id: 'q1', role: 'question', text: 'What is it?', at: 't', subject: 's', status: 'sent', codeAccess: true },
+      {
+        id: 'a1',
+        role: 'answer',
+        text: 'A struct.',
+        at: 't',
+        subject: 's',
+        questionId: 'q1',
+        status: 'done',
+        references: [{ label: 'Def', range: { kind: 'lines', side: 'target', path: 'src/a.ts', start: 3, end: 5 } }, { label: 'Broken', range: { side: 'elsewhere' } }],
+        insufficient: true,
+        adjustments: ['left out'],
+        reads: ['Read target/src/a.ts'],
+      },
+    ],
+  };
+  const adopted = adoptDiscussionRecord(JSON.parse(JSON.stringify(record)), IDENTITY);
+  assert.equal(adopted.kind, 'adopted');
+  const answer = adopted.kind === 'adopted' ? adopted.record.messages[1] : undefined;
+  assert.equal(adopted.kind === 'adopted' ? adopted.record.messages[0]?.codeAccess : undefined, true);
+  assert.deepEqual(answer?.references?.map((entry) => entry.label), ['Def']);
+  assert.equal(answer?.insufficient, true);
+  assert.deepEqual(answer?.adjustments, ['left out']);
+  assert.deepEqual(answer?.reads, ['Read target/src/a.ts']);
 });

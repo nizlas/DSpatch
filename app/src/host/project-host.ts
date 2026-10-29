@@ -89,6 +89,7 @@ import {
   type WorkspaceView,
 } from '../shared/workspace-folders';
 import {
+  ANALYSIS_PERMISSIONS,
   REVIEW_DENY_REASON,
   REVIEW_PERMISSIONS,
   describePermissionPolicy,
@@ -4332,6 +4333,20 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
       provider === 'claude'
         ? `${describePermissionPolicy(REVIEW_PERMISSIONS)}. Deny reason: ${REVIEW_DENY_REASON}`
         : 'text-only (tools: [])',
+    // Niclas's decision of 30 October 2026: a question may read the two revisions with the
+    // analysis access the walk preparation uses. Only an agent with a read-only analysis
+    // policy gets it (Claude); Cursor has none and stays tool-free.
+    codeAccess: {
+      offered: (provider) => provider === 'claude',
+      createAdapter: (provider) => {
+        log(`[review] building a ${provider} analysis adapter for a discussion${presentationMode ? ' (presentation, simulated)' : ''}`);
+        return adapterFactory.createAdapter({ provider, purpose: 'analysis' });
+      },
+      policy: ANALYSIS_PERMISSIONS,
+      policyLine: `${describePermissionPolicy(ANALYSIS_PERMISSIONS)}, in a folder holding the two revisions only`,
+      hold: (identity, holder) =>
+        requireReviewAgentJobs().holdForDiscussion({ repository: identity.repository, base: identity.base, target: identity.target }, holder),
+    },
     log: (message) => {
       log(`[review] ${message}`);
     },

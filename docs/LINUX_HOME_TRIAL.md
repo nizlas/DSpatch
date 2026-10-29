@@ -116,7 +116,7 @@ Two things to know first:
 
 16. **Cancel during a loop command.** Start the loop from step 15 again and press Cancel while *work* runs a command. Expected: the run stops on *work*, the command is recorded as stopped, *check* never starts; record whether any process is left (the `ps` line above). Restarting DSpatch shows the run in history and does not start it again.
 
-17. **The review discussion stays text-only.** Open the review discussion with Claude (Part B) and ask it to run the tests. Expected: it answers in text; no command runs and none is listed.
+17. **The review discussion runs no commands.** Open the review discussion with Claude (Part B) and ask it to run the tests. Expected: it answers in text; no command runs and none is listed. (Since 30 October 2026 it may read the two revisions with read-only tools; it still cannot run anything.)
 
 18. **Refusals, no run.** (a) With Claude's conversation open, add a second folder and try *Use loop*: a plain sentence that Claude works in one folder, ending *Nothing was started.* (b) Quit, start once with plain `npm run dev` (no `DSPATCH_CLAUDE_AUTHORIZATION`), **do not start a Cursor session**, open the graph editor: the line under the drawing reads *No loop run can start: …*. Nothing contacts Cursor or installs anything.
 

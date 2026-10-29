@@ -1998,6 +1998,16 @@ The code column keeps its width either way.
   (5) the reviewed repository's own hooks and ignore rules are not loaded, and DSpatch
   itself supplies its code with no exclusion applied - `envelopeFor` is where a
   content-exclusion check would go.
+- **Reading the code (Niclas's decision of 30 October 2026).** With Claude, a question may
+  read the two revisions: the discussion's session runs in the folder `RevisionSnapshots`
+  writes the commits to (held while the session is open, released when it closes), under an
+  adapter for the `analysis` purpose that must hold exactly `ANALYSIS_PERMISSIONS` (Read,
+  Glob and Grep in that folder) or nothing is sent. The prompt starts with
+  `DSPATCH-REVIEW-TASK: review-question` and `REVIEW_DISCUSSION_CODE_INSTRUCTION`; the
+  answer ends with a `dspatch-references` block, which is taken off the text and checked
+  against Git at each reference's commit (`readStepAnswer`) before it is shown as links.
+  Cursor has no read-only policy and stays text-only as above. The gate below still holds:
+  the folder is DSpatch's own copy of the commits, never the working copy.
 - **Gates.** One answer at a time per review; Stop before the provider has answered the
   send makes the outcome unknown and cancels the run when it appears; a cancel with no
   confirmed end becomes unknown, never "stopped"; an unknown outcome blocks the next

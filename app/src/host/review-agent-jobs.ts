@@ -36,6 +36,7 @@ import type { ChatAdapter } from '../main/chat-service';
 import {
   answerJson,
   definitionFrom,
+  discussionFolderSection,
   followUpWords,
   linesAround,
   readSelection,
@@ -49,6 +50,7 @@ import {
   uncoveredBy,
   walkPlaceProblems,
   walksPrompt,
+  withCheckedChecks,
   withCheckedFindings,
   withoutInvalidPlaces,
   type AnalysisMaterial,
@@ -74,6 +76,8 @@ import {
   type ReviewAgents,
   type StepQuestion,
 } from '../shared/review-pair';
+import type { HeldRevisions } from '../main/review-discussion-service';
+import type { RevisionPairIdentity } from '../shared/review-pair';
 import type { ReviewPairs } from './review-pairs';
 import type { RevisionSnapshots, SnapshotManifest } from './revision-snapshots';
 
@@ -560,6 +564,36 @@ export class ReviewAgentJobs {
     timer.unref?.();
   }
 
+  /**
+   * The two revisions as files for a review discussion's session (Niclas's decision of 30
+   * October 2026): the same folder a job reads, held under `holder` until released, the same
+   * prompt section, and the same check of references against Git at the two commits.
+   */
+  async holdForDiscussion(pair: RevisionPairIdentity, holder: string): Promise<HeldRevisions> {
+    const opened = await this.options.pairs.openForWalk(pair);
+    if (isPairError(opened)) {
+      throw new Error(opened.error);
+    }
+    const key = opened.key;
+    const material = await this.options.pairs.material(key);
+    if (isPairError(material)) {
+      throw new Error(material.error);
+    }
+    const snapshot = await this.options.snapshots.acquire(key, opened.pair, changedPaths(material), holder);
+    let released = false;
+    return {
+      folder: snapshot.folder,
+      section: discussionFolderSection(material, materialOf(snapshot.manifest)),
+      check: (raw) => readStepAnswer(raw, (side, filePath) => this.options.pairs.linesAt(key, side, filePath)),
+      release: () => {
+        if (!released) {
+          released = true;
+          this.options.snapshots.release(key, holder);
+        }
+      },
+    };
+  }
+
   private async closeSession(live: Live): Promise<void> {
     live.unsubscribe?.();
     live.unsubscribe = null;
@@ -828,7 +862,9 @@ export class ReviewAgentJobs {
       this.finish(live, 'failed', 'The agent did not answer with walks DSpatch could read, even when asked again.');
       return;
     }
-    const walks: ProposedWalks = withoutInvalidPlaces(parsed.walks, invalid);
+    // The points worth checking keep only the places that exist; their text stays.
+    const checked = await withCheckedChecks(withoutInvalidPlaces(parsed.walks, invalid), read);
+    const walks: ProposedWalks = checked.walks;
     if (walks.walks.length === 0) {
       this.finish(live, 'failed', 'None of the proposed walks had a place that exists at these commits, so none was kept.');
       return;
@@ -846,7 +882,7 @@ export class ReviewAgentJobs {
     const provenance =
       `Prepared by ${providerName(job.provider)} (${job.model}) on ${generatedAt.slice(0, 16).replace('T', ' ')} UTC. ` +
       'It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing.' +
-      (invalid.size > 0 ? ` ${String(invalid.size)} place(s) that did not exist at their commit were left out.` : '') +
+      (invalid.size + checked.left > 0 ? ` ${String(invalid.size + checked.left)} place(s) that did not exist at their commit were left out.` : '') +
       (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) of the commits could not be given to the agent to read.` : '');
     fs.mkdirSync(path.dirname(definitionPath), { recursive: true });
     fs.writeFileSync(definitionPath, `${JSON.stringify(definitionFrom(walks, opened?.pair ?? { repository: '', base: '', target: '' }, heading, provenance), null, 2)}\n`, 'utf8');

@@ -344,6 +344,8 @@ interface SessionState {
   steerMode: 'fold' | 'late' | 'decline';
   /** DSP-147, SIMULATED: a cancel of the running turn ends without a confirmed local end. */
   cancelUnconfirmed: boolean;
+  /** SIMULATED: the review questions asked in this session so far, as a session remembers them. */
+  asked: string[];
 }
 
 export class PresentationAdapter implements ChatAdapter, AgentAdapter {
@@ -417,6 +419,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       steers: [],
       steerMode: 'fold',
       cancelUnconfirmed: false,
+      asked: [],
     });
     return {
       dspatchSessionId,
@@ -585,8 +588,11 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
         : `${presentationReply(token)}\n\nRESULT: ${declared}`;
     // DSP-152, SIMULATED: an analysis task (walks, a delegated review, a step question),
     // answered by reading the revision folder the session runs in, as the real agent does.
-    const task = simulatedReviewTask(prompt, state.config.workspacePath);
+    const task = simulatedReviewTask(prompt, state.config.workspacePath, state.asked);
     answer = task?.answer ?? answer;
+    // An analysis task reads before it answers: long enough to be stopped, as a real one is,
+    // whether or not the revision folder had to be written first (a discussion may hold it).
+    const lead = task === null ? 0 : 400;
     // Chunked on whitespace, so what arrives is the partial text a real stream
     // produces — including a fence that is open for several frames, which is the
     // case the reader has to survive.
@@ -670,7 +676,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
               });
             }
           },
-          deltaMs * (index + 1),
+          lead + deltaMs * (index + 1),
         );
         state.timers.add(timer);
       });

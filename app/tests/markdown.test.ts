@@ -239,3 +239,29 @@ test('nothing but markers is removed from an ordinary reply', () => {
   assert.ok(!text.includes('#'));
   assert.ok(!text.includes('**'));
 });
+
+// Niclas's trial (30 October 2026): a table in an explanation was drawn as its pipes.
+test('a GitHub table parses with its header, alignment and rows, and its cells keep inline code', () => {
+  const block = firstBlock(['| Name | Kind | Lines |', '| --- | :---: | ---: |', '| `ProjectFile` | struct | 12 |', '| a \\| b | enum |'].join('\n'));
+  assert.equal(block.kind, 'table');
+  if (block.kind !== 'table') {
+    return;
+  }
+  assert.deepEqual(block.align, [null, 'center', 'right']);
+  assert.equal(block.header.length, 3);
+  assert.equal(block.rows.length, 2);
+  assert.deepEqual(inlineKinds(block.rows[0]?.[0] ?? []), ['code']);
+  // An escaped pipe stays in its cell; a short row is filled to the header's width.
+  assert.equal(markdownPlainText([{ kind: 'paragraph', content: block.rows[1]?.[0] ?? [] }]), 'a | b');
+  assert.deepEqual(block.rows[1]?.[2], []);
+});
+
+test('a table ends a paragraph, and pipes without a delimiter row stay text', () => {
+  const blocks = parseMarkdown(['Before the table.', '| a | b |', '|---|---|', '| 1 | 2 |', '', 'After.'].join('\n'));
+  assert.deepEqual(
+    blocks.map((block) => block.kind),
+    ['paragraph', 'table', 'paragraph'],
+  );
+  assert.equal(firstBlock('a | b\nc | d').kind, 'paragraph');
+  assert.equal(firstBlock('| a | b |\n|---|').kind, 'paragraph');
+});

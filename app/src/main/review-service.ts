@@ -16,6 +16,7 @@ import {
   splitLines,
   carryStepMarks,
   stepHashesOf,
+  stepsWalks,
   type CodeLocation,
   type Lang,
   type ReviewDefinition,
@@ -377,7 +378,8 @@ export class ReviewService {
       this.opened.set(recordKey, opened);
 
       const referenceProblems: { stepId: string; refId: string; problem: string }[] = [];
-      for (const walk of definition.walks) {
+      // The points' own tours are checked like walks: a tour points at code too.
+      for (const walk of stepsWalks(definition)) {
         for (const step of walk.steps) {
           for (const ref of step.refs) {
             const content = await this.readFile(ref.side, ref.path);
@@ -629,8 +631,9 @@ export class ReviewService {
     let relevantNotes: typeof notes = [];
 
     if (subjectRaw?.['kind'] === 'point') {
-      const walkIndex = definition.walks.findIndex((walk) => walk.id === subjectRaw['walkId']);
-      const walk = definition.walks[walkIndex];
+      const walks = stepsWalks(definition);
+      const walkIndex = walks.findIndex((walk) => walk.id === subjectRaw['walkId']);
+      const walk = walks[walkIndex];
       if (walk === undefined) {
         return { kind: 'refused', error: `This review has no walk "${String(subjectRaw['walkId'])}".` };
       }
@@ -643,8 +646,16 @@ export class ReviewService {
       if (place === undefined || typeof placeIndex !== 'number') {
         return { kind: 'refused', error: `Step "${step.id}" has no place ${String(placeIndex)}.` };
       }
-      subject = { kind: 'point', walkId: walk.id, stepId: step.id, placeIndex };
+      // Asked from a point worth checking: its reasoning and places go along (30 October 2026).
+      const check = typeof subjectRaw['checkId'] === 'string' ? (definition.checks.find((entry) => entry.id === subjectRaw['checkId']) ?? null) : null;
+      if (typeof subjectRaw['checkId'] === 'string' && check === null) {
+        return { kind: 'refused', error: `This review has no point to check "${subjectRaw['checkId']}".` };
+      }
+      subject = { kind: 'point', walkId: walk.id, stepId: step.id, placeIndex, ...(check === null ? {} : { checkId: check.id }) };
       ranges.push({ role: 'focus', location: place.focus });
+      for (const checkPlace of check?.places ?? []) {
+        ranges.push({ role: 'context', location: checkPlace });
+      }
       if (place.unit !== null) {
         ranges.push({ role: 'unit', location: place.unit.ref });
         if (place.unit.counterpart !== null) {
@@ -677,6 +688,7 @@ export class ReviewService {
           const analysis = this.options.stepAnalysis?.(open.definitionPath, step.id) ?? [];
           return analysis.length === 0 ? {} : { analysis };
         })(),
+        ...(check === null ? {} : { check: { id: check.id, kind: check.kind, title: check.title[language], reasoning: check.reasoning[language] } }),
       };
       relevantNotes = notes.filter((note) => note.stepId === step.id || near(note, place.focus));
     } else if (subjectRaw?.['kind'] === 'away') {

@@ -143,9 +143,10 @@ export interface WalkStep {
  * The form of a walk (Niclas's trial feedback, 29 October 2026). A `walk` follows an
  * execution path from a concrete entry point; a `reading` takes one coherent change of
  * text — documentation, prose — in its context, where following execution means nothing.
- * A definition without the field has walks only.
+ * A definition without the field has walks only. A `check` is never in `walks`: it is the
+ * own tour of a point worth checking that no walk step fits ({@link CheckPoint.tour}).
  */
-export type WalkKind = 'walk' | 'reading';
+export type WalkKind = 'walk' | 'reading' | 'check';
 
 export interface Walk {
   readonly id: string;
@@ -155,6 +156,35 @@ export interface Walk {
   readonly purpose: LocalText;
   readonly question: LocalText;
   readonly steps: readonly WalkStep[];
+}
+
+/**
+ * What a point worth checking is (Niclas's decision of 30 October 2026): a question to look
+ * into, an uncertainty the preparation could not settle, or a finding the code shows. Opening
+ * or discussing one decides nothing about it.
+ */
+export type CheckKind = 'question' | 'uncertainty' | 'finding';
+
+export const CHECK_KINDS: readonly CheckKind[] = ['question', 'uncertainty', 'finding'];
+
+/**
+ * A point worth checking, as an entry into the code: a short title, at most one sentence
+ * more, and the reasoning with its places, shown when it is opened. It goes to the walk step
+ * it belongs to when the preparation named one that exists, else to its own tour.
+ */
+export interface CheckPoint {
+  readonly id: string;
+  readonly kind: CheckKind;
+  readonly title: LocalText;
+  readonly detail: LocalText;
+  /** Markdown: why it is worth checking, shown at the code. */
+  readonly reasoning: LocalText;
+  /** The step it belongs to, when one fits: an existing step id of `walks`. */
+  readonly stepId: string | null;
+  /** Its own tour through its places, when no step fits. Never counted as walk coverage. */
+  readonly tour: Walk | null;
+  /** Where in the code it is, as context references. */
+  readonly places: readonly CodeReference[];
 }
 
 export interface ReviewDefinition {
@@ -180,6 +210,16 @@ export interface ReviewDefinition {
   /** Languages every text is written in. A version 1 file has none: its text is shown as written. */
   readonly languages: readonly Lang[];
   readonly walks: readonly Walk[];
+  /**
+   * Points worth checking with their links into the code (30 October 2026). Empty in a
+   * definition written before: its `attention` text is shown as it is, with no links made up.
+   */
+  readonly checks: readonly CheckPoint[];
+}
+
+/** The walks, then the points' own tours: every step a position can name. */
+export function stepsWalks(definition: ReviewDefinition): readonly Walk[] {
+  return [...definition.walks, ...definition.checks.flatMap((check) => (check.tour === null ? [] : [check.tour]))];
 }
 
 export interface DefinitionProblem {
@@ -405,7 +445,7 @@ export function parseReviewDefinition(raw: unknown): {
       }
       const kind = walkRaw['kind'];
       if (kind !== undefined && kind !== 'walk' && kind !== 'reading') {
-        problems.push({ where, problem: '"kind" must be "walk" or "reading" when present.' });
+        problems.push({ where, problem: '"kind" must be "walk" or "reading" when present (a check tour belongs to its check).' });
       }
       walks.push({
         id,
@@ -414,6 +454,83 @@ export function parseReviewDefinition(raw: unknown): {
         purpose: text(walkRaw, 'purpose', where, false),
         question: text(walkRaw, 'question', where),
         steps,
+      });
+    });
+  }
+  // Points worth checking: their step must exist, their own tour is read like a walk.
+  const stepIds = new Set(walks.flatMap((walk) => walk.steps.map((step) => step.id)));
+  const checks: CheckPoint[] = [];
+  const checksRaw = raw['checks'];
+  if (checksRaw !== undefined && !Array.isArray(checksRaw)) {
+    problems.push({ where: 'file', problem: '"checks" must be an array when present.' });
+  } else if (Array.isArray(checksRaw) && v2) {
+    checksRaw.forEach((checkRaw: unknown, checkIndex) => {
+      const where = `checks[${String(checkIndex)}]`;
+      if (!isRecord(checkRaw)) {
+        problems.push({ where, problem: 'A check must be an object.' });
+        return;
+      }
+      const id = str(checkRaw, 'id', where, problems);
+      unique(id, where);
+      const kind = checkRaw['kind'];
+      if (!CHECK_KINDS.includes(kind as CheckKind)) {
+        problems.push({ where, problem: `"kind" must be one of ${CHECK_KINDS.join(', ')}.` });
+      }
+      const stepRaw = checkRaw['stepId'];
+      let stepId: string | null = null;
+      if (typeof stepRaw === 'string' && stepIds.has(stepRaw)) {
+        stepId = stepRaw;
+      } else if (stepRaw !== undefined && stepRaw !== null) {
+        problems.push({ where, problem: `"stepId" ${JSON.stringify(stepRaw)} is not a step of this review.` });
+      }
+      const places: CodeReference[] = [];
+      const placesRaw = checkRaw['places'];
+      if (Array.isArray(placesRaw)) {
+        placesRaw.forEach((entry: unknown, placeIndex) => {
+          const ref = parseReference(entry, `${id}.place${String(placeIndex + 1)}`, `${where}.places[${String(placeIndex)}]`, problems, 'context', true);
+          if (ref !== null) {
+            places.push({ ...ref, role: 'context' });
+          }
+        });
+      }
+      let tour: Walk | null = null;
+      const tourRaw = checkRaw['tour'];
+      if (isRecord(tourRaw) && Array.isArray(tourRaw['steps'])) {
+        const tourSteps: WalkStep[] = [];
+        tourRaw['steps'].forEach((stepEntry: unknown, tourIndex) => {
+          const stepWhere = `${where}.tour.steps[${String(tourIndex)}]`;
+          if (!isRecord(stepEntry)) {
+            problems.push({ where: stepWhere, problem: 'A step must be an object.' });
+            return;
+          }
+          const tourStepId = str(stepEntry, 'id', stepWhere, problems);
+          unique(tourStepId, stepWhere);
+          const step = parseStepV2(stepEntry, tourStepId, stepWhere, problems);
+          if (step !== null) {
+            // A tour shows where a point is; it never covers a change.
+            const asContext = (ref: CodeReference): CodeReference => ({ ...ref, role: 'context' });
+            tourSteps.push({
+              ...step,
+              places: step.places.map((place) => ({ ...place, focus: asContext(place.focus) })),
+              refs: step.refs.map(asContext),
+            });
+          }
+        });
+        if (tourSteps.length > 0) {
+          tour = { id, kind: 'check', title: text(checkRaw, 'title', where), purpose: { sv: '', en: '' }, question: text(checkRaw, 'title', where), steps: tourSteps };
+        }
+      } else if (tourRaw !== undefined) {
+        problems.push({ where, problem: '"tour" must be an object with steps when present.' });
+      }
+      checks.push({
+        id,
+        kind: CHECK_KINDS.includes(kind as CheckKind) ? (kind as CheckKind) : 'question',
+        title: text(checkRaw, 'title', where),
+        detail: text(checkRaw, 'detail', where, false),
+        reasoning: text(checkRaw, 'reasoning', where, false),
+        stepId,
+        tour,
+        places,
       });
     });
   }
@@ -431,6 +548,7 @@ export function parseReviewDefinition(raw: unknown): {
       attention,
       languages: v2 ? LANGS : [],
       walks,
+      checks,
     },
     problems,
   };

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, JSX, ReactNode } from 'react';
 
+import { DiscussionAnswer } from './DiscussionAnswer';
 import { Markdown } from './Markdown';
 import { ReviewDiscussion } from './ReviewDiscussion';
 import { AgentPicker } from './AgentPicker';
@@ -9,6 +10,9 @@ import { Inline, LineGutter, TokensView, asLocation, capitalise, fileName, lineD
 import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
 import {
+  stepsWalks,
+  type CheckKind,
+  type CheckPoint,
   DEFAULT_PREFERENCES,
   EXPLANATION_WIDTH,
   NAVIGATION_WIDTH,
@@ -160,7 +164,7 @@ function findStep(bundle: ReviewBundle, stepId: string | null): { walk: Walk; st
   if (stepId === null) {
     return null;
   }
-  for (const walk of bundle.definition.walks) {
+  for (const walk of stepsWalks(bundle.definition)) {
     const index = walk.steps.findIndex((step) => step.id === stepId);
     const step = walk.steps[index];
     if (step !== undefined) {
@@ -528,6 +532,13 @@ function OpenReview({
    */
   const [discussionMessages, setDiscussionMessages] = useState<readonly DiscussionMessage[]>([]);
   const [deepenError, setDeepenError] = useState<string | null>(null);
+  /*
+   * A point worth checking that is open (30 October 2026), and the position it was opened
+   * from, to go back to. Opening one moves to its step or its own tour; it marks, approves
+   * and resolves nothing.
+   */
+  const [openCheckId, setOpenCheckId] = useState<string | null>(null);
+  const [checkReturn, setCheckReturn] = useState<{ readonly stepId: string | null; readonly refIndex: number; readonly away: CodeLocation | null } | null>(null);
   const [delegatingWalk, setDelegatingWalk] = useState(false);
   const [liveWidth, setLiveWidth] = useState(explanationWidth);
   useEffect(() => {
@@ -715,6 +726,10 @@ function OpenReview({
         goToStep(target.stepId, target.placeIndex);
         return;
       }
+      // A point's own tour is not one of the walks: its ends are its own.
+      if (current.walk.kind === 'check') {
+        return;
+      }
       const walks = bundle.definition.walks;
       const walkIndex = walks.indexOf(current.walk);
       const neighbour = walks[walkIndex + delta];
@@ -843,22 +858,67 @@ function OpenReview({
 
   // What a question asked now would be about: the place on screen, a location away
   // from the walk, or the review as a whole; and the lines selected, if any.
+  const openCheck = openCheckId === null ? null : (bundle.definition.checks.find((check) => check.id === openCheckId) ?? null);
   const discussionRequest: DiscussionRequest = useMemo(
     () => ({
       subject:
         away !== null
           ? { kind: 'away', location: away }
           : current !== null && place !== null
-            ? { kind: 'point', walkId: current.walk.id, stepId: current.step.id, placeIndex }
+            ? { kind: 'point', walkId: current.walk.id, stepId: current.step.id, placeIndex, ...(openCheck === null ? {} : { checkId: openCheck.id }) }
             : { kind: 'review' },
       selection,
       language: lang,
     }),
-    [away, current?.walk.id, current?.step.id, place, placeIndex, selection, lang],
+    [away, current?.walk.id, current?.step.id, place, placeIndex, selection, lang, openCheck],
   );
 
+  // A point stays open while its step or tour is shown; moving elsewhere closes it.
+  useEffect(() => {
+    if (openCheck === null) {
+      return;
+    }
+    const own = openCheck.stepId ?? openCheck.tour?.steps[0]?.id ?? null;
+    const inTour = openCheck.tour?.steps.some((step) => step.id === current?.step.id) === true;
+    if (own !== null && away === null && current?.step.id !== own && !inTour) {
+      setOpenCheckId(null);
+    }
+  }, [openCheck, current?.step.id, away]);
+
+  const openPoint = useCallback(
+    (check: CheckPoint) => {
+      const here = latest.current.position;
+      // Where it was opened from, unless that is already a point being looked at.
+      setCheckReturn((before) => (openCheckId !== null && before !== null ? before : { stepId: here.stepId, refIndex: here.refIndex, away: here.away }));
+      setOpenCheckId(check.id);
+      setRightTab('step');
+      const target = check.stepId ?? check.tour?.steps[0]?.id ?? null;
+      if (target !== null) {
+        goToStep(target);
+        setNavRequest((count) => count + 1);
+      }
+    },
+    [goToStep, openCheckId],
+  );
+
+  const closePoint = useCallback(() => {
+    const back = checkReturn;
+    setOpenCheckId(null);
+    setCheckReturn(null);
+    if (back === null) {
+      return;
+    }
+    if (back.away !== null) {
+      goAway(back.away);
+    } else if (back.stepId !== null) {
+      goToStep(back.stepId, back.refIndex);
+      setNavRequest((count) => count + 1);
+    }
+  }, [checkReturn, goAway, goToStep]);
+
+  /** A deepening of the step, or (`fromPoint`) of the open point worth checking at it. */
   const deepen = useCallback(
-    async (request: DeepenRequest): Promise<void> => {
+    async (request: DeepenRequest, fromPoint = false): Promise<void> => {
       const discussion = window.dspatchReviewDiscussion;
       if (discussion === undefined || current === null) {
         return;
@@ -866,9 +926,13 @@ function OpenReview({
       setDeepenError(null);
       // The review's own save first, as the discussion does before any question.
       await flush();
+      const subject = discussionRequest.subject;
+      // The step's own actions are about the step, even while a point is open above it.
+      const asked =
+        !fromPoint && subject.kind === 'point' ? { kind: 'point' as const, walkId: subject.walkId, stepId: subject.stepId, placeIndex: subject.placeIndex } : subject;
       const outcome = await discussion.send({
-        question: deepenQuestion(request, lang),
-        subject: discussionRequest.subject,
+        question: deepenQuestion(request, lang, fromPoint),
+        subject: asked,
         selection: discussionRequest.selection,
         language: lang,
         deepen: request,
@@ -957,12 +1021,7 @@ function OpenReview({
               <div className="rv-walks-tab">
                 {(pick(bundle.definition.overview, lang) !== '' || pick(bundle.definition.overviewSummary, lang) !== '') && (
                   <Collapsible title={words.overviewTitle} defaultOpen={state.shownSteps[bundle.definition.walks[0]?.steps[0]?.id ?? ''] === undefined} ev="walk-about">
-                    <Overview
-                      summary={pick(bundle.definition.overviewSummary, lang)}
-                      full={pick(bundle.definition.overview, lang)}
-                      attention={pick(bundle.definition.attention, lang)}
-                      words={words}
-                    />
+                    <Overview summary={pick(bundle.definition.overviewSummary, lang)} full={pick(bundle.definition.overview, lang)} words={words} />
                   </Collapsible>
                 )}
                 <h2 className="rv-walks-heading" data-ev="walks-heading">
@@ -978,6 +1037,14 @@ function OpenReview({
                     setNavRequest((count) => count + 1);
                   }}
                   onToggle={toggleWalk}
+                />
+                <WorthChecking
+                  checks={bundle.definition.checks}
+                  attention={pick(bundle.definition.attention, lang)}
+                  open={openCheck?.id ?? null}
+                  words={words}
+                  lang={lang}
+                  onOpen={openPoint}
                 />
                 <Collapsible title={words.tree.title} defaultOpen={false} ev="walk-files">
                 <FileTree
@@ -1253,20 +1320,40 @@ function OpenReview({
                   )}
                 </div>
               )}
+              {openCheck !== null && (
+                <CheckPanel
+                  check={openCheck}
+                  inTour={current?.walk.kind === 'check' && current.walk.id === openCheck.id}
+                  exchanges={pointExchanges(discussionMessages, openCheck.id)}
+                  error={deepenError}
+                  backLabel={checkReturn === null ? null : checkReturn.away !== null ? words.backToCode : checkReturn.stepId === null ? null : words.backTo(checkReturn.stepId)}
+                  lang={lang}
+                  onBack={closePoint}
+                  onShow={goAway}
+                  onDeepen={(request) => void deepen(request, true)}
+                  onAsk={async (question) => {
+                    const discussion = window.dspatchReviewDiscussion;
+                    if (discussion === undefined) {
+                      return 'The discussion is not available in this window.';
+                    }
+                    await flush();
+                    const outcome = await discussion.send({ question, subject: discussionRequest.subject, selection: discussionRequest.selection, language: lang });
+                    return outcome.kind === 'sent' ? null : outcome.error;
+                  }}
+                />
+              )}
               {current !== null && away === null && place !== null && (
                 <StepPanel
                   codeQuestion={
                     pair === null || pairBridge === undefined
                       ? undefined
-                      : (selectedText) => (
+                      : () => (
                           <StepCodeQuestion
                             pairKey={pair.key}
                             bridge={pairBridge}
                             jobs={pair.record.jobs.filter(
                               (job) => job.kind === 'explain' && job.question?.definitionPath === bundle.definitionPath && job.question.stepId === current.step.id,
                             )}
-                            step={{ definitionPath: bundle.definitionPath, walkId: current.walk.id, stepId: current.step.id }}
-                            selectedText={selectedText}
                             onShow={(range) => goAway({ path: range.path, side: range.side, start: range.start, end: range.end })}
                           />
                         )
@@ -1342,35 +1429,204 @@ function OpenReview({
  * trial a generated walk's summary and full text were the same text, so pressing it
  * changed nothing (the preparation wrote one overview into both fields).
  */
-function Overview({
-  summary,
-  full,
-  attention,
-  words,
-}: {
-  readonly summary: string;
-  readonly full: string;
-  readonly attention: string;
-  readonly words: ReviewWords;
-}): JSX.Element {
+function Overview({ summary, full, words }: { readonly summary: string; readonly full: string; readonly words: ReviewWords }): JSX.Element {
   const [more, setMore] = useState(false);
   const first = summary === '' ? full : summary;
   const extra = summary !== '' && full.trim() !== '' && full.trim() !== summary.trim();
   return (
     <div className="rv-explanation rv-overview" data-ev="walk-overview">
       <Markdown text={more && extra ? full : first} />
-      {attention.trim() !== '' && (
-        <div className="rv-attention" data-ev="walk-attention">
-          <div className="rv-attention-title">{words.attentionTitle}</div>
-          <Markdown text={attention} />
-        </div>
-      )}
       {extra && (
         <button type="button" className="rv-link rv-more-link" data-ev="walk-overview-more" aria-expanded={more} onClick={() => setMore(!more)}>
           {more ? words.showLess : words.showMore}
         </button>
       )}
     </div>
+  );
+}
+
+const CHECK_WORD: Record<CheckKind, { readonly sv: string; readonly en: string }> = {
+  question: { sv: 'Fråga', en: 'Question' },
+  uncertainty: { sv: 'Osäkert', en: 'Uncertain' },
+  finding: { sv: 'Fynd', en: 'Finding' },
+};
+
+/**
+ * What is worth checking, after the walks (30 October 2026): a short title per point and at
+ * most a sentence more. Opening one shows its reasoning at the code. A review prepared before
+ * has only its text, shown as written: no links are made up for it.
+ */
+function WorthChecking({
+  checks,
+  attention,
+  open,
+  words,
+  lang,
+  onOpen,
+}: {
+  readonly checks: readonly CheckPoint[];
+  readonly attention: string;
+  readonly open: string | null;
+  readonly words: ReviewWords;
+  readonly lang: Lang;
+  readonly onOpen: (check: CheckPoint) => void;
+}): JSX.Element | null {
+  if (checks.length === 0 && attention.trim() === '') {
+    return null;
+  }
+  return (
+    <section className="rv-checks" data-ev="walk-attention">
+      <h2 className="rv-walks-heading">{words.attentionTitle}</h2>
+      {checks.length === 0 ? (
+        <div className="rv-explanation">
+          <Markdown text={attention} />
+        </div>
+      ) : (
+        <ul className="rv-check-list">
+          {checks.map((check) => (
+            <li key={check.id}>
+              <button
+                type="button"
+                className={check.id === open ? 'rv-check rv-check-on' : 'rv-check'}
+                data-ev={`check-${check.id}`}
+                aria-current={check.id === open ? 'true' : undefined}
+                onClick={() => onOpen(check)}
+              >
+                <span className="rv-check-head">
+                  <span className={`rv-check-kind rv-check-kind-${check.kind}`}>{CHECK_WORD[check.kind][lang]}</span>
+                  <span className="rv-check-title">
+                    <Inline text={pick(check.title, lang)} />
+                  </span>
+                </span>
+                {pick(check.detail, lang) !== '' && (
+                  <span className="rv-check-detail">
+                    <Inline text={pick(check.detail, lang)} />
+                  </span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * An open point worth checking, above the step it goes to: why it is worth checking, its
+ * places as links, and the way back. Tell me more, Explain more simply and the person's own
+ * questions are asked with the point, its code and what was answered before. None of it
+ * decides anything: lines are marked, and findings resolved, only where that is done.
+ */
+function CheckPanel({
+  check,
+  inTour,
+  exchanges,
+  error,
+  backLabel,
+  lang,
+  onBack,
+  onShow,
+  onDeepen,
+  onAsk,
+}: {
+  readonly check: CheckPoint;
+  /** Shown on its own tour, whose step already holds the reasoning. */
+  readonly inTour: boolean;
+  readonly exchanges: readonly Deepening[];
+  readonly error: string | null;
+  readonly backLabel: string | null;
+  readonly lang: Lang;
+  readonly onBack: () => void;
+  readonly onShow: (location: CodeLocation) => void;
+  readonly onDeepen: (request: DeepenRequest) => void;
+  readonly onAsk: (question: string) => Promise<string | null>;
+}): JSX.Element {
+  const [text, setText] = useState('');
+  const [problem, setProblem] = useState<string | null>(null);
+  const waiting = exchanges.some((entry) => entry.question.status === 'sending' || entry.answer?.status === 'streaming');
+  return (
+    <section className="rv-check-panel" data-ev="check-panel" data-check={check.id}>
+      <div className="rv-check-panel-top">
+        <span className={`rv-check-kind rv-check-kind-${check.kind}`}>{CHECK_WORD[check.kind][lang]}</span>
+        {backLabel !== null && (
+          <button type="button" className="rv-link" data-ev="check-back" onClick={onBack}>
+            ← {backLabel}
+          </button>
+        )}
+      </div>
+      <h2 className="rv-check-panel-title">
+        <Inline text={pick(check.title, lang)} />
+      </h2>
+      {!inTour && pick(check.reasoning, lang) !== '' && (
+        <div className="rv-explanation" data-ev="check-reasoning">
+          <Markdown text={pick(check.reasoning, lang)} />
+        </div>
+      )}
+      {check.places.length > 0 && (
+        <div className="rv-answer-refs" data-ev="check-places">
+          <span className="rv-sub">{lang === 'sv' ? 'Koden det gäller:' : 'The code it is about:'}</span>
+          <ul>
+            {check.places.map((ref) => (
+              <li key={ref.id}>
+                <button type="button" className="rv-pair-link" data-ev="check-place" onClick={() => onShow(asLocation(ref))}>
+                  {ref.note === undefined ? `${ref.path}:${rangeText(ref)}` : pick(ref.note, lang)}
+                </button>{' '}
+                <span className="rv-sub">
+                  {ref.path}:{rangeText(ref)} ({ref.side === 'base' ? 'From' : 'To'})
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="rv-deepen-actions">
+        <button type="button" data-ev="check-tell-more" disabled={waiting} onClick={() => onDeepen({ action: 'more' })}>
+          Tell me more
+        </button>
+        <button type="button" data-ev="check-explain-simpler" disabled={waiting} onClick={() => onDeepen({ action: 'simpler' })}>
+          Explain more simply
+        </button>
+      </div>
+      {exchanges.map((entry, index) => {
+        const status = entry.answer?.status ?? entry.question.status;
+        return (
+          <details key={entry.question.id} className="rv-deepening" open={index === exchanges.length - 1} data-ev="check-exchange" data-state={status}>
+            <summary>
+              {entry.question.deepen === undefined ? `“${entry.question.text.slice(0, 70)}”` : DEEPEN_WORD[entry.question.deepen.action]}
+              {(status === 'sending' || status === 'streaming') && <span className="rv-sub"> · answering…</span>}
+              {(status === 'failed' || status === 'unknown' || status === 'cancelled') && <span className="rv-sub"> · {status}</span>}
+            </summary>
+            {entry.answer !== null && entry.answer.text !== '' ? <DiscussionAnswer answer={entry.answer} onShow={onShow} /> : <p className="rv-sub">…</p>}
+          </details>
+        );
+      })}
+      {(error ?? problem) !== null && <p className="rv-error">{error ?? problem}</p>}
+      <div className="rv-check-ask">
+        <textarea
+          data-ev="check-question-text"
+          rows={2}
+          value={text}
+          placeholder={lang === 'sv' ? 'Fråga om den här punkten…' : 'Ask about this point…'}
+          onChange={(event) => setText(event.target.value)}
+        />
+        <button
+          type="button"
+          data-ev="check-ask"
+          disabled={waiting || text.trim() === ''}
+          onClick={() => {
+            void onAsk(text.trim()).then((failure) => {
+              setProblem(failure);
+              if (failure === null) {
+                setText('');
+              }
+            });
+          }}
+        >
+          {lang === 'sv' ? 'Fråga' : 'Ask'}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -1881,7 +2137,21 @@ function Browse({
 // --- Right column ---------------------------------------------------------------------
 
 /** The question a deepening action asks, in the review's language. */
-function deepenQuestion(request: DeepenRequest, lang: Lang): string {
+function deepenQuestion(request: DeepenRequest, lang: Lang, check = false): string {
+  if (check) {
+    if (lang === 'sv') {
+      return request.action === 'more'
+        ? 'Berätta mer om den här punkten att granska: vad koden faktiskt gör här, och vad som avgör om det är ett problem.'
+        : request.action === 'simpler'
+          ? 'Förklara den här punkten enklare: mer bakgrund och ett konkret exempel. Behåll klass- och metodnamnen.'
+          : `Förklara detta i sammanhanget av den här punkten: "${request.text ?? ''}"`;
+    }
+    return request.action === 'more'
+      ? 'Tell me more about this point worth checking: what the code actually does here, and what decides whether it is a problem.'
+      : request.action === 'simpler'
+        ? 'Explain this point more simply: more background and a concrete example. Keep the class and method names.'
+        : `Explain this, in the context of this point: "${request.text ?? ''}"`;
+  }
   if (lang === 'sv') {
     return request.action === 'more'
       ? 'Berätta mer om det här steget: mekanismen, hur koden hänger ihop och de detaljer som spelar roll.'
@@ -1906,7 +2176,17 @@ function deepeningsFor(messages: readonly DiscussionMessage[], stepId: string): 
   return messages
     .filter((message) => {
       const subject = message.envelope?.subject;
-      return message.role === 'question' && message.deepen !== undefined && subject?.kind === 'point' && subject.stepId === stepId;
+      return message.role === 'question' && message.deepen !== undefined && subject?.kind === 'point' && subject.stepId === stepId && subject.checkId === undefined;
+    })
+    .map((question) => ({ question, answer: messages.find((message) => message.role === 'answer' && message.questionId === question.id) ?? null }));
+}
+
+/** Everything asked from a point worth checking, deepenings and the person's own questions, with answers. */
+function pointExchanges(messages: readonly DiscussionMessage[], checkId: string): readonly Deepening[] {
+  return messages
+    .filter((message) => {
+      const subject = message.envelope?.subject;
+      return message.role === 'question' && subject?.kind === 'point' && subject.checkId === checkId;
     })
     .map((question) => ({ question, answer: messages.find((message) => message.role === 'answer' && message.questionId === question.id) ?? null }));
 }
@@ -1919,12 +2199,15 @@ function StepDeepening({
   error,
   onDeepen,
   onContinue,
+  onShow,
   selectedText,
 }: {
   readonly deepenings: readonly Deepening[];
   readonly error: string | null;
   readonly onDeepen: (request: DeepenRequest) => void;
   readonly onContinue: () => void;
+  /** Opens a reference of an answer at its revision. */
+  readonly onShow: (location: CodeLocation) => void;
   readonly selectedText: string;
 }): JSX.Element {
   const waiting = deepenings.some((entry) => entry.question.status === 'sending' || entry.answer?.status === 'streaming');
@@ -1959,7 +2242,7 @@ function StepDeepening({
               {(status === 'sending' || status === 'streaming') && <span className="rv-sub"> · answering…</span>}
               {(status === 'failed' || status === 'unknown' || status === 'cancelled') && <span className="rv-sub"> · {status}</span>}
             </summary>
-            {entry.answer !== null && entry.answer.text !== '' ? <Markdown text={entry.answer.text} /> : <p className="rv-sub">…</p>}
+            {entry.answer !== null && entry.answer.text !== '' ? <DiscussionAnswer answer={entry.answer} onShow={onShow} /> : <p className="rv-sub">…</p>}
             {last && (
               <button type="button" className="rv-quiet" data-ev="step-continue-discussion" onClick={onContinue}>
                 Continue in the discussion
@@ -1982,21 +2265,17 @@ function StepCodeQuestion({
   pairKey,
   bridge,
   jobs,
-  step,
-  selectedText,
   onShow,
 }: {
   readonly pairKey: string;
   readonly bridge: ReviewPairBridge;
   readonly jobs: readonly AgentJob[];
-  readonly step: { readonly definitionPath: string; readonly walkId: string; readonly stepId: string };
-  readonly selectedText: string;
   readonly onShow: (range: LineRange) => void;
-}): JSX.Element {
-  const [asking, setAsking] = useState(false);
-  const [text, setText] = useState('');
-  const [problem, setProblem] = useState<string | null>(null);
+}): JSX.Element | null {
   const running = jobs.find(isRunning);
+  if (jobs.length === 0) {
+    return null;
+  }
   const finished = jobs.filter((job) => !isRunning(job));
   const where = (range: LineRange): string =>
     `${range.path} ${range.start === range.end ? `line ${String(range.start)}` : `lines ${String(range.start)}–${String(range.end)}`} (${range.side === 'base' ? 'From' : 'To'})`;
@@ -2047,62 +2326,6 @@ function StepCodeQuestion({
         </details>
       ))}
       {running !== undefined && <JobLine job={running} onStop={() => void bridge.cancelJob(pairKey, running.id)} />}
-      {problem !== null && <p className="rv-error">{problem}</p>}
-      {asking ? (
-        <div className="rv-code-question-form">
-          <textarea
-            data-ev="step-question-text"
-            rows={3}
-            value={text}
-            placeholder="What should the agent find out in the code? For example: what calls this, or what it depends on."
-            onChange={(event) => setText(event.target.value)}
-          />
-          <AgentPicker
-            pairKey={pairKey}
-            action="Ask"
-            busy={running !== undefined}
-            testId="step-question-agent"
-            onCancel={() => {
-              setAsking(false);
-              setProblem(null);
-            }}
-            onStart={(choice) => {
-              if (text.trim() === '') {
-                setProblem('Write what the agent should find out first.');
-                return;
-              }
-              setProblem(null);
-              void bridge
-                .startJob(pairKey, { kind: 'explain', ...choice, question: { ...step, question: text.trim() } })
-                .catch((error: unknown) => ({ error: requestFailure(error) }))
-                .then((answer) => {
-                  if (isPairError(answer)) {
-                    setProblem(`The question could not be sent: ${answer.error}`);
-                  } else {
-                    setAsking(false);
-                    setText('');
-                  }
-                });
-            }}
-          />
-        </div>
-      ) : (
-        running === undefined && (
-          <button
-            type="button"
-            className="rv-quiet"
-            data-ev="step-question"
-            title="The agent reads the two revisions with read-only tools to answer."
-            onClick={() => {
-              setText(selectedText.trim() === '' ? '' : `“${selectedText.trim()}”: `);
-              setProblem(null);
-              setAsking(true);
-            }}
-          >
-            Look into the code…
-          </button>
-        )
-      )}
     </div>
   );
 }
@@ -2125,7 +2348,7 @@ function StepPanel({
   codeQuestion,
 }: {
   /** DSP-152: asking the agent to look into the code for this step, when the walk is over a revision pair. */
-  readonly codeQuestion?: (selectedText: string) => JSX.Element;
+  readonly codeQuestion?: () => JSX.Element;
   readonly deepenings: readonly Deepening[];
   readonly deepenError: string | null;
   readonly onDeepen: (request: DeepenRequest) => void;
@@ -2244,8 +2467,8 @@ function StepPanel({
         </>
       )}
 
-      <StepDeepening deepenings={deepenings} error={deepenError} onDeepen={onDeepen} onContinue={onContinue} selectedText={selectedText} />
-      {codeQuestion?.(selectedText)}
+      <StepDeepening deepenings={deepenings} error={deepenError} onDeepen={onDeepen} onContinue={onContinue} onShow={onOpenEvidence} selectedText={selectedText} />
+      {codeQuestion?.()}
 
       {step.evidence.length > 0 && (
         <div className="rv-evidence">

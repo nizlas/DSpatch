@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react';
 
-import { Markdown } from './Markdown';
+import { DiscussionAnswer } from './DiscussionAnswer';
 import { ModelSelect, type ModelApi } from './StartPage';
 import { firstSentence } from './plain-error';
 import type { DiscussionWords } from './review-i18n';
@@ -19,7 +19,7 @@ import {
   type ReviewDiscussionBridge,
   type ReviewDiscussionEvent,
 } from '../shared/review-discussion';
-import type { CodeLocation, Lang, ReviewBundle } from '../shared/review-model';
+import { stepsWalks, type CodeLocation, type Lang, type ReviewBundle } from '../shared/review-model';
 
 /*
  * The discussion about the code under review (DSP-127), in the review window's right
@@ -474,7 +474,7 @@ export function ReviewDiscussion({
       if (subject.kind !== 'point') {
         return;
       }
-      const step = bundle.definition.walks.find((walk) => walk.id === subject.walkId)?.steps.find((entry) => entry.id === subject.stepId);
+      const step = stepsWalks(bundle.definition).find((walk) => walk.id === subject.walkId)?.steps.find((entry) => entry.id === subject.stepId);
       if (step?.places[subject.placeIndex] !== undefined) {
         onGoToPoint(subject.stepId, subject.placeIndex);
         return;
@@ -513,6 +513,13 @@ export function ReviewDiscussion({
             questionId: message.questionId ?? null,
             sentPrompt: message.sentPrompt ?? null,
             envelopeSubject: message.envelope?.subject ?? null,
+            // 30 October 2026: whether it could read the code, and what it rests on, as checked.
+            codeAccess: message.codeAccess === true,
+            toolPolicy: message.toolPolicy ?? null,
+            references: (message.references ?? []).map((entry) => `${entry.range.side}:${entry.range.path}:${String(entry.range.start)}-${String(entry.range.end)}`),
+            insufficient: message.insufficient === true,
+            adjustments: message.adjustments ?? [],
+            reads: message.reads ?? [],
           })),
           status: now.status,
           composer: field()?.value ?? '',
@@ -625,7 +632,7 @@ export function ReviewDiscussion({
             </div>
             {answersOf(question.id).map((answer) => (
               <div key={answer.id} className="rv-discussion-answer" data-status={answer.status}>
-                {answer.text === '' ? <span className="rv-sub">…</span> : <Markdown text={answer.text} />}
+                <DiscussionAnswer answer={answer} onShow={onGoToLocation} />
                 {answer.status !== 'done' && answer.status !== 'streaming' && (
                   <div className="rv-discussion-meta">
                     {answer.status === 'cancelled' ? words.status.cancelled : answer.status === 'failed' ? words.status.failed : words.status.unknown}
