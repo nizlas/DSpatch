@@ -744,7 +744,7 @@ export async function runScriptedWorkflow(
 ): Promise<ScriptedRunReport> {
   // DSP-149: `model-list` chooses Claude itself and must never choose Cursor. DSP-152:
   // `review-agent-choice` starts from the kit's own choice of Claude, usable or not.
-  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow' && plan.scenario !== 'review-agent-choice' && plan.scenario !== 'walk-start' && plan.scenario !== 'analysis-access' && plan.scenario !== 'selection-explain') {
+  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow' && plan.scenario !== 'review-agent-choice' && plan.scenario !== 'walk-start' && plan.scenario !== 'analysis-access' && plan.scenario !== 'selection-explain' && plan.scenario !== 'diff-marks') {
     await nameScenarioAgent();
   }
   switch (plan.scenario) {
@@ -820,6 +820,8 @@ export async function runScriptedWorkflow(
       return runAnalysisAccessScenario(plan);
     case 'selection-explain':
       return runSelectionExplainScenario(plan);
+    case 'diff-marks':
+      return runDiffMarksScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -11599,7 +11601,8 @@ interface PairReading {
   readonly diffNote?: string;
   readonly walksNote?: string;
   readonly targetShown?: boolean;
-  readonly words?: readonly { side: string; text: string }[];
+  readonly words?: readonly { side: string; line?: number; text: string }[];
+  readonly wholeLines?: readonly string[];
   readonly signs?: string;
 }
 
@@ -11882,7 +11885,8 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     const renamed = await untilPair(diff.id, 'the pure rename', (reading) => (reading.pair?.diffNote ?? '') !== '');
     expect((renamed.pair?.diffNote ?? '').startsWith('Renamed without changes'), `a pure rename is not explained: ${String(renamed.pair?.diffNote)}`);
 
-    // Small changes inside long, wrapping lines: the changed words are marked, in both layouts.
+    // Small changes inside long, wrapping lines: the changed characters are marked, in both
+    // layouts, as Gerrit marks them (a common trailing "e" of line → range stays light).
     const afterIndex = (listed.pair?.files ?? []).findIndex((file) => file.path === 'src/after.ts');
     await inPairWindow(diff.id, '[data-ev="pair-files"]');
     await inPairWindow(diff.id, `[data-ev="pair-file-${String(afterIndex)}"]`);
@@ -11892,19 +11896,22 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       const marked = (words.pair?.words ?? []).map((word) => `${word.side}:${word.text}`).sort();
       record(`changed words, ${layout}`, { marked, signs: words.pair?.signs });
       expect(
-        JSON.stringify(marked) === JSON.stringify(['base:5', 'base:line', 'target:five', 'target:range']),
+        JSON.stringify(marked) === JSON.stringify(['base:5', 'base:lin', 'target:five', 'target:rang']),
         `the changed words are not marked in the ${layout} diff: ${JSON.stringify(marked)}`,
       );
       expect((words.pair?.signs ?? '').replace(/\s/g, '') === '−−++' || (words.pair?.signs ?? '').replace(/\s/g, '').split('').sort().join('') === '++−−', `the − and + column is wrong in the ${layout} diff: ${String(words.pair?.signs)}`);
       await capture(diff.id, `words-${layout}`);
     }
-    // keep.ts: the edited line has its changed characters; pure additions and the deletion none.
+    // keep.ts: the edited line has its changed characters; pure additions and the deletion
+    // have nothing to compare with and are strong throughout instead.
     const keepAgain = (listed.pair?.files ?? []).findIndex((file) => file.path === 'src/keep.ts');
     await inPairWindow(diff.id, '[data-ev="pair-files"]');
     await inPairWindow(diff.id, `[data-ev="pair-file-${String(keepAgain)}"]`);
     const keepWords = await untilPair(diff.id, 'keep.ts words', (reading) => (reading.pair?.words?.length ?? 0) > 0);
     const keepMarked = (keepWords.pair?.words ?? []).map((word) => `${word.side}:${word.text}`).sort();
-    expect(JSON.stringify(keepMarked) === JSON.stringify(['base:3', 'target:30']), `pure additions or deletions carry word marks: ${JSON.stringify(keepMarked)}`);
+    expect(JSON.stringify(keepMarked) === JSON.stringify(['target:0']), `3 → 30 is not marked as the added 0, or pure additions carry marks: ${JSON.stringify(keepMarked)}`);
+    const keepWhole = [...new Set(keepWords.pair?.wholeLines ?? [])].sort();
+    expect(JSON.stringify(keepWhole) === JSON.stringify(['base:10', 'target:8', 'target:9']), `the pure additions and the deletion are not strong throughout: ${JSON.stringify(keepWhole)}`);
     await capture(diff.id, 'keep-unified-marked');
     await inPairWindow(diff.id, '[data-ev="pair-layout-split"]');
     await untilPair(diff.id, 'keep.ts side by side', (reading) => reading.pair?.layout === 'split');
@@ -13396,6 +13403,192 @@ async function runSelectionExplainScenario(plan: ScriptedRunPlan): Promise<Scrip
     await capture(diffId, 'folded');
     const adapter = await reviewAdapterRecord();
     expect(adapter.built.every((provider) => provider === 'claude'), `an adapter was built for another agent: ${JSON.stringify(adapter.built)}`);
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+    const rows = await pairWindows().catch(() => []);
+    observations['atFailure'] = { windows: rows, readings: await Promise.all(rows.map((row) => readPairWindow(row.id).catch(() => null))) };
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/**
+ * The diff's change marks (DSP-150 follow-up, Gerrit v3.14.4 behaviour) in the real window,
+ * over `tests/support/marks-fixture.ts`. Each file is drawn side by side and unified; both
+ * layouts must mark the same characters and the same whole lines, and the marks must not
+ * move when the window's code column narrows. A selection over marked code is explained
+ * (SIMULATED provider) and a line is marked as reviewed, to show the marks with the
+ * selection, the explanation's highlight and the review strip.
+ */
+async function runDiffMarksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const observations: Record<string, unknown> = {
+    plan,
+    limits:
+      'The marks are computed by the product from the commits in an isolated repository; no Gerrit was run, and no ' +
+      'model was asked for them. The one explanation is the SIMULATED provider (presentation adapter).',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const MAIN = 0;
+  const check = async (request: PairWindowCheckRequest, what: string): Promise<unknown> => {
+    const answer = await window.dspatch.pairWindowCheck(request);
+    if (!answer.ok) {
+      throw new Error(`could not ${what}: ${JSON.stringify(answer.detail)}`);
+    }
+    await sleep(250);
+    return answer.detail;
+  };
+  const press = (id: number, selector: string): Promise<unknown> => check({ action: 'press', id, selector }, `press ${selector}`);
+  const capture = async (id: number, label: string): Promise<void> => {
+    await sleep(300);
+    await window.dspatch.pairWindowCheck({ action: 'capture', id, label });
+  };
+  type Diff = {
+    readonly words: readonly { readonly side: string; readonly line: number; readonly text: string }[];
+    readonly wholeLines: readonly string[];
+    readonly strips: readonly { readonly side: string; readonly line: number; readonly status: string }[];
+    readonly explanations: readonly { readonly state: string; readonly selection: unknown }[];
+    readonly highlighted: number;
+    readonly textSelection: string;
+    readonly explainOffered: boolean;
+    readonly explainPanel: { readonly open: boolean } | null;
+    readonly layout: string;
+  };
+  const diffOf = (reading: PairWindowReading | null): Diff => (reading?.pair ?? {}) as unknown as Diff;
+  // The marks of the file shown, independent of the order a layout draws them in.
+  const marksKey = (reading: PairWindowReading | null): string => {
+    const words = new Map<string, string[]>();
+    for (const word of diffOf(reading).words) {
+      const key = `${word.side}:${String(word.line)}`;
+      words.set(key, [...(words.get(key) ?? []), word.text]);
+    }
+    return JSON.stringify({
+      words: [...words.entries()].sort(([a], [b]) => a.localeCompare(b)),
+      whole: [...new Set(diffOf(reading).wholeLines)].sort(),
+    });
+  };
+  const wordsOn = (reading: PairWindowReading | null, side: string, line: number): string[] =>
+    diffOf(reading).words.filter((word) => word.side === side && word.line === line).map((word) => word.text);
+  const wholeOf = (reading: PairWindowReading | null): string => JSON.stringify([...new Set(diffOf(reading).wholeLines)].sort());
+  const stripsKey = (reading: PairWindowReading | null): string =>
+    JSON.stringify([...new Set(diffOf(reading).strips.map((strip) => `${strip.side}:${String(strip.line)}:${strip.status}`))].sort());
+  const cell = (side: 'base' | 'target', line: number): string => `.rv-pair-diff td[data-code-side="${side}"][data-code-line="${String(line)}"]`;
+
+  const openReview = async (): Promise<number> => {
+    await press(MAIN, '[data-ev="open-review"]');
+    const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+    const first = await untilPair(diffId, 'the repository list or the log', (reading) => reading.pair?.phase === 'repositories' || reading.pair?.phase === 'log' || reading.pair?.phase === 'review');
+    if (first.pair?.phase === 'repositories') {
+      await press(diffId, '[data-ev="pair-repo-0"]');
+    }
+    if (first.pair?.phase !== 'review') {
+      await untilPair(diffId, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
+      await press(diffId, '[data-ev="pair-commit-1"]');
+      await press(diffId, '[data-ev="pair-commit-0"]');
+      await press(diffId, '[data-ev="pair-open"]');
+    }
+    await untilPair(diffId, 'the diff review', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
+    return diffId;
+  };
+  const show = async (diffId: number, path: string, layout: 'split' | 'unified'): Promise<PairWindowReading> => {
+    const list = await readPairWindow(diffId);
+    const index = (list?.pair?.files ?? []).findIndex((file) => file.path === path);
+    if (index < 0) {
+      throw new Error(`${path} is not in the change`);
+    }
+    if ((list?.pair?.fileKey ?? null) !== null) {
+      // Back to the list of files, where each is offered by its place.
+      await press(diffId, '[data-ev="pair-files"]');
+      await untilPair(diffId, 'the list of files', (reading) => (reading.pair?.fileKey ?? null) === null);
+    }
+    await press(diffId, `[data-ev="pair-file-${String(index)}"]`);
+    await press(diffId, `[data-ev="pair-layout-${layout}"]`);
+    await sleep(400);
+    return untilPair(diffId, `${path} ${layout}`, (reading) => diffOf(reading).layout === layout && diffOf(reading).words.length + diffOf(reading).wholeLines.length > 0);
+  };
+  const shotName = (path: string, layout: string): string => `${path.replace(/[/.]/g, '-')}-${layout}`;
+
+  try {
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await waitFor('a project to be offered in the window', () => element('project-0-path') !== null, 60_000);
+    await press(MAIN, '[data-ev="open-project-0"]');
+    await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
+    const diffId = await openReview();
+
+    // 1. Each file in both layouts: the same marks from the same change.
+    const byFile: Record<string, PairWindowReading> = {};
+    for (const path of ['src/checkout.ts', 'src/datasets.py', 'docs/notes.md']) {
+      const split = await show(diffId, path, 'split');
+      await capture(diffId, shotName(path, 'split'));
+      const unified = await show(diffId, path, 'unified');
+      await capture(diffId, shotName(path, 'unified'));
+      record(path, { split: JSON.parse(marksKey(split)) as unknown, unified: JSON.parse(marksKey(unified)) as unknown });
+      expect(marksKey(split) === marksKey(unified), `${path}: the layouts mark different characters or lines`);
+      byFile[path] = split;
+    }
+    const checkout = byFile['src/checkout.ts'] ?? null;
+    const datasets = byFile['src/datasets.py'] ?? null;
+    const notes = byFile['docs/notes.md'] ?? null;
+    // A one-character change: that character, on one side.
+    expect(JSON.stringify(wordsOn(checkout, 'target', 1)) === '["0"]' && wordsOn(checkout, 'base', 1).length === 0, `3 → 30 is not marked as the added 0: ${JSON.stringify(wordsOn(checkout, 'target', 1))}`);
+    // Three removed lines replaced by one: compared as one block, what did not survive is strong.
+    expect(
+      wordsOn(checkout, 'base', 4).length > 0 && wordsOn(checkout, 'base', 5).length > 0 && wordsOn(checkout, 'base', 6).length > 0 && wordsOn(checkout, 'target', 4).length > 0,
+      'the three removed lines are not compared with the line that replaced them',
+    );
+    // A rewritten line is marked, not left to its line colour.
+    expect(wordsOn(checkout, 'target', 8).join('') === '`${value.toFixed(2)} in total`', `the rewritten line is not marked: ${JSON.stringify(wordsOn(checkout, 'target', 8))}`);
+    // Indentation only: the removed spaces are marked.
+    expect(JSON.stringify(wordsOn(checkout, 'base', 14)) === '["  "]', `the removed indentation is not marked: ${JSON.stringify(wordsOn(checkout, 'base', 14))}`);
+    // Nothing on the other side: strong throughout.
+    expect(wholeOf(checkout) === '["base:16","base:17","base:18"]', `the removed function is not strong throughout: ${wholeOf(checkout)}`);
+    const addedLines = [...Array.from({ length: 11 }, (_, index) => `target:${String(17 + index)}`), 'target:32'].sort();
+    expect(wholeOf(datasets) === JSON.stringify(addedLines), `the added lines are not strong throughout: ${wholeOf(datasets)}`);
+    expect(JSON.stringify(wordsOn(datasets, 'target', 3)) === '["Any, Dict, "]' && wordsOn(datasets, 'base', 1).length === 0, `the kept import is not marked as Gerrit marks it: ${JSON.stringify(wordsOn(datasets, 'target', 3))}`);
+    expect(wordsOn(notes, 'target', 3).some((word) => word.includes('chosen')) && wordsOn(notes, 'target', 3).includes('delegate'), `the words changed in the long line are not marked: ${JSON.stringify(wordsOn(notes, 'target', 3))}`);
+
+    // 2. Select marked code, explain it, and narrow the code column with the panel.
+    const wide = await show(diffId, 'src/checkout.ts', 'split');
+    const stripsBefore = stripsKey(wide);
+    const drag = (await check(
+      { action: 'drag', id: diffId, from: { selector: cell('target', 4), offset: 9 }, to: { selector: cell('target', 4), offset: 29 } },
+      'select text with the mouse',
+    )) as { selected?: string };
+    const offered = await untilPair(diffId, 'Explain this beside the selection', (entry) => diffOf(entry).explainOffered);
+    expect(drag.selected === 'sorted(load(amount))' && diffOf(offered).textSelection === 'sorted(load(amount))', `the mouse did not select sorted(load(amount)): "${drag.selected ?? ''}"`);
+    await capture(diffId, 'selected-over-marks');
+    await press(diffId, '[data-ev="explain-this"]');
+    const explained = await untilPair(diffId, 'the explanation', (entry) => diffOf(entry).explanations.some((job) => job.state === 'done') && diffOf(entry).highlighted > 0, 60_000);
+    record('explained', { explanations: diffOf(explained).explanations.length, highlighted: diffOf(explained).highlighted, selection: diffOf(explained).explanations[0]?.selection });
+    expect(marksKey(explained) === marksKey(wide), 'the marks changed when the panel narrowed the code column');
+    expect(stripsKey(explained) === stripsBefore, 'explaining changed a review mark');
+    await capture(diffId, 'explained-over-marks');
+    const notesNarrow = await show(diffId, 'docs/notes.md', 'split');
+    expect(marksKey(notesNarrow) === marksKey(notes), 'the long line is marked differently when it wraps in a narrower column');
+    await capture(diffId, 'notes-narrow');
+    await press(diffId, '[data-ev="explain-fold"]');
+    await untilPair(diffId, 'the panel folded', (entry) => diffOf(entry).explainPanel?.open === false);
+
+    // 3. A line selected and marked as reviewed: the strip beside the marks.
+    await show(diffId, 'src/checkout.ts', 'split');
+    await check({ action: 'press-key', id: diffId, selector: '.rv-pair-diff td.rv-pair-strip[data-side="target"][data-line="1"]', key: 'Enter' }, 'select line 1 for review');
+    await capture(diffId, 'line-selected');
+    await press(diffId, '[data-ev="pair-mark-manual"]');
+    const marked = await untilPair(diffId, 'the line marked as reviewed', (entry) => diffOf(entry).strips.some((strip) => strip.side === 'target' && strip.line === 1 && strip.status === 'manual'));
+    expect(marksKey(marked) === marksKey(wide), 'marking a line changed the change marks');
+    await capture(diffId, 'line-marked');
+    const unifiedMarked = await show(diffId, 'src/checkout.ts', 'unified');
+    expect(marksKey(unifiedMarked) === marksKey(wide), 'unified marks differ after a review mark');
+    await capture(diffId, 'line-marked-unified');
     return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));

@@ -2,11 +2,13 @@
  * Seed a kit for the `pair-review` scenario (DSP-150): a user-data folder whose only
  * project is a workspace with two Git repositories and a folder without Git.
  *
- *     node --import ./scripts/ts-resolve.mjs scripts/seed-pair-kit.mjs <kit-folder> [--agent claude] [--model <id>] [--history <record.json>] [--fixture analysis]
+ *     node --import ./scripts/ts-resolve.mjs scripts/seed-pair-kit.mjs <kit-folder> [--agent claude] [--model <id>] [--history <record.json>] [--fixture analysis|marks]
  *
  * `--fixture analysis` (DSP-152) makes the workspace the analysis fixture instead: one
  * repository whose change depends on an unchanged definition in another file, with a
  * working copy that differs from both commits (`tests/support/analysis-fixture.ts`).
+ * `--fixture marks` makes it one repository whose change holds the kinds of change the
+ * diff's marks must tell apart (`tests/support/marks-fixture.ts`).
  *
  * Writes `<kit>/userData`, `<kit>/workspace` and `<kit>/kit.json` (the walk definition
  * the scenario's file pick answers with). Nothing outside the kit folder is touched.
@@ -19,6 +21,7 @@ import process from 'node:process';
 import { pairKeyOf } from '../src/host/review-pairs';
 import { ProjectStore } from '../src/main/project-store';
 import { makeAnalysisFixture } from '../tests/support/analysis-fixture';
+import { makeMarksFixture } from '../tests/support/marks-fixture';
 import { makePairFixture } from '../tests/support/pair-fixture';
 
 const kitArgument = process.argv[2];
@@ -40,8 +43,8 @@ const MODEL = option('--model');
 // kit's own pair (the app repository's two commits), as the same review opened again.
 const HISTORY = option('--history');
 const FIXTURE = option('--fixture') ?? 'pair';
-if (FIXTURE !== 'pair' && FIXTURE !== 'analysis') {
-  console.error('--fixture is pair or analysis');
+if (FIXTURE !== 'pair' && FIXTURE !== 'analysis' && FIXTURE !== 'marks') {
+  console.error('--fixture is pair, analysis or marks');
   process.exit(2);
 }
 if (AGENT !== 'cursor' && AGENT !== 'claude') {
@@ -56,7 +59,8 @@ if (fs.existsSync(USERDATA)) {
 fs.mkdirSync(USERDATA, { recursive: true });
 const workspace = path.join(KIT, 'workspace');
 fs.mkdirSync(workspace, { recursive: true });
-const fixture = FIXTURE === 'analysis' ? makeAnalysisFixture(workspace) : makePairFixture(workspace);
+const fixture =
+  FIXTURE === 'analysis' ? makeAnalysisFixture(workspace) : FIXTURE === 'marks' ? makeMarksFixture(workspace) : makePairFixture(workspace);
 
 // The kit's person chose an agent (Cursor unless told otherwise); nothing in the
 // scenario reaches a provider, and the presentation adapter answers in its place.

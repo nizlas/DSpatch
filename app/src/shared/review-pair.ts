@@ -11,7 +11,7 @@
  * draw what these functions derive. Nothing here reads the working copy.
  */
 
-import { diffWordsWithSpace } from 'diff';
+import { diffChars } from 'diff';
 
 // --- Identity ------------------------------------------------------------------------
 
@@ -1337,49 +1337,308 @@ export interface ReviewPairBridge {
   onNavigate(listener: (location: DiffLocation) => void): () => void;
 }
 
-// --- Changes inside a line -------------------------------------------------------------
+// --- What changed inside the changed lines -------------------------------------------
+//
+// The behaviour of Gerrit's diff view, as of Gerrit v3.14.4 (commit 6d03864). Written here
+// from Gerrit's documented behaviour and its source, not copied from it:
+// `IntraLineLoader.compute` decides the ranges, `DiffInfoCreator` hands them to the
+// browser, and `gr-diff-processor` and `gr-diff-styles` draw them.
+//
+// - A block of removed lines followed by added lines (a hunk with both) is compared as
+//   one text, character by character, with the line breaks included. The block is not
+//   cut into line pairs first, so three removed lines replaced by one are compared with
+//   that one line as a whole, and whatever of the three did not survive is marked.
+// - Lines of such a block keep the light line colour, and the characters that changed
+//   get the strong one. A line can have no strong part at all: everything on it survived.
+// - A block with only removed or only added lines has nothing to compare with, and all of
+//   its text is strong.
+// - Nothing is dropped for having changed too much: a rewritten line is all strong.
+// - Whitespace counts like any other character, and the comparison works on the file's
+//   own lines. How a long line wraps in the window changes nothing.
 
-/** Character ranges `[start, end)` that changed inside a paired removed and added line. */
-export interface IntralineRanges {
-  readonly base: readonly (readonly [number, number])[];
-  readonly target: readonly (readonly [number, number])[];
+/** Character ranges `[start, end)` on one line, in the line's own characters. */
+export type LineRanges = readonly (readonly [number, number])[];
+
+/** How one changed line shows what changed on it. */
+export type ChangedLineMarks =
+  /** In a block compared with the other side: light, with these characters strong. */
+  | { readonly kind: 'ranges'; readonly ranges: LineRanges }
+  /** All of the line is strong: nothing on the other side, or too large to compare. */
+  | { readonly kind: 'whole' };
+
+/** The ranges of a compared block, per line of each side, in the block's line order. */
+export interface IntralineBlock {
+  readonly base: readonly LineRanges[];
+  readonly target: readonly LineRanges[];
 }
 
 /**
- * Which words changed between a removed line and the added line it is paired with.
- *
- * Only for a line that was edited, not replaced: when most of both lines changed, a word
- * mark would say nothing the line colour does not, so there is none. Pure additions and
- * deletions have no partner and are marked by their line alone.
+ * Where Gerrit gives up comparing a block (its five-second timeout), DSpatch stops at a
+ * size instead, so the same change always looks the same. Past either bound every line
+ * of the block is strong, as Gerrit draws a block without a comparison.
  */
-export function intralineRanges(before: string, after: string): IntralineRanges | null {
-  if (before === after) {
+export const INTRALINE_LIMITS = { characters: 20_000, edits: 2_000 } as const;
+
+/** One difference, in characters of the two block texts: `a` is From, `b` is To. */
+interface CharEdit {
+  readonly a0: number;
+  readonly a1: number;
+  readonly b0: number;
+  readonly b1: number;
+}
+
+/** The character edits that turn `a` into `b`, adjacent removals and additions joined. */
+function charEdits(a: string, b: string): CharEdit[] | null {
+  const parts = diffChars(a, b, { maxEditLength: INTRALINE_LIMITS.edits });
+  if (parts === undefined) {
     return null;
   }
-  const base: [number, number][] = [];
-  const target: [number, number][] = [];
-  let atBase = 0;
-  let atTarget = 0;
-  let changedBase = 0;
-  let changedTarget = 0;
-  for (const part of diffWordsWithSpace(before, after)) {
+  const edits: CharEdit[] = [];
+  let atA = 0;
+  let atB = 0;
+  let open: { a0: number; a1: number; b0: number; b1: number } | null = null;
+  for (const part of parts) {
     const length = part.value.length;
-    if (part.added) {
-      target.push([atTarget, atTarget + length]);
-      atTarget += length;
-      changedTarget += length;
-    } else if (part.removed) {
-      base.push([atBase, atBase + length]);
-      atBase += length;
-      changedBase += length;
+    if (!part.added && !part.removed) {
+      if (open !== null) {
+        edits.push(open);
+        open = null;
+      }
+      atA += length;
+      atB += length;
+      continue;
+    }
+    open ??= { a0: atA, a1: atA, b0: atB, b1: atB };
+    if (part.removed) {
+      atA += length;
+      open.a1 = atA;
     } else {
-      atBase += length;
-      atTarget += length;
+      atB += length;
+      open.b1 = atB;
     }
   }
-  const mostlyChanged = (changed: number, total: number): boolean => total === 0 || changed / total > 0.6;
-  if (mostlyChanged(changedBase, before.length) && mostlyChanged(changedTarget, after.length)) {
+  if (open !== null) {
+    edits.push(open);
+  }
+  return joinedAcrossCommon(a, b, edits);
+}
+
+/**
+ * Two additions (or two removals) with a short common run between them, where one of
+ * them can slide over that run onto the other, as one span. A minimal comparison is not
+ * unique: JGit's Myers, which Gerrit uses, gives "multi\nline" added at once where the
+ * `diff` package gives "multi", a common "\n", then "line\n". Both are minimal; this
+ * picks the one Gerrit draws.
+ */
+function joinedAcrossCommon(a: string, b: string, raw: readonly CharEdit[]): CharEdit[] {
+  const edits = [...raw];
+  for (let j = 0; j < edits.length - 1; ) {
+    const c = edits[j] as CharEdit;
+    const n = edits[j + 1] as CharEdit;
+    const inserts = c.a0 === c.a1 && n.a0 === n.a1 && c.b0 < c.b1 && n.b0 < n.b1;
+    const removes = c.b0 === c.b1 && n.b0 === n.b1 && c.a0 < c.a1 && n.a0 < n.a1;
+    const text = inserts ? b : a;
+    const [c0, c1, n0, n1] = inserts ? [c.b0, c.b1, n.b0, n.b1] : [c.a0, c.a1, n.a0, n.a1];
+    const common = text.slice(c1, n0);
+    let joined: CharEdit | null = null;
+    if ((inserts || removes) && common.length > 0) {
+      if (text.slice(n0, n1).endsWith(common)) {
+        // The second slides back over the common run onto the first.
+        joined = inserts
+          ? { a0: c.a0, a1: c.a0, b0: c0, b1: n1 - common.length }
+          : { a0: c0, a1: n1 - common.length, b0: c.b0, b1: c.b0 };
+      } else if (text.slice(c0, c1).startsWith(common)) {
+        // The first slides forward over the common run onto the second.
+        joined = inserts
+          ? { a0: n.a0, a1: n.a0, b0: c0 + common.length, b1: n1 }
+          : { a0: c0 + common.length, a1: n1, b0: n.b0, b1: n.b0 };
+      }
+    }
+    if (joined !== null) {
+      edits.splice(j, 2, joined);
+      continue;
+    }
+    j += 1;
+  }
+  return edits;
+}
+
+const noBreakIn = (text: string, from: number, to: number): boolean => !text.slice(from, to).includes('\n');
+
+/**
+ * Gerrit's tidying of a character comparison: edits a few characters apart on one line
+ * become one span; a span's identical ends are dropped; a span slides to the end of a
+ * repeated run, but not across a line break; and a span that covers a line up to its
+ * break takes the break too.
+ */
+function tidied(a: string, b: string, raw: readonly CharEdit[]): CharEdit[] {
+  const edits = [...raw];
+  for (let j = 0; j < edits.length - 1; ) {
+    const c = edits[j] as CharEdit;
+    const n = edits[j + 1] as CharEdit;
+    if ((n.a0 - c.a1 <= 5 || n.b0 - c.b1 <= 5) && noBreakIn(a, c.a1, n.a0) && noBreakIn(b, c.b1, n.b0)) {
+      edits.splice(j, 2, { a0: c.a0, a1: n.a1, b0: c.b0, b1: n.b1 });
+      continue;
+    }
+    j += 1;
+  }
+  for (let j = 0; j < edits.length; j += 1) {
+    const c = edits[j] as CharEdit;
+    let { a0, a1, b0, b1 } = c;
+    // An edit that ends where this one starts is taken into it. Gerrit looks back only
+    // from the third edit on; that is kept, since it decides what is drawn.
+    if (j > 1) {
+      const p = edits[j - 1] as CharEdit;
+      if (p.a1 === a0 || p.b1 === b0) {
+        if (p.a1 === a0 && p.a0 < p.a1) {
+          a0 = p.a0;
+        }
+        if (p.b1 === b0 && p.b0 < p.b1) {
+          b0 = p.b0;
+        }
+        edits.splice(j - 1, 1);
+        j -= 1;
+      }
+    }
+    while (a0 < a1 && b0 < b1 && a[a0] === b[b0]) {
+      a0 += 1;
+      b0 += 1;
+    }
+    while (a0 < a1 && b0 < b1 && a[a1 - 1] === b[b1 - 1]) {
+      a1 -= 1;
+      b1 -= 1;
+    }
+    [a0, a1] = slid(a, a0, a1);
+    [b0, b1] = slid(b, b0, b1);
+    a1 = withBreak(a, a0, a1);
+    b1 = withBreak(b, b0, b1);
+    edits[j] = { a0, a1, b0, b1 };
+  }
+  return edits;
+}
+
+/** One side of a span, slid back while its start repeats its end, then forward to its line's end. */
+function slid(text: string, from: number, to: number): [number, number] {
+  while (from > 0 && from < to && text[from - 1] !== '\n' && text[from - 1] === text[to - 1]) {
+    from -= 1;
+    to -= 1;
+  }
+  const lineStart = from === 0 || text[from - 1] === '\n';
+  if (!lineStart || !text.slice(from, to).includes('\n')) {
+    while (from < to && to < text.length && text[from] === text[to]) {
+      from += 1;
+      to += 1;
+      if (text[to - 1] === '\n') {
+        break;
+      }
+    }
+  }
+  return [from, to];
+}
+
+/** A span covering a whole line but its break ends after the break. */
+function withBreak(text: string, from: number, to: number): number {
+  const lineStart = from === 0 || text[from - 1] === '\n';
+  return from < to && lineStart && to < text.length && text[to - 1] !== '\n' && text[to] === '\n' ? to + 1 : to;
+}
+
+/** Whether the edits still turn `a` into `b`; when tidying broke that, Gerrit marks everything. */
+function transforms(a: string, b: string, edits: readonly CharEdit[]): boolean {
+  const inRange = (text: string, from: number, last: number): boolean =>
+    from >= 0 && last >= 0 && from < text.length && last < text.length;
+  let left = a;
+  let right = b;
+  for (let i = edits.length - 1; i >= 0; i -= 1) {
+    const e = edits[i] as CharEdit;
+    const removes = e.a0 < e.a1;
+    const adds = e.b0 < e.b1;
+    if (removes && adds) {
+      if (!inRange(left, e.a0, e.a1 - 1) || !inRange(b, e.b0, e.b1 - 1)) {
+        return false;
+      }
+      left = left.slice(0, e.a0) + b.slice(e.b0, e.b1) + left.slice(e.a1);
+    } else if (removes) {
+      if (!inRange(left, e.a0, e.a1 - 1)) {
+        return false;
+      }
+      left = left.slice(0, e.a0) + left.slice(e.a1);
+    } else if (adds) {
+      if (!inRange(right, e.b0, e.b1 - 1)) {
+        return false;
+      }
+      right = right.slice(0, e.b0) + right.slice(e.b1);
+    }
+  }
+  return left === right;
+}
+
+/** Block-wide spans cut into each line's own ranges; a line break is not drawn. */
+function perLine(lines: readonly string[], spans: readonly (readonly [number, number])[]): LineRanges[] {
+  const out: [number, number][][] = lines.map(() => []);
+  let start = 0;
+  lines.forEach((line, index) => {
+    const end = start + line.length;
+    for (const [from, to] of spans) {
+      const lo = Math.max(from, start);
+      const hi = Math.min(to, end);
+      if (lo < hi) {
+        (out[index] as [number, number][]).push([lo - start, hi - start]);
+      }
+    }
+    start = end + 1;
+  });
+  return out;
+}
+
+/**
+ * What changed between a block of removed lines and the added lines that replace it, per
+ * line. Null when the block is too large to compare (`INTRALINE_LIMITS`).
+ */
+export function intralineBlock(baseLines: readonly string[], targetLines: readonly string[]): IntralineBlock | null {
+  const a = baseLines.map((line) => `${line}\n`).join('');
+  const b = targetLines.map((line) => `${line}\n`).join('');
+  if (a.length + b.length > INTRALINE_LIMITS.characters) {
     return null;
   }
-  return { base, target };
+  const raw = charEdits(a, b);
+  if (raw === null) {
+    return null;
+  }
+  const tidy = tidied(a, b, raw);
+  const edits = transforms(a, b, tidy) ? tidy : [{ a0: 0, a1: a.length, b0: 0, b1: b.length }];
+  return {
+    base: perLine(baseLines, edits.filter((e) => e.a0 < e.a1).map((e) => [e.a0, e.a1] as const)),
+    target: perLine(targetLines, edits.filter((e) => e.b0 < e.b1).map((e) => [e.b0, e.b1] as const)),
+  };
+}
+
+/**
+ * How every changed line of a file shows what changed, keyed `base:N` or `target:N`. One
+ * source for both layouts: it follows the file's hunks, not the rows either layout draws.
+ */
+export function changeMarksOf(
+  file: PairFile,
+  base: readonly string[],
+  target: readonly string[],
+): ReadonlyMap<string, ChangedLineMarks> {
+  const marks = new Map<string, ChangedLineMarks>();
+  const whole: ChangedLineMarks = { kind: 'whole' };
+  for (const hunk of file.hunks) {
+    const baseLines = Array.from({ length: hunk.baseCount }, (_, index) => hunk.baseStart + index);
+    const targetLines = Array.from({ length: hunk.targetCount }, (_, index) => hunk.targetStart + index);
+    const block =
+      baseLines.length > 0 && targetLines.length > 0
+        ? intralineBlock(
+            baseLines.map((line) => base[line - 1] ?? ''),
+            targetLines.map((line) => target[line - 1] ?? ''),
+          )
+        : null;
+    baseLines.forEach((line, index) => {
+      marks.set(`base:${String(line)}`, block === null ? whole : { kind: 'ranges', ranges: block.base[index] ?? [] });
+    });
+    targetLines.forEach((line, index) => {
+      marks.set(`target:${String(line)}`, block === null ? whole : { kind: 'ranges', ranges: block.target[index] ?? [] });
+    });
+  }
+  return marks;
 }

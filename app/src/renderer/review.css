@@ -2261,7 +2261,19 @@
   background: color-mix(in srgb, var(--panel) 60%, var(--bg));
 }
 
-/* The words that changed inside an edited line. */
+/*
+ * Two strengths, as in Gerrit. A replaced block is compared as one text: its lines keep
+ * the light colour and the characters that changed get the strong one. A block with only
+ * removed or only added lines has nothing to compare with and is strong throughout.
+ */
+.rv-pair-table td.rv-pair-old.rv-pair-whole {
+  background: var(--rv-pair-del-word);
+}
+
+.rv-pair-table td.rv-pair-new.rv-pair-whole {
+  background: var(--rv-pair-add-word);
+}
+
 .rv-pair-old .rv-pair-word {
   background: var(--rv-pair-del-word);
   border-radius: 2px;

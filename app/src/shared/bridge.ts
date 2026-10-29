@@ -1795,6 +1795,8 @@ export type ScriptedScenario =
   | 'analysis-access'
   /** DSP-152: code selected in the diff explained, in both layouts, with follow-ups, reopened after a restart. SIMULATED provider. */
   | 'selection-explain'
+  /** DSP-150 follow-up: how the diff marks what changed (Gerrit's behaviour), in both layouts, with selection and review marks. SIMULATED provider. */
+  | 'diff-marks'
   | 'interactive-chat'
   | 'review-and-test'
   /**

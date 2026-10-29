@@ -19,7 +19,8 @@ import {
   changedLinesOf,
   emptyRecord,
   fileProgressOf,
-  intralineRanges,
+  changeMarksOf,
+  intralineBlock,
   isPairError,
   lineStatusesOf,
   lineKey,
@@ -388,14 +389,77 @@ it('keys a pair by its repository and both commits', () => {
   assert.notEqual(pairKeyOf(pair), pairKeyOf({ ...pair, target: 'c'.repeat(40) }));
 });
 
-describe('changes inside a line', () => {
-  it('marks the changed words of an edited line on both sides', () => {
-    const found = intralineRanges('export const v3 = 3;', 'export const v3 = 30;');
-    assert.deepEqual(found, { base: [[18, 19]], target: [[18, 20]] });
+describe('changes inside changed lines (Gerrit v3.14.4 behaviour)', () => {
+  // The cases of Gerrit's IntraLineLoaderTest, as the ranges Gerrit draws on each line.
+  const one = (a: string, b: string): unknown => intralineBlock([a], [b]);
+
+  it('marks the changed characters of an edited line, not whole words', () => {
+    assert.deepEqual(one('abc1', 'def1'), { base: [[[0, 3]]], target: [[[0, 3]]] });
+    assert.deepEqual(one('abc1', 'abc2'), { base: [[[3, 4]]], target: [[[3, 4]]] });
+    assert.deepEqual(one('export const v3 = 3;', 'export const v3 = 30;'), { base: [[]], target: [[[19, 20]]] });
   });
 
-  it('marks nothing when the line was replaced rather than edited', () => {
-    assert.equal(intralineRanges('alpha beta gamma', 'one two three'), null);
-    assert.equal(intralineRanges('same', 'same'), null);
+  it('marks a rewritten line throughout instead of dropping the marks', () => {
+    assert.deepEqual(one('abc1', 'def2'), { base: [[[0, 4]]], target: [[[0, 4]]] });
+  });
+
+  it('joins edits a few characters apart into one span', () => {
+    assert.deepEqual(one('ab1cdef2gh', 'ab2cdef3gh'), { base: [[[2, 8]]], target: [[[2, 8]]] });
+  });
+
+  it('puts an insertion after the common part, and counts whitespace', () => {
+    assert.deepEqual(one('start middle end', 'start middlemiddle end'), { base: [[]], target: [[[12, 18]]] });
+    assert.deepEqual(one('abc def', 'abc  def'), { base: [[]], target: [[[4, 5]]] });
+    assert.deepEqual(one(' int *foobar', ' int * foobar'), { base: [[]], target: [[[6, 7]]] });
+    assert.deepEqual(intralineBlock([' int *foobar', ' int *foobar'], [' int * foobar', ' int * foobar']), {
+      base: [[], []],
+      target: [[[6, 7]], [[6, 7]]],
+    });
+  });
+
+  it('compares a block across its line breaks, as Gerrit does', () => {
+    assert.deepEqual(intralineBlock(['multi', 'line'], ['multi', 'linemulti', 'line']), {
+      base: [[], []],
+      target: [[], [[0, 9]], []],
+    });
+  });
+
+  it('compares three removed lines with the one line that replaced them as a whole', () => {
+    const found = intralineBlock(
+      ['    pending = load(path)', '    pending.sort()', '    return pending'],
+      ['    return sorted(load(path))'],
+    );
+    // What survived ("load(path)") is light; the lines that did not survive are strong.
+    assert.deepEqual(found, { base: [[[4, 14]], [[0, 17]], [[0, 18]]], target: [[[4, 18]]] });
+  });
+
+  it('gives each changed line of a file its marks from its hunk, the same for both layouts', () => {
+    const file: PairFile = {
+      key: 'f.ts→f.ts',
+      status: 'modified',
+      oldPath: 'f.ts',
+      newPath: 'f.ts',
+      similarity: null,
+      binary: false,
+      hunks: [
+        { baseStart: 1, baseCount: 1, targetStart: 1, targetCount: 1 },
+        { baseStart: 3, baseCount: 0, targetStart: 4, targetCount: 2 },
+        { baseStart: 5, baseCount: 1, targetStart: 6, targetCount: 0 },
+      ],
+      added: 3,
+      deleted: 2,
+    };
+    const marks = changeMarksOf(file, ['a = 1', 'b', 'c', 'd', 'gone'], ['a = 2', 'b', 'c', 'new 1', 'new 2', 'd']);
+    assert.deepEqual(marks.get('base:1'), { kind: 'ranges', ranges: [[4, 5]] });
+    assert.deepEqual(marks.get('target:1'), { kind: 'ranges', ranges: [[4, 5]] });
+    assert.deepEqual(marks.get('target:4'), { kind: 'whole' });
+    assert.deepEqual(marks.get('target:5'), { kind: 'whole' });
+    assert.deepEqual(marks.get('base:5'), { kind: 'whole' });
+    assert.equal(marks.get('base:2'), undefined);
+  });
+
+  it('marks a block too large to compare throughout', () => {
+    const long = 'x'.repeat(15_000);
+    assert.equal(intralineBlock([long], [`${long}y`]), null);
   });
 });

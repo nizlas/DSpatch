@@ -19,7 +19,7 @@ import { highlightLines, type Token } from '../shared/review-model';
 import {
   changedLinesOf,
   fileProgressOf,
-  intralineRanges,
+  changeMarksOf,
   isPairError,
   lineKey,
   lineStatusesOf,
@@ -36,7 +36,7 @@ import {
   type CodeSelectionRequest,
   type DelegationScope,
   type FileProgress,
-  type IntralineRanges,
+  type LineRanges,
   type AgentFinding,
   type LineRange,
   type LineSide,
@@ -596,11 +596,14 @@ function DiffReview({
           label: cell.getAttribute('aria-label') ?? '',
         })),
         rowsDrawn: document.querySelectorAll('.rv-pair-diff tr').length,
-        // The changed words marked inside edited lines, by side.
+        // The changed characters marked inside compared lines, by side and line.
         words: [...document.querySelectorAll<HTMLElement>('.rv-pair-diff .rv-pair-word')].map((word) => ({
           side: word.closest('.rv-pair-old') !== null ? 'base' : 'target',
+          line: Number(word.closest<HTMLElement>('[data-code-line]')?.dataset['codeLine'] ?? 0),
           text: word.textContent ?? '',
         })),
+        // Changed lines that are strong throughout: nothing on the other side to compare with.
+        wholeLines: [...document.querySelectorAll<HTMLElement>('.rv-pair-diff td.rv-pair-whole')].map((cell) => `${cell.dataset['codeSide'] ?? ''}:${cell.dataset['codeLine'] ?? ''}`),
         signs: [...document.querySelectorAll<HTMLElement>('.rv-pair-diff td.rv-pair-sign')].map((cell) => cell.textContent ?? '').join(''),
         // DSP-152: explanations of selected code, as recorded, and the panel as drawn.
         explanations: record.jobs
@@ -1697,31 +1700,24 @@ function FileDiff({
     line === null ? undefined : (side === 'base' ? tokens.base : tokens.target)[line - 1];
 
   /*
-   * The words that changed inside an edited line. A removed line and an added line are
-   * paired the way the side-by-side view pairs them, the same in both layouts; a line
-   * with no partner is a pure addition or deletion and is marked by its colour alone.
+   * What changed on each changed line, as Gerrit draws it: a replaced block is compared
+   * as one text, so its lines are light with the changed characters strong; a block with
+   * nothing on the other side is strong throughout. Both layouts read this one map.
    */
-  const wordRanges = useMemo(() => {
-    const ranges = new Map<string, IntralineRanges['base']>();
-    if (text === null || text.base === null || text.target === null) {
-      return ranges;
-    }
-    for (const row of splitRowsOf(file, text.base.length, text.target.length, new Set(['*']))) {
-      if (row.kind !== 'change' || row.base === null || row.target === null) {
-        continue;
-      }
-      const found = intralineRanges(text.base[row.base - 1] ?? '', text.target[row.target - 1] ?? '');
-      if (found !== null) {
-        ranges.set(`base:${String(row.base)}`, found.base);
-        ranges.set(`target:${String(row.target)}`, found.target);
-      }
-    }
-    return ranges;
-  }, [file, text]);
+  const marks = useMemo(
+    () => (text === null || text.base === null || text.target === null ? new Map() : changeMarksOf(file, text.base, text.target)),
+    [file, text],
+  );
+  const wholeLine = (side: LineSide, line: number | null): boolean =>
+    line !== null && marks.get(`${side}:${String(line)}`)?.kind === 'whole';
 
   const codeView = (side: LineSide, line: number | null, changedRow: boolean): JSX.Element => {
-    const ranges = changedRow && line !== null ? wordRanges.get(`${side}:${String(line)}`) : undefined;
-    return ranges === undefined ? <TokensView tokens={code(side, line)} /> : <MarkedTokens tokens={code(side, line)} ranges={ranges} />;
+    const mark = changedRow && line !== null ? marks.get(`${side}:${String(line)}`) : undefined;
+    return mark?.kind === 'ranges' && mark.ranges.length > 0 ? (
+      <MarkedTokens tokens={code(side, line)} ranges={mark.ranges} />
+    ) : (
+      <TokensView tokens={code(side, line)} />
+    );
   };
 
   /** The column of − and +, apart from the review strip and the numbers. */
@@ -2104,6 +2100,7 @@ function FileDiff({
                       className={[
                         'rv-pair-code',
                         row.kind === 'change' && row.base !== null ? 'rv-pair-old' : '',
+                        row.kind === 'change' && wholeLine('base', row.base) ? 'rv-pair-whole' : '',
                         row.kind === 'change' && row.base === null ? 'rv-pair-empty' : '',
                         isTarget('base', row.base) ? 'rv-pair-target' : '',
                         selectedOnRow('base', row.base) ? 'rv-pair-selected' : '',
@@ -2120,6 +2117,7 @@ function FileDiff({
                       className={[
                         'rv-pair-code',
                         row.kind === 'change' && row.target !== null ? 'rv-pair-new' : '',
+                        row.kind === 'change' && wholeLine('target', row.target) ? 'rv-pair-whole' : '',
                         row.kind === 'change' && row.target === null ? 'rv-pair-empty' : '',
                         isTarget('target', row.target) ? 'rv-pair-target' : '',
                         selectedOnRow('target', row.target) ? 'rv-pair-selected' : '',
@@ -2160,6 +2158,7 @@ function FileDiff({
                         className={[
                           'rv-pair-code',
                           row.kind === 'deleted' ? 'rv-pair-old' : row.kind === 'added' ? 'rv-pair-new' : '',
+                          changedRow && wholeLine(side, line) ? 'rv-pair-whole' : '',
                           isTarget(side, line) ? 'rv-pair-target' : '',
                           selectedOnRow(side, line) ? 'rv-pair-selected' : '',
                         ].join(' ')}
@@ -2226,7 +2225,7 @@ function FileDiff({
 }
 
 /**
- * Highlighted tokens with the changed words of an edited line marked.
+ * Highlighted tokens with the changed characters of a compared line marked.
  *
  * The syntax colours stay: a token is cut where a changed range starts or ends, and the
  * changed pieces get a stronger shade of the line's own colour around them.
@@ -2236,7 +2235,7 @@ function MarkedTokens({
   ranges,
 }: {
   readonly tokens: readonly Token[] | undefined;
-  readonly ranges: IntralineRanges['base'];
+  readonly ranges: LineRanges;
 }): JSX.Element {
   if (tokens === undefined) {
     return <></>;
