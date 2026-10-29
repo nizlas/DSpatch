@@ -180,9 +180,21 @@ export function PairReview(): JSX.Element {
         ongoing: [...document.querySelectorAll<HTMLElement>('[data-ev^="pair-ongoing-open-"]')].map((row) => (row.innerText || '').replace(/\s+/g, ' ').trim()),
         ongoingNote: document.querySelector('[data-ev="pair-ongoing-note"]')?.textContent ?? '',
         heading: document.querySelector('.rv-pair-head h1')?.textContent ?? '',
-        // Commits chosen as From or To in the log, and how many the log shows.
+        // Commits chosen in the log, and how many the log shows.
         chosen: document.querySelectorAll('.rv-pair-commit[aria-pressed="true"]').length,
         commits: document.querySelectorAll('.rv-pair-commit').length,
+        // How the two chosen commits are ordered, as drawn: From and To, or the choice asked for.
+        direction: document.querySelector<HTMLElement>('[data-ev="pair-picked"]')?.dataset['direction'] ?? null,
+        from: document.querySelector('[data-ev="pair-from"] code')?.textContent ?? null,
+        to: document.querySelector('[data-ev="pair-to"] code')?.textContent ?? null,
+        reversed: document.querySelector('[data-ev="pair-reversed"]') !== null,
+        directionAsked: document.querySelector('[data-ev="pair-direction"]')?.textContent ?? null,
+        openEnabled: !(document.querySelector<HTMLButtonElement>('[data-ev="pair-open"]')?.disabled ?? true),
+        log: [...document.querySelectorAll<HTMLElement>('.rv-pair-commit')].map((commit) => ({
+          hash: commit.dataset['hash'] ?? '',
+          subject: commit.querySelector('.rv-pair-commit-message')?.textContent?.split('\n')[0] ?? '',
+          role: commit.querySelector('.rv-pair-role')?.textContent ?? null,
+        })),
       }),
     };
     return () => {
@@ -339,6 +351,17 @@ function RepositoryList({
   );
 }
 
+/** The direction of two chosen commits, as the log shows it. */
+type ChosenDirection =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'deciding' }
+  /** From and To; `reversed` once the person reversed what ancestry gave. */
+  | { readonly kind: 'ordered'; readonly base: string; readonly target: string; readonly reversed: boolean }
+  /** Git could not order them: the person chooses. */
+  | { readonly kind: 'choose'; readonly first: string; readonly second: string; readonly reason: string };
+
+const ROLE_WORD = { from: 'From', to: 'To', chosen: 'Chosen' } as const;
+
 function CommitLog({
   bridge,
   repository,
@@ -356,9 +379,15 @@ function CommitLog({
   const [more, setMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [from, setFrom] = useState<string | null>(null);
-  const [to, setTo] = useState<string | null>(null);
+  // The commits chosen, in click order: neither is From or To until Git's ancestry says
+  // which came first (Niclas's decision after his trial, 29 October 2026).
+  const [picked, setPicked] = useState<readonly string[]>([]);
+  const [direction, setDirection] = useState<ChosenDirection>({ kind: 'none' });
   const [opening, setOpening] = useState(false);
+  // Every change of the chosen commits counts up, so a late answer about an earlier
+  // choice is dropped rather than written over a newer one.
+  const asked = useRef(0);
+  const pending = useRef<Promise<ChosenDirection> | null>(null);
 
   const load = useCallback(
     async (skip: number): Promise<void> => {
@@ -370,8 +399,8 @@ function CommitLog({
       }
       setCommits((before) => (skip === 0 ? page.commits : [...before, ...page.commits]));
       setMore(page.more);
-      // From and To start empty every time the log opens: the person chooses the
-      // comparison. Choosing a pair reviewed before brings its marks back from its record.
+      // Nothing starts chosen when the log opens: the person chooses the comparison.
+      // Choosing a pair reviewed before brings its marks back from its record.
       setLoaded(true);
     },
     [bridge, repository.path],
@@ -381,37 +410,59 @@ function CommitLog({
     void load(0);
   }, [load]);
 
+  const decide = (first: string, second: string): void => {
+    const ask = ++asked.current;
+    setDirection({ kind: 'deciding' });
+    const answer = bridge.direction(repository.path, first, second).then(
+      (found): ChosenDirection => {
+        if (isPairError(found)) {
+          return { kind: 'choose', first, second, reason: 'The order of these commits could not be read.' };
+        }
+        if (found.kind === 'ordered') {
+          return { kind: 'ordered', base: found.base, target: found.target, reversed: false };
+        }
+        return {
+          kind: 'choose',
+          first,
+          second,
+          reason: found.kind === 'unrelated' ? 'Neither commit comes before the other; they are on separate branches.' : found.reason,
+        };
+      },
+      (): ChosenDirection => ({ kind: 'choose', first, second, reason: 'The order of these commits could not be read.' }),
+    );
+    pending.current = answer;
+    void answer.then((found) => {
+      if (ask === asked.current) {
+        setDirection(found);
+      }
+    });
+  };
+
   const choose = (hash: string): void => {
     setError(null);
-    if (from === hash) {
-      setFrom(to);
-      setTo(null);
-      return;
-    }
-    if (to === hash) {
-      setTo(null);
-      return;
-    }
-    if (from === null) {
-      setFrom(hash);
-    } else if (to === null) {
-      setTo(hash);
+    const next = picked.includes(hash) ? picked.filter((one) => one !== hash) : picked.length < 2 ? [...picked, hash] : [hash];
+    setPicked(next);
+    const [first, second] = next;
+    if (first !== undefined && second !== undefined) {
+      decide(first, second);
     } else {
-      setFrom(hash);
-      setTo(null);
+      asked.current += 1;
+      pending.current = null;
+      setDirection({ kind: 'none' });
     }
   };
 
   const subjectOf = (hash: string | null): string => commits.find((commit) => commit.hash === hash)?.subject ?? '';
-  const indexOf = (hash: string | null): number => commits.findIndex((commit) => commit.hash === hash);
-  const fromNewer = from !== null && to !== null && indexOf(from) < indexOf(to);
 
   const openReview = async (): Promise<void> => {
-    if (from === null || to === null) {
+    const ask = asked.current;
+    // Pressed before Git answered: wait for that answer, unless the choice changed meanwhile.
+    const settled = direction.kind === 'deciding' && pending.current !== null ? await pending.current : direction;
+    if (ask !== asked.current || settled.kind !== 'ordered') {
       return;
     }
     setOpening(true);
-    const outcome = await bridge.open({ repository: repository.path, base: from, target: to });
+    const outcome = await bridge.open({ repository: repository.path, base: settled.base, target: settled.target });
     setOpening(false);
     if (outcome.kind === 'opened') {
       onOpened(outcome.open);
@@ -421,6 +472,15 @@ function CommitLog({
       setError(outcome.error);
     }
   };
+
+  const ordered = direction.kind === 'ordered' ? direction : null;
+  const roleOf = (hash: string): 'from' | 'to' | 'chosen' | null =>
+    ordered?.base === hash ? 'from' : ordered?.target === hash ? 'to' : picked.includes(hash) ? 'chosen' : null;
+  const commitText = (hash: string): JSX.Element => (
+    <>
+      <code>{short(hash)}</code> {subjectOf(hash)}
+    </>
+  );
 
   return (
     <div className="rv-pair-choose">
@@ -432,43 +492,86 @@ function CommitLog({
         )}
         <h1>{repository.name}</h1>
       </header>
-      <div className="rv-pair-picked" data-ev="pair-picked">
-        <span className={from === null ? 'rv-pair-slot rv-pair-slot-empty' : 'rv-pair-slot'} data-ev="pair-from">
-          <span className="rv-pair-slot-label">From</span>
-          {from === null ? 'click a commit' : <><code>{short(from)}</code> {subjectOf(from)}</>}
-        </span>
-        <span className="rv-pair-arrow" aria-hidden="true">→</span>
-        <span className={to === null ? 'rv-pair-slot rv-pair-slot-empty' : 'rv-pair-slot'} data-ev="pair-to">
-          <span className="rv-pair-slot-label">To</span>
-          {to === null ? (from === null ? '' : 'click a second commit') : <><code>{short(to)}</code> {subjectOf(to)}</>}
-        </span>
+      <div className="rv-pair-picked" data-ev="pair-picked" data-direction={direction.kind}>
+        {ordered !== null ? (
+          <>
+            <span className="rv-pair-slot" data-ev="pair-from">
+              <span className="rv-pair-slot-label">From</span>
+              {commitText(ordered.base)}
+            </span>
+            <span className="rv-pair-arrow" aria-hidden="true">→</span>
+            <span className="rv-pair-slot" data-ev="pair-to">
+              <span className="rv-pair-slot-label">To</span>
+              {commitText(ordered.target)}
+            </span>
+            <button
+              type="button"
+              className="rv-pair-link"
+              data-ev="pair-swap"
+              title="Show the change the other way round"
+              onClick={() => setDirection({ kind: 'ordered', base: ordered.target, target: ordered.base, reversed: !ordered.reversed })}
+            >
+              Reverse direction
+            </button>
+          </>
+        ) : (
+          <span className={picked.length === 0 ? 'rv-pair-slot rv-pair-slot-empty' : 'rv-pair-slot'} data-ev="pair-chosen">
+            {picked.length === 0 ? (
+              'Click two commits to compare, in any order'
+            ) : picked.length === 1 ? (
+              <>{commitText(picked[0] ?? '')} — click a second commit</>
+            ) : direction.kind === 'choose' ? (
+              'Choose the direction below'
+            ) : (
+              'Reading which commit came first…'
+            )}
+          </span>
+        )}
         <button
           type="button"
-          data-ev="pair-swap"
-          disabled={from === null || to === null}
-          onClick={() => {
-            setFrom(to);
-            setTo(from);
-          }}
+          className="rv-pair-primary"
+          data-ev="pair-open"
+          disabled={picked.length < 2 || direction.kind === 'choose' || opening}
+          onClick={() => void openReview()}
         >
-          Swap
-        </button>
-        <button type="button" className="rv-pair-primary" data-ev="pair-open" disabled={from === null || to === null || opening} onClick={() => void openReview()}>
           Review changes
         </button>
       </div>
-      {fromNewer && <p className="rv-pair-hint">From is newer than To, so the diff shows the change backwards. Swap to review it forwards.</p>}
+      {ordered?.reversed === true && (
+        <p className="rv-pair-hint" data-ev="pair-reversed">
+          Reversed: the diff shows the change from the later commit back to the earlier one.
+        </p>
+      )}
+      {direction.kind === 'choose' && (
+        <div className="rv-pair-direction" data-ev="pair-direction" role="group" aria-label="Direction">
+          <p>{direction.reason} Choose which is From.</p>
+          {[
+            [direction.first, direction.second],
+            [direction.second, direction.first],
+          ].map(([base = '', target = ''], index) => (
+            <button
+              key={base}
+              type="button"
+              data-ev={`pair-direction-${String(index)}`}
+              onClick={() => setDirection({ kind: 'ordered', base, target, reversed: false })}
+            >
+              From <code>{short(base)}</code> → To <code>{short(target)}</code>
+            </button>
+          ))}
+        </div>
+      )}
       {error !== null && <p className="rv-pair-error" data-ev="pair-error">{error}</p>}
       {loaded && commits.length === 0 && error === null && <p className="rv-pair-message">This repository has no commits yet.</p>}
       <ol className="rv-pair-log" data-ev="pair-log">
         {commits.map((commit, index) => {
-          const role = commit.hash === from ? 'from' : commit.hash === to ? 'to' : null;
+          const role = roleOf(commit.hash);
           return (
             <li key={commit.hash}>
               {/*
                 One commit as a traditional `git log` writes it: the commit line, the
                 author, the date and the whole message indented. The whole block is the
-                button — first click From, second To.
+                button. Two clicks, in any order, choose the commits; Git's ancestry
+                decides which is From.
               */}
               <button
                 type="button"
@@ -476,12 +579,12 @@ function CommitLog({
                 data-ev={`pair-commit-${String(index)}`}
                 data-hash={commit.hash}
                 aria-pressed={role !== null}
-                aria-label={`${role === 'from' ? 'From: ' : role === 'to' ? 'To: ' : ''}${short(commit.hash)} ${commit.subject}`}
+                aria-label={`${role === null ? '' : `${ROLE_WORD[role]}: `}${short(commit.hash)} ${commit.subject}`}
                 onClick={() => choose(commit.hash)}
               >
                 <span className="rv-pair-commit-line">
                   <span className="rv-pair-hash">commit {commit.hash}</span>
-                  {role !== null && <span className="rv-pair-role">{role === 'from' ? 'From' : 'To'}</span>}
+                  {role !== null && <span className="rv-pair-role">{ROLE_WORD[role]}</span>}
                 </span>
                 <span className="rv-pair-meta">
                   Author: {commit.author}
@@ -1708,6 +1811,24 @@ function FileDiff({
     [text, file],
   );
 
+  /*
+   * The columns' widths, set once for the table. With a fixed table layout the browser
+   * takes them from the first row, and a diff often starts with a fold whose one cell
+   * spans every column: then all columns got the same share and the code a fraction of
+   * it. The strip and the sign are narrow and fixed, the numbers as wide as the file's
+   * largest line number needs, and the code everything else.
+   */
+  const digits = String(Math.max(tokens.base.length, tokens.target.length, 1)).length;
+  const numberColumn = <col className="rv-pair-col-num" style={{ width: `calc(${String(digits)}ch + 0.8rem)` }} />;
+  const sideColumns = (
+    <>
+      <col className="rv-pair-col-strip" />
+      {numberColumn}
+      <col className="rv-pair-col-sign" />
+      <col />
+    </>
+  );
+
   const baseLength = text?.base?.length ?? 0;
   const targetLength = text?.target?.length ?? 0;
   const allExpanded = expanded.has('*');
@@ -2238,6 +2359,10 @@ function FileDiff({
         )}
         {text !== null && !noText && text.error === null && layout === 'split' && (
           <table className="rv-pair-table rv-pair-table-split">
+            <colgroup>
+              {sideColumns}
+              {sideColumns}
+            </colgroup>
             <tbody>
               {split.map((row, index) =>
                 row.kind === 'gap' && row.gap !== undefined ? (
@@ -2286,6 +2411,13 @@ function FileDiff({
         )}
         {text !== null && !noText && text.error === null && layout === 'unified' && (
           <table className="rv-pair-table rv-pair-table-unified">
+            <colgroup>
+              <col className="rv-pair-col-strip" />
+              {numberColumn}
+              {numberColumn}
+              <col className="rv-pair-col-sign" />
+              <col />
+            </colgroup>
             <tbody>
               {unified.map((row, index) => {
                 if (row.kind === 'gap') {

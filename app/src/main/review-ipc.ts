@@ -196,6 +196,10 @@ export function registerReviewIpc(
     entryOf(event);
     return pairs.call('reviewPair.log', repository, skip);
   });
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.direction, async (event, repository: unknown, first: unknown, second: unknown) => {
+    entryOf(event);
+    return pairs.call('reviewPair.direction', repository, first, second);
+  });
   ipcMain.handle(REVIEW_PAIR_CHANNELS.open, async (event, request: unknown): Promise<PairOpenOutcome> => {
     const entry = entryOf(event);
     if (entry.view !== 'diff') {

@@ -79,6 +79,8 @@ const pairBridge: ReviewPairBridge = {
   start: () => ipcRenderer.invoke('dspatch:review-pair-start') as ReturnType<ReviewPairBridge['start']>,
   repositories: () => ipcRenderer.invoke('dspatch:review-pair-repositories') as ReturnType<ReviewPairBridge['repositories']>,
   log: (repository, skip) => ipcRenderer.invoke('dspatch:review-pair-log', repository, skip) as ReturnType<ReviewPairBridge['log']>,
+  direction: (repository, first, second) =>
+    ipcRenderer.invoke('dspatch:review-pair-direction', repository, first, second) as ReturnType<ReviewPairBridge['direction']>,
   open: (pair) => ipcRenderer.invoke('dspatch:review-pair-open', pair) as ReturnType<ReviewPairBridge['open']>,
   forWalk: () => ipcRenderer.invoke('dspatch:review-pair-for-walk') as ReturnType<ReviewPairBridge['forWalk']>,
   readFile: (key, side, filePath) =>

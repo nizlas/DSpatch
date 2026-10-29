@@ -5,7 +5,7 @@ import { Markdown } from './Markdown';
 import { ReviewDiscussion } from './ReviewDiscussion';
 import { AgentPicker } from './AgentPicker';
 import { attemptLabel, isRunning, JobLine, JobNote, requestFailure } from './PairReview';
-import { Inline, TokensView, asLocation, capitalise, fileName, rangeText, useFiles, useRows, type Files } from './review-code';
+import { Inline, LineGutter, TokensView, asLocation, capitalise, fileName, lineDigits, rangeText, useFiles, useRows, type Files } from './review-code';
 import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
 import {
@@ -2865,8 +2865,7 @@ function CodePane({
       if (selectionSet.has(index)) {
         classes.push('rv-row-selected');
       }
-      const marker =
-        row.kind === 'deleted' ? words.view.before : row.kind === 'added' ? words.view.after : '';
+      const mark = row.kind === 'deleted' ? { sign: '−', word: words.view.before } : row.kind === 'added' ? { sign: '+', word: words.view.after } : null;
       const focusAttrs: Record<string, string> = {};
       if (inFocus && firstFocus) {
         focusAttrs['data-focus'] = '1';
@@ -2878,11 +2877,14 @@ function CodePane({
       }
       body.push(
         <div key={`row-${String(index)}`} className={classes.join(' ')} {...focusAttrs}>
-          <button type="button" className="rv-ln" title={words.view.selectLine} onClick={(event) => select(row, event.shiftKey)}>
-            <span>{row.baseLine ?? ''}</span>
-            <span>{row.targetLine ?? ''}</span>
-          </button>
-          <span className={inFocus && marker !== '' ? 'rv-marker rv-marker-strong' : 'rv-marker'}>{marker}</span>
+          <LineGutter
+            base={row.baseLine}
+            target={row.targetLine}
+            mark={mark}
+            strong={inFocus && mark !== null}
+            title={words.view.selectLine}
+            onSelect={(shift) => select(row, shift)}
+          />
           <code className="rv-text">
             <TokensView tokens={lineTokens} />
           </code>
@@ -2954,7 +2956,7 @@ function CodePane({
         )}
         {highlightWalk && <span className="rv-key rv-walk-mark">{words.view.legendWalk}</span>}
       </div>
-      <div className={wrap ? 'rv-lines rv-lines-wrap' : 'rv-lines'} ref={container}>
+      <div className={wrap ? 'rv-lines rv-lines-wrap' : 'rv-lines'} ref={container} style={{ '--rv-digits': String(lineDigits(rows)) } as CSSProperties}>
         {content === null && <div className="rv-empty">{words.view.reading}</div>}
         {content !== null && content.error !== null && (
           <div className="rv-error">

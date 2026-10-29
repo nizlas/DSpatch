@@ -32,6 +32,7 @@ import type {
   ReviewAgents,
   LogCommit,
   OpenPair,
+  PairDirection,
   PairAnswer,
   PairRecord,
   OngoingReview,
@@ -183,6 +184,7 @@ export type ProjectHostMethods = ReviewMethods & {
     readonly more: boolean;
     readonly last: { readonly base: string; readonly target: string } | null;
   }>;
+  readonly 'reviewPair.direction': (repository: unknown, first: unknown, second: unknown) => PairAnswer<PairDirection>;
   readonly 'reviewPair.open': (request: unknown) => PairAnswer<OpenPair>;
   readonly 'reviewPair.openForWalk': (pair: RevisionPairIdentity) => PairAnswer<OpenPair>;
   readonly 'reviewPair.readFile': (key: unknown, side: unknown, path: unknown) => PairAnswer<{ readonly text: string | null; readonly binary: boolean }>;
@@ -327,6 +329,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'review.openContext': true,
   'reviewPair.repositories': true,
   'reviewPair.log': true,
+  'reviewPair.direction': true,
   'reviewPair.open': true,
   'reviewPair.openForWalk': true,
   'reviewPair.readFile': true,

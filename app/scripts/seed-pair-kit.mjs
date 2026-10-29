@@ -10,7 +10,8 @@
  * `--fixture marks` makes it one repository whose change holds the kinds of change the
  * diff's marks must tell apart (`tests/support/marks-fixture.ts`). `--fixture flow` makes it
  * the review flow's repository (`tests/support/flow-fixture.ts`): a call path, a document
- * with independent changes and a file list long enough to scroll. `--clone <repository>`
+ * with independent changes and a file list long enough to scroll, with `history` beside it
+ * (`tests/support/history-fixture.ts`): branches and misleading dates for choosing From. `--clone <repository>`
  * adds a clone of another repository beside it, made with `git clone --no-local`, which only
  * reads the source; its working copy and its `.git` are not changed.
  *
@@ -29,6 +30,7 @@ import { execFileSync } from 'node:child_process';
 
 import { makeAnalysisFixture } from '../tests/support/analysis-fixture';
 import { makeFlowFixture } from '../tests/support/flow-fixture';
+import { makeHistoryFixture } from '../tests/support/history-fixture';
 import { makeMarksFixture } from '../tests/support/marks-fixture';
 import { makePairFixture } from '../tests/support/pair-fixture';
 
@@ -74,7 +76,7 @@ const fixture =
     : FIXTURE === 'marks'
       ? makeMarksFixture(workspace)
       : FIXTURE === 'flow'
-        ? makeFlowFixture(workspace)
+        ? { ...makeFlowFixture(workspace), history: makeHistoryFixture(workspace) }
         : makePairFixture(workspace);
 let cloned = null;
 if (CLONE !== null) {

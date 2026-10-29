@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, JSX } from 'react';
 
-import { Inline, TokensView, fileName, rangeText, rowsOf, useRows, type Files } from './review-code';
+import { Inline, LineGutter, TokensView, fileName, lineDigits, rangeText, rowsOf, useRows, type Files } from './review-code';
 import { pick, type ReviewWords } from './review-i18n';
 import {
   isProsePath,
@@ -1435,6 +1435,7 @@ function TimelinePaneView({
     return { items, tops, columns, firstShown, firstChange, firstFrom };
   }, [rows, visible, effectiveView, shownFocus, shownSet, fromSet, unitSet, inContext, station.place.unit, words]);
   const { items, tops, columns } = layoutRows;
+  const digits = useMemo(() => lineDigits(rows), [rows]);
 
   // The part of the pane's content in view, kept in step with scrolling and resizing.
   // Only when the view nears the edge of what is drawn does the pane draw again.
@@ -1570,14 +1571,24 @@ function TimelinePaneView({
     if (index === layoutRows.firstFrom) {
       attrs['data-from'] = '1';
     }
-    const marker = row.kind === 'deleted' ? words.view.before : row.kind === 'added' ? words.view.after : isFrom ? words.timeline.call : '';
+    const mark =
+      row.kind === 'deleted'
+        ? { sign: '−', word: words.view.before }
+        : row.kind === 'added'
+          ? { sign: '+', word: words.view.after }
+          : isFrom
+            ? { sign: '↳', word: words.timeline.call }
+            : null;
     return (
       <div key={`row-${String(index)}`} className={classes.join(' ')} {...attrs}>
-        <button type="button" className="rv-ln" title={words.view.selectLine} onClick={(event) => select(row, event.shiftKey)}>
-          <span>{row.baseLine ?? ''}</span>
-          <span>{row.targetLine ?? ''}</span>
-        </button>
-        <span className={inShown || isFrom ? 'rv-marker rv-marker-strong' : 'rv-marker'}>{marker}</span>
+        <LineGutter
+          base={row.baseLine}
+          target={row.targetLine}
+          mark={mark}
+          strong={inShown || isFrom}
+          title={words.view.selectLine}
+          onSelect={(shift) => select(row, shift)}
+        />
         <code className="rv-text">
           <TokensView tokens={lineTokens} />
         </code>
@@ -1667,7 +1678,11 @@ function TimelinePaneView({
         {content !== null && content.error !== null && (
           <div className="rv-error">{content.error === 'binary' ? words.view.binary : content.error}</div>
         )}
-        <div className="rv-rows" ref={rowsBox} style={{ '--rv-longest': `calc(${String(columns)}ch + 10.4rem)` } as CSSProperties}>
+        <div
+          className="rv-rows"
+          ref={rowsBox}
+          style={{ '--rv-digits': String(digits), '--rv-longest': `calc(${String(columns + 2 * digits)}ch + 3.2rem)` } as CSSProperties}
+        >
           {/* As wide as the longest line the pane shows, drawn or not: what fitting measures. */}
           <div className="rv-longest" aria-hidden="true" />
           {body}

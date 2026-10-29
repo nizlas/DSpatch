@@ -3763,6 +3763,16 @@ function registerReviewMethods(): void {
     const page = await pairs.log(repository, skip);
     return 'error' in page ? page : { ...page, last: pairs.lastPair(repository) };
   });
+  // A scripted run can hold Git's answer back (DSPATCH_PAIR_DIRECTION_DELAY_MS, presentation
+  // mode only), so that a newer choice is made while an older answer is on its way.
+  const directionDelayMs = presentationMode ? Number.parseInt(process.env['DSPATCH_PAIR_DIRECTION_DELAY_MS'] ?? '', 10) : Number.NaN;
+  handle('reviewPair.direction', async (_event, repository: unknown, first: unknown, second: unknown) => {
+    const answer = await requireReviewPairs().direction(repository, first, second);
+    if (Number.isFinite(directionDelayMs) && directionDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, directionDelayMs));
+    }
+    return answer;
+  });
   handle('reviewPair.open', async (_event, request: unknown) => reconciled(await requireReviewPairs().openPair(request)));
   handle('reviewPair.openForWalk', async (_event, pair) => reconciled(await requireReviewPairs().openForWalk(pair)));
   handle('reviewPair.readFile', (_event, key: unknown, side: unknown, filePath: unknown) =>

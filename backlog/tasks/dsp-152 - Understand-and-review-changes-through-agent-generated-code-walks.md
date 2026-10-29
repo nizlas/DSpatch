@@ -4,7 +4,7 @@ title: Understand and review changes through agent-generated code walks
 status: Review
 assignee: []
 created_date: '2026-10-28 22:32'
-updated_date: '2026-10-29 19:02'
+updated_date: '2026-10-29 20:56'
 labels:
   - review
   - code-walks
@@ -353,4 +353,8 @@ Assignment of this date, collected feedback for DSP-150 and DSP-152; the clarifi
 - What a real model writes as code walks and readings with the new form rules, summary, background and points to check (AC #3, #12); the simulated agent's text says nothing about that.
 - UX acceptance of the list, the windows, the column widths and wrapping in use: Niclas's.
 - Linux.
+
+### Walk gutter (29 Oct 2026)
+
+The walk window's code rows had 6rem of line numbers and a 3.4rem Before/After word column whatever the file. Now `LineGutter` draws both numbers as wide as the pane's largest number needs and a one-character −, + or ↳ mark (its word as tooltip and screen-reader text); the gutter is sticky as one unit, wrapped or not. Measured in the real walk window over MiniDAWLab e15b426 → 9993113: numbers 85 px for five-digit lines, mark 19 px. Details and the related diff-column fix are in DSP-150's note of the same date. UX acceptance is Niclas's.
 <!-- SECTION:NOTES:END -->

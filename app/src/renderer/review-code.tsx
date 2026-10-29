@@ -20,6 +20,54 @@ import {
  * revision, a file's rows (its real diff, or the file itself), and highlighted text.
  */
 
+/**
+ * A code row's gutter in the walk window: the line's numbers in both revisions and a
+ * narrow mark, − for a removed line, + for an added one, ↳ for where a place is reached
+ * from. The mark's word is its tooltip and what a screen reader says. The numbers take the
+ * width the pane's largest line number needs (`--rv-digits` on the rows).
+ */
+export function LineGutter({
+  base,
+  target,
+  mark,
+  strong,
+  title,
+  onSelect,
+}: {
+  readonly base: number | null;
+  readonly target: number | null;
+  readonly mark: { readonly sign: string; readonly word: string } | null;
+  readonly strong: boolean;
+  readonly title: string;
+  readonly onSelect: (shift: boolean) => void;
+}): JSX.Element {
+  return (
+    <span className="rv-gutter">
+      <button type="button" className="rv-ln" title={title} onClick={(event) => onSelect(event.shiftKey)}>
+        <span>{base ?? ''}</span>
+        <span>{target ?? ''}</span>
+      </button>
+      <span className={strong ? 'rv-marker rv-marker-strong' : 'rv-marker'} title={mark?.word}>
+        {mark !== null && (
+          <>
+            <span aria-hidden="true">{mark.sign}</span>
+            <span className="rv-sr">{mark.word}</span>
+          </>
+        )}
+      </span>
+    </span>
+  );
+}
+
+/** How many digits the largest line number of these rows has, for the gutter's width. */
+export function lineDigits(rows: readonly { readonly baseLine: number | null; readonly targetLine: number | null }[]): number {
+  let largest = 1;
+  for (const row of rows) {
+    largest = Math.max(largest, row.baseLine ?? 0, row.targetLine ?? 0);
+  }
+  return String(largest).length;
+}
+
 export function rangeText(location: { start: number; end: number }): string {
   return location.start === location.end ? String(location.start) : `${String(location.start)}–${String(location.end)}`;
 }

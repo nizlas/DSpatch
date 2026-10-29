@@ -2065,6 +2065,8 @@ export type PairWindowCheckRequest =
   | { readonly action: 'go-to-step'; readonly id: number; readonly stepId: string }
   | { readonly action: 'capture'; readonly id: number; readonly label: string }
   | { readonly action: 'focus'; readonly id: number }
+  /** Set the window's content size, as a person resizing it would. */
+  | { readonly action: 'resize'; readonly id: number; readonly width: number; readonly height: number }
   /** DSP-152: select the first words of an element's text and release the mouse there, as a person selecting it. */
   | { readonly action: 'select-text'; readonly id: number; readonly selector: string; readonly length: number }
   /**
@@ -2239,7 +2241,7 @@ export interface ScriptedRunPlan {
    */
   readonly resumeHold?: boolean;
   /** DSP-149 `workspace-flow`: which process this is, and the folder its projects are in. */
-  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked' | 'pick';
+  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked' | 'pick' | 'direction' | 'columns';
   readonly flowRoot?: string;
 }
 

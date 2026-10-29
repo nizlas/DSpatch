@@ -11771,7 +11771,7 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       await inPairWindow(diffAgain.id, '[data-ev="pair-repo-0"]');
       const offered = await untilPair(diffAgain.id, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
       record('log after restart', { chosen: offered.pair?.chosen, picked: offered.text.slice(0, 120) });
-      expect(offered.pair?.chosen === 0 && offered.text.includes('click a commit'), 'the log after the restart has commits chosen before anyone clicked');
+      expect(offered.pair?.chosen === 0 && offered.text.includes('Click two commits to compare'), 'the log after the restart has commits chosen before anyone clicked');
       await inPairWindow(diffAgain.id, '[data-ev="pair-commit-1"]');
       await inPairWindow(diffAgain.id, '[data-ev="pair-commit-0"]');
       await inPairWindow(diffAgain.id, '[data-ev="pair-open"]');
@@ -11815,15 +11815,15 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     await untilPair(diff.id, 'the log', (reading) => reading.text.includes('Rework the app'));
     await inPairWindow(diff.id, '[data-ev="pair-commit-1"]');
     let picked = await readPairWindow(diff.id);
-    expect((picked?.text ?? '').includes('click a second commit'), 'the first click did not choose From');
+    expect((picked?.text ?? '').includes('click a second commit') && !(picked?.text ?? '').includes('From'), 'the first click gave the commit a role');
     await inPairWindow(diff.id, '[data-ev="pair-commit-0"]');
-    picked = await readPairWindow(diff.id);
+    picked = await untilPair(diff.id, 'From and To', (reading) => (reading.pair as { direction?: string } | undefined)?.direction === 'ordered');
     const fromFirst = (picked?.text ?? '').indexOf('Start the app');
     const toFirst = (picked?.text ?? '').indexOf('Rework the app');
     expect(fromFirst >= 0 && toFirst > fromFirst, 'From and To are not shown as chosen');
     await inPairWindow(diff.id, '[data-ev="pair-swap"]');
     const swapped = await readPairWindow(diff.id);
-    expect((swapped?.text ?? '').includes('From is newer than To'), 'a swap that makes From newer is not pointed out');
+    expect((swapped?.text ?? '').includes('Reversed'), 'a reversed direction is not pointed out');
     await inPairWindow(diff.id, '[data-ev="pair-swap"]');
     await capture(diff.id, 'log');
     await inPairWindow(diff.id, '[data-ev="pair-open"]');
@@ -12000,7 +12000,7 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     // Nothing is chosen when the log opens again; the person chooses the same pair.
     const emptyLog = await untilPair(reopened.id, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
     record('log reopened', { chosen: emptyLog.pair?.chosen });
-    expect(emptyLog.pair?.chosen === 0 && emptyLog.text.includes('click a commit'), 'the reopened log has commits chosen before anyone clicked');
+    expect(emptyLog.pair?.chosen === 0 && emptyLog.text.includes('Click two commits to compare'), 'the reopened log has commits chosen before anyone clicked');
     await inPairWindow(reopened.id, '[data-ev="pair-commit-1"]');
     await inPairWindow(reopened.id, '[data-ev="pair-commit-0"]');
     await inPairWindow(reopened.id, '[data-ev="pair-open"]');
@@ -13467,7 +13467,7 @@ async function runSelectionExplainScenario(plan: ScriptedRunPlan): Promise<Scrip
 async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
   const steps: unknown[] = [];
   const failures: string[] = [];
-  const phase = plan.flowPhase === 'again' ? 'again' : 'first';
+  const phase = plan.flowPhase === 'again' || plan.flowPhase === 'direction' || plan.flowPhase === 'columns' ? plan.flowPhase : 'first';
   const observations: Record<string, unknown> = {
     plan,
     phase,
@@ -13550,7 +13550,8 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
   const rowOf = (reading: PairWindowReading, path: string): string => diffOf(reading).fileRows[fileIndex(reading, path)] ?? '';
   const strip = (side: 'base' | 'target', line: number): string => `.rv-pair-diff td.rv-pair-strip[data-side="${side}"][data-line="${String(line)}"]`;
   const cell = (side: 'base' | 'target', line: number): string => `.rv-pair-diff td[data-code-side="${side}"][data-code-line="${String(line)}"]`;
-  const DAL = { name: 'MiniDAWLab-spike01', base: 'b87f0422450e1458c14fc0ce179d22a66c7a66e9', target: '8c7d41b7dde19bd5568c2b79fd0bd929b6a9b30e' };
+  // Niclas's trial pair, forwards: 8c7d41b is the ancestor (he first reviewed it backwards, newer as From).
+  const DAL = { name: 'MiniDAWLab-spike01', base: '8c7d41b7dde19bd5568c2b79fd0bd929b6a9b30e', target: 'b87f0422450e1458c14fc0ce179d22a66c7a66e9' };
   const DAL_FILE = 'docs/PORTABLE_INSTRUMENTS_AND_PROXIES.md';
 
   const startReview = async (diffId: number, repository: string, pair: { readonly base: string; readonly target: string } | null): Promise<PairWindowReading> => {
@@ -13595,6 +13596,240 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
     await press(MAIN, '[data-ev="open-review"]');
     const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+
+    if (phase === 'direction') {
+      // --- Choosing two commits in any order: Git's ancestry decides From (decision of 29 October 2026) ---
+      type LogRead = {
+        readonly phase?: string;
+        readonly direction: string | null;
+        readonly from: string | null;
+        readonly to: string | null;
+        readonly reversed: boolean;
+        readonly directionAsked: string | null;
+        readonly openEnabled: boolean;
+        readonly log: readonly { readonly hash: string; readonly subject: string; readonly role: string | null }[];
+      };
+      const logOf = (reading: PairWindowReading | null): LogRead => (reading?.pair ?? { log: [] }) as unknown as LogRead;
+      const settled = (what: string): Promise<PairWindowReading> =>
+        untilPair(diffId, what, (reading) => logOf(reading).direction === 'ordered' || logOf(reading).direction === 'choose');
+      const at = (hash: string): string => `[data-hash="${hash}"]`;
+      const brief = (reading: PairWindowReading | null): Record<string, unknown> => {
+        const read = logOf(reading);
+        return { direction: read.direction, from: read.from, to: read.to, reversed: read.reversed, asked: read.directionAsked, open: read.openEnabled };
+      };
+      const chooseHistory = async (): Promise<PairWindowReading> => {
+        await pastOngoing(diffId);
+        const shown = await untilPair(diffId, 'the repositories', (reading) => diffOf(reading).phase === 'repositories');
+        await press(diffId, `[data-ev="pair-repo-${String((diffOf(shown).repositories ?? []).findIndex((name) => name.trim() === 'history'))}"]`);
+        return untilPair(diffId, 'the history log', (reading) => logOf(reading).phase === 'log' && logOf(reading).log.length === 4);
+      };
+
+      const log = await chooseHistory();
+      const hashOf = (start: string): string => logOf(log).log.find((commit) => commit.subject.startsWith(start))?.hash ?? '';
+      const root = hashOf('Start the notes');
+      const ahead = hashOf('Add a second note');
+      const side = hashOf('Add a note on a branch');
+      const merge = hashOf('Merge the branch');
+      const short7 = (hash: string): string => hash.slice(0, 7);
+      record('log', { order: logOf(log).log.map((commit) => commit.subject), nothingChosen: logOf(log).log.every((commit) => commit.role === null) });
+      expect([root, ahead, side, merge].every((hash) => hash.length === 40), 'the fixture commits are not all in the log');
+      expect(logOf(log).log.every((commit) => commit.role === null) && logOf(log).direction === 'none', 'the log opened with a commit chosen');
+
+      // The descendant first. `ahead` is dated nineteen years before `root`, its parent.
+      await press(diffId, at(ahead));
+      const one = await readPairWindow(diffId);
+      record('one chosen', { ...brief(one), role: logOf(one).log.find((commit) => commit.hash === ahead)?.role });
+      expect(logOf(one).from === null && logOf(one).log.find((commit) => commit.hash === ahead)?.role === 'Chosen', 'the first click made the commit From');
+      await capture(diffId, 'direction-one-chosen');
+      await press(diffId, at(root));
+      const newestFirst = await settled('the order, descendant clicked first');
+      record('descendant clicked first', brief(newestFirst));
+      expect(logOf(newestFirst).from === short7(root) && logOf(newestFirst).to === short7(ahead), `the descendant clicked first did not give From the ancestor: ${JSON.stringify(brief(newestFirst))}`);
+      await capture(diffId, 'direction-ordered');
+      // Both chosen commits clicked again: nothing chosen. Then the ancestor first.
+      await press(diffId, at(root));
+      await press(diffId, at(ahead));
+      expect(logOf(await readPairWindow(diffId)).log.every((commit) => commit.role === null), 'clicking a chosen commit did not unchoose it');
+      await press(diffId, at(root));
+      await press(diffId, at(ahead));
+      const oldestFirst = await settled('the order, ancestor clicked first');
+      record('ancestor clicked first', brief(oldestFirst));
+      expect(logOf(oldestFirst).from === short7(root) && logOf(oldestFirst).to === short7(ahead), `the ancestor clicked first did not give the same From and To: ${JSON.stringify(brief(oldestFirst))}`);
+
+      // Reverse direction: kept as chosen, never turned back.
+      await press(diffId, '[data-ev="pair-swap"]');
+      await sleep(2000);
+      const reversed = await readPairWindow(diffId);
+      record('reversed', brief(reversed));
+      expect(logOf(reversed).from === short7(ahead) && logOf(reversed).to === short7(root) && logOf(reversed).reversed, `Reverse direction did not hold: ${JSON.stringify(brief(reversed))}`);
+      await capture(diffId, 'direction-reversed');
+
+      // Two commits on separate branches: the person chooses before the review opens.
+      await press(diffId, at(side));
+      await press(diffId, at(ahead));
+      const branches = await settled('the separate branches');
+      record('separate branches', brief(branches));
+      expect(logOf(branches).direction === 'choose' && !logOf(branches).openEnabled && (logOf(branches).directionAsked ?? '').includes('separate branches'), `separate branches did not ask for the direction: ${JSON.stringify(brief(branches))}`);
+      await capture(diffId, 'direction-branches');
+      await press(diffId, '[data-ev="pair-direction-1"]');
+      const chosen = await readPairWindow(diffId);
+      record('direction chosen', brief(chosen));
+      expect(logOf(chosen).from === short7(ahead) && logOf(chosen).to === short7(side) && logOf(chosen).openEnabled, `the chosen direction is not shown: ${JSON.stringify(brief(chosen))}`);
+
+      // A late answer about an earlier choice (each answer held back by DSPATCH_PAIR_DIRECTION_DELAY_MS).
+      await press(diffId, at(root));
+      await press(diffId, at(ahead));
+      await press(diffId, at(ahead));
+      await press(diffId, at(merge));
+      const seen: Record<string, unknown>[] = [];
+      const lateUntil = performance.now() + 4000;
+      while (performance.now() < lateUntil) {
+        const reading = await readPairWindow(diffId);
+        seen.push({ atMs: Math.round(performance.now() - startedAt), ...brief(reading) });
+        if (logOf(reading).direction === 'ordered') {
+          break;
+        }
+        await sleep(100);
+      }
+      const final = await settled('the newer choice');
+      record('late answer', { seen: seen.slice(-6), states: seen.length, final: brief(final) });
+      expect(!seen.some((entry) => entry['from'] === short7(root) && entry['to'] === short7(ahead)), 'the late answer about root and ahead was drawn over the newer choice');
+      expect(logOf(final).from === short7(root) && logOf(final).to === short7(merge), `the newer choice is not what is shown: ${JSON.stringify(brief(final))}`);
+
+      // Review changes pressed before Git has answered: it waits and opens the decided pair.
+      await press(diffId, at(ahead));
+      await press(diffId, at(root));
+      const pressedEarly = await readPairWindow(diffId);
+      await press(diffId, '[data-ev="pair-open"]');
+      const opened = await untilPair(diffId, 'the review from an early press', (reading) => diffOf(reading).phase === 'review' && diffOf(reading).files.length > 0, 30_000);
+      record('opened while deciding', { before: brief(pressedEarly), files: diffOf(opened).files.map((file) => file.path) });
+      expect(logOf(pressedEarly).direction === 'deciding', `Review changes was not pressed while deciding: ${JSON.stringify(brief(pressedEarly))}`);
+      expect(diffOf(opened).files.length === 1 && diffOf(opened).files[0]?.path === 'notes.txt', 'the review opened from an early press is not root → ahead');
+      // A review is kept once its position is saved, a quarter second after it opens.
+      await sleep(800);
+
+      // The reversed pair is a review of its own; reopening either changes nothing about it.
+      await press(diffId, '[data-ev="pair-all-reviews"]');
+      await untilPair(diffId, 'the ongoing reviews', (reading) => diffOf(reading).phase === 'ongoing');
+      await chooseHistory();
+      await press(diffId, at(root));
+      await press(diffId, at(ahead));
+      await settled('root and ahead again');
+      await press(diffId, '[data-ev="pair-swap"]');
+      await press(diffId, '[data-ev="pair-open"]');
+      await untilPair(diffId, 'the reversed review', (reading) => diffOf(reading).phase === 'review' && diffOf(reading).files.length > 0, 30_000);
+      await sleep(800);
+      await press(diffId, '[data-ev="pair-all-reviews"]');
+      const two = await untilPair(diffId, 'two reviews of history', (reading) => diffOf(reading).phase === 'ongoing' && (diffOf(reading).ongoing ?? []).filter((row) => row.startsWith('history')).length === 2);
+      const rows = (diffOf(two).ongoing ?? []).filter((row) => row.startsWith('history'));
+      record('two directed reviews', { rows });
+      // A row reads `history <From> <subject> → <To> <subject> …`.
+      const directed = (from: string, to: string) => (row: string): boolean => row.startsWith(`history ${short7(from)} `) && row.includes(`→ ${short7(to)} `);
+      const forward = directed(root, ahead);
+      const backward = directed(ahead, root);
+      expect(rows.some(forward) && rows.some(backward), `the two directions are not two reviews: ${JSON.stringify(rows)}`);
+      await capture(diffId, 'direction-two-reviews');
+      await press(diffId, `[data-ev="pair-ongoing-open-${String((diffOf(two).ongoing ?? []).findIndex(backward))}"]`);
+      await untilPair(diffId, 'the reversed review resumed', (reading) => diffOf(reading).phase === 'review' && diffOf(reading).files.length > 0, 30_000);
+      await press(diffId, '[data-ev="pair-all-reviews"]');
+      const again = await untilPair(diffId, 'the reviews after resuming', (reading) => diffOf(reading).phase === 'ongoing');
+      const rowsAgain = (diffOf(again).ongoing ?? []).filter((row) => row.startsWith('history'));
+      record('after resuming the reversed review', { rows: rowsAgain });
+      expect(rowsAgain.length === 2 && rowsAgain.some(backward) && rowsAgain.some(forward), `resuming changed a review's direction: ${JSON.stringify(rowsAgain)}`);
+      const sentHere = await reviewPromptsSent();
+      expect(sentHere.length === 0, `prompts were sent while choosing commits: ${String(sentHere.length)}`);
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    if (phase === 'columns') {
+      // --- The diff's column widths on Niclas's file (e15b426 → 9993113), measured as drawn ---
+      type Cell = { readonly kind: string; readonly width: number };
+      type Columns = {
+        readonly diff: { readonly layout: string; readonly width: number; readonly startsWithFold: boolean; readonly cells: readonly Cell[] } | null;
+        readonly walk: readonly { readonly digits: number; readonly pane: number; readonly gutter: number; readonly numbers: number; readonly mark: number; readonly code: number }[];
+      };
+      const columnsOf = (reading: PairWindowReading | null): Columns => (reading as unknown as { columns: Columns } | null)?.columns ?? { diff: null, walk: [] };
+      const PAIR = { base: 'e15b426a69ba308c4200cdd592ef5946461c5cfc', target: '9993113fe45cba9fd90e8696845afb6e7979e759' };
+      const FILE = 'src/app/MidiEditorPresenter.h';
+      const measured: Record<string, unknown> = {};
+      const metaOf = (cells: readonly Cell[]): number[] => cells.filter((entry) => entry.kind !== 'rv-pair-code').map((entry) => entry.width);
+      const measure = async (label: string, layout: 'split' | 'unified'): Promise<Columns['diff']> => {
+        await press(diffId, `[data-ev="pair-layout-${layout}"]`);
+        const reading = await untilPair(diffId, `${layout} drawn`, (read) => diffOf(read).layout === layout && (columnsOf(read).diff?.cells.length ?? 0) > 0);
+        const diff = columnsOf(reading).diff;
+        measured[label] = diff;
+        const codes = (diff?.cells ?? []).filter((entry) => entry.kind === 'rv-pair-code').map((entry) => entry.width);
+        const meta = metaOf(diff?.cells ?? []);
+        const width = diff?.width ?? 0;
+        expect(codes.length === (layout === 'split' ? 2 : 1), `${label}: not the code columns expected: ${JSON.stringify(diff)}`);
+        expect(meta.every((entry) => entry <= 48), `${label}: a strip, number or sign column is wide: ${JSON.stringify(diff?.cells)}`);
+        // The code takes exactly what the fixed columns leave, shared equally side by side.
+        const rest = (width - meta.reduce((sum, entry) => sum + entry, 0)) / codes.length;
+        expect(codes.every((entry) => Math.abs(entry - rest) <= 2), `${label}: the code does not take the rest: ${JSON.stringify(diff)}`);
+        await capture(diffId, `columns-${label}`);
+        return diff;
+      };
+
+      // The newer commit clicked first, as in Niclas's trial, on the real repository's clone.
+      await pastOngoing(diffId);
+      const shown = await untilPair(diffId, 'the repositories', (reading) => diffOf(reading).phase === 'repositories');
+      await press(diffId, `[data-ev="pair-repo-${String((diffOf(shown).repositories ?? []).findIndex((name) => name.trim() === DAL.name))}"]`);
+      await untilPair(diffId, 'the MiniDAWLab log', (reading) => diffOf(reading).phase === 'log' && ((reading.pair as { commits?: number } | undefined)?.commits ?? 0) > 13);
+      await press(diffId, `[data-hash="${PAIR.target}"]`);
+      await press(diffId, `[data-hash="${PAIR.base}"]`);
+      const order = await untilPair(diffId, 'the MiniDAWLab order', (reading) => (reading.pair as { direction?: string } | undefined)?.direction === 'ordered');
+      const fromTo = order.pair as unknown as { from: string; to: string };
+      record('newer clicked first on MiniDAWLab', { from: fromTo.from, to: fromTo.to });
+      expect(fromTo.from === 'e15b426' && fromTo.to === '9993113', `MiniDAWLab's pair is not e15b426 → 9993113: ${JSON.stringify(fromTo)}`);
+      await press(diffId, '[data-ev="pair-open"]');
+      await untilPair(diffId, 'the MiniDAWLab review', (reading) => diffOf(reading).phase === 'review' && diffOf(reading).files.length > 0, 60_000);
+
+      const size = async (width: number, height: number): Promise<unknown> => check({ action: 'resize', id: diffId, width, height }, `resize to ${String(width)}×${String(height)}`);
+      measured['normal size'] = await size(1280, 820);
+      const file = await openFile(diffId, FILE);
+      const normalSplit = await measure('normal-split', 'split');
+      expect(normalSplit?.startsWithFold === true, 'the file does not start with a fold, the case that broke the widths');
+      await measure('normal-unified', 'unified');
+      measured['wide size'] = await size(2200, 1150);
+      const wideSplit = await measure('wide-split', 'split');
+      expect(JSON.stringify(metaOf(wideSplit?.cells ?? [])) === JSON.stringify(metaOf(normalSplit?.cells ?? [])), 'the metadata columns grew with the window');
+      await measure('wide-unified', 'unified');
+      // With the explanation panel beside the diff.
+      await press(diffId, '[data-ev="pair-layout-split"]');
+      const line = diffOf(file).strips.find((entry) => entry.side === 'target')?.line ?? 0;
+      await check({ action: 'drag', id: diffId, from: { selector: cell('target', line), offset: 2 }, to: { selector: cell('target', line), offset: 24 } }, 'select code');
+      await untilPair(diffId, 'Explain this', (reading) => diffOf(reading).explainOffered);
+      await press(diffId, '[data-ev="explain-this"]');
+      await untilPair(diffId, 'the explanation', (reading) => diffOf(reading).explanations.some((job) => job.state === 'done'), 60_000);
+      await measure('wide-split-explained', 'split');
+      await measure('wide-unified-explained', 'unified');
+      await size(1280, 820);
+      await measure('normal-unified-explained', 'unified');
+      await measure('normal-split-explained', 'split');
+      // A file past a thousand lines: four-digit numbers.
+      await backToFiles(diffId);
+      await openFile(diffId, 'src/app/ProjectIoCoordinator.cpp');
+      const four = await measure('normal-split-four-digits', 'split');
+      expect(metaOf(four?.cells ?? []).some((entry, index) => index % 3 === 1 && entry > (metaOf(normalSplit?.cells ?? [])[1] ?? 0)), 'the number column does not widen for four digits');
+
+      // The walk window's gutter on the same pair.
+      await press(diffId, '[data-ev="pair-prepare-walks"]');
+      await untilPair(diffId, 'the agent picker', (reading) => (reading.text ?? '').includes('Model'), 15_000);
+      await press(diffId, '[data-ev="pair-walks-agent-start"]');
+      const walkRow = await untilWindow('the walk window', (rows) => rows.find((row) => row.view === 'walk'), 90_000);
+      await check({ action: 'resize', id: walkRow.id, width: 1600, height: 900 }, 'size the walk window');
+      const walk = await untilPair(walkRow.id, 'the walk panes', (reading) => columnsOf(reading).walk.length > 0 && columnsOf(reading).walk.every((pane) => pane.gutter > 0), 30_000);
+      measured['walk'] = columnsOf(walk).walk;
+      // Two columns of digits with their gap and padding, and a mark of one character.
+      expect(columnsOf(walk).walk.every((pane) => pane.digits > 0 && pane.numbers <= pane.digits * 2 * 7 + 22 && pane.mark <= 24 && pane.gutter <= pane.numbers + pane.mark + 1), `the walk gutter is wider than its digits need: ${JSON.stringify(columnsOf(walk).walk)}`);
+      await capture(walkRow.id, 'columns-walk');
+      await press(walkRow.id, '[data-ev="walk-wrap"]');
+      const walkWrapped = await readPairWindow(walkRow.id);
+      measured['walk wrapped'] = columnsOf(walkWrapped).walk;
+      await capture(walkRow.id, 'columns-walk-wrapped');
+      record('columns', measured);
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
 
     if (phase === 'again') {
       // --- After a restart: both reviews ongoing, resumed without any agent work -----------
@@ -13804,14 +14039,14 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     const dal = await startReview(diffId, DAL.name, DAL);
     expect(diffOf(dal).files.length === 1 && diffOf(dal).files[0]?.path === DAL_FILE, `the trial's pair is not one Markdown file: ${JSON.stringify(diffOf(dal).files.map((file) => file.path))}`);
     const dalSplit = await openFile(diffId, DAL_FILE);
-    const long = diffOf(dalSplit).longLines.filter((entry) => entry.side === 'base').sort((a, b) => b.length - a.length)[0];
+    const long = diffOf(dalSplit).longLines.filter((entry) => entry.side === 'target').sort((a, b) => b.length - a.length)[0];
     record('long lines', { count: diffOf(dalSplit).longLines.length, longest: long, overflow: diffOf(dalSplit).diffOverflowX, words: diffOf(dalSplit).words.length, whole: diffOf(dalSplit).wholeLines.length });
     expect(long !== undefined && long.height > 40, 'a long line does not wrap in the diff');
     expect(!diffOf(dalSplit).diffOverflowX, 'the diff scrolls sideways for long lines');
     expect(diffOf(dalSplit).words.length + diffOf(dalSplit).wholeLines.length > 0, 'the wrapped diff has no change marks');
     await capture(diffId, 'dal-split-wrapped');
     if (long !== undefined) {
-      const selected = (await check({ action: 'drag', id: diffId, from: { selector: cell('base', long.line), offset: 20 }, to: { selector: cell('base', long.line), offset: 140 } }, 'select in a long line')) as { selected?: string };
+      const selected = (await check({ action: 'drag', id: diffId, from: { selector: cell('target', long.line), offset: 20 }, to: { selector: cell('target', long.line), offset: 140 } }, 'select in a long line')) as { selected?: string };
       await untilPair(diffId, 'Explain this beside the selection', (reading) => diffOf(reading).explainOffered);
       record('selected in a wrapped line', { selected: (selected.selected ?? '').slice(0, 80), length: (selected.selected ?? '').length });
       expect((selected.selected ?? '').length === 120, `the selection in a wrapped line is not the 120 characters dragged over: ${String((selected.selected ?? '').length)}`);
@@ -13820,7 +14055,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       expect(diffOf(explained).highlighted > 0, 'the explained text is not marked');
       await capture(diffId, 'dal-explained-wrapped');
       await press(diffId, '[data-ev="explain-fold"]');
-      await markLine(diffId, 'base', long.line, 'manual');
+      await markLine(diffId, 'target', long.line, 'manual');
       await capture(diffId, 'dal-line-marked');
     }
     await press(diffId, '[data-ev="pair-layout-unified"]');

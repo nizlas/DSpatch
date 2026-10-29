@@ -2757,6 +2757,12 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
     entry.window.focus();
     return { ok: true, detail: 'focused' };
   }
+  if (request.action === 'resize') {
+    entry.window.setContentSize(Math.round(request.width), Math.round(request.height));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const [width, height] = entry.window.getContentSize();
+    return { ok: true, detail: { width, height } };
+  }
   if (request.action === 'press' || request.action === 'press-key' || request.action === 'type') {
     return pressIn(entry.window, entry.contents, request);
   }
@@ -2915,6 +2921,33 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
               stepTitle: text(document.querySelector('.rv-step-on .rv-step-title')),
               position: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read().position : null,
               chooseOffered: [...document.querySelectorAll('button')].some((button) => /Open another review/.test(button.textContent || '')),
+            };
+          })(),
+          // The decided column widths as drawn: the diff's first changed row, cell by cell, and
+          // each walk pane's gutter beside its code.
+          columns: (() => {
+            const width = (node) => (node === null ? 0 : Math.round(node.getBoundingClientRect().width));
+            const table = document.querySelector('.rv-pair-diff table.rv-pair-table');
+            const row = table === null ? null : table.querySelector('tr.rv-pair-row-change');
+            return {
+              diff: table === null ? null : {
+                layout: table.classList.contains('rv-pair-table-split') ? 'split' : 'unified',
+                width: width(table),
+                startsWithFold: (table.querySelector('tbody > tr') || { classList: { contains: () => false } }).classList.contains('rv-pair-gap'),
+                cells: row === null ? [] : [...row.children].map((cell) => ({ kind: cell.className.split(' ')[0], width: width(cell) })),
+              },
+              walk: [...document.querySelectorAll('.rv-pane-lines')].map((pane) => {
+                const line = pane.querySelector('.rv-row');
+                const rows = pane.querySelector('.rv-rows');
+                return {
+                  digits: rows === null ? 0 : Number(getComputedStyle(rows).getPropertyValue('--rv-digits')),
+                  pane: width(pane),
+                  gutter: width(line && line.querySelector('.rv-gutter')),
+                  numbers: width(line && line.querySelector('.rv-ln')),
+                  mark: width(line && line.querySelector('.rv-marker')),
+                  code: width(line && line.querySelector('.rv-text')),
+                };
+              }),
             };
           })(),
           rightWidth: (document.querySelector('.rv-right') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width,
@@ -3517,7 +3550,7 @@ function registerIpc(): void {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.
-              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' ? named : 'first';
+              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' ? named : 'first';
             })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }

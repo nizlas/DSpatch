@@ -8,6 +8,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,6 +36,7 @@ import {
   type PairRecord,
 } from '../src/shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges } from '../src/shared/review-pair-walk';
+import { makeHistoryFixture, type HistoryFixture } from './support/history-fixture';
 import { PAIR_WORKING_TREE_ONLY, makePairFixture, type PairFixture } from './support/pair-fixture';
 
 let fixture: PairFixture;
@@ -236,6 +238,59 @@ describe('decisions about changed lines', () => {
     const lib = await pairs.openPair({ repository: fixture.lib, base: fixture.libBase, target: fixture.libTarget });
     assert.ok(!isPairError(lib));
     assert.deepEqual(pairs.walksFor(lib.key, [fixture.walkDefinition]), []);
+  });
+});
+
+describe('which chosen commit is From (decision after the trial, 29 October 2026)', () => {
+  let history: HistoryFixture;
+  let shallow: string;
+
+  before(async () => {
+    history = makeHistoryFixture();
+    // A clone two commits deep: the merge and its two parents, without their common root.
+    shallow = path.join(history.workspace, 'shallow');
+    execFileSync('git', ['clone', '-q', '--depth', '2', '--no-single-branch', `file://${history.history.replace(/\\/g, '/')}`, shallow]);
+    await pairs.repositories([history.workspace]);
+  });
+
+  after(() => {
+    fs.rmSync(history.workspace, { recursive: true, force: true });
+  });
+
+  it('makes the ancestor From in either click order, whatever the dates say', async () => {
+    const ordered = { kind: 'ordered', base: history.root, target: history.ahead };
+    // `ahead` is dated nineteen years before its parent: the date would give it backwards.
+    assert.deepEqual(await pairs.direction(history.history, history.ahead, history.root), ordered);
+    assert.deepEqual(await pairs.direction(history.history, history.root, history.ahead), ordered);
+    assert.deepEqual(await pairs.direction(history.history, history.merge, history.side), { kind: 'ordered', base: history.side, target: history.merge });
+  });
+
+  it('leaves two commits on separate branches to the person, without a merge base', async () => {
+    assert.deepEqual(await pairs.direction(history.history, history.ahead, history.side), { kind: 'unrelated' });
+    assert.deepEqual(await pairs.direction(history.history, history.side, history.ahead), { kind: 'unrelated' });
+  });
+
+  it('says it cannot tell when the history is shallow or a commit is missing', async () => {
+    const parents = execFileSync('git', ['-C', shallow, 'rev-list', '--parents', '-n', '1', 'HEAD'], { encoding: 'utf8' }).trim().split(' ');
+    assert.deepEqual(parents.slice(1).sort(), [history.ahead, history.side].sort());
+    const partial = await pairs.direction(shallow, history.ahead, history.side);
+    assert.equal(isPairError(partial) ? 'error' : partial.kind, 'unknown');
+    const missing = await pairs.direction(history.history, 'f'.repeat(40), history.merge);
+    assert.equal(isPairError(missing) ? 'error' : missing.kind, 'unknown');
+  });
+
+  it('refuses one commit as both ends, and a folder it did not offer', async () => {
+    assert.ok(isPairError(await pairs.direction(history.history, history.root, history.root)));
+    assert.ok(isPairError(await pairs.direction(path.join(history.workspace, 'nowhere'), history.root, history.ahead)));
+  });
+
+  it('opens exactly the pair asked for, a reversed one as a review of its own', async () => {
+    const forward = await pairs.openPair({ repository: history.history, base: history.root, target: history.ahead });
+    const reversed = await pairs.openPair({ repository: history.history, base: history.ahead, target: history.root });
+    assert.ok(!isPairError(forward) && !isPairError(reversed));
+    assert.equal(forward.pair.base, history.root);
+    assert.equal(reversed.pair.base, history.ahead);
+    assert.notEqual(forward.key, reversed.key);
   });
 });
 

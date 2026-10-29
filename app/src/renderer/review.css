@@ -893,40 +893,34 @@
   outline-offset: -1px;
 }
 
+/* A row's gutter: numbers and mark side by side, as narrow as the numbers need. */
+.rv-gutter {
+  display: flex;
+  flex: none;
+}
+
 .rv .rv-ln {
   display: inline-flex;
   flex: none;
-  gap: 0.4rem;
+  gap: 0.5rem;
   border: none;
   border-radius: 0;
   background: transparent;
   color: var(--muted);
-  padding: 0 0.4rem;
+  padding: 0 0.3rem 0 0.4rem;
   font-family: inherit;
   font-size: 0.75rem;
   line-height: inherit;
 }
 
-/* In the map's panes the line numbers stay put while a long line is scrolled
-   sideways, with their row's colour and its left edge mark (call, walk, arrival). */
-.rv .rv-pane-lines .rv-ln {
+/* In the map's panes the gutter stays put while a long line is scrolled sideways,
+   with its row's colour and its left edge mark (call, walk, arrival). */
+.rv-pane-lines .rv-gutter {
   position: sticky;
   left: 0;
   z-index: 1;
   background: inherit;
   box-shadow: inherit;
-}
-
-/* So does the before/after label beside them (the numbers are 6rem wide). */
-.rv .rv-pane-lines .rv-marker {
-  position: sticky;
-  left: 6rem;
-  z-index: 1;
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: inherit;
 }
 
 /* The links that open folded lines stay at the left edge too. */
@@ -939,18 +933,26 @@
 
 .rv-ln span {
   display: inline-block;
-  min-width: 2.4rem;
+  min-width: calc(var(--rv-digits, 3) * 1ch);
   text-align: right;
 }
 
 .rv-marker {
   flex: none;
-  width: 3.4rem;
-  font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 0.68rem;
+  width: 1.2rem;
   color: var(--muted);
   text-align: center;
-  align-self: center;
+  user-select: none;
+}
+
+/* Said by a screen reader, not drawn. */
+.rv-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .rv-marker-strong {
@@ -1770,6 +1772,21 @@
   font-size: 0.85rem;
 }
 
+/* Two commits Git cannot order: the person chooses which is From. */
+.rv-pair-direction {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.3rem 1.2rem;
+  font-size: 0.85rem;
+}
+
+.rv-pair-direction p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .rv-pair-choose {
   display: flex;
   flex-direction: column;
@@ -1814,7 +1831,9 @@
 .rv-pair .rv-pair-commit-from,
 .rv-pair .rv-pair-commit-from:hover:not(:disabled),
 .rv-pair .rv-pair-commit-to,
-.rv-pair .rv-pair-commit-to:hover:not(:disabled) {
+.rv-pair .rv-pair-commit-to:hover:not(:disabled),
+.rv-pair .rv-pair-commit-chosen,
+.rv-pair .rv-pair-commit-chosen:hover:not(:disabled) {
   background: var(--raised);
   border-left-color: var(--text);
 }
@@ -2367,7 +2386,6 @@
 /* The strip: a narrow cell beside the numbers. Adjacent cells of one status join
    into one band, because the rows have no gap between them. */
 .rv-pair-table td.rv-pair-strip {
-  width: 10px;
   padding: 0;
   border-left: 2px solid transparent;
   /* A dark gap to the numbers, so the band reads on a red or green row too. */
@@ -2405,8 +2423,16 @@
   border-left-color: var(--text);
 }
 
+/* Column widths: the table's colgroup, never the first row (see FileDiff). */
+.rv-pair-table col.rv-pair-col-strip {
+  width: 14px;
+}
+
+.rv-pair-table col.rv-pair-col-sign {
+  width: 1.6rem;
+}
+
 .rv-pair-table td.rv-pair-num {
-  width: 3.4rem;
   color: var(--muted);
   text-align: right;
   user-select: none;
@@ -2493,7 +2519,6 @@
 
 /* − and +, in a column of their own between the numbers and the code. */
 .rv-pair-table td.rv-pair-sign {
-  width: 1.6rem;
   padding: 0;
   text-align: center;
   color: var(--muted);
@@ -2947,7 +2972,6 @@
   overflow-wrap: anywhere;
 }
 
-.rv-lines-wrap .rv-row > .rv-ln,
-.rv-lines-wrap .rv-row > .rv-marker {
+.rv-lines-wrap .rv-row > .rv-gutter {
   align-self: flex-start;
 }

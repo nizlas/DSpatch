@@ -37,6 +37,7 @@ import {
   type MarkScope,
   type OngoingReview,
   type OpenPair,
+  type PairDirection,
   type PairAnswer,
   type PairWalk,
   type PairMark,
@@ -82,6 +83,21 @@ function git(repository: string, args: readonly string[]): Promise<string> {
         resolve(stdout);
       },
     );
+  });
+}
+
+/** Run git for its exit status: 0 and 1 are answers; anything else is a failure. */
+function gitStatus(repository: string, args: readonly string[]): Promise<0 | 1> {
+  return new Promise((resolve, reject) => {
+    execFile('git', ['-C', repository, ...args], { windowsHide: true, encoding: 'utf8' }, (error, _stdout, stderr) => {
+      if (error === null) {
+        resolve(0);
+      } else if (error.code === 1) {
+        resolve(1);
+      } else {
+        reject(new Error(stderr.trim() || error.message));
+      }
+    });
   });
 }
 
@@ -271,6 +287,38 @@ export class ReviewPairs {
       return /does not have any commits/i.test(message)
         ? { commits: [], more: false }
         : { error: `The log of ${path.basename(folder)} could not be read: ${message}` };
+    }
+  }
+
+  /**
+   * Which of two chosen commits is From: the one that is an ancestor of the other. Only
+   * Git's ancestry decides. Two commits on separate branches, or a history too shallow or
+   * unreadable to tell, are left to the person.
+   */
+  async direction(repository: unknown, first: unknown, second: unknown): Promise<PairAnswer<PairDirection>> {
+    const folder = this.repositoryOf(repository);
+    if (folder === null) {
+      return { error: 'That folder is not one of the repositories offered for review.' };
+    }
+    if (!isFullHash(first) || !isFullHash(second)) {
+      return { error: 'A review needs two full commit hashes.' };
+    }
+    if (first === second) {
+      return { error: 'From and To are the same commit, so there is no change to review.' };
+    }
+    try {
+      if ((await gitStatus(folder, ['merge-base', '--is-ancestor', first, second])) === 0) {
+        return { kind: 'ordered', base: first, target: second };
+      }
+      if ((await gitStatus(folder, ['merge-base', '--is-ancestor', second, first])) === 0) {
+        return { kind: 'ordered', base: second, target: first };
+      }
+      const shallow = (await git(folder, ['rev-parse', '--is-shallow-repository'])).trim() === 'true';
+      return shallow
+        ? { kind: 'unknown', reason: 'This clone has only part of the history, so Git cannot tell which commit came first.' }
+        : { kind: 'unrelated' };
+    } catch {
+      return { kind: 'unknown', reason: 'Git could not tell which commit came first.' };
     }
   }
 

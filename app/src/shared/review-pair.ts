@@ -1338,6 +1338,20 @@ export interface DiffLocation {
   readonly line: number;
 }
 
+/**
+ * How two chosen commits relate in Git's history, which decides which is From and which
+ * is To. Only ancestry decides: not dates, not the order of the log, not the order of the
+ * clicks. Where it cannot decide, the person chooses; DSpatch never guesses and never
+ * compares with a merge base instead.
+ */
+export type PairDirection =
+  /** `base` is an ancestor of `target`. */
+  | { readonly kind: 'ordered'; readonly base: string; readonly target: string }
+  /** Neither commit is an ancestor of the other, as on two branches. */
+  | { readonly kind: 'unrelated' }
+  /** Git could not say: a shallow history, a missing commit or a failed read. */
+  | { readonly kind: 'unknown'; readonly reason: string };
+
 /** What a review window over a pair starts with. */
 export type PairWindowStart =
   /** A diff window that has not chosen a pair yet: repository list or log. */
@@ -1361,6 +1375,7 @@ export const REVIEW_PAIR_CHANNELS = {
   start: 'dspatch:review-pair-start',
   repositories: 'dspatch:review-pair-repositories',
   log: 'dspatch:review-pair-log',
+  direction: 'dspatch:review-pair-direction',
   open: 'dspatch:review-pair-open',
   forWalk: 'dspatch:review-pair-for-walk',
   readFile: 'dspatch:review-pair-read-file',
@@ -1399,6 +1414,8 @@ export interface ReviewPairBridge {
     repository: string,
     skip: number,
   ): Promise<PairAnswer<{ readonly commits: readonly LogCommit[]; readonly more: boolean; readonly last: { readonly base: string; readonly target: string } | null }>>;
+  /** Which of two chosen commits is From and which is To, from Git's ancestry. Reads only. */
+  direction(repository: string, first: string, second: string): Promise<PairAnswer<PairDirection>>;
   open(pair: RevisionPairIdentity): Promise<PairOpenOutcome>;
   /** In a walk window: the pair the walk is over, opened so decisions share its record. */
   forWalk(): Promise<PairAnswer<OpenPair>>;
