@@ -1793,6 +1793,8 @@ export type ScriptedScenario =
   | 'walk-start'
   /** DSP-152: the analysis agent reads the two revisions; walk, step question, delegated review, stop and restart. SIMULATED provider. */
   | 'analysis-access'
+  /** DSP-152: code selected in the diff explained, in both layouts, with follow-ups, reopened after a restart. SIMULATED provider. */
+  | 'selection-explain'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2071,7 +2073,25 @@ export type PairWindowCheckRequest =
   | { readonly action: 'press-key'; readonly id: number; readonly selector: string; readonly key: string }
   /** DSP-152: the element focused, then `text` typed into it one character at a time, as a keyboard does. */
   | { readonly action: 'type'; readonly id: number; readonly selector: string; readonly text: string }
+  /**
+   * DSP-152: select text with the mouse: the left button pressed at a character of one
+   * element, moved, and released at a character of another, through `sendInputEvent`. A
+   * point is an element and a 0-based character offset in its text; the press lands on the
+   * left half of the character at `from.offset` (the selection starts before it) and the
+   * release on the right half of the character before `to.offset` (it ends after that one).
+   */
+  | { readonly action: 'drag'; readonly id: number; readonly from: TextPoint; readonly to: TextPoint }
+  /** DSP-152: the right button pressed and released at a character, as a person opens a context menu. */
+  | { readonly action: 'right-click'; readonly id: number; readonly at: TextPoint }
+  /** DSP-152: a key with modifiers pressed and released in the focused window, as a shortcut. */
+  | { readonly action: 'chord'; readonly id: number; readonly key: string; readonly modifiers: readonly ('control' | 'shift' | 'alt')[] }
   | { readonly action: 'close'; readonly id: number };
+
+/** A character in an element's text, for real mouse input (DSP-152). */
+export interface TextPoint {
+  readonly selector: string;
+  readonly offset: number;
+}
 
 /** What the `editor-joins-run` scenario asks of the loop editor's own window. */
 export type EditorWindowCheckRequest =
@@ -2211,7 +2231,7 @@ export interface ScriptedRunPlan {
    */
   readonly resumeHold?: boolean;
   /** DSP-149 `workspace-flow`: which process this is, and the folder its projects are in. */
-  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked';
+  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked' | 'pick';
   readonly flowRoot?: string;
 }
 

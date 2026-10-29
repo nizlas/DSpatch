@@ -113,6 +113,18 @@ export interface AgentJobRequestInput {
   readonly scope?: DelegationScope;
   /** DSP-152, `explain`: the step (by its walk definition and ids) and the person's question. */
   readonly question?: { readonly definitionPath: string; readonly walkId: string; readonly stepId: string; readonly question: string };
+  /** DSP-152, `explain`: code selected in the diff, as the window read it (the host checks it). */
+  readonly selection?: CodeSelectionRequest;
+  /** DSP-152, `explain`: a follow-up on an earlier explanation of a selection, by its first job. */
+  readonly followUp?: { readonly root: string; readonly action: ExplainAction; readonly question?: string };
+}
+
+/** What a window sends for a selection: where it is, and the text it saw there. */
+export interface CodeSelectionRequest {
+  readonly fileKey: string;
+  readonly layout: 'split' | 'unified';
+  readonly segments: readonly Omit<SelectionSegment, 'text' | 'kind'>[];
+  readonly text: string;
 }
 
 /** A host answer, or why there is none. */
@@ -452,6 +464,63 @@ export interface StepQuestion {
   readonly places: readonly LineRange[];
 }
 
+/**
+ * How selected code relates to the change: removed (only in From, the base commit), added
+ * (only in To, the target commit) or unchanged (the same in both; read at the side it was
+ * selected on).
+ */
+export type SelectedCodeKind = 'removed' | 'added' | 'unchanged';
+
+/**
+ * One run of selected lines on one side of the diff, all of one kind (DSP-152). `from` is
+ * the 0-based character offset on `start` where the selection begins, `to` the 0-based
+ * offset on `end` just after it ends; a whole line is `0` to its length. `text` is the
+ * selected text as the host read it from the commit, not as the window drew it.
+ */
+export interface SelectionSegment {
+  readonly side: LineSide;
+  readonly path: string;
+  readonly start: number;
+  readonly end: number;
+  readonly from: number;
+  readonly to: number;
+  readonly kind: SelectedCodeKind;
+  readonly text: string;
+}
+
+/** Code selected in the diff window for an explanation, checked against the commits. */
+export interface CodeSelection {
+  /** The diff's file the selection was made in. */
+  readonly fileKey: string;
+  /** The layout it was selected in; the segments do not depend on it. */
+  readonly layout: 'split' | 'unified';
+  readonly segments: readonly SelectionSegment[];
+}
+
+/** A follow-up on an explanation: tell more, explain more simply, or the person's question. */
+export type ExplainAction = 'more' | 'simpler' | 'question';
+
+/** What a follow-up job asks, and the explanation (its first job) it follows. */
+export interface ExplainFollowUp {
+  readonly root: string;
+  readonly action: ExplainAction;
+  /** For `question`: what the person asked. */
+  readonly question: string;
+}
+
+/** The selected text, segment by segment, as one string. */
+export function selectionText(selection: Pick<CodeSelection, 'segments'>): string {
+  return selection.segments.map((segment) => segment.text).join('\n');
+}
+
+/** Where a segment is, in words: "src/a.ts line 4, characters 9–20 (To, added)". */
+export function segmentWords(segment: Omit<SelectionSegment, 'text'>): string {
+  const lines = segment.start === segment.end ? `line ${String(segment.start)}` : `lines ${String(segment.start)}–${String(segment.end)}`;
+  const characters = segment.start === segment.end ? `, characters ${String(segment.from + 1)}–${String(segment.to)}` : '';
+  const where = segment.kind === 'removed' ? 'From, removed' : segment.kind === 'added' ? 'To, added' : `${segment.side === 'base' ? 'From' : 'To'}, unchanged`;
+  return `${segment.path} ${lines}${characters} (${where})`;
+}
+
 /** A code reference in an answer, checked against its commit. */
 export interface AnswerReference {
   readonly label: string;
@@ -518,6 +587,9 @@ export interface AgentJob {
   /** For a step question: the question, and its checked answer once there is one. */
   readonly question?: StepQuestion;
   readonly answer?: StepAnswer;
+  /** For an explanation of selected code: the selection, and for a follow-up what it asks. */
+  readonly selection?: CodeSelection;
+  readonly followUp?: ExplainFollowUp;
   /** What the agent could read, and what it looked at (DSP-152 analysis access). */
   readonly material?: AgentMaterial;
   readonly investigation?: AgentInvestigation;
@@ -662,6 +734,30 @@ function answerFrom(raw: unknown): StepAnswer | null {
   };
 }
 
+function selectionFrom(raw: unknown): CodeSelection | null {
+  if (!isRecordObject(raw) || typeof raw['fileKey'] !== 'string' || !Array.isArray(raw['segments'])) {
+    return null;
+  }
+  const segments = raw['segments'].filter(isRecordObject).flatMap((entry): SelectionSegment[] => {
+    // A segment's `kind` says how it relates to the change; its place reads as a line range.
+    const range = rangeFrom({ ...entry, kind: 'lines' });
+    const kind = entry['kind'];
+    if (range === null || (kind !== 'removed' && kind !== 'added' && kind !== 'unchanged')) {
+      return [];
+    }
+    const offset = (key: string): number => (Number.isInteger(entry[key]) ? (entry[key] as number) : 0);
+    return [{ side: range.side, path: range.path, start: range.start, end: range.end, from: offset('from'), to: offset('to'), kind, text: typeof entry['text'] === 'string' ? entry['text'] : '' }];
+  });
+  return segments.length === 0 ? null : { fileKey: raw['fileKey'], layout: raw['layout'] === 'unified' ? 'unified' : 'split', segments };
+}
+
+function followUpFrom(raw: unknown): ExplainFollowUp | null {
+  if (!isRecordObject(raw) || typeof raw['root'] !== 'string' || (raw['action'] !== 'more' && raw['action'] !== 'simpler' && raw['action'] !== 'question')) {
+    return null;
+  }
+  return { root: raw['root'], action: raw['action'], question: typeof raw['question'] === 'string' ? raw['question'] : '' };
+}
+
 function materialFrom(raw: unknown): AgentMaterial | null {
   if (!isRecordObject(raw) || typeof raw['base'] !== 'string' || typeof raw['target'] !== 'string') {
     return null;
@@ -743,9 +839,13 @@ export function jobFrom(raw: unknown): AgentJob | null {
       const answer = answerFrom(raw['answer']);
       const material = materialFrom(raw['material']);
       const investigation = investigationFrom(raw['investigation']);
+      const selection = selectionFrom(raw['selection']);
+      const followUp = followUpFrom(raw['followUp']);
       return {
         ...(question === null ? {} : { question }),
         ...(answer === null ? {} : { answer }),
+        ...(selection === null ? {} : { selection }),
+        ...(followUp === null ? {} : { followUp }),
         ...(material === null ? {} : { material }),
         ...(investigation === null ? {} : { investigation }),
       };

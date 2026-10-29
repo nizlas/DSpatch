@@ -21,6 +21,10 @@ import {
   type AgentMaterial,
   type AnswerReference,
   type ChangedLine,
+  type CodeSelection,
+  type ExplainFollowUp,
+  type SelectedCodeKind,
+  type SelectionSegment,
   type DelegationResult,
   type DelegationScope,
   type LineRange,
@@ -305,6 +309,210 @@ export function stepQuestionPrompt(
     changeSection(material),
   ].join('\n');
 }
+/** The bounds of a selection the agent is asked to explain; beyond them it is refused. */
+export const SELECTION_LIMITS = { segments: 40, lines: 400, characters: 20_000 } as const;
+
+/** How many lines around each selected run the prompt shows, before and after. */
+const AROUND_LINES = 6;
+
+/**
+ * A selection a window sent, checked against the commits (DSP-152). The host reads every
+ * line from Git at the side it names and decides itself whether it is removed, added or
+ * unchanged; a run of lines of more than one kind is split. The text the window saw must be
+ * the commits' text at those places, or the selection is refused: the agent is never asked
+ * about text the person did not select.
+ */
+export async function readSelection(raw: unknown, files: readonly PairFile[], read: LineReader): Promise<CodeSelection | { readonly error: string }> {
+  const again = 'Select the code again.';
+  if (!isObject(raw) || typeof raw['fileKey'] !== 'string' || !Array.isArray(raw['segments']) || typeof raw['text'] !== 'string') {
+    return { error: 'No code was selected.' };
+  }
+  const file = files.find((entry) => entry.key === raw['fileKey']);
+  if (file === undefined) {
+    return { error: `The selected file is not part of this change. ${again}` };
+  }
+  if (raw['segments'].length === 0) {
+    return { error: 'No code was selected.' };
+  }
+  if (raw['segments'].length > SELECTION_LIMITS.segments) {
+    return { error: 'The selection is too large to explain at once. Select less.' };
+  }
+  const changed = new Set(changedLinesOf(file).map(lineKey));
+  const kindOf = (side: LineSide, filePath: string, line: number): SelectedCodeKind =>
+    changed.has(lineKey({ side, path: filePath, line })) ? (side === 'base' ? 'removed' : 'added') : 'unchanged';
+  const segments: SelectionSegment[] = [];
+  let lineCount = 0;
+  for (const entry of raw['segments'] as unknown[]) {
+    const range = rangeOf(entry);
+    if (range === null || !isObject(entry) || !Number.isInteger(entry['from']) || !Number.isInteger(entry['to'])) {
+      return { error: `The selection does not name its lines. ${again}` };
+    }
+    const expected = range.side === 'base' ? file.oldPath : file.newPath;
+    if (expected === null || range.path !== expected) {
+      return { error: `The selection names ${range.path}, which is not this file at ${range.side === 'base' ? 'From' : 'To'}. ${again}` };
+    }
+    lineCount += range.end - range.start + 1;
+    if (lineCount > SELECTION_LIMITS.lines) {
+      return { error: `The selection is longer than ${String(SELECTION_LIMITS.lines)} lines. Select less.` };
+    }
+    const lines = await read(range.side, range.path);
+    if (lines === null || range.end > lines.length) {
+      return { error: `${range.path} has no line ${String(range.end)} at ${range.side === 'base' ? 'From' : 'To'}. ${again}` };
+    }
+    const from = entry['from'] as number;
+    const to = entry['to'] as number;
+    const first = lines[range.start - 1] ?? '';
+    const last = lines[range.end - 1] ?? '';
+    if (from < 0 || from > first.length || to < 0 || to > last.length || (range.start === range.end && to < from)) {
+      return { error: `The selection's characters are not on those lines. ${again}` };
+    }
+    // Runs of one kind: removed, added and unchanged lines are never one segment.
+    let runStart = range.start;
+    for (let line = range.start; line <= range.end; line += 1) {
+      const kind = kindOf(range.side, range.path, line);
+      if (line < range.end && kindOf(range.side, range.path, line + 1) === kind) {
+        continue;
+      }
+      const runFrom = runStart === range.start ? from : 0;
+      const runTo = line === range.end ? to : (lines[line - 1] ?? '').length;
+      const picked = lines.slice(runStart - 1, line).map((value, index, all) => {
+        const lead = index === 0 ? runFrom : 0;
+        return index === all.length - 1 ? value.slice(lead, runTo) : value.slice(lead);
+      });
+      segments.push({ side: range.side, path: range.path, start: runStart, end: line, from: runFrom, to: runTo, kind, text: picked.join('\n') });
+      runStart = line + 1;
+    }
+  }
+  const joined = segments.map((segment) => segment.text).join('\n');
+  if (joined.length > SELECTION_LIMITS.characters) {
+    return { error: `The selection is longer than ${String(SELECTION_LIMITS.characters)} characters. Select less.` };
+  }
+  if (joined.trim() === '') {
+    return { error: 'Only blank space was selected.' };
+  }
+  // What the window saw must be what the commits hold there (split runs joined alike).
+  if (raw['text'].replace(/\r/g, '') !== joined) {
+    return { error: `The selected text is not what the commits hold at that place. ${again}` };
+  }
+  return { fileKey: file.key, layout: raw['layout'] === 'unified' ? 'unified' : 'split', segments };
+}
+
+/** The lines around a segment at its side, numbered, the selected ones marked with `>`. */
+export function linesAround(segment: Pick<SelectionSegment, 'start' | 'end'>, lines: readonly string[]): string {
+  const first = Math.max(1, segment.start - AROUND_LINES);
+  const last = Math.min(lines.length, segment.end + AROUND_LINES);
+  const width = String(last).length;
+  const out: string[] = [];
+  for (let line = first; line <= last; line += 1) {
+    const mark = line >= segment.start && line <= segment.end ? '>' : ' ';
+    out.push(`${mark} ${String(line).padStart(width)} | ${lines[line - 1] ?? ''}`);
+  }
+  return out.join('\n');
+}
+
+/** An earlier question and answer about the same selection, for a follow-up's context. */
+export interface ExplainTurn {
+  readonly asked: string;
+  readonly answer: string;
+}
+
+/** What a follow-up asks, in the words of the plan's step deepenings, said of the code. */
+export function followUpWords(followUp: Pick<ExplainFollowUp, 'action' | 'question'>): string {
+  return followUp.action === 'more'
+    ? 'Tell me more about this code: the mechanism, how the code connects, and the details that matter. Do not repeat what was already explained.'
+    : followUp.action === 'simpler'
+      ? 'Explain this code more simply: more background, a clearer cause and effect, or a concrete example. Keep the class and method names.'
+      : followUp.question;
+}
+
+const KIND_WORDS: Record<SelectedCodeKind, (side: LineSide) => string> = {
+  removed: () => 'REMOVED: this code is only in From (base). It does not exist in To; it is behaviour the change takes away or replaces.',
+  added: () => 'ADDED: this code is only in To (target). It did not exist in From; it is behaviour the change brings.',
+  unchanged: (side) =>
+    `UNCHANGED: the same in From and To, selected at ${side === 'base' ? 'From (base)' : 'To (target)'}. The change does not touch it, but may change how it is reached or what it works on.`,
+};
+
+/**
+ * Ask for an explanation of code the person selected in the diff (DSP-152), or a follow-up
+ * on one. The selection is given exactly, part by part, with its side and kind and the
+ * lines around it; the agent reads further in the revision folder as the explanation needs.
+ */
+export function selectionPrompt(
+  material: AnalysisMaterial,
+  folder: AgentMaterial,
+  selection: CodeSelection,
+  around: readonly string[],
+  thread: readonly ExplainTurn[],
+  followUp: ExplainFollowUp | null,
+  language: 'sv' | 'en',
+): string {
+  const commit = (side: LineSide): string => (side === 'base' ? `From (base, commit ${material.pair.base})` : `To (target, commit ${material.pair.target})`);
+  return [
+    `${TASK_HEADER} explain-selection`,
+    '',
+    'A person reviewing this change selected code in the diff and asks you to explain it. Examine the code with your reading tools as far as the explanation needs (what the selected code calls, what calls it, the data and types it uses, and how it differs between the revisions), then answer. Explaining approves nothing and is not a review.',
+    '',
+    '## The selected code',
+    `${String(selection.segments.length)} part(s), in the order they appear in the diff. Each part is on one side of the diff; keep the sides apart.`,
+    ...selection.segments.flatMap((segment, index) => [
+      '',
+      `### Part ${String(index + 1)}: ${segment.path} at ${commit(segment.side)}`,
+      KIND_WORDS[segment.kind](segment.side),
+      `Lines ${String(segment.start)}–${String(segment.end)}${segment.start === segment.end ? `, characters ${String(segment.from + 1)}–${String(segment.to)}` : ''} at that side.`,
+      'Selected text, exactly:',
+      '```',
+      segment.text,
+      '```',
+      'The lines around it at that side (selected lines marked >):',
+      '```',
+      around[index] ?? '',
+      '```',
+    ]),
+    '',
+    '## The selection (machine-readable)',
+    '```json',
+    JSON.stringify(selection.segments.map((segment) => ({ path: segment.path, side: segment.side, start: segment.start, end: segment.end, kind: segment.kind }))),
+    '```',
+    ...(thread.length === 0
+      ? []
+      : [
+          '',
+          '## Earlier in this explanation',
+          'The person has already read these answers about the same selection:',
+          ...thread.flatMap((turn, index) => ['', `### ${String(index + 1)}. Asked: ${turn.asked}`, turn.answer]),
+        ]),
+    '',
+    '## What the person asks now',
+    followUp === null ? 'Explain the selected code.' : followUpWords(followUp),
+    '',
+    `## How to answer (language: ${language === 'sv' ? 'Swedish' : 'English'})`,
+    followUp === null
+      ? 'Start with what the selected code does and why it is relevant in this change. Then give the context needed to understand it, such as what it depends on and what depends on it, in short paragraphs.'
+      : 'Answer what is asked now, for this selection, building on the earlier answers without repeating them.',
+    'Keep the revisions apart: say which revision each statement is about. Never describe removed code as what the code does now, or added code as what it did before. When the selection holds both, say what was replaced by what.',
+    ...WRITING_RULES.map((rule) => `- ${rule}`),
+    'If the code you could read does not settle it, say what is missing and set "insufficient": true.',
+    '',
+    'Answer with one JSON object in a ```json fence and nothing else:',
+    '```json',
+    JSON.stringify(
+      {
+        answer: 'The explanation in Markdown.',
+        references: [{ label: 'What this place shows', path: 'src/file.ts', side: 'target', start: 10, end: 14 }],
+        insufficient: false,
+      },
+      null,
+      2,
+    ),
+    '```',
+    'Every reference names a path, a side and 1-based lines at that side; DSpatch checks each against the commit.',
+    '',
+    folderSection(material, folder),
+    '',
+    changeSection(material),
+  ].join('\n');
+}
+
 // --- Reading answers ----------------------------------------------------------------------
 
 /** The JSON object of an answer: a ```json fence, or the whole text when it is one object. */

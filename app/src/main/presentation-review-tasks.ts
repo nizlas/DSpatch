@@ -28,6 +28,8 @@
  *   approved.
  * - A step question reads the step's places, follows the first imported function they call
  *   to its definition, and answers with both as references.
+ * - An explanation of selected code reads each selected part at its side and answers only
+ *   if the selected text is there; it names each part's kind and the definition it calls.
  */
 
 import fs from 'node:fs';
@@ -351,6 +353,61 @@ function stepQuestion(prompt: string, reader: Reader): string {
   return fence({ answer, references, insufficient: false });
 }
 
+interface SimSegment extends SimRange {
+  readonly kind: 'removed' | 'added' | 'unchanged';
+}
+
+const SIM_KIND: Record<SimSegment['kind'], string> = {
+  removed: 'removed: only in From',
+  added: 'added: only in To',
+  unchanged: 'unchanged in both',
+};
+
+/**
+ * An explanation of selected code: each part is read at its side in the folder and its
+ * selected text must be there, or the answer is "insufficient" (so a part sent with the
+ * wrong side shows). It follows the first imported function a part calls to its definition.
+ * A follow-up says what it was asked and how many earlier answers it was given.
+ */
+function explainSelection(prompt: string, reader: Reader): string {
+  const parts = rangesAfter(prompt, '## The selection (machine-readable)') as SimSegment[];
+  const texts = [...prompt.matchAll(/Selected text, exactly:\n```\n([\s\S]*?)\n```/g)].map((match) => match[1] ?? '');
+  const asked = /## What the person asks now\n([\s\S]*?)\n\n## /.exec(prompt)?.[1]?.trim() ?? '';
+  const earlier = (/## Earlier in this explanation\n([\s\S]*?)\n\n## What the person asks now/.exec(prompt)?.[1] ?? '').match(/^### \d+\. Asked:/gm)?.length ?? 0;
+  const references: unknown[] = [];
+  const found: string[] = [];
+  let definition: Definition | null = null;
+  for (const [index, part] of parts.entries()) {
+    const lines = reader.read(part.side, part.path);
+    const selected = texts[index] ?? '';
+    const there = lines === null ? '' : lines.slice(part.start - 1, part.end).join('\n');
+    if (lines === null || !there.includes(selected)) {
+      return fence({
+        answer: `SIMULATED: the selected text of part ${String(index + 1)} is not at ${part.path} lines ${String(part.start)}–${String(part.end)} on the ${part.side} side of the folder.`,
+        references: [],
+        insufficient: true,
+      });
+    }
+    found.push(`- \`${selected.split('\n')[0]?.trim().slice(0, 60) ?? ''}\` (${part.path} line ${String(part.start)}, ${SIM_KIND[part.kind]}, read at ${part.side})`);
+    references.push({ label: `The selected code (${SIM_KIND[part.kind]})`, path: part.path, side: part.side, start: part.start, end: part.end });
+    definition ??= followCall(reader, part.side, part.path, lines, there);
+  }
+  if (definition !== null) {
+    const side = parts.find((part) => part.side === 'target')?.side ?? parts[0]?.side ?? 'target';
+    references.push({ label: `${definition.name}, where it is defined`, path: definition.path, side, start: definition.start, end: definition.end });
+  }
+  const opening =
+    asked === 'Explain the selected code.'
+      ? 'SIMULATED explanation of the selected code.'
+      : `SIMULATED follow-up: “${asked.slice(0, 90)}”, building on ${String(earlier)} earlier answer(s) about the same selection.`;
+  const dependency =
+    definition === null
+      ? 'It calls nothing defined in another file of this revision.'
+      : `It calls \`${definition.name}\`, defined in \`${definition.path}\` lines ${String(definition.start)}–${String(definition.end)}, outside the change.` +
+        (definition.returnsNull ? ' That function can return `null`.' : '');
+  return fence({ answer: `${opening}\n\nWhat was selected:\n${found.join('\n')}\n\n${dependency}`, references, insufficient: false });
+}
+
 /**
  * The simulated answer to an analysis task prompt, reading the revisions in `folder` (the
  * session's working folder), or `null` for any other prompt.
@@ -370,6 +427,8 @@ export function simulatedReviewTask(prompt: string, folder: string): SimulatedTa
     answer = delegatedReview(prompt, reader);
   } else if (task === 'step-question') {
     answer = stepQuestion(prompt, reader);
+  } else if (task === 'explain-selection') {
+    answer = explainSelection(prompt, reader);
   }
   return answer === null ? null : { answer, tools: reader.tools };
 }

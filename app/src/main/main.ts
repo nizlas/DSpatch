@@ -41,6 +41,7 @@ import type {
   EditorWindowCheckAnswer,
   EditorWindowCheckRequest,
   PairWindowCheckRequest,
+  TextPoint,
   SampleProjectsView,
   ScriptedRunPlan,
   ScriptedRunReport,
@@ -2607,6 +2608,88 @@ async function pressIn(
   return { ok: true, detail: place };
 }
 
+/**
+ * DSP-152: where a character of an element's text is drawn, for real mouse input: the left
+ * or right half of the character's box, in the window's coordinates. The element is
+ * scrolled into view first.
+ */
+async function textPointIn(contents: Electron.WebContents, point: TextPoint, half: 'left' | 'right'): Promise<{ x: number; y: number } | null> {
+  return (await contents.executeJavaScript(
+    `(() => {
+      const element = document.querySelector(${JSON.stringify(point.selector)});
+      if (!(element instanceof HTMLElement)) { return null; }
+      element.scrollIntoView({ block: 'center' });
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let at = 0;
+      const wanted = ${String(point.offset)};
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        const length = (node.textContent || '').length;
+        if (wanted < at + length) {
+          const range = document.createRange();
+          range.setStart(node, wanted - at);
+          range.setEnd(node, wanted - at + 1);
+          const box = range.getBoundingClientRect();
+          const x = ${half === 'left' ? 'box.left + Math.max(1, box.width * 0.25)' : 'box.right - Math.max(1, box.width * 0.25)'};
+          return { x: Math.round(x), y: Math.round(box.top + box.height / 2) };
+        }
+        at += length;
+      }
+      return null;
+    })()`,
+  )) as { x: number; y: number } | null;
+}
+
+async function pointerIn(window: BrowserWindow, contents: Electron.WebContents, request: PairWindowCheckRequest): Promise<EditorWindowCheckAnswer> {
+  window.show();
+  window.focus();
+  contents.focus();
+  const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+  if (request.action === 'drag') {
+    const start = await textPointIn(contents, request.from, 'left');
+    // The end is found after the start was scrolled to, so both are in the same frame.
+    const end = await textPointIn(contents, { selector: request.to.selector, offset: Math.max(0, request.to.offset - 1) }, 'right');
+    if (start === null || end === null) {
+      return { ok: false, detail: `no character at ${JSON.stringify(start === null ? request.from : request.to)}` };
+    }
+    contents.sendInputEvent({ type: 'mouseDown', x: start.x, y: start.y, button: 'left', clickCount: 1 });
+    for (let step = 1; step <= 8; step += 1) {
+      const x = Math.round(start.x + ((end.x - start.x) * step) / 8);
+      const y = Math.round(start.y + ((end.y - start.y) * step) / 8);
+      contents.sendInputEvent({ type: 'mouseMove', x, y, button: 'left', modifiers: ['leftbuttondown'] });
+      await pause(20);
+    }
+    contents.sendInputEvent({ type: 'mouseUp', x: end.x, y: end.y, button: 'left', clickCount: 1 });
+    await pause(150);
+    return { ok: true, detail: { start, end, selected: (await contents.executeJavaScript('String(window.getSelection())')) as string } };
+  }
+  if (request.action === 'right-click') {
+    const at = await textPointIn(contents, request.at, 'left');
+    if (at === null) {
+      return { ok: false, detail: `no character at ${JSON.stringify(request.at)}` };
+    }
+    // What reached the page, counted, so a scenario can tell a missing event from a missed handler.
+    await contents.executeJavaScript(
+      `(() => { const seen = { mousedown: 0, mouseup: 0, contextmenu: 0 }; window.__dspatchRightClick = seen;
+        for (const name of Object.keys(seen)) { window.addEventListener(name, (event) => { if (event.button === 2 || name === 'contextmenu') { seen[name] += 1; } }, { capture: true }); } })()`,
+    );
+    // As Windows delivers a right click: the button down and up, then the context-menu
+    // request (WM_CONTEXTMENU), which is what makes the page's `contextmenu` event.
+    contents.sendInputEvent({ type: 'mouseDown', x: at.x, y: at.y, button: 'right', clickCount: 1 });
+    await pause(40);
+    contents.sendInputEvent({ type: 'mouseUp', x: at.x, y: at.y, button: 'right', clickCount: 1 });
+    contents.sendInputEvent({ type: 'contextMenu', x: at.x, y: at.y, button: 'right', clickCount: 1 });
+    await pause(150);
+    return { ok: true, detail: { at, seen: (await contents.executeJavaScript('window.__dspatchRightClick')) as unknown } };
+  }
+  if (request.action === 'chord') {
+    contents.sendInputEvent({ type: 'keyDown', keyCode: request.key, modifiers: [...request.modifiers] });
+    contents.sendInputEvent({ type: 'keyUp', keyCode: request.key, modifiers: [...request.modifiers] });
+    await pause(150);
+    return { ok: true, detail: 'pressed' };
+  }
+  return { ok: false, detail: 'not a pointer action' };
+}
+
 async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorWindowCheckAnswer> {
   // DSP-152: id 0 is the main window, for real input from where a person starts.
   if ((request.action === 'press' || request.action === 'press-key') && request.id === 0) {
@@ -2647,6 +2730,9 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
   }
   if (request.action === 'press' || request.action === 'press-key' || request.action === 'type') {
     return pressIn(entry.window, entry.contents, request);
+  }
+  if (request.action === 'drag' || request.action === 'right-click' || request.action === 'chord') {
+    return pointerIn(entry.window, entry.contents, request);
   }
   if (request.action === 'capture') {
     // Two frames painted first: a capture taken at once can return the frame before the
@@ -3359,12 +3445,12 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
-      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice' || chatRunScenario === 'walk-start' || chatRunScenario === 'analysis-access'
+      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice' || chatRunScenario === 'walk-start' || chatRunScenario === 'analysis-access' || chatRunScenario === 'selection-explain'
         ? {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.
-              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' ? named : 'first';
+              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' ? named : 'first';
             })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }

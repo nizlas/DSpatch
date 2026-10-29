@@ -1,4 +1,4 @@
-import type { ScriptedRunPlan, ScriptedRunReport } from '../shared/bridge';
+import type { PairWindowCheckRequest, ScriptedRunPlan, ScriptedRunReport } from '../shared/bridge';
 import type { WorkspaceView } from '../shared/workspace-folders';
 import { nodeRunStates } from '../shared/loop-run-view';
 import {
@@ -744,7 +744,7 @@ export async function runScriptedWorkflow(
 ): Promise<ScriptedRunReport> {
   // DSP-149: `model-list` chooses Claude itself and must never choose Cursor. DSP-152:
   // `review-agent-choice` starts from the kit's own choice of Claude, usable or not.
-  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow' && plan.scenario !== 'review-agent-choice' && plan.scenario !== 'walk-start' && plan.scenario !== 'analysis-access') {
+  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow' && plan.scenario !== 'review-agent-choice' && plan.scenario !== 'walk-start' && plan.scenario !== 'analysis-access' && plan.scenario !== 'selection-explain') {
     await nameScenarioAgent();
   }
   switch (plan.scenario) {
@@ -818,6 +818,8 @@ export async function runScriptedWorkflow(
       return runWalkStartScenario(plan);
     case 'analysis-access':
       return runAnalysisAccessScenario(plan);
+    case 'selection-explain':
+      return runSelectionExplainScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -13038,6 +13040,362 @@ async function runAnalysisAccessScenario(plan: ScriptedRunPlan): Promise<Scripte
     expect((stopped?.approved ?? []).length === 0, 'a stopped review approved lines');
     await capture(diffId, 'stopped');
 
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+    const rows = await pairWindows().catch(() => []);
+    observations['atFailure'] = { windows: rows, readings: await Promise.all(rows.map((row) => readPairWindow(row.id).catch(() => null))) };
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/**
+ * DSP-152: explaining code selected in the diff. The kit is the analysis fixture (`shop`,
+ * `tests/support/analysis-fixture.ts`): `src/checkout.ts` changes `total()` to call
+ * `findDiscount()`, defined in an unchanged file; `formatTotal()` at its end is unchanged;
+ * the working copy says something else. Real mouse and keyboard through `sendInputEvent`:
+ * text is selected by pressing, moving and releasing the left button over the characters.
+ *
+ * The provider is SIMULATED (presentation adapter), but it reads the revision folder the
+ * host wrote and answers only when the selected text is at the place and side it was sent
+ * for. What a real model explains is for the live trial.
+ *
+ * Phases:
+ * - `first` (kit chose Claude with `opus`): side by side, part of an added line explained
+ *   with the button beside the selection; Tell me more, Explain more simply and a typed
+ *   question on it; two removed lines through the context menu; part of an unchanged line
+ *   with Ctrl+Shift+E; unified, a selection over removed and added lines; a line selected for
+ *   review by its strip with the keyboard, explained, then marked as reviewed; an earlier
+ *   explanation reopened. Throughout, nothing is marked by explaining.
+ * - `again` (restart, same kit): the explanations are back, reopen with their answers and
+ *   the selection marked, and nothing is sent.
+ * - `pick` (a kit whose chat chose Cursor, which does no analysis): the selection is kept
+ *   while the picker asks for an agent; Claude is chosen there and explains.
+ */
+async function runSelectionExplainScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const phase = plan.flowPhase === 'again' ? 'again' : plan.flowPhase === 'pick' ? 'pick' : 'first';
+  const observations: Record<string, unknown> = {
+    plan,
+    phase,
+    limits:
+      'SIMULATED provider (presentation adapter): fixed answers over what it reads in the revision folder the host wrote. ' +
+      'The selections, clicks, context menu and shortcut are real input; the windows, IPC, the host, its checks against Git, ' +
+      'the job records and the panel are the product\'s own.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const MAIN = 0;
+  const check = async (request: PairWindowCheckRequest, what: string): Promise<unknown> => {
+    const answer = await window.dspatch.pairWindowCheck(request);
+    if (!answer.ok) {
+      throw new Error(`could not ${what}: ${JSON.stringify(answer.detail)}`);
+    }
+    await sleep(250);
+    return answer.detail;
+  };
+  const press = (id: number, selector: string): Promise<unknown> => check({ action: 'press', id, selector }, `press ${selector}`);
+  const capture = async (id: number, label: string): Promise<void> => {
+    await sleep(300);
+    await window.dspatch.pairWindowCheck({ action: 'capture', id, label });
+  };
+  type Segment = { readonly side: string; readonly path: string; readonly start: number; readonly end: number; readonly from: number; readonly to: number; readonly kind: string; readonly text: string };
+  type Explained = {
+    readonly id: string;
+    readonly state: string;
+    readonly provider: string;
+    readonly model: string;
+    readonly root: string | null;
+    readonly action: string | null;
+    readonly question: string | null;
+    readonly selection: { readonly fileKey: string; readonly layout: string; readonly segments: readonly Segment[] } | null;
+    readonly answer: string | null;
+    readonly references: readonly { readonly path: string; readonly side: string; readonly start: number }[];
+    readonly material: { readonly base: string; readonly target: string } | null;
+    readonly investigation: { readonly reads: readonly string[] } | null;
+  };
+  type Panel = {
+    readonly open: boolean;
+    readonly text: string;
+    readonly segments: readonly string[];
+    readonly answers: readonly { readonly state: string; readonly open: boolean; readonly text: string }[];
+    readonly reopen: readonly string[];
+    readonly picker: boolean;
+  };
+  type Strip = { readonly side: string; readonly line: number; readonly status: string };
+  type Diff = {
+    readonly explanations: readonly Explained[];
+    readonly explainActive: string | null;
+    readonly explainPanel: Panel | null;
+    readonly textSelection: string;
+    readonly explainOffered: boolean;
+    readonly explainMenu: boolean;
+    readonly highlighted: number;
+    readonly linesSelected: number;
+    readonly strips: readonly Strip[];
+    readonly fileKey: string | null;
+    readonly layout: string;
+  };
+  const diffOf = (reading: PairWindowReading | null): Diff => (reading?.pair ?? {}) as unknown as Diff;
+  const cell = (side: 'base' | 'target', line: number): string => `.rv-pair-diff td[data-code-side="${side}"][data-code-line="${String(line)}"]`;
+  const select = async (id: number, from: { side: 'base' | 'target'; line: number; offset: number }, to: { side: 'base' | 'target'; line: number; offset: number }): Promise<string> => {
+    const detail = (await check(
+      { action: 'drag', id, from: { selector: cell(from.side, from.line), offset: from.offset }, to: { selector: cell(to.side, to.line), offset: to.offset } },
+      'select text with the mouse',
+    )) as { selected?: string };
+    return detail.selected ?? '';
+  };
+  // Each changed line's review status, whatever order the layout draws them in.
+  const stripsKey = (reading: PairWindowReading | null): string =>
+    JSON.stringify([...new Set(diffOf(reading).strips.map((strip) => `${strip.side}:${String(strip.line)}:${strip.status}`))].sort());
+  const explained = async (id: number, before: number, what: string): Promise<{ readonly job: Explained | undefined; readonly reading: PairWindowReading }> => {
+    const reading = await untilPair(
+      id,
+      what,
+      (entry) => {
+        const all = diffOf(entry).explanations;
+        const last = all.at(-1);
+        return all.length > before && last !== undefined && last.state !== 'running' && last.state !== 'cancelling';
+      },
+      60_000,
+    );
+    return { job: diffOf(reading).explanations.at(-1), reading };
+  };
+  const lastSelectionPrompt = async (): Promise<string> => [...(await reviewPromptsSent())].reverse().find((prompt) => prompt.includes('explain-selection')) ?? '';
+  const openReview = async (): Promise<number> => {
+    await press(MAIN, '[data-ev="open-review"]');
+    const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+    const first = await untilPair(diffId, 'the repository list or the log', (reading) => reading.pair?.phase === 'repositories' || reading.pair?.phase === 'log' || reading.pair?.phase === 'review');
+    if (first.pair?.phase === 'repositories') {
+      await press(diffId, '[data-ev="pair-repo-0"]');
+    }
+    if (first.pair?.phase !== 'review') {
+      await untilPair(diffId, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
+      await press(diffId, '[data-ev="pair-commit-1"]');
+      await press(diffId, '[data-ev="pair-commit-0"]');
+      await press(diffId, '[data-ev="pair-open"]');
+    }
+    await untilPair(diffId, 'the diff review', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
+    return diffId;
+  };
+  const openCheckout = async (diffId: number, layout: 'split' | 'unified'): Promise<PairWindowReading> => {
+    const list = await readPairWindow(diffId);
+    if (list?.pair?.fileKey === null) {
+      const index = (list.pair.files ?? []).findIndex((file) => file.path === 'src/checkout.ts');
+      await press(diffId, `[data-ev="pair-file-${String(index)}"]`);
+    }
+    await untilPair(diffId, 'the diff of src/checkout.ts', (reading) => (reading.pair?.fileKey ?? null) !== null && (reading.pair?.strips?.length ?? 0) > 0);
+    await press(diffId, `[data-ev="pair-layout-${layout}"]`);
+    return untilPair(diffId, `the ${layout} layout`, (reading) => diffOf(reading).layout === layout && document !== null);
+  };
+  const kit = { base: '', target: '' };
+
+  try {
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await waitFor('a project to be offered in the window', () => element('project-0-path') !== null, 60_000);
+    await press(MAIN, '[data-ev="open-project-0"]');
+    await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
+    const diffId = await openReview();
+    const opened = await readPairWindow(diffId);
+    kit.base = (opened?.pair as { base?: string } | null)?.base ?? '';
+    kit.target = (opened?.pair as { target?: string } | null)?.target ?? '';
+    record('review opened', { base: kit.base, target: kit.target, explanations: diffOf(opened).explanations?.length ?? 0 });
+
+    if (phase === 'again') {
+      // --- After a restart: back, reopened from the record, nothing sent --------------------
+      const sentBefore = (await reviewPromptsSent()).length;
+      const reading = await openCheckout(diffId, 'split');
+      const back = diffOf(reading).explanations;
+      expect(back.filter((job) => job.root === null).length >= 5, `the explanations are not back: ${String(back.length)}`);
+      expect(back.every((job) => job.state !== 'running' && job.state !== 'cancelling'), 'an explanation is shown running after the restart');
+      expect(diffOf(reading).explainPanel !== null && diffOf(reading).explainPanel?.open === false, 'the explanations are not offered, folded, beside the diff');
+      await press(diffId, '[data-ev="explain-open"]');
+      const list = await untilPair(diffId, 'the list of explanations', (entry) => (diffOf(entry).explainPanel?.reopen.length ?? 0) > 0);
+      record('list', { reopen: diffOf(list).explainPanel?.reopen });
+      expect((diffOf(list).explainPanel?.reopen ?? []).some((entry) => entry.includes('findDiscount(code)')), 'the first explanation is not listed by its selected text');
+      await press(diffId, '[data-ev="explain-reopen"]');
+      const reopened = await untilPair(diffId, 'a reopened explanation', (entry) => (diffOf(entry).explainPanel?.answers.length ?? 0) > 0 && diffOf(entry).highlighted > 0);
+      const panel = diffOf(reopened).explainPanel;
+      record('reopened', { panel });
+      expect((panel?.answers ?? []).every((answer) => answer.state === 'done'), 'a reopened answer is not done');
+      expect((panel?.answers.length ?? 0) >= 4 || (panel?.segments.length ?? 0) > 0, 'the reopened explanation shows no answers');
+      await capture(diffId, 'again-reopened');
+      const sentAfter = (await reviewPromptsSent()).length;
+      expect(sentAfter === sentBefore, `reopening sent ${String(sentAfter - sentBefore)} prompt(s)`);
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    if (phase === 'pick') {
+      // --- No usable agent chosen: the picker asks, the selection waits -----------------------
+      await openCheckout(diffId, 'split');
+      const selected = await select(diffId, { side: 'target', line: 4, offset: 18 }, { side: 'target', line: 4, offset: 36 });
+      await press(diffId, '[data-ev="explain-this"]');
+      const asking = await untilPair(diffId, 'the picker in the panel', (entry) => diffOf(entry).explainPanel?.picker === true);
+      record('picker', { panel: diffOf(asking).explainPanel, selection: diffOf(asking).textSelection, pickers: (asking as { pickers?: unknown }).pickers });
+      expect(selected === 'findDiscount(code)', `the mouse did not select findDiscount(code): ${selected}`);
+      expect(diffOf(asking).textSelection === 'findDiscount(code)', `the selection was lost when the picker opened: "${diffOf(asking).textSelection}"`);
+      expect(diffOf(asking).explanations.length === 0, 'an explanation was started before an agent was chosen');
+      await check({ action: 'select', id: diffId, selector: '[data-ev="explain-agent-provider"]', value: 'claude' }, 'choose Claude');
+      await untilPair(diffId, "Claude's models", (entry) => (pickerOf(entry, 'explain-agent')?.options ?? []).includes('opus'), 20_000);
+      await check({ action: 'select', id: diffId, selector: '[data-ev="explain-agent-model"]', value: 'opus' }, 'choose opus');
+      await press(diffId, '[data-ev="explain-agent-start"]');
+      const { job } = await explained(diffId, 0, 'the explanation after choosing');
+      record('explained after picking', { job });
+      expect(job?.state === 'done' && job.provider === 'claude' && job.model === 'opus', `not explained with the chosen Claude/opus: ${JSON.stringify(job)}`);
+      expect(job?.selection?.segments[0]?.text === 'findDiscount(code)', `the kept selection is not what was explained: ${JSON.stringify(job?.selection)}`);
+      const adapter = await reviewAdapterRecord();
+      expect(adapter.built.every((provider) => provider === 'claude'), `an adapter was built for another agent: ${JSON.stringify(adapter.built)}`);
+      await capture(diffId, 'pick');
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    // --- first ------------------------------------------------------------------------------
+    const start = await openCheckout(diffId, 'split');
+    const stripsBefore = stripsKey(start);
+    expect(diffOf(start).explanations.length === 0, 'a fresh kit has explanations');
+
+    // 1. Part of an added line, side by side, with the button beside the selection.
+    const part = await select(diffId, { side: 'target', line: 4, offset: 18 }, { side: 'target', line: 4, offset: 36 });
+    const offered = await untilPair(diffId, 'Explain this beside the selection', (entry) => diffOf(entry).explainOffered);
+    expect(part === 'findDiscount(code)' && diffOf(offered).textSelection === 'findDiscount(code)', `the mouse did not select findDiscount(code): "${part}"`);
+    expect(diffOf(offered).linesSelected === 0, 'selecting text selected lines for review');
+    await capture(diffId, 'offered');
+    await press(diffId, '[data-ev="explain-this"]');
+    const kept = await readPairWindow(diffId);
+    expect(diffOf(kept).textSelection === 'findDiscount(code)', `pressing Explain this took the selection away: "${diffOf(kept).textSelection}"`);
+    const first = await explained(diffId, 0, 'the explanation of part of a line');
+    const added = first.job;
+    record('part of an added line', { job: added, panel: diffOf(first.reading).explainPanel });
+    expect(added?.state === 'done' && added.provider === 'claude' && added.model === 'opus', `not explained with Claude/opus: ${JSON.stringify(added)}`);
+    const addedSegment = added?.selection?.segments[0];
+    expect(
+      added?.selection?.segments.length === 1 && addedSegment?.side === 'target' && addedSegment.path === 'src/checkout.ts' && addedSegment.start === 4 && addedSegment.end === 4 && addedSegment.from === 18 && addedSegment.to === 36 && addedSegment.kind === 'added' && addedSegment.text === 'findDiscount(code)',
+      `the selection was not recorded as To, added, line 4, characters 19–36: ${JSON.stringify(added?.selection)}`,
+    );
+    expect(added?.material?.base === kit.base && added.material.target === kit.target, `the job's revisions are not the pair's: ${JSON.stringify(added?.material)}`);
+    expect((added?.investigation?.reads ?? []).includes('target/src/checkout.ts') && (added?.investigation?.reads ?? []).includes('target/src/pricing.ts'), `the agent did not read on in To: ${JSON.stringify(added?.investigation)}`);
+    expect((added?.answer ?? '').includes('added: only in To') && (added?.answer ?? '').includes('findDiscount'), `the answer is not about the added code: ${added?.answer ?? ''}`);
+    expect((added?.references ?? []).some((reference) => reference.path === 'src/pricing.ts' && reference.start === 61), 'the answer does not point at the unchanged definition');
+    const addedPrompt = await lastSelectionPrompt();
+    expect(addedPrompt.includes('Selected text, exactly:\n```\nfindDiscount(code)\n```') && addedPrompt.includes('ADDED: this code is only in To'), 'the prompt does not carry the selected text as added code');
+    expect(addedPrompt.includes(`To (target, commit ${kit.target})`), 'the prompt does not name the To commit');
+    expect(!addedPrompt.includes('WORKING COPY ONLY'), 'the working copy reached the prompt');
+    const panel = diffOf(first.reading).explainPanel;
+    expect(panel?.open === true && (panel.segments[0] ?? '').includes('src/checkout.ts line 4, characters 19–36 (To, added)'), `the panel does not say what was explained: ${JSON.stringify(panel?.segments)}`);
+    expect(diffOf(first.reading).highlighted > 0, 'the explained selection is not marked in the code');
+    expect(stripsKey(first.reading) === stripsBefore, 'explaining changed what is marked as reviewed');
+    await capture(diffId, 'explained-part');
+
+    // 2. Follow-ups with the same selection and the earlier answers.
+    await press(diffId, '[data-ev="explain-more"]');
+    const more = await explained(diffId, 1, 'Tell me more');
+    record('tell me more', { job: more.job });
+    expect(more.job?.root === added?.id && more.job?.action === 'more' && more.job.state === 'done', `Tell me more is not a follow-up of the explanation: ${JSON.stringify(more.job)}`);
+    expect((more.job?.answer ?? '').includes('building on 1 earlier answer'), `Tell me more did not get the earlier answer: ${more.job?.answer ?? ''}`);
+    const morePrompt = await lastSelectionPrompt();
+    expect(morePrompt.includes('## Earlier in this explanation') && morePrompt.includes('findDiscount(code)') && morePrompt.includes('Tell me more about this code'), 'the follow-up prompt lacks the selection or the earlier answer');
+    await press(diffId, '[data-ev="explain-simpler"]');
+    const simpler = await explained(diffId, 2, 'Explain more simply');
+    expect(simpler.job?.action === 'simpler' && (simpler.job.answer ?? '').includes('building on 2 earlier answer'), `Explain more simply did not build on both: ${simpler.job?.answer ?? ''}`);
+    await check({ action: 'type', id: diffId, selector: '[data-ev="explain-question-text"]', text: 'What happens when the code is unknown?' }, 'type a question');
+    await press(diffId, '[data-ev="explain-ask"]');
+    const asked = await explained(diffId, 3, 'the typed question');
+    record('typed question', { job: asked.job, panel: diffOf(asked.reading).explainPanel });
+    expect(asked.job?.action === 'question' && asked.job.question === 'What happens when the code is unknown?', `the typed question was not asked: ${JSON.stringify(asked.job)}`);
+    expect((asked.job?.answer ?? '').includes('What happens when the code is unknown?') && (asked.job?.answer ?? '').includes('building on 3 earlier answer'), 'the question was not answered with the same context');
+    expect(JSON.stringify(asked.job?.selection) === JSON.stringify(added?.selection), 'the follow-up does not carry the same selection');
+    expect((diffOf(asked.reading).explainPanel?.answers.length ?? 0) === 4, 'the panel does not show the explanation and its three follow-ups');
+    await capture(diffId, 'follow-ups');
+
+    // 3. Removed lines, side by side, through the context menu.
+    const removed = await select(diffId, { side: 'base', line: 3, offset: 0 }, { side: 'base', line: 4, offset: 25 });
+    const rightClick = await check({ action: 'right-click', id: diffId, at: { selector: cell('base', 3), offset: 7 } }, 'right-click in the selection');
+    record('right click', { detail: rightClick });
+    const menu = await untilPair(diffId, 'the context menu', (entry) => diffOf(entry).explainMenu);
+    expect(diffOf(menu).textSelection === removed && removed.includes('export function total(amount: number): number {'), `the right click lost the selection: "${diffOf(menu).textSelection}"`);
+    await capture(diffId, 'context-menu');
+    await press(diffId, '[data-ev="explain-menu-explain"]');
+    const fromMenu = await explained(diffId, 4, 'the removed lines');
+    const removedJob = fromMenu.job;
+    record('removed lines', { job: removedJob });
+    const removedSegment = removedJob?.selection?.segments[0];
+    expect(
+      removedJob?.selection?.segments.length === 1 && removedSegment?.side === 'base' && removedSegment.start === 3 && removedSegment.end === 4 && removedSegment.kind === 'removed' && removedSegment.text === 'export function total(amount: number): number {\n  return amount * RATE_1;',
+      `the removed lines were not recorded as From, removed, lines 3–4: ${JSON.stringify(removedJob?.selection)}`,
+    );
+    expect((removedJob?.answer ?? '').includes('removed: only in From') && (removedJob?.answer ?? '').includes('read at base'), `the answer is not about the removed code: ${removedJob?.answer ?? ''}`);
+    expect((removedJob?.investigation?.reads ?? []).includes('base/src/checkout.ts'), 'the agent did not read From');
+    expect((await lastSelectionPrompt()).includes('REMOVED: this code is only in From'), 'the prompt does not say the code is removed');
+
+    // 4. Part of an unchanged line, with Ctrl+Shift+E.
+    const unchanged = await select(diffId, { side: 'target', line: 8, offset: 16 }, { side: 'target', line: 8, offset: 27 });
+    await check({ action: 'chord', id: diffId, key: 'E', modifiers: ['control', 'shift'] }, 'press Ctrl+Shift+E');
+    const byKey = await explained(diffId, 5, 'the unchanged code');
+    record('unchanged code', { selected: unchanged, job: byKey.job });
+    const unchangedSegment = byKey.job?.selection?.segments[0];
+    expect(unchanged === 'formatTotal', `the mouse did not select formatTotal: "${unchanged}"`);
+    expect(unchangedSegment?.kind === 'unchanged' && unchangedSegment.side === 'target' && unchangedSegment.start === 8 && unchangedSegment.text === 'formatTotal', `the unchanged code was not recorded as such: ${JSON.stringify(byKey.job?.selection)}`);
+    expect((await lastSelectionPrompt()).includes('UNCHANGED: the same in From and To'), 'the prompt does not say the code is unchanged');
+
+    // 5. Unified: one selection over removed and added lines becomes two parts, never one.
+    await press(diffId, '[data-ev="pair-layout-unified"]');
+    await untilPair(diffId, 'the unified layout', (entry) => diffOf(entry).layout === 'unified');
+    const across = await select(diffId, { side: 'base', line: 3, offset: 7 }, { side: 'target', line: 3, offset: 15 });
+    await untilPair(diffId, 'Explain this in the unified layout', (entry) => diffOf(entry).explainOffered);
+    await capture(diffId, 'unified-selection');
+    await press(diffId, '[data-ev="explain-this"]');
+    const mixed = await explained(diffId, 6, 'the selection over removed and added lines');
+    record('unified across', { selected: across, job: mixed.job });
+    const parts = mixed.job?.selection?.segments ?? [];
+    expect(
+      parts.length === 2 &&
+        parts[0]?.side === 'base' && parts[0].kind === 'removed' && parts[0].start === 3 && parts[0].end === 4 && parts[0].text === 'function total(amount: number): number {\n  return amount * RATE_1;' &&
+        parts[1]?.side === 'target' && parts[1].kind === 'added' && parts[1].start === 3 && parts[1].end === 3 && parts[1].text === 'export function',
+      `the unified selection was not split into From (removed) and To (added): ${JSON.stringify(parts)}`,
+    );
+    expect(mixed.job?.selection?.layout === 'unified', 'the layout the selection was made in is not recorded');
+    expect((mixed.job?.answer ?? '').includes('removed: only in From') && (mixed.job?.answer ?? '').includes('added: only in To'), 'the answer does not keep the two sides apart');
+    expect(stripsKey(mixed.reading) === stripsBefore, 'explaining changed what is marked as reviewed');
+    await capture(diffId, 'unified-explained');
+
+    // 6. The existing line selection still works, with the keyboard, and can be explained.
+    await check({ action: 'press-key', id: diffId, selector: '.rv-pair-diff td.rv-pair-strip[data-side="target"][data-line="5"]', key: 'Enter' }, 'select line 5 for review with the keyboard');
+    const lines = await untilPair(diffId, 'a line selected for review', (entry) => diffOf(entry).linesSelected === 1);
+    expect(stripsKey(lines) === stripsBefore, 'selecting a line marked it');
+    await press(diffId, '[data-ev="pair-explain-lines"]');
+    const lineJob = await explained(diffId, 7, 'the selected line');
+    const lineSegment = lineJob.job?.selection?.segments[0];
+    expect(lineSegment?.kind === 'added' && lineSegment.start === 5 && lineSegment.from === 0 && lineSegment.text === '  return amount * RATE_1 * (1 - percent / 100);', `the selected line was not explained whole: ${JSON.stringify(lineJob.job?.selection)}`);
+    expect(stripsKey(lineJob.reading) === stripsBefore && diffOf(lineJob.reading).linesSelected === 1, 'explaining the selected line marked it or dropped the line selection');
+    await press(diffId, '[data-ev="pair-mark-manual"]');
+    const marked = await untilPair(diffId, 'the line marked as reviewed', (entry) => diffOf(entry).strips.some((strip) => strip.side === 'target' && strip.line === 5 && strip.status === 'manual'));
+    const changedStrips = diffOf(marked).strips.filter((strip) => strip.status !== 'none');
+    record('marked', { changedStrips });
+    expect(changedStrips.length === 1, `marking one line changed more: ${JSON.stringify(changedStrips)}`);
+    const jobs = jobsOf(marked);
+    expect(jobs.every((job) => job.kind !== 'review') && (marked.pair as { jobs?: { approved: unknown[] }[] }).jobs?.every((job) => job.approved.length === 0) === true, 'an explanation started a review or approved lines');
+
+    // 7. An earlier explanation reopened from the list.
+    await press(diffId, '[data-ev="pair-layout-split"]');
+    await untilPair(diffId, 'side by side again', (entry) => diffOf(entry).layout === 'split');
+    await press(diffId, '[data-ev="explain-reopen"]');
+    const reopened = await untilPair(diffId, 'an earlier explanation reopened', (entry) => diffOf(entry).explainActive === added?.id && diffOf(entry).highlighted > 0);
+    record('reopened', { panel: diffOf(reopened).explainPanel });
+    expect((diffOf(reopened).explainPanel?.answers.length ?? 0) === 4, 'the reopened explanation does not show its follow-ups');
+    await press(diffId, '[data-ev="explain-fold"]');
+    const folded = await untilPair(diffId, 'the panel folded', (entry) => diffOf(entry).explainPanel?.open === false);
+    expect(stripsKey(folded) !== '', 'no strips');
+    await capture(diffId, 'folded');
+    const adapter = await reviewAdapterRecord();
+    expect(adapter.built.every((provider) => provider === 'claude'), `an adapter was built for another agent: ${JSON.stringify(adapter.built)}`);
     return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));

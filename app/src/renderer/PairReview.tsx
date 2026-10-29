@@ -12,7 +12,7 @@
  * controls, no explanations in the ordinary flow.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 
 import { highlightLines, type Token } from '../shared/review-model';
@@ -31,6 +31,9 @@ import {
   type ChangedLine,
   type DiffLocation,
   type AgentJob,
+  type AgentJobRequestInput,
+  type CodeSelection,
+  type CodeSelectionRequest,
   type DelegationScope,
   type FileProgress,
   type IntralineRanges,
@@ -51,6 +54,7 @@ import {
 } from '../shared/review-pair';
 import { TokensView } from './review-code';
 import { AgentPicker, type AgentChoice } from './AgentPicker';
+import { ExplainPanel, explanationThreads } from './ExplainPanel';
 import { changedRangesOf } from '../shared/review-agent';
 
 declare global {
@@ -470,16 +474,76 @@ function DiffReview({
   // DSP-152: agent work over the pair, started only by an explicit action here.
   const [preparing, setPreparing] = useState(false);
   const walksJob = [...record.jobs].reverse().find((job) => job.kind === 'walks') ?? null;
-  const startJob = async (request: { kind: 'walks' | 'review'; provider: 'cursor' | 'claude'; model: string; scope?: DelegationScope }): Promise<boolean> => {
+  const startJob = async (request: AgentJobRequestInput): Promise<boolean> => (await sendJob(request)) !== null;
+  /** The one way this window starts agent work; a refusal or a failed request is said. */
+  const sendJob = async (request: AgentJobRequestInput): Promise<AgentJob | null> => {
     setProblem(null);
+    setExplainProblem(null);
     // A request that fails on its way (IPC or the host) is said, as a refusal is: a press
     // that starts nothing must never leave the window as it was.
     const answer = await bridge.startJob(open.key, request).catch((error: unknown) => ({ error: requestFailure(error) }));
     if (isPairError(answer)) {
-      setProblem(`${request.kind === 'walks' ? 'The code walks could not be started' : 'The review could not be started'}: ${answer.error}`);
-      return false;
+      if (request.kind === 'explain') {
+        setExplainProblem(`The explanation could not be started: ${answer.error}`);
+        setExplainOpen(true);
+      } else {
+        setProblem(`${request.kind === 'walks' ? 'The code walks could not be started' : 'The review could not be started'}: ${answer.error}`);
+      }
+      return null;
     }
-    return true;
+    return answer;
+  };
+
+  /*
+   * DSP-152: explanations of selected code. Started with the review's current agent and
+   * model, the ones the picker would start from, without asking again; only when there is
+   * no usable choice does the picker ask, and the selection waits for it. Never another
+   * agent or a fallback model.
+   */
+  type ExplainAsk = Pick<AgentJobRequestInput, 'selection' | 'followUp'>;
+  const [explainActive, setExplainActive] = useState<string | null>(null);
+  const [explainOpen, setExplainOpen] = useState(false);
+  const [explainProblem, setExplainProblem] = useState<string | null>(null);
+  const [awaitingAgent, setAwaitingAgent] = useState<ExplainAsk | null>(null);
+  const threads = useMemo(() => explanationThreads(record.jobs), [record.jobs]);
+  const explaining = record.jobs.some((job) => job.kind === 'explain' && isRunning(job));
+  const explainWith = async (asked: ExplainAsk, choice: AgentChoice): Promise<void> => {
+    const job = await sendJob({ kind: 'explain', ...choice, ...asked });
+    if (job !== null) {
+      setAwaitingAgent(null);
+      setExplainActive(job.followUp?.root ?? job.id);
+    }
+  };
+  const explain = async (asked: ExplainAsk): Promise<void> => {
+    setExplainOpen(true);
+    setExplainProblem(null);
+    const agents = await bridge.agents(open.key).catch((error: unknown) => ({ error: requestFailure(error) }));
+    if (isPairError(agents)) {
+      setExplainProblem(`The explanation could not be started: ${agents.error}`);
+      return;
+    }
+    const chosen = agents.current;
+    if (chosen === null || !chosen.choosable || chosen.model.trim() === '') {
+      setAwaitingAgent(asked);
+      return;
+    }
+    await explainWith(asked, { provider: chosen.provider, model: chosen.model });
+  };
+  /** A place in the diff, in this file or another of the change, as Show in diff goes there. */
+  const showAt = (location: DiffLocation): void => {
+    const file = open.files.find((candidate) => fileLocationMatch(candidate, location));
+    if (file !== undefined) {
+      setFileKey(file.key);
+      setTarget((before) => ({ location, nonce: (before?.nonce ?? 0) + 1 }));
+    }
+  };
+  const showSelection = (selection: CodeSelection): void => {
+    const first = selection.segments[0];
+    const file = open.files.find((candidate) => candidate.key === selection.fileKey);
+    if (first !== undefined && file !== undefined) {
+      setFileKey(file.key);
+      setTarget((before) => ({ location: { side: first.side, path: first.path, line: first.start }, nonce: (before?.nonce ?? 0) + 1 }));
+    }
   };
   const stopJob = async (job: AgentJob): Promise<void> => {
     const answer = await bridge.cancelJob(open.key, job.id).catch((error: unknown) => ({ error: requestFailure(error) }));
@@ -538,6 +602,50 @@ function DiffReview({
           text: word.textContent ?? '',
         })),
         signs: [...document.querySelectorAll<HTMLElement>('.rv-pair-diff td.rv-pair-sign')].map((cell) => cell.textContent ?? '').join(''),
+        // DSP-152: explanations of selected code, as recorded, and the panel as drawn.
+        explanations: record.jobs
+          .filter((job) => job.kind === 'explain' && job.selection !== undefined)
+          .map((job) => ({
+            id: job.id,
+            state: job.state,
+            provider: job.provider,
+            model: job.model,
+            root: job.followUp?.root ?? null,
+            action: job.followUp?.action ?? null,
+            question: job.followUp?.question ?? null,
+            selection: job.selection ?? null,
+            answer: job.answer?.answer ?? null,
+            references: (job.answer?.references ?? []).map((reference) => reference.range),
+            insufficient: job.answer?.insufficient ?? null,
+            material: job.material ?? null,
+            investigation: job.investigation ?? null,
+          })),
+        explainActive,
+        explainPanel: ((): unknown => {
+          const panel = document.querySelector<HTMLElement>('.rv-explain');
+          return panel === null
+            ? null
+            : {
+                open: panel.dataset['ev'] === 'explain-panel',
+                text: (panel.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 4000),
+                segments: [...panel.querySelectorAll('[data-ev="explain-segment"]')].map((node) => node.textContent ?? ''),
+                answers: [...panel.querySelectorAll<HTMLDetailsElement>('[data-ev="explain-answer"]')].map((node) => ({
+                  state: node.dataset['state'] ?? '',
+                  open: node.open,
+                  text: (node.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 1500),
+                })),
+                reopen: [...panel.querySelectorAll('[data-ev="explain-reopen"]')].map((node) => node.textContent ?? ''),
+                picker: panel.querySelector('[data-ev="explain-agent"]') !== null,
+                width: Math.round(panel.getBoundingClientRect().width),
+              };
+        })(),
+        // The text selected in the window now, and whether the action is offered for it.
+        textSelection: window.getSelection()?.toString() ?? '',
+        explainOffered: document.querySelector('[data-ev="explain-this"]') !== null,
+        explainMenu: document.querySelector('[data-ev="explain-menu"]') !== null,
+        highlighted: CSS.highlights?.get('rv-explained')?.size ?? 0,
+        linesSelected: document.querySelectorAll('.rv-pair-diff td.rv-pair-strip-selected').length,
+        diffScrollTop: Math.round(document.querySelector('.rv-pair-diff')?.scrollTop ?? 0),
         jobs: record.jobs.map((job) => ({
           id: job.id,
           kind: job.kind,
@@ -567,7 +675,7 @@ function DiffReview({
     return () => {
       delete window.__dspatchPairCheck;
     };
-  }, [open, fileKey, layout, record, progress]);
+  }, [open, fileKey, layout, record, progress, explainActive]);
 
   const totals = useMemo(() => {
     let total = 0;
@@ -693,6 +801,39 @@ function DiffReview({
               jobs={record.jobs}
               onDelegate={(choice, scope) => startJob({ kind: 'review', ...choice, scope })}
               onStop={(job) => void stopJob(job)}
+              explained={threads.find((entry) => entry.root.id === explainActive)?.root.selection ?? null}
+              onExplain={(selection) => void explain({ selection })}
+              explainPanel={
+                <ExplainPanel
+                  pairKey={open.key}
+                  threads={threads}
+                  fileKey={current.key}
+                  active={explainActive}
+                  open={explainOpen}
+                  picking={awaitingAgent !== null}
+                  busy={explaining}
+                  problem={explainProblem}
+                  canShow={(range) => open.files.some((file) => fileLocationMatch(file, { side: range.side, path: range.path, line: range.start }))}
+                  onToggle={() => setExplainOpen((value) => !value)}
+                  onActivate={(root) => {
+                    setExplainActive(root);
+                    const thread = threads.find((entry) => entry.root.id === root);
+                    if (thread !== undefined) {
+                      showSelection(thread.root.selection);
+                    }
+                  }}
+                  onShowSelection={showSelection}
+                  onShowRange={(range) => showAt({ side: range.side, path: range.path, line: range.start })}
+                  onFollowUp={(root, action, question) => void explain({ followUp: { root, action, ...(action === 'question' ? { question } : {}) } })}
+                  onPick={(choice) => {
+                    if (awaitingAgent !== null) {
+                      void explainWith(awaitingAgent, choice);
+                    }
+                  }}
+                  onCancelPick={() => setAwaitingAgent(null)}
+                  onStop={(job) => void stopJob(job)}
+                />
+              }
               onPrevious={currentIndex > 0 ? () => setFileKey(open.files[currentIndex - 1]?.key ?? null) : null}
               onNext={currentIndex < open.files.length - 1 ? () => setFileKey(open.files[currentIndex + 1]?.key ?? null) : null}
             />
@@ -855,7 +996,13 @@ export function attemptLabel(job: AgentJob): string {
 export function JobLine({ job, onStop, onOpenWalks }: { readonly job: AgentJob; readonly onStop: () => void; readonly onOpenWalks?: () => void }): JSX.Element {
   const running = job.state === 'running' || job.state === 'cancelling';
   const what =
-    job.kind === 'walks' ? 'Preparing code walks' : job.kind === 'explain' ? 'Looking into the code' : `Reviewing ${job.scope?.label ?? 'the delegated part'}`;
+    job.kind === 'walks'
+      ? 'Preparing code walks'
+      : job.kind === 'explain'
+        ? job.selection === undefined
+          ? 'Looking into the code'
+          : 'Explaining the selected code'
+        : `Reviewing ${job.scope?.label ?? 'the delegated part'}`;
   return (
     <div className={`rv-agent-line rv-agent-line-${job.state}`} data-ev={`agent-job-${job.kind}`} data-state={job.state} aria-live="polite">
       {running ? (
@@ -1168,6 +1315,131 @@ function describeLine(status: LineStatus | undefined): string {
   return parts.join('; ');
 }
 
+/**
+ * DSP-152: the code selected in this file's diff, read from the window's selection: each
+ * selected line's side and number from its code cell, the characters from where the
+ * selection starts and ends in it, and the text from the file as read (never the drawn
+ * text). In the side-by-side layout only one column is selectable at a time, so a
+ * selection is on one side there; in the unified layout removed and added lines follow each
+ * other and become separate segments. `null` when nothing in the code is selected.
+ */
+function codeSelectionIn(
+  root: HTMLElement,
+  file: PairFile,
+  layout: 'split' | 'unified',
+  base: readonly string[],
+  target: readonly string[],
+): { readonly request: CodeSelectionRequest; readonly rect: DOMRect | null; readonly firstCell: HTMLElement } | null {
+  const chosen = window.getSelection();
+  if (chosen === null || chosen.rangeCount === 0 || chosen.isCollapsed) {
+    return null;
+  }
+  const range = chosen.getRangeAt(0);
+  if (!root.contains(range.commonAncestorContainer)) {
+    return null;
+  }
+  // The column the drag started in; a range in the DOM also spans the other column's cells.
+  const startCell = (range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement)?.closest<HTMLElement>('td[data-code-side]');
+  const column = layout === 'split' ? (root.querySelector<HTMLElement>('table')?.dataset['selectSide'] || startCell?.dataset['codeSide'] || null) : null;
+  const cells = [...root.querySelectorAll<HTMLElement>('td[data-code-line]')].filter(
+    (cell) => range.intersectsNode(cell) && (column === null || cell.dataset['codeSide'] === column),
+  );
+  const lengthTo = (cell: HTMLElement, node: Node, offset: number): number => {
+    const part = document.createRange();
+    part.setStart(cell, 0);
+    part.setEnd(node, offset);
+    return part.toString().length;
+  };
+  const picked = cells.map((cell) => {
+    const side: LineSide = cell.dataset['codeSide'] === 'base' ? 'base' : 'target';
+    const line = Number(cell.dataset['codeLine']);
+    const length = ((side === 'base' ? base : target)[line - 1] ?? '').length;
+    const from = cell.contains(range.startContainer) ? Math.min(length, lengthTo(cell, range.startContainer, range.startOffset)) : 0;
+    const to = cell.contains(range.endContainer) ? Math.min(length, lengthTo(cell, range.endContainer, range.endOffset)) : length;
+    return { cell, side, line, from, to, length };
+  });
+  // A selection that only reaches the end of the line before it, or the start of the line
+  // after it, does not include those lines.
+  while (picked.length > 0 && (picked[0] as (typeof picked)[number]).from >= (picked[0] as (typeof picked)[number]).length) {
+    picked.shift();
+  }
+  while (picked.length > 0 && (picked.at(-1) as (typeof picked)[number]).to === 0) {
+    picked.pop();
+  }
+  const first = picked[0];
+  if (first === undefined || (picked.length === 1 && first.from >= first.to)) {
+    return null;
+  }
+  const segments: { side: LineSide; path: string; start: number; end: number; from: number; to: number }[] = [];
+  for (const entry of picked) {
+    const path = entry.side === 'base' ? file.oldPath : file.newPath;
+    if (path === null) {
+      continue;
+    }
+    const last = segments.at(-1);
+    if (last !== undefined && last.side === entry.side && last.end + 1 === entry.line) {
+      last.end = entry.line;
+      last.to = entry.to;
+    } else {
+      segments.push({ side: entry.side, path, start: entry.line, end: entry.line, from: entry.from, to: entry.to });
+    }
+  }
+  const request: CodeSelectionRequest = { fileKey: file.key, layout, segments, text: selectedTextOf(segments, base, target) };
+  if (request.text.trim() === '') {
+    return null;
+  }
+  const rects = range.getClientRects();
+  return { request, rect: rects.length > 0 ? (rects[rects.length - 1] ?? null) : null, firstCell: first.cell };
+}
+
+/** The text of selected segments, from the file's lines, joined as the host joins them. */
+function selectedTextOf(
+  segments: readonly { readonly side: LineSide; readonly start: number; readonly end: number; readonly from: number; readonly to: number }[],
+  base: readonly string[],
+  target: readonly string[],
+): string {
+  return segments
+    .map((segment) =>
+      (segment.side === 'base' ? base : target)
+        .slice(segment.start - 1, segment.end)
+        .map((line, index, all) => {
+          const lead = index === 0 ? segment.from : 0;
+          return index === all.length - 1 ? line.slice(lead, segment.to) : line.slice(lead);
+        })
+        .join('\n'),
+    )
+    .join('\n');
+}
+
+/** A range over characters `from`–`to` of a code cell's text, across its token spans. */
+function rangeInCell(cell: HTMLElement, from: number, to: number): Range | null {
+  const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  let at = 0;
+  let started = false;
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const length = node.textContent?.length ?? 0;
+    if (!started && from <= at + length) {
+      range.setStart(node, from - at);
+      started = true;
+    }
+    if (started && to <= at + length) {
+      range.setEnd(node, to - at);
+      return range;
+    }
+    at += length;
+  }
+  return null;
+}
+
+/** The code cell that shows a line of one side, in either layout. */
+function codeCellOf(root: HTMLElement, side: LineSide, line: number): HTMLElement | null {
+  return (
+    root.querySelector<HTMLElement>(`td[data-code-side="${side}"][data-code-line="${String(line)}"]`) ??
+    root.querySelector<HTMLElement>(`td[data-code-also="${side}:${String(line)}"]`)
+  );
+}
+
 function FileDiff({
   bridge,
   pairKey,
@@ -1183,7 +1455,14 @@ function FileDiff({
   jobs,
   onDelegate,
   onStop,
+  explained,
+  onExplain,
+  explainPanel,
 }: {
+  /** DSP-152: the selection of the explanation shown, drawn marked in the code. */
+  readonly explained: CodeSelection | null;
+  readonly onExplain: (selection: CodeSelectionRequest) => void;
+  readonly explainPanel: JSX.Element;
   readonly bridge: ReviewPairBridge;
   readonly pairKey: string;
   readonly file: PairFile;
@@ -1469,6 +1748,161 @@ function FileDiff({
 
   const noText = text !== null && (text.binary || (file.hunks.length === 0 && progress.total === 0));
 
+  /*
+   * DSP-152: Explain this, for code selected with the mouse (or the keyboard), offered beside
+   * the selection, in a context menu, and as Ctrl+Shift+E. Selecting text never selects
+   * lines for review and never marks anything; the action leaves the selection in place.
+   */
+  const wrap = useRef<HTMLDivElement | null>(null);
+  const dragging = useRef(false);
+  const [offer, setOffer] = useState<{ readonly request: CodeSelectionRequest; readonly x: number; readonly y: number; readonly menu: boolean } | null>(null);
+  const menuFirst = useRef<HTMLButtonElement | null>(null);
+  // The row the reader is at, kept where it is when the diff's width changes.
+  const anchorRow = useRef<{ readonly row: Element; readonly top: number } | null>(null);
+  const rememberRow = (row?: Element | null): void => {
+    const root = scroller.current;
+    if (root === null) {
+      return;
+    }
+    const box = root.getBoundingClientRect();
+    const chosen = row ?? [...root.querySelectorAll('tr')].find((entry) => entry.getBoundingClientRect().bottom > box.top + 1);
+    anchorRow.current = chosen === undefined || chosen === null ? null : { row: chosen, top: chosen.getBoundingClientRect().top - box.top };
+  };
+  useEffect(() => {
+    const root = scroller.current;
+    if (root === null) {
+      return;
+    }
+    let width = root.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (root.clientWidth === width) {
+        return;
+      }
+      width = root.clientWidth;
+      const anchor = anchorRow.current;
+      if (anchor !== null && anchor.row.isConnected) {
+        root.scrollTop += anchor.row.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.top;
+      }
+    });
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
+
+  const readOffer = (menu: boolean, at?: { readonly x: number; readonly y: number }): boolean => {
+    const root = scroller.current;
+    const box = wrap.current?.getBoundingClientRect();
+    if (root === null || box === undefined || text === null || text.base === null || text.target === null) {
+      setOffer(null);
+      return false;
+    }
+    const found = codeSelectionIn(root, file, layout, text.base, text.target);
+    if (found === null) {
+      setOffer(null);
+      return false;
+    }
+    const point = at ?? { x: found.rect?.right ?? box.left, y: (found.rect?.bottom ?? box.top) + 4 };
+    setOffer({ request: found.request, x: Math.max(4, Math.min(point.x - box.left, box.width - 140)), y: Math.max(4, Math.min(point.y - box.top, box.height - 70)), menu });
+    return true;
+  };
+  const explainNow = (request: CodeSelectionRequest): void => {
+    const root = scroller.current;
+    const first = request.segments[0];
+    if (root !== null && first !== undefined) {
+      // The reading position is the selection's: it stays where it is when the panel opens.
+      rememberRow(codeCellOf(root, first.side, first.start)?.closest('tr'));
+    }
+    setOffer(null);
+    onExplain(request);
+  };
+  useEffect(() => {
+    const changed = (): void => {
+      if (!dragging.current) {
+        const chosen = window.getSelection();
+        if (chosen === null || chosen.isCollapsed) {
+          setOffer(null);
+        }
+      }
+    };
+    const key = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setOffer((before) => (before?.menu === true ? null : before));
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'e') {
+        const root = scroller.current;
+        if (root === null || text === null || text.base === null || text.target === null) {
+          return;
+        }
+        const found = codeSelectionIn(root, file, layout, text.base, text.target);
+        if (found !== null) {
+          event.preventDefault();
+          explainNow(found.request);
+        }
+      }
+    };
+    document.addEventListener('selectionchange', changed);
+    window.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('selectionchange', changed);
+      window.removeEventListener('keydown', key);
+    };
+  });
+  useEffect(() => {
+    if (offer?.menu === true) {
+      menuFirst.current?.focus({ preventScroll: true });
+    }
+  }, [offer]);
+
+  // The selection of the explanation shown, marked in the code without touching the DOM.
+  useLayoutEffect(() => {
+    const registry = CSS.highlights;
+    const root = scroller.current;
+    if (registry === undefined) {
+      return;
+    }
+    if (explained === null || explained.fileKey !== file.key || root === null) {
+      registry.delete('rv-explained');
+      return;
+    }
+    const ranges: Range[] = [];
+    for (const segment of explained.segments) {
+      for (let line = segment.start; line <= segment.end; line += 1) {
+        const cell = codeCellOf(root, segment.side, line);
+        const length = cell?.textContent?.length ?? 0;
+        const found = cell === null ? null : rangeInCell(cell, line === segment.start ? segment.from : 0, line === segment.end ? Math.min(segment.to, length) : length);
+        if (found !== null) {
+          ranges.push(found);
+        }
+      }
+    }
+    registry.set('rv-explained', new Highlight(...ranges));
+    return () => {
+      registry.delete('rv-explained');
+    };
+  }, [explained, file.key, text, layout, expanded, record]);
+
+  /** The changed lines selected for review, as a selection to explain (the keyboard's way). */
+  const explainLines = (): void => {
+    if (text === null || text.base === null || text.target === null) {
+      return;
+    }
+    const lines = order.filter((key) => selected.has(key)).map((key) => byKey.get(key)).filter((line): line is ChangedLine => line !== undefined);
+    const segments: { side: LineSide; path: string; start: number; end: number; from: number; to: number }[] = [];
+    for (const line of lines) {
+      const length = ((line.side === 'base' ? text.base : text.target)[line.line - 1] ?? '').length;
+      const last = segments.at(-1);
+      if (last !== undefined && last.side === line.side && last.end + 1 === line.line) {
+        last.end = line.line;
+        last.to = length;
+      } else {
+        segments.push({ side: line.side, path: line.path, start: line.line, end: line.line, from: 0, to: length });
+      }
+    }
+    if (segments.length > 0) {
+      explainNow({ fileKey: file.key, layout, segments, text: selectedTextOf(segments, text.base, text.target) });
+    }
+  };
+
   return (
     <section className="rv-pair-file-view" aria-label={shownPath(file)}>
       <div className="rv-pair-file-head">
@@ -1526,6 +1960,9 @@ function FileDiff({
               }}
             >
               Delegate…
+            </button>
+            <button type="button" data-ev="pair-explain-lines" title="Ask the agent to explain these lines. Marks nothing." onClick={explainLines}>
+              Explain
             </button>
             <button type="button" className="rv-pair-link" onClick={() => setSelected(new Set())}>
               Cancel
@@ -1593,7 +2030,54 @@ function FileDiff({
           ))}
         </div>
       )}
-      <div className="rv-pair-diff" ref={scroller}>
+      <div className="rv-pair-diff-row">
+      <div className="rv-pair-diff-wrap" ref={wrap}>
+      <div
+        className="rv-pair-diff"
+        ref={scroller}
+        onScroll={() => {
+          rememberRow();
+          if (offer !== null && !offer.menu) {
+            readOffer(false);
+          }
+        }}
+        onMouseDown={(event) => {
+          if (event.button !== 0) {
+            return;
+          }
+          dragging.current = true;
+          setOffer(null);
+          // Side by side, a selection stays in the column it starts in.
+          const table = scroller.current?.querySelector<HTMLElement>('table.rv-pair-table-split');
+          const cell = (event.target as Element).closest<HTMLElement>('td[data-code-side]');
+          if (table !== null && table !== undefined) {
+            table.dataset['selectSide'] = cell?.dataset['codeSide'] ?? '';
+          }
+        }}
+        onMouseUp={(event) => {
+          // A right button's release is followed by the context menu, which this would replace.
+          if (event.button !== 0) {
+            return;
+          }
+          dragging.current = false;
+          // After the browser has settled the selection for this release.
+          setTimeout(() => {
+            readOffer(false);
+            rememberRow();
+          }, 0);
+        }}
+        onKeyUp={(event) => {
+          if (event.shiftKey) {
+            readOffer(false);
+          }
+        }}
+        onContextMenu={(event) => {
+          const keyboard = event.clientX === 0 && event.clientY === 0;
+          if (readOffer(true, keyboard ? undefined : { x: event.clientX, y: event.clientY })) {
+            event.preventDefault();
+          }
+        }}
+      >
         {text === null && <p className="rv-pair-muted">Reading…</p>}
         {text?.error !== null && text?.error !== undefined && <p className="rv-pair-error">{text.error}</p>}
         {noText && (
@@ -1624,6 +2108,8 @@ function FileDiff({
                         isTarget('base', row.base) ? 'rv-pair-target' : '',
                         selectedOnRow('base', row.base) ? 'rv-pair-selected' : '',
                       ].join(' ')}
+                      data-code-side="base"
+                      data-code-line={row.base ?? undefined}
                     >
                       {codeView('base', row.base, row.kind === 'change')}
                     </td>
@@ -1638,6 +2124,8 @@ function FileDiff({
                         isTarget('target', row.target) ? 'rv-pair-target' : '',
                         selectedOnRow('target', row.target) ? 'rv-pair-selected' : '',
                       ].join(' ')}
+                      data-code-side="target"
+                      data-code-line={row.target ?? undefined}
                     >
                       {codeView('target', row.target, row.kind === 'change')}
                     </td>
@@ -1675,6 +2163,10 @@ function FileDiff({
                           isTarget(side, line) ? 'rv-pair-target' : '',
                           selectedOnRow(side, line) ? 'rv-pair-selected' : '',
                         ].join(' ')}
+                        data-code-side={side}
+                        data-code-line={line ?? undefined}
+                        // An unchanged line is drawn once, at To; it is the same line of From.
+                        data-code-also={row.kind === 'context' ? `base:${String(row.base)}` : undefined}
                       >
                         {codeView(side, line, changedRow)}
                       </td>
@@ -1685,6 +2177,49 @@ function FileDiff({
             </tbody>
           </table>
         )}
+      </div>
+        {offer !== null &&
+          (offer.menu ? (
+            <div className="rv-explain-menu" role="menu" data-ev="explain-menu" style={{ left: offer.x, top: offer.y }}>
+              <button
+                type="button"
+                role="menuitem"
+                ref={menuFirst}
+                data-ev="explain-menu-explain"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => explainNow(offer.request)}
+              >
+                Explain this
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                data-ev="explain-menu-copy"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  void navigator.clipboard?.writeText(offer.request.text).catch(() => undefined);
+                  setOffer(null);
+                }}
+              >
+                Copy
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="rv-explain-this"
+              data-ev="explain-this"
+              title="Explain the selected code (Ctrl+Shift+E). Marks nothing."
+              style={{ left: offer.x, top: offer.y }}
+              // Pressing it must not take the selection away.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => explainNow(offer.request)}
+            >
+              Explain this
+            </button>
+          ))}
+      </div>
+      {explainPanel}
       </div>
     </section>
   );

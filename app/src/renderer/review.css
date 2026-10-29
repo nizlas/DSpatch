@@ -2543,3 +2543,168 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* --- DSP-152: explaining selected code in the diff ------------------------------------- */
+
+.rv-pair-diff-row {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.rv-pair-diff-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Only the code is text to select: not the strip, the numbers, the signs or a fold. */
+.rv-pair-table td.rv-pair-strip,
+.rv-pair-gap {
+  user-select: none;
+}
+
+/* Side by side, a selection stays in the column it was started in. */
+.rv-pair-table-split[data-select-side="base"] td[data-code-side="target"],
+.rv-pair-table-split[data-select-side="target"] td[data-code-side="base"] {
+  user-select: none;
+}
+
+/* The code an explanation is about, while it is shown. */
+::highlight(rv-explained) {
+  background-color: color-mix(in srgb, #f0b429 42%, transparent);
+}
+
+.rv-pair .rv-explain-this {
+  position: absolute;
+  z-index: 5;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.8rem;
+  background: var(--raised);
+  box-shadow: 0 2px 6px color-mix(in srgb, #000 35%, transparent);
+}
+
+.rv-explain-menu {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-width: 9rem;
+  padding: 0.2rem;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 3px 10px color-mix(in srgb, #000 40%, transparent);
+}
+
+.rv-pair .rv-explain-menu button {
+  border: none;
+  border-radius: 3px;
+  text-align: left;
+  padding: 0.3rem 0.6rem;
+  background: transparent;
+  font-size: 0.85rem;
+}
+
+.rv-pair .rv-explain-menu button:focus-visible,
+.rv-pair .rv-explain-menu button:hover {
+  background: var(--panel);
+}
+
+.rv-explain {
+  flex: 0 0 24rem;
+  max-width: 45%;
+  overflow: auto;
+  border-left: 1px solid var(--line);
+  padding: 0.5rem 0.8rem 1rem;
+  font-size: 0.88rem;
+}
+
+.rv-explain-folded {
+  flex: 0 0 auto;
+  padding: 0;
+  overflow: hidden;
+}
+
+.rv-pair .rv-explain-tab {
+  writing-mode: vertical-rl;
+  border: none;
+  border-radius: 0;
+  padding: 0.8rem 0.3rem;
+  height: 100%;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.rv-explain-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.4rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rv-explain-quote {
+  margin: 0 0 0.6rem;
+  padding: 0.4rem 0.5rem;
+  border-left: 3px solid var(--rv-gold);
+  background: var(--panel);
+}
+
+.rv-explain-part + .rv-explain-part {
+  margin-top: 0.4rem;
+}
+
+.rv-explain-part figcaption {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.rv-explain-part pre {
+  margin: 0.15rem 0 0;
+  padding: 0.15rem 0.35rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.8rem;
+  max-height: 10rem;
+  overflow: auto;
+}
+
+.rv-explain-part-removed pre {
+  background: var(--rv-pair-del);
+}
+
+.rv-explain-part-added pre {
+  background: var(--rv-pair-add);
+}
+
+.rv-explain-ask {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+}
+
+.rv-explain-ask textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.rv-explain-list ul {
+  margin: 0.2rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.rv-explain-pick {
+  margin-bottom: 0.6rem;
+}

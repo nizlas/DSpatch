@@ -36,11 +36,15 @@ import type { ChatAdapter } from '../main/chat-service';
 import {
   answerJson,
   definitionFrom,
+  followUpWords,
+  linesAround,
+  readSelection,
   readReviewAnswer,
   readStepAnswer,
   readWalksAnswer,
   repairPrompt,
   reviewPrompt,
+  selectionPrompt,
   stepQuestionPrompt,
   uncoveredBy,
   walkPlaceProblems,
@@ -48,6 +52,7 @@ import {
   withCheckedFindings,
   withoutInvalidPlaces,
   type AnalysisMaterial,
+  type ExplainTurn,
   type ProposedWalks,
 } from '../shared/review-agent';
 import {
@@ -59,7 +64,9 @@ import {
   type AgentJob,
   type AgentMaterial,
   type AgentReview,
+  type CodeSelection,
   type DelegationScope,
+  type ExplainFollowUp,
   type LineRange,
   type PairAnswer,
   type PairRecord,
@@ -116,6 +123,12 @@ interface Live {
   /** Each tool call's name and subject, until its result says whether it ran. */
   readonly calls: Map<string, { readonly name: string; readonly subject: string | null }>;
   finished: ((status: 'finished' | 'failed' | 'cancelled' | 'unconfirmed', error: string | null) => void) | null;
+}
+
+/** An explanation of selected code, checked against the commits before its job is registered. */
+export interface PreparedExplanation {
+  readonly selection: CodeSelection;
+  readonly followUp: ExplainFollowUp | null;
 }
 
 const CANCEL_CONFIRM_MS = 15_000;
@@ -267,16 +280,66 @@ export class ReviewAgentJobs {
    * written if it cannot run. Each request and its outcome is logged with the job id, the
    * agent and model and the review's key, never with prompt content.
    */
-  start(key: unknown, raw: unknown): PairAnswer<AgentJob> {
+  start(key: unknown, raw: unknown, prepared: PreparedExplanation | null = null): PairAnswer<AgentJob> {
     const request = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
     const word = (value: unknown): string => (typeof value === 'string' ? value.slice(0, 80) : String(value));
     this.options.log(`job request: ${word(request['kind'])} with ${word(request['provider'])}/${word(request['model'])} for review ${word(key).slice(0, 12)}`);
-    const answer = this.startChecked(key, raw);
+    const answer = this.startChecked(key, raw, prepared);
     this.options.log(isPairError(answer) ? `job refused: ${answer.error}` : `job ${answer.id} registered (${answer.kind}, ${answer.provider}/${answer.model})`);
     return answer;
   }
 
-  private startChecked(key: unknown, raw: unknown): PairAnswer<AgentJob> {
+  /**
+   * Any request from a window. An explanation of selected code (DSP-152), or a follow-up on
+   * one, is first checked against the commits: the host reads the selected lines from Git,
+   * decides which are removed, added or unchanged, and refuses a selection whose text is not
+   * what the commits hold there. A follow-up takes its selection from the explanation it
+   * follows, never from the window. Everything else is {@link start} as it was.
+   */
+  async request(key: unknown, raw: unknown): Promise<PairAnswer<AgentJob>> {
+    const request = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+    if (request['kind'] !== 'explain' || (request['selection'] === undefined && request['followUp'] === undefined)) {
+      return this.start(key, raw);
+    }
+    const prepared = await this.prepareExplanation(key, request);
+    if (isPairError(prepared)) {
+      this.options.log(`job refused: explanation of selected code - ${prepared.error}`);
+      return prepared;
+    }
+    return this.start(key, raw, prepared);
+  }
+
+  private async prepareExplanation(key: unknown, request: Record<string, unknown>): Promise<PairAnswer<PreparedExplanation>> {
+    if (typeof key !== 'string') {
+      return { error: 'That review is not open.' };
+    }
+    const record = this.options.pairs.state(key);
+    const opened = this.options.pairs.opened(key);
+    if (isPairError(record) || opened === null) {
+      return isPairError(record) ? record : { error: 'That review is not open.' };
+    }
+    const asked = request['followUp'];
+    if (asked !== undefined) {
+      const value = typeof asked === 'object' && asked !== null ? (asked as Record<string, unknown>) : {};
+      const root = record.jobs.find((job) => job.id === value['root']);
+      if (root === undefined || root.kind !== 'explain' || root.selection === undefined || root.followUp !== undefined) {
+        return { error: 'The explanation this follows is not in this review.' };
+      }
+      const action = value['action'];
+      if (action !== 'more' && action !== 'simpler' && action !== 'question') {
+        return { error: 'Unknown kind of follow-up.' };
+      }
+      const question = typeof value['question'] === 'string' ? value['question'].trim().slice(0, 4000) : '';
+      if (action === 'question' && question === '') {
+        return { error: 'Write your question first.' };
+      }
+      return { selection: root.selection, followUp: { root: root.id, action, question: action === 'question' ? question : '' } };
+    }
+    const selection = await readSelection(request['selection'], opened.files, (side, filePath) => this.options.pairs.linesAt(key, side, filePath));
+    return isPairError(selection) ? selection : { selection, followUp: null };
+  }
+
+  private startChecked(key: unknown, raw: unknown, prepared: PreparedExplanation | null): PairAnswer<AgentJob> {
     if (typeof key !== 'string') {
       return { error: 'That review is not open.' };
     }
@@ -304,7 +367,11 @@ export class ReviewAgentJobs {
     this.reconcile(key);
     let scope: DelegationScope | null = null;
     let question: StepQuestion | null = null;
-    if (kind === 'explain') {
+    if (kind === 'explain' && prepared === null && (request['selection'] !== undefined || request['followUp'] !== undefined)) {
+      // Only `request` checks a selection against the commits; one that skipped it is refused.
+      return { error: 'The selection was not checked, so nothing was started.' };
+    }
+    if (kind === 'explain' && prepared === null) {
       const asked = questionRequestFrom(request['question']);
       if (asked === null) {
         return { error: 'Write a question about this step first.' };
@@ -357,7 +424,9 @@ export class ReviewAgentJobs {
         kind === 'walks'
           ? 'Preparing code walks.'
           : kind === 'explain'
-            ? 'Looking into the code.'
+            ? prepared === null
+              ? 'Looking into the code.'
+              : 'Explaining the selected code.'
             : `Reviewing ${scope?.label ?? 'the delegated part'}.`,
       detail: '',
       scope,
@@ -365,6 +434,8 @@ export class ReviewAgentJobs {
       definitionPath: null,
       uncovered: [],
       ...(question === null ? {} : { question }),
+      ...(prepared === null ? {} : { selection: prepared.selection }),
+      ...(prepared?.followUp == null ? {} : { followUp: prepared.followUp }),
     };
     // Written before anything is sent: a job that never reached the disk could not be
     // reconciled after a restart. The agent and model it was started with become the
@@ -647,6 +718,8 @@ export class ReviewAgentJobs {
       }
       if (job.kind === 'walks') {
         await this.prepareWalks(live, job, walksPrompt(material, folder, language), folder);
+      } else if (job.kind === 'explain' && job.selection !== undefined) {
+        await this.explain(live, await this.selectionPromptFor(live.key, job, job.selection, material, folder, language));
       } else if (job.kind === 'explain' && job.question !== undefined) {
         const step = this.options.pairs.stepOf(live.key, job.question.definitionPath, job.question.walkId, job.question.stepId);
         if (isPairError(step)) {
@@ -672,6 +745,39 @@ export class ReviewAgentJobs {
   /** The line reader every result is checked with: Git at the pair's commits, not the folder. */
   private reader(live: Live): (side: 'base' | 'target', filePath: string) => Promise<readonly string[] | null> {
     return (side, filePath) => this.options.pairs.linesAt(live.key, side, filePath);
+  }
+
+  /**
+   * The prompt for an explanation of selected code: the selection with the lines around each
+   * part, read from Git at its side, and, for a follow-up, what was asked and answered
+   * about the same selection before, in order.
+   */
+  private async selectionPromptFor(
+    key: string,
+    job: AgentJob,
+    selection: CodeSelection,
+    material: AnalysisMaterial,
+    folder: AgentMaterial,
+    language: 'sv' | 'en',
+  ): Promise<string> {
+    const around: string[] = [];
+    for (const segment of selection.segments) {
+      const lines = await this.options.pairs.linesAt(key, segment.side, segment.path);
+      around.push(lines === null ? '' : linesAround(segment, lines));
+    }
+    const thread: ExplainTurn[] = [];
+    const root = job.followUp?.root ?? null;
+    const record = this.options.pairs.state(key);
+    if (root !== null && !isPairError(record)) {
+      for (const entry of record.jobs) {
+        const inThread = entry.id === root || entry.followUp?.root === root;
+        if (!inThread || entry.id === job.id || entry.state !== 'done' || entry.answer === undefined) {
+          continue;
+        }
+        thread.push({ asked: entry.followUp === undefined ? 'Explain the selected code.' : followUpWords(entry.followUp), answer: entry.answer.answer });
+      }
+    }
+    return selectionPrompt(material, folder, selection, around, thread.slice(-6), job.followUp ?? null, language);
   }
 
   private async explain(live: Live, prompt: string): Promise<void> {

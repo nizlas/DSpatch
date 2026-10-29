@@ -4,7 +4,7 @@ title: Understand and review changes through agent-generated code walks
 status: Review
 assignee: []
 created_date: '2026-10-28 22:32'
-updated_date: '2026-10-29 10:26'
+updated_date: '2026-10-29 12:55'
 labels:
   - review
   - code-walks
@@ -273,5 +273,52 @@ DSpatch excludes nothing in any of them today and does not claim to; the content
 - What a real model reads and writes, and the quality of its walks, reviews and answers (AC #3, #12).
 - How long writing the folder takes for a large repository (the fixtures are small); Linux.
 - Cursor's ability to read-only analysis.
+
+29 Oct 2026: in progress again under Niclas's assignment of this date: explain selected code directly in the diff window (Explain this on a text selection, in both layouts, through the analysis path of 35fd548). Focus: the selection's identity (file, side, revision, lines and characters), the host's checks and storage, then the window.
+
+### Explaining selected code in the diff (29 Oct 2026)
+
+Assignment of this date: explain code the person selects in the diff window, without copying it into a chat or making a walk first, through the analysis path of 35fd548.
+
+Governing decisions: the plan's deepening actions and writing rules (§2, §4); analysis through the runtime's own read-only tools over the two revisions (design choices 1–3 of *Analysis access* above); the review discussion stays tool-free (design choice 5); agent work starts only from an explicit action, with the review's agent and model and no fallback (fixes d5a670b, 4122f81, b420a3f); nothing but the person or an explicit delegation marks or approves lines (manual review default, 29 Oct).
+
+**What works now**
+- Selecting code with the mouse in either layout offers *Explain this* beside the selection. The same action is in a context menu (right click, or the context-menu key) and on Ctrl+Shift+E. Changed lines selected for review by their strip can also be explained (*Explain* in the line bar), which is the keyboard-only way. Pressing the action keeps the selection.
+- A selection may be part of a line, several lines, or removed, added or unchanged code. Side by side, a selection stays in the column it starts in. In the unified layout a selection over removed and added lines becomes separate parts.
+- The explanation opens in a panel beside the diff. The panel shows each selected part with its place ("src/checkout.ts line 4, characters 19–36 (To, added)"), colours removed and added parts, and offers *Show in diff*. The explained code stays marked in the diff (a CSS highlight, which changes neither the DOM nor the selection). The panel can be hidden to a narrow tab, and the row being read stays in place when its width changes.
+- *Tell me more*, *Explain more simply* and a typed follow-up ask again about the same selection, with the earlier answers. Each answer is folded except the latest; references open in the diff when they are in the change; Details say what the agent read.
+- Explanations are kept with the review. They reopen from "Explanations in this file", and after a restart, without anything being sent.
+- With no usable agent chosen for the review, the picker opens in the panel and the selection waits for it.
+
+**Design choices (changeable)**
+1. **Explanations are analysis jobs.** Each explanation and each follow-up is an `explain` job with a `selection` (and `followUp`), stored in the pair record like the step questions. This reuses job registration, stop, unknown outcomes, restart reconciliation, Details and the one-at-a-time rule per kind. Follow-ups go through the analysis path rather than the discussion, so the agent can read further for them; the discussion is not given tools.
+2. **The host decides what was selected.** The window sends file, side, lines, characters and the text it saw. The host reads those lines from Git at the named commit, decides which are removed, added or unchanged from the diff, and splits runs of different kinds. It refuses the selection when the text differs from the commit. A follow-up's selection is taken from the explanation it follows, never from the window. A selection is bounded to 40 parts, 400 lines and 20 000 characters.
+3. **The prompt keeps the sides apart.** Each part names its commit and kind ("REMOVED: only in From …", "ADDED: only in To …", "UNCHANGED …"). It includes the exact text and the lines around it at that side, plus the folder and orientation sections of the other analysis tasks. The agent is told never to describe removed code as current behaviour or added code as earlier behaviour.
+4. **No question per press.** The action uses the review's current agent and model (the review's own choice, else the opener's), as the picker would preselect them. It shows the picker only when that choice is missing or unusable. It never uses Cursor (refused for analysis) or another model.
+5. **The panel narrows the diff rather than covering it.** Covering would hide the To column side by side. The anchor row keeps the reading position.
+
+**Boundaries kept:** selecting text and explaining never change marks, approvals or delegations (no agent review is written for an explanation job); the existing line selection by strip and number is unchanged and works alongside; the analysis permissions, revision snapshots and host/client split are those of 35fd548; the discussion has no new tools. Content exclusion: an explanation's prompt adds the selected lines and the lines around them read from the commits, a fourth path alongside those named above; DSpatch excludes nothing there either.
+
+**Verified** (no provider contacted, no live calls, isolated user data, the real profile untouched):
+- `tests/review-analysis.test.ts` +3. The selection is recorded as the commits hold it, split into removed, added and unchanged, and marks and approves nothing. Wrong text, wrong side, another file and an unchecked start are refused. A follow-up carries its explanation's selection (a forged one is ignored) and the earlier answer. A follow-up of a follow-up is refused. 13/13; review group 141/141; `npm run typecheck`; build.
+- Scenario `selection-explain` used real input through `sendInputEvent` (left-button drags over characters, a right click with Windows' context-menu event, Ctrl+Shift+E, Enter on a strip), the SIMULATED agent reading the revision folder (it answers only if the selected text is at the sent side and place) and isolated user data:
+  - `first`:
+    - Part of an added line side by side ("findDiscount(code)", To, line 4, characters 19–36). The selection was kept after pressing, the agent read on to `src/pricing.ts` line 61, and the prompt carried the exact text, ADDED and the To commit, and no working-copy text.
+    - *Tell me more*, *Explain more simply* and a typed question each built on 1, 2 and 3 earlier answers.
+    - Two removed lines through the context menu (From, lines 3–4, read in `base/`).
+    - Part of an unchanged line with Ctrl+Shift+E.
+    - In unified, one drag over removed lines 3–4 and added line 3, recorded as two parts.
+    - A line selected for review with the keyboard, explained, then marked as reviewed. Only that line changed, and no explanation changed any line's status, approved anything or started a review.
+    - An earlier explanation reopened with its follow-ups.
+  - `again` (restart): five explanations back, reopened with answers and the selection marked, 0 prompts sent.
+  - `pick` (chat on Cursor): the picker in the panel with the selection kept; Claude/opus chosen there; no adapter built for Cursor.
+  - Runner, every phase: working copy unchanged; every job's commits equal to the kit's; every revision folder removed.
+- Regression: `analysis-access` (`first`) passes with the fixture's new unchanged tail.
+
+**Not established**
+- What a real model writes for a selection, and whether the opening explanation and the follow-ups meet the plan's writing rules (needs the live trial, AC #3, #12).
+- Text selection with a real mouse and touchpad by a person, including selections that start or end in a fold, a number or the gap between columns; the scenarios' drags are exact.
+- UX acceptance: how the button, the panel's width and the reading position feel in use.
+- Linux.
 
 <!-- SECTION:NOTES:END -->

@@ -434,3 +434,77 @@ describe('the presentation agent (scenarios) reads the folder too', () => {
     assert.ok(isPairError(refused) && /other commits/.test(refused.error));
   });
 });
+
+describe('DSP-152: explaining selected code', () => {
+  const fileKey = 'src/checkout.ts→src/checkout.ts';
+  const request = (selection: unknown): Record<string, unknown> => ({ kind: 'explain', provider: 'claude', model: 'opus', selection });
+  function presentationJobs(): ReviewAgentJobs {
+    return new ReviewAgentJobs({
+      recordsDir: records,
+      createAdapter: () => new PresentationAdapter({ deltaMs: 1 }),
+      snapshots: new RevisionSnapshots({ root: path.join(records, 'revisions-s'), log: () => undefined }),
+      availability: () => ({ choosable: true, reason: null }),
+      pairs,
+      language: () => Promise.resolve('en'),
+      log: () => undefined,
+    });
+  }
+
+  it('records the selection as the commits hold it, splitting removed, added and unchanged lines, and marks nothing', async () => {
+    const statusBefore = JSON.stringify((pairs.state(open.key) as PairRecord).marks);
+    const started = await presentationJobs().request(open.key, request({
+      fileKey,
+      layout: 'unified',
+      // From line 3 (removed) to the end of line 4, as one run; then To lines 5–7 (added, unchanged, unchanged).
+      segments: [
+        { side: 'base', path: 'src/checkout.ts', start: 3, end: 4, from: 7, to: 25 },
+        { side: 'target', path: 'src/checkout.ts', start: 5, end: 8, from: 2, to: 15 },
+      ],
+      text: 'function total(amount: number): number {\n  return amount * RATE_1;\nreturn amount * RATE_1 * (1 - percent / 100);\n}\n\nexport function',
+    }));
+    assert.ok(!isPairError(started), JSON.stringify(started));
+    assert.deepEqual(
+      started.selection?.segments.map((segment) => [segment.side, segment.start, segment.end, segment.kind, segment.text]),
+      [
+        ['base', 3, 4, 'removed', 'function total(amount: number): number {\n  return amount * RATE_1;'],
+        ['target', 5, 5, 'added', 'return amount * RATE_1 * (1 - percent / 100);'],
+        ['target', 6, 8, 'unchanged', '}\n\nexport function'],
+      ],
+    );
+    const job = await settled(open.key, started.id);
+    assert.equal(job.state, 'done', job.note);
+    assert.ok(job.answer?.answer.includes('removed: only in From') && job.answer.answer.includes('added: only in To') && job.answer.answer.includes('unchanged in both'), job.answer?.answer);
+    assert.ok(job.investigation?.reads.includes('base/src/checkout.ts') && job.investigation.reads.includes('target/src/checkout.ts'), JSON.stringify(job.investigation));
+    const record = pairs.state(open.key) as PairRecord;
+    assert.equal(record.agentReviews.filter((review) => review.jobId === job.id).length, 0, 'an explanation approves nothing');
+    assert.equal(JSON.stringify(record.marks), statusBefore, 'an explanation marks nothing');
+    assert.equal(workingCopyState(fixture.shop), before0);
+  });
+
+  it('refuses a selection whose text is not what the commits hold, or that names another file or side', async () => {
+    const wrongText = await presentationJobs().request(open.key, request({ fileKey, layout: 'split', segments: [{ side: 'target', path: 'src/checkout.ts', start: 4, end: 4, from: 18, to: 36 }], text: 'findDiscount(cod)' }));
+    assert.ok(isPairError(wrongText) && /not what the commits hold/.test(wrongText.error), JSON.stringify(wrongText));
+    // The working copy's pricing.ts is not this file; the commit's line 4 at From is another line.
+    const wrongSide = await presentationJobs().request(open.key, request({ fileKey, layout: 'split', segments: [{ side: 'base', path: 'src/checkout.ts', start: 4, end: 4, from: 18, to: 36 }], text: 'findDiscount(code)' }));
+    assert.ok(isPairError(wrongSide), 'a selection sent with the wrong side is refused');
+    const wrongFile = await presentationJobs().request(open.key, request({ fileKey, layout: 'split', segments: [{ side: 'target', path: 'src/pricing.ts', start: 61, end: 61, from: 0, to: 6 }], text: 'export' }));
+    assert.ok(isPairError(wrongFile) && /not this file/.test(wrongFile.error));
+    const unchecked = presentationJobs().start(open.key, request({ fileKey, layout: 'split', segments: [], text: '' }));
+    assert.ok(isPairError(unchecked) && /not checked/.test(unchecked.error), 'start without the check refuses a selection');
+  });
+
+  it('gives a follow-up the explanation it follows: its selection and the earlier answers', async () => {
+    const root = await presentationJobs().request(open.key, request({ fileKey, layout: 'split', segments: [{ side: 'target', path: 'src/checkout.ts', start: 4, end: 4, from: 18, to: 36 }], text: 'findDiscount(code)' }));
+    assert.ok(!isPairError(root), JSON.stringify(root));
+    await settled(open.key, root.id);
+    const more = await presentationJobs().request(open.key, { kind: 'explain', provider: 'claude', model: 'opus', followUp: { root: root.id, action: 'question', question: 'Why can it be null?' }, selection: { forged: true } });
+    assert.ok(!isPairError(more), JSON.stringify(more));
+    assert.deepEqual(more.selection, root.selection, 'the selection is the explanation\'s, not the window\'s');
+    const job = await settled(open.key, more.id);
+    assert.ok(job.answer?.answer.includes('Why can it be null?') && job.answer.answer.includes('building on 1 earlier answer'), job.answer?.answer);
+    const empty = await presentationJobs().request(open.key, { kind: 'explain', provider: 'claude', model: 'opus', followUp: { root: root.id, action: 'question', question: ' ' } });
+    assert.ok(isPairError(empty));
+    const notRoot = await presentationJobs().request(open.key, { kind: 'explain', provider: 'claude', model: 'opus', followUp: { root: more.id, action: 'more' } });
+    assert.ok(isPairError(notRoot), 'a follow-up follows the first explanation, not another follow-up');
+  });
+});

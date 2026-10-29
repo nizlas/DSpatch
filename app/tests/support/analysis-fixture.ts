@@ -58,12 +58,16 @@ const PRICING =
   '  return null;\n' +
   '}\n';
 
+/** Code at the end of `src/checkout.ts` that neither commit changes (DSP-152: unchanged code to select). */
+const UNCHANGED_TAIL = '\n' + 'export function formatTotal(value: number): string {\n' + '  return value.toFixed(2);\n' + '}\n';
+
 const CHECKOUT_BASE =
   "import { RATE_1 } from './pricing';\n" +
   '\n' +
   'export function total(amount: number): number {\n' +
   '  return amount * RATE_1;\n' +
-  '}\n';
+  '}\n' +
+  UNCHANGED_TAIL;
 
 const CHECKOUT_TARGET =
   "import { RATE_1, findDiscount } from './pricing';\n" +
@@ -71,7 +75,8 @@ const CHECKOUT_TARGET =
   'export function total(amount: number, code: string): number {\n' +
   '  const percent = findDiscount(code).percent;\n' +
   '  return amount * RATE_1 * (1 - percent / 100);\n' +
-  '}\n';
+  '}\n' +
+  UNCHANGED_TAIL;
 
 export function makeAnalysisFixture(workspace: string = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-analysis-'))): AnalysisFixture {
   const shop = path.join(workspace, 'shop');

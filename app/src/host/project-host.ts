@@ -3789,7 +3789,7 @@ function registerReviewMethods(): void {
     if (presentationMode && process.env['DSPATCH_REVIEW_SIM'] === 'start-throws') {
       throw new Error('SIMULATED (DSPATCH_REVIEW_SIM=start-throws): the host could not take the request.');
     }
-    return requireReviewAgentJobs().start(key, request);
+    return requireReviewAgentJobs().request(key, request);
   });
   handle('reviewPair.cancelJob', (_event, key: unknown, jobId: unknown) => requireReviewAgentJobs().cancel(key, jobId));
 
