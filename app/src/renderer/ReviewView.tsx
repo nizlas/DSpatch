@@ -4,7 +4,7 @@ import type { CSSProperties, JSX, ReactNode } from 'react';
 import { Markdown } from './Markdown';
 import { ReviewDiscussion } from './ReviewDiscussion';
 import { AgentPicker } from './AgentPicker';
-import { JobLine } from './PairReview';
+import { isRunning, JobLine } from './PairReview';
 import { Inline, TokensView, asLocation, capitalise, fileName, rangeText, useFiles, useRows, type Files } from './review-code';
 import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
@@ -1090,7 +1090,9 @@ function OpenReview({
               )}
               {pair !== null && pairBridge !== undefined && current !== null && away === null && walkScope !== null && (
                 <div className="rv-walk-delegate">
-                  {walkJob !== null && <JobLine job={walkJob} onStop={() => void pairBridge.cancelJob(pair.key, walkJob.id)} />}
+                  {walkJob !== null && (!delegatingWalk || isRunning(walkJob)) && (
+                    <JobLine job={walkJob} onStop={() => void pairBridge.cancelJob(pair.key, walkJob.id)} />
+                  )}
                   {delegatingWalk ? (
                     <AgentPicker
                       pairKey={pair.key}

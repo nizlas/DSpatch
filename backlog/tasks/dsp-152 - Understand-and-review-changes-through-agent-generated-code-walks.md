@@ -172,4 +172,26 @@ Unchecked on purpose: #3 and #12 need a real model and Niclas's trial (the writi
 - `code-walks` (both phases) passes after the change.
 
 **Not established:** a live run with Claude; how the real Claude SDK names or lists models compared with the simulated list; the missing-choice case in the UI (covered by the unit test; with no usable agent the main window has no review button). Remaining: the chat's own Cursor default (`DEFAULT_MODEL`) and the review discussion's Cursor fallback are still `claude-haiku-4-5`; both apply only to Cursor and were not changed here. The tool-free analysis with bounded excerpts (design choice 1) remains a separate follow-up. This fix does not make DSP-152 as a whole done.
+### Second live trial (29 Oct 2026): an earlier Cursor failure shown as the outcome of a new choice
+
+**Observed by Niclas (live, build of 08:22 with d5a670b):** a review opened with Claude · Opus 5.5 showed `Cursor adapter operation "startSession" failed: UnknownAgentError: [plan_required]`.
+
+**Established from his profile (read only; the record was copied to a scratchpad kit, nothing in the profile changed):**
+- The review of that revision pair (`reviews/pairs/abebf79d…json`, MiniDAWLab, `b87f042` → `8c7d41b`) holds one job: `job-56bdb702…`, walks, Cursor · `claude-haiku-4-5`, started 00:02:34Z and failed 00:02:35Z, which is before d5a670b (00:29Z). Its note is in the old form, with the raw SDK text inside the note.
+- The app was started at 07:22Z and the review opened at 07:22:27Z; only its position was saved. `agent` is still `null` and there is no later job. `ReviewAgentJobs.start` writes a job synchronously before anything is sent, so no new job reached the host, and no Cursor session was started that morning.
+- A review record belongs to its revision pair, so opening "a new review" of the same two commits is the same review and reads its jobs back. That is intended; the defect was how the last job was drawn. The window drew the last walks job directly under the picker, with no agent, model or time, and the old note carried the raw Cursor text. So a failure from before the fix read as the outcome of the Claude/Opus choice shown above it.
+
+**Fix:**
+- A finished job's line says which attempt it was: `Last attempt (<Agent> · <model> · <time>):` before the note (a done job shows its agent, model and time too). Its *Details* name the job id, agent, model, start and end, and hold the provider's own text.
+- While the picker for new work is open, the previous finished job of that kind is not drawn beside it (diff window: walks and whole delegation; walk window: walk delegation). A running job stays visible.
+- A job stored before the fix of d5a670b has its note split on reading: the short meaning stays as the note and the raw text moves to the detail, as a new failure is written.
+- A stored job without a known agent is no longer read as Cursor; it is not attributed to any agent.
+
+**Verified** (simulated providers, isolated userData, no live calls, no Cursor contact):
+- `tests/review-pairs.test.ts` 24/24 (one new: the copied legacy job is read with its own agent, the raw text is split into the detail, and a job without an agent is not read as Cursor); `tests/review-agent-jobs.test.ts` 13/13; typecheck and build clean.
+- New phase `history` of `review-agent-choice`, real input events. The kit is seeded with the chat on Claude with the model `opus` and with Niclas's stored record (its pair identity replaced by the kit's): the old job is shown as `Last attempt (Cursor · claude-haiku-4-5 · …)` with the raw text only under *Details* with its job id; with the picker open it is not drawn, and the picker shows Claude · `opus`; no adapter was built before the start; the start ran Claude/`opus` (job and adapter session); both jobs are kept; the line then shows only the Claude job. The host log has one model listing, for Claude, and no line mentioning Cursor.
+- Phases `first` and `start-fails` pass again after the change.
+
+**Not established:** a live run with Claude and the real SDK's `opus` alias (the simulated list gained an `opus` entry for this). Once a newer job of the same kind exists, an older failed job is kept in the record but no longer drawn in the window. The tool-free analysis follow-up is unchanged, and DSP-152 as a whole is not done.
+
 <!-- SECTION:NOTES:END -->

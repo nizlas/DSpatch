@@ -627,7 +627,9 @@ function DiffReview({
           />
         </div>
       )}
-      {walksJob !== null && <JobLine job={walksJob} onStop={() => void stopJob(walksJob)} onOpenWalks={() => setWalksOpen(true)} />}
+      {walksJob !== null && (!preparing || isRunning(walksJob)) && (
+        <JobLine job={walksJob} onStop={() => void stopJob(walksJob)} onOpenWalks={() => setWalksOpen(true)} />
+      )}
       {walksOpen && (
         <WalkList bridge={bridge} pairKey={open.key} refresh={walksJob?.endedAt ?? ''} onClose={() => setWalksOpen(false)} />
       )}
@@ -819,6 +821,21 @@ function agentName(job: AgentJob): string {
   return `${job.provider === 'claude' ? 'Claude' : 'Cursor'} (${job.model})`;
 }
 
+export function isRunning(job: AgentJob): boolean {
+  return job.state === 'running' || job.state === 'cancelling';
+}
+
+/**
+ * Which attempt a finished line is about: its agent, model and start. A record keeps
+ * every job of its revision pair, so reopening the same change shows its last job, which
+ * may have been started with another agent long before; the line must not read as the
+ * outcome of the choice shown now.
+ */
+function attemptLabel(job: AgentJob): string {
+  const words = `${job.provider === 'claude' ? 'Claude' : 'Cursor'} · ${job.model} · ${formatDate(job.startedAt)}`;
+  return job.state === 'done' ? words : `Last attempt (${words}):`;
+}
+
 /** Where one piece of agent work stands, in a line, with Stop while it runs. */
 export function JobLine({ job, onStop, onOpenWalks }: { readonly job: AgentJob; readonly onStop: () => void; readonly onOpenWalks?: () => void }): JSX.Element {
   const running = job.state === 'running' || job.state === 'cancelling';
@@ -839,6 +856,9 @@ export function JobLine({ job, onStop, onOpenWalks }: { readonly job: AgentJob; 
         </>
       ) : (
         <>
+          <span className="rv-agent-attempt" data-ev={`agent-job-${job.kind}-attempt`}>
+            {attemptLabel(job)}
+          </span>
           <span>{job.note}</span>
           <JobDetail job={job} />
           {job.kind === 'walks' && job.state === 'done' && onOpenWalks !== undefined && (
@@ -852,18 +872,22 @@ export function JobLine({ job, onStop, onOpenWalks }: { readonly job: AgentJob; 
   );
 }
 
-/** The provider's own words about a failure, folded away: the note above says what it means. */
+/**
+ * A job that did not finish well, folded away: which job it was, with which agent and
+ * model and when, and the provider's own words. The note above says what it means.
+ */
 function JobDetail({ job }: { readonly job: AgentJob }): JSX.Element | null {
-  if (job.detail === '') {
+  if (job.state === 'done' || isRunning(job)) {
     return null;
   }
   return (
     <details className="rv-agent-detail" data-ev={`agent-job-${job.kind}-detail`}>
       <summary>Details</summary>
       <p>
-        {job.provider === 'claude' ? 'Claude' : 'Cursor'} · {job.model}
+        {job.provider === 'claude' ? 'Claude' : 'Cursor'} · {job.model} · started {formatDate(job.startedAt)}
+        {job.endedAt !== null ? `, ended ${formatDate(job.endedAt)}` : ''} · {job.id}
       </p>
-      <pre>{job.detail}</pre>
+      {job.detail !== '' && <pre>{job.detail}</pre>}
     </details>
   );
 }
@@ -895,7 +919,9 @@ function AgentReviewResult({
         <JobLine job={job} onStop={onStop} />
       ) : result === null ? (
         <>
-          <p>{job.note}</p>
+          <p>
+            <span className="rv-agent-attempt">{attemptLabel(job)}</span> {job.note}
+          </p>
           <JobDetail job={job} />
         </>
       ) : (
@@ -1006,7 +1032,7 @@ function FilesChanged({
           />
         </div>
       )}
-      {whole !== null && <JobLine job={whole} onStop={() => onStop(whole)} />}
+      {whole !== null && (!delegating || isRunning(whole)) && <JobLine job={whole} onStop={() => onStop(whole)} />}
       <table>
         <thead>
           <tr>

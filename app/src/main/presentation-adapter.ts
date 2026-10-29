@@ -41,6 +41,8 @@ const MODELS: readonly ModelInfo[] = [
   { id: 'claude-haiku-4-5', displayName: 'Claude Haiku 4.5', provider: 'cursor' },
   { id: 'claude-sonnet-4-5', displayName: 'Claude Sonnet 4.5', provider: 'cursor' },
   { id: 'gpt-5-codex', displayName: 'GPT-5 Codex', provider: 'cursor' },
+  // The alias form Claude's own listing uses, as a stored Claude choice can hold it.
+  { id: 'opus', displayName: 'Opus (simulated)', provider: 'claude' },
 ];
 
 const CAPABILITIES: CapabilityReport = {

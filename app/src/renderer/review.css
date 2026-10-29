@@ -2501,6 +2501,10 @@
 }
 
 /* DSP-152: a failed agent job keeps the provider's own words folded away. */
+.rv-agent-attempt {
+  color: var(--muted);
+}
+
 .rv-agent-detail {
   flex-basis: 100%;
   font-size: 0.8rem;

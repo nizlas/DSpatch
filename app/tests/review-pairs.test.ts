@@ -290,6 +290,37 @@ describe('requirements and agent review', () => {
     assert.equal(adoptPairRecord({ ...stored, pair: { ...pair, base: 'c'.repeat(40) } }, pair).marks.length, 0);
   });
 
+  it('keeps an earlier failed job with its own agent, the raw text split off into the detail, and attributes none', () => {
+    // As a job written before the fix of 29 October 2026 was stored (copied from a real record).
+    const legacy = {
+      id: 'job-56bdb702-83d8-4895-b226-f56675d58ad2',
+      kind: 'walks',
+      state: 'failed',
+      provider: 'cursor',
+      model: 'claude-haiku-4-5',
+      startedAt: '2026-10-29T00:02:34.205Z',
+      endedAt: '2026-10-29T00:02:35.884Z',
+      note: 'The agent could not be asked: Cursor adapter operation "startSession" failed: UnknownAgentError: [plan_required] Cloud Agent is not available for free users. Please upgrade to Pro.. Nothing was approved.',
+      detail: '',
+      scope: null,
+      result: null,
+      definitionPath: null,
+      uncovered: [],
+    };
+    const { provider: _dropped, ...withoutAgent } = legacy;
+    const adopted = adoptPairRecord({ ...emptyRecord(pair), jobs: [legacy, { ...withoutAgent, id: 'job-x' }] }, pair);
+    assert.deepEqual(
+      adopted.jobs.map((job) => [job.id, job.provider, job.model, job.startedAt]),
+      [['job-56bdb702-83d8-4895-b226-f56675d58ad2', 'cursor', 'claude-haiku-4-5', '2026-10-29T00:02:34.205Z']],
+    );
+    assert.equal(adopted.jobs[0]?.note, 'The agent could not be asked. Nothing was approved.');
+    assert.equal(
+      adopted.jobs[0]?.detail,
+      'Cursor adapter operation "startSession" failed: UnknownAgentError: [plan_required] Cloud Agent is not available for free users. Please upgrade to Pro.',
+    );
+    assert.equal(adopted.agent, null);
+  });
+
   it('counts a change several walks pass once: a walk decision is a decision over the same lines', () => {
     const hunk = { id: 'H1', path: 'a.ts', baseStart: 2, baseCount: 1, targetStart: 2, targetCount: 2 };
     const ranges = hunkRanges(hunk);

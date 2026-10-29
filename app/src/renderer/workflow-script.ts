@@ -12369,6 +12369,11 @@ async function reviewAdapterRecord(): Promise<{
  * - `start-fails`: the session start is refused (a SIMULATED provider error); the window
  *   shows a short note, keeps the raw text under Details, approves nothing and tries no
  *   other agent.
+ * - `history`: Niclas's second live trial. The kit's chat chose Claude with `opus`, and the
+ *   review of the same revision pair already holds a failed Cursor job copied from a real
+ *   record (written before the fix, raw text inside its note). Reopening shows that job as
+ *   an earlier attempt with its own agent, model and time and the raw text under Details;
+ *   choosing anew hides it; the start runs Claude/`opus`.
  *
  * In every phase the review adapters are built only for Claude: Cursor is never built.
  * The review windows are pressed with real input events (`press`, `press-key`).
@@ -12378,7 +12383,7 @@ async function runReviewAgentChoiceScenario(plan: ScriptedRunPlan): Promise<Scri
   const failures: string[] = [];
   // `first` (the default) is the chat's way in.
   const phase = plan.flowPhase === undefined || plan.flowPhase === 'first' ? 'chat' : plan.flowPhase;
-  const chosenModel = 'claude-sonnet-4-5';
+  const chosenModel = phase === 'history' ? 'opus' : 'claude-sonnet-4-5';
   const observations: Record<string, unknown> = {
     plan,
     phase,
@@ -12500,6 +12505,49 @@ async function runReviewAgentChoiceScenario(plan: ScriptedRunPlan): Promise<Scri
     }
     const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
     await openPair(diffId);
+
+    if (phase === 'history') {
+      // --- The stored Cursor failure, read back: an earlier attempt, not this choice -----------
+      const reopened = await untilPair(diffId, 'the earlier job read back', (reading) => lastJob(reading, 'walks') !== undefined);
+      const earlier = lastJob(reopened, 'walks');
+      const shown = (reopened as { visibleText?: string } | null)?.visibleText ?? '';
+      const earlierDetails = (reopened as { jobDetails?: { open: boolean; text: string }[] } | null)?.jobDetails ?? [];
+      record('earlier job', { earlier, earlierDetails, lines: shown.split('\n').filter((line) => line.includes('attempt')) });
+      expect(earlier?.provider === 'cursor' && earlier.model === 'claude-haiku-4-5' && earlier.state === 'failed', `the stored job was not read back as it was: ${JSON.stringify(earlier)}`);
+      expect(shown.includes('Last attempt (Cursor · claude-haiku-4-5 ·'), 'the stored failure is not shown as an earlier attempt with its own agent and model');
+      expect(!shown.includes('UnknownAgentError'), "the stored failure's raw text shows in the normal view");
+      expect(
+        earlierDetails.length === 1 && earlierDetails[0]?.open === false && earlierDetails[0].text.includes('plan_required') && earlierDetails[0].text.includes('job-56bdb702'),
+        'the raw text is not kept under Details with its job',
+      );
+      await capture(diffId, 'history-earlier');
+
+      // --- Choosing anew: the earlier attempt is not drawn as the outcome of this choice ------
+      await press(diffId, '[data-ev="pair-prepare-walks"]');
+      const choosing = await untilPair(diffId, 'the picker', pickerReady('pair-walks-agent'));
+      expectChoice(pickerOf(choosing, 'pair-walks-agent'), chosenModel, 'over a stored Cursor failure');
+      const choosingText = (choosing as { visibleText?: string } | null)?.visibleText ?? '';
+      expect(!choosingText.includes('could not be asked') && !choosingText.includes('Last attempt'), 'the stored failure is drawn beside the new choice');
+      const beforeStart = await reviewAdapterRecord();
+      record('adapters before the start', beforeStart);
+      expect(beforeStart.built.length === 0 && beforeStart.starts.length === 0, `an adapter was built before the start: ${JSON.stringify(beforeStart)}`);
+      await capture(diffId, 'history-choosing');
+
+      // --- The start: Claude/opus, and nothing else ---------------------------------------
+      const job = await runJob(diffId, '[data-ev="pair-walks-agent-start"]', 'walks');
+      expect(job?.state === 'done', `the walks did not finish: ${String(job?.state)} ${String(job?.note)}`);
+      await expectJob(job, chosenModel, 'the start over a stored failure');
+      const after = await readPairWindow(diffId);
+      const afterText = (after as { visibleText?: string } | null)?.visibleText ?? '';
+      record('after the start', { jobs: jobsOf(after), lines: afterText.split('\n').filter((line) => line.includes('Claude') || line.includes('Cursor')) });
+      expect(jobsOf(after).length === 2 && jobsOf(after)[0]?.provider === 'cursor', 'the stored job was not kept beside the new one');
+      expect(afterText.includes('Claude · opus ·') && !afterText.includes('Cursor'), 'the line does not show the new job alone');
+      const adapter = await reviewAdapterRecord();
+      record('adapters', adapter);
+      expect(JSON.stringify(adapter.built) === JSON.stringify(['claude']), `the review built an adapter for another agent: ${JSON.stringify(adapter.built)}`);
+      await capture(diffId, 'history-after');
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
 
     if (phase === 'start-fails') {
       await press(diffId, '[data-ev="pair-prepare-walks"]');

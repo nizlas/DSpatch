@@ -542,8 +542,32 @@ function stringsFrom(raw: unknown): string[] {
 const JOB_STATES: readonly AgentJobState[] = ['running', 'cancelling', 'done', 'failed', 'cancelled', 'unknown'];
 
 /** A stored job, or `null` for one too broken to show. */
+/**
+ * Before the fix of 29 October 2026 a failure put the provider's raw text inside the note
+ * itself and kept no detail. Such a note is split as a new one is written: the short
+ * meaning in the note, the provider's own words in the detail.
+ */
+const LEGACY_FAILURES: readonly { readonly prefix: string; readonly note: string }[] = [
+  { prefix: 'The agent could not be asked: ', note: 'The agent could not be asked. Nothing was approved.' },
+  { prefix: 'The agent did not finish: ', note: 'The agent did not finish. Nothing was approved.' },
+];
+const LEGACY_END = '. Nothing was approved.';
+
+function splitLegacyNote(note: string, detail: string): { readonly note: string; readonly detail: string } {
+  if (detail !== '' || !note.endsWith(LEGACY_END)) {
+    return { note, detail };
+  }
+  const legacy = LEGACY_FAILURES.find((entry) => note.startsWith(entry.prefix));
+  return legacy === undefined ? { note, detail } : { note: legacy.note, detail: note.slice(legacy.prefix.length, note.length - LEGACY_END.length) };
+}
+
 export function jobFrom(raw: unknown): AgentJob | null {
   if (!isRecordObject(raw) || typeof raw['id'] !== 'string' || (raw['kind'] !== 'walks' && raw['kind'] !== 'review')) {
+    return null;
+  }
+  // A job is always written with the agent it was started with; one without a known
+  // agent cannot be attributed, and is not given one.
+  if (raw['provider'] !== 'claude' && raw['provider'] !== 'cursor') {
     return null;
   }
   const state = JOB_STATES.includes(raw['state'] as AgentJobState) ? (raw['state'] as AgentJobState) : 'unknown';
@@ -574,12 +598,11 @@ export function jobFrom(raw: unknown): AgentJob | null {
     id: raw['id'],
     kind: raw['kind'],
     state,
-    provider: raw['provider'] === 'claude' ? 'claude' : 'cursor',
+    provider: raw['provider'],
     model: typeof raw['model'] === 'string' ? raw['model'] : '',
     startedAt: typeof raw['startedAt'] === 'string' ? raw['startedAt'] : '',
     endedAt: typeof raw['endedAt'] === 'string' ? raw['endedAt'] : null,
-    note: typeof raw['note'] === 'string' ? raw['note'] : '',
-    detail: typeof raw['detail'] === 'string' ? raw['detail'] : '',
+    ...splitLegacyNote(typeof raw['note'] === 'string' ? raw['note'] : '', typeof raw['detail'] === 'string' ? raw['detail'] : ''),
     scope,
     result,
     definitionPath: typeof raw['definitionPath'] === 'string' ? raw['definitionPath'] : null,

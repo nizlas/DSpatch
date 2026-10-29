@@ -2,7 +2,7 @@
  * Seed a kit for the `pair-review` scenario (DSP-150): a user-data folder whose only
  * project is a workspace with two Git repositories and a folder without Git.
  *
- *     node --import ./scripts/ts-resolve.mjs scripts/seed-pair-kit.mjs <kit-folder> [--agent claude] [--model <id>]
+ *     node --import ./scripts/ts-resolve.mjs scripts/seed-pair-kit.mjs <kit-folder> [--agent claude] [--model <id>] [--history <record.json>]
  *
  * Writes `<kit>/userData`, `<kit>/workspace` and `<kit>/kit.json` (the walk definition
  * the scenario's file pick answers with). Nothing outside the kit folder is touched.
@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
+import { pairKeyOf } from '../src/host/review-pairs';
 import { ProjectStore } from '../src/main/project-store';
 import { makePairFixture } from '../tests/support/pair-fixture';
 
@@ -30,6 +31,9 @@ const option = (name) => {
 };
 const AGENT = option('--agent') ?? 'cursor';
 const MODEL = option('--model');
+// DSP-152: a review record copied from a real profile, whose jobs become the history of the
+// kit's own pair (the app repository's two commits), as the same review opened again.
+const HISTORY = option('--history');
 if (AGENT !== 'cursor' && AGENT !== 'claude') {
   console.error('--agent is cursor or claude');
   process.exit(2);
@@ -62,6 +66,13 @@ const projects = new ProjectStore(path.join(USERDATA, 'dspatch-projects.json'));
 const outcome = projects.openFolder(workspace, new Date().toISOString());
 if (outcome.problem !== null) {
   throw new Error(outcome.problem);
+}
+if (HISTORY !== null) {
+  const copied = JSON.parse(fs.readFileSync(HISTORY, 'utf8'));
+  const pair = { repository: fixture.app, base: fixture.appBase, target: fixture.appTarget };
+  const pairs = path.join(USERDATA, 'reviews', 'pairs');
+  fs.mkdirSync(pairs, { recursive: true });
+  fs.writeFileSync(path.join(pairs, `${pairKeyOf(pair)}.json`), `${JSON.stringify({ ...copied, pair, position: null }, null, 2)}\n`, 'utf8');
 }
 fs.writeFileSync(path.join(KIT, 'kit.json'), `${JSON.stringify(fixture, null, 2)}\n`, 'utf8');
 console.log(JSON.stringify({ kit: KIT, workspace, walk: fixture.walkDefinition }));
