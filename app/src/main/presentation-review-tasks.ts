@@ -611,8 +611,29 @@ function reviewQuestion(prompt: string, reader: Reader, asked: string[]): string
   const question = /## Question\n([\s\S]*?)(?:\n\n## |\n*$)/.exec(prompt)?.[1]?.trim() ?? '';
   const before = asked.length;
   asked.push(question);
-  const session = before === 0 ? 'This is the first question in this session.' : `This session has had ${String(before)} question(s) before this one; the last was “${(asked[before - 1] ?? '').slice(0, 60)}”.`;
-  const name = /`([A-Za-z_][A-Za-z0-9_]*)`/.exec(question)?.[1] ?? /\b([A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+)\b/.exec(question)?.[1] ?? null;
+  const sessionWords = before === 0 ? 'This is the first question in this session.' : `This session has had ${String(before)} question(s) before this one; the last was “${(asked[before - 1] ?? '').slice(0, 60)}”.`;
+  // What the person selected, when the question is about a selection (30 October 2026).
+  const selectedCode = /Selected code, (\S+) lines? (\d+)[^\n]*?· (base|target) \((?:From|To)\) @ \w+:\n(`{3,})\n([\s\S]*?)\n\4/.exec(prompt);
+  const selectedText = /Selected text from [^\n]*\n(`{3,})\n([\s\S]*?)\n\1/.exec(prompt);
+  let selectedName: string | null = null;
+  let said = '';
+  if (selectedCode !== null) {
+    const [, selectedPath = '', line = '1', side = 'target', , text = ''] = selectedCode;
+    said = `You selected \`${text}\` in \`${selectedPath}\` line ${line}, at ${side === 'base' ? 'From' : 'To'}.`;
+    // A selected variable: its type, from the line it is declared on, is what to look up.
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(text)) {
+      const lines = reader.read(side === 'base' ? 'base' : 'target', selectedPath) ?? [];
+      const typed = new RegExp(`\\b${text}\\s*:\\s*([A-Z][A-Za-z0-9_]*)`).exec(lines.join('\n'));
+      selectedName = typed?.[1] ?? text;
+      if (typed !== null) {
+        said += ` It is declared as \`${typed[1] ?? ''}\`.`;
+      }
+    }
+  } else if (selectedText !== null) {
+    said = `You selected this text, not code: “${(selectedText[2] ?? '').slice(0, 80)}”.`;
+  }
+  const name = selectedName ?? /`([A-Za-z_][A-Za-z0-9_]*)`/.exec(question)?.[1] ?? /\b([A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+)\b/.exec(question)?.[1] ?? null;
+  const session = [said, sessionWords].filter((part) => part !== '').join('\n\n');
   const refs = (references: unknown[], insufficient: boolean): string => `\n\n\`\`\`dspatch-references\n${JSON.stringify({ references, insufficient })}\n\`\`\``;
   if (name === null) {
     // No name to look up: the code the question is about, and the first function it calls.

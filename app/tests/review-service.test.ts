@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { ReviewService, reviewRecordKey } from '../src/main/review-service.ts';
-import { PROVIDER_ADDED_CONTEXT_LINE, buildEnvelopePrompt } from '../src/shared/review-discussion.ts';
+import { PROVIDER_ADDED_CONTEXT_LINE, buildEnvelopePrompt, subjectLine } from '../src/shared/review-discussion.ts';
 import {
   buildDiffRows,
   computeCoverage,
@@ -475,6 +475,64 @@ test('git that cannot run, and git that cannot read the repository, are each sai
     assert.match(unreadable.kind === 'failed' ? (unreadable.detail ?? '') : '', /config/);
   } finally {
     process.env['PATH'] = savedPath;
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// Niclas's trial (30 October 2026): a selected variable must reach the question exactly.
+test('a selected quote is checked against its revision and sent first, exactly; text from an explanation gets no place', async () => {
+  const fixture = makeFixture();
+  try {
+    const { service } = await open(fixture);
+    const point = { kind: 'point', walkId: 'W1', stepId: 'W1.1', placeIndex: 0 } as const;
+    // `20` on line 2 of keep.ts at To (`export const b = 20;`, characters 18–19), and `b = 2` on line 2 at From.
+    const built = await service.envelopeFor({
+      subject: point,
+      selection: null,
+      language: 'en',
+      quote: { kind: 'code', text: '20', segments: [{ side: 'target', path: 'src/keep.ts', start: 2, end: 2, from: 17, to: 19 }] },
+    });
+    assert.equal(built.kind, 'built', built.kind === 'refused' ? built.error : '');
+    if (built.kind !== 'built') {
+      return;
+    }
+    assert.deepEqual(built.envelope.quote, { kind: 'code', segments: [{ side: 'target', path: 'src/keep.ts', start: 2, end: 2, from: 17, to: 19, sha: fixture.target, text: '20' }] });
+    const prompt = buildEnvelopePrompt(built.envelope, 'What have I selected?', null);
+    const selected = prompt.indexOf('## What the person selected');
+    assert.ok(selected > 0 && selected < prompt.indexOf('## Code'), 'the selection comes before the background code');
+    assert.ok(prompt.includes(`Selected code, src/keep.ts line 2, characters 18–19 · target (To) @ ${fixture.target}:`));
+    assert.match(subjectLine(built.envelope), /selected “20”$/);
+
+    // Several lines at From, and a quote whose text is not what the revision has there.
+    const lines = await service.envelopeFor({
+      subject: point,
+      selection: null,
+      quote: { kind: 'code', text: 'b = 2;\nexport const c', segments: [{ side: 'base', path: 'src/keep.ts', start: 2, end: 3, from: 13, to: 14 }] },
+    });
+    assert.equal(lines.kind === 'built' && lines.envelope.quote?.kind === 'code' ? lines.envelope.quote.segments[0]?.text : null, 'b = 2;\nexport const c');
+    const wrong = await service.envelopeFor({
+      subject: point,
+      selection: null,
+      quote: { kind: 'code', text: '20', segments: [{ side: 'base', path: 'src/keep.ts', start: 2, end: 2, from: 17, to: 19 }] },
+    });
+    assert.match(wrong.kind === 'refused' ? wrong.error : '', /not what the revision has/);
+    const outside = await service.envelopeFor({
+      subject: point,
+      selection: null,
+      quote: { kind: 'code', text: 'x', segments: [{ side: 'target', path: 'src/keep.ts', start: 9, end: 9, from: 0, to: 1 }] },
+    });
+    assert.match(outside.kind === 'refused' ? outside.error : '', /not at those lines in the To revision/);
+
+    // Text from the explanation: quoted with its passage, never with a place in the code.
+    const text = await service.envelopeFor({
+      subject: point,
+      selection: null,
+      quote: { kind: 'text', text: 'b changes', source: 'explanation', context: 'b changes from 2 to 20.', segments: [{ side: 'target', path: 'src/keep.ts', start: 1, end: 1, from: 0, to: 1 }] },
+    });
+    assert.deepEqual(text.kind === 'built' ? text.envelope.quote : null, { kind: 'text', text: 'b changes', source: 'explanation', context: 'b changes from 2 to 20.' });
+    const textPrompt = text.kind === 'built' ? buildEnvelopePrompt(text.envelope, 'What does this mean?', null) : '';
+    assert.ok(textPrompt.includes('(not code; it has no place in the code)') && !textPrompt.includes('Selected code,'));
+  } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });

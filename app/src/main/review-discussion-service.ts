@@ -728,7 +728,7 @@ export class ReviewDiscussionService {
     let session: Session;
     let prompt: string;
     try {
-      const built = await envelopes.envelopeFor({ subject: raw.subject, selection: raw.selection ?? null, language: raw.language });
+      const built = await envelopes.envelopeFor({ subject: raw.subject, selection: raw.selection ?? null, language: raw.language, quote: raw.quote ?? null });
       // A quit while the envelope was read: no adapter may be created after `dispose`.
       if (this.closedForQuit) {
         return closing;

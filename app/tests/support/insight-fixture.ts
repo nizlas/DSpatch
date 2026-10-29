@@ -5,7 +5,8 @@
  * `insight` has two commits. `src/save.ts` starts saving an `EditorWorkspace`, a type
  * defined in `src/workspace.ts`, which the same change widens: the type has one field at
  * From and three at To, so the two revisions answer "what is it?" differently. `src/load.ts`
- * changes too, and is the file a simulated preparation leaves out of its walks. Nothing
+ * changes too, and is the file a simulated preparation leaves out of its walks. `save.ts`
+ * ends with a line long enough to wrap, for selecting across a wrap. Nothing
  * defines `UndoJournal`: a question about it has no definition to find.
  *
  * The content is invented for the check. Only node built-ins and git.
@@ -72,6 +73,8 @@ export function makeInsightFixture(workspace: string = fs.mkdtempSync(path.join(
     '  const saved = workspace === null ? "" : ` ${JSON.stringify(workspace)}`;',
     '  return `project ${name}${saved}`;',
     '}',
+    '',
+    `export const SAVE_NOTE = '${'The workspace is saved with the project only when the editor is open, so that a closed editor never reopens by itself on load; '.repeat(2).trim()}';`,
   ]);
   write(insight, 'src/load.ts', [
     'export function loadProject(text: string): string {',

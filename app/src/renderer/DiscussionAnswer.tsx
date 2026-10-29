@@ -22,7 +22,7 @@ export function DiscussionAnswer({
   const references = answer.references ?? [];
   const where = (start: number, end: number): string => (start === end ? `line ${String(start)}` : `lines ${String(start)}–${String(end)}`);
   return (
-    <div className="rv-answer" data-ev="discussion-answer-body">
+    <div className="rv-answer" data-ev="discussion-answer-body" data-quote-source="answer">
       {shown === '' ? <span className="rv-sub">…</span> : <Markdown text={shown} />}
       {answer.insufficient === true && <p className="rv-agent-insufficient">The agent could not settle this from the code it could read.</p>}
       {references.length > 0 && (

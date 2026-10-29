@@ -1580,7 +1580,15 @@ function TimelinePaneView({
             ? { sign: '↳', word: words.timeline.call }
             : null;
     return (
-      <div key={`row-${String(index)}`} className={classes.join(' ')} {...attrs}>
+      <div
+        key={`row-${String(index)}`}
+        className={classes.join(' ')}
+        {...attrs}
+        // Where this row's text is, for a text selection to ask about (`walk-selection.ts`).
+        data-sel-side={rowSide}
+        data-sel-path={path}
+        data-sel-line={String((rowSide === 'target' ? row.targetLine : row.baseLine) ?? '')}
+      >
         <LineGutter
           base={row.baseLine}
           target={row.targetLine}

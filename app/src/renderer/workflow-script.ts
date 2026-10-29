@@ -12268,7 +12268,9 @@ async function runCodeWalksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     await inPairWindow(walk.id, '[data-ev="step-tell-more"]');
     const more = await untilPair(walk.id, 'Tell me more answered', (reading) => ((reading as { deepenings?: { state: string }[] }).deepenings ?? []).some((entry) => entry.state === 'done'), 60_000);
     record('tell me more', { deepenings: (more as { deepenings?: unknown }).deepenings });
-    const chosen = await window.dspatch.pairWindowCheck({ action: 'select-text', id: walk.id, selector: '.rv-step-panel .rv-explanation', length: 24 });
+    // A real drag over the explanation (30 October 2026: the walk window reads mouse selections).
+    const dragged = await window.dspatch.pairWindowCheck({ action: 'drag', id: walk.id, from: { selector: '.rv-step-panel .rv-explanation', offset: 0 }, to: { selector: '.rv-step-panel .rv-explanation', offset: 24 } });
+    const chosen = { detail: (dragged.detail as { selected?: string } | null)?.selected ?? '' };
     record('selected', { text: chosen.detail });
     await inPairWindow(walk.id, '[data-ev="step-explain-this"]');
     const explained = await untilPair(walk.id, 'Explain this answered', (reading) => ((reading as { deepenings?: { state: string }[] }).deepenings ?? []).filter((entry) => entry.state === 'done').length === 2, 60_000);
@@ -13478,7 +13480,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
   const steps: unknown[] = [];
   const failures: string[] = [];
   const phase =
-    plan.flowPhase === 'again' || plan.flowPhase === 'direction' || plan.flowPhase === 'columns' || plan.flowPhase === 'insight' || plan.flowPhase === 'insight-again'
+    plan.flowPhase === 'again' || plan.flowPhase === 'direction' || plan.flowPhase === 'columns' || plan.flowPhase === 'insight' || plan.flowPhase === 'insight-again' || plan.flowPhase === 'selection'
       ? plan.flowPhase
       : 'first';
   const observations: Record<string, unknown> = {
@@ -13609,6 +13611,169 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
     await press(MAIN, '[data-ev="open-review"]');
     const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+
+    if (phase === 'selection') {
+      // --- Selecting text in the walk window to ask about it (Niclas's trial, 30 October 2026) ---
+      type Sel = { readonly quoteOffer: readonly string[]; readonly quoteChip: string; readonly windowSelection: string; readonly paneRows: readonly string[]; readonly position: { readonly stepId: string | null } | null };
+      const selOf = (reading: PairWindowReading | null): Sel => ((reading as unknown as { walkView?: Sel } | null)?.walkView ?? { quoteOffer: [], quoteChip: '', windowSelection: '', paneRows: [], position: null });
+      const stepAt = (reading: PairWindowReading | null): string | null => selOf(reading).position?.stepId ?? null;
+      type Msg = { readonly role: string; readonly status: string; readonly text: string };
+      const answers = (reading: PairWindowReading | null): readonly Msg[] => ((reading as unknown as { discussion?: { messages?: readonly Msg[] } | null } | null)?.discussion?.messages ?? []).filter((message) => message.role === 'answer');
+      const selected = (prompt: string): string => /## What the person selected\n[\s\S]*?(?=\n## )/.exec(prompt)?.[0] ?? '';
+      const lastPrompt = async (count: number): Promise<string> => {
+        const until = performance.now() + 30_000;
+        while (performance.now() < until) {
+          const sent = await reviewPromptsSent();
+          if (sent.length >= count) {
+            return sent[count - 1] ?? '';
+          }
+          await sleep(200);
+        }
+        throw new Error(`prompt ${String(count)} never reached the adapter`);
+      };
+      const row = (side: 'base' | 'target', line: number): string => `.rv-pane-active [data-sel-side="${side}"][data-sel-line="${String(line)}"] .rv-text`;
+      const drag = async (walkId: number, from: { readonly selector: string; readonly offset: number }, to: { readonly selector: string; readonly offset: number }): Promise<string> => {
+        const detail = (await check({ action: 'drag', id: walkId, from, to }, `select from ${from.selector}`)) as { selected?: string };
+        return detail.selected ?? '';
+      };
+      // Step through the walks until the active pane shows a row; the steps' numbers are the preparation's.
+      const showRow = async (walkId: number, wanted: string, button: 'next' | 'previous'): Promise<void> => {
+        for (let move = 0; move < 10 && !selOf(await readPairWindow(walkId)).paneRows.includes(wanted); move += 1) {
+          await press(walkId, `button.rv-nav-${button}`);
+        }
+        expect(selOf(await readPairWindow(walkId)).paneRows.includes(wanted), `no step shows ${wanted}`);
+      };
+      const settledAnswers = async (walkId: number, count: number, what: string): Promise<PairWindowReading> =>
+        untilPair(walkId, what, (reading) => answers(reading).length >= count && answers(reading)[count - 1]?.status === 'done', 60_000);
+
+      const review = await startReview(diffId, 'insight', null);
+      const statusBefore = JSON.stringify(diffOf(review).files.map((file) => [file.path, file.handled]));
+      await press(diffId, '[data-ev="pair-prepare-walks"]');
+      await untilPair(diffId, 'the agent picker', (reading) => (reading.text ?? '').includes('Model'), 15_000);
+      await press(diffId, '[data-ev="pair-walks-agent-start"]');
+      const walkId = (await untilWindow('the walk window', (rows) => rows.find((entry) => entry.view === 'walk'), 90_000)).id;
+      await check({ action: 'resize', id: walkId, width: 1500, height: 900 }, 'size the walk window');
+      await untilPair(walkId, 'the walks', (reading) => stepAt(reading) !== null, 30_000);
+      await showRow(walkId, 'target:src/save.ts:3', 'next');
+      let prompts = (await reviewPromptsSent()).length;
+
+      // 1–2. Only the variable `workspace` (line 3, characters 43–51, To), then Explain this.
+      const line3 = 'export function saveProject(name: string, workspace: EditorWorkspace | null): string {';
+      const at = line3.indexOf('workspace');
+      const picked = await drag(walkId, { selector: row('target', 3), offset: at }, { selector: row('target', 3), offset: at + 'workspace'.length });
+      const offered = await untilPair(walkId, 'Explain this beside the selection', (reading) => selOf(reading).quoteOffer.includes('walk-explain-this'), 5_000).catch(() => null);
+      record('variable selected', { picked, offer: selOf(offered).quoteOffer });
+      expect(picked === 'workspace' && offered !== null, `selecting the variable did not offer Explain this: ${JSON.stringify({ picked, offer: selOf(offered).quoteOffer })}`);
+      await capture(walkId, 'selection-offer');
+      await press(walkId, '[data-ev="walk-explain-this"]');
+      prompts += 1;
+      const explained = selected(await lastPrompt(prompts));
+      const variableAnswer = await settledAnswers(walkId, 1, 'the explanation of the variable');
+      record('Explain this reached the adapter', { selection: explained, answer: answers(variableAnswer)[0]?.text.slice(0, 300) });
+      expect(explained.includes('Selected code, src/save.ts line 3, characters 43–51 · target (To) @') && /\n(`{3,})\nworkspace\n\1/.test(explained), `the adapter did not get exactly the variable: ${explained}`);
+      expect((answers(variableAnswer)[0]?.text ?? '').includes('declared as `EditorWorkspace`') && (answers(variableAnswer)[0]?.text ?? '').includes('src/workspace.ts'), 'the answer did not go from the variable to its type');
+      await capture(walkId, 'selection-explained');
+
+      // 3. Select again, click into the question field, write a question: the selection goes along.
+      const typeAt = line3.indexOf('EditorWorkspace');
+      await drag(walkId, { selector: row('target', 3), offset: typeAt }, { selector: row('target', 3), offset: typeAt + 'EditorWorkspace'.length });
+      await press(walkId, '[data-ev="right-tab-discussion"]');
+      await press(walkId, '[data-ev="discussion-composer"]');
+      const focused = await readPairWindow(walkId);
+      record('after the focus moved', { chip: selOf(focused).quoteChip, windowSelection: selOf(focused).windowSelection });
+      expect(selOf(focused).quoteChip.includes('EditorWorkspace') && selOf(focused).quoteChip.includes('save.ts:3 (To)'), `the quote is not shown at the field after the focus moved: ${selOf(focused).quoteChip}`);
+      await capture(walkId, 'selection-chip');
+      await check({ action: 'type', id: walkId, selector: '[data-ev="discussion-composer"]', text: 'Vad har jag markerat nu?' }, 'type a question');
+      await pressKey(walkId, '[data-ev="discussion-composer"]', 'Enter');
+      prompts += 1;
+      const asked = await lastPrompt(prompts);
+      record('own question reached the adapter', { selection: selected(asked) });
+      expect(/\n(`{3,})\nEditorWorkspace\n\1/.test(selected(asked)) && asked.includes('Vad har jag markerat nu?'), `the question did not carry exactly the selection: ${selected(asked)}`);
+      await settledAnswers(walkId, 2, 'the answer to the own question');
+
+      // 4a. Several lines (4 and 5), with Ctrl+Shift+E.
+      await press(walkId, '[data-ev="right-tab-step"]');
+      const twoLines = (await check({ action: 'drag', id: walkId, from: { selector: row('target', 4), offset: 16 }, to: { selector: row('target', 5), offset: 20 } }, 'select two lines')) as unknown;
+      record('two lines selected', { drag: twoLines, offer: selOf(await readPairWindow(walkId)).quoteOffer, rows: selOf(await readPairWindow(walkId)).paneRows });
+      await capture(walkId, 'selection-two-lines');
+      await check({ action: 'chord', id: walkId, key: 'E', modifiers: ['control', 'shift'] }, 'press Ctrl+Shift+E');
+      prompts += 1;
+      const lines = selected(await lastPrompt(prompts));
+      record('two lines', { selection: lines });
+      expect(lines.includes('src/save.ts lines 4–5, characters 17–20 (of the first and last line) · target (To)'), `two selected lines did not reach the adapter as one run: ${lines}`);
+      await settledAnswers(walkId, 3, 'the answer about two lines');
+
+      // 4b. The other revision: a removed line at From in load.ts (W1.1), from the context menu.
+      await press(walkId, '[data-ev="right-tab-discussion"]');
+      const chipBefore = selOf(await readPairWindow(walkId)).quoteChip;
+      await showRow(walkId, 'base:src/load.ts:2', 'previous');
+      const moved = await readPairWindow(walkId);
+      record('after moving to W1.1', { before: chipBefore, after: selOf(moved).quoteChip });
+      expect(chipBefore !== '' && selOf(moved).quoteChip === '', 'a selection from the last step went along to the next');
+      const removed = '  return text.slice(8);';
+      await drag(walkId, { selector: row('base', 2), offset: removed.indexOf('text.slice') }, { selector: row('base', 2), offset: removed.indexOf('text.slice') + 'text.slice'.length });
+      await check({ action: 'right-click', id: walkId, at: { selector: row('base', 2), offset: removed.indexOf('slice') } }, 'open the context menu');
+      const menu = await untilPair(walkId, 'the context menu', (reading) => selOf(reading).quoteOffer.includes('walk-ask-about-this'), 5_000).catch(() => null);
+      expect(menu !== null, 'the context menu does not offer the selection');
+      await press(walkId, '[data-ev="walk-explain-this"]');
+      prompts += 1;
+      const fromSide = selected(await lastPrompt(prompts));
+      record('removed line at From', { selection: fromSide });
+      expect(fromSide.includes('src/load.ts line 2, characters 10–19 · base (From) @') && /\n(`{3,})\ntext\.slice\n\1/.test(fromSide), `a selection at From did not reach the adapter at From: ${fromSide}`);
+      await settledAnswers(walkId, 4, 'the answer about the From line');
+
+      // 4c. Across a wrapped line: the long line at the end of save.ts, wrapped.
+      await showRow(walkId, 'target:src/save.ts:8', 'next');
+      await press(walkId, '[data-ev="walk-wrap"]');
+      const longLine = row('target', 8);
+      const wrapped = await drag(walkId, { selector: longLine, offset: 30 }, { selector: longLine, offset: 190 });
+      await press(walkId, '[data-ev="walk-explain-this"]');
+      prompts += 1;
+      const acrossWrap = selected(await lastPrompt(prompts));
+      record('across a wrap', { selected: wrapped.length, selection: acrossWrap.slice(0, 200) });
+      expect(wrapped.length === 160 && acrossWrap.includes('src/save.ts line 8, characters 31–190 · target (To)'), `a selection across a wrap did not reach the adapter whole: ${acrossWrap.slice(0, 300)}`);
+      await capture(walkId, 'selection-wrapped');
+      await settledAnswers(walkId, 5, 'the answer about the wrapped line');
+
+      // 5. Text of the explanation: quoted with its passage, with no place in the code.
+      await press(walkId, '[data-ev="right-tab-step"]');
+      await drag(walkId, { selector: '.rv-step-panel [data-quote-source="explanation"]', offset: 0 }, { selector: '.rv-step-panel [data-quote-source="explanation"]', offset: 20 });
+      await press(walkId, '[data-ev="walk-explain-this"]');
+      prompts += 1;
+      const prose = selected(await lastPrompt(prompts));
+      record('explanation text', { selection: prose });
+      expect(prose.includes('(not code; it has no place in the code)') && !prose.includes('Selected code,'), `selected explanation text was given a place in the code: ${prose}`);
+      await settledAnswers(walkId, 6, 'the answer about the explanation text');
+
+      // 5b. Text of an answer in the discussion: quoted as an answer, with no place either.
+      await press(walkId, '[data-ev="right-tab-discussion"]');
+      const answerText = '.rv-discussion [data-quote-source="answer"]';
+      await drag(walkId, { selector: answerText, offset: 0 }, { selector: answerText, offset: 18 });
+      await press(walkId, '[data-ev="walk-explain-this"]');
+      prompts += 1;
+      const fromAnswer = selected(await lastPrompt(prompts));
+      record('answer text', { selection: fromAnswer });
+      expect(fromAnswer.includes('Selected text from an earlier answer in this discussion (not code; it has no place in the code)') && !fromAnswer.includes('Selected code,'), `selected answer text was not quoted as such: ${fromAnswer}`);
+      await settledAnswers(walkId, 7, 'the answer about the answer text');
+
+      // 6. A removed quote does not go along: the next question has no selection.
+      await drag(walkId, { selector: row('target', 8), offset: 0 }, { selector: row('target', 8), offset: 12 });
+      await press(walkId, '[data-ev="right-tab-discussion"]');
+      expect(selOf(await readPairWindow(walkId)).quoteChip !== '', 'the quote is not shown before it is removed');
+      await press(walkId, '[data-ev="discussion-quote-clear"]');
+      await check({ action: 'type', id: walkId, selector: '[data-ev="discussion-composer"]', text: 'And without a selection?' }, 'type a question');
+      await pressKey(walkId, '[data-ev="discussion-composer"]', 'Enter');
+      prompts += 1;
+      const plain = await lastPrompt(prompts);
+      record('after the quote was removed', { hasSelection: selected(plain) !== '' });
+      expect(selected(plain) === '', 'a removed quote still went along with the next question');
+      await settledAnswers(walkId, 8, 'the answer without a selection');
+
+      const statusAfter = JSON.stringify(diffOf(await readPairWindow(diffId)).files.map((file) => [file.path, file.handled]));
+      record('status', { before: statusBefore, after: statusAfter });
+      expect(statusBefore === statusAfter, `selecting and asking changed the review status: ${statusBefore} → ${statusAfter}`);
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
 
     if (phase === 'insight' || phase === 'insight-again') {
       // --- Asking about code the walk does not show; points worth checking (30 October 2026) ---

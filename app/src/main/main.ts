@@ -2946,6 +2946,11 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
                 }),
               })),
               away: (document.querySelector('.rv-code-pane .rv-path') || { title: '' }).title,
+              // What is selected to ask about: the action beside it, and the quote above the field.
+              quoteOffer: [...document.querySelectorAll('[data-ev="walk-quote-offer"] button')].map((node) => node.getAttribute('data-ev')),
+              quoteChip: text(document.querySelector('[data-ev="discussion-quote"]')),
+              windowSelection: (window.getSelection() || { toString: () => '' }).toString(),
+              paneRows: [...document.querySelectorAll('.rv-pane-active [data-sel-line]')].map((node) => node.getAttribute('data-sel-side') + ':' + node.getAttribute('data-sel-path') + ':' + node.getAttribute('data-sel-line')),
               position: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read().position : null,
               chooseOffered: [...document.querySelectorAll('button')].some((button) => /Open another review/.test(button.textContent || '')),
             };
@@ -3577,7 +3582,7 @@ function registerIpc(): void {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.
-              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' ? named : 'first';
+              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' || named === 'selection' ? named : 'first';
             })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }

@@ -44,7 +44,8 @@ import {
   type Walk,
   type WalkStep,
 } from '../shared/review-model';
-import type { DeepenRequest, DiscussionMessage, DiscussionRequest } from '../shared/review-discussion';
+import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuote } from '../shared/review-discussion';
+import { readQuote } from './walk-selection';
 import { isPairError, type AgentJob, type LineRange, type PairRecord, type PairWalk, type ReviewPairBridge } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
 
@@ -538,6 +539,16 @@ function OpenReview({
    * and resolves nothing.
    */
   const [openCheckId, setOpenCheckId] = useState<string | null>(null);
+  /*
+   * What the person selected to ask about (30 October 2026): code in a code pane, or text of
+   * an explanation or an answer. Kept when the focus moves to the action or the question field
+   * (the window's own selection is gone by then); a new selection replaces it, and moving to
+   * another step or place clears it, so nothing old goes along unseen. It is not a choice of
+   * lines for review and decides nothing.
+   */
+  const [quote, setQuote] = useState<SelectionQuote | null>(null);
+  const [quoteOffer, setQuoteOffer] = useState<{ readonly x: number; readonly y: number; readonly menu: boolean } | null>(null);
+  const viewRoot = useRef<HTMLDivElement | null>(null);
   const [checkReturn, setCheckReturn] = useState<{ readonly stepId: string | null; readonly refIndex: number; readonly away: CodeLocation | null } | null>(null);
   const [delegatingWalk, setDelegatingWalk] = useState(false);
   const [liveWidth, setLiveWidth] = useState(explanationWidth);
@@ -869,9 +880,22 @@ function OpenReview({
             : { kind: 'review' },
       selection,
       language: lang,
+      quote,
     }),
-    [away, current?.walk.id, current?.step.id, place, placeIndex, selection, lang, openCheck],
+    [away, current?.walk.id, current?.step.id, place, placeIndex, selection, lang, openCheck, quote],
   );
+
+  /** Let go of the selection: the kept quote and the window's own, which would otherwise be read again. */
+  const dropQuote = useCallback(() => {
+    setQuote(null);
+    setQuoteOffer(null);
+    window.getSelection()?.removeAllRanges();
+  }, []);
+
+  // Another step, place or location: a selection made for the last one does not go along.
+  useEffect(() => {
+    dropQuote();
+  }, [dropQuote, current?.step.id, placeIndex, away?.path, away?.side, away?.start, away?.end]);
 
   // A point stays open while its step or tour is shown; moving elsewhere closes it.
   useEffect(() => {
@@ -918,7 +942,7 @@ function OpenReview({
 
   /** A deepening of the step, or (`fromPoint`) of the open point worth checking at it. */
   const deepen = useCallback(
-    async (request: DeepenRequest, fromPoint = false): Promise<void> => {
+    async (request: DeepenRequest, fromPoint = false, explained: SelectionQuote | null = null): Promise<void> => {
       const discussion = window.dspatchReviewDiscussion;
       if (discussion === undefined || current === null) {
         return;
@@ -930,19 +954,68 @@ function OpenReview({
       // The step's own actions are about the step, even while a point is open above it.
       const asked =
         !fromPoint && subject.kind === 'point' ? { kind: 'point' as const, walkId: subject.walkId, stepId: subject.stepId, placeIndex: subject.placeIndex } : subject;
+      // Explain this is about the selection, which goes along exactly; the rest is background.
       const outcome = await discussion.send({
         question: deepenQuestion(request, lang, fromPoint),
         subject: asked,
         selection: discussionRequest.selection,
         language: lang,
         deepen: request,
+        ...(request.action === 'explain' && explained !== null ? { quote: explained } : {}),
       });
       if (outcome.kind !== 'sent') {
         setDeepenError(outcome.error);
       }
+      // Away from the walk an answer has no step to stand under: it is in the discussion.
+      if (outcome.kind === 'sent' && asked.kind !== 'point') {
+        setRightTab('discussion');
+      }
     },
     [current, discussionRequest, flush, lang],
   );
+
+  /** Explain exactly this selection: the one just read, or the one kept. */
+  const explainQuote = useCallback(
+    (selected: SelectionQuote | null = quote) => {
+      setQuoteOffer(null);
+      if (selected !== null) {
+        void deepen({ action: 'explain', text: selected.text.slice(0, 2000) }, false, selected);
+      }
+    },
+    [deepen, quote],
+  );
+
+  // Read what is selected now; offer the action beside it, or in place of the context menu.
+  const takeSelection = useCallback((menuAt: { readonly x: number; readonly y: number } | null): SelectionQuote | null => {
+    const root = viewRoot.current;
+    const found = root === null ? null : readQuote(root);
+    if (found === null) {
+      if (menuAt === null && (window.getSelection()?.isCollapsed ?? true)) {
+        setQuoteOffer(null);
+      }
+      return null;
+    }
+    setQuote(found.quote);
+    setQuoteOffer(menuAt === null ? { x: found.rect.right, y: found.rect.bottom, menu: false } : { ...menuAt, menu: true });
+    return found.quote;
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.ctrlKey && event.shiftKey && (event.key === 'E' || event.key === 'e')) {
+        // What is selected now, if anything; else the selection kept for the question.
+        const selected = takeSelection(null) ?? quote;
+        if (selected !== null) {
+          event.preventDefault();
+          explainQuote(selected);
+        }
+      } else if (event.key === 'Escape') {
+        setQuoteOffer(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [explainQuote, takeSelection, quote]);
 
   // The changed lines the current walk covers, for delegating the walk (DSP-152).
   const walkScope = useMemo(() => {
@@ -966,7 +1039,61 @@ function OpenReview({
   const walkKinds = { walks: bundle.definition.walks.filter((walk) => walk.kind === 'walk').length, readings: bundle.definition.walks.filter((walk) => walk.kind === 'reading').length };
 
   return (
-    <div className="rv">
+    <div
+      className="rv"
+      ref={viewRoot}
+      onMouseUp={(event) => {
+        if (event.button === 0 && !(event.target as Element).closest('[data-ev="walk-quote-offer"]')) {
+          // After the browser has settled the selection for this release.
+          setTimeout(() => takeSelection(null), 0);
+        }
+      }}
+      onKeyUp={(event) => {
+        if (event.shiftKey && !event.ctrlKey) {
+          takeSelection(null);
+        }
+      }}
+      onContextMenu={(event) => {
+        if (takeSelection({ x: event.clientX, y: event.clientY }) !== null) {
+          event.preventDefault();
+        }
+      }}
+    >
+      {quoteOffer !== null && quote !== null && (
+        <div
+          className={quoteOffer.menu ? 'rv-explain-menu' : 'rv-explain-offer'}
+          data-ev="walk-quote-offer"
+          role={quoteOffer.menu ? 'menu' : undefined}
+          style={{ left: Math.min(quoteOffer.x, window.innerWidth - 220), top: Math.min(quoteOffer.y + 4, window.innerHeight - 80) }}
+        >
+          <button
+            type="button"
+            role={quoteOffer.menu ? 'menuitem' : undefined}
+            data-ev="walk-explain-this"
+            title="Explain exactly what is selected (Ctrl+Shift+E)"
+            // Not a focus change: the selection stays as it is.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => explainQuote()}
+          >
+            Explain this
+          </button>
+          {quoteOffer.menu && (
+            <button
+              type="button"
+              role="menuitem"
+              data-ev="walk-ask-about-this"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                setQuoteOffer(null);
+                setRightTab('discussion');
+                setTimeout(() => document.querySelector<HTMLTextAreaElement>('[data-ev="discussion-composer"]')?.focus(), 0);
+              }}
+            >
+              Ask about this…
+            </button>
+          )}
+        </div>
+      )}
       <Header
         bundle={bundle}
         history={state.previousDefinitionHashes.length}
@@ -1266,6 +1393,7 @@ function OpenReview({
             }}
             onGoToLocation={(location) => goAway(location)}
             onMessages={setDiscussionMessages}
+            onClearQuote={dropQuote}
           />
           {rightTab === 'step' && (
             <>
@@ -1360,7 +1488,7 @@ function OpenReview({
                   }
                   deepenings={deepeningsFor(discussionMessages, current.step.id)}
                   deepenError={deepenError}
-                  onDeepen={(request) => void deepen(request)}
+                  onDeepen={(request) => void deepen(request, false, request.action === 'explain' ? quote : null)}
                   onContinue={() => setRightTab('discussion')}
                   walk={current.walk}
                   step={current.step}
@@ -1375,6 +1503,7 @@ function OpenReview({
                     setNavRequest((count) => count + 1);
                   }}
                   onOpenEvidence={goAway}
+                  quoteText={quote?.text ?? ''}
                 />
               )}
               {away !== null && current !== null && (
@@ -1559,7 +1688,7 @@ function CheckPanel({
         <Inline text={pick(check.title, lang)} />
       </h2>
       {!inTour && pick(check.reasoning, lang) !== '' && (
-        <div className="rv-explanation" data-ev="check-reasoning">
+        <div className="rv-explanation" data-ev="check-reasoning" data-quote-source="explanation">
           <Markdown text={pick(check.reasoning, lang)} />
         </div>
       )}
@@ -2346,6 +2475,7 @@ function StepPanel({
   onDeepen,
   onContinue,
   codeQuestion,
+  quoteText,
 }: {
   /** DSP-152: asking the agent to look into the code for this step, when the walk is over a revision pair. */
   readonly codeQuestion?: () => JSX.Element;
@@ -2363,10 +2493,11 @@ function StepPanel({
   readonly lang: Lang;
   readonly onPlace: (index: number) => void;
   readonly onOpenEvidence: (location: CodeLocation) => void;
+  /** What is selected to ask about in the window, if anything: Explain this explains it. */
+  readonly quoteText: string;
 }): JSX.Element {
   const [sources, setSources] = useState(false);
   const [introOpen, setIntroOpen] = useState(false);
-  const [selectedText, setSelectedText] = useState('');
   const panel = useRef<HTMLElement | null>(null);
   const active = placeIndex;
   const purpose = pick(walk.purpose, lang);
@@ -2377,15 +2508,7 @@ function StepPanel({
   );
   const summaryLabels = [...new Set(step.evidence.map((entry) => entry.label))];
   return (
-    <section
-      className="rv-step-panel"
-      ref={panel}
-      onMouseUp={() => {
-        const chosen = window.getSelection();
-        const inside = chosen !== null && chosen.anchorNode !== null && panel.current?.contains(chosen.anchorNode) === true;
-        setSelectedText(inside ? (chosen?.toString() ?? '') : '');
-      }}
-    >
+    <section className="rv-step-panel" ref={panel}>
       <div className="rv-walk-title">
         {walk.id} · <Inline text={pick(walk.title, lang)} />
       </div>
@@ -2407,7 +2530,7 @@ function StepPanel({
         {state.walkedSteps[step.id] !== undefined && <span className="rv-mark-walked"> ✓</span>}
       </div>
       {pick(step.summary, lang) !== '' && (
-        <p className="rv-summary">
+        <p className="rv-summary" data-quote-source="explanation">
           <Inline text={pick(step.summary, lang)} />
         </p>
       )}
@@ -2455,19 +2578,19 @@ function StepPanel({
         </div>
       )}
 
-      <div className="rv-explanation">
+      <div className="rv-explanation" data-quote-source="explanation">
         <Markdown text={pick(step.body, lang)} />
       </div>
       {pick(step.why, lang) !== '' && (
         <>
           <div className="rv-section-title">{words.whyItMatters}</div>
-          <div className="rv-explanation">
+          <div className="rv-explanation" data-quote-source="explanation">
             <Markdown text={pick(step.why, lang)} />
           </div>
         </>
       )}
 
-      <StepDeepening deepenings={deepenings} error={deepenError} onDeepen={onDeepen} onContinue={onContinue} onShow={onOpenEvidence} selectedText={selectedText} />
+      <StepDeepening deepenings={deepenings} error={deepenError} onDeepen={onDeepen} onContinue={onContinue} onShow={onOpenEvidence} selectedText={quoteText} />
       {codeQuestion?.()}
 
       {step.evidence.length > 0 && (
@@ -2792,7 +2915,7 @@ function WalkNavBar({
   return (
     <div className="rv-navbar">
       <div className="rv-navbar-row">
-        <button type="button" className="rv-nav-button" disabled={!canBack} onClick={() => onMove(-1)}>
+        <button type="button" className="rv-nav-button rv-nav-previous" disabled={!canBack} onClick={() => onMove(-1)}>
           {words.nav.previous}
         </button>
         <div className="rv-nav-where">
@@ -3099,7 +3222,15 @@ function CodePane({
         firstChange = false;
       }
       body.push(
-        <div key={`row-${String(index)}`} className={classes.join(' ')} {...focusAttrs}>
+        <div
+          key={`row-${String(index)}`}
+          className={classes.join(' ')}
+          {...focusAttrs}
+          // Where this row's text is, for a text selection to ask about (`walk-selection.ts`).
+          data-sel-side={side}
+          data-sel-path={focus.path}
+          data-sel-line={String((side === 'target' ? row.targetLine : row.baseLine) ?? '')}
+        >
           <LineGutter
             base={row.baseLine}
             target={row.targetLine}

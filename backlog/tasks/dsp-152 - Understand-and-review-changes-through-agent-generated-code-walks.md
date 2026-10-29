@@ -4,7 +4,7 @@ title: Understand and review changes through agent-generated code walks
 status: Review
 assignee: []
 created_date: '2026-10-28 22:32'
-updated_date: '2026-10-29 22:04'
+updated_date: '2026-10-29 22:53'
 labels:
   - review
   - code-walks
@@ -381,4 +381,25 @@ Niclas's decision of this date, after asking in the discussion what `ProjectFile
 - What a real model answers with the read access and the new instruction, and how well it writes the points worth checking: needs Niclas's trial with Claude.
 - Cursor: no read-only policy, so its discussion stays tool-free and will still say it cannot see a definition outside the envelope.
 - UX acceptance of the list, the point panel and the tables: Niclas's. Linux.
+
+### Selecting text in the walk window to ask about it (30 Oct 2026)
+
+Niclas's trial: he selected `midiEditorWorkspace` in a walk's code pane; no Explain this appeared, and "Vad har jag markerat nu?" was answered about the whole step (lines 566–583). The same in the explanation and the discussion to the right.
+
+**Root cause.** The walk window never read the window's text selection. Its code panes knew only line choices (the line-number buttons), and a question carried that line choice (`selection`), which was empty, so the envelope held the step's places and nothing about what was selected. The step panel's *Explain this* read a selection only inside the step panel, sat among the deepening buttons rather than at the selection, and was disabled for anything selected in the code; answers in the discussion were not covered at all. The diff window's selection support (`codeSelectionIn` in `PairReview.tsx`) belongs to its table and never reached the walk window.
+
+**What changed**
+- Code rows in the walk window's panes (`ReviewTimeline`, `CodePane`) say where their text is (`data-sel-side`, `data-sel-path`, `data-sel-line`); `walk-selection.ts` turns a selection into runs of lines with the exact text and the characters it starts and ends at (one pane at a time; line numbers and marks left out). A selection in the step's explanation, a point's reasoning or an answer (`data-quote-source`) is quoted text with its passage and no place in the code.
+- The selection is kept as the question's quote (`SelectionQuote` on `DiscussionRequest` and `DiscussionSendInput`) when the focus moves to the action or the field; a new selection replaces it; a step, place or location change, and removing it (×), drop it together with the window's own selection, so nothing old goes along unseen. It is not a line choice for review and decides nothing.
+- *Explain this* appears beside the selection, in its context menu (with *Ask about this…*) and as Ctrl+Shift+E, and asks about exactly the selection. A question written in the discussion field takes it along; a compact, removable quote above the field shows what it will carry.
+- `ReviewService.envelopeFor` checks a code quote against the commit it was selected at (lines exist, characters within them, the commit's text equal to the window's apart from whitespace runs) and sends the commit's text; a mismatch refuses the question. The prompt puts *What the person selected* first — path, lines, characters, side and commit, and the exact text — and says the rest is background. The analysis access (Claude) lets the agent read on, e.g. to the selected variable's type.
+
+**Verified** (SIMULATED presentation agent, isolated user data, real profile and MiniDAWLab working copy untouched, no live provider). The simulated answer names the selection it was given and, for a selected variable, looks up the type on its declaration line.
+- Tests: `review-service` (a code quote at To and over two lines at From checked and sent first; wrong text and a line that is not there refused; explanation text kept with no place), review group 168/168, boundary and Markdown tests, typecheck, build.
+- Real window, `review-flow` phase `selection` on the insight fixture, mouse drags and real clicks and keys: only `workspace` on save.ts line 3 offered Explain this beside it, and the adapter got exactly "src/save.ts line 3, characters 43–51 · target (To)" with the text `workspace`; the answer followed it to `EditorWorkspace` and its two definitions. `EditorWorkspace` selected, then a click into the question field: the quote stayed above the field, and the typed question reached the adapter with exactly that selection. Two lines with Ctrl+Shift+E, a removed line at From in load.ts from the context menu, 160 characters across a wrapped line, selected explanation text and selected answer text each reached the adapter as selected; prose with no place in the code. A step change cleared the quote; a removed quote did not go along; review status unchanged.
+- Two bugs found and fixed on the way: Ctrl+Shift+E explained the previous selection (a stale closure), and a removed quote came back on the next click (the window's own selection was still there).
+- Regression on the final build: `code-walks` (both phases; it now selects the explanation with a real drag), `insight` and `insight-again`, `analysis-access` (both), `walk-start` (three phases): pass.
+
+**Not established**
+- A trial with a real model on Niclas's MiniDAWLab pair; UX acceptance of the offer, the menu and the quote; Linux.
 <!-- SECTION:NOTES:END -->

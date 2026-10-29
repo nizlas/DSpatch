@@ -110,11 +110,39 @@ export type DiscussionSubject =
   | { readonly kind: 'away'; readonly location: CodeLocation }
   | { readonly kind: 'review' };
 
+/**
+ * One run of selected code in the walk window, as the window read it: a side, a path, the
+ * lines, and the 0-based characters where it starts on `start` and ends on `end` (just after).
+ * The text is checked against the commit before anything is sent.
+ */
+export interface QuoteSegment {
+  readonly side: RevisionSide;
+  readonly path: string;
+  readonly start: number;
+  readonly end: number;
+  readonly from: number;
+  readonly to: number;
+}
+
+/**
+ * What the person selected with the mouse (or keyboard) to ask about (30 October 2026): code
+ * in a code pane, with where it is, or text of an explanation or an answer, which has no place
+ * in the code and is never given one. Apart from selecting lines for review: it decides nothing.
+ */
+export type SelectionQuote =
+  | { readonly kind: 'code'; readonly text: string; readonly segments: readonly QuoteSegment[] }
+  | { readonly kind: 'text'; readonly text: string; readonly source: 'explanation' | 'answer'; readonly context: string };
+
+/** Bounds on a quote: longer is refused, not cut silently. */
+export const QUOTE_LIMITS = { characters: 20_000, segments: 40, contextChars: 1_500 } as const;
+
 /** What the window sends to have an envelope built: the subject, and a selection if any. */
 export interface DiscussionRequest {
   readonly subject: DiscussionSubject;
   /** Lines the person has selected in the code, if any. */
   readonly selection: CodeLocation | null;
+  /** Text the person has selected to ask about, if any: what the question is about. */
+  readonly quote?: SelectionQuote | null;
   /** The display language the explanation is taken in; the service's preference when absent. */
   readonly language?: Lang;
 }
@@ -185,6 +213,11 @@ export interface EnvelopeNote {
   readonly stepId: string | null;
 }
 
+/** A selected quote as sent: code checked against its commit (with the commit named), or text as it was. */
+export type EnvelopeQuote =
+  | { readonly kind: 'code'; readonly segments: readonly (QuoteSegment & { readonly sha: string; readonly text: string })[] }
+  | { readonly kind: 'text'; readonly text: string; readonly source: 'explanation' | 'answer'; readonly context: string };
+
 export interface EnvelopeIdentity {
   readonly title: string;
   readonly definitionPath: string;
@@ -210,6 +243,8 @@ export interface ContextEnvelope {
   /** Whole-review subjects only. */
   readonly overview: EnvelopeOverview | null;
   readonly ranges: readonly EnvelopeRange[];
+  /** What the person selected to ask about; the rest of the envelope is background to it. */
+  readonly quote?: EnvelopeQuote | null;
   readonly notes: readonly EnvelopeNote[];
   /** {@link PROVIDER_ADDED_CONTEXT_LINE}: what the provider adds is not visible to DSpatch. */
   readonly providerContext: string;
@@ -291,6 +326,15 @@ function selectionText(envelope: ContextEnvelope, near: CodeLocation | null): st
  * `Walk 2 › Cancel path › adapter.cancel · src/main/x.ts 120–148 @def5678 (+ selection 130–134)`.
  */
 export function subjectLine(envelope: ContextEnvelope): string {
+  const quote = envelope.quote ?? null;
+  if (quote === null) {
+    return placeLine(envelope);
+  }
+  const text = (quote.kind === 'code' ? quote.segments.map((segment) => segment.text).join(' ') : quote.text).replace(/\s+/g, ' ').trim();
+  return `${placeLine(envelope)} · selected “${text.length > 60 ? `${text.slice(0, 59)}…` : text}”`;
+}
+
+function placeLine(envelope: ContextEnvelope): string {
   const subject = envelope.subject;
   if (subject.kind === 'point') {
     const explanation = envelope.explanation;
@@ -320,6 +364,39 @@ function fenceFor(text: string): string {
     longest = Math.max(longest, run.length);
   }
   return '`'.repeat(Math.max(3, longest + 1));
+}
+
+/** Where a quoted run of code is, in words: path, lines, characters, side and commit. */
+function quoteWhere(segment: QuoteSegment & { readonly sha: string }): string {
+  const lines = segment.start === segment.end ? `line ${String(segment.start)}` : `lines ${String(segment.start)}–${String(segment.end)}`;
+  return `${segment.path} ${lines}, characters ${String(segment.from + 1)}–${String(segment.to)}${segment.start === segment.end ? '' : ' (of the first and last line)'} · ${segment.side === 'base' ? 'base (From)' : 'target (To)'} @ ${segment.sha}`;
+}
+
+/**
+ * The selection the question is about, first and exactly. Code says where it is; text from
+ * an explanation or an answer says it has no place in the code, so none is made up for it.
+ */
+function quoteSection(quote: EnvelopeQuote): string {
+  const lines = ['## What the person selected', 'The question is about exactly this selection. The code and explanation further down, and the conversation, are background to it.'];
+  if (quote.kind === 'code') {
+    for (const segment of quote.segments) {
+      const fence = fenceFor(segment.text);
+      lines.push('', `Selected code, ${quoteWhere(segment)}:`, fence, segment.text, fence);
+    }
+  } else {
+    const fence = fenceFor(quote.text);
+    lines.push(
+      '',
+      `Selected text from ${quote.source === 'answer' ? 'an earlier answer in this discussion' : 'the explanation of the step'} (not code; it has no place in the code):`,
+      fence,
+      quote.text,
+      fence,
+    );
+    if (quote.context.trim() !== '' && quote.context.trim() !== quote.text.trim()) {
+      lines.push('', 'The passage it is from:', clip(quote.context.trim(), QUOTE_LIMITS.contextChars));
+    }
+  }
+  return lines.join('\n');
 }
 
 function rangeHeading(range: EnvelopeRange): string {
@@ -387,6 +464,10 @@ export function buildEnvelopePrompt(envelope: ContextEnvelope, question: string,
     ].join('\n'),
   );
   parts.push(`## Subject\n${subjectLine(envelope)}`);
+  const quote = envelope.quote ?? null;
+  if (quote !== null) {
+    parts.push(quoteSection(quote));
+  }
 
   const explanation = envelope.explanation;
   if (explanation !== null) {
@@ -996,6 +1077,8 @@ export interface DiscussionSendInput {
   readonly question: string;
   readonly subject: DiscussionSubject;
   readonly selection: CodeLocation | null;
+  /** What the person selected to ask about; checked before it is sent. */
+  readonly quote?: SelectionQuote | null;
   readonly language?: Lang;
   /** DSP-152: asked from a walk step's own deepening action. */
   readonly deepen?: DeepenRequest;

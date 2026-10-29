@@ -2954,6 +2954,61 @@
   background: var(--panel);
 }
 
+/* The walk window (30 October 2026): the action beside a selection and its context menu,
+   placed in window coordinates. */
+.rv > .rv-explain-offer,
+.rv > .rv-explain-menu {
+  position: fixed;
+  z-index: 20;
+}
+
+.rv-explain-offer button {
+  padding: 0.15rem 0.55rem;
+  font-size: 0.8rem;
+  background: var(--raised);
+  box-shadow: 0 2px 6px color-mix(in srgb, #000 35%, transparent);
+}
+
+.rv > .rv-explain-menu button {
+  border: none;
+  border-radius: 3px;
+  text-align: left;
+  padding: 0.3rem 0.6rem;
+  background: transparent;
+  font-size: 0.85rem;
+}
+
+.rv > .rv-explain-menu button:focus-visible,
+.rv > .rv-explain-menu button:hover {
+  background: var(--panel);
+}
+
+/* What the next question is about, above the field: removable. */
+.rv-quote-chip {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin: 0.2rem 0 0.3rem;
+  padding: 0.2rem 0.3rem 0.2rem 0.5rem;
+  border-left: 3px solid var(--unknown);
+  background: color-mix(in srgb, var(--unknown) 8%, var(--bg));
+  font-size: 0.8rem;
+}
+
+.rv-quote-chip-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rv .rv-quote-chip-clear {
+  flex: none;
+  border: none;
+  background: transparent;
+  padding: 0 0.3rem;
+  line-height: 1.2;
+}
+
 .rv-explain {
   flex: 0 0 24rem;
   max-width: 45%;

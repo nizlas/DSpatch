@@ -18,6 +18,7 @@ import {
   type EnvelopeRange,
   type ReviewDiscussionBridge,
   type ReviewDiscussionEvent,
+  type SelectionQuote,
 } from '../shared/review-discussion';
 import { stepsWalks, type CodeLocation, type Lang, type ReviewBundle } from '../shared/review-model';
 
@@ -250,6 +251,16 @@ function PlainProblem({ text, words }: { readonly text: string; readonly words: 
   );
 }
 
+/** Where quoted code is, short: the file name, its first line and the side. */
+function quoteWhere(quote: Extract<SelectionQuote, { kind: 'code' }>): string {
+  const first = quote.segments[0];
+  if (first === undefined) {
+    return 'Selected code';
+  }
+  const name = first.path.split('/').at(-1) ?? first.path;
+  return `${name}:${String(first.start)} (${first.side === 'base' ? 'From' : 'To'})`;
+}
+
 export function ReviewDiscussion({
   bundle,
   request,
@@ -259,6 +270,7 @@ export function ReviewDiscussion({
   flush,
   onGoToPoint,
   onGoToLocation,
+  onClearQuote,
   onMessages,
 }: {
   readonly bundle: ReviewBundle;
@@ -271,6 +283,8 @@ export function ReviewDiscussion({
   readonly flush: () => Promise<string>;
   readonly onGoToPoint: (stepId: string, placeIndex: number) => void;
   readonly onGoToLocation: (location: CodeLocation) => void;
+  /** Take the selection off the next question. */
+  readonly onClearQuote?: () => void;
   /** DSP-152: the thread as it stands, for a step to show its own deepenings beside it. */
   readonly onMessages?: (messages: readonly DiscussionMessage[]) => void;
 }): JSX.Element {
@@ -379,7 +393,8 @@ export function ReviewDiscussion({
         }
         // The position and notes the envelope reads come from the saved record.
         await flush();
-        const outcome = await bridge.send({ question, subject: request.subject, selection: request.selection, language: lang });
+        // The selection goes along with the question, exactly as it is shown above the field.
+        const outcome = await bridge.send({ question, subject: request.subject, selection: request.selection, language: lang, quote: request.quote ?? null });
         if (outcome.kind === 'sent') {
           setText('');
           void bridge.saveDraft('');
@@ -724,6 +739,19 @@ export function ReviewDiscussion({
         <div className="rv-discussion-about" data-ev="discussion-subject" title={line}>
           {words.about}: {line}
         </div>
+        {request.quote != null && (
+          <div className="rv-quote-chip" data-ev="discussion-quote" title={request.quote.text}>
+            <span className="rv-quote-chip-text">
+              {request.quote.kind === 'code' ? quoteWhere(request.quote) : request.quote.source === 'answer' ? 'From an answer' : 'From the explanation'}: “{request.quote.text.replace(/\s+/g, ' ').slice(0, 80)}
+              {request.quote.text.length > 80 ? '…' : ''}”
+            </span>
+            {onClearQuote !== undefined && (
+              <button type="button" className="rv-quote-chip-clear" data-ev="discussion-quote-clear" aria-label="Remove the selection from the question" onClick={onClearQuote}>
+                ×
+              </button>
+            )}
+          </div>
+        )}
         <textarea
           className="rv-discussion-composer"
           data-ev="discussion-composer"
