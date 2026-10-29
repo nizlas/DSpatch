@@ -124,7 +124,7 @@ import { uncertainLoopWork, WORKING_COPY_LOCK } from '../main/working-copy-lock'
 import type { DisposalRecord } from '../adapter/claude-agent-sdk-adapter';
 import { defaultLiveModel, runLiveGraph } from '../main/loop-live-run';
 import { LoopRunAudience } from '../main/loop-run-audience';
-import { loopRunAgentInfo, prepareLoopRun, type LoopRunAgentRequest } from '../main/loop-run-agent';
+import { loopRunAgentInfo, prepareLoopRun, resolveLoopProvider, type LoopRunAgentRequest } from '../main/loop-run-agent';
 import { ownRepositoryRoot } from '../main/own-repository';
 import {
   PresentationAdapter,
@@ -382,6 +382,10 @@ const adapterFactory = providerAdapters({
     sendMode: presentationMode
       ? (presentationSendMode(process.env['DSPATCH_REVIEW_PRESENTATION_SEND']) ?? 'ok')
       : 'ok',
+    // DSP-152: a session start the provider refuses, with a SIMULATED error of its shape.
+    ...(presentationMode && process.env['DSPATCH_REVIEW_SIM'] === 'start-fails'
+      ? { startFailure: 'SIMULATED (DSPATCH_REVIEW_SIM=start-fails) UnknownAgentError: [plan_required] this agent is not available for this account.' }
+      : {}),
     ...((): { deltaMs?: number } => {
       const parsed = Number.parseInt(process.env['DSPATCH_PRESENTATION_DELTA_MS'] ?? '', 10);
       return Number.isFinite(parsed) && parsed > 0 ? { deltaMs: parsed } : {};
@@ -2283,12 +2287,17 @@ function registerLoopMethods(): void {
    * repository. Nothing else of the chat goes to review, and nothing comes back. The
    * client opens the window with it.
    */
-  handle('review.openContext', (): { readonly repository: string | null; readonly defaultProvider: StoredSessionProvider | null } => {
+  handle('review.openContext', (): { readonly repository: string | null; readonly defaultProvider: StoredSessionProvider | null; readonly defaultModel: string } => {
     const session = chatService.openSession();
+    // DSP-132: the main window's agent is the default for a new review discussion. It is
+    // the agent a loop run would use too (`resolveLoopProvider`), so review opened from
+    // the chat and from the loop editor starts from the same choice.
+    const provider = resolveLoopProvider({ sessionProvider: session?.provider ?? null, chosenAgent: chatService.chosenAgent() });
     return {
       repository: session?.workspacePath ?? null,
-      // DSP-132: the main window's agent is the default for a new review discussion.
-      defaultProvider: session?.provider ?? chatService.chosenAgent(),
+      defaultProvider: provider,
+      // DSP-152: the model that agent is asked for there; '' when none was chosen.
+      defaultModel: provider === null ? '' : chatService.modelFor(provider),
     };
   });
 
@@ -3635,24 +3644,6 @@ function reconciled<T>(answer: T): T {
   return answer;
 }
 
-/** The agents review can use in this launch, each with the model it would use now. */
-function reviewAgentOptions(): readonly { readonly provider: 'cursor' | 'claude'; readonly choosable: boolean; readonly reason: string | null; readonly model: string }[] {
-  return (['cursor', 'claude'] as const).map((provider) => {
-    const availability = providerAvailability(provider, {
-      claudeAuthorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,
-      claudeInstalled: CLAUDE_SUPPORT.installed,
-    });
-    return { provider, choosable: availability.choosable, reason: availability.reason, model: reviewModelFor(provider) };
-  });
-}
-
-/** The model review asks for of each agent: the same choice as the chat and the discussion. */
-function reviewModelFor(provider: 'cursor' | 'claude'): string {
-  return provider === 'claude'
-    ? chatService.modelFor('claude')
-    : (modelChoiceStore.read('cursor') ?? process.env['DSPATCH_CHAT_MODEL'] ?? REVIEW_DISCUSSION_DEFAULT_MODEL);
-}
-
 /** Walk definitions prepared for one pair (DSP-152), newest first. */
 function generatedWalkDefinitions(key: unknown): readonly string[] {
   if (typeof key !== 'string' || !/^[0-9a-f]{24}$/.test(key)) {
@@ -3784,7 +3775,7 @@ function registerReviewMethods(): void {
     ]),
   );
   // DSP-152: preparing walks and delegated review, started only by an explicit request.
-  handle('reviewPair.agents', () => reviewAgentOptions());
+  handle('reviewPair.agents', (_event, key: unknown, opener: unknown) => requireReviewAgentJobs().agents(key, opener));
   handle('reviewPair.startJob', (_event, key: unknown, request: unknown) => requireReviewAgentJobs().start(key, request));
   handle('reviewPair.cancelJob', (_event, key: unknown, jobId: unknown) => requireReviewAgentJobs().cancel(key, jobId));
 
@@ -4160,6 +4151,9 @@ function registerScriptedMethods(): void {
       adapterSent: {
         chat: presentationMode ? presentationResume.record().sent : null,
         review: adapterFactory.reviewPresentationBehaviour?.record().sent ?? null,
+        // DSP-152: which agent the review adapters were built for, and each session's model.
+        reviewBuilt: adapterFactory.reviewPresentationBehaviour?.record().built ?? null,
+        reviewStarts: adapterFactory.reviewPresentationBehaviour?.record().starts ?? null,
       },
     };
   });

@@ -73,12 +73,36 @@ export interface PairWalk {
   readonly note: string;
 }
 
-/** An agent review can use in this launch (DSP-152), with the model it would use now. */
+/** An agent review can use in this launch (DSP-152), and why not when it cannot. */
 export interface ReviewAgentOption {
   readonly provider: 'cursor' | 'claude';
   readonly choosable: boolean;
   readonly reason: string | null;
+}
+
+/** An agent and model, as chosen; the model is the provider's id, never empty. */
+export interface ReviewAgentChoice {
+  readonly provider: 'cursor' | 'claude';
   readonly model: string;
+}
+
+/**
+ * The agent and model a review's agent work starts from (DSP-152 fix after the first
+ * live trial): the choice made in this review, else the one of the chat or loop editor
+ * that opened it, else none. Never a provider or model DSpatch picks on its own.
+ */
+export interface ReviewAgentCurrent extends ReviewAgentChoice {
+  /** `review`: chosen in this review; `opener`: taken from the window that opened it. */
+  readonly from: 'review' | 'opener';
+  /** Whether it can be used in this launch; when not, the picker asks for a choice. */
+  readonly choosable: boolean;
+  readonly reason: string | null;
+}
+
+/** What the picker starts from. */
+export interface ReviewAgents {
+  readonly options: readonly ReviewAgentOption[];
+  readonly current: ReviewAgentCurrent | null;
 }
 
 /** What a window asks of the host to start agent work over the pair. */
@@ -420,6 +444,8 @@ export interface AgentJob {
   readonly endedAt: string | null;
   /** A plain sentence about the outcome, for the window. */
   readonly note: string;
+  /** The provider's or SDK's own error text, when there was one, for the details only. */
+  readonly detail: string;
   /** For a delegated review. */
   readonly scope: DelegationScope | null;
   readonly result: DelegationResult | null;
@@ -460,6 +486,8 @@ export interface PairRecord {
   readonly agentReviews: readonly AgentReview[];
   /** Walk preparations and delegated reviews, newest last (DSP-152). */
   readonly jobs: readonly AgentJob[];
+  /** The agent and model last chosen in this review for its agent work, or `null`. */
+  readonly agent: ReviewAgentChoice | null;
   readonly position: PairPosition;
   readonly savedAt: string;
 }
@@ -472,6 +500,7 @@ export function emptyRecord(pair: RevisionPairIdentity): PairRecord {
     marks: [],
     agentReviews: [],
     jobs: [],
+    agent: null,
     position: START_POSITION,
     savedAt: new Date(0).toISOString(),
   };
@@ -550,11 +579,21 @@ export function jobFrom(raw: unknown): AgentJob | null {
     startedAt: typeof raw['startedAt'] === 'string' ? raw['startedAt'] : '',
     endedAt: typeof raw['endedAt'] === 'string' ? raw['endedAt'] : null,
     note: typeof raw['note'] === 'string' ? raw['note'] : '',
+    detail: typeof raw['detail'] === 'string' ? raw['detail'] : '',
     scope,
     result,
     definitionPath: typeof raw['definitionPath'] === 'string' ? raw['definitionPath'] : null,
     uncovered: rangesFrom(raw['uncovered']),
   };
+}
+
+/** A stored agent choice, or `null` for none or one that does not name both. */
+export function agentChoiceFrom(raw: unknown): ReviewAgentChoice | null {
+  if (!isRecordObject(raw) || (raw['provider'] !== 'cursor' && raw['provider'] !== 'claude')) {
+    return null;
+  }
+  const model = typeof raw['model'] === 'string' ? raw['model'].trim() : '';
+  return model === '' || model.length > 200 ? null : { provider: raw['provider'], model };
 }
 
 export function scopeFrom(raw: unknown): MarkScope | null {
@@ -645,6 +684,7 @@ export function adoptPairRecord(raw: unknown, pair: RevisionPairIdentity): PairR
     // A stored requirement is kept as stored; a record without one takes today's default.
     requirement: raw['requirement'] === 'manual-or-agent' ? 'manual-or-agent' : raw['requirement'] === 'manual' ? 'manual' : DEFAULT_REQUIREMENT,
     jobs,
+    agent: agentChoiceFrom(raw['agent']),
     marks,
     agentReviews,
     position: positionFrom(raw['position']),
@@ -1024,7 +1064,7 @@ export interface ReviewPairBridge {
   chooseWalk(key: string): Promise<{ readonly ok: boolean; readonly note: string }>;
   showInDiff(location: DiffLocation): Promise<{ readonly ok: boolean; readonly note: string }>;
   /** DSP-152: the agents that can prepare walks or review a delegated part here. */
-  agents(): Promise<readonly ReviewAgentOption[]>;
+  agents(key: string): Promise<PairAnswer<ReviewAgents>>;
   startJob(key: string, request: AgentJobRequestInput): Promise<PairAnswer<AgentJob>>;
   cancelJob(key: string, jobId: string): Promise<PairAnswer<{ readonly note: string }>>;
   onChanged(listener: (event: PairChangedEvent) => void): () => void;

@@ -4,7 +4,7 @@ title: Understand and review changes through agent-generated code walks
 status: Review
 assignee: []
 created_date: '2026-10-28 22:32'
-updated_date: '2026-10-28 23:19'
+updated_date: '2026-10-29 00:29'
 labels:
   - review
   - code-walks
@@ -137,4 +137,39 @@ Simulated provider (`DSPATCH_REVIEW_SIM=bad-ref-first`), isolated userData in sc
 - Linux.
 
 Unchecked on purpose: #3 and #12 need a real model and Niclas's trial (the writing rules are in the prompt; simulated answers show only the flow); #6 is UX acceptance, Niclas's; #9 is met except "its own tools", see design choice 1.
+
+29 Oct 2026, after Niclas's first live trial: priority fix. Observed: the agent picker in the review flow could not be used; the review seemed to pick Haiku instead of the opening context's provider and model; Prepare code walks tried to start Cursor (UnknownAgentError plan_required). Focus: trace the provider/model choice from the opening window through the review window, picker, host job start, provider factory and adapter; fix where it is lost; short error in the normal view with the raw SDK text in details. Do not contact Cursor. The tool-free analysis departure (design choice 1) stays a separate follow-up.
+
+### Fix after the first live trial (29 Oct 2026): the agent and model of review jobs
+
+**Observed by Niclas (live):** the agent picker could not be used; the review seemed to pick Haiku; *Prepare code walks* failed with Cursor's `UnknownAgentError: [plan_required]`, so Cursor was started although his chat used Claude.
+
+**Cause, traced from the opening window to the adapter:**
+- `AgentPicker` preselected the first usable agent of `['cursor', 'claude']`. `providerAvailability` always counts Cursor as usable (its account is checked only at session start), so the picker always started on **Cursor**, whatever the opener used.
+- Its model came from `reviewModelFor`, whose Cursor branch fell back to `REVIEW_DISCUSSION_DEFAULT_MODEL` = `claude-haiku-4-5`: the **hard-coded Haiku**.
+- The windows carried the opener's provider (`defaultProvider`, DSP-132) for the discussion, but the picker never read it, and no model was carried at all.
+- Opening the picker listed Cursor's models through the chat's lookup, so Cursor was asked something even before a start.
+- A late model listing for one agent could overwrite the list after the agent was changed.
+- The host, the factory and the adapter passed on exactly what they were given; the choice was wrong before it left the window. My earlier `code-walks` verification only pressed *Start* and so ran exactly that combination without noticing.
+
+**Fix:**
+- `review.openContext` returns the opener's agent (`resolveLoopProvider`: the open session's, else the stored choice, the same rule as the loop editor's run) and its model (`chatService.modelFor`). The review windows carry it as `defaultModel` beside `defaultProvider`, including walk windows opened from the diff.
+- `reviewPair.agents(key, opener)` (host, `ReviewAgentJobs.agents`) answers the options and the current choice: the review's own (`PairRecord.agent`, written when a job is started) else the opener's, else none. It builds nothing and picks nothing; an unusable choice comes back with its reason.
+- `AgentPicker` starts from that choice, lists models only for the chosen agent (ignoring stale answers), starts a changed agent with no model unless it is the one already chosen, and never falls back. Without a usable choice it says why and waits for one. The start button sends exactly what is shown.
+- A job that fails gets a short note in the window; the provider's or SDK's own text is kept in `AgentJob.detail` and shown under *Details*. A session start that fails says "<Agent> could not start a session with <model>. Nothing was sent, and nothing was approved." No other agent or model is tried.
+- The old `reviewAgentOptions`/`reviewModelFor` are removed.
+
+**Design choice (changeable):** a choice made in a review (by starting a job) wins over the opener's the next time that review is opened, as a stored discussion keeps its agent (DSP-132).
+
+**Verified** (simulated providers, isolated userData in scratchpad kits, no live calls, no Cursor contact):
+- `tests/review-agent-jobs.test.ts`: 13/13, three new (choice order and storing, unusable choice, start failure with detail and no other agent); `tests/review-pairs.test.ts` 23/23; typecheck and build clean.
+- New scenario `review-agent-choice`, real input events (`press`, `press-key` through `sendInputEvent`) in the review windows:
+  - `first` (from the chat): picker shows Claude · `claude-sonnet-4-5`; walks ran with it and the adapter's session got Claude/`claude-sonnet-4-5`; the model changed with the Up key in *Delegate the whole review*, and that job and session got `claude-haiku-4-5`; the picker then offers the changed choice.
+  - `editor` (from the loop editor): the same with a delegation first and walks after the change.
+  - `unavailable` (the first kit relaunched without Claude, the chat on Cursor): the picker says Claude cannot be used and why, preselects nothing, cannot start; no adapter built, no session.
+  - `start-fails` (simulated `plan_required` start error): short note, raw text folded under *Details*, one start only, nothing approved.
+  - In every phase the review adapters were built for Claude only.
+- `code-walks` (both phases) passes after the change.
+
+**Not established:** a live run with Claude; how the real Claude SDK names or lists models compared with the simulated list; the missing-choice case in the UI (covered by the unit test; with no usable agent the main window has no review button). Remaining: the chat's own Cursor default (`DEFAULT_MODEL`) and the review discussion's Cursor fallback are still `claude-haiku-4-5`; both apply only to Cursor and were not changed here. The tool-free analysis with bounded excerpts (design choice 1) remains a separate follow-up. This fix does not make DSP-152 as a whole done.
 <!-- SECTION:NOTES:END -->

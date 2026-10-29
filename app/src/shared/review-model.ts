@@ -1681,6 +1681,11 @@ export interface ReviewWindowInput {
    * then asks for an explicit choice. A discussion's stored agent always wins.
    */
   readonly defaultProvider?: 'cursor' | 'claude' | null;
+  /**
+   * DSP-152: the model the opening chat or loop editor uses with `defaultProvider`, the
+   * starting choice for the review's agent work. `''` or absent means none was chosen.
+   */
+  readonly defaultModel?: string;
 }
 
 /** How opening a review window went, for the note beside the button that asked. */

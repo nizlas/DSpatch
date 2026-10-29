@@ -1093,6 +1093,7 @@ function OpenReview({
                   {walkJob !== null && <JobLine job={walkJob} onStop={() => void pairBridge.cancelJob(pair.key, walkJob.id)} />}
                   {delegatingWalk ? (
                     <AgentPicker
+                      pairKey={pair.key}
                       action="Delegate this walk"
                       busy={false}
                       testId="walk-delegate-agent"

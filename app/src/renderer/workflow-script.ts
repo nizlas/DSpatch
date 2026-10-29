@@ -742,8 +742,9 @@ async function nameScenarioAgent(): Promise<void> {
 export async function runScriptedWorkflow(
   plan: ScriptedRunPlan,
 ): Promise<ScriptedRunReport> {
-  // DSP-149: `model-list` chooses Claude itself and must never choose Cursor.
-  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow') {
+  // DSP-149: `model-list` chooses Claude itself and must never choose Cursor. DSP-152:
+  // `review-agent-choice` starts from the kit's own choice of Claude, usable or not.
+  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow' && plan.scenario !== 'review-agent-choice') {
     await nameScenarioAgent();
   }
   switch (plan.scenario) {
@@ -811,6 +812,8 @@ export async function runScriptedWorkflow(
       return runPairReviewScenario(plan);
     case 'code-walks':
       return runCodeWalksScenario(plan);
+    case 'review-agent-choice':
+      return runReviewAgentChoiceScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -12061,7 +12064,10 @@ interface JobReading {
   readonly id: string;
   readonly kind: 'walks' | 'review';
   readonly state: string;
+  readonly provider?: string;
+  readonly model?: string;
   readonly note: string;
+  readonly detail?: string;
   readonly scope: string | null;
   readonly approved: readonly { readonly start: number; readonly end: number; readonly path: string }[];
   readonly findings: number;
@@ -12318,6 +12324,253 @@ async function runCodeWalksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
       windows: rows,
       readings: await Promise.all(rows.map((row) => readPairWindow(row.id).catch(() => null))),
     };
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+interface PickerReading {
+  readonly ev: string | null;
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly modelReading: string | null;
+  readonly options: readonly string[] | null;
+  readonly startDisabled: boolean | null;
+  readonly note: string;
+  readonly text: string;
+}
+
+function pickerOf(reading: PairWindowReading | null, ev: string): PickerReading | undefined {
+  return ((reading as { pickers?: PickerReading[] } | null)?.pickers ?? []).find((picker) => picker.ev === ev);
+}
+
+/** The agents the review adapters were built for, and each session's agent and model, from the host. */
+async function reviewAdapterRecord(): Promise<{
+  readonly built: readonly string[];
+  readonly starts: readonly { readonly provider: string; readonly modelRequested: string }[];
+}> {
+  const answer = await window.dspatch.reviewWindowCheck({ action: 'read' });
+  const sent = (answer.detail as { adapterSent?: { reviewBuilt?: string[] | null; reviewStarts?: { provider: string; modelRequested: string }[] | null } }).adapterSent;
+  return { built: sent?.reviewBuilt ?? [], starts: sent?.reviewStarts ?? [] };
+}
+
+/**
+ * DSP-152, after Niclas's first live trial: the agent and model of a review's agent work.
+ * The kit's person chose Claude with an explicit model in the chat (the kit is seeded so);
+ * the presentation adapter answers in place of every provider (SIMULATED).
+ *
+ * Phases, each in a fresh kit:
+ * - `chat`: review opened from the chat; the picker shows Claude and that model and walks
+ *   are prepared with them; then the model is changed with the keyboard in a delegation,
+ *   which is what the next job gets, and what the picker offers after.
+ * - `editor`: the same from the loop editor, a delegation first and walks after a change.
+ * - `unavailable`: the `first` phase's kit launched again without Claude, the chat on
+ *   Cursor; the review's own choice (Claude) cannot be used, so the picker says so and
+ *   offers a choice instead of taking Cursor, and nothing is built or started.
+ * - `start-fails`: the session start is refused (a SIMULATED provider error); the window
+ *   shows a short note, keeps the raw text under Details, approves nothing and tries no
+ *   other agent.
+ *
+ * In every phase the review adapters are built only for Claude: Cursor is never built.
+ * The review windows are pressed with real input events (`press`, `press-key`).
+ */
+async function runReviewAgentChoiceScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  // `first` (the default) is the chat's way in.
+  const phase = plan.flowPhase === undefined || plan.flowPhase === 'first' ? 'chat' : plan.flowPhase;
+  const chosenModel = 'claude-sonnet-4-5';
+  const observations: Record<string, unknown> = {
+    plan,
+    phase,
+    limits:
+      'SIMULATED provider: the presentation adapter answers for every agent and lists a fixed set of models. ' +
+      'The windows, the host, its job records and the provider factory are real; no provider was contacted.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const press = async (id: number, selector: string): Promise<void> => {
+    const answer = await window.dspatch.pairWindowCheck({ action: 'press', id, selector });
+    if (!answer.ok) {
+      throw new Error(`could not press ${selector}: ${JSON.stringify(answer.detail)}`);
+    }
+    await sleep(200);
+  };
+  const pressKey = async (id: number, selector: string, key: string): Promise<void> => {
+    const answer = await window.dspatch.pairWindowCheck({ action: 'press-key', id, selector, key });
+    if (!answer.ok) {
+      throw new Error(`could not press ${key} on ${selector}: ${JSON.stringify(answer.detail)}`);
+    }
+    await sleep(250);
+  };
+  const capture = async (id: number, label: string): Promise<void> => {
+    await sleep(300);
+    await window.dspatch.pairWindowCheck({ action: 'capture', id, label });
+  };
+  const openPair = async (id: number): Promise<PairWindowReading> => {
+    await untilPair(id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
+    await press(id, '[data-ev="pair-repo-0"]');
+    await untilPair(id, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
+    await press(id, '[data-ev="pair-commit-1"]');
+    await press(id, '[data-ev="pair-commit-0"]');
+    await press(id, '[data-ev="pair-open"]');
+    return untilPair(id, 'the diff review', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) > 0);
+  };
+  /** A picker that has read its agents and, with an agent chosen, that agent's models. */
+  const pickerReady =
+    (ev: string) =>
+    (reading: PairWindowReading): boolean => {
+      const picker = pickerOf(reading, ev);
+      return picker !== undefined && picker.modelReading === null && !picker.text.startsWith('Reading the agents') && (picker.provider === '' || picker.options !== null || picker.model !== null);
+    };
+  const runJob = async (id: number, starter: string, kind: 'walks' | 'review'): Promise<JobReading | undefined> => {
+    const before = jobsOf(await readPairWindow(id)).length;
+    await press(id, starter);
+    const done = await untilPair(id, `the ${kind} job`, (reading) => jobsOf(reading).length > before && settledJob(lastJob(reading, kind)), 60_000);
+    return lastJob(done, kind);
+  };
+  const expectChoice = (picker: PickerReading | undefined, model: string, where: string): void => {
+    record(`picker ${where}`, { picker });
+    expect(picker?.provider === 'claude', `${where}: the picker shows ${String(picker?.provider)}, not Claude`);
+    expect(picker?.model === model, `${where}: the picker shows the model ${String(picker?.model)}, not ${model}`);
+    expect(picker?.startDisabled === false, `${where}: the picker cannot start with the choice it shows`);
+  };
+  const expectJob = async (job: JobReading | undefined, model: string, where: string): Promise<void> => {
+    const adapter = await reviewAdapterRecord();
+    const lastStart = adapter.starts.at(-1);
+    record(`job ${where}`, { job, lastStart, built: adapter.built });
+    expect(job?.provider === 'claude' && job.model === model, `${where}: the job ran with ${String(job?.provider)} ${String(job?.model)}, not Claude ${model}`);
+    expect(lastStart?.provider === 'claude' && lastStart.modelRequested === model, `${where}: the adapter's session was opened for ${JSON.stringify(lastStart)}, not Claude ${model}`);
+  };
+
+  try {
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await waitFor('a project to be offered in the window', () => element('project-0-path') !== null, 60_000);
+    if (phase === 'unavailable') {
+      await chooseInSelect('open-agent-select', 'cursor');
+    }
+    await click('open-project-0');
+
+    if (phase === 'unavailable') {
+      // The kit of the `first` phase, launched again without Claude: the review chose
+      // Claude there, and the chat here runs with Cursor, chosen explicitly. The review's
+      // own choice cannot be used, so the picker must say so rather than take Cursor.
+      await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
+      await click('open-review');
+      const diff = await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'));
+      await openPair(diff.id);
+      await press(diff.id, '[data-ev="pair-prepare-walks"]');
+      const shown = await untilPair(diff.id, 'the picker', pickerReady('pair-walks-agent'), 20_000);
+      const picker = pickerOf(shown, 'pair-walks-agent');
+      record('picker unavailable', { picker });
+      expect(picker?.provider === '', `an unusable Claude was preselected or replaced: ${String(picker?.provider)}`);
+      expect((picker?.note ?? '').startsWith('Claude cannot be used here'), `the picker does not say why Claude cannot be used: ${String(picker?.note)}`);
+      expect(picker?.startDisabled === true, 'the picker can start without a usable choice');
+      expect(picker?.model === null, 'a model is offered before an agent is chosen');
+      await capture(diff.id, 'picker-unavailable');
+      const adapter = await reviewAdapterRecord();
+      record('adapters', adapter);
+      expect(adapter.built.length === 0 && adapter.starts.length === 0, `an adapter was built or a session started: ${JSON.stringify(adapter)}`);
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
+    if (phase === 'editor') {
+      await click('edit-agent-loops');
+      const pressed = await (async () => {
+        const until = performance.now() + 30_000;
+        while (performance.now() < until) {
+          const answer = await window.dspatch.editorWindowCheck({ action: 'click', selector: '[data-ev="editor-open-review"]' });
+          if (answer.ok) {
+            return true;
+          }
+          await sleep(300);
+        }
+        return false;
+      })();
+      expect(pressed, 'the loop editor has no way into review');
+    } else {
+      await click('open-review');
+    }
+    const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+    await openPair(diffId);
+
+    if (phase === 'start-fails') {
+      await press(diffId, '[data-ev="pair-prepare-walks"]');
+      expectChoice(pickerOf(await untilPair(diffId, 'the picker', pickerReady('pair-walks-agent')), 'pair-walks-agent'), chosenModel, 'before a failing start');
+      const job = await runJob(diffId, '[data-ev="pair-walks-agent-start"]', 'walks');
+      await sleep(1500);
+      const after = await readPairWindow(diffId);
+      const details = (after as { jobDetails?: { open: boolean; text: string }[] } | null)?.jobDetails ?? [];
+      record('failed start', { job, details });
+      expect(job?.state === 'failed', `a refused start is not recorded as failed: ${String(job?.state)}`);
+      expect(job?.note === `Claude could not start a session with ${chosenModel}. Nothing was sent, and nothing was approved.`, `the note is not the short one: ${String(job?.note)}`);
+      expect((job?.detail ?? '').includes('plan_required'), "the provider's own text is not kept as detail");
+      expect(details.length === 1 && details[0]?.open === false && details[0].text.includes('plan_required'), 'the raw text is not folded under Details');
+      // What is drawn, not what the DOM holds: a closed Details keeps its text unrendered.
+      const shownText = (after as { visibleText?: string } | null)?.visibleText ?? '';
+      expect(!shownText.includes('UnknownAgentError'), 'the raw SDK text shows in the normal view');
+      expect(jobsOf(after).length === 1, 'the failed start was tried again on its own');
+      const adapter = await reviewAdapterRecord();
+      record('adapters', adapter);
+      expect(JSON.stringify(adapter.built) === JSON.stringify(['claude']), `another agent was built after the failure: ${JSON.stringify(adapter.built)}`);
+      expect(adapter.starts.length === 1, `the start was tried ${String(adapter.starts.length)} times`);
+      expect(((after?.pair as { agentReviewsShown?: number } | null)?.agentReviewsShown ?? 0) === 0, 'a failed start shows an agent review');
+      await press(diffId, '[data-ev="agent-job-walks-detail"] summary');
+      await capture(diffId, 'start-failed');
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    const fromEditor = phase === 'editor';
+    const firstStarter = fromEditor ? '[data-ev="pair-delegate-all"]' : '[data-ev="pair-prepare-walks"]';
+    const firstPicker = fromEditor ? 'pair-delegate-all-agent' : 'pair-walks-agent';
+    const firstKind = fromEditor ? 'review' : 'walks';
+    const secondStarter = fromEditor ? '[data-ev="pair-prepare-walks"]' : '[data-ev="pair-delegate-all"]';
+    const secondPicker = fromEditor ? 'pair-walks-agent' : 'pair-delegate-all-agent';
+    const secondKind = fromEditor ? 'walks' : 'review';
+
+    // --- 1. The opener's agent and model, shown and used -----------------------------------
+    await press(diffId, firstStarter);
+    const first = await untilPair(diffId, 'the first picker', pickerReady(firstPicker));
+    expectChoice(pickerOf(first, firstPicker), chosenModel, `opened from the ${phase}`);
+    await capture(diffId, 'picker-inherited');
+    const firstJob = await runJob(diffId, `[data-ev="${firstPicker}-start"]`, firstKind);
+    expect(firstJob?.state === 'done', `the first job did not finish: ${String(firstJob?.state)} ${String(firstJob?.note)}`);
+    await expectJob(firstJob, chosenModel, `the first job (${firstKind})`);
+
+    // --- 2. The model changed in the review with the keyboard; the next job gets it ---------
+    await press(diffId, secondStarter);
+    const second = await untilPair(diffId, 'the second picker', pickerReady(secondPicker));
+    expectChoice(pickerOf(second, secondPicker), chosenModel, "the review's own choice");
+    const options = pickerOf(second, secondPicker)?.options ?? [];
+    const target = options[options.indexOf(chosenModel) - 1];
+    await pressKey(diffId, `[data-ev="${secondPicker}-model"]`, 'Up');
+    const changed = await readPairWindow(diffId);
+    record('model changed', { picker: pickerOf(changed, secondPicker), target });
+    expect(target !== undefined && pickerOf(changed, secondPicker)?.model === target, `the keyboard did not change the model to ${String(target)}: ${String(pickerOf(changed, secondPicker)?.model)}`);
+    expect(pickerOf(changed, secondPicker)?.provider === 'claude', 'changing the model changed the agent');
+    await capture(diffId, 'picker-changed');
+    const secondJob = await runJob(diffId, `[data-ev="${secondPicker}-start"]`, secondKind);
+    expect(secondJob?.state === 'done', `the second job did not finish: ${String(secondJob?.state)} ${String(secondJob?.note)}`);
+    await expectJob(secondJob, target ?? '', `the second job (${secondKind})`);
+
+    // --- 3. The change stays the review's choice -------------------------------------------
+    await press(diffId, firstStarter);
+    const third = await untilPair(diffId, 'the picker again', pickerReady(firstPicker));
+    expectChoice(pickerOf(third, firstPicker), target ?? '', 'after the change');
+
+    const adapter = await reviewAdapterRecord();
+    record('adapters', adapter);
+    expect(adapter.built.length > 0 && adapter.built.every((provider) => provider === 'claude'), `the review built an adapter for another agent: ${JSON.stringify(adapter.built)}`);
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
     return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
   }
 }

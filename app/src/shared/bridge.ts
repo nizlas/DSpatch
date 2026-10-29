@@ -1787,6 +1787,8 @@ export type ScriptedScenario =
   | 'pair-review'
   /** DSP-152: walks prepared, a step deepened, parts delegated, stopped, reopened and read back after a restart. SIMULATED provider. */
   | 'code-walks'
+  /** DSP-152 fix: the review's agent and model come from its opener and reach the adapter. SIMULATED provider. */
+  | 'review-agent-choice'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2055,6 +2057,13 @@ export type PairWindowCheckRequest =
   | { readonly action: 'focus'; readonly id: number }
   /** DSP-152: select the first words of an element's text and release the mouse there, as a person selecting it. */
   | { readonly action: 'select-text'; readonly id: number; readonly selector: string; readonly length: number }
+  /**
+   * DSP-152: real input through Electron's `sendInputEvent`, not a script's synthetic
+   * event: a left click at the element's centre, or (`press-key`) the element focused and
+   * a key pressed and released, as the person's mouse and keyboard would.
+   */
+  | { readonly action: 'press'; readonly id: number; readonly selector: string }
+  | { readonly action: 'press-key'; readonly id: number; readonly selector: string; readonly key: string }
   | { readonly action: 'close'; readonly id: number };
 
 /** What the `editor-joins-run` scenario asks of the loop editor's own window. */
@@ -2195,7 +2204,7 @@ export interface ScriptedRunPlan {
    */
   readonly resumeHold?: boolean;
   /** DSP-149 `workspace-flow`: which process this is, and the folder its projects are in. */
-  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch';
+  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails';
   readonly flowRoot?: string;
 }
 

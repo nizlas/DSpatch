@@ -51,7 +51,12 @@ export interface ProviderAdaptersOptions {
   /** The chat's presentation adapter (main.ts). Required in presentation mode. */
   readonly presentationChat?: () => ChatAdapter;
   /** The review's presentation adapters: stream speed and simulated send failures. */
-  readonly reviewPresentation?: { readonly deltaMs?: number; readonly sendMode?: PresentationSendMode };
+  readonly reviewPresentation?: {
+    readonly deltaMs?: number;
+    readonly sendMode?: PresentationSendMode;
+    /** DSP-152: a SIMULATED provider error every review session start is refused with. */
+    readonly startFailure?: string;
+  };
   /** The launch's \`DSPATCH_CLAUDE_AUTHORIZATION\`, or \`null\`. */
   readonly claudeAuthorizationReference: string | null;
   /** Whether Claude support was installed at launch (DSP-133). */
@@ -104,6 +109,9 @@ export function providerAdapters(options: ProviderAdaptersOptions): ProviderAdap
   const reviewBehaviour = options.presentation
     ? new PresentationResumeBehaviour('ok', options.reviewPresentation?.sendMode ?? 'ok')
     : null;
+  if (reviewBehaviour !== null && options.reviewPresentation?.startFailure !== undefined) {
+    reviewBehaviour.startFailure = options.reviewPresentation.startFailure;
+  }
   const deltaMs = options.reviewPresentation?.deltaMs;
   const unavailable = (provider: StoredSessionProvider): string | null => {
     const availability = providerAvailability(provider, {
@@ -140,6 +148,8 @@ export function providerAdapters(options: ProviderAdaptersOptions): ProviderAdap
       }
       if (options.presentation) {
         if (purpose === 'review') {
+          // Which agent was asked for, so a trial can show it is the chosen one.
+          reviewBehaviour?.recordBuilt(provider);
           return new PresentationAdapter({
             resume: reviewBehaviour ?? new PresentationResumeBehaviour('ok'),
             ...(deltaMs === undefined ? {} : { deltaMs }),

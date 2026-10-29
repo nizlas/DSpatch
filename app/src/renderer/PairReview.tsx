@@ -540,7 +540,10 @@ function DiffReview({
           id: job.id,
           kind: job.kind,
           state: job.state,
+          provider: job.provider,
+          model: job.model,
           note: job.note,
+          detail: job.detail,
           scope: job.scope?.label ?? null,
           approved: job.result?.approved ?? [],
           findings: job.result?.findings.length ?? 0,
@@ -609,6 +612,7 @@ function DiffReview({
             The agent reads the two commits and proposes walks around the behaviours the change touches. A walk is not a review and approves nothing.
           </p>
           <AgentPicker
+            pairKey={open.key}
             action="Prepare code walks"
             busy={false}
             testId="pair-walks-agent"
@@ -631,6 +635,7 @@ function DiffReview({
       <div className={current === null ? 'rv-pair-body' : 'rv-pair-body rv-pair-body-file'}>
         {current === null ? (
           <FilesChanged
+            pairKey={open.key}
             files={open.files}
             progress={progress}
             totals={totals}
@@ -835,6 +840,7 @@ export function JobLine({ job, onStop, onOpenWalks }: { readonly job: AgentJob; 
       ) : (
         <>
           <span>{job.note}</span>
+          <JobDetail job={job} />
           {job.kind === 'walks' && job.state === 'done' && onOpenWalks !== undefined && (
             <button type="button" className="rv-pair-link" data-ev="agent-job-walks-open" onClick={onOpenWalks}>
               Show the walks
@@ -843,6 +849,22 @@ export function JobLine({ job, onStop, onOpenWalks }: { readonly job: AgentJob; 
         </>
       )}
     </div>
+  );
+}
+
+/** The provider's own words about a failure, folded away: the note above says what it means. */
+function JobDetail({ job }: { readonly job: AgentJob }): JSX.Element | null {
+  if (job.detail === '') {
+    return null;
+  }
+  return (
+    <details className="rv-agent-detail" data-ev={`agent-job-${job.kind}-detail`}>
+      <summary>Details</summary>
+      <p>
+        {job.provider === 'claude' ? 'Claude' : 'Cursor'} · {job.model}
+      </p>
+      <pre>{job.detail}</pre>
+    </details>
   );
 }
 
@@ -872,7 +894,10 @@ function AgentReviewResult({
       {job.state === 'running' || job.state === 'cancelling' ? (
         <JobLine job={job} onStop={onStop} />
       ) : result === null ? (
-        <p>{job.note}</p>
+        <>
+          <p>{job.note}</p>
+          <JobDetail job={job} />
+        </>
       ) : (
         <div className="rv-agent-review-body">
           {result.insufficient && <p className="rv-agent-insufficient">The agent found the material not enough to judge this part. Nothing was approved.</p>}
@@ -926,6 +951,7 @@ function touchesFile(job: AgentJob, file: PairFile): boolean {
 }
 
 function FilesChanged({
+  pairKey,
   files,
   progress,
   totals,
@@ -934,6 +960,7 @@ function FilesChanged({
   onDelegate,
   onStop,
 }: {
+  readonly pairKey: string;
   readonly files: readonly PairFile[];
   readonly progress: ReadonlyMap<string, FileProgress>;
   readonly totals: { readonly total: number; readonly handled: number; readonly done: number };
@@ -964,6 +991,7 @@ function FilesChanged({
             The agent reviews every changed line and may approve what it reviewed and found acceptable. Its findings and uncertainties stay visible here and at each file.
           </p>
           <AgentPicker
+            pairKey={pairKey}
             action="Delegate"
             busy={false}
             testId="pair-delegate-all-agent"
@@ -1463,6 +1491,7 @@ function FileDiff({
             Delegate {delegating.label} to the agent. It may approve only changed lines in this part that it reviewed and found acceptable; findings and uncertainties stay visible here.
           </p>
           <AgentPicker
+            pairKey={pairKey}
             action="Delegate"
             busy={false}
             testId="pair-delegate-agent"

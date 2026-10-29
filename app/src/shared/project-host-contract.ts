@@ -29,7 +29,7 @@ import type {
 import type { ReviewHostApi } from './review-host-contract';
 import type {
   AgentJob,
-  ReviewAgentOption,
+  ReviewAgents,
   LogCommit,
   OpenPair,
   PairAnswer,
@@ -167,6 +167,7 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'review.openContext': () => {
     readonly repository: string | null;
     readonly defaultProvider: StoredSessionProvider | null;
+    readonly defaultModel: string;
   };
   readonly 'review.exampleDefinition': () =>
     | { readonly kind: 'found'; readonly definitionPath: string; readonly repositoryRoot: string }
@@ -189,7 +190,7 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'reviewPair.setRequirement': (key: unknown, requirement: unknown) => PairAnswer<PairRecord>;
   readonly 'reviewPair.savePosition': (key: unknown, position: unknown) => PairAnswer<{ readonly saved: true }>;
   readonly 'reviewPair.walks': (key: unknown, also: readonly string[]) => PairAnswer<readonly PairWalk[]>;
-  readonly 'reviewPair.agents': () => readonly ReviewAgentOption[];
+  readonly 'reviewPair.agents': (key: unknown, opener: unknown) => PairAnswer<ReviewAgents>;
   readonly 'reviewPair.startJob': (key: unknown, request: unknown) => PairAnswer<AgentJob>;
   readonly 'reviewPair.cancelJob': (key: unknown, jobId: unknown) => PairAnswer<{ readonly note: string }>;
   readonly 'discussion.load': (target: DiscussionTarget, request: unknown) => DiscussionLoadOutcome;

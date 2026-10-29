@@ -95,7 +95,7 @@ const pairBridge: ReviewPairBridge = {
   chooseWalk: (key) => ipcRenderer.invoke('dspatch:review-pair-choose-walk', key) as ReturnType<ReviewPairBridge['chooseWalk']>,
   showInDiff: (location) =>
     ipcRenderer.invoke('dspatch:review-pair-show-in-diff', location) as ReturnType<ReviewPairBridge['showInDiff']>,
-  agents: () => ipcRenderer.invoke('dspatch:review-pair-agents') as ReturnType<ReviewPairBridge['agents']>,
+  agents: (key) => ipcRenderer.invoke('dspatch:review-pair-agents', key) as ReturnType<ReviewPairBridge['agents']>,
   startJob: (key, request) =>
     ipcRenderer.invoke('dspatch:review-pair-start-job', key, request) as ReturnType<ReviewPairBridge['startJob']>,
   cancelJob: (key, jobId) =>

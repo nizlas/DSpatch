@@ -2588,6 +2588,37 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
     entry.window.focus();
     return { ok: true, detail: 'focused' };
   }
+  if (request.action === 'press' || request.action === 'press-key') {
+    // Where the element is, and (for a key) focus on it; the input itself is real.
+    const place = (await entry.contents.executeJavaScript(
+      `(() => {
+        const element = document.querySelector(${JSON.stringify(request.selector)});
+        if (!(element instanceof HTMLElement)) { return null; }
+        element.scrollIntoView({ block: 'center' });
+        ${request.action === 'press-key' ? 'element.focus();' : ''}
+        const box = element.getBoundingClientRect();
+        return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2), disabled: element instanceof HTMLButtonElement && element.disabled, focused: document.activeElement === element };
+      })()`,
+    )) as { x: number; y: number; disabled: boolean; focused: boolean } | null;
+    if (place === null) {
+      return { ok: false, detail: `nothing matches ${request.selector}` };
+    }
+    if (place.disabled) {
+      return { ok: false, detail: 'disabled' };
+    }
+    entry.window.show();
+    entry.window.focus();
+    entry.contents.focus();
+    if (request.action === 'press') {
+      entry.contents.sendInputEvent({ type: 'mouseDown', x: place.x, y: place.y, button: 'left', clickCount: 1 });
+      entry.contents.sendInputEvent({ type: 'mouseUp', x: place.x, y: place.y, button: 'left', clickCount: 1 });
+    } else {
+      entry.contents.sendInputEvent({ type: 'keyDown', keyCode: request.key });
+      entry.contents.sendInputEvent({ type: 'keyUp', keyCode: request.key });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return { ok: true, detail: place };
+  }
   if (request.action === 'capture') {
     // Two frames painted first: a capture taken at once can return the frame before the
     // last change.
@@ -2678,10 +2709,30 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
           deepenings: [...document.querySelectorAll('[data-ev="step-deepening"]')].map((node) => ({ state: node.getAttribute('data-state'), text: (node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300) })),
           walkJob: (document.querySelector('.rv-walk-delegate [data-state]') || { getAttribute: () => null }).getAttribute('data-state'),
           walkJobText: (document.querySelector('.rv-walk-delegate') || { textContent: '' }).textContent,
+          // DSP-152: what each open agent picker shows, as the person sees it.
+          pickers: [...document.querySelectorAll('.rv-agent-picker')].map((node) => {
+            const provider = node.querySelector('select[data-ev$="-provider"]');
+            const model = node.querySelector('[data-ev$="-model"]');
+            const start = node.querySelector('button[data-ev$="-start"]');
+            const reading = node.querySelector('[data-ev$="-model-reading"]');
+            return {
+              ev: node.getAttribute('data-ev'),
+              provider: provider ? provider.value : null,
+              model: model ? model.value : null,
+              modelReading: reading ? reading.textContent : null,
+              options: model && model.tagName === 'SELECT' ? [...model.options].map((option) => option.value) : null,
+              startDisabled: start ? start.disabled : null,
+              note: (node.querySelector('[data-ev$="-note"]') || { textContent: '' }).textContent,
+              text: (node.textContent || '').replace(/s+/g, ' ').trim(),
+            };
+          }),
+          jobDetails: [...document.querySelectorAll('.rv-agent-detail')].map((node) => ({ open: node.open, text: (node.textContent || '').replace(/s+/g, ' ').trim() })),
           rightWidth: (document.querySelector('.rv-right') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width,
           codeWidth: (document.querySelector('.rv-code') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width,
           overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
           text: (document.body.textContent || '').replace(/\s+/g, ' ').slice(0, 30000),
+          // DSP-152: the text as drawn, without what a closed Details holds.
+          visibleText: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 30000),
         }))()`;
 
 /** Read the loop editor's window through its check hook, or close it like its X does. */
@@ -3271,11 +3322,12 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
-      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks'
+      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice'
         ? {
-            flowPhase: ((): 'first' | 'again' | 'retry' | 'switch' => {
+            flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
-              return named === 'again' || named === 'retry' || named === 'switch' ? named : 'first';
+              // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.
+              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' ? named : 'first';
             })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }
@@ -3617,9 +3669,9 @@ function registerLoopGraphIpc(): void {
     // DSP-150: review starts by choosing a repository and two commits, in a diff
     // window of its own. Walk definitions are opened from there, over the same pair.
     // DSP-132: the main window's agent is the default for a new review discussion.
-    return requireReviewWindows().openDiff(
-      context.defaultProvider === 'cursor' || context.defaultProvider === 'claude' ? context.defaultProvider : null,
-    );
+    // DSP-152: with the model that agent uses there, the start of the review's agent work.
+    const provider = context.defaultProvider === 'cursor' || context.defaultProvider === 'claude' ? context.defaultProvider : null;
+    return requireReviewWindows().openDiff(provider, provider === null ? '' : context.defaultModel);
   });
   ipcMain.handle(OPEN_EXAMPLE_REVIEW, (): Promise<LoopEditorWindowOutcome> => openExampleReview());
 

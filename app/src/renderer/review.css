@@ -2408,6 +2408,7 @@
 .rv-agent-line {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.6rem;
   padding: 0.35rem 1.2rem;
   font-size: 0.85rem;
@@ -2497,4 +2498,17 @@
 .rv-agent-adjustments > summary {
   cursor: pointer;
   color: var(--muted);
+}
+
+/* DSP-152: a failed agent job keeps the provider's own words folded away. */
+.rv-agent-detail {
+  flex-basis: 100%;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.rv-agent-detail pre {
+  margin: 0.3rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

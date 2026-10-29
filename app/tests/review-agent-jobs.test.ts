@@ -210,3 +210,118 @@ describe('reading answers', () => {
     assert.ok(result.adjustments.length > 0);
   });
 });
+
+describe('the agent and model (after the first live trial)', () => {
+  // A pair record of its own, so the choice made by the tests above is not in it.
+  async function freshPair(): Promise<{ readonly pairs: ReviewPairs; readonly key: string; readonly dir: string }> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-agent-choice-'));
+    const own = new ReviewPairs({ recordsDir: path.join(dir, 'pairs'), changed: () => undefined });
+    await own.repositories([fixture.workspace]);
+    const opened = await own.openPair({ repository: fixture.app, base: fixture.appBase, target: fixture.appTarget });
+    if (isPairError(opened)) {
+      throw new Error(opened.error);
+    }
+    return { pairs: own, key: opened.key, dir };
+  }
+
+  function service(
+    own: ReviewPairs,
+    dir: string,
+    built: string[],
+    options: { readonly failStart?: string; readonly claude?: boolean } = {},
+  ): ReviewAgentJobs {
+    return new ReviewAgentJobs({
+      recordsDir: dir,
+      createAdapter: (provider) => {
+        built.push(provider);
+        const adapter = new PresentationAdapter({ deltaMs: 1 });
+        if (options.failStart !== undefined) {
+          const message = options.failStart;
+          adapter.startSession = () => Promise.reject(new Error(message));
+        }
+        return adapter;
+      },
+      availability: (provider) =>
+        provider === 'claude' && options.claude === false
+          ? { choosable: false, reason: 'Claude is not enabled for this launch.' }
+          : { choosable: true, reason: null },
+      pairs: own,
+      language: () => Promise.resolve('en'),
+      log: () => undefined,
+      cancelConfirmMs: 500,
+    });
+  }
+
+  it("starts from the opener's agent and model, and from the review's own choice once one is made", async () => {
+    const { pairs: own, key, dir } = await freshPair();
+    const built: string[] = [];
+    const jobsHere = service(own, dir, built);
+    assert.deepEqual(jobsHere.agents(key, { provider: null, model: '' }), {
+      options: [
+        { provider: 'claude', choosable: true, reason: null },
+        { provider: 'cursor', choosable: true, reason: null },
+      ],
+      current: null,
+    });
+    const opened = jobsHere.agents(key, { provider: 'claude', model: 'claude-opus-4-5' });
+    assert.ok(!isPairError(opened));
+    assert.deepEqual(opened.current, { provider: 'claude', model: 'claude-opus-4-5', from: 'opener', choosable: true, reason: null });
+    assert.deepEqual(built, [], 'reading the choice builds no adapter');
+
+    const started = jobsHere.start(key, { kind: 'walks', provider: 'claude', model: 'claude-sonnet-4-5' });
+    assert.ok(!isPairError(started));
+    assert.equal((own.state(key) as PairRecord).agent?.model, 'claude-sonnet-4-5');
+    await jobsHere.cancel(key, started.id).catch(() => undefined);
+    await (async () => {
+      const until = Date.now() + 15_000;
+      while (Date.now() < until) {
+        const job = (own.state(key) as PairRecord).jobs.find((entry) => entry.id === started.id);
+        if (job !== undefined && job.state !== 'running' && job.state !== 'cancelling') {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    })();
+    assert.deepEqual(built, ['claude'], 'only the chosen agent was built');
+    // The choice made in the review wins over the opener's from now on.
+    const later = jobsHere.agents(key, { provider: 'claude', model: 'claude-opus-4-5' });
+    assert.ok(!isPairError(later));
+    assert.deepEqual(later.current, { provider: 'claude', model: 'claude-sonnet-4-5', from: 'review', choosable: true, reason: null });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('shows an unusable choice with its reason rather than picking another agent', async () => {
+    const { pairs: own, key, dir } = await freshPair();
+    const answer = service(own, dir, [], { claude: false }).agents(key, { provider: 'claude', model: 'claude-opus-4-5' });
+    assert.ok(!isPairError(answer));
+    assert.equal(answer.current?.provider, 'claude');
+    assert.equal(answer.current?.choosable, false);
+    assert.equal(answer.current?.reason, 'Claude is not enabled for this launch.');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('records a start failure briefly, keeps the raw text as detail, approves nothing and tries no other agent', async () => {
+    const { pairs: own, key, dir } = await freshPair();
+    const built: string[] = [];
+    const raw = 'UnknownAgentError: [plan_required] Cloud Agent is not available for free users.';
+    const jobsHere = service(own, dir, built, { failStart: raw });
+    const scope = { kind: 'file', label: 'src/keep.ts', ranges: [{ kind: 'lines', side: 'target', path: 'src/keep.ts', start: 8, end: 9 }] };
+    const started = jobsHere.start(key, { kind: 'review', provider: 'claude', model: 'claude-opus-4-5', scope });
+    assert.ok(!isPairError(started));
+    const until = Date.now() + 15_000;
+    let job: AgentJob | undefined;
+    while (Date.now() < until) {
+      job = (own.state(key) as PairRecord).jobs.find((entry) => entry.id === started.id);
+      if (job !== undefined && job.state !== 'running') {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(job?.state, 'failed');
+    assert.equal(job?.note, 'Claude could not start a session with claude-opus-4-5. Nothing was sent, and nothing was approved.');
+    assert.equal(job?.detail, raw);
+    assert.deepEqual(built, ['claude']);
+    assert.equal((own.state(key) as PairRecord).agentReviews.length, 0);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

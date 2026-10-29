@@ -75,6 +75,8 @@ export interface ReviewWindowEntry {
   readonly startFolder: string | null;
   /** DSP-132: the main window's agent when it opened this review, else `null`. */
   readonly defaultProvider: 'cursor' | 'claude' | null;
+  /** DSP-152: the opener's model for `defaultProvider`, `''` when none was chosen. */
+  readonly defaultModel: string;
   /** What `initial` answers: the review opened for it, or the chooser's note. */
   initial: ReviewOpenOutcome;
   /** The review on screen, once a definition has opened; `null` while choosing. */
@@ -210,7 +212,7 @@ export class ReviewWindows {
                 return { kind: 'focused', note: `This review is already open in its own window (${this.labelOf(existing)}). It has been brought to the front.` };
               }
             }
-            const entry = this.create({ sessionId, startFolder: input.repository, defaultProvider: input.defaultProvider ?? null, initial: outcome, identity, chooserKey: null });
+            const entry = this.create({ sessionId, startFolder: input.repository, defaultProvider: input.defaultProvider ?? null, defaultModel: input.defaultModel ?? '', initial: outcome, identity, chooserKey: null });
             handedOver = true;
             return {
               kind: 'opened',
@@ -223,6 +225,7 @@ export class ReviewWindows {
               sessionId,
               startFolder: input.repository,
               defaultProvider: input.defaultProvider ?? null,
+              defaultModel: input.defaultModel ?? '',
               initial: outcome,
               identity: null,
               chooserKey: null,
@@ -263,6 +266,7 @@ export class ReviewWindows {
         sessionId: await this.newSession(),
         startFolder: input.repository,
         defaultProvider: input.defaultProvider ?? null,
+        defaultModel: input.defaultModel ?? '',
         initial: { kind: 'none', note, repository: input.repository, ...(problem === null ? {} : { problem }) },
         identity: null,
         chooserKey,
@@ -359,7 +363,7 @@ export class ReviewWindows {
    * repository and two commits. One such window waiting for a choice is enough, so a
    * second press brings it to the front.
    */
-  async openDiff(defaultProvider: 'cursor' | 'claude' | null): Promise<ReviewWindowOutcome> {
+  async openDiff(defaultProvider: 'cursor' | 'claude' | null, defaultModel = ''): Promise<ReviewWindowOutcome> {
     try {
       const waiting = this.list().find((entry) => entry.view === 'diff' && entry.pairKey === null);
       if (waiting !== undefined) {
@@ -370,6 +374,7 @@ export class ReviewWindows {
         sessionId: await this.newSession(),
         startFolder: null,
         defaultProvider,
+        defaultModel,
         initial: { kind: 'none', note: '', repository: null },
         identity: null,
         chooserKey: null,
@@ -440,6 +445,7 @@ export class ReviewWindows {
         sessionId: await this.newSession(),
         startFolder: null,
         defaultProvider: from.defaultProvider,
+        defaultModel: from.defaultModel,
         initial: { kind: 'none', note: '', repository: null },
         identity: null,
         chooserKey: null,
@@ -584,6 +590,7 @@ export class ReviewWindows {
     readonly sessionId: string;
     readonly startFolder: string | null;
     readonly defaultProvider: 'cursor' | 'claude' | null;
+    readonly defaultModel: string;
     readonly initial: ReviewOpenOutcome;
     readonly identity: ReviewIdentity | null;
     readonly chooserKey: string | null;
@@ -612,6 +619,7 @@ export class ReviewWindows {
       sessionId: init.sessionId,
       startFolder: init.startFolder,
       defaultProvider: init.defaultProvider,
+      defaultModel: init.defaultModel,
       initial: init.initial,
       identity: init.identity,
       chooserKey: init.chooserKey,

@@ -41,6 +41,7 @@ import {
   type ProposedWalks,
 } from '../shared/review-agent';
 import {
+  agentChoiceFrom,
   changedLinesOf,
   isPairError,
   lineKey,
@@ -50,6 +51,8 @@ import {
   type LineRange,
   type PairAnswer,
   type PairRecord,
+  type ReviewAgentChoice,
+  type ReviewAgents,
 } from '../shared/review-pair';
 import type { ReviewPairs } from './review-pairs';
 
@@ -165,6 +168,35 @@ export class ReviewAgentJobs {
     }));
   }
 
+  /**
+   * The agents a window can choose from, and the choice it starts from: the one made in
+   * this review (stored with the pair), else the opener's (the chat or loop editor that
+   * opened the window), else none. Nothing here picks a provider or a model of its own,
+   * and nothing is constructed or asked: an unusable choice is shown with its reason.
+   */
+  agents(key: unknown, opener: unknown): PairAnswer<ReviewAgents> {
+    if (typeof key !== 'string') {
+      return { error: 'That review is not open.' };
+    }
+    const record = this.options.pairs.state(key);
+    if (isPairError(record)) {
+      return record;
+    }
+    const options = (['claude', 'cursor'] as const).map((provider) => ({ provider, ...this.options.availability(provider) }));
+    const fromReview = record.agent;
+    const fromOpener = agentChoiceFrom(opener);
+    const chosen: { readonly choice: ReviewAgentChoice; readonly from: 'review' | 'opener' } | null =
+      fromReview !== null ? { choice: fromReview, from: 'review' } : fromOpener !== null ? { choice: fromOpener, from: 'opener' } : null;
+    if (chosen === null) {
+      return { options, current: null };
+    }
+    const availability = this.options.availability(chosen.choice.provider);
+    return {
+      options,
+      current: { ...chosen.choice, from: chosen.from, choosable: availability.choosable, reason: availability.reason },
+    };
+  }
+
   /** Start a job from an explicit request. Refused, with a reason, before anything is written if it cannot run. */
   start(key: unknown, raw: unknown): PairAnswer<AgentJob> {
     if (typeof key !== 'string') {
@@ -230,14 +262,16 @@ export class ReviewAgentJobs {
       startedAt: new Date().toISOString(),
       endedAt: null,
       note: kind === 'walks' ? 'Preparing code walks.' : `Reviewing ${scope?.label ?? 'the delegated part'}.`,
+      detail: '',
       scope,
       result: null,
       definitionPath: null,
       uncovered: [],
     };
     // Written before anything is sent: a job that never reached the disk could not be
-    // reconciled after a restart.
-    const written = this.options.pairs.update(key, (current) => ({ ...current, jobs: [...current.jobs, job] }));
+    // reconciled after a restart. The agent and model it was started with become the
+    // review's choice: the next job starts from them, whatever window opens it.
+    const written = this.options.pairs.update(key, (current) => ({ ...current, agent: { provider, model }, jobs: [...current.jobs, job] }));
     if (isPairError(written)) {
       return written;
     }
@@ -409,7 +443,7 @@ export class ReviewAgentJobs {
     if (outcome.status === 'unconfirmed') {
       this.finish(live, 'unknown', 'The provider reported an end it could not confirm, so the outcome is unknown. Nothing was approved.');
     } else {
-      this.finish(live, 'failed', `The agent did not finish: ${outcome.error ?? 'the provider reported a failure'}. Nothing was approved.`);
+      this.finish(live, 'failed', 'The agent did not finish. Nothing was approved.', { detail: outcome.error ?? 'The provider reported a failure without a reason.' });
     }
     return true;
   }
@@ -422,7 +456,13 @@ export class ReviewAgentJobs {
         return;
       }
       const language = await this.options.language();
-      await this.openSession(live, job.provider, job.model);
+      try {
+        await this.openSession(live, job.provider, job.model);
+      } catch (error) {
+        // No other agent or model is tried: what was chosen is what was asked for.
+        this.finish(live, 'failed', `${providerName(job.provider)} could not start a session with ${job.model}. Nothing was sent, and nothing was approved.`, { detail: describe(error) });
+        return;
+      }
       if (live.cancelRequested) {
         this.finish(live, 'cancelled', 'Stopped before anything was sent.');
         return;
@@ -433,7 +473,7 @@ export class ReviewAgentJobs {
         await this.review(live, job, job.scope, reviewPrompt(material, job.scope, language));
       }
     } catch (error) {
-      this.finish(live, 'failed', `The agent could not be asked: ${describe(error)}. Nothing was approved.`);
+      this.finish(live, 'failed', 'The agent could not be asked. Nothing was approved.', { detail: describe(error) });
     } finally {
       await this.closeSession(live);
     }

@@ -255,7 +255,7 @@ export function registerReviewIpc(
     if (isPairError(matching) || !matching.some((walk) => walk.definitionPath.toLowerCase() === definitionPath.toLowerCase() || walk.definitionPath === definitionPath)) {
       return { ok: false, note: 'That walk is over another repository or other revisions, so it is not about this change.' };
     }
-    const outcome = await windows.open({ repository: null, definitionPath, defaultProvider: entry.defaultProvider });
+    const outcome = await windows.open({ repository: null, definitionPath, defaultProvider: entry.defaultProvider, defaultModel: entry.defaultModel });
     return { ok: outcome.kind !== 'failed', note: outcome.note };
   };
   ipcMain.handle(REVIEW_PAIR_CHANNELS.openWalk, async (event, key: unknown, definitionPath: unknown) => {
@@ -272,9 +272,11 @@ export function registerReviewIpc(
     return chosen === null ? { ok: false, note: '' } : openWalk(entry, pairKey, chosen);
   });
   // DSP-152: agent work over the pair. The host checks the request; a window names only its own pair.
-  ipcMain.handle(REVIEW_PAIR_CHANNELS.agents, async (event) => {
-    entryOf(event);
-    return pairs.call('reviewPair.agents');
+  // The opener's agent and model go with the question: the host answers with the choice
+  // made in this review if there is one, else this one, and never picks one itself.
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.agents, async (event, key: unknown) => {
+    const entry = entryOf(event);
+    return pairs.call('reviewPair.agents', keyOf(entry, key), { provider: entry.defaultProvider, model: entry.defaultModel });
   });
   ipcMain.handle(REVIEW_PAIR_CHANNELS.startJob, async (event, key: unknown, request: unknown) =>
     pairs.call('reviewPair.startJob', keyOf(entryOf(event), key), request),

@@ -213,6 +213,18 @@ export class PresentationResumeBehaviour {
 
   private startSessionCount = 0;
 
+  /** DSP-152: the agent and model each session was opened for, as the adapter got them. */
+  private readonly starts: { readonly provider: string; readonly modelRequested: string }[] = [];
+
+  /** DSP-152: which agent the factory was asked to build each time, in order. */
+  private readonly built: string[] = [];
+
+  /**
+   * DSP-152: when set, every session start is refused with this SIMULATED text, shaped
+   * like a provider's own error, so the window's handling of a start failure can be seen.
+   */
+  startFailure: string | null = null;
+
   /** How `send()` answers; `ok` unless a review factory was told otherwise. */
   readonly sendMode: PresentationSendMode;
 
@@ -266,8 +278,18 @@ export class PresentationResumeBehaviour {
     this.attempts.push({ sessionId, outcome: 'resumed', atUtc: new Date().toISOString() });
   }
 
-  recordStartSession(): void {
+  recordStartSession(config?: Pick<SessionConfig, 'provider' | 'modelRequested'>): void {
     this.startSessionCount += 1;
+    if (config !== undefined) {
+      this.starts.push({ provider: config.provider, modelRequested: config.modelRequested });
+    }
+    if (this.startFailure !== null) {
+      throw Object.assign(new Error(this.startFailure), { name: 'PresentationStartFailed' });
+    }
+  }
+
+  recordBuilt(provider: string): void {
+    this.built.push(provider);
   }
 
   recordSent(text: string): void {
@@ -281,6 +303,8 @@ export class PresentationResumeBehaviour {
     readonly resumeAttempts: readonly PresentationResumeAttempt[];
     readonly startSessionCalls: number;
     readonly sent: readonly string[];
+    readonly starts: readonly { readonly provider: string; readonly modelRequested: string }[];
+    readonly built: readonly string[];
   } {
     return {
       mode: this.mode,
@@ -288,6 +312,8 @@ export class PresentationResumeBehaviour {
       resumeAttempts: [...this.attempts],
       startSessionCalls: this.startSessionCount,
       sent: [...this.sentTexts],
+      starts: [...this.starts],
+      built: [...this.built],
     };
   }
 }
@@ -340,7 +366,11 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
   }
 
   startSession(config: SessionConfig): Promise<SessionHandle> {
-    this.behaviour.recordStartSession();
+    try {
+      this.behaviour.recordStartSession(config);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
     return Promise.resolve(this.open(config));
   }
 
