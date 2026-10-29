@@ -4,7 +4,7 @@ title: Understand and review changes through agent-generated code walks
 status: Review
 assignee: []
 created_date: '2026-10-28 22:32'
-updated_date: '2026-10-29 12:55'
+updated_date: '2026-10-29 19:02'
 labels:
   - review
   - code-walks
@@ -321,4 +321,36 @@ Governing decisions: the plan's deepening actions and writing rules (§2, §4); 
 - UX acceptance: how the button, the panel's width and the reading position feel in use.
 - Linux.
 
+29 Oct 2026: in progress again under Niclas's collected feedback from his first real trial (DSP-150/DSP-152): a full-width file list as the review overview, the diff and the walk window as independent windows (one walk window per review), generate-and-open, the Code walks button, less technical noise, resuming ongoing reviews, code walks versus readings, a readable resizable left column, and wrapping long lines. Note: the trial's failed start was most likely a press on Code walks, not a new start failure. Focus: the file list and the window flow first.
+
+### After Niclas's first real trial (29 Oct 2026): one review flow
+
+Assignment of this date, collected feedback for DSP-150 and DSP-152; the clarifications are recorded in VISION.md section 3.4 ("Clarifications after Niclas's first trial") and the original plan stays verbatim. Correction to the trial record: the failed start in the second trial was most likely a press on *Code walks*, not a new start failure; generation with Claude has since produced walks in his real trial.
+
+**What changed**
+- *Files changed* is the whole diff window: one row per file, the whole row a button, name first and folder after it, change, +/−, *Handled by* (You, the agent by name and model, exempted, with counts when mixed), handled percentage or a check once the requirement is met, and open agent problems and questions beside the check. A file's diff has no sidebar; ↑ at the top right goes back, and the list comes back at its scroll position. Walk coverage and opened files count for nothing there.
+- *Code walks* opens the review's walk window directly, at the walk last opened from the review (`PairRecord.walkDefinition`), else the newest preparation. It is dimmed and focusable with "No code walks yet" on hover and keyboard focus while nothing can be opened. A preparation started in the window opens the walk window once when it succeeds (the job id lives only in the window, so reopening or restarting opens nothing). One walk window per review: `ReviewWindows.openWalkOfPair` reuses it, loading another preparation in place; several preparations are chosen in the walk window's header.
+- Removed from the ordinary flow: the paragraph beside the picker, *Show the walks*, the walk list with its "Prepared by…" notes, *Open a walk file…* (and its channel), the walk window's file chooser over a pair, and every *Details* with job ids, times, reads and tool calls. They stay in the job record; a failure's provider text is on the note's tooltip.
+- Ongoing reviews: the diff window opens on the list of reviews not ended (repository, pair, handled percentage, files done), with *Start a new review* (log with nothing chosen) and *End review* (`PairRecord.endedAt`; approves and deletes nothing; choosing the pair again resumes it). Listing reads records and git only. *All reviews* in a review goes back to the list.
+- Code walks and readings: the preparation prompt has form rules (a walk follows execution from an entry point with a word on each hop and never claims it ran; a reading takes one coherent text change in context; no invented call chains, no touring lines for coverage), asks for `summary`, optional `background` and `attention`, a `kind` per item and an optional `from` per place (checked like any place). Definitions gain an optional `kind` per walk (default `walk`) and `attention`; readings are numbered R1, R2 apart from W1, W2.
+- *Show more* in Niclas's trial changed nothing because the preparation wrote the same text into the summary and the full overview. Now the full overview is the summary plus the background, and the link appears only when there is more.
+- Walk window: the left column has a divider (pointer and arrow keys, width kept as `navigationWidth`); the list is headed Walks, Readings or Walks and readings; each item shows its title, id, a Reading tag and a two-line description; the file tree is folded under *Files* and wraps names. *Wrap lines* in the navigation bar and the code pane, on by default for Markdown: wrapped rows keep their Git line numbers, a wrapping pane takes the whole code width and draws all its rows, and no sideways scroll is carried over. The diff window's long lines now wrap at word boundaries (they broke inside words).
+
+**Design choices (changeable)**
+1. The walk window opens from the diff window that started the preparation; if that window was closed meanwhile, the walks wait behind *Code walks*.
+2. Resuming restores the diff position, marks and explanations at once, and the walks at their own position through *Code walks*; a walk window is not reopened by itself after a restart.
+3. Every pair record not ended is an ongoing review, including those opened before this change.
+4. Wrapping is chosen separately for Markdown and for code, per walk window.
+
+**Verified** (SIMULATED presentation agent, isolated user data, real profile untouched, no Cursor, no live provider):
+- Tests: `review-pairs` (ongoing listing writes nothing; ending keeps marks; reopening resumes; which walk opens; who handled a file and its open findings), `review-model` (walk kinds, attention, wrap defaults, both widths), `review-agent-jobs` (readings and walks, summary apart from background, form rules in the prompt); the review group 154/154; `npm run typecheck`; build.
+- New scenario `review-flow` over `tests/support/flow-fixture.ts` and a `git clone --no-local` of MiniDAWLab-spike01 at b87f042 → 8c7d41b (Niclas's pair; his working copy's HEAD and status unchanged), real clicks, keys, wheel and drags:
+  - `first`: 30 files over the whole width; the long path readable; *Code walks* dimmed with its reason and opening nothing; the wheel scrolled the list to 346 px, a file opened without a sidebar and ↑ returned to 346 px; cart.ts done ("You ✓"), guide.md "You: 1 · exempted: 1 50%", item-02.json "You: 1 · Claude · opus: 2 1 open finding ✓ mixed"; a preparation opened exactly one walk window; no old list, notes, job ids or Details in the diff window; "Walks and readings" with R1 and R2 for the guide's two changes; *Show more* showed the background and *Show less* folded it; the button's code walk reached `checkout` in cart.ts drawn as reached from the call; a step in the walk did not move the diff and opening a file in the diff did not move the walk; a mark in the diff appeared in the walk window's coverage; the left column 340 → 460 by mouse → 420 by key; the tree opened without sideways scroll; MiniDAWLab's one Markdown file wrapped without sideways scroll in both layouts with its marks (64 marked runs, 39 strong lines), a 120-character mouse selection inside a wrapped 639-character line explained with the highlight, the line marked; its preparation gave 11 readings with the pane wrapped by default and *Wrap lines* off and on; *Code walks* in the first review brought its own window forward (two windows, one per review).
+  - `again` (restart): both reviews listed with progress, no walk window opened by itself; MiniDAWLab resumed at its file with the mark and the explanation, its readings opened at their position; the shop review's statuses and finding back, its walks at R2.1 with the left column 420; MiniDAWLab ended and gone from the list; 0 prompts sent.
+- Regression after adapting them to the direct flow: `pair-review`, `code-walks` (both phases), `walk-start` (three phases), `analysis-access` (`first` now expects no reads drawn; `again`), `selection-explain` (both), `diff-marks`: pass.
+
+**Not established**
+- What a real model writes as code walks and readings with the new form rules, summary, background and points to check (AC #3, #12); the simulated agent's text says nothing about that.
+- UX acceptance of the list, the windows, the column widths and wrapping in use: Niclas's.
+- Linux.
 <!-- SECTION:NOTES:END -->

@@ -4,13 +4,16 @@ import type { CSSProperties, JSX, ReactNode } from 'react';
 import { Markdown } from './Markdown';
 import { ReviewDiscussion } from './ReviewDiscussion';
 import { AgentPicker } from './AgentPicker';
-import { attemptLabel, isRunning, JobDetail, JobLine, requestFailure } from './PairReview';
+import { attemptLabel, isRunning, JobLine, JobNote, requestFailure } from './PairReview';
 import { Inline, TokensView, asLocation, capitalise, fileName, rangeText, useFiles, useRows, type Files } from './review-code';
 import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
 import {
   DEFAULT_PREFERENCES,
   EXPLANATION_WIDTH,
+  NAVIGATION_WIDTH,
+  isProsePath,
+  wrapsLines,
   computeCoverage,
   currentHunkDecisions,
   placeKey,
@@ -38,7 +41,7 @@ import {
   type WalkStep,
 } from '../shared/review-model';
 import type { DeepenRequest, DiscussionMessage, DiscussionRequest } from '../shared/review-discussion';
-import { isPairError, type AgentJob, type LineRange, type PairRecord, type ReviewPairBridge } from '../shared/review-pair';
+import { isPairError, type AgentJob, type LineRange, type PairRecord, type PairWalk, type ReviewPairBridge } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
 
 declare global {
@@ -174,6 +177,7 @@ export function ReviewView(): JSX.Element {
   const [outcome, setOutcome] = useState<ReviewOpenOutcome | null>(null);
   const [lang, setLangState] = useState<Lang>(DEFAULT_PREFERENCES.language);
   const [width, setWidthState] = useState<number>(EXPLANATION_WIDTH.initial);
+  const [navWidth, setNavWidthState] = useState<number>(NAVIGATION_WIDTH.initial);
   const [langError, setLangError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -185,6 +189,7 @@ export function ReviewView(): JSX.Element {
       (preferences) => {
         setLangState(preferences.language);
         setWidthState(preferences.explanationWidth ?? EXPLANATION_WIDTH.initial);
+        setNavWidthState(preferences.navigationWidth ?? NAVIGATION_WIDTH.initial);
       },
       (error: unknown) => {
         setLangError(String(error));
@@ -193,16 +198,24 @@ export function ReviewView(): JSX.Element {
     void bridge.initial().then(setOutcome);
   }, [bridge]);
 
-  const setLang = useCallback(
-    (next: Lang) => {
-      setLangState(next);
+  // The preferences are saved whole, in the order the host keeps them.
+  const savePreferences = useCallback(
+    (next: { readonly language: Lang; readonly explanationWidth: number; readonly navigationWidth: number }) => {
       if (bridge !== undefined) {
-        void bridge.setPreferences({ language: next, explanationWidth: width }).then((result) => {
+        void bridge.setPreferences(next).then((result) => {
           setLangError(result.saved ? null : (result.error ?? 'not saved'));
         });
       }
     },
-    [bridge, width],
+    [bridge],
+  );
+
+  const setLang = useCallback(
+    (next: Lang) => {
+      setLangState(next);
+      savePreferences({ language: next, explanationWidth: width, navigationWidth: navWidth });
+    },
+    [savePreferences, width, navWidth],
   );
 
   // DSP-152: the explanation column's width, as the reviewer left it.
@@ -210,11 +223,19 @@ export function ReviewView(): JSX.Element {
     (next: number) => {
       const clamped = Math.round(Math.min(EXPLANATION_WIDTH.max, Math.max(EXPLANATION_WIDTH.min, next)));
       setWidthState(clamped);
-      if (bridge !== undefined) {
-        void bridge.setPreferences({ language: lang, explanationWidth: clamped });
-      }
+      savePreferences({ language: lang, explanationWidth: clamped, navigationWidth: navWidth });
     },
-    [bridge, lang],
+    [savePreferences, lang, navWidth],
+  );
+
+  // The left column's width, as the reviewer left it (Niclas's trial feedback, 29 October 2026).
+  const setNavWidth = useCallback(
+    (next: number) => {
+      const clamped = Math.round(Math.min(NAVIGATION_WIDTH.max, Math.max(NAVIGATION_WIDTH.min, next)));
+      setNavWidthState(clamped);
+      savePreferences({ language: lang, explanationWidth: width, navigationWidth: clamped });
+    },
+    [savePreferences, lang, width],
   );
 
   // What the last choice said when it opened nothing here: dismissed, or already
@@ -327,6 +348,8 @@ export function ReviewView(): JSX.Element {
       langError={langError}
       explanationWidth={width}
       onExplanationWidth={setWidth}
+      navigationWidth={navWidth}
+      onNavigationWidth={setNavWidth}
     />
   );
 }
@@ -340,6 +363,8 @@ function OpenReview({
   langError,
   explanationWidth,
   onExplanationWidth,
+  navigationWidth,
+  onNavigationWidth,
 }: {
   readonly bundle: ReviewBundle;
   readonly bridge: ReviewBridge | undefined;
@@ -349,6 +374,8 @@ function OpenReview({
   readonly langError: string | null;
   readonly explanationWidth: number;
   readonly onExplanationWidth: (width: number) => void;
+  readonly navigationWidth: number;
+  readonly onNavigationWidth: (width: number) => void;
 }): JSX.Element {
   const words = WORDS[lang];
   const [state, setState] = useState<ReviewState>(bundle.state);
@@ -506,6 +533,46 @@ function OpenReview({
   useEffect(() => {
     setLiveWidth(explanationWidth);
   }, [explanationWidth]);
+  const [liveNavWidth, setLiveNavWidth] = useState(navigationWidth);
+  useEffect(() => {
+    setLiveNavWidth(navigationWidth);
+  }, [navigationWidth]);
+
+  /*
+   * The other walk definitions over this review's pair (several preparations): chosen here,
+   * and opened in this same window, which is the review's one walk window.
+   */
+  const [pairWalks, setPairWalks] = useState<readonly PairWalk[]>([]);
+  useEffect(() => {
+    if (pairBridge === undefined || pair === null) {
+      return;
+    }
+    let live = true;
+    void pairBridge
+      .walks(pair.key)
+      .catch(() => [])
+      .then((answer) => {
+        if (live) {
+          setPairWalks(isPairError(answer) ? [] : answer);
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [pairBridge, pair?.key]);
+
+  // Long lines wrap within the code panes: Markdown by default, code when asked for.
+  const wrapProse = state.ui.wrap?.markdown ?? true;
+  const wrapCode = state.ui.wrap?.code ?? false;
+  const setWrap = useCallback(
+    (path: string, on: boolean) => {
+      update((value) => {
+        const current = value.ui.wrap ?? { markdown: true, code: false };
+        return { ...value, ui: { ...value.ui, wrap: isProsePath(path) ? { ...current, markdown: on } : { ...current, code: on } } };
+      });
+    },
+    [update],
+  );
 
   const coverage = useMemo(() => computeCoverage(bundle.definition, bundle.files, shownState), [bundle, shownState]);
   const coverageByHunk = useMemo(() => new Map(coverage.hunks.map((entry) => [entry.hunk.id, entry])), [coverage]);
@@ -830,6 +897,9 @@ function OpenReview({
   // The divider between the code and the explanation: dragged, or moved with the arrow keys.
   const drag = useRef<{ readonly x: number; readonly width: number } | null>(null);
   const clampWidth = (value: number): number => Math.round(Math.min(EXPLANATION_WIDTH.max, Math.max(EXPLANATION_WIDTH.min, value)));
+  const navDrag = useRef<{ readonly x: number; readonly width: number } | null>(null);
+  const clampNav = (value: number): number => Math.round(Math.min(NAVIGATION_WIDTH.max, Math.max(NAVIGATION_WIDTH.min, value)));
+  const walkKinds = { walks: bundle.definition.walks.filter((walk) => walk.kind === 'walk').length, readings: bundle.definition.walks.filter((walk) => walk.kind === 'reading').length };
 
   return (
     <div className="rv">
@@ -843,7 +913,13 @@ function OpenReview({
         save={save}
         saving={saving}
         coverage={coverage}
-        onChoose={onChoose}
+        onChoose={pair === null ? onChoose : null}
+        pairWalks={pairWalks}
+        onOpenWalk={(definitionPath) => {
+          if (pair !== null && pairBridge !== undefined) {
+            void pairBridge.openWalk(pair.key, definitionPath).then((answer) => setDiffNote(answer.ok ? '' : answer.note));
+          }
+        }}
       />
       {noticeOpen && bundle.stateNotice !== null && (
         <div className="rv-notice" role="status">
@@ -859,7 +935,7 @@ function OpenReview({
       )}
       <div
         className={tab === 'coverage' || tab === 'notes' ? 'rv-body rv-body-wide' : 'rv-body'}
-        style={{ '--rv-right-width': `${String(liveWidth)}px` } as CSSProperties}
+        style={{ '--rv-right-width': `${String(liveWidth)}px`, '--rv-left-width': `${String(liveNavWidth)}px` } as CSSProperties}
       >
         <nav className="rv-left">
           <div className="rv-tabs" role="tablist">
@@ -880,10 +956,18 @@ function OpenReview({
             {tab === 'walks' && (
               <div className="rv-walks-tab">
                 {(pick(bundle.definition.overview, lang) !== '' || pick(bundle.definition.overviewSummary, lang) !== '') && (
-                  <Collapsible title={words.overviewTitle} defaultOpen={state.shownSteps[bundle.definition.walks[0]?.steps[0]?.id ?? ''] === undefined}>
-                    <Overview summary={pick(bundle.definition.overviewSummary, lang)} full={pick(bundle.definition.overview, lang)} words={words} />
+                  <Collapsible title={words.overviewTitle} defaultOpen={state.shownSteps[bundle.definition.walks[0]?.steps[0]?.id ?? ''] === undefined} ev="walk-about">
+                    <Overview
+                      summary={pick(bundle.definition.overviewSummary, lang)}
+                      full={pick(bundle.definition.overview, lang)}
+                      attention={pick(bundle.definition.attention, lang)}
+                      words={words}
+                    />
                   </Collapsible>
                 )}
+                <h2 className="rv-walks-heading" data-ev="walks-heading">
+                  {words.walksHeading(walkKinds.walks, walkKinds.readings)}
+                </h2>
                 <WalkList
                   bundle={bundle}
                   state={state}
@@ -895,6 +979,7 @@ function OpenReview({
                   }}
                   onToggle={toggleWalk}
                 />
+                <Collapsible title={words.tree.title} defaultOpen={false} ev="walk-files">
                 <FileTree
                   paths={treePaths}
                   changed={changedFiles}
@@ -911,6 +996,7 @@ function OpenReview({
                     }
                   }}
                 />
+                </Collapsible>
               </div>
             )}
             {tab === 'coverage' && <CoverageTable coverage={coverage} words={words} onOpen={(hunk) => goAway(hunkLocation(hunk))} />}
@@ -920,6 +1006,40 @@ function OpenReview({
             {tab === 'search' && bridge !== undefined && <Browse bridge={bridge} words={words} onOpen={goAway} />}
           </div>
         </nav>
+
+        <div
+          className="rv-divider"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={words.navigationWidth}
+          aria-valuenow={liveNavWidth}
+          aria-valuemin={NAVIGATION_WIDTH.min}
+          aria-valuemax={NAVIGATION_WIDTH.max}
+          tabIndex={0}
+          data-ev="walk-nav-divider"
+          onPointerDown={(event) => {
+            navDrag.current = { x: event.clientX, width: liveNavWidth };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (navDrag.current !== null) {
+              setLiveNavWidth(clampNav(navDrag.current.width + event.clientX - navDrag.current.x));
+            }
+          }}
+          onPointerUp={(event) => {
+            if (navDrag.current !== null) {
+              const next = clampNav(navDrag.current.width + event.clientX - navDrag.current.x);
+              navDrag.current = null;
+              onNavigationWidth(next);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault();
+              onNavigationWidth(clampNav(liveNavWidth + (event.key === 'ArrowRight' ? 40 : -40)));
+            }
+          }}
+        />
 
         <main className="rv-code">
           {away !== null && current !== null && (
@@ -953,6 +1073,12 @@ function OpenReview({
                 onView={setView}
                 highlightWalk={state.ui.highlightWalk}
                 onHighlightWalk={setHighlightWalk}
+                wrap={place === null ? false : wrapsLines(state.ui, place.focus.path)}
+                onWrap={(on) => {
+                  if (place !== null) {
+                    setWrap(place.focus.path, on);
+                  }
+                }}
                 words={words}
                 lang={lang}
               />
@@ -976,6 +1102,8 @@ function OpenReview({
                 level={level}
                 view={view}
                 highlightWalk={state.ui.highlightWalk}
+                wrapProse={wrapProse}
+                wrapCode={wrapCode}
                 words={words}
                 lang={lang}
                 onOpenLocation={goAway}
@@ -998,6 +1126,8 @@ function OpenReview({
               onScope={setScope}
               highlightWalk={state.ui.highlightWalk}
               onHighlightWalk={current === null ? null : setHighlightWalk}
+              wrap={wrapsLines(state.ui, focus.path)}
+              onWrap={(on) => setWrap(focus.path, on)}
               selection={selection}
               onSelect={setSelection}
               problem={placeProblem}
@@ -1168,7 +1298,7 @@ function OpenReview({
                   </button>
                 </section>
               )}
-              <Collapsible title={words.reviewSection} defaultOpen={false}>
+              <Collapsible title={words.reviewSection} defaultOpen={false} ev="walk-review-section">
                 {current !== null && away === null && (
                   <div className="rv-walked">
                     <button type="button" onClick={() => toggleWalked(current.step.id)}>
@@ -1206,22 +1336,40 @@ function OpenReview({
   );
 }
 
-/** A few sentences first; the whole account, with what lies outside the walks, in their place on request. */
-function Overview({ summary, full, words }: { readonly summary: string; readonly full: string; readonly words: ReviewWords }): JSX.Element {
+/**
+ * A few sentences first, with what is worth checking right under them; the background
+ * opens on request. *Show more* is offered only when there is more to show: in Niclas's
+ * trial a generated walk's summary and full text were the same text, so pressing it
+ * changed nothing (the preparation wrote one overview into both fields).
+ */
+function Overview({
+  summary,
+  full,
+  attention,
+  words,
+}: {
+  readonly summary: string;
+  readonly full: string;
+  readonly attention: string;
+  readonly words: ReviewWords;
+}): JSX.Element {
   const [more, setMore] = useState(false);
-  if (summary === '' || full === '') {
-    return (
-      <div className="rv-explanation rv-overview">
-        <Markdown text={summary === '' ? full : summary} />
-      </div>
-    );
-  }
+  const first = summary === '' ? full : summary;
+  const extra = summary !== '' && full.trim() !== '' && full.trim() !== summary.trim();
   return (
-    <div className="rv-explanation rv-overview">
-      <Markdown text={more ? full : summary} />
-      <button type="button" className="rv-link rv-more-link" aria-expanded={more} onClick={() => setMore(!more)}>
-        {more ? words.showLess : words.showMore}
-      </button>
+    <div className="rv-explanation rv-overview" data-ev="walk-overview">
+      <Markdown text={more && extra ? full : first} />
+      {attention.trim() !== '' && (
+        <div className="rv-attention" data-ev="walk-attention">
+          <div className="rv-attention-title">{words.attentionTitle}</div>
+          <Markdown text={attention} />
+        </div>
+      )}
+      {extra && (
+        <button type="button" className="rv-link rv-more-link" data-ev="walk-overview-more" aria-expanded={more} onClick={() => setMore(!more)}>
+          {more ? words.showLess : words.showMore}
+        </button>
+      )}
     </div>
   );
 }
@@ -1230,15 +1378,17 @@ function Collapsible({
   title,
   defaultOpen,
   children,
+  ev,
 }: {
   readonly title: string;
   readonly defaultOpen: boolean;
   readonly children: ReactNode;
+  readonly ev?: string;
 }): JSX.Element {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <section className="rv-collapsible">
-      <button type="button" className="rv-collapsible-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button type="button" className="rv-collapsible-head" aria-expanded={open} {...(ev === undefined ? {} : { 'data-ev': ev })} onClick={() => setOpen(!open)}>
         <span className="rv-chevron">{open ? '▾' : '▸'}</span> {title}
       </button>
       {open && <div className="rv-collapsible-body">{children}</div>}
@@ -1259,6 +1409,8 @@ function Header({
   saving,
   coverage,
   onChoose,
+  pairWalks,
+  onOpenWalk,
 }: {
   readonly bundle: ReviewBundle;
   readonly history: number;
@@ -1269,7 +1421,11 @@ function Header({
   readonly save: { at: string; error?: string } | null;
   readonly saving: boolean;
   readonly coverage: CoverageSummary;
-  readonly onChoose: () => void;
+  /** The file chooser, for a walk window not tied to a review's pair; `null` over a pair. */
+  readonly onChoose: (() => void) | null;
+  /** The walk definitions over the same pair, when there are several to choose between. */
+  readonly pairWalks: readonly PairWalk[];
+  readonly onOpenWalk: (definitionPath: string) => void;
 }): JSX.Element {
   const [details, setDetails] = useState(false);
   const references = bundle.definition.walks.flatMap((walk) => walk.steps.flatMap((step) => step.refs));
@@ -1288,6 +1444,22 @@ function Header({
         </span>
       </div>
       <div className="rv-header-side">
+        {pairWalks.length > 1 && (
+          <label className="rv-lang">
+            {words.preparedWalks}{' '}
+            <select
+              data-ev="walk-definition"
+              value={pairWalks.find((walk) => walk.definitionPath.toLowerCase() === bundle.definitionPath.toLowerCase())?.definitionPath ?? ''}
+              onChange={(event) => onOpenWalk(event.target.value)}
+            >
+              {pairWalks.map((walk) => (
+                <option key={walk.definitionPath} value={walk.definitionPath}>
+                  {walk.note === '' ? walk.title : `${walk.title} · ${walk.note}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {coverage.openFindings > 0 && <span className="rv-findings">{words.openFindings(coverage.openFindings)}</span>}
         <span className={save?.error !== undefined ? 'rv-error rv-save' : 'rv-sub rv-save'} role="status">
           {save?.error !== undefined ? words.notSaved(save.error) : saving ? words.saving : save === null ? '' : words.saved}
@@ -1360,9 +1532,11 @@ function Header({
               </ul>
             </>
           )}
-          <button type="button" onClick={onChoose}>
-            {words.openAnother}
-          </button>
+          {onChoose !== null && (
+            <button type="button" onClick={onChoose}>
+              {words.openAnother}
+            </button>
+          )}
         </div>
       )}
     </header>
@@ -1395,15 +1569,19 @@ function WalkList({
         const containsCurrent = walk.steps.some((step) => step.id === state.position.stepId);
         return (
           <section key={walk.id} className={containsCurrent ? 'rv-walk rv-walk-current' : 'rv-walk'}>
-            <button type="button" className="rv-walk-head" aria-expanded={isOpen} onClick={() => onToggle(walk.id)}>
+            <button type="button" className="rv-walk-head" aria-expanded={isOpen} data-ev={`walk-head-${walk.id}`} onClick={() => onToggle(walk.id)}>
               <span className="rv-chevron">{isOpen ? '▾' : '▸'}</span>
               <span className="rv-walk-name">
-                <span className="rv-step-id">{walk.id}</span> <Inline text={pick(walk.title, lang)} />
+                <Inline text={pick(walk.title, lang)} />
               </span>
-              <span className="rv-sub rv-walk-count">{words.walkProgress(opened, walk.steps.length)}</span>
+              <span className="rv-walk-meta">
+                <span className="rv-step-id">{walk.id}</span>
+                {walk.kind === 'reading' && <span className="rv-kind-tag">{words.readingTag}</span>}
+                <span className="rv-sub rv-walk-count">{words.walkProgress(opened, walk.steps.length)}</span>
+              </span>
             </button>
-            {isOpen && pick(walk.purpose, lang) !== '' && (
-              <p className="rv-walk-purpose">
+            {pick(walk.purpose, lang) !== '' && (
+              <p className={isOpen ? 'rv-walk-purpose' : 'rv-walk-purpose rv-walk-purpose-short'} title={pick(walk.purpose, lang).replace(/`/g, '')}>
                 <Inline text={pick(walk.purpose, lang)} />
               </p>
             )}
@@ -1863,10 +2041,9 @@ function StepCodeQuestion({
             </>
           ) : (
             <p>
-              <span className="rv-agent-attempt">{attemptLabel(job)}</span> {job.note}
+              <span className="rv-agent-attempt">{attemptLabel(job)}</span> <JobNote job={job} />
             </p>
           )}
-          <JobDetail job={job} />
         </details>
       ))}
       {running !== undefined && <JobLine job={running} onStop={() => void bridge.cancelJob(pairKey, running.id)} />}
@@ -2362,6 +2539,8 @@ function WalkNavBar({
   onView,
   highlightWalk,
   onHighlightWalk,
+  wrap,
+  onWrap,
   words,
   lang,
 }: {
@@ -2380,6 +2559,8 @@ function WalkNavBar({
   readonly onView: (view: CodeView) => void;
   readonly highlightWalk: boolean;
   readonly onHighlightWalk: (on: boolean) => void;
+  readonly wrap: boolean;
+  readonly onWrap: (on: boolean) => void;
   readonly words: ReviewWords;
   readonly lang: Lang;
 }): JSX.Element {
@@ -2428,6 +2609,9 @@ function WalkNavBar({
         <label className="rv-check rv-walk-toggle">
           <input type="checkbox" checked={highlightWalk} onChange={(event) => onHighlightWalk(event.target.checked)} /> {words.view.highlightWalk}
         </label>
+        <label className="rv-check rv-walk-toggle" title={words.wrapLinesTitle}>
+          <input type="checkbox" data-ev="walk-wrap" checked={wrap} onChange={(event) => onWrap(event.target.checked)} /> {words.wrapLines}
+        </label>
       </div>
     </div>
   );
@@ -2447,6 +2631,8 @@ function CodePane({
   onScope,
   highlightWalk,
   onHighlightWalk,
+  wrap,
+  onWrap,
   selection,
   onSelect,
   problem,
@@ -2463,6 +2649,8 @@ function CodePane({
   readonly onScope: (scope: CodeScope) => void;
   readonly highlightWalk: boolean;
   readonly onHighlightWalk: ((on: boolean) => void) | null;
+  readonly wrap: boolean;
+  readonly onWrap: (on: boolean) => void;
   readonly selection: CodeLocation | null;
   readonly onSelect: (location: CodeLocation | null) => void;
   readonly problem: string | null;
@@ -2579,7 +2767,11 @@ function CodePane({
     const target =
       container.current?.querySelector('[data-focus-change="1"]') ?? container.current?.querySelector('[data-focus="1"]');
     if (target !== null && target !== undefined) {
-      target.scrollIntoView({ block: 'center' });
+      // A new place starts at the left edge: no sideways scroll is carried over from another.
+      if (container.current !== null) {
+        container.current.scrollLeft = 0;
+      }
+      target.scrollIntoView({ block: 'center', inline: 'nearest' });
       scrolledFor.current = scrollKey;
     }
   });
@@ -2745,6 +2937,9 @@ function CodePane({
             {words.view.highlightWalk}
           </label>
         )}
+        <label className="rv-check rv-walk-toggle" title={words.wrapLinesTitle}>
+          <input type="checkbox" data-ev="code-wrap" checked={wrap} onChange={(event) => onWrap(event.target.checked)} /> {words.wrapLines}
+        </label>
       </div>
       {problem !== null && <div className="rv-error rv-problem">{words.view.invalidReference(problem)}</div>}
       <div className="rv-legend-bar" aria-hidden="true">
@@ -2759,7 +2954,7 @@ function CodePane({
         )}
         {highlightWalk && <span className="rv-key rv-walk-mark">{words.view.legendWalk}</span>}
       </div>
-      <div className="rv-lines" ref={container}>
+      <div className={wrap ? 'rv-lines rv-lines-wrap' : 'rv-lines'} ref={container}>
         {content === null && <div className="rv-empty">{words.view.reading}</div>}
         {content !== null && content.error !== null && (
           <div className="rv-error">

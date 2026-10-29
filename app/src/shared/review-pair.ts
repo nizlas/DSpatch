@@ -629,6 +629,16 @@ export interface PairRecord {
   /** The agent and model last chosen in this review for its agent work, or `null`. */
   readonly agent: ReviewAgentChoice | null;
   readonly position: PairPosition;
+  /**
+   * The walk definition last opened from this review, so *Code walks* opens it again at
+   * the position its own record keeps. `null` until one is opened.
+   */
+  readonly walkDefinition: string | null;
+  /**
+   * When the person ended this review: it leaves the list of ongoing reviews. Ending
+   * approves nothing and deletes nothing; opening the pair again makes it ongoing again.
+   */
+  readonly endedAt: string | null;
   readonly savedAt: string;
 }
 
@@ -642,6 +652,8 @@ export function emptyRecord(pair: RevisionPairIdentity): PairRecord {
     jobs: [],
     agent: null,
     position: START_POSITION,
+    walkDefinition: null,
+    endedAt: null,
     savedAt: new Date(0).toISOString(),
   };
 }
@@ -954,6 +966,8 @@ export function adoptPairRecord(raw: unknown, pair: RevisionPairIdentity): PairR
     marks,
     agentReviews,
     position: positionFrom(raw['position']),
+    walkDefinition: typeof raw['walkDefinition'] === 'string' && raw['walkDefinition'] !== '' ? raw['walkDefinition'] : null,
+    endedAt: typeof raw['endedAt'] === 'string' && raw['endedAt'] !== '' ? raw['endedAt'] : null,
     savedAt: typeof raw['savedAt'] === 'string' ? raw['savedAt'] : empty.savedAt,
   };
 }
@@ -1073,6 +1087,72 @@ export function fileProgressOf(file: PairFile, record: PairRecord): FileProgress
     done: total === 0 ? wholeFile !== null : handled === total,
     wholeFile,
   };
+}
+
+/**
+ * What the file list says about a file beside its progress: who reviewed it and what is
+ * still open there. A finished file keeps showing both; the checkbox never hides them.
+ */
+export interface FileReviewFacts {
+  /** The agents whose recorded review counts for lines of this file, by name and model. */
+  readonly agents: readonly string[];
+  /** Problems and questions an agent reported at this file. */
+  readonly findings: number;
+}
+
+export function fileReviewFactsOf(file: PairFile, record: PairRecord): FileReviewFacts {
+  const agents = new Set<string>();
+  for (const status of lineStatusesOf(file, record).values()) {
+    if (status.decision === null && isHandled(status, record.requirement)) {
+      for (const review of status.agent) {
+        if (record.requirement === 'manual-or-agent' || review.jobId !== undefined) {
+          agents.add(review.reviewer === '' ? 'Agent' : review.reviewer);
+        }
+      }
+    }
+  }
+  let findings = 0;
+  for (const job of record.jobs) {
+    if (job.kind !== 'review' || job.state !== 'done' || job.result === null) {
+      continue;
+    }
+    for (const finding of job.result.findings) {
+      const at = finding.location;
+      if (finding.severity !== 'note' && at !== null && at.path === (at.side === 'base' ? file.oldPath : file.newPath)) {
+        findings += 1;
+      }
+    }
+  }
+  return { agents: [...agents], findings };
+}
+
+/** A review that has not been ended, as the way into review lists it. */
+export interface OngoingReview {
+  readonly key: string;
+  readonly pair: RevisionPairIdentity;
+  readonly repositoryName: string;
+  readonly base: Pick<LogCommit, 'hash' | 'subject'>;
+  readonly target: Pick<LogCommit, 'hash' | 'subject'>;
+  readonly files: number;
+  readonly filesDone: number;
+  /** Changed lines in all, and how many of them are handled under the review's requirement. */
+  readonly total: number;
+  readonly handled: number;
+  readonly savedAt: string;
+}
+
+/** How far a review has come, over all its files. */
+export function reviewTotalsOf(files: readonly PairFile[], record: PairRecord): Pick<OngoingReview, 'files' | 'filesDone' | 'total' | 'handled'> {
+  let total = 0;
+  let handled = 0;
+  let filesDone = 0;
+  for (const file of files) {
+    const progress = fileProgressOf(file, record);
+    total += progress.total;
+    handled += progress.handled;
+    filesDone += progress.done ? 1 : 0;
+  }
+  return { files: files.length, filesDone, total, handled };
 }
 
 /** Collapse a set of changed lines into contiguous ranges per side and path. */
@@ -1290,7 +1370,9 @@ export const REVIEW_PAIR_CHANNELS = {
   savePosition: 'dspatch:review-pair-save-position',
   walks: 'dspatch:review-pair-walks',
   openWalk: 'dspatch:review-pair-open-walk',
-  chooseWalk: 'dspatch:review-pair-choose-walk',
+  openWalks: 'dspatch:review-pair-open-walks',
+  ongoing: 'dspatch:review-pair-ongoing',
+  end: 'dspatch:review-pair-end',
   showInDiff: 'dspatch:review-pair-show-in-diff',
   agents: 'dspatch:review-pair-agents',
   startJob: 'dspatch:review-pair-start-job',
@@ -1326,8 +1408,17 @@ export interface ReviewPairBridge {
   setRequirement(key: string, requirement: ReviewRequirement): Promise<PairAnswer<PairRecord>>;
   savePosition(key: string, position: PairPosition): Promise<PairAnswer<{ readonly saved: true }>>;
   walks(key: string): Promise<PairAnswer<readonly PairWalk[]>>;
+  /**
+   * Open one walk definition over the pair in the review's walk window: the open one is
+   * reused (one walk window per review), else one is made. Its record keeps its position.
+   */
   openWalk(key: string, definitionPath: string): Promise<{ readonly ok: boolean; readonly note: string }>;
-  chooseWalk(key: string): Promise<{ readonly ok: boolean; readonly note: string }>;
+  /** *Code walks*: the walk last opened from this review (else the newest), in its walk window. */
+  openWalks(key: string): Promise<{ readonly ok: boolean; readonly note: string }>;
+  /** The reviews not ended, newest first, for the way into review. Reads; starts nothing. */
+  ongoing(): Promise<readonly OngoingReview[]>;
+  /** End a review: it leaves the ongoing list. Approves nothing and deletes nothing. */
+  end(pair: RevisionPairIdentity): Promise<PairAnswer<{ readonly ended: true }>>;
   showInDiff(location: DiffLocation): Promise<{ readonly ok: boolean; readonly note: string }>;
   /** DSP-152: the agents that can prepare walks or review a delegated part here. */
   agents(key: string): Promise<PairAnswer<ReviewAgents>>;

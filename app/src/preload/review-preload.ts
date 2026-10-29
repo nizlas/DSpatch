@@ -92,7 +92,9 @@ const pairBridge: ReviewPairBridge = {
   walks: (key) => ipcRenderer.invoke('dspatch:review-pair-walks', key) as ReturnType<ReviewPairBridge['walks']>,
   openWalk: (key, definitionPath) =>
     ipcRenderer.invoke('dspatch:review-pair-open-walk', key, definitionPath) as ReturnType<ReviewPairBridge['openWalk']>,
-  chooseWalk: (key) => ipcRenderer.invoke('dspatch:review-pair-choose-walk', key) as ReturnType<ReviewPairBridge['chooseWalk']>,
+  openWalks: (key) => ipcRenderer.invoke('dspatch:review-pair-open-walks', key) as ReturnType<ReviewPairBridge['openWalks']>,
+  ongoing: () => ipcRenderer.invoke('dspatch:review-pair-ongoing') as ReturnType<ReviewPairBridge['ongoing']>,
+  end: (pair) => ipcRenderer.invoke('dspatch:review-pair-end', pair) as ReturnType<ReviewPairBridge['end']>,
   showInDiff: (location) =>
     ipcRenderer.invoke('dspatch:review-pair-show-in-diff', location) as ReturnType<ReviewPairBridge['showInDiff']>,
   agents: (key) => ipcRenderer.invoke('dspatch:review-pair-agents', key) as ReturnType<ReviewPairBridge['agents']>,

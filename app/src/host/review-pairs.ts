@@ -29,11 +29,13 @@ import {
   LOG_FORMAT_ARGS,
   pairFilesFrom,
   parseLog,
+  reviewTotalsOf,
   scopeFrom,
   type LineRange,
   type LineSide,
   type LogCommit,
   type MarkScope,
+  type OngoingReview,
   type OpenPair,
   type PairAnswer,
   type PairWalk,
@@ -298,10 +300,25 @@ export class ReviewPairs {
       return { error: 'From and To are the same commit, so there is no change to review.' };
     }
     const pair: RevisionPairIdentity = { repository, base: value['base'], target: value['target'] };
+    const opened = await this.load(pair);
+    if (isPairError(opened)) {
+      return opened;
+    }
+    this.rememberLastPair(pair);
+    // Opening an ended review makes it ongoing again; nothing else about it changes.
+    if (opened.record.endedAt !== null) {
+      const resumed = this.write(opened.key, { ...opened.record, endedAt: null }, false);
+      return isPairError(resumed) ? opened : { ...opened, record: resumed };
+    }
+    return opened;
+  }
+
+  /** The pair's files and record, read once per pair; remembers nothing. */
+  private async load(pair: RevisionPairIdentity): Promise<PairAnswer<OpenPair>> {
+    const repository = pair.repository;
     const key = pairKeyOf(pair);
     const already = this.open.get(key);
     if (already !== undefined) {
-      this.rememberLastPair(pair);
       return { ...already, record: this.readRecord(key, pair) };
     }
     try {
@@ -321,7 +338,6 @@ export class ReviewPairs {
         record: this.readRecord(key, pair),
       };
       this.open.set(key, opened);
-      this.rememberLastPair(pair);
       return opened;
     } catch (error) {
       return { error: `The change could not be read: ${error instanceof Error ? error.message : String(error)}` };
@@ -404,6 +420,108 @@ export class ReviewPairs {
     const adopted = adoptPairRecord({ ...record, position }, opened.pair).position as PairPosition;
     const written = this.write(opened.key, { ...record, position: adopted }, false);
     return isPairError(written) ? written : { saved: true };
+  }
+
+  /**
+   * The reviews that have not been ended, newest first: every pair record on disk whose
+   * repository still exists. The repositories are read from the host's own records, which
+   * is why they may be admitted here. Reading starts nothing and remembers nothing.
+   */
+  async ongoing(): Promise<readonly OngoingReview[]> {
+    let names: string[];
+    try {
+      names = fs.readdirSync(this.options.recordsDir).filter((name) => /^[0-9a-f]{24}\.json$/.test(name));
+    } catch {
+      return [];
+    }
+    const out: OngoingReview[] = [];
+    for (const name of names) {
+      const pair = this.storedPairOf(name);
+      if (pair === null || !fs.existsSync(pair.repository)) {
+        continue;
+      }
+      const record = this.readRecord(pairKeyOf(pair), pair);
+      if (record.endedAt !== null) {
+        continue;
+      }
+      this.admit(pair.repository);
+      const opened = await this.load(pair);
+      if (isPairError(opened)) {
+        continue;
+      }
+      out.push({
+        key: opened.key,
+        pair,
+        repositoryName: opened.repositoryName,
+        base: { hash: opened.base.hash, subject: opened.base.subject },
+        target: { hash: opened.target.hash, subject: opened.target.subject },
+        ...reviewTotalsOf(opened.files, record),
+        savedAt: record.savedAt,
+      });
+    }
+    return out.sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+  }
+
+  /** End a review: it leaves the ongoing list. Its marks, jobs and walks stay as they are. */
+  end(raw: unknown): PairAnswer<{ readonly ended: true }> {
+    const value = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+    if (typeof value['repository'] !== 'string' || !isFullHash(value['base']) || !isFullHash(value['target'])) {
+      return { error: 'No review was named.' };
+    }
+    const pair: RevisionPairIdentity = { repository: value['repository'], base: value['base'], target: value['target'] };
+    const key = pairKeyOf(pair);
+    const stored = this.storedPairOf(`${key}.json`);
+    if (stored === null) {
+      return { error: 'That review is not known.' };
+    }
+    const record = this.readRecord(key, stored);
+    const written = this.write(key, { ...record, endedAt: new Date().toISOString() }, true);
+    return isPairError(written) ? written : { ended: true };
+  }
+
+  /** The walk definition just opened from this review, for the next *Code walks*. */
+  walkOpened(key: unknown, definitionPath: unknown): void {
+    const opened = this.openOf(key);
+    if (opened === null || typeof definitionPath !== 'string') {
+      return;
+    }
+    const record = this.readRecord(opened.key, opened.pair);
+    if (record.walkDefinition !== definitionPath) {
+      this.write(opened.key, { ...record, walkDefinition: definitionPath }, false);
+    }
+  }
+
+  /**
+   * Which walk *Code walks* opens, among the walks over the pair: the one last opened
+   * from this review, else the first offered (the newest prepared one comes first).
+   */
+  walkToOpen(key: unknown, walks: readonly PairWalk[]): string | null {
+    const opened = this.openOf(key);
+    if (opened === null || walks.length === 0) {
+      return null;
+    }
+    const last = this.readRecord(opened.key, opened.pair).walkDefinition;
+    const again = last === null ? undefined : walks.find((walk) => folderIdentity(walk.definitionPath) === folderIdentity(last));
+    return (again ?? walks[0])?.definitionPath ?? null;
+  }
+
+  /** The pair a stored record names, when the file is that pair's record. */
+  private storedPairOf(name: string): RevisionPairIdentity | null {
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.join(this.options.recordsDir, name), 'utf8')) as Record<string, unknown>;
+      const stored = raw['pair'];
+      if (typeof stored !== 'object' || stored === null) {
+        return null;
+      }
+      const value = stored as Record<string, unknown>;
+      if (typeof value['repository'] !== 'string' || !isFullHash(value['base']) || !isFullHash(value['target'])) {
+        return null;
+      }
+      const pair: RevisionPairIdentity = { repository: value['repository'], base: value['base'], target: value['target'] };
+      return `${pairKeyOf(pair)}.json` === name ? pair : null;
+    } catch {
+      return null;
+    }
   }
 
   /** The pair last opened for a repository, so the log can offer it again. */

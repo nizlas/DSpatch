@@ -139,8 +139,17 @@ export interface WalkStep {
   readonly refs: readonly CodeReference[];
 }
 
+/**
+ * The form of a walk (Niclas's trial feedback, 29 October 2026). A `walk` follows an
+ * execution path from a concrete entry point; a `reading` takes one coherent change of
+ * text — documentation, prose — in its context, where following execution means nothing.
+ * A definition without the field has walks only.
+ */
+export type WalkKind = 'walk' | 'reading';
+
 export interface Walk {
   readonly id: string;
+  readonly kind: WalkKind;
   readonly title: LocalText;
   /** What the walk is for. */
   readonly purpose: LocalText;
@@ -163,6 +172,11 @@ export interface ReviewDefinition {
   readonly overview: LocalText;
   /** The same in a few sentences, shown first; the overview opens on request. Empty when not given. */
   readonly overviewSummary: LocalText;
+  /**
+   * What deserves the reviewer's attention across the change — contradictions, open
+   * questions, risks — as a short Markdown list shown with the summary. Empty when not given.
+   */
+  readonly attention: LocalText;
   /** Languages every text is written in. A version 1 file has none: its text is shown as written. */
   readonly languages: readonly Lang[];
   readonly walks: readonly Walk[];
@@ -349,6 +363,7 @@ export function parseReviewDefinition(raw: unknown): {
   const provenance = text(raw, 'provenance', 'file', false);
   const overview = text(raw, 'overview', 'file', false);
   const overviewSummary = text(raw, 'overviewSummary', 'file', false);
+  const attention = text(raw, 'attention', 'file', false);
   const walksRaw = raw['walks'];
   const walks: Walk[] = [];
   const seenIds = new Set<string>();
@@ -388,8 +403,13 @@ export function parseReviewDefinition(raw: unknown): {
           }
         });
       }
+      const kind = walkRaw['kind'];
+      if (kind !== undefined && kind !== 'walk' && kind !== 'reading') {
+        problems.push({ where, problem: '"kind" must be "walk" or "reading" when present.' });
+      }
       walks.push({
         id,
+        kind: kind === 'reading' ? 'reading' : 'walk',
         title: text(walkRaw, 'title', where),
         purpose: text(walkRaw, 'purpose', where, false),
         question: text(walkRaw, 'question', where),
@@ -408,6 +428,7 @@ export function parseReviewDefinition(raw: unknown): {
       provenance,
       overview,
       overviewSummary,
+      attention,
       languages: v2 ? LANGS : [],
       walks,
     },
@@ -969,6 +990,22 @@ export interface ReviewUi {
   readonly highlightWalk: boolean;
   /** How much code a place shows: the change, its unit (default), or the whole file. */
   readonly level?: CodeLevel;
+  /**
+   * Whether long lines wrap in the code panes, chosen apart for Markdown and for other
+   * files. Absent: Markdown wraps, code does not ({@link wrapsLines}).
+   */
+  readonly wrap?: { readonly markdown: boolean; readonly code: boolean };
+}
+
+/** Markdown and plain prose, where a line is a paragraph rather than a statement. */
+export function isProsePath(path: string): boolean {
+  return /\.(md|markdown|mdx|txt|rst|adoc)$/i.test(path);
+}
+
+/** Whether a file's long lines wrap in the code panes, by the reviewer's choice or the default. */
+export function wrapsLines(ui: Pick<ReviewUi, 'wrap'>, path: string): boolean {
+  const prose = isProsePath(path);
+  return ui.wrap === undefined ? prose : prose ? ui.wrap.markdown : ui.wrap.code;
 }
 
 export type CodeLevel = 'change' | 'unit' | 'file';
@@ -1051,7 +1088,9 @@ function isUi(value: unknown): value is ReviewUi {
     Array.isArray(value['openWalks']) &&
     value['openWalks'].every((entry) => typeof entry === 'string') &&
     typeof value['highlightWalk'] === 'boolean' &&
-    (value['level'] === undefined || value['level'] === 'change' || value['level'] === 'unit' || value['level'] === 'file')
+    (value['level'] === undefined || value['level'] === 'change' || value['level'] === 'unit' || value['level'] === 'file') &&
+    (value['wrap'] === undefined ||
+      (isRecord(value['wrap']) && typeof value['wrap']['markdown'] === 'boolean' && typeof value['wrap']['code'] === 'boolean'))
   );
 }
 
@@ -1540,6 +1579,8 @@ export interface ReviewPreferences {
   readonly language: Lang;
   /** DSP-152: the width of the walk window's explanation column, as the reviewer left it, in pixels. */
   readonly explanationWidth?: number;
+  /** The width of the walk window's left column (walks, About the change, files), in pixels. */
+  readonly navigationWidth?: number;
 }
 
 export const DEFAULT_PREFERENCES: ReviewPreferences = { language: 'en' };
@@ -1547,14 +1588,22 @@ export const DEFAULT_PREFERENCES: ReviewPreferences = { language: 'en' };
 /** The widths the explanation column may be given. */
 export const EXPLANATION_WIDTH = { min: 300, max: 1100, initial: 520 } as const;
 
+/** The widths the left column may be given (Niclas's trial feedback, 29 October 2026). */
+export const NAVIGATION_WIDTH = { min: 220, max: 720, initial: 340 } as const;
+
 export function adoptPreferences(raw: unknown): ReviewPreferences {
   if (!isRecord(raw) || (raw['language'] !== 'sv' && raw['language'] !== 'en')) {
     return DEFAULT_PREFERENCES;
   }
+  const within = (value: unknown, bounds: { readonly min: number; readonly max: number }): value is number =>
+    Number.isInteger(value) && (value as number) >= bounds.min && (value as number) <= bounds.max;
   const width = raw['explanationWidth'];
-  return Number.isInteger(width) && (width as number) >= EXPLANATION_WIDTH.min && (width as number) <= EXPLANATION_WIDTH.max
-    ? { language: raw['language'], explanationWidth: width as number }
-    : { language: raw['language'] };
+  const navigation = raw['navigationWidth'];
+  return {
+    language: raw['language'],
+    ...(within(width, EXPLANATION_WIDTH) ? { explanationWidth: width } : {}),
+    ...(within(navigation, NAVIGATION_WIDTH) ? { navigationWidth: navigation } : {}),
+  };
 }
 
 /** Validate a renderer-supplied revision side and repository path before git sees them. */

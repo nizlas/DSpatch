@@ -170,6 +170,19 @@ export interface ReviewWords {
   readonly overviewTitle: string;
   readonly showMore: string;
   readonly showLess: string;
+  /** The heading right above the walk list, after what it holds (Niclas's trial feedback, 29 October 2026). */
+  readonly walksHeading: (walks: number, readings: number) => string;
+  /** The discreet tag of a reading in the list and the step panel. */
+  readonly readingTag: string;
+  /** What deserves attention across the change, under the summary. */
+  readonly attentionTitle: string;
+  /** Long source lines wrap within the code pane. */
+  readonly wrapLines: string;
+  readonly wrapLinesTitle: string;
+  /** The left column's divider, for screen readers. */
+  readonly navigationWidth: string;
+  /** Choosing among several preparations over the same change. */
+  readonly preparedWalks: string;
   readonly purpose: string;
   readonly status: Record<'added' | 'modified' | 'deleted' | 'type-changed', string>;
   readonly decisions: {
@@ -424,6 +437,13 @@ const sv: ReviewWords = {
   overviewTitle: 'Om ändringen',
   showMore: 'Visa mer',
   showLess: 'Visa mindre',
+  walksHeading: (walks, readings) => (readings === 0 ? 'Walks' : walks === 0 ? 'Läsningar' : 'Walks och läsningar'),
+  readingTag: 'Läsning',
+  attentionTitle: 'Värt att granska',
+  wrapLines: 'Radbryt',
+  wrapLinesTitle: 'Bryt långa rader inom kodpanelen. Radnumren är filens egna.',
+  navigationWidth: 'Vänsterspaltens bredd',
+  preparedWalks: 'Förberedda walks',
   purpose: 'Syfte',
   status: { added: 'ny fil', modified: 'ändrad', deleted: 'borttagen', 'type-changed': 'typ ändrad' },
   decisions: {
@@ -698,6 +718,13 @@ const en: ReviewWords = {
   overviewTitle: 'About the change',
   showMore: 'Show more',
   showLess: 'Show less',
+  walksHeading: (walks, readings) => (readings === 0 ? 'Walks' : walks === 0 ? 'Readings' : 'Walks and readings'),
+  readingTag: 'Reading',
+  attentionTitle: 'Worth checking',
+  wrapLines: 'Wrap lines',
+  wrapLinesTitle: "Wrap long lines within the code pane. The line numbers stay the file's own.",
+  navigationWidth: 'Width of the left column',
+  preparedWalks: 'Prepared walks',
   purpose: 'Purpose',
   status: { added: 'new file', modified: 'changed', deleted: 'deleted', 'type-changed': 'type changed' },
   decisions: {

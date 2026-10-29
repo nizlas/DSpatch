@@ -254,11 +254,14 @@ export function registerReviewIpc(
   );
   const openWalk = async (entry: ReviewWindowEntry, key: string, definitionPath: string): Promise<{ ok: boolean; note: string }> => {
     const matching = (await pairs.call('reviewPair.walks', key, [definitionPath])) as PairAnswer<readonly PairWalk[]>;
-    if (isPairError(matching) || !matching.some((walk) => walk.definitionPath.toLowerCase() === definitionPath.toLowerCase() || walk.definitionPath === definitionPath)) {
+    if (isPairError(matching) || !matching.some((walk) => walk.definitionPath.toLowerCase() === definitionPath.toLowerCase())) {
       return { ok: false, note: 'That walk is over another repository or other revisions, so it is not about this change.' };
     }
-    const outcome = await windows.open({ repository: null, definitionPath, defaultProvider: entry.defaultProvider, defaultModel: entry.defaultModel });
-    return { ok: outcome.kind !== 'failed', note: outcome.note };
+    const outcome = await windows.openWalkOfPair(entry, key, definitionPath);
+    if (outcome.ok) {
+      await pairs.call('reviewPair.walkOpened', key, definitionPath);
+    }
+    return outcome;
   };
   ipcMain.handle(REVIEW_PAIR_CHANNELS.openWalk, async (event, key: unknown, definitionPath: unknown) => {
     const entry = entryOf(event);
@@ -267,11 +270,24 @@ export function registerReviewIpc(
     }
     return openWalk(entry, keyOf(entry, key), definitionPath);
   });
-  ipcMain.handle(REVIEW_PAIR_CHANNELS.chooseWalk, async (event, key: unknown) => {
+  // *Code walks*: straight into the review's walk window, at the walk last opened from it.
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.openWalks, async (event, key: unknown) => {
     const entry = entryOf(event);
     const pairKey = keyOf(entry, key);
-    const chosen = await windows.pickWalkFile(entry);
-    return chosen === null ? { ok: false, note: '' } : openWalk(entry, pairKey, chosen);
+    const chosen = (await pairs.call('reviewPair.walkToOpen', pairKey, openWalkDefinitions())) as PairAnswer<{ readonly definitionPath: string | null }>;
+    if (isPairError(chosen)) {
+      return { ok: false, note: chosen.error };
+    }
+    return chosen.definitionPath === null ? { ok: false, note: 'No code walks yet.' } : openWalk(entry, pairKey, chosen.definitionPath);
+  });
+  // The way into review: reviews not ended, and ending one. Neither starts agent work.
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.ongoing, async (event) => {
+    entryOf(event);
+    return pairs.call('reviewPair.ongoing');
+  });
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.end, async (event, pair: unknown) => {
+    entryOf(event);
+    return pairs.call('reviewPair.end', pair);
   });
   // DSP-152: agent work over the pair. The host checks the request; a window names only its own pair.
   // The opener's agent and model go with the question: the host answers with the choice

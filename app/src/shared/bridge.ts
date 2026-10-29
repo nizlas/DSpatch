@@ -1797,6 +1797,8 @@ export type ScriptedScenario =
   | 'selection-explain'
   /** DSP-150 follow-up: how the diff marks what changed (Gerrit's behaviour), in both layouts, with selection and review marks. SIMULATED provider. */
   | 'diff-marks'
+  /** Niclas's first real trial of the review flow (29 October 2026): file list, walk window, readings, resuming. SIMULATED provider. */
+  | 'review-flow'
   | 'interactive-chat'
   | 'review-and-test'
   /**
@@ -2087,6 +2089,10 @@ export type PairWindowCheckRequest =
   | { readonly action: 'right-click'; readonly id: number; readonly at: TextPoint }
   /** DSP-152: a key with modifiers pressed and released in the focused window, as a shortcut. */
   | { readonly action: 'chord'; readonly id: number; readonly key: string; readonly modifiers: readonly ('control' | 'shift' | 'alt')[] }
+  /** The left button pressed at an element's centre, moved `dx` pixels sideways and released, as a person drags a divider. */
+  | { readonly action: 'pointer-drag'; readonly id: number; readonly selector: string; readonly dx: number }
+  /** The mouse wheel turned over an element's centre; a positive `deltaY` scrolls down. */
+  | { readonly action: 'wheel'; readonly id: number; readonly selector: string; readonly deltaY: number }
   | { readonly action: 'close'; readonly id: number };
 
 /** A character in an element's text, for real mouse input (DSP-152). */

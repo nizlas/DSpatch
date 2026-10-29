@@ -19,7 +19,7 @@ import type { JSX } from 'react';
 import { segmentWords, type AgentJob, type CodeSelection, type ExplainAction, type LineRange } from '../shared/review-pair';
 import { AgentPicker, type AgentChoice } from './AgentPicker';
 import { Markdown } from './Markdown';
-import { attemptLabel, isRunning, JobDetail, JobLine } from './PairReview';
+import { attemptLabel, isRunning, JobLine, JobNote } from './PairReview';
 
 const FOLLOW_UP_WORD: Record<ExplainAction, string> = { more: 'Tell me more', simpler: 'Explain more simply', question: 'Your question' };
 
@@ -46,7 +46,7 @@ function Answer({ job, canShow, onShowRange }: { readonly job: AgentJob; readonl
   if (job.state !== 'done' || job.answer === undefined) {
     return (
       <p>
-        <span className="rv-agent-attempt">{attemptLabel(job)}</span> {job.note}
+        <span className="rv-agent-attempt">{attemptLabel(job)}</span> <JobNote job={job} />
       </p>
     );
   }
@@ -184,7 +184,6 @@ export function ExplainPanel({
                 {job.state !== 'done' && <span className="rv-sub"> · {job.state}</span>}
               </summary>
               <Answer job={job} canShow={canShow} onShowRange={onShowRange} />
-              <JobDetail job={job} />
             </details>
           ))}
           {running !== undefined && <JobLine job={running} onStop={() => onStop(running)} />}

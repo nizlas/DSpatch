@@ -2681,6 +2681,35 @@ async function pointerIn(window: BrowserWindow, contents: Electron.WebContents, 
     await pause(150);
     return { ok: true, detail: { at, seen: (await contents.executeJavaScript('window.__dspatchRightClick')) as unknown } };
   }
+  if (request.action === 'pointer-drag' || request.action === 'wheel') {
+    const centre = (await contents.executeJavaScript(
+      `(() => {
+        const element = document.querySelector(${JSON.stringify(request.selector)});
+        if (!(element instanceof HTMLElement)) { return null; }
+        const box = element.getBoundingClientRect();
+        return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + Math.min(box.height / 2, 200)) };
+      })()`,
+    )) as { x: number; y: number } | null;
+    if (centre === null) {
+      return { ok: false, detail: `nothing matches ${request.selector}` };
+    }
+    if (request.action === 'wheel') {
+      contents.sendInputEvent({ type: 'mouseMove', x: centre.x, y: centre.y });
+      // Chromium's wheel deltas point the other way: a negative delta scrolls the page down.
+      contents.sendInputEvent({ type: 'mouseWheel', x: centre.x, y: centre.y, deltaX: 0, deltaY: -request.deltaY, canScroll: true });
+      await pause(300);
+      return { ok: true, detail: centre };
+    }
+    contents.sendInputEvent({ type: 'mouseMove', x: centre.x, y: centre.y });
+    contents.sendInputEvent({ type: 'mouseDown', x: centre.x, y: centre.y, button: 'left', clickCount: 1 });
+    for (let step = 1; step <= 10; step += 1) {
+      contents.sendInputEvent({ type: 'mouseMove', x: Math.round(centre.x + (request.dx * step) / 10), y: centre.y, button: 'left', modifiers: ['leftbuttondown'] });
+      await pause(20);
+    }
+    contents.sendInputEvent({ type: 'mouseUp', x: centre.x + request.dx, y: centre.y, button: 'left', clickCount: 1 });
+    await pause(200);
+    return { ok: true, detail: { from: centre, dx: request.dx } };
+  }
   if (request.action === 'chord') {
     contents.sendInputEvent({ type: 'keyDown', keyCode: request.key, modifiers: [...request.modifiers] });
     contents.sendInputEvent({ type: 'keyUp', keyCode: request.key, modifiers: [...request.modifiers] });
@@ -2731,7 +2760,7 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
   if (request.action === 'press' || request.action === 'press-key' || request.action === 'type') {
     return pressIn(entry.window, entry.contents, request);
   }
-  if (request.action === 'drag' || request.action === 'right-click' || request.action === 'chord') {
+  if (request.action === 'drag' || request.action === 'right-click' || request.action === 'chord' || request.action === 'pointer-drag' || request.action === 'wheel') {
     return pointerIn(entry.window, entry.contents, request);
   }
   if (request.action === 'capture') {
@@ -2850,6 +2879,44 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
             };
           }),
           jobDetails: [...document.querySelectorAll('.rv-agent-detail')].map((node) => ({ open: node.open, text: (node.textContent || '').replace(/\s+/g, ' ').trim() })),
+          // Niclas's trial feedback (29 October 2026): the walk window's left column, list and code panes.
+          walkView: (() => {
+            const left = document.querySelector('.rv-left');
+            if (!left) { return null; }
+            const text = (node) => ((node && (node.innerText || node.textContent)) || '').replace(/\s+/g, ' ').trim();
+            const activePane = document.querySelector('.rv-pane-active .rv-pane-lines');
+            return {
+              leftWidth: Math.round(left.getBoundingClientRect().width),
+              leftOverflowX: left.scrollWidth > left.clientWidth + 1,
+              heading: text(document.querySelector('[data-ev="walks-heading"]')),
+              items: [...document.querySelectorAll('.rv-walk')].map((walk) => ({
+                id: text(walk.querySelector('.rv-walk-meta .rv-step-id')),
+                title: text(walk.querySelector('.rv-walk-name')),
+                reading: walk.querySelector('.rv-kind-tag') !== null,
+                purpose: text(walk.querySelector('.rv-walk-purpose')),
+                purposeHeight: Math.round((walk.querySelector('.rv-walk-purpose') || { getBoundingClientRect: () => ({ height: 0 }) }).getBoundingClientRect().height),
+                open: (walk.querySelector('.rv-walk-head') || { getAttribute: () => null }).getAttribute('aria-expanded') === 'true',
+                steps: walk.querySelectorAll('.rv-step').length,
+              })),
+              overview: text(document.querySelector('[data-ev="walk-overview"]')),
+              overviewMore: (document.querySelector('[data-ev="walk-overview-more"]') || { textContent: null }).textContent,
+              attention: text(document.querySelector('[data-ev="walk-attention"]')),
+              treeOpen: document.querySelector('.rv-tree') !== null,
+              wrapChecked: (document.querySelector('[data-ev="walk-wrap"]') || { checked: null }).checked,
+              definitions: [...document.querySelectorAll('[data-ev="walk-definition"] option')].map((option) => option.textContent),
+              activePane: activePane === null ? null : {
+                wrap: activePane.getAttribute('data-wrap'),
+                scrollLeft: Math.round(activePane.scrollLeft),
+                scrollWidth: activePane.scrollWidth,
+                clientWidth: activePane.clientWidth,
+                path: (activePane.closest('.rv-pane').querySelector('.rv-path') || { title: '' }).title,
+                focusRows: [...activePane.querySelectorAll('[data-focus="1"]')].map((row) => ({ line: row.getAttribute('data-line'), height: Math.round(row.getBoundingClientRect().height), numbers: text(row.querySelector('.rv-ln')) })),
+              },
+              stepTitle: text(document.querySelector('.rv-step-on .rv-step-title')),
+              position: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read().position : null,
+              chooseOffered: [...document.querySelectorAll('button')].some((button) => /Open another review/.test(button.textContent || '')),
+            };
+          })(),
           rightWidth: (document.querySelector('.rv-right') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width,
           codeWidth: (document.querySelector('.rv-code') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width,
           overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -3445,7 +3512,7 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
-      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice' || chatRunScenario === 'walk-start' || chatRunScenario === 'analysis-access' || chatRunScenario === 'selection-explain'
+      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice' || chatRunScenario === 'walk-start' || chatRunScenario === 'analysis-access' || chatRunScenario === 'selection-explain' || chatRunScenario === 'review-flow'
         ? {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];

@@ -744,7 +744,7 @@ export async function runScriptedWorkflow(
 ): Promise<ScriptedRunReport> {
   // DSP-149: `model-list` chooses Claude itself and must never choose Cursor. DSP-152:
   // `review-agent-choice` starts from the kit's own choice of Claude, usable or not.
-  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow' && plan.scenario !== 'review-agent-choice' && plan.scenario !== 'walk-start' && plan.scenario !== 'analysis-access' && plan.scenario !== 'selection-explain' && plan.scenario !== 'diff-marks') {
+  if (plan.scenario !== 'review-direct' && plan.scenario !== 'model-list' && plan.scenario !== 'model-start' && plan.scenario !== 'model-flow' && plan.scenario !== 'review-agent-choice' && plan.scenario !== 'walk-start' && plan.scenario !== 'analysis-access' && plan.scenario !== 'selection-explain' && plan.scenario !== 'diff-marks' && plan.scenario !== 'review-flow') {
     await nameScenarioAgent();
   }
   switch (plan.scenario) {
@@ -822,6 +822,8 @@ export async function runScriptedWorkflow(
       return runSelectionExplainScenario(plan);
     case 'diff-marks':
       return runDiffMarksScenario(plan);
+    case 'review-flow':
+      return runReviewFlowScenario(plan);
     case 'review-direct':
       // Driven by the main process alone: there is no chat window to run this in.
       return finish(CHAT_EXIT.scriptFailed, [], ['review-direct has no chat window and is not run here'], { plan });
@@ -11646,6 +11648,22 @@ async function untilPair(id: number, what: string, done: (reading: PairWindowRea
   throw new Error(`timed out waiting for ${what}; last reading: ${JSON.stringify(last?.pair ?? last?.text ?? null).slice(0, 600)}`);
 }
 
+/**
+ * The way into review lists the ongoing reviews first when there are any (Niclas's trial
+ * feedback, 29 October 2026). A scenario that chooses a repository and two commits goes on
+ * with *Start a new review*, as a person starting another review would.
+ */
+async function pastOngoing(id: number): Promise<void> {
+  const first = await untilPair(id, 'the way into review', (reading) => ['ongoing', 'repositories', 'log', 'review', 'message'].includes(reading.pair?.phase ?? ''));
+  if (first.pair?.phase === 'ongoing') {
+    const pressed = await window.dspatch.pairWindowCheck({ action: 'press', id, selector: '[data-ev="pair-new-review"]' });
+    if (!pressed.ok) {
+      throw new Error(`could not start a new review: ${JSON.stringify(pressed.detail)}`);
+    }
+    await untilPair(id, 'the repository list or the log', (reading) => reading.pair?.phase === 'repositories' || reading.pair?.phase === 'log');
+  }
+}
+
 async function untilWindow(what: string, find: (rows: readonly PairWindowRow[]) => PairWindowRow | undefined, timeoutMs = 20_000): Promise<PairWindowRow> {
   const until = performance.now() + timeoutMs;
   while (performance.now() < until) {
@@ -11715,6 +11733,8 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     // --- Open review from the chat ---------------------------------------------------
     await click('open-review');
     const diff = await untilWindow('a diff review window', (rows) => rows.find((row) => row.view === 'diff'));
+    await pastOngoing(diff.id);
+
     const repos = await untilPair(diff.id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
     record('repositories', { repositories: repos.pair?.repositories });
     expect(
@@ -11739,6 +11759,8 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       })();
       expect(pressed, 'the loop editor has no way into review');
       const fromEditor = await untilWindow('a diff window opened from the loop editor', (rows) => rows.find((row) => row.view === 'diff' && row.id !== diff.id));
+      await pastOngoing(fromEditor.id);
+
       const editorRepos = await untilPair(fromEditor.id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
       record('opened from the loop editor', { repositories: editorRepos.pair?.repositories });
       expect(JSON.stringify(editorRepos.pair?.repositories) === JSON.stringify(['app', 'lib']), 'review from the loop editor does not list the workspace repositories');
@@ -11765,6 +11787,8 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       // A pair with no walk: the diff review works and says so briefly.
       await inPairWindow(diffAgain.id, '[data-ev="pair-change-revisions"]');
       await inPairWindow(diffAgain.id, '[data-ev="pair-back-to-repositories"]');
+      await pastOngoing(diffAgain.id);
+
       await untilPair(diffAgain.id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
       await inPairWindow(diffAgain.id, '[data-ev="pair-repo-1"]');
       await untilPair(diffAgain.id, 'the lib log', (reading) => reading.text.includes('Bump the library'));
@@ -11772,10 +11796,13 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       await inPairWindow(diffAgain.id, '[data-ev="pair-commit-0"]');
       await inPairWindow(diffAgain.id, '[data-ev="pair-open"]');
       await untilPair(diffAgain.id, 'the lib review', (reading) => reading.pair?.phase === 'review' && (reading.pair.files?.length ?? 0) === 1);
+      const none = await untilPair(diffAgain.id, 'Code walks to settle', (reading) => (reading.pair as { walkCount?: number | null } | undefined)?.walkCount !== null);
+      const button = (none.pair as { codeWalks?: { enabled: boolean; tip: string } } | undefined)?.codeWalks;
+      record('no walks', { codeWalks: button, files: none.pair?.files });
+      expect(button?.enabled === false && button.tip === 'No code walks yet', `Code walks is not dimmed with its reason: ${JSON.stringify(button)}`);
       await inPairWindow(diffAgain.id, '[data-ev="pair-walks"]');
-      const none = await untilPair(diffAgain.id, 'the walk list', (reading) => (reading.pair?.walksNote ?? '') !== '');
-      record('no walks', { note: none.pair?.walksNote, files: none.pair?.files });
-      expect((none.pair?.walksNote ?? '').startsWith('No code walks for these revisions.'), `the absence of walks is not said: ${String(none.pair?.walksNote)}`);
+      await sleep(400);
+      expect(!(await pairWindows()).some((row) => row.view === 'walk' && row.id !== diffAgain.id && row.pairKey === none.pair?.key), 'a dimmed Code walks opened a window');
       await inPairWindow(diffAgain.id, '[data-ev="pair-file-0"]');
       const lib = await untilPair(diffAgain.id, 'the lib diff', (reading) => (reading.pair?.strips?.length ?? 0) === 2);
       expect(fileReading(lib, 'index.ts')?.percent === 0, 'a pair without walks does not review normally');
@@ -11924,10 +11951,8 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     await inPairWindow(diff.id, '[data-ev="pair-layout-unified"]');
 
     // --- A walk beside the diff ------------------------------------------------------
+    await untilPair(diff.id, 'Code walks to be offered', (reading) => ((reading.pair as { walkCount?: number | null } | undefined)?.walkCount ?? 0) > 0);
     await inPairWindow(diff.id, '[data-ev="pair-walks"]');
-    const noneYet = await untilPair(diff.id, 'the walk list', (reading) => reading.text.includes('Open a walk file'));
-    record('walks before any is opened', { note: noneYet.pair?.walksNote });
-    await inPairWindow(diff.id, '[data-ev="pair-walk-file"]');
     const walk = await untilWindow('a walk window', (rows) => rows.find((row) => row.view === 'walk'));
     const walkReading = await untilPair(walk.id, 'the walk to open and join the pair', (reading) => reading.walk?.kind === 'opened' && reading.showInDiff, 30_000);
     const walkRows = await pairWindows();
@@ -11943,7 +11968,7 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     expect(diffAfterStep?.pair?.fileKey === diffBefore?.pair?.fileKey, 'a step in the walk moved the diff');
 
     // Shared status: the walk reads the marks made in the diff, without counting them twice.
-    await inPairWindow(walk.id, '.rv-collapsible-head');
+    await inPairWindow(walk.id, '[data-ev="walk-review-section"]');
     const walkSees = await untilPair(walk.id, 'the walk to show the diff marks', (reading) => reading.decisions.length > 0);
     record('walk decisions', { decisions: walkSees.decisions });
     expect(walkSees.decisions.some((text) => /accepted|godkänd/i.test(text)), `the walk does not see the marks made in the diff: ${JSON.stringify(walkSees.decisions)}`);
@@ -11968,6 +11993,8 @@ async function runPairReviewScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     await window.dspatch.pairWindowCheck({ action: 'close', id: diff.id });
     await click('open-review');
     const reopened = await untilWindow('the diff window again', (rows) => rows.find((row) => row.view === 'diff' && row.id !== diff.id));
+    await pastOngoing(reopened.id);
+
     await untilPair(reopened.id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
     await inPairWindow(reopened.id, '[data-ev="pair-repo-0"]');
     // Nothing is chosen when the log opens again; the person chooses the same pair.
@@ -12047,9 +12074,10 @@ async function choosePairInDiff(id: number): Promise<PairWindowReading> {
  * closed afterwards, so the walk scenarios go on with the windows they had before.
  */
 async function openWalkFromDiff(id: number, listed: boolean): Promise<void> {
+  void listed;
+  await untilPair(id, 'Code walks to be offered', (reading) => ((reading.pair as { walkCount?: number | null } | undefined)?.walkCount ?? 0) > 0);
   await inPairWindow(id, '[data-ev="pair-walks"]');
-  await untilPair(id, 'the walk list', (reading) => reading.text.includes('Open a walk file') && !reading.text.includes('Looking for walks'));
-  await inPairWindow(id, listed ? '[data-ev="pair-walk-0"]' : '[data-ev="pair-walk-file"]');
+  await untilWindow('the walk window', (rows) => rows.find((row) => row.view === 'walk'));
   await sleep(500);
   await window.dspatch.pairWindowCheck({ action: 'close', id });
   // Closing the diff window hands the focus to whichever window is next; a person would
@@ -12141,6 +12169,8 @@ async function runCodeWalksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     await window.dspatch.pairWindowCheck({ action: 'capture', id, label });
   };
   const openApp = async (id: number): Promise<PairWindowReading> => {
+    await pastOngoing(id);
+
     await untilPair(id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
     await inPairWindow(id, '[data-ev="pair-repo-0"]');
     await untilPair(id, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
@@ -12186,9 +12216,8 @@ async function runCodeWalksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
       await showFile(diff.id, 'src/keep.ts');
       const keep = await untilPair(diff.id, 'keep.ts with its agent review', (reading) => (reading.pair?.strips?.length ?? 0) === 5 && ((reading.pair as { agentReviewsShown?: number }).agentReviewsShown ?? 0) > 0);
       expect(stripOf(keep, 'target', 8)?.status === 'agent', 'the agent approval is not drawn after a restart');
+      await untilPair(diff.id, 'Code walks to be offered', (reading) => ((reading.pair as { walkCount?: number | null } | undefined)?.walkCount ?? 0) > 0);
       await inPairWindow(diff.id, '[data-ev="pair-walks"]');
-      await untilPair(diff.id, 'the walk list', (reading) => reading.text.includes('Code walks ·'));
-      await inPairWindow(diff.id, '[data-ev="pair-walk-0"]');
       const walk = await untilWindow('the generated walk', (rows) => rows.find((row) => row.view === 'walk'));
       const walkBack = await untilPair(walk.id, 'the walk with its deepenings', (reading) => reading.walk?.kind === 'opened' && (reading as { deepenings?: unknown[] }).deepenings !== undefined && ((reading as { deepenings?: unknown[] }).deepenings?.length ?? 0) > 0, 30_000);
       record('walk after restart', { deepenings: (walkBack as { deepenings?: unknown[] }).deepenings });
@@ -12210,17 +12239,14 @@ async function runCodeWalksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     const walksJob = lastJob(prepared, 'walks');
     record('prepared', { job: walksJob });
     expect(walksJob?.state === 'done', `the preparation did not finish: ${String(walksJob?.state)} ${String(walksJob?.note)}`);
-    expect((walksJob?.uncovered ?? 0) > 0 && (walksJob?.note ?? '').includes('in no walk'), 'the changed lines no walk covers are not shown');
+    expect((walksJob?.uncovered ?? 0) > 0 && (walksJob?.note ?? '').includes('in none of them'), 'the changed lines no walk covers are not shown');
     const sentAfterPrepare = await reviewPromptsSent();
     expect(sentAfterPrepare.filter((prompt) => prompt.startsWith('DSPATCH-REVIEW-TASK: prepare-walks')).length === 1, 'the preparation was sent more than once');
     expect(sentAfterPrepare.filter((prompt) => prompt.startsWith('DSPATCH-REVIEW-TASK: repair-walks')).length === 1, 'a bad reference did not get exactly one repair round');
     expect(!sentAfterPrepare.some((prompt) => prompt.includes('WORKING TREE ONLY')), 'the agent was given working-copy content');
     await capture(diff.id, 'prepared');
 
-    // --- 2. Open the generated walk ----------------------------------------------------------
-    await inPairWindow(diff.id, '[data-ev="agent-job-walks-open"]');
-    await untilPair(diff.id, 'the walk list', (reading) => reading.text.includes('Code walks ·'));
-    await inPairWindow(diff.id, '[data-ev="pair-walk-0"]');
+    // --- 2. The generated walk opens by itself, once --------------------------------------------
     const walk = await untilWindow('the generated walk window', (rows) => rows.find((row) => row.view === 'walk'));
     const walkOpen = await untilPair(walk.id, 'the generated walk', (reading) => reading.walk?.kind === 'opened', 30_000);
     expect(walkOpen.text.includes('A walk is not a review') || walkOpen.text.includes('SIMULATED'), 'the generated walk does not show its provenance or text');
@@ -12282,6 +12308,11 @@ async function runCodeWalksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
 
     // --- 6. A delegated walk, seen in the diff ---------------------------------------------------
     await window.dspatch.pairWindowCheck({ action: 'focus', id: walk.id });
+    // The first code walk: the preparation puts a reading of the removed document before it.
+    // The step the walk was on is returned to afterwards, where its deepenings were asked.
+    const stepBeforeDelegation = (await readPairWindow(walk.id))?.walk?.position?.stepId ?? null;
+    await window.dspatch.pairWindowCheck({ action: 'go-to-step', id: walk.id, stepId: 'W1.1' });
+    await sleep(400);
     await inPairWindow(walk.id, '[data-ev="walk-delegate"]');
     await untilPair(walk.id, 'the walk agent picker', (reading) => reading.text.includes('Delegate this walk'), 15_000);
     await inPairWindow(walk.id, '[data-ev="walk-delegate-agent-start"]');
@@ -12292,6 +12323,9 @@ async function runCodeWalksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     record('delegated walk', { state: (walkDelegated as { walkJob?: unknown }).walkJob, text: (walkDelegated as { walkJobText?: unknown }).walkJobText });
     const afterWalk = await untilPair(diff.id, 'the walk review in the diff', (reading) => settledJob(lastJob(reading, 'review', 'walk W1')));
     expect(lastJob(afterWalk, 'review', 'walk W1')?.state === 'done', 'the delegated walk did not reach the diff window');
+    if (stepBeforeDelegation !== null) {
+      await window.dspatch.pairWindowCheck({ action: 'go-to-step', id: walk.id, stepId: stepBeforeDelegation });
+    }
 
     // --- 7. Stop a delegated review: nothing approved --------------------------------------------
     await window.dspatch.pairWindowCheck({ action: 'focus', id: diff.id });
@@ -12432,6 +12466,8 @@ async function runReviewAgentChoiceScenario(plan: ScriptedRunPlan): Promise<Scri
     await window.dspatch.pairWindowCheck({ action: 'capture', id, label });
   };
   const openPair = async (id: number): Promise<PairWindowReading> => {
+    await pastOngoing(id);
+
     await untilPair(id, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
     await press(id, '[data-ev="pair-repo-0"]');
     await untilPair(id, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
@@ -12708,6 +12744,8 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
     await press(MAIN, '[data-ev="open-review"]');
     const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+    await pastOngoing(diffId);
+
     await untilPair(diffId, 'the repository list', (reading) => reading.pair?.phase === 'repositories');
     await press(diffId, '[data-ev="pair-repo-0"]');
     await untilPair(diffId, 'the log', (reading) => (reading.pair?.commits ?? 0) === 2);
@@ -12793,10 +12831,7 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     expect(job?.definitionPath !== null && job?.definitionPath !== undefined, 'the walks were not saved');
     await capture(diffId, 'prepared');
 
-    // --- Open the walk that came back ------------------------------------------------------
-    await press(diffId, '[data-ev="agent-job-walks-open"]');
-    await untilPair(diffId, 'the walk list', (reading) => (reading.text ?? '').includes('Code walks ·'), 15_000);
-    await press(diffId, '[data-ev="pair-walk-0"]');
+    // --- The walk that came back opens by itself ---------------------------------------------
     const walk = await untilWindow('the walk window', (rows) => rows.find((row) => row.view === 'walk'));
     const walkOpen = await untilPair(walk.id, 'the walk', (reading) => reading.walk?.kind === 'opened', 30_000);
     record('walk opened', { walk: walkOpen.walk, visible: shown(walkOpen).slice(0, 300) });
@@ -12897,6 +12932,7 @@ async function runAnalysisAccessScenario(plan: ScriptedRunPlan): Promise<Scripte
     await press(MAIN, '[data-ev="open-review"]');
     const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
     // One repository in the workspace: the window goes straight to its log.
+    await pastOngoing(diffId);
     const first = await untilPair(diffId, 'the repository list or the log', (reading) => reading.pair?.phase === 'repositories' || reading.pair?.phase === 'log');
     if (first.pair?.phase === 'repositories') {
       await press(diffId, '[data-ev="pair-repo-0"]');
@@ -12909,9 +12945,8 @@ async function runAnalysisAccessScenario(plan: ScriptedRunPlan): Promise<Scripte
     return { diffId, opened };
   };
   const openWalkAtDefinition = async (diffId: number): Promise<{ readonly walkId: number; readonly reading: PairWindowReading }> => {
-    await press(diffId, '[data-ev="pair-walks"]').catch(() => undefined);
-    await untilPair(diffId, 'the walk list', (reading) => (reading.text ?? '').includes('Code walks ·'), 15_000);
-    await press(diffId, '[data-ev="pair-walk-0"]');
+    await untilPair(diffId, 'Code walks to be offered', (reading) => ((reading.pair as { walkCount?: number | null } | undefined)?.walkCount ?? 0) > 0, 15_000);
+    await press(diffId, '[data-ev="pair-walks"]');
     const walkRow = await untilWindow('the walk window', (rows) => rows.find((row) => row.view === 'walk'));
     await untilPair(walkRow.id, 'the walk', (reading) => reading.walk?.kind === 'opened', 30_000);
     // Forward through the walk, as a person would, until the place at the definition is on the strip.
@@ -13006,7 +13041,9 @@ async function runAnalysisAccessScenario(plan: ScriptedRunPlan): Promise<Scripte
     record('step question', { answer });
     expect(answer?.state === 'done' && answer.text.includes('findDiscount') && answer.text.includes('Where does the discount percentage come from?'), `the step question was not answered from the code: ${JSON.stringify(answer)}`);
     expect((answer?.references ?? []).some((entry) => entry.includes('src/pricing.ts lines 61–66 (To)')), `the answer does not point at the definition: ${JSON.stringify(answer?.references)}`);
-    expect((answer?.details ?? '').includes('target/src/pricing.ts'), 'Details do not say what the agent read');
+    // Since Niclas's trial feedback (29 October 2026) what the agent read is kept in the job
+    // record (checked by the runner), not drawn in the review flow.
+    expect((answer?.details ?? '') === '', `the step answer still draws the agent's reads: ${String(answer?.details)}`);
     expect(!shown(answered).includes('Read: target/'), 'the reads are drawn in the view instead of under Details');
     await capture(walkId, 'step-question');
 
@@ -13180,6 +13217,7 @@ async function runSelectionExplainScenario(plan: ScriptedRunPlan): Promise<Scrip
   const openReview = async (): Promise<number> => {
     await press(MAIN, '[data-ev="open-review"]');
     const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+    await pastOngoing(diffId);
     const first = await untilPair(diffId, 'the repository list or the log', (reading) => reading.pair?.phase === 'repositories' || reading.pair?.phase === 'log' || reading.pair?.phase === 'review');
     if (first.pair?.phase === 'repositories') {
       await press(diffId, '[data-ev="pair-repo-0"]');
@@ -13413,6 +13451,435 @@ async function runSelectionExplainScenario(plan: ScriptedRunPlan): Promise<Scrip
 }
 
 /**
+ * The review flow after Niclas's first real trial (29 October 2026), in the real windows,
+ * over `tests/support/flow-fixture.ts` (`shop`) and a clone of MiniDAWLab-spike01 read at
+ * b87f042 → 8c7d41b, the pair of his trial. Real mouse, keyboard, wheel and drags through
+ * `sendInputEvent`; the agent is the SIMULATED presentation adapter.
+ *
+ * `first`: the full-width file list, a file and back with the list where it was, progress
+ * with mixed status and an open finding beside a check, Code walks dimmed, a preparation
+ * that opens the walk window once, walks and readings in it, independent navigation with
+ * shared status, the left column dragged and kept, Show more, long Markdown lines wrapped
+ * in both windows with marks, a selection explained and a line marked.
+ * `again` (restart): both reviews listed as ongoing and resumed without any agent work, the
+ * walks back at their place, and one review ended.
+ */
+async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
+  const steps: unknown[] = [];
+  const failures: string[] = [];
+  const phase = plan.flowPhase === 'again' ? 'again' : 'first';
+  const observations: Record<string, unknown> = {
+    plan,
+    phase,
+    limits:
+      'SIMULATED provider (presentation adapter): fixed walks, readings, reviews and explanations over what it reads in the ' +
+      'revision folder. The clicks, keys, wheel and drags are real input; windows, IPC, the host and its records are the product.',
+  };
+  const startedAt = performance.now();
+  const record = (name: string, detail: Record<string, unknown>): void => {
+    steps.push({ step: name, atMs: Math.round(performance.now() - startedAt), ...detail });
+  };
+  const expect = (ok: boolean, message: string): void => {
+    if (!ok) {
+      failures.push(message);
+    }
+  };
+  const MAIN = 0;
+  const check = async (request: PairWindowCheckRequest, what: string): Promise<unknown> => {
+    const answer = await window.dspatch.pairWindowCheck(request);
+    if (!answer.ok) {
+      throw new Error(`could not ${what}: ${JSON.stringify(answer.detail)}`);
+    }
+    await sleep(250);
+    return answer.detail;
+  };
+  const press = (id: number, selector: string): Promise<unknown> => check({ action: 'press', id, selector }, `press ${selector}`);
+  const pressKey = (id: number, selector: string, key: string): Promise<unknown> => check({ action: 'press-key', id, selector, key }, `press ${key} on ${selector}`);
+  const capture = async (id: number, label: string): Promise<void> => {
+    await sleep(350);
+    await window.dspatch.pairWindowCheck({ action: 'capture', id, label });
+  };
+  type FileRow = { readonly key: string; readonly path: string; readonly percent: number; readonly done: boolean; readonly manual: number; readonly agent: number; readonly exempted: number; readonly total: number; readonly handled: number };
+  type Job = { readonly id: string; readonly kind: string; readonly state: string; readonly definitionPath: string | null; readonly findings: number; readonly scope: string | null };
+  type Diff = {
+    readonly phase?: string;
+    readonly key?: string;
+    readonly fileKey: string | null;
+    readonly layout: string;
+    readonly files: readonly FileRow[];
+    readonly fileRows: readonly string[];
+    readonly listShown: boolean;
+    readonly sidebarShown: boolean;
+    readonly listScrollTop: number;
+    readonly listScrollSaved: number;
+    readonly walkCount: number | null;
+    readonly codeWalks: { readonly enabled: boolean; readonly tip: string } | null;
+    readonly strips: readonly { readonly side: string; readonly line: number; readonly status: string }[];
+    readonly words: readonly { readonly side: string; readonly line: number; readonly text: string }[];
+    readonly wholeLines: readonly string[];
+    readonly explanations: readonly { readonly state: string }[];
+    readonly highlighted: number;
+    readonly explainOffered: boolean;
+    readonly textSelection: string;
+    readonly diffOverflowX: boolean;
+    readonly longLines: readonly { readonly side: string; readonly line: number; readonly length: number; readonly height: number }[];
+    readonly jobs: readonly Job[];
+    readonly ongoing?: readonly string[];
+    readonly repositories?: readonly string[];
+    readonly walksNote: string;
+  };
+  type WalkView = {
+    readonly leftWidth: number;
+    readonly leftOverflowX: boolean;
+    readonly heading: string;
+    readonly items: readonly { readonly id: string; readonly title: string; readonly reading: boolean; readonly purpose: string; readonly purposeHeight: number; readonly open: boolean; readonly steps: number }[];
+    readonly overview: string;
+    readonly overviewMore: string | null;
+    readonly attention: string;
+    readonly treeOpen: boolean;
+    readonly wrapChecked: boolean | null;
+    readonly activePane: { readonly wrap: string; readonly scrollLeft: number; readonly scrollWidth: number; readonly clientWidth: number; readonly path: string; readonly focusRows: readonly { readonly line: string; readonly height: number; readonly numbers: string }[] } | null;
+    readonly position: { readonly walkId: string | null; readonly stepId: string | null } | null;
+    readonly chooseOffered: boolean;
+  };
+  const diffOf = (reading: PairWindowReading | null): Diff => (reading?.pair ?? {}) as unknown as Diff;
+  const walkOf = (reading: PairWindowReading | null): WalkView | null => ((reading as unknown as { walkView?: WalkView | null } | null)?.walkView ?? null);
+  const visibleOf = (reading: PairWindowReading | null): string => ((reading as unknown as { visibleText?: string } | null)?.visibleText ?? '');
+  const walkWindows = async (): Promise<readonly PairWindowRow[]> => (await pairWindows()).filter((row) => row.view === 'walk');
+  const fileIndex = (reading: PairWindowReading, path: string): number => diffOf(reading).files.findIndex((file) => file.path === path);
+  const rowOf = (reading: PairWindowReading, path: string): string => diffOf(reading).fileRows[fileIndex(reading, path)] ?? '';
+  const strip = (side: 'base' | 'target', line: number): string => `.rv-pair-diff td.rv-pair-strip[data-side="${side}"][data-line="${String(line)}"]`;
+  const cell = (side: 'base' | 'target', line: number): string => `.rv-pair-diff td[data-code-side="${side}"][data-code-line="${String(line)}"]`;
+  const DAL = { name: 'MiniDAWLab-spike01', base: 'b87f0422450e1458c14fc0ce179d22a66c7a66e9', target: '8c7d41b7dde19bd5568c2b79fd0bd929b6a9b30e' };
+  const DAL_FILE = 'docs/PORTABLE_INSTRUMENTS_AND_PROXIES.md';
+
+  const startReview = async (diffId: number, repository: string, pair: { readonly base: string; readonly target: string } | null): Promise<PairWindowReading> => {
+    await pastOngoing(diffId);
+    const at = await untilPair(diffId, 'the repositories or the log', (reading) => diffOf(reading).phase === 'repositories' || diffOf(reading).phase === 'log');
+    if (diffOf(at).phase === 'repositories') {
+      const index = (diffOf(at).repositories ?? []).findIndex((name) => name.trim() === repository);
+      if (index < 0) {
+        throw new Error(`${repository} is not offered: ${JSON.stringify(diffOf(at).repositories)}`);
+      }
+      await press(diffId, `[data-ev="pair-repo-${String(index)}"]`);
+    }
+    await untilPair(diffId, `the log of ${repository}`, (reading) => diffOf(reading).phase === 'log' && ((reading.pair as { commits?: number } | undefined)?.commits ?? 0) > 1);
+    await press(diffId, pair === null ? '[data-ev="pair-commit-1"]' : `[data-hash="${pair.base}"]`);
+    await press(diffId, pair === null ? '[data-ev="pair-commit-0"]' : `[data-hash="${pair.target}"]`);
+    await press(diffId, '[data-ev="pair-open"]');
+    return untilPair(diffId, `the review of ${repository}`, (reading) => diffOf(reading).phase === 'review' && diffOf(reading).files.length > 0, 60_000);
+  };
+  const openFile = async (diffId: number, path: string): Promise<PairWindowReading> => {
+    const list = await untilPair(diffId, 'Files changed', (reading) => diffOf(reading).listShown);
+    const index = fileIndex(list, path);
+    if (index < 0) {
+      throw new Error(`${path} is not in the change`);
+    }
+    await press(diffId, `[data-ev="pair-file-${String(index)}"]`);
+    return untilPair(diffId, path, (reading) => diffOf(reading).fileKey !== null && diffOf(reading).strips.length > 0);
+  };
+  const backToFiles = async (diffId: number): Promise<PairWindowReading> => {
+    await press(diffId, '[data-ev="pair-files"]');
+    return untilPair(diffId, 'Files changed again', (reading) => diffOf(reading).listShown);
+  };
+  const markLine = async (diffId: number, side: 'base' | 'target', line: number, op: 'manual' | 'exempt'): Promise<void> => {
+    await pressKey(diffId, strip(side, line), 'Enter');
+    await press(diffId, `[data-ev="pair-mark-${op}"]`);
+    await untilPair(diffId, `${side} ${String(line)} ${op}`, (reading) => diffOf(reading).strips.some((entry) => entry.side === side && entry.line === line && entry.status === op));
+  };
+
+  try {
+    await waitFor('the connection to reach a decided state', connectionDecided, 60_000);
+    await waitFor('a project to be offered in the window', () => element('project-0-path') !== null, 60_000);
+    await press(MAIN, '[data-ev="open-project-0"]');
+    await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
+    await press(MAIN, '[data-ev="open-review"]');
+    const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+
+    if (phase === 'again') {
+      // --- After a restart: both reviews ongoing, resumed without any agent work -----------
+      const list = await untilPair(diffId, 'the ongoing reviews', (reading) => diffOf(reading).phase === 'ongoing');
+      const ongoing = diffOf(list).ongoing ?? [];
+      record('ongoing after restart', { ongoing });
+      expect(ongoing.length === 2 && ongoing.some((row) => row.startsWith('shop')) && ongoing.some((row) => row.startsWith(DAL.name)), `both reviews are not listed: ${JSON.stringify(ongoing)}`);
+      expect(ongoing.every((row) => /% handled · \d+ of \d+ files? done/.test(row)), `a review is listed without its progress: ${JSON.stringify(ongoing)}`);
+      await sleep(1500);
+      expect((await walkWindows()).length === 0, 'a walk window opened by itself after the restart');
+      await capture(diffId, 'again-ongoing');
+      // The MiniDAWLab review: its file, marks and explanation, and its readings at their place.
+      await press(diffId, `[data-ev="pair-ongoing-open-${String(ongoing.findIndex((row) => row.startsWith(DAL.name)))}"]`);
+      const dal = await untilPair(diffId, 'the MiniDAWLab review where it was left', (reading) => diffOf(reading).phase === 'review' && diffOf(reading).fileKey !== null && diffOf(reading).strips.length > 0, 60_000);
+      record('MiniDAWLab resumed', { fileKey: diffOf(dal).fileKey, manual: diffOf(dal).strips.filter((entry) => entry.status === 'manual').length, explanations: diffOf(dal).explanations.length });
+      expect(diffOf(dal).strips.some((entry) => entry.status === 'manual'), 'the line marked before the restart is not marked');
+      expect(diffOf(dal).explanations.some((job) => job.state === 'done'), 'the explanation is not back after the restart');
+      expect(diffOf(dal).codeWalks?.enabled === true, 'Code walks is not offered for a review with readings');
+      await capture(diffId, 'again-dal-resumed');
+      await press(diffId, '[data-ev="pair-walks"]');
+      const dalWalkRow = await untilWindow('the readings window', (rows) => rows.find((row) => row.view === 'walk'));
+      const dalWalk = await untilPair(dalWalkRow.id, 'the readings', (reading) => walkOf(reading)?.position?.stepId != null, 30_000);
+      record('readings resumed', { position: walkOf(dalWalk)?.position, heading: walkOf(dalWalk)?.heading });
+      expect(walkOf(dalWalk)?.heading === 'Readings', `the MiniDAWLab walks are not headed Readings: ${String(walkOf(dalWalk)?.heading)}`);
+      // The shop review: its file list with mixed status and the open finding, and its walk at R2.1.
+      await press(diffId, '[data-ev="pair-all-reviews"]');
+      const back = await untilPair(diffId, 'the ongoing reviews again', (reading) => diffOf(reading).phase === 'ongoing');
+      await press(diffId, `[data-ev="pair-ongoing-open-${String((diffOf(back).ongoing ?? []).findIndex((row) => row.startsWith('shop')))}"]`);
+      const shop = await untilPair(diffId, 'the shop review', (reading) => diffOf(reading).phase === 'review' && diffOf(reading).files.length > 0, 60_000);
+      if (diffOf(shop).fileKey !== null) {
+        await backToFiles(diffId);
+      }
+      const shopList = await untilPair(diffId, 'the shop file list', (reading) => diffOf(reading).listShown && diffOf(reading).fileRows.length > 0);
+      const item02 = rowOf(shopList, 'data/item-02.json');
+      record('shop resumed', { item02, cart: rowOf(shopList, 'src/cart.ts'), guide: rowOf(shopList, 'docs/guide.md') });
+      expect(/open finding/.test(item02) && /You/.test(item02) && /Claude · opus/.test(item02), `the mixed status or the finding is gone after the restart: ${item02}`);
+      await press(diffId, '[data-ev="pair-walks"]');
+      await sleep(800);
+      const shopWalkRow = (await walkWindows()).find((row) => row.id !== dalWalkRow.id);
+      if (shopWalkRow === undefined) {
+        throw new Error('Code walks did not open the shop walks');
+      }
+      const shopWalk = await untilPair(shopWalkRow.id, 'the shop walks', (reading) => walkOf(reading)?.position?.stepId != null, 30_000);
+      record('shop walks resumed', { position: walkOf(shopWalk)?.position, leftWidth: walkOf(shopWalk)?.leftWidth });
+      expect(walkOf(shopWalk)?.position?.stepId === 'R2.1', `the shop walks are not back at R2.1: ${JSON.stringify(walkOf(shopWalk)?.position)}`);
+      expect(Math.abs((walkOf(shopWalk)?.leftWidth ?? 0) - 420) <= 2, `the left column's width was not kept: ${String(walkOf(shopWalk)?.leftWidth)}`);
+      await capture(shopWalkRow.id, 'again-shop-walks');
+      // Ending the MiniDAWLab review: off the list, nothing approved.
+      await press(diffId, '[data-ev="pair-all-reviews"]');
+      const before = await untilPair(diffId, 'the ongoing reviews to end one', (reading) => diffOf(reading).phase === 'ongoing');
+      await press(diffId, `[data-ev="pair-ongoing-end-${String((diffOf(before).ongoing ?? []).findIndex((row) => row.startsWith(DAL.name)))}"]`);
+      const after = await untilPair(diffId, 'the list after ending', (reading) => diffOf(reading).phase === 'ongoing' && (diffOf(reading).ongoing ?? []).length === 1);
+      record('ended', { ongoing: diffOf(after).ongoing });
+      expect((diffOf(after).ongoing ?? [])[0]?.startsWith('shop') === true, 'the wrong review was ended');
+      await capture(diffId, 'again-ended');
+      const sent = await reviewPromptsSent();
+      record('prompts', { sent: sent.length });
+      expect(sent.length === 0, `resuming sent ${String(sent.length)} prompt(s) to an agent`);
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+    }
+
+    // --- 1. Files changed over the whole width -----------------------------------------------
+    const opened = await startReview(diffId, 'shop', null);
+    record('files', { rows: diffOf(opened).fileRows.length, listShown: diffOf(opened).listShown, sidebar: diffOf(opened).sidebarShown });
+    expect(diffOf(opened).listShown && !diffOf(opened).sidebarShown && diffOf(opened).fileKey === null, 'the review does not start with the full-width file list');
+    expect(diffOf(opened).fileRows.length === 30, `not every changed file is listed: ${String(diffOf(opened).fileRows.length)}`);
+    const longRow = rowOf(opened, 'src/features/portable-instruments/proxies/PortableInstrumentProxyRegistryConfigurationDefaults.ts');
+    expect(longRow.includes('PortableInstrumentProxyRegistryConfigurationDefaults.ts') && longRow.includes('src/features/portable-instruments/proxies/'), `the long path is not readable: ${longRow}`);
+    await capture(diffId, 'files-full-width');
+
+    // --- 2. Code walks dimmed while there is none -----------------------------------------------
+    const dimmed = await untilPair(diffId, 'Code walks to settle', (reading) => diffOf(reading).walkCount !== null);
+    expect(diffOf(dimmed).codeWalks?.enabled === false && diffOf(dimmed).codeWalks?.tip === 'No code walks yet', `Code walks is not dimmed with its reason: ${JSON.stringify(diffOf(dimmed).codeWalks)}`);
+    await pressKey(diffId, '[data-ev="pair-walks"]', 'Shift');
+    await capture(diffId, 'code-walks-dimmed-focus');
+    await press(diffId, '[data-ev="pair-walks"]');
+    await sleep(600);
+    expect((await walkWindows()).length === 0, 'a dimmed Code walks opened a window');
+
+    // --- 3. A file and back, with the list where it was ----------------------------------------
+    await check({ action: 'wheel', id: diffId, selector: '.rv-pair-filelist', deltaY: 500 }, 'scroll the file list');
+    const scrolled = await readPairWindow(diffId);
+    record('list scrolled', { top: diffOf(scrolled).listScrollTop });
+    expect(diffOf(scrolled).listScrollTop > 0, 'the wheel did not scroll the file list');
+    const cartFile = await openFile(diffId, 'src/cart.ts');
+    expect(!diffOf(cartFile).sidebarShown && !diffOf(cartFile).listShown, 'the diff of a file is drawn beside a file list');
+    await capture(diffId, 'file-diff-up-arrow');
+    const saved = diffOf(cartFile).listScrollSaved;
+    const returned = await backToFiles(diffId);
+    record('back to the list', { saved, top: diffOf(returned).listScrollTop });
+    expect(saved > 0 && Math.abs(diffOf(returned).listScrollTop - saved) <= 1, `the list did not come back where it was: ${String(saved)} → ${String(diffOf(returned).listScrollTop)}`);
+
+    // --- 4. Progress and who handled it --------------------------------------------------------
+    await openFile(diffId, 'src/cart.ts');
+    await press(diffId, '[data-ev="pair-file-manual"]');
+    await untilPair(diffId, 'cart.ts reviewed', (reading) => diffOf(reading).files.find((file) => file.path === 'src/cart.ts')?.done === true);
+    await backToFiles(diffId);
+    await openFile(diffId, 'docs/guide.md');
+    await markLine(diffId, 'target', 3, 'manual');
+    await markLine(diffId, 'base', 3, 'exempt');
+    await backToFiles(diffId);
+    await openFile(diffId, 'data/item-02.json');
+    await press(diffId, '[data-ev="pair-delegate-file"]');
+    await untilPair(diffId, 'the agent picker', (reading) => (reading.text ?? '').includes('Model'), 15_000);
+    await press(diffId, '[data-ev="pair-delegate-agent-start"]');
+    const delegated = await untilPair(diffId, 'the delegated review', (reading) => diffOf(reading).jobs.some((job) => job.kind === 'review' && job.state === 'done'), 60_000);
+    const problemLine = diffOf(delegated).strips.find((entry) => entry.side === 'target' && entry.status === 'none');
+    if (problemLine !== undefined) {
+      await markLine(diffId, 'target', problemLine.line, 'manual');
+    }
+    const status = await backToFiles(diffId);
+    const rows = { cart: rowOf(status, 'src/cart.ts'), guide: rowOf(status, 'docs/guide.md'), item02: rowOf(status, 'data/item-02.json') };
+    record('status', rows);
+    expect(diffOf(status).files.find((file) => file.path === 'src/cart.ts')?.done === true, 'cart.ts is not done after Mark all reviewed');
+    expect(/You: 1 · exempted: 1/.test(rows.guide) && /50%/.test(rows.guide), `the guide's mixed status is not shown: ${rows.guide}`);
+    expect(diffOf(status).files.find((file) => file.path === 'data/item-02.json')?.done === true && /You: \d+ · Claude · opus: \d+/.test(rows.item02) && /1 open finding/.test(rows.item02), `a finished file with mixed review hides its finding: ${rows.item02}`);
+    await capture(diffId, 'files-progress-mixed');
+
+    // --- 5. Prepare code walks: the walk window opens once ----------------------------------------
+    await press(diffId, '[data-ev="pair-prepare-walks"]');
+    await untilPair(diffId, 'the agent picker', (reading) => (reading.text ?? '').includes('Model'), 15_000);
+    expect(!(visibleOf(await readPairWindow(diffId))).includes('The agent reads the two commits'), 'the long explanation is still drawn beside the picker');
+    await press(diffId, '[data-ev="pair-walks-agent-start"]');
+    const walkRow = await untilWindow('the walk window to open by itself', (rows) => rows.find((row) => row.view === 'walk'), 90_000);
+    await sleep(2500);
+    const walkCountAfter = (await walkWindows()).length;
+    record('walk window opened', { windows: walkCountAfter });
+    expect(walkCountAfter === 1, `the preparation opened ${String(walkCountAfter)} walk windows`);
+    const afterPrep = await readPairWindow(diffId);
+    expect(diffOf(afterPrep).codeWalks?.enabled === true, 'Code walks is not offered once walks exist');
+    expect(!visibleOf(afterPrep).includes('Show the walks') && !visibleOf(afterPrep).includes('Open a walk file') && !visibleOf(afterPrep).includes('Prepared by'), 'the old walk list or its notes are still in the diff window');
+    expect(!/job-[0-9a-f]{8}/.test(visibleOf(afterPrep)) && !visibleOf(afterPrep).includes('Details'), 'job ids or Details are in the review flow');
+
+    // --- 6. Walks and readings in the walk window --------------------------------------------------
+    const walk = await untilPair(walkRow.id, 'the walks', (reading) => (walkOf(reading)?.items.length ?? 0) > 0, 30_000);
+    const view = walkOf(walk);
+    record('walk window', { heading: view?.heading, items: view?.items, overview: view?.overview, attention: view?.attention, leftWidth: view?.leftWidth, tree: view?.treeOpen });
+    expect(view?.heading === 'Walks and readings', `the list is not headed for walks and readings: ${String(view?.heading)}`);
+    expect((view?.items ?? []).filter((item) => item.reading).map((item) => item.id).join(',') === 'R1,R2', `the guide's two changes are not two readings: ${JSON.stringify(view?.items)}`);
+    expect((view?.items ?? []).every((item) => item.title !== '' && item.purpose !== '' && item.purposeHeight <= 44), 'an item lacks a short description, or its introduction is long');
+    expect(view?.treeOpen === false && view.leftOverflowX === false, 'the file tree is in the way or the left column scrolls sideways');
+    expect(view?.chooseOffered === false, 'the walk window still offers a file chooser');
+    expect(view?.overviewMore === 'Show more' && (view?.attention ?? '').includes('in no walk'), `Show more or the points worth checking are missing: ${JSON.stringify({ more: view?.overviewMore, attention: view?.attention })}`);
+    await capture(walkRow.id, 'walks-and-readings');
+    await press(walkRow.id, '[data-ev="walk-overview-more"]');
+    const more = walkOf(await readPairWindow(walkRow.id));
+    expect(more?.overviewMore === 'Show less' && (more?.overview.length ?? 0) > (view?.overview.length ?? 0) && (more?.overview ?? '').includes('background'), `Show more showed nothing more: ${JSON.stringify(more?.overview)}`);
+    await capture(walkRow.id, 'about-show-more');
+    await press(walkRow.id, '[data-ev="walk-overview-more"]');
+    expect(walkOf(await readPairWindow(walkRow.id))?.overviewMore === 'Show more', 'Show less did not fold the background');
+
+    // A code walk follows the call: the button calls checkout, defined in cart.ts.
+    const button = (view?.items ?? []).find((item) => item.title.includes('checkout-button.ts'));
+    if (button !== undefined) {
+      await check({ action: 'go-to-step', id: walkRow.id, stepId: `${button.id}.1` }, 'go to the button step');
+      await press(walkRow.id, 'button.rv-nav-next');
+      const called = await untilPair(walkRow.id, 'the place the call leads to', (reading) => (walkOf(reading)?.activePane?.path ?? '').endsWith('src/cart.ts'));
+      record('call followed', { pane: walkOf(called)?.activePane?.path, from: visibleOf(called).includes('The call of checkout') });
+      expect(visibleOf(called).includes('The call of checkout'), 'the place is not shown as reached from the call');
+      await capture(walkRow.id, 'code-walk-call');
+    } else {
+      expect(false, 'no code walk over the button');
+    }
+
+    // --- 7. Independent navigation, shared status -------------------------------------------------
+    const diffBefore = diffOf(await readPairWindow(diffId)).fileKey;
+    await press(walkRow.id, '[data-ev="walk-head-R1"]');
+    await check({ action: 'go-to-step', id: walkRow.id, stepId: 'R1.1' }, 'go to the first reading');
+    await sleep(600);
+    expect(diffOf(await readPairWindow(diffId)).fileKey === diffBefore, 'a step in the walk moved the diff window');
+    const walkBefore = walkOf(await readPairWindow(walkRow.id))?.position?.stepId;
+    await openFile(diffId, 'src/app/checkout-button.ts');
+    await sleep(400);
+    expect(walkOf(await readPairWindow(walkRow.id))?.position?.stepId === walkBefore, 'opening a file in the diff moved the walk');
+    await press(walkRow.id, '.rv-tabs .rv-tab:nth-child(2)');
+    const accepted = (reading: PairWindowReading | null): number => (visibleOf(reading).match(/Accepted by you/g) ?? []).length;
+    const acceptedBefore = accepted(await untilPair(walkRow.id, 'the coverage tab', (reading) => visibleOf(reading).includes('Accepted by you')));
+    await press(diffId, '[data-ev="pair-file-manual"]');
+    const shared = await untilPair(walkRow.id, 'the walk window to show the mark made in the diff', (reading) => accepted(reading) > acceptedBefore, 15_000).catch(() => null);
+    record('shared status', { before: acceptedBefore, after: accepted(shared) });
+    expect(shared !== null, 'a mark made in the diff window is not shown in the walk window');
+    await capture(walkRow.id, 'shared-status');
+    await press(walkRow.id, '.rv-tabs .rv-tab:nth-child(1)');
+
+    // --- 8. The left column: dragged, moved with the keys, kept -----------------------------------
+    const widthBefore = walkOf(await readPairWindow(walkRow.id))?.leftWidth ?? 0;
+    await check({ action: 'pointer-drag', id: walkRow.id, selector: '[data-ev="walk-nav-divider"]', dx: 120 }, 'drag the left divider');
+    const dragged = walkOf(await readPairWindow(walkRow.id))?.leftWidth ?? 0;
+    await pressKey(walkRow.id, '[data-ev="walk-nav-divider"]', 'Left');
+    await sleep(300);
+    const keyed = walkOf(await readPairWindow(walkRow.id))?.leftWidth ?? 0;
+    record('left column', { before: widthBefore, dragged, keyed });
+    expect(Math.abs(dragged - widthBefore - 120) <= 3 && Math.abs(keyed - dragged + 40) <= 3, `the left column did not follow the mouse and the keys: ${String(widthBefore)} → ${String(dragged)} → ${String(keyed)}`);
+    await press(walkRow.id, '[data-ev="walk-files"]');
+    const tree = walkOf(await readPairWindow(walkRow.id));
+    expect(tree?.treeOpen === true && tree.leftOverflowX === false, 'the opened file tree makes the left column scroll sideways');
+    await capture(walkRow.id, 'left-column-wider-files');
+    await press(walkRow.id, '[data-ev="walk-files"]');
+    await window.dspatch.reviewWindowCheck({ action: 'capture', webContentsId: walkRow.id, label: 'walk-narrow-window', width: 1000 });
+    await check({ action: 'go-to-step', id: walkRow.id, stepId: 'R2.1' }, 'leave the walks at R2.1');
+
+    // --- 9. Long Markdown lines: MiniDAWLab-spike01 at the pair of the trial ----------------------
+    await press(diffId, '[data-ev="pair-all-reviews"]');
+    await untilPair(diffId, 'the ongoing reviews', (reading) => diffOf(reading).phase === 'ongoing');
+    await capture(diffId, 'ongoing-one');
+    await press(diffId, '[data-ev="pair-new-review"]');
+    const dal = await startReview(diffId, DAL.name, DAL);
+    expect(diffOf(dal).files.length === 1 && diffOf(dal).files[0]?.path === DAL_FILE, `the trial's pair is not one Markdown file: ${JSON.stringify(diffOf(dal).files.map((file) => file.path))}`);
+    const dalSplit = await openFile(diffId, DAL_FILE);
+    const long = diffOf(dalSplit).longLines.filter((entry) => entry.side === 'base').sort((a, b) => b.length - a.length)[0];
+    record('long lines', { count: diffOf(dalSplit).longLines.length, longest: long, overflow: diffOf(dalSplit).diffOverflowX, words: diffOf(dalSplit).words.length, whole: diffOf(dalSplit).wholeLines.length });
+    expect(long !== undefined && long.height > 40, 'a long line does not wrap in the diff');
+    expect(!diffOf(dalSplit).diffOverflowX, 'the diff scrolls sideways for long lines');
+    expect(diffOf(dalSplit).words.length + diffOf(dalSplit).wholeLines.length > 0, 'the wrapped diff has no change marks');
+    await capture(diffId, 'dal-split-wrapped');
+    if (long !== undefined) {
+      const selected = (await check({ action: 'drag', id: diffId, from: { selector: cell('base', long.line), offset: 20 }, to: { selector: cell('base', long.line), offset: 140 } }, 'select in a long line')) as { selected?: string };
+      await untilPair(diffId, 'Explain this beside the selection', (reading) => diffOf(reading).explainOffered);
+      record('selected in a wrapped line', { selected: (selected.selected ?? '').slice(0, 80), length: (selected.selected ?? '').length });
+      expect((selected.selected ?? '').length === 120, `the selection in a wrapped line is not the 120 characters dragged over: ${String((selected.selected ?? '').length)}`);
+      await press(diffId, '[data-ev="explain-this"]');
+      const explained = await untilPair(diffId, 'the explanation', (reading) => diffOf(reading).explanations.some((job) => job.state === 'done') && diffOf(reading).highlighted > 0, 60_000);
+      expect(diffOf(explained).highlighted > 0, 'the explained text is not marked');
+      await capture(diffId, 'dal-explained-wrapped');
+      await press(diffId, '[data-ev="explain-fold"]');
+      await markLine(diffId, 'base', long.line, 'manual');
+      await capture(diffId, 'dal-line-marked');
+    }
+    await press(diffId, '[data-ev="pair-layout-unified"]');
+    await untilPair(diffId, 'unified', (reading) => diffOf(reading).layout === 'unified');
+    expect(!diffOf(await readPairWindow(diffId)).diffOverflowX, 'the unified diff scrolls sideways for long lines');
+    await capture(diffId, 'dal-unified-wrapped');
+    await press(diffId, '[data-ev="pair-layout-split"]');
+
+    // Readings for a documentation change, with the long lines wrapped in the walk window.
+    await press(diffId, '[data-ev="pair-prepare-walks"]');
+    await untilPair(diffId, 'the agent picker', (reading) => (reading.text ?? '').includes('Model'), 15_000);
+    await press(diffId, '[data-ev="pair-walks-agent-start"]');
+    const dalWalkRow = await untilWindow('the readings window', (rows) => rows.find((row) => row.view === 'walk' && row.id !== walkRow.id), 90_000);
+    const readings = await untilPair(dalWalkRow.id, 'the readings with a pane', (reading) => walkOf(reading)?.activePane != null && (walkOf(reading)?.activePane?.focusRows.length ?? 0) > 0, 30_000);
+    const pane = walkOf(readings)?.activePane;
+    record('readings', { heading: walkOf(readings)?.heading, items: walkOf(readings)?.items.map((item) => `${item.id}:${item.title}`), pane });
+    expect(walkOf(readings)?.heading === 'Readings' && (walkOf(readings)?.items ?? []).every((item) => item.reading), 'a documentation change did not get readings');
+    expect(pane?.wrap === '1' && pane.scrollLeft === 0 && pane.scrollWidth <= pane.clientWidth + 2, `the Markdown pane does not wrap by default: ${JSON.stringify(pane)}`);
+    expect(walkOf(readings)?.wrapChecked === true, 'Wrap lines does not show as on for Markdown');
+    await capture(dalWalkRow.id, 'dal-reading-wrapped');
+    // Through the readings to a place with a long line: wrapped rows keep their own numbers.
+    let tall = pane?.focusRows.find((row) => row.height > 19) ?? null;
+    for (let step = 0; step < 12 && tall === null; step += 1) {
+      await press(dalWalkRow.id, 'button.rv-nav-next');
+      tall = walkOf(await readPairWindow(dalWalkRow.id))?.activePane?.focusRows.find((row) => row.height > 19) ?? null;
+    }
+    record('wrapped row', { tall });
+    expect(tall !== null && tall.numbers.includes(tall.line), `no wrapped row with its own line number: ${JSON.stringify(tall)}`);
+    await capture(dalWalkRow.id, 'dal-reading-long-line');
+    await press(dalWalkRow.id, '[data-ev="walk-wrap"]');
+    const unwrapped = walkOf(await readPairWindow(dalWalkRow.id))?.activePane;
+    expect(unwrapped?.wrap === '0' && unwrapped.scrollWidth > unwrapped.clientWidth, `Wrap lines off did not unwrap: ${JSON.stringify(unwrapped)}`);
+    await capture(dalWalkRow.id, 'dal-reading-unwrapped');
+    await press(dalWalkRow.id, '[data-ev="walk-wrap"]');
+    expect(walkOf(await readPairWindow(dalWalkRow.id))?.activePane?.wrap === '1', 'Wrap lines did not come back on');
+
+    // One walk window per review: Code walks of the shop review brings its own window forward.
+    await press(diffId, '[data-ev="pair-all-reviews"]');
+    const both = await untilPair(diffId, 'two ongoing reviews', (reading) => diffOf(reading).phase === 'ongoing' && (diffOf(reading).ongoing ?? []).length === 2);
+    await press(diffId, `[data-ev="pair-ongoing-open-${String((diffOf(both).ongoing ?? []).findIndex((row) => row.startsWith('shop')))}"]`);
+    await untilPair(diffId, 'the shop review', (reading) => diffOf(reading).phase === 'review', 30_000);
+    await press(diffId, '[data-ev="pair-walks"]');
+    await sleep(800);
+    const windowsNow = await walkWindows();
+    record('one walk window per review', { windows: windowsNow.map((row) => row.title) });
+    expect(windowsNow.length === 2, `Code walks made another walk window: ${String(windowsNow.length)}`);
+    const sent = await reviewPromptsSent();
+    record('prompts', { preparations: sent.filter((prompt) => prompt.startsWith('DSPATCH-REVIEW-TASK: prepare-walks')).length, all: sent.length });
+    expect(sent.filter((prompt) => prompt.startsWith('DSPATCH-REVIEW-TASK: prepare-walks')).length === 2, 'a preparation was sent more or fewer times than pressed');
+    return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+    const rows = await pairWindows().catch(() => []);
+    observations['atFailure'] = { windows: rows, readings: await Promise.all(rows.map((row) => readPairWindow(row.id).catch(() => null))) };
+    return finish(CHAT_EXIT.scriptFailed, steps, failures, observations);
+  }
+}
+
+/**
  * The diff's change marks (DSP-150 follow-up, Gerrit v3.14.4 behaviour) in the real window,
  * over `tests/support/marks-fixture.ts`. Each file is drawn side by side and unified; both
  * layouts must mark the same characters and the same whole lines, and the marks must not
@@ -13486,6 +13953,7 @@ async function runDiffMarksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
   const openReview = async (): Promise<number> => {
     await press(MAIN, '[data-ev="open-review"]');
     const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
+    await pastOngoing(diffId);
     const first = await untilPair(diffId, 'the repository list or the log', (reading) => reading.pair?.phase === 'repositories' || reading.pair?.phase === 'log' || reading.pair?.phase === 'review');
     if (first.pair?.phase === 'repositories') {
       await press(diffId, '[data-ev="pair-repo-0"]');

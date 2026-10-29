@@ -458,21 +458,72 @@ export class ReviewWindows {
     }
   }
 
-  /** Ask where to find a walk definition (the existing chooser's dialog, or the scripted pick). */
-  async pickWalkFile(entry: ReviewWindowEntry): Promise<string | null> {
-    if (this.options.scriptedPick !== null) {
-      const chosen = this.options.scriptedPick();
-      this.options.log(`walk file answered by the scripted pick: ${chosen ?? '(dismissed)'}`);
-      return chosen;
+  /**
+   * Open a walk definition over a pair in that review's walk window (Niclas's trial
+   * feedback, 29 October 2026): one walk window per review. A walk window already over the
+   * pair is reused — brought to the front when it shows this definition, else given this
+   * definition after it has saved what it holds — and a new one is made only when none is
+   * open. The walk's own record keeps its position, so it opens where it was left. The
+   * diff window is not moved: the two windows navigate independently.
+   */
+  openWalkOfPair(from: ReviewWindowEntry, key: string, definitionPath: string): Promise<{ readonly ok: boolean; readonly note: string }> {
+    const next = this.queue.then(() => this.openWalkNow(from, key, definitionPath));
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async openWalkNow(from: ReviewWindowEntry, key: string, definitionPath: string): Promise<{ readonly ok: boolean; readonly note: string }> {
+    const same = (entry: ReviewWindowEntry): boolean =>
+      entry.identity !== null && path.resolve(entry.identity.definitionPath).toLowerCase() === path.resolve(definitionPath).toLowerCase();
+    const walkWindows = this.list().filter((entry) => entry.view === 'walk');
+    const showing = walkWindows.find(same);
+    if (showing !== undefined) {
+      showing.pairKey = key;
+      this.focus(showing);
+      return { ok: true, note: '' };
     }
-    const dialogOptions = {
-      title: 'Open a code walk',
-      properties: ['openFile' as const],
-      filters: [{ name: 'Review definition', extensions: ['json'] }],
-    };
-    const parent = entry.window.isDestroyed() ? null : entry.window;
-    const result = parent === null ? await dialog.showOpenDialog(dialogOptions) : await dialog.showOpenDialog(parent, dialogOptions);
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+    const existing = walkWindows.find((entry) => entry.pairKey === key);
+    if (existing !== undefined) {
+      await this.flushView(existing);
+      const outcome = await this.openChosen(existing, definitionPath);
+      if (outcome.kind !== 'opened') {
+        return { ok: false, note: outcome.kind === 'failed' ? outcome.error : outcome.note };
+      }
+      // The view reads what it shows when it loads: the new definition, at its own position.
+      existing.contents.reload();
+      this.focus(existing);
+      return { ok: true, note: '' };
+    }
+    try {
+      const sessionId = await this.newSession();
+      let handedOver = false;
+      try {
+        const opened = await this.options.host.open({ sessionId, definitionPath, remember: true });
+        const outcome = isReviewHostError(opened) ? openFailureOf(opened) : opened.outcome;
+        if (outcome.kind !== 'opened') {
+          return { ok: false, note: outcome.kind === 'failed' ? outcome.error : outcome.note };
+        }
+        const identity = isReviewHostError(opened) ? null : opened.identity;
+        const entry = this.create({
+          sessionId,
+          startFolder: null,
+          defaultProvider: from.defaultProvider,
+          defaultModel: from.defaultModel,
+          initial: outcome,
+          identity,
+          chooserKey: null,
+        });
+        entry.pairKey = key;
+        handedOver = true;
+        return { ok: true, note: '' };
+      } finally {
+        if (!handedOver) {
+          void this.options.host.closeSession({ sessionId });
+        }
+      }
+    } catch (error) {
+      return { ok: false, note: `The walks could not be opened: ${error instanceof Error ? error.message : String(error)}` };
+    }
   }
 
   async readings(): Promise<readonly ReviewWindowReading[]> {

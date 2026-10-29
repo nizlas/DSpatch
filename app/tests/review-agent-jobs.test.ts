@@ -109,7 +109,18 @@ describe('preparing code walks', () => {
     assert.deepEqual(parsed.problems, []);
     assert.equal(parsed.definition?.base, fixture.appBase);
     assert.ok(job.uncovered.length > 0, 'the simulated walks leave a file out, and the gap is recorded');
-    assert.match(job.note, /changed line\(s\) are in no walk/);
+    assert.match(job.note, /changed line\(s\) are in none of them/);
+    // Niclas's trial feedback (29 October 2026): text gets readings, code gets walks, and
+    // the summary is not repeated as the background (Show more must show more).
+    const definition = parsed.definition;
+    assert.ok(definition !== null);
+    const kinds = definition.walks.map((walk) => `${walk.id}:${walk.kind}`);
+    assert.ok(kinds.some((entry) => /^R\d+:reading$/.test(entry)) && kinds.some((entry) => /^W\d+:walk$/.test(entry)), kinds.join(', '));
+    assert.notEqual(definition.overview.en, definition.overviewSummary.en);
+    assert.ok(definition.overview.en.startsWith(definition.overviewSummary.en));
+    assert.match(definition.attention.en, /^- SIMULATED/);
+    assert.match(sent[0] ?? '', /A \*\*reading\*\*/);
+    assert.match(sent[0] ?? '', /Never invent a direction or a call chain/);
   });
 
   it('refuses a second preparation while one runs', () => {

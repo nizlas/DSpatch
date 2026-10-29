@@ -8,10 +8,15 @@
  * repository whose change depends on an unchanged definition in another file, with a
  * working copy that differs from both commits (`tests/support/analysis-fixture.ts`).
  * `--fixture marks` makes it one repository whose change holds the kinds of change the
- * diff's marks must tell apart (`tests/support/marks-fixture.ts`).
+ * diff's marks must tell apart (`tests/support/marks-fixture.ts`). `--fixture flow` makes it
+ * the review flow's repository (`tests/support/flow-fixture.ts`): a call path, a document
+ * with independent changes and a file list long enough to scroll. `--clone <repository>`
+ * adds a clone of another repository beside it, made with `git clone --no-local`, which only
+ * reads the source; its working copy and its `.git` are not changed.
  *
- * Writes `<kit>/userData`, `<kit>/workspace` and `<kit>/kit.json` (the walk definition
- * the scenario's file pick answers with). Nothing outside the kit folder is touched.
+ * Writes `<kit>/userData`, `<kit>/workspace` and `<kit>/kit.json`. A fixture's walk
+ * definition is recorded as opened before, so the review offers it among the pair's walks.
+ * Nothing outside the kit folder is touched.
  */
 
 import fs from 'node:fs';
@@ -20,7 +25,10 @@ import process from 'node:process';
 
 import { pairKeyOf } from '../src/host/review-pairs';
 import { ProjectStore } from '../src/main/project-store';
+import { execFileSync } from 'node:child_process';
+
 import { makeAnalysisFixture } from '../tests/support/analysis-fixture';
+import { makeFlowFixture } from '../tests/support/flow-fixture';
 import { makeMarksFixture } from '../tests/support/marks-fixture';
 import { makePairFixture } from '../tests/support/pair-fixture';
 
@@ -43,10 +51,11 @@ const MODEL = option('--model');
 // kit's own pair (the app repository's two commits), as the same review opened again.
 const HISTORY = option('--history');
 const FIXTURE = option('--fixture') ?? 'pair';
-if (FIXTURE !== 'pair' && FIXTURE !== 'analysis' && FIXTURE !== 'marks') {
-  console.error('--fixture is pair, analysis or marks');
+if (FIXTURE !== 'pair' && FIXTURE !== 'analysis' && FIXTURE !== 'marks' && FIXTURE !== 'flow') {
+  console.error('--fixture is pair, analysis, marks or flow');
   process.exit(2);
 }
+const CLONE = option('--clone');
 if (AGENT !== 'cursor' && AGENT !== 'claude') {
   console.error('--agent is cursor or claude');
   process.exit(2);
@@ -60,7 +69,18 @@ fs.mkdirSync(USERDATA, { recursive: true });
 const workspace = path.join(KIT, 'workspace');
 fs.mkdirSync(workspace, { recursive: true });
 const fixture =
-  FIXTURE === 'analysis' ? makeAnalysisFixture(workspace) : FIXTURE === 'marks' ? makeMarksFixture(workspace) : makePairFixture(workspace);
+  FIXTURE === 'analysis'
+    ? makeAnalysisFixture(workspace)
+    : FIXTURE === 'marks'
+      ? makeMarksFixture(workspace)
+      : FIXTURE === 'flow'
+        ? makeFlowFixture(workspace)
+        : makePairFixture(workspace);
+let cloned = null;
+if (CLONE !== null) {
+  cloned = path.join(workspace, path.basename(path.resolve(CLONE)));
+  execFileSync('git', ['clone', '--no-local', '--quiet', path.resolve(CLONE), cloned], { stdio: 'inherit' });
+}
 
 // The kit's person chose an agent (Cursor unless told otherwise); nothing in the
 // scenario reaches a provider, and the presentation adapter answers in its place.
@@ -88,5 +108,14 @@ if (HISTORY !== null && 'app' in fixture) {
   fs.mkdirSync(pairs, { recursive: true });
   fs.writeFileSync(path.join(pairs, `${pairKeyOf(pair)}.json`), `${JSON.stringify({ ...copied, pair, position: null }, null, 2)}\n`, 'utf8');
 }
-fs.writeFileSync(path.join(KIT, 'kit.json'), `${JSON.stringify(fixture, null, 2)}\n`, 'utf8');
+// The fixture's hand-written walk was opened before, as a walk opened from the chat would
+// have been: the review offers it among the pair's walks without any file chooser (Niclas's
+// trial feedback of 29 October 2026 took the chooser out of the review flow).
+if ('walkDefinition' in fixture && 'app' in fixture) {
+  const reviews = path.join(USERDATA, 'reviews');
+  fs.mkdirSync(reviews, { recursive: true });
+  const repositories = { kit: { repository: fixture.app, definitionPath: fixture.walkDefinition, openedAt: new Date().toISOString() } };
+  fs.writeFileSync(path.join(reviews, 'recent.json'), `${JSON.stringify({ version: 1, repositories }, null, 2)}\n`, 'utf8');
+}
+fs.writeFileSync(path.join(KIT, 'kit.json'), `${JSON.stringify({ ...fixture, cloned }, null, 2)}\n`, 'utf8');
 console.log(JSON.stringify({ kit: KIT, workspace, walk: 'walkDefinition' in fixture ? fixture.walkDefinition : null }));

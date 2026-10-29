@@ -421,6 +421,18 @@ What DSP-152 implemented within that decision, and the choices it made that Nicl
 
 The walk content and the explanations come from the model and have not been evaluated on real changes; the pilot questions in this section still apply.
 
+#### Clarifications after Niclas's first trial (29 October 2026)
+
+After his first real trial Niclas clarified the flow. These clarify the two decisions above; they do not replace the original plan, which stays as written.
+
+- **Files changed is the review's overview.** The diff window starts with *Files changed* over its whole width: a readable list, one row per file, the whole row opening its diff. An upward arrow at the top right of the diff goes back to the list where it was left. Each row names the file and enough of its path, the kind of change, the handled percentage (a check once the requirement is met), who handled it — the person, a named agent, exempted, or a mix — and the agent's open problems and questions, which a check never hides. Opening a file, reading an explanation or a walk passing a line is not review, and walk coverage is not review progress.
+- **The diff window and the walk window are independent windows** with shared review status. One walk window per review: opening walks again reuses it. Generation starts from the diff window, and a successful preparation opens the walk window once, at its first item; reading history or restarting never starts work or opens windows. *Code walks* stays where it is: dimmed, with "No code walks yet" on hover and keyboard focus, while there is nothing to open; otherwise it opens or brings forward the walk window at its last position. Only an explicit *Show in diff* moves the diff.
+- **DSpatch keeps the generated material.** No walk files are chosen, opened or saved by hand in the ordinary flow. Job ids, internal times, reads and tool calls are not shown; short status, *Stop* and failures or limits that affect the review are. Findings and uncertainties are content, not diagnostics.
+- **Ongoing reviews are resumed from the way into review.** Several can be ongoing; each lists its repository, revision pair and progress and reopens with its marks, explanations, walks and positions, without a provider call. Starting a new review is a separate action whose log opens with nothing chosen. Closing a window does not end a review; *End review* takes it off the list, approves nothing and deletes nothing.
+- **Code walks and readings.** A code walk follows a relevant execution path from a concrete entry point, through calls, conditions and data, with unchanged code where it is needed and a short word on each hop; it never claims that a flow was run. A reading takes one coherent change of documentation or other text in its context and jumps elsewhere only for a real connection; independent changes are separate readings. A change can have both. The agent must not invent a call chain to fit the walk form, nor tour every changed line for coverage.
+- **Readable walk window.** The left column has a draggable, keyboard-adjustable divider whose width is kept. *About the change* starts with a short summary, shows what is worth checking, and offers *Show more* only when there is more. The list is headed after what it holds (Walks, Readings, or both); each item has a title and a short description, and W1 or R1 is an identifier. Long lines wrap within the code panes (by default for Markdown, chosen with *Wrap lines*), keep their Git line numbers, and never change what counts as changed or covered.
+
+
 <a id="4-maestro-och-agentnätverket"></a>
 
 ## 4 Maestro and the agent network

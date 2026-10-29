@@ -199,21 +199,30 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(13rem, 18rem) minmax(0, 1fr) 6px minmax(16rem, min(var(--rv-right-width, 520px), 48vw));
+  /* The left column has the reviewer's chosen width too (Niclas's trial feedback, 29
+     October 2026), never more than about a third of the window, so the code keeps room. */
+  grid-template-columns:
+    minmax(13rem, min(var(--rv-left-width, 340px), 34vw)) 6px minmax(0, 1fr) 6px
+    minmax(16rem, min(var(--rv-right-width, 520px), 48vw));
 }
 
 .rv-body-wide {
-  grid-template-columns: minmax(26rem, 42rem) minmax(0, 1fr) 6px minmax(16rem, min(var(--rv-right-width, 520px), 40vw));
+  grid-template-columns:
+    minmax(22rem, min(max(var(--rv-left-width, 340px), 26rem), 44vw)) 6px minmax(0, 1fr) 6px
+    minmax(16rem, min(var(--rv-right-width, 520px), 40vw));
 }
 
 @media (max-width: 1150px) {
-  .rv-body,
-  .rv-body-wide {
-    grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr) 6px minmax(15rem, min(var(--rv-right-width, 520px), 44vw));
+  .rv-body {
+    grid-template-columns:
+      minmax(11rem, min(var(--rv-left-width, 340px), 30vw)) 6px minmax(0, 1fr) 6px
+      minmax(15rem, min(var(--rv-right-width, 520px), 44vw));
   }
 
   .rv-body-wide {
-    grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr) 6px minmax(15rem, min(var(--rv-right-width, 520px), 36vw));
+    grid-template-columns:
+      minmax(16rem, min(max(var(--rv-left-width, 340px), 22rem), 38vw)) 6px minmax(0, 1fr) 6px
+      minmax(15rem, min(var(--rv-right-width, 520px), 36vw));
   }
 }
 
@@ -236,7 +245,7 @@
 }
 
 .rv-left {
-  border-right: 1px solid var(--line);
+  overflow-x: hidden;
 }
 
 .rv-right {
@@ -1335,6 +1344,52 @@
   font-size: 0.82rem;
   line-height: 1.4;
   margin: 0.1rem 0 0.4rem 1.3rem;
+  overflow-wrap: anywhere;
+}
+
+/* A closed walk shows what it helps you understand in two lines at most, so a long
+   introduction never pushes the step list away; the whole text is on its tooltip. */
+.rv-walk-purpose-short {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.rv-walks-heading {
+  margin: 0.6rem 0 0.2rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.rv-walk-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  grid-column: 2;
+}
+
+.rv-kind-tag {
+  font-size: 0.7rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 0.3rem;
+}
+
+.rv-attention {
+  margin: 0.5rem 0 0.2rem;
+  padding: 0.35rem 0.6rem;
+  border-left: 3px solid var(--unknown);
+  background: color-mix(in srgb, var(--unknown) 10%, var(--bg));
+}
+
+.rv-attention-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-bottom: 0.15rem;
 }
 
 .rv-purpose {
@@ -1348,10 +1403,9 @@
 }
 
 .rv-tree {
-  border-top: 1px solid var(--line);
-  padding-top: 0.3rem;
   max-height: 45vh;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .rv-tree-head {
@@ -1390,6 +1444,8 @@
   gap: 0.35rem;
   align-items: baseline;
   width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   text-align: left;
   border: none;
   background: transparent;
@@ -1905,10 +1961,14 @@
   overflow: auto;
 }
 
-.rv-pair-body-file {
-  display: grid;
-  grid-template-columns: minmax(11rem, 15rem) 1fr;
+/* A file's diff fills the body; its own columns scroll (Files changed scrolls the body). */
+.rv-pair-body:has(> .rv-pair-file-view) {
+  display: flex;
   overflow: hidden;
+}
+
+.rv-pair-body > .rv-pair-file-view {
+  flex: 1 1 auto;
 }
 
 .rv-pair-files {
@@ -1931,32 +1991,105 @@
   font-size: 0.85rem;
 }
 
-.rv-pair-files table {
+/* Files changed: the whole width, one row per file, the whole row a button (Niclas's trial
+   feedback, 29 October 2026). The columns are a grid so a long path wraps in its own
+   column instead of pushing the others away. */
+.rv-pair-filelist {
+  display: flex;
+  flex-direction: column;
+}
+
+.rv-pair .rv-pair-filerow {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) 7.5rem 7rem minmax(9rem, 16rem) 8rem;
+  gap: 0.2rem 1rem;
+  align-items: center;
   width: 100%;
-  border-collapse: collapse;
-}
-
-.rv-pair-files th {
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
   text-align: left;
-  font-weight: 500;
-  color: var(--muted);
-  font-size: 0.8rem;
-  padding: 0.3rem 0.6rem;
-  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
 }
 
-.rv-pair-files td {
-  padding: 0.35rem 0.6rem;
-  border-bottom: 1px solid var(--line);
-  vertical-align: middle;
-}
-
-.rv-pair-files tbody tr:hover {
+.rv-pair .rv-pair-filerow:hover:not(:disabled) {
   background: var(--panel);
 }
 
-.rv-pair-col-status {
-  width: 7rem;
+.rv-pair .rv-pair-filerow:focus-visible {
+  outline: 2px solid var(--rv-mark-manual);
+  outline-offset: -2px;
+}
+
+.rv-pair .rv-pair-filehead {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
+}
+
+.rv-pair .rv-pair-filehead:hover {
+  background: none;
+}
+
+.rv-pair-file-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rv-pair-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.6rem;
+  min-width: 0;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.88em;
+}
+
+.rv-pair-path-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.rv-pair-path-dir {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.rv-pair-renamed-from {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.8em;
+  overflow-wrap: anywhere;
+}
+
+.rv-pair-by {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rv-pair-findings {
+  color: var(--no);
+}
+
+@media (max-width: 900px) {
+  .rv-pair .rv-pair-filerow {
+    grid-template-columns: minmax(10rem, 1fr) 6.5rem 6rem 6rem;
+  }
+
+  .rv-pair .rv-pair-filerow > :nth-child(4) {
+    display: none;
+  }
 }
 
 .rv-pair-col-num {
@@ -2020,14 +2153,25 @@
   color: var(--muted);
 }
 
-.rv-pair-done input {
-  margin: 0;
-  accent-color: var(--rv-mark-manual);
-  pointer-events: none;
+.rv-pair-check {
+  display: inline-grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 3px;
+  background: var(--rv-mark-manual);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1;
 }
 
-.rv-pair-done-exempted input {
-  accent-color: var(--muted);
+.rv-pair-done-agent .rv-pair-check {
+  background: var(--rv-mark-agent);
+}
+
+.rv-pair-done-exempted .rv-pair-check {
+  background: var(--muted);
 }
 
 .rv-pair-done-how {
@@ -2035,43 +2179,97 @@
   font-size: 0.78rem;
 }
 
-.rv-pair-sidebar {
-  border-right: 1px solid var(--line);
-  overflow: auto;
-  padding: 0.5rem 0;
+/* Back to Files changed: the arrow at the top right of a file's diff. */
+.rv-pair .rv-pair-up {
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.25rem 0.55rem;
 }
 
-.rv-pair-sidebar ul {
+/* Code walks while there is nothing to open: dimmed, still focusable, its reason on hover
+   and keyboard focus alike (a native title shows on hover only). */
+.rv-pair .rv-pair-tip {
+  position: relative;
+}
+
+.rv-pair .rv-pair-dimmed,
+.rv-pair .rv-pair-dimmed:hover {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rv-pair-tip[data-tip]:not([data-tip=""]):hover::after,
+.rv-pair-tip[data-tip]:not([data-tip=""]):focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 5;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* The way into review: ongoing reviews and Start a new review. */
+.rv-pair-section {
+  margin: 0.4rem 1.2rem 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.rv-pair-ongoing {
   list-style: none;
-  margin: 0.3rem 0 0;
-  padding: 0;
+  margin: 0;
+  padding: 0 1.2rem 2rem;
 }
 
-.rv-pair .rv-pair-side-file {
+.rv-pair-ongoing-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-  padding: 0.25rem 0.8rem;
-  text-align: left;
-  background: none;
+  gap: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.rv-pair .rv-pair-ongoing-open {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(8rem, 12rem) 1fr auto;
+  gap: 0.2rem 1rem;
+  align-items: baseline;
+  min-width: 0;
+  padding: 0.55rem 0.6rem;
   border: none;
   border-radius: 0;
+  background: none;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
 }
 
-.rv-pair .rv-pair-side-file-on,
-.rv-pair .rv-pair-side-file-on:hover:not(:disabled) {
-  background: var(--raised);
+.rv-pair .rv-pair-ongoing-open:hover:not(:disabled) {
+  background: var(--panel);
 }
 
-.rv-pair-side-file .rv-pair-progress {
-  flex: 0 0 2.6rem;
-  font-size: 0.78rem;
+.rv-pair-ongoing-repo {
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
-.rv-pair-side-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.rv-pair-ongoing-revs {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.rv-pair-ongoing-progress {
+  color: var(--muted);
+  font-size: 0.85rem;
   white-space: nowrap;
 }
 
@@ -2222,9 +2420,10 @@
   color: var(--text);
 }
 
+/* Long lines wrap at word boundaries; a word longer than the column is broken only then. */
 .rv-pair-code {
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .rv-pair-table-split .rv-pair-code {
@@ -2719,4 +2918,36 @@
 
 .rv-explain-pick {
   margin-bottom: 0.6rem;
+}
+
+/* --- Wrapped lines (Niclas's trial feedback, 29 October 2026) -------------------------
+   A file's long line wraps within the pane and keeps its own line number at the top of
+   its first row. Its rows then take the height they need; the pane draws all of them. */
+.rv-lines-wrap .rv-rows {
+  width: auto;
+  min-width: 0;
+}
+
+.rv-lines-wrap .rv-longest {
+  display: none;
+}
+
+.rv-lines-wrap .rv-row,
+.rv-pane-lines.rv-lines-wrap .rv-row {
+  min-width: 0;
+  height: auto;
+  min-height: 19px;
+  align-items: flex-start;
+}
+
+.rv-lines-wrap .rv-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rv-lines-wrap .rv-row > .rv-ln,
+.rv-lines-wrap .rv-row > .rv-marker {
+  align-self: flex-start;
 }

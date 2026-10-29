@@ -35,6 +35,7 @@ import {
   stepContentHash,
   stepHashesOf,
   splitLines,
+  wrapsLines,
   type CodeReference,
   type DiffHunk,
   type ReviewDecision,
@@ -667,6 +668,36 @@ test('preferences accept only the two display languages', () => {
   assert.deepEqual(adoptPreferences({ language: 'sv' }), { language: 'sv' });
   assert.deepEqual(adoptPreferences({ language: 'de' }), { language: 'en' });
   assert.deepEqual(adoptPreferences(null), { language: 'en' });
+});
+
+test('preferences keep the widths of both walk window columns, within bounds', () => {
+  assert.deepEqual(adoptPreferences({ language: 'en', explanationWidth: 600, navigationWidth: 420 }), { language: 'en', explanationWidth: 600, navigationWidth: 420 });
+  assert.deepEqual(adoptPreferences({ language: 'en', navigationWidth: 5 }), { language: 'en' });
+});
+
+test('a walk is a code walk or a reading, and the change can name what is worth checking', () => {
+  const place = { id: 'P1', label: { sv: 'l', en: 'l' }, focus: { path: 'docs/a.md', side: 'target', start: 1, end: 1, role: 'walk' } };
+  const step = { id: 'R1.1', title: { sv: 't', en: 't' }, summary: { sv: 's', en: 's' }, body: { sv: 'b', en: 'b' }, places: [place] };
+  const walk = { id: 'W1', title: { sv: 't', en: 't' }, question: { sv: 'q', en: 'q' }, steps: [{ ...step, id: 'W1.1' }] };
+  const { definition, problems } = parseReviewDefinition({
+    format: 'dspatch-review/2',
+    title: { sv: 't', en: 't' },
+    repository: '.',
+    base: REVISIONS.base,
+    target: REVISIONS.target,
+    attention: { sv: '- Motsägelse', en: '- A contradiction' },
+    walks: [walk, { ...walk, id: 'R1', kind: 'reading', steps: [step] }, { ...walk, id: 'X1', kind: 'tour', steps: [{ ...step, id: 'X1.1' }] }],
+  });
+  assert.deepEqual(definition?.walks.map((entry) => entry.kind), ['walk', 'reading', 'walk']);
+  assert.deepEqual(definition?.attention, { sv: '- Motsägelse', en: '- A contradiction' });
+  assert.deepEqual(problems.map((problem) => problem.where), ['walks[2]']);
+});
+
+test('Markdown wraps by default and code does not, until the reviewer chooses', () => {
+  assert.equal(wrapsLines({}, 'docs/PORTABLE_INSTRUMENTS_AND_PROXIES.md'), true);
+  assert.equal(wrapsLines({}, 'src/a.ts'), false);
+  assert.equal(wrapsLines({ wrap: { markdown: false, code: true } }, 'README.md'), false);
+  assert.equal(wrapsLines({ wrap: { markdown: false, code: true } }, 'src/a.ts'), true);
 });
 
 test('opened coverage counts only the focus of opened places; declared context counts as planned', () => {

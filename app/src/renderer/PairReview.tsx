@@ -19,6 +19,7 @@ import { highlightLines, type Token } from '../shared/review-model';
 import {
   changedLinesOf,
   fileProgressOf,
+  fileReviewFactsOf,
   changeMarksOf,
   isPairError,
   lineKey,
@@ -36,6 +37,8 @@ import {
   type CodeSelectionRequest,
   type DelegationScope,
   type FileProgress,
+  type FileReviewFacts,
+  type OngoingReview,
   type LineRanges,
   type AgentFinding,
   type LineRange,
@@ -46,7 +49,6 @@ import {
   type PairFile,
   type PairPosition,
   type PairRecord,
-  type PairWalk,
   type ReviewPairBridge,
   type ReviewRepository,
   type ReviewRequirement,
@@ -73,6 +75,7 @@ export interface PairCheck {
 type Phase =
   | { readonly kind: 'loading' }
   | { readonly kind: 'message'; readonly text: string }
+  | { readonly kind: 'ongoing'; readonly reviews: readonly OngoingReview[]; readonly note: string | null }
   | { readonly kind: 'repositories'; readonly repositories: readonly ReviewRepository[] }
   | { readonly kind: 'log'; readonly repository: ReviewRepository; readonly several: boolean }
   | { readonly kind: 'review'; readonly open: OpenPair; readonly at: DiffLocation | null; readonly several: boolean; readonly repository: ReviewRepository };
@@ -107,6 +110,42 @@ export function PairReview(): JSX.Element {
     }
   }, [bridge]);
 
+  /**
+   * The way into review: the reviews not ended, when there are any, with *Start a new
+   * review* beside them; else straight to choosing a repository. Reading the list starts
+   * nothing and sends nothing to an agent.
+   */
+  const showReviews = useCallback(
+    async (note: string | null = null): Promise<void> => {
+      if (bridge === undefined) {
+        return;
+      }
+      const reviews = await bridge.ongoing().catch(() => []);
+      if (reviews.length === 0 && note === null) {
+        await chooseRepository();
+      } else {
+        setPhase({ kind: 'ongoing', reviews, note });
+      }
+    },
+    [bridge, chooseRepository],
+  );
+
+  const resume = useCallback(
+    async (review: OngoingReview): Promise<void> => {
+      if (bridge === undefined) {
+        return;
+      }
+      const outcome = await bridge.open(review.pair);
+      if (outcome.kind === 'opened') {
+        const repository = { path: outcome.open.pair.repository, name: outcome.open.repositoryName };
+        setPhase({ kind: 'review', open: outcome.open, at: null, several: true, repository });
+      } else {
+        await showReviews(outcome.kind === 'failed' ? outcome.error : outcome.note);
+      }
+    },
+    [bridge, showReviews],
+  );
+
   useEffect(() => {
     if (bridge === undefined) {
       setPhase({ kind: 'message', text: 'This window has no review connection.' });
@@ -115,7 +154,7 @@ export function PairReview(): JSX.Element {
     void (async () => {
       const start = await bridge.start();
       if (start.kind === 'choose') {
-        await chooseRepository();
+        await showReviews();
         return;
       }
       const outcome = await bridge.open(start.pair);
@@ -126,7 +165,7 @@ export function PairReview(): JSX.Element {
         setPhase({ kind: 'message', text: outcome.kind === 'failed' ? outcome.error : outcome.note });
       }
     })();
-  }, [bridge, chooseRepository]);
+  }, [bridge, showReviews]);
 
   useEffect(() => {
     // The review installs its own, fuller reading; a parent effect runs after it and
@@ -138,6 +177,8 @@ export function PairReview(): JSX.Element {
       read: () => ({
         phase: phase.kind,
         repositories: [...document.querySelectorAll<HTMLElement>('[data-ev^="pair-repo-"]')].map((row) => row.textContent ?? ''),
+        ongoing: [...document.querySelectorAll<HTMLElement>('[data-ev^="pair-ongoing-open-"]')].map((row) => (row.innerText || '').replace(/\s+/g, ' ').trim()),
+        ongoingNote: document.querySelector('[data-ev="pair-ongoing-note"]')?.textContent ?? '',
         heading: document.querySelector('.rv-pair-head h1')?.textContent ?? '',
         // Commits chosen as From or To in the log, and how many the log shows.
         chosen: document.querySelectorAll('.rv-pair-commit[aria-pressed="true"]').length,
@@ -156,6 +197,19 @@ export function PairReview(): JSX.Element {
     <div className="rv rv-pair">
       {phase.kind === 'loading' && <p className="rv-pair-message">Reading the workspace…</p>}
       {phase.kind === 'message' && <p className="rv-pair-message" data-ev="pair-message">{phase.text}</p>}
+      {phase.kind === 'ongoing' && (
+        <OngoingList
+          reviews={phase.reviews}
+          note={phase.note}
+          onResume={(review) => void resume(review)}
+          onNew={() => void chooseRepository()}
+          onEnd={(review) => {
+            void bridge.end(review.pair).then((answer) => {
+              void showReviews(isPairError(answer) ? answer.error : '');
+            });
+          }}
+        />
+      )}
       {phase.kind === 'repositories' && (
         <RepositoryList
           repositories={phase.repositories}
@@ -178,6 +232,7 @@ export function PairReview(): JSX.Element {
           open={phase.open}
           initialAt={phase.at}
           onChangeRevisions={() => setPhase({ kind: 'log', repository: phase.repository, several: phase.several })}
+          onAllReviews={() => void showReviews('')}
         />
       )}
     </div>
@@ -185,6 +240,79 @@ export function PairReview(): JSX.Element {
 }
 
 // --- Choosing ---------------------------------------------------------------------------
+
+/**
+ * The reviews not ended (Niclas's trial feedback, 29 October 2026): each opens where it
+ * was left, with its marks, explanations and walks, without any agent work. Several can be
+ * ongoing at once; closing a window does not end one, *End review* does, and that approves
+ * nothing.
+ */
+function OngoingList({
+  reviews,
+  note,
+  onResume,
+  onNew,
+  onEnd,
+}: {
+  readonly reviews: readonly OngoingReview[];
+  readonly note: string | null;
+  readonly onResume: (review: OngoingReview) => void;
+  readonly onNew: () => void;
+  readonly onEnd: (review: OngoingReview) => void;
+}): JSX.Element {
+  return (
+    <div className="rv-pair-choose">
+      <header className="rv-pair-head">
+        <h1>Reviews</h1>
+        <button type="button" className="rv-pair-primary" data-ev="pair-new-review" onClick={onNew}>
+          Start a new review
+        </button>
+      </header>
+      {note !== null && note !== '' && (
+        <p className="rv-pair-hint" data-ev="pair-ongoing-note">
+          {note}
+        </p>
+      )}
+      {reviews.length === 0 ? (
+        <p className="rv-pair-message">No ongoing reviews.</p>
+      ) : (
+        <>
+          <h2 className="rv-pair-section">Ongoing</h2>
+          <ul className="rv-pair-ongoing">
+            {reviews.map((review, index) => {
+              const percent = review.total === 0 ? null : Math.floor((review.handled * 100) / review.total);
+              return (
+                <li key={review.key} className="rv-pair-ongoing-row">
+                  <button type="button" className="rv-pair-ongoing-open" data-ev={`pair-ongoing-open-${String(index)}`} onClick={() => onResume(review)}>
+                    <span className="rv-pair-ongoing-repo">{review.repositoryName}</span>
+                    <span className="rv-pair-ongoing-revs">
+                      <code>{short(review.base.hash)}</code> {review.base.subject}
+                      <span className="rv-pair-arrow" aria-hidden="true"> → </span>
+                      <code>{short(review.target.hash)}</code> {review.target.subject}
+                    </span>
+                    <span className="rv-pair-ongoing-progress">
+                      {percent === null ? '' : `${String(percent)}% handled · `}
+                      {review.filesDone} of {review.files} {review.files === 1 ? 'file' : 'files'} done
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="rv-pair-link"
+                    data-ev={`pair-ongoing-end-${String(index)}`}
+                    title="Take it off this list. Nothing is approved or deleted; choosing the same two commits opens it again."
+                    onClick={() => onEnd(review)}
+                  >
+                    End review
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
 
 function RepositoryList({
   repositories,
@@ -398,11 +526,13 @@ function DiffReview({
   open,
   initialAt,
   onChangeRevisions,
+  onAllReviews,
 }: {
   readonly bridge: ReviewPairBridge;
   readonly open: OpenPair;
   readonly initialAt: DiffLocation | null;
   readonly onChangeRevisions: () => void;
+  readonly onAllReviews: () => void;
 }): JSX.Element {
   const [record, setRecord] = useState<PairRecord>(open.record);
   const startFile = (): string | null => {
@@ -418,8 +548,21 @@ function DiffReview({
   const [target, setTarget] = useState<{ readonly location: DiffLocation; readonly nonce: number } | null>(
     initialAt === null ? null : { location: initialAt, nonce: 1 },
   );
-  const [walksOpen, setWalksOpen] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  /** Where *Files changed* was scrolled, so coming back from a file finds the same rows. */
+  const listScroll = useRef(0);
+  const body = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (fileKey === null && body.current !== null) {
+      body.current.scrollTop = listScroll.current;
+    }
+  }, [fileKey]);
+  const openFile = (key: string | null): void => {
+    if (fileKey === null && body.current !== null) {
+      listScroll.current = body.current.scrollTop;
+    }
+    setFileKey(key);
+  };
 
   // What another window marked reaches this one through the host.
   useEffect(
@@ -438,7 +581,7 @@ function DiffReview({
       bridge.onNavigate((location) => {
         const file = open.files.find((candidate) => fileLocationMatch(candidate, location));
         if (file !== undefined) {
-          setFileKey(file.key);
+          openFile(file.key);
           setTarget((before) => ({ location, nonce: (before?.nonce ?? 0) + 1 }));
         }
       }),
@@ -474,6 +617,51 @@ function DiffReview({
   // DSP-152: agent work over the pair, started only by an explicit action here.
   const [preparing, setPreparing] = useState(false);
   const walksJob = [...record.jobs].reverse().find((job) => job.kind === 'walks') ?? null;
+
+  /*
+   * Niclas's trial feedback (29 October 2026): *Code walks* opens the review's walk window
+   * directly, and is dimmed while the pair has no walk to open. A preparation started in
+   * this window opens the walk window once when it succeeds; reading the record again,
+   * reopening the review or restarting the app never does (the ids live only here).
+   */
+  const [walkCount, setWalkCount] = useState<number | null>(null);
+  const [walksNote, setWalksNote] = useState('');
+  useEffect(() => {
+    let live = true;
+    void bridge
+      .walks(open.key)
+      .catch(() => [])
+      .then((answer) => {
+        if (live) {
+          setWalkCount(isPairError(answer) ? 0 : answer.length);
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [bridge, open.key, walksJob?.endedAt]);
+  const startedWalks = useRef(new Set<string>());
+  useEffect(() => {
+    for (const id of [...startedWalks.current]) {
+      const job = record.jobs.find((entry) => entry.id === id);
+      if (job === undefined || isRunning(job)) {
+        continue;
+      }
+      startedWalks.current.delete(id);
+      if (job.state === 'done' && job.definitionPath !== null) {
+        void bridge.openWalk(open.key, job.definitionPath).then((answer) => setWalksNote(answer.ok ? '' : answer.note));
+      }
+    }
+  }, [bridge, open.key, record.jobs]);
+  const openWalks = (): void => {
+    if (walkCount === null || walkCount === 0) {
+      return;
+    }
+    void bridge
+      .openWalks(open.key)
+      .catch((error: unknown) => ({ ok: false, note: requestFailure(error) }))
+      .then((answer) => setWalksNote(answer.ok ? '' : answer.note));
+  };
   const startJob = async (request: AgentJobRequestInput): Promise<boolean> => (await sendJob(request)) !== null;
   /** The one way this window starts agent work; a refusal or a failed request is said. */
   const sendJob = async (request: AgentJobRequestInput): Promise<AgentJob | null> => {
@@ -490,6 +678,9 @@ function DiffReview({
         setProblem(`${request.kind === 'walks' ? 'The code walks could not be started' : 'The review could not be started'}: ${answer.error}`);
       }
       return null;
+    }
+    if (request.kind === 'walks') {
+      startedWalks.current.add(answer.id);
     }
     return answer;
   };
@@ -533,7 +724,7 @@ function DiffReview({
   const showAt = (location: DiffLocation): void => {
     const file = open.files.find((candidate) => fileLocationMatch(candidate, location));
     if (file !== undefined) {
-      setFileKey(file.key);
+      openFile(file.key);
       setTarget((before) => ({ location, nonce: (before?.nonce ?? 0) + 1 }));
     }
   };
@@ -541,7 +732,7 @@ function DiffReview({
     const first = selection.segments[0];
     const file = open.files.find((candidate) => candidate.key === selection.fileKey);
     if (first !== undefined && file !== undefined) {
-      setFileKey(file.key);
+      openFile(file.key);
       setTarget((before) => ({ location: { side: first.side, path: first.path, line: first.start }, nonce: (before?.nonce ?? 0) + 1 }));
     }
   };
@@ -586,7 +777,10 @@ function DiffReview({
             percent: entry.percent,
             done: entry.done,
             shown: document.querySelector(`[data-file-key="${CSS.escape(file.key)}"] .rv-pair-progress`)?.textContent ?? '',
-            checkbox: document.querySelector(`[data-file-key="${CSS.escape(file.key)}"] input[type="checkbox"]`) !== null,
+            // The check in the file list, or in the file's own header while its diff is open.
+            checkbox:
+              document.querySelector(`[data-file-key="${CSS.escape(file.key)}"] .rv-pair-check`) !== null ||
+              (file.key === fileKey && document.querySelector('.rv-pair-file-head .rv-pair-check') !== null),
           };
         }),
         strips: [...document.querySelectorAll<HTMLElement>('.rv-pair-diff [data-strip]')].map((cell) => ({
@@ -671,14 +865,32 @@ function DiffReview({
         agentReviewsShown: document.querySelectorAll('[data-ev="agent-review"]').length,
         findingsShown: [...document.querySelectorAll<HTMLElement>('[data-ev="agent-finding"]')].map((item) => item.textContent ?? ''),
         diffNote: document.querySelector('.rv-pair-nodiff')?.textContent ?? '',
-        walksNote: document.querySelector('[data-ev="pair-walks-none"]')?.textContent ?? '',
+        walksNote,
+        walkCount,
+        codeWalks: ((): unknown => {
+          const button = document.querySelector<HTMLElement>('[data-ev="pair-walks"]');
+          return button === null ? null : { enabled: button.getAttribute('aria-disabled') !== 'true', tip: button.dataset['tip'] ?? '' };
+        })(),
+        listShown: document.querySelector('.rv-pair-files') !== null,
+        sidebarShown: document.querySelector('.rv-pair-sidebar') !== null,
+        listScrollTop: Math.round(body.current?.scrollTop ?? 0),
+        listScrollSaved: Math.round(listScroll.current),
+        diffOverflowX: ((): boolean => {
+          const diff = document.querySelector<HTMLElement>('.rv-pair-diff');
+          return diff !== null && diff.scrollWidth > diff.clientWidth + 1;
+        })(),
+        // Lines long enough to wrap, by side and line: where a scenario selects in a wrapped line.
+        longLines: [...document.querySelectorAll<HTMLElement>('.rv-pair-diff td[data-code-line]')]
+          .filter((cell) => (cell.textContent ?? '').length > 200)
+          .map((cell) => ({ side: cell.dataset['codeSide'] ?? '', line: Number(cell.dataset['codeLine']), length: (cell.textContent ?? '').length, height: Math.round(cell.getBoundingClientRect().height) })),
+        fileRows: [...document.querySelectorAll<HTMLElement>('[data-file-row]')].map((row) => (row.innerText || '').replace(/\s+/g, ' ').trim()),
         targetShown: document.querySelector('.rv-pair-target') !== null,
       }),
     };
     return () => {
       delete window.__dspatchPairCheck;
     };
-  }, [open, fileKey, layout, record, progress, explainActive]);
+  }, [open, fileKey, layout, record, progress, explainActive, walksNote, walkCount]);
 
   const totals = useMemo(() => {
     let total = 0;
@@ -692,6 +904,7 @@ function DiffReview({
     return { total, handled, done };
   }, [progress]);
 
+  const noWalks = walkCount === null || walkCount === 0;
   return (
     <div className="rv-pair-review">
       <header className="rv-pair-head rv-pair-review-head">
@@ -718,19 +931,27 @@ function DiffReview({
               Prepare code walks…
             </button>
           )}
-          <button type="button" data-ev="pair-walks" aria-expanded={walksOpen} onClick={() => setWalksOpen((value) => !value)}>
+          {/* Focusable while dimmed, so its reason reads on hover and on keyboard focus alike. */}
+          <button
+            type="button"
+            className={noWalks ? 'rv-pair-tip rv-pair-dimmed' : 'rv-pair-tip'}
+            data-ev="pair-walks"
+            aria-disabled={noWalks}
+            data-tip={noWalks ? 'No code walks yet' : ''}
+            onClick={openWalks}
+          >
             Code walks
           </button>
           <button type="button" className="rv-pair-link" data-ev="pair-change-revisions" onClick={onChangeRevisions}>
             Change revisions
           </button>
+          <button type="button" className="rv-pair-link" data-ev="pair-all-reviews" onClick={onAllReviews}>
+            All reviews
+          </button>
         </div>
       </header>
       {preparing && (
         <div className="rv-pair-walks">
-          <p className="rv-pair-muted">
-            The agent reads the two commits and proposes walks around the behaviours the change touches. A walk is not a review and approves nothing.
-          </p>
           <AgentPicker
             pairKey={open.key}
             action="Prepare code walks"
@@ -747,172 +968,106 @@ function DiffReview({
           />
         </div>
       )}
-      {walksJob !== null && (!preparing || isRunning(walksJob)) && (
-        <JobLine job={walksJob} onStop={() => void stopJob(walksJob)} onOpenWalks={() => setWalksOpen(true)} />
+      {/* A preparation shows while it runs, and when it gave nothing to open; a good one opens the walks instead. */}
+      {walksJob !== null && (isRunning(walksJob) || (!preparing && (walksJob.state !== 'done' || walksJob.definitionPath === null))) && (
+        <JobLine job={walksJob} onStop={() => void stopJob(walksJob)} />
       )}
-      {walksOpen && (
-        <WalkList bridge={bridge} pairKey={open.key} refresh={walksJob?.endedAt ?? ''} onClose={() => setWalksOpen(false)} />
+      {walksNote !== '' && (
+        <p className="rv-pair-error" data-ev="pair-walks-note">
+          {walksNote}
+        </p>
       )}
       {problem !== null && <p className="rv-pair-error">{problem}</p>}
-      <div className={current === null ? 'rv-pair-body' : 'rv-pair-body rv-pair-body-file'}>
+      <div className="rv-pair-body" ref={body}>
         {current === null ? (
           <FilesChanged
             pairKey={open.key}
             files={open.files}
             progress={progress}
+            record={record}
             totals={totals}
             jobs={record.jobs}
-            onOpen={(file) => setFileKey(file.key)}
+            onOpen={(file) => openFile(file.key)}
             onDelegate={(choice) =>
               startJob({ kind: 'review', ...choice, scope: { kind: 'file', label: 'the whole change', ranges: changedRangesOf(open.files) } })
             }
             onStop={(job) => void stopJob(job)}
           />
         ) : (
-          <>
-            <nav className="rv-pair-sidebar" aria-label="Files changed">
-              <button type="button" className="rv-pair-link" data-ev="pair-files" onClick={() => setFileKey(null)}>
-                Files changed
-              </button>
-              <ul>
-                {open.files.map((file) => (
-                  <li key={file.key} data-file-key={file.key}>
-                    <button
-                      type="button"
-                      className={file.key === fileKey ? 'rv-pair-side-file rv-pair-side-file-on' : 'rv-pair-side-file'}
-                      title={shownPath(file)}
-                      onClick={() => setFileKey(file.key)}
-                    >
-                      <ProgressMark progress={progress.get(file.key) as FileProgress} compact />
-                      <span className="rv-pair-side-name">{shownPath(file).split('/').at(-1)}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </nav>
-            <FileDiff
-              key={current.key}
-              bridge={bridge}
-              pairKey={open.key}
-              file={current}
-              record={record}
-              layout={layout}
-              target={target !== null && fileLocationMatch(current, target.location) ? target : null}
-              progress={progress.get(current.key) as FileProgress}
-              onLayout={setLayout}
-              onMark={mark}
-              jobs={record.jobs}
-              onDelegate={(choice, scope) => startJob({ kind: 'review', ...choice, scope })}
-              onStop={(job) => void stopJob(job)}
-              explained={threads.find((entry) => entry.root.id === explainActive)?.root.selection ?? null}
-              onExplain={(selection) => void explain({ selection })}
-              explainPanel={
-                <ExplainPanel
-                  pairKey={open.key}
-                  threads={threads}
-                  fileKey={current.key}
-                  active={explainActive}
-                  open={explainOpen}
-                  picking={awaitingAgent !== null}
-                  busy={explaining}
-                  problem={explainProblem}
-                  canShow={(range) => open.files.some((file) => fileLocationMatch(file, { side: range.side, path: range.path, line: range.start }))}
-                  onToggle={() => setExplainOpen((value) => !value)}
-                  onActivate={(root) => {
-                    setExplainActive(root);
-                    const thread = threads.find((entry) => entry.root.id === root);
-                    if (thread !== undefined) {
-                      showSelection(thread.root.selection);
-                    }
-                  }}
-                  onShowSelection={showSelection}
-                  onShowRange={(range) => showAt({ side: range.side, path: range.path, line: range.start })}
-                  onFollowUp={(root, action, question) => void explain({ followUp: { root, action, ...(action === 'question' ? { question } : {}) } })}
-                  onPick={(choice) => {
-                    if (awaitingAgent !== null) {
-                      void explainWith(awaitingAgent, choice);
-                    }
-                  }}
-                  onCancelPick={() => setAwaitingAgent(null)}
-                  onStop={(job) => void stopJob(job)}
-                />
-              }
-              onPrevious={currentIndex > 0 ? () => setFileKey(open.files[currentIndex - 1]?.key ?? null) : null}
-              onNext={currentIndex < open.files.length - 1 ? () => setFileKey(open.files[currentIndex + 1]?.key ?? null) : null}
-            />
-          </>
+          <FileDiff
+            key={current.key}
+            bridge={bridge}
+            pairKey={open.key}
+            file={current}
+            record={record}
+            layout={layout}
+            target={target !== null && fileLocationMatch(current, target.location) ? target : null}
+            progress={progress.get(current.key) as FileProgress}
+            onLayout={setLayout}
+            onMark={mark}
+            jobs={record.jobs}
+            onDelegate={(choice, scope) => startJob({ kind: 'review', ...choice, scope })}
+            onStop={(job) => void stopJob(job)}
+            explained={threads.find((entry) => entry.root.id === explainActive)?.root.selection ?? null}
+            onExplain={(selection) => void explain({ selection })}
+            explainPanel={
+              <ExplainPanel
+                pairKey={open.key}
+                threads={threads}
+                fileKey={current.key}
+                active={explainActive}
+                open={explainOpen}
+                picking={awaitingAgent !== null}
+                busy={explaining}
+                problem={explainProblem}
+                canShow={(range) => open.files.some((file) => fileLocationMatch(file, { side: range.side, path: range.path, line: range.start }))}
+                onToggle={() => setExplainOpen((value) => !value)}
+                onActivate={(root) => {
+                  setExplainActive(root);
+                  const thread = threads.find((entry) => entry.root.id === root);
+                  if (thread !== undefined) {
+                    showSelection(thread.root.selection);
+                  }
+                }}
+                onShowSelection={showSelection}
+                onShowRange={(range) => showAt({ side: range.side, path: range.path, line: range.start })}
+                onFollowUp={(root, action, question) => void explain({ followUp: { root, action, ...(action === 'question' ? { question } : {}) } })}
+                onPick={(choice) => {
+                  if (awaitingAgent !== null) {
+                    void explainWith(awaitingAgent, choice);
+                  }
+                }}
+                onCancelPick={() => setAwaitingAgent(null)}
+                onStop={(job) => void stopJob(job)}
+              />
+            }
+            onBack={() => openFile(null)}
+            onPrevious={currentIndex > 0 ? () => openFile(open.files[currentIndex - 1]?.key ?? null) : null}
+            onNext={currentIndex < open.files.length - 1 ? () => openFile(open.files[currentIndex + 1]?.key ?? null) : null}
+          />
         )}
       </div>
     </div>
   );
 }
 
-function WalkList({
-  bridge,
-  pairKey,
-  refresh,
-  onClose,
-}: {
-  readonly bridge: ReviewPairBridge;
-  readonly pairKey: string;
-  /** Changes when a preparation ends, so a new walk shows without reopening the list. */
-  readonly refresh: string;
-  readonly onClose: () => void;
-}): JSX.Element {
-  const [walks, setWalks] = useState<readonly PairWalk[] | null>(null);
-  const [note, setNote] = useState('');
-  useEffect(() => {
-    void bridge.walks(pairKey).then((answer) => setWalks(isPairError(answer) ? [] : answer));
-  }, [bridge, pairKey, refresh]);
-  return (
-    <div className="rv-pair-walks" data-ev="pair-walk-list">
-      {walks === null ? (
-        <span className="rv-pair-muted">Looking for walks…</span>
-      ) : walks.length === 0 ? (
-        <span className="rv-pair-muted" data-ev="pair-walks-none">No code walks for these revisions. Prepare code walks asks the agent for some.</span>
-      ) : (
-        <ul>
-          {walks.map((walk, index) => (
-            <li key={walk.definitionPath}>
-              <button
-                type="button"
-                className="rv-pair-row"
-                data-ev={`pair-walk-${String(index)}`}
-                title={walk.definitionPath}
-                onClick={() => {
-                  void bridge.openWalk(pairKey, walk.definitionPath).then((answer) => {
-                    setNote(answer.ok ? '' : answer.note);
-                    if (answer.ok) {
-                      onClose();
-                    }
-                  });
-                }}
-              >
-                {walk.title}
-                {walk.note !== '' && <span className="rv-pair-muted"> · {walk.note}</span>}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <button
-        type="button"
-        className="rv-pair-link"
-        data-ev="pair-walk-file"
-        onClick={() => {
-          void bridge.chooseWalk(pairKey).then((answer) => {
-            setNote(answer.ok ? '' : answer.note);
-            if (answer.ok) {
-              onClose();
-            }
-          });
-        }}
-      >
-        Open a walk file…
-      </button>
-      {note !== '' && <p className="rv-pair-error">{note}</p>}
-    </div>
-  );
+/** Who handled a file's changed lines, in a few words: you, which agent, exempted, with how many lines each when mixed. */
+function handledBy(progress: FileProgress, facts: FileReviewFacts): string {
+  const parts: string[] = [];
+  if (progress.total === 0) {
+    return progress.wholeFile === null ? '' : progress.wholeFile.op === 'manual' ? 'You' : 'Exempted';
+  }
+  if (progress.manual > 0) {
+    parts.push(progress.manual === progress.handled ? 'You' : `You: ${String(progress.manual)}`);
+  }
+  if (progress.agent > 0) {
+    const who = facts.agents.length === 0 ? 'Agent' : facts.agents.join(', ');
+    parts.push(progress.agent === progress.handled ? who : `${who}: ${String(progress.agent)}`);
+  }
+  if (progress.exempted > 0) {
+    parts.push(progress.exempted === progress.handled ? 'Exempted' : `exempted: ${String(progress.exempted)}`);
+  }
+  return parts.join(' · ');
 }
 
 function ProgressMark({ progress, compact = false }: { readonly progress: FileProgress; readonly compact?: boolean }): JSX.Element {
@@ -947,16 +1102,12 @@ function ProgressMark({ progress, compact = false }: { readonly progress: FilePr
             : progress.manual === progress.total
               ? 'reviewed'
               : 'mixed';
-    const words =
-      how === 'exempted'
-        ? 'exempted'
-        : how === 'agent'
-          ? 'by the agent'
-          : `partly ${[progress.agent > 0 ? 'by the agent' : '', progress.exempted > 0 ? 'exempted' : ''].filter((part) => part !== '').join(', ')}`;
     return (
       <span className={`rv-pair-progress rv-pair-done rv-pair-done-${how}`} title={`Done. ${detail}`}>
-        <input type="checkbox" checked readOnly tabIndex={-1} aria-label={`Done. ${detail}`} />
-        {!compact && how !== 'reviewed' && <span className="rv-pair-done-how">{words}</span>}
+        <span className="rv-pair-check" role="img" aria-label={`Done. ${detail}`}>
+          ✓
+        </span>
+        {!compact && how !== 'reviewed' && <span className="rv-pair-done-how">{how === 'mixed' ? 'mixed' : how === 'agent' ? 'agent' : 'exempted'}</span>}
       </span>
     );
   }
@@ -995,8 +1146,13 @@ export function attemptLabel(job: AgentJob): string {
   return job.state === 'done' ? words : `Last attempt (${words}):`;
 }
 
-/** Where one piece of agent work stands, in a line, with Stop while it runs. */
-export function JobLine({ job, onStop, onOpenWalks }: { readonly job: AgentJob; readonly onStop: () => void; readonly onOpenWalks?: () => void }): JSX.Element {
+/**
+ * Where one piece of agent work stands, in a line, with Stop while it runs. Since Niclas's
+ * trial feedback (29 October 2026) the product view says only that: no job ids, internal
+ * times, reads or tool calls. Those stay in the review record, and the provider's own
+ * words for a failure are on the note's tooltip for whoever needs them.
+ */
+export function JobLine({ job, onStop }: { readonly job: AgentJob; readonly onStop: () => void }): JSX.Element {
   const running = job.state === 'running' || job.state === 'cancelling';
   const what =
     job.kind === 'walks'
@@ -1025,63 +1181,19 @@ export function JobLine({ job, onStop, onOpenWalks }: { readonly job: AgentJob; 
           <span className="rv-agent-attempt" data-ev={`agent-job-${job.kind}-attempt`}>
             {attemptLabel(job)}
           </span>
-          <span>{job.note}</span>
-          <JobDetail job={job} />
-          {job.kind === 'walks' && job.state === 'done' && onOpenWalks !== undefined && (
-            <button type="button" className="rv-pair-link" data-ev="agent-job-walks-open" onClick={onOpenWalks}>
-              Show the walks
-            </button>
-          )}
+          <JobNote job={job} />
         </>
       )}
     </div>
   );
 }
 
-/**
- * A finished job's details, folded away: which job it was, with which agent and model and
- * when, the provider's own words when it failed, and (DSP-152) what the agent could read
- * and what it looked at. The note above says what it means; none of this is in the way.
- */
-export function JobDetail({ job }: { readonly job: AgentJob }): JSX.Element | null {
-  if (isRunning(job) || (job.state === 'done' && job.material === undefined && job.investigation === undefined)) {
-    return null;
-  }
-  const material = job.material;
-  const investigation = job.investigation;
+/** A finished job's note; the provider's own text, when there is any, only on its tooltip. */
+export function JobNote({ job }: { readonly job: AgentJob }): JSX.Element {
   return (
-    <details className="rv-agent-detail" data-ev={`agent-job-${job.kind}-detail`}>
-      <summary>Details</summary>
-      <p>
-        {job.provider === 'claude' ? 'Claude' : 'Cursor'} · {job.model} · started {formatDate(job.startedAt)}
-        {job.endedAt !== null ? `, ended ${formatDate(job.endedAt)}` : ''} · {job.id}
-      </p>
-      {material !== undefined && (
-        <p data-ev="agent-job-material">
-          Could read {String(material.files)} files of {material.base.slice(0, 7)} (base/) and {material.target.slice(0, 7)} (target/), with Read, Glob and Grep only.
-          {material.skippedCount > 0 && ` ${String(material.skippedCount)} left out: ${material.skipped.map((entry) => `${entry.side}/${entry.path} (${entry.reason})`).join('; ')}${material.skipped.length < material.skippedCount ? '; …' : ''}.`}
-        </p>
-      )}
-      {investigation !== undefined && (
-        <div data-ev="agent-job-investigation">
-          {investigation.reads.length === 0 && investigation.searches.length === 0 ? (
-            <p>The provider reported no reads.</p>
-          ) : (
-            <>
-              {investigation.reads.length > 0 && <p>Read: {investigation.reads.join(', ')}</p>}
-              {investigation.searches.length > 0 && <p>Searched: {investigation.searches.join('; ')}</p>}
-            </>
-          )}
-          {investigation.refused > 0 && (
-            <p>
-              {String(investigation.refused)} tool call(s) failed or were refused
-              {(investigation.refusedCalls ?? []).length > 0 ? `: ${(investigation.refusedCalls ?? []).join('; ')}` : ''}.
-            </p>
-          )}
-        </div>
-      )}
-      {job.detail !== '' && <pre>{job.detail}</pre>}
-    </details>
+    <span data-ev={`agent-job-${job.kind}-note`} {...(job.detail === '' ? {} : { title: job.detail })}>
+      {job.note}
+    </span>
   );
 }
 
@@ -1111,12 +1223,9 @@ function AgentReviewResult({
       {job.state === 'running' || job.state === 'cancelling' ? (
         <JobLine job={job} onStop={onStop} />
       ) : result === null ? (
-        <>
-          <p>
-            <span className="rv-agent-attempt">{attemptLabel(job)}</span> {job.note}
-          </p>
-          <JobDetail job={job} />
-        </>
+        <p>
+          <span className="rv-agent-attempt">{attemptLabel(job)}</span> <JobNote job={job} />
+        </p>
       ) : (
         <div className="rv-agent-review-body">
           {result.insufficient && <p className="rv-agent-insufficient">The agent could not judge this part from the code it could read. Nothing was approved.</p>}
@@ -1159,7 +1268,6 @@ function AgentReviewResult({
               </ul>
             </details>
           )}
-          <JobDetail job={job} />
         </div>
       )}
     </details>
@@ -1170,10 +1278,30 @@ function touchesFile(job: AgentJob, file: PairFile): boolean {
   return (job.scope?.ranges ?? []).some((range) => range.path === (range.side === 'base' ? file.oldPath : file.newPath));
 }
 
+/** A path as the file list shows it: the name first, the folder it is in after it. */
+function PathCell({ path }: { readonly path: string }): JSX.Element {
+  const slash = path.lastIndexOf('/');
+  return (
+    <span className="rv-pair-path">
+      <span className="rv-pair-path-name">{slash < 0 ? path : path.slice(slash + 1)}</span>
+      {slash >= 0 && <span className="rv-pair-path-dir">{path.slice(0, slash + 1)}</span>}
+    </span>
+  );
+}
+
+/**
+ * *Files changed*, the review's overview (Niclas's trial feedback, 29 October 2026): the
+ * whole width, one row per file, the whole row opening its diff. Each row says the kind of
+ * change, how much is handled under the review's requirement (a check once all is), who
+ * handled it — you, which agent, exempted, or a mix — and the agent's open problems and
+ * questions, which a check never hides. Opening a file, reading an explanation or a walk
+ * passing a line counts for nothing here; walk coverage is not review progress.
+ */
 function FilesChanged({
   pairKey,
   files,
   progress,
+  record,
   totals,
   jobs,
   onOpen,
@@ -1183,6 +1311,7 @@ function FilesChanged({
   readonly pairKey: string;
   readonly files: readonly PairFile[];
   readonly progress: ReadonlyMap<string, FileProgress>;
+  readonly record: PairRecord;
   readonly totals: { readonly total: number; readonly handled: number; readonly done: number };
   readonly jobs: readonly AgentJob[];
   readonly onOpen: (file: PairFile) => void;
@@ -1190,6 +1319,7 @@ function FilesChanged({
   readonly onStop: (job: AgentJob) => void;
 }): JSX.Element {
   const [delegating, setDelegating] = useState(false);
+  const facts = useMemo(() => new Map(files.map((file) => [file.key, fileReviewFactsOf(file, record)])), [files, record]);
   if (files.length === 0) {
     return <p className="rv-pair-message">The two commits have the same content: there is nothing to review.</p>;
   }
@@ -1229,47 +1359,62 @@ function FilesChanged({
         </div>
       )}
       {whole !== null && (!delegating || isRunning(whole)) && <JobLine job={whole} onStop={() => onStop(whole)} />}
-      <table>
-        <thead>
-          <tr>
-            <th className="rv-pair-col-status">Status</th>
-            <th>File</th>
-            <th className="rv-pair-col-num">Lines</th>
-            <th className="rv-pair-col-progress">Handled</th>
-          </tr>
-        </thead>
-        <tbody>
-          {files.map((file, index) => (
-            <tr key={file.key} data-file-key={file.key}>
-              <td className={`rv-pair-status rv-pair-status-${file.status}`}>{STATUS_WORD[file.status]}</td>
-              <td>
-                <button type="button" className="rv-pair-file" data-ev={`pair-file-${String(index)}`} onClick={() => onOpen(file)}>
+      <div className="rv-pair-filelist" role="list">
+        <div className="rv-pair-filerow rv-pair-filehead" aria-hidden="true">
+          <span>File</span>
+          <span>Change</span>
+          <span className="rv-pair-col-num">Lines</span>
+          <span>Handled by</span>
+          <span className="rv-pair-col-progress">Handled</span>
+        </div>
+        {files.map((file, index) => {
+          const entry = progress.get(file.key) as FileProgress;
+          const fileFacts = facts.get(file.key) ?? { agents: [], findings: 0 };
+          const by = handledBy(entry, fileFacts);
+          const running = jobs.some((job) => job.kind === 'review' && isRunning(job) && touchesFile(job, file));
+          return (
+            <div role="listitem" key={file.key} data-file-key={file.key}>
+              <button type="button" className="rv-pair-filerow" data-ev={`pair-file-${String(index)}`} data-file-row="" onClick={() => onOpen(file)}>
+                <span className="rv-pair-file-cell">
                   {file.status === 'renamed' || file.status === 'copied' ? (
                     <>
-                      <span className="rv-pair-muted">{file.oldPath}</span> → {file.newPath}
+                      <PathCell path={file.newPath ?? shownPath(file)} />
+                      <span className="rv-pair-muted rv-pair-renamed-from">from {file.oldPath}</span>
                     </>
                   ) : (
-                    shownPath(file)
+                    <PathCell path={shownPath(file)} />
                   )}
-                </button>
-                {file.binary && <span className="rv-pair-muted"> · binary</span>}
-              </td>
-              <td className="rv-pair-col-num">
-                {file.binary ? (
-                  ''
-                ) : (
-                  <>
-                    <span className="rv-pair-add">+{file.added}</span> <span className="rv-pair-del">−{file.deleted}</span>
-                  </>
-                )}
-              </td>
-              <td className="rv-pair-col-progress">
-                <ProgressMark progress={progress.get(file.key) as FileProgress} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                </span>
+                <span className={`rv-pair-status rv-pair-status-${file.status}`}>
+                  {STATUS_WORD[file.status]}
+                  {file.binary && <span className="rv-pair-muted"> · binary</span>}
+                </span>
+                <span className="rv-pair-col-num">
+                  {file.binary ? (
+                    ''
+                  ) : (
+                    <>
+                      <span className="rv-pair-add">+{file.added}</span> <span className="rv-pair-del">−{file.deleted}</span>
+                    </>
+                  )}
+                </span>
+                <span className="rv-pair-by" data-ev="pair-file-by">
+                  {by}
+                  {running && <span className="rv-pair-muted"> · agent reviewing…</span>}
+                  {fileFacts.findings > 0 && (
+                    <span className="rv-pair-findings" data-ev="pair-file-findings">
+                      {fileFacts.findings} open {fileFacts.findings === 1 ? 'finding' : 'findings'}
+                    </span>
+                  )}
+                </span>
+                <span className="rv-pair-col-progress">
+                  <ProgressMark progress={entry} />
+                </span>
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -1453,6 +1598,7 @@ function FileDiff({
   progress,
   onLayout,
   onMark,
+  onBack,
   onPrevious,
   onNext,
   jobs,
@@ -1475,6 +1621,8 @@ function FileDiff({
   readonly progress: FileProgress;
   readonly onLayout: (layout: 'split' | 'unified') => void;
   readonly onMark: (op: 'manual' | 'exempt' | 'clear', scopes: Parameters<ReviewPairBridge['mark']>[1]['scopes']) => Promise<void>;
+  /** Back to *Files changed*, where the list was left. */
+  readonly onBack: () => void;
   readonly onPrevious: (() => void) | null;
   readonly onNext: (() => void) | null;
   readonly jobs: readonly AgentJob[];
@@ -1928,6 +2076,9 @@ function FileDiff({
           </button>
           <button type="button" data-ev="pair-next" disabled={onNext === null} onClick={() => onNext?.()} aria-label="Next file">
             ›
+          </button>
+          <button type="button" className="rv-pair-up" data-ev="pair-files" onClick={onBack} aria-label="Back to Files changed" title="Files changed">
+            ↑
           </button>
         </div>
       </div>

@@ -3776,12 +3776,24 @@ function registerReviewMethods(): void {
   handle('reviewPair.savePosition', (_event, key: unknown, position: unknown) =>
     requireReviewPairs().savePosition(key, position),
   );
-  handle('reviewPair.walks', async (_event, key: unknown, also: readonly string[]) =>
+  const walksOver = async (key: unknown, also: unknown): Promise<ReturnType<ReviewPairs['walksFor']>> =>
     requireReviewPairs().walksFor(key, [
       ...generatedWalkDefinitions(key),
-      ...(await knownWalkDefinitions(Array.isArray(also) ? also.filter((entry) => typeof entry === 'string') : [])),
-    ]),
-  );
+      ...(await knownWalkDefinitions(Array.isArray(also) ? also.filter((entry): entry is string => typeof entry === 'string') : [])),
+    ]);
+  handle('reviewPair.walks', (_event, key: unknown, also: unknown) => walksOver(key, also));
+  // *Code walks* opens the walk last opened from this review, else the newest prepared one.
+  handle('reviewPair.walkToOpen', async (_event, key: unknown, also: unknown) => {
+    const walks = await walksOver(key, also);
+    return 'error' in walks ? walks : { definitionPath: requireReviewPairs().walkToOpen(key, walks) };
+  });
+  handle('reviewPair.walkOpened', (_event, key: unknown, definitionPath: unknown) => {
+    requireReviewPairs().walkOpened(key, definitionPath);
+    return { saved: true };
+  });
+  // The way into review lists the reviews not ended; ending one approves nothing.
+  handle('reviewPair.ongoing', () => requireReviewPairs().ongoing());
+  handle('reviewPair.end', (_event, pair: unknown) => requireReviewPairs().end(pair));
   // DSP-152: preparing walks and delegated review, started only by an explicit request.
   handle('reviewPair.agents', (_event, key: unknown, opener: unknown) => requireReviewAgentJobs().agents(key, opener));
   handle('reviewPair.startJob', (_event, key: unknown, request: unknown) => {

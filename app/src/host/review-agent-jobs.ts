@@ -839,10 +839,13 @@ export class ReviewAgentJobs {
     const stepCount = walks.walks.reduce((total, walk) => total + walk.steps.length, 0);
     const definitionPath = path.join(this.options.recordsDir, 'generated', live.key, `${job.id}.review.json`);
     const generatedAt = new Date().toISOString();
-    const heading = `Code walks · ${opened?.repositoryName ?? ''} ${opened?.pair.base.slice(0, 7) ?? ''}→${opened?.pair.target.slice(0, 7) ?? ''}`;
+    const readings = walks.walks.filter((walk) => walk.kind === 'reading').length;
+    const forms = readings === 0 ? 'Code walks' : readings === walks.walks.length ? 'Readings' : 'Code walks and readings';
+    const heading = `${forms} · ${opened?.repositoryName ?? ''} ${opened?.pair.base.slice(0, 7) ?? ''}→${opened?.pair.target.slice(0, 7) ?? ''}`;
+    // The first sentence names the preparation where several are offered; the rest is for Details.
     const provenance =
-      `Prepared by ${providerName(job.provider)} (${job.model}) on ${generatedAt}, reading the two commits with its own read-only tools. ` +
-      'DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing.' +
+      `Prepared by ${providerName(job.provider)} (${job.model}) on ${generatedAt.slice(0, 16).replace('T', ' ')} UTC. ` +
+      'It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing.' +
       (invalid.size > 0 ? ` ${String(invalid.size)} place(s) that did not exist at their commit were left out.` : '') +
       (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) of the commits could not be given to the agent to read.` : '');
     fs.mkdirSync(path.dirname(definitionPath), { recursive: true });
@@ -851,10 +854,10 @@ export class ReviewAgentJobs {
     this.finish(
       live,
       'done',
-      `${String(walks.walks.length)} walk(s), ${String(stepCount)} step(s).` +
-        (uncoveredLines === 0 ? ' Every changed line is in a walk.' : ` ${String(uncoveredLines)} changed line(s) are in no walk.`) +
+      `${String(walks.walks.length - readings)} walk(s) and ${String(readings)} reading(s), ${String(stepCount)} step(s).` +
+        (uncoveredLines === 0 ? ' Every changed line is in one of them.' : ` ${String(uncoveredLines)} changed line(s) are in none of them.`) +
         (invalid.size > 0 ? ` ${String(invalid.size)} place(s) were left out because they do not exist at their commit.` : '') +
-        (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) could not be given to the agent to read (see Details).` : ''),
+        (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) could not be given to the agent to read.` : ''),
       { definitionPath, uncovered },
     );
   }

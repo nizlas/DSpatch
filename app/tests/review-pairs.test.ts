@@ -19,6 +19,7 @@ import {
   changedLinesOf,
   emptyRecord,
   fileProgressOf,
+  fileReviewFactsOf,
   changeMarksOf,
   intralineBlock,
   isPairError,
@@ -238,6 +239,51 @@ describe('decisions about changed lines', () => {
   });
 });
 
+describe('ongoing reviews (trial feedback of 29 October 2026)', () => {
+  it('lists every review not ended, with its progress, and reading the list writes nothing', async () => {
+    const open = await openApp();
+    pairs.mark(open.key, { op: 'manual', scopes: [fileAt(open, 'src/keep.ts').key ? { kind: 'lines', side: 'target', path: 'src/keep.ts', start: 1, end: 1 } : { kind: 'lines', side: 'target', path: 'x', start: 1, end: 1 }], reason: '' });
+    const before = fs.readdirSync(records).map((name) => `${name}:${String(fs.statSync(path.join(records, name)).mtimeMs)}`).sort();
+    const fresh = new ReviewPairs({ recordsDir: records, changed: () => undefined });
+    const ongoing = await fresh.ongoing();
+    const app = ongoing.find((entry) => entry.key === open.key);
+    assert.ok(app !== undefined, 'the review of app is listed by a host that has not opened it');
+    assert.equal(app.repositoryName, 'app');
+    assert.equal(app.files, open.files.length);
+    assert.ok(app.total > 0 && app.handled >= 1);
+    assert.equal(app.base.hash, fixture.appBase);
+    const after = fs.readdirSync(records).map((name) => `${name}:${String(fs.statSync(path.join(records, name)).mtimeMs)}`).sort();
+    assert.deepEqual(after, before, 'listing changed no record and no last pair');
+  });
+
+  it('ends a review without approving or deleting anything, and opening it again resumes it', async () => {
+    const open = await openApp();
+    const marksBefore = (pairs.state(open.key) as PairRecord).marks.length;
+    assert.ok(!isPairError(pairs.end(open.pair)));
+    assert.ok(!(await pairs.ongoing()).some((entry) => entry.key === open.key));
+    const ended = pairs.state(open.key) as PairRecord;
+    assert.equal(ended.marks.length, marksBefore);
+    assert.notEqual(ended.endedAt, null);
+    assert.ok(isPairError(pairs.end({ repository: fixture.app, base: fixture.libBase, target: fixture.libTarget })), 'an unknown review is refused');
+    const reopened = await openApp();
+    assert.equal(reopened.record.endedAt, null);
+    assert.ok((await pairs.ongoing()).some((entry) => entry.key === open.key));
+  });
+
+  it('opens the walk last opened from the review, else the first offered', async () => {
+    const open = await openApp();
+    const walks = [
+      { definitionPath: path.join(records, 'newest.review.json'), title: 'Newest', note: '' },
+      { definitionPath: fixture.walkDefinition, title: 'The app rework', note: '' },
+    ];
+    assert.equal(pairs.walkToOpen(open.key, walks), walks[0]?.definitionPath);
+    pairs.walkOpened(open.key, fixture.walkDefinition);
+    assert.equal(pairs.walkToOpen(open.key, walks), fixture.walkDefinition);
+    assert.equal(pairs.walkToOpen(open.key, walks.slice(0, 1)), walks[0]?.definitionPath, 'a walk no longer offered is not opened');
+    assert.equal(pairs.walkToOpen(open.key, []), null);
+  });
+});
+
 describe('requirements and agent review', () => {
   const file: PairFile = {
     key: 'a',
@@ -283,6 +329,51 @@ describe('requirements and agent review', () => {
     assert.equal(stripStatusOf(two), 'manual');
     assert.equal(two.agent.length, 1);
     assert.equal(stripStatusOf(three), 'agent');
+  });
+
+  it('says who handled a file and keeps open agent findings beside a finished file', () => {
+    const job = {
+      id: 'job-1',
+      kind: 'review' as const,
+      state: 'done' as const,
+      provider: 'claude' as const,
+      model: 'opus',
+      startedAt: '',
+      endedAt: '',
+      note: '',
+      detail: '',
+      scope: null,
+      definitionPath: null,
+      uncovered: [],
+      result: {
+        assessment: '',
+        reviewed: [],
+        approved: [],
+        findings: [
+          { severity: 'problem' as const, text: 'p', location: { kind: 'lines' as const, side: 'target' as const, path: 'a.ts', start: 3, end: 3 } },
+          { severity: 'note' as const, text: 'n', location: { kind: 'lines' as const, side: 'target' as const, path: 'a.ts', start: 2, end: 2 } },
+          { severity: 'question' as const, text: 'q', location: { kind: 'lines' as const, side: 'target' as const, path: 'b.ts', start: 1, end: 1 } },
+        ],
+        uncertainties: [],
+        insufficient: false,
+        adjustments: [],
+      },
+    };
+    const record: PairRecord = {
+      ...emptyRecord(pair),
+      agentReviews: [{ ...agent, reviewer: 'Claude · opus', jobId: 'job-1' }],
+      marks: [
+        { id: 'm', op: 'manual', scope: { kind: 'lines', side: 'target', path: 'a.ts', start: 2, end: 2 }, reason: '', at: '' },
+        { id: 'e', op: 'exempt', scope: { kind: 'lines', side: 'base', path: 'a.ts', start: 2, end: 2 }, reason: '', at: '' },
+      ],
+      jobs: [job],
+    };
+    const progress = fileProgressOf(file, record);
+    assert.equal(progress.done, true);
+    assert.deepEqual([progress.manual, progress.agent, progress.exempted], [1, 1, 1]);
+    const facts = fileReviewFactsOf(file, record);
+    assert.deepEqual(facts.agents, ['Claude · opus']);
+    assert.equal(facts.findings, 1, 'a problem at this file counts; a note and another file do not');
   });
 
   it('adopts a stored record only for its own pair, and drops malformed entries', () => {

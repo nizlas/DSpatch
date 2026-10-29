@@ -34,6 +34,7 @@ import type {
   OpenPair,
   PairAnswer,
   PairRecord,
+  OngoingReview,
   PairWalk,
   ReviewRepository,
   RevisionPairIdentity,
@@ -189,7 +190,11 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'reviewPair.mark': (key: unknown, request: unknown) => PairAnswer<PairRecord>;
   readonly 'reviewPair.setRequirement': (key: unknown, requirement: unknown) => PairAnswer<PairRecord>;
   readonly 'reviewPair.savePosition': (key: unknown, position: unknown) => PairAnswer<{ readonly saved: true }>;
-  readonly 'reviewPair.walks': (key: unknown, also: readonly string[]) => PairAnswer<readonly PairWalk[]>;
+  readonly 'reviewPair.walks': (key: unknown, also: unknown) => PairAnswer<readonly PairWalk[]>;
+  readonly 'reviewPair.walkToOpen': (key: unknown, also: unknown) => PairAnswer<{ readonly definitionPath: string | null }>;
+  readonly 'reviewPair.walkOpened': (key: unknown, definitionPath: unknown) => { readonly saved: true };
+  readonly 'reviewPair.ongoing': () => readonly OngoingReview[];
+  readonly 'reviewPair.end': (pair: unknown) => PairAnswer<{ readonly ended: true }>;
   readonly 'reviewPair.agents': (key: unknown, opener: unknown) => PairAnswer<ReviewAgents>;
   readonly 'reviewPair.startJob': (key: unknown, request: unknown) => PairAnswer<AgentJob>;
   readonly 'reviewPair.cancelJob': (key: unknown, jobId: unknown) => PairAnswer<{ readonly note: string }>;
@@ -330,6 +335,10 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'reviewPair.setRequirement': true,
   'reviewPair.savePosition': true,
   'reviewPair.walks': true,
+  'reviewPair.walkToOpen': true,
+  'reviewPair.walkOpened': true,
+  'reviewPair.ongoing': true,
+  'reviewPair.end': true,
   'reviewPair.agents': true,
   'reviewPair.startJob': true,
   'reviewPair.cancelJob': true,

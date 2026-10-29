@@ -92,6 +92,8 @@ export const chatRunScenario: ScriptedScenario =
                                 ? 'selection-explain'
                                 : chatRunValue === 'diff-marks'
                                 ? 'diff-marks'
+                                : chatRunValue === 'review-flow'
+                                ? 'review-flow'
                                 : chatRunValue === 'switch'
                                   ? 'workspace-switch'
                                   : chatRunValue === 'resume-choice'
@@ -196,6 +198,8 @@ export const presentationMode =
   chatRunScenario === 'selection-explain' ||
   // DSP-150 follow-up: the diff's change marks in the real window (one SIMULATED explanation).
   chatRunScenario === 'diff-marks' ||
+  // The review flow after Niclas's first real trial (SIMULATED walks, readings, reviews and explanations).
+  chatRunScenario === 'review-flow' ||
   // DSP-121: the refused and failed resume states through the real choice panel. The
   // refusal is the presentation adapter's own, simulated on this machine; the one
   // message the scenario sends after choosing a new session is answered locally.

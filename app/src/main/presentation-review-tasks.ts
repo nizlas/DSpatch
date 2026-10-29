@@ -14,10 +14,14 @@
  * scenario can check that the right revision's files were there and were what the answer
  * rests on. It never reads outside its folder. What it does with what it reads is fixed:
  *
- * - A walk preparation proposes one walk per changed file, a step per changed range, except
- *   that the last file is left out when there are three or more, so coverage gaps show. A
- *   step whose changed lines call a function imported from another file gets a second place
- *   at that function's definition, at the To side, found by reading that file. With
+ * - A walk preparation proposes one item per changed file, except that the last file is
+ *   left out when there are three or more, so coverage gaps show. A code file gets a code
+ *   walk with a step per changed range; a step whose changed lines call a function imported
+ *   from another file gets a second place at that function's definition, at the To side,
+ *   found by reading that file, reached `from` the call. A Markdown or text file gets
+ *   readings instead: one per group of changes that lie within twelve lines of each other
+ *   (a coherent change), so independent changes are separate readings. Data files (JSON,
+ *   YAML, TOML, CSV) of one folder share one walk with a step per file. With
  *   `DSPATCH_REVIEW_SIM=bad-ref-first` its first answer also names a line that does not
  *   exist; the repair answer is the same walks without it.
  * - A delegated review reviews every changed line it is given, reading it from the folder.
@@ -164,6 +168,36 @@ function followCall(reader: Reader, side: 'base' | 'target', filePath: string, f
   return null;
 }
 
+/** Markdown and text, where a reading fits rather than a code walk. */
+function isProse(filePath: string): boolean {
+  return /\.(md|markdown|txt|rst|adoc)$/i.test(filePath);
+}
+
+/** Data and configuration, whose files of one folder the simulation takes together. */
+function isData(filePath: string): boolean {
+  return /\.(json|ya?ml|toml|csv)$/i.test(filePath);
+}
+
+/** Changed ranges of one file grouped into coherent changes: within twelve lines of each other. */
+function coherent(ranges: readonly SimRange[]): SimRange[][] {
+  const sorted = [...ranges].sort((a, b) => a.start - b.start);
+  const groups: SimRange[][] = [];
+  for (const range of sorted) {
+    const last = groups.at(-1);
+    const previous = last?.at(-1);
+    if (last !== undefined && previous !== undefined && range.start - previous.end <= 12) {
+      last.push(range);
+    } else {
+      groups.push([range]);
+    }
+  }
+  return groups;
+}
+
+function lineWords(start: number, end: number): string {
+  return start === end ? `line ${String(start)}` : `lines ${String(start)}–${String(end)}`;
+}
+
 function prepareWalks(prompt: string, reader: Reader): string {
   const changed = rangesAfter(prompt, '## Changed lines (machine-readable)');
   const byFile = new Map<string, SimRange[]>();
@@ -172,8 +206,38 @@ function prepareWalks(prompt: string, reader: Reader): string {
   }
   const paths = [...byFile.keys()];
   const kept = paths.length >= 3 ? paths.slice(0, -1) : paths;
-  const walks = kept.map((filePath) => {
+  const dataFolders = new Map<string, string[]>();
+  for (const filePath of kept.filter(isData)) {
+    const folder = path.posix.dirname(filePath);
+    dataFolders.set(folder, [...(dataFolders.get(folder) ?? []), filePath]);
+  }
+  const walks = kept.flatMap((filePath) => {
     const ranges = byFile.get(filePath) ?? [];
+    if (isData(filePath)) {
+      const folder = path.posix.dirname(filePath);
+      const together = dataFolders.get(folder) ?? [];
+      if (together[0] !== filePath) {
+        return [];
+      }
+      return [
+        {
+          kind: 'walk',
+          title: `What changes in the data in ${folder}/`,
+          question: `What do the changed values in ${folder}/ change for the code that reads them?`,
+          purpose: `The changed values, file by file. SIMULATED: written by the presentation adapter, not by a model.`,
+          steps: together.map((dataPath) => {
+            const first = (byFile.get(dataPath) ?? [])[0] ?? { path: dataPath, side: 'target' as const, start: 1, end: 1 };
+            reader.read(first.side, dataPath);
+            return {
+              title: base(dataPath),
+              summary: `The changed values in ${base(dataPath)}.`,
+              body: `**What changes:** values in \`${dataPath}\`.`,
+              places: [{ label: `${base(dataPath)} lines ${String(first.start)}–${String(first.end)}`, path: dataPath, side: first.side, start: first.start, end: first.end }],
+            };
+          }),
+        },
+      ];
+    }
     const sideLines = new Map<string, string[] | null>();
     const linesOf = (side: 'base' | 'target'): string[] | null => {
       if (!sideLines.has(side)) {
@@ -181,45 +245,72 @@ function prepareWalks(prompt: string, reader: Reader): string {
       }
       return sideLines.get(side) ?? null;
     };
-    return {
-      title: `What changes in ${base(filePath)}`,
-      question: `What does the change do to ${filePath}, and why?`,
-      purpose: `You will see each change in ${base(filePath)} and what it means for the code around it. SIMULATED: written by the presentation adapter, not by a model.`,
-      steps: ranges.map((range, index) => {
-        const lines = linesOf(range.side);
-        const changedText = (lines ?? []).slice(range.start - 1, range.end).join('\n');
-        const definition = lines === null ? null : followCall(reader, range.side, filePath, lines, changedText);
-        const places: unknown[] = [
-          { label: `${base(filePath)} lines ${String(range.start)}–${String(range.end)}`, path: filePath, side: range.side, start: range.start, end: range.end },
-        ];
-        if (definition !== null) {
-          places.push({
-            label: `Where ${definition.name} is defined`,
-            path: definition.path,
-            side: range.side,
-            start: definition.start,
-            end: definition.end,
-            anchor: definition.name,
-          });
-        }
-        return {
-          title: `${range.side === 'base' ? 'Removed' : 'Changed'} lines ${String(range.start)}–${String(range.end)}`,
-          summary: `${range.side === 'base' ? 'The From version had' : 'The To version has'} these lines in ${base(filePath)}.`,
+    if (isProse(filePath)) {
+      return coherent(ranges).map((group, index) => ({
+        kind: 'reading',
+        title: `${index === 0 ? 'The change' : 'A further change'} to ${base(filePath)}, ${lineWords(Math.min(...group.map((range) => range.start)), Math.max(...group.map((range) => range.end)))}`,
+        question: `What changes in this part of ${filePath}, and what does it mean?`,
+        purpose: `What this part of ${base(filePath)} now says. SIMULATED: written by the presentation adapter, not by a model.`,
+        steps: group.map((range) => ({
+          title: `${range.side === 'base' ? 'Removed' : 'Changed'} text, lines ${String(range.start)}–${String(range.end)}`,
+          summary: `${range.side === 'base' ? 'The From version said' : 'The To version says'} this in ${base(filePath)}.`,
           body:
-            `**What happens:** ${range.side === 'base' ? 'these lines were removed' : 'these lines were added or changed'} in \`${filePath}\`.\n\n` +
-            (definition === null
-              ? ''
-              : `**What it depends on:** \`${definition.name}\`, defined in \`${definition.path}\` lines ${String(definition.start)}–${String(definition.end)}, which this change does not touch.` +
-                (definition.returnsNull ? ' It can return `null`.' : '') +
-                '\n\n') +
-            `**Why:** a simulated answer cannot say; a real agent explains the reason from the code.\n\n` +
-            `**Notice:** step ${String(index + 1)} of this file.`,
-          places,
-        };
-      }),
-    };
+            `**What changes:** ${range.side === 'base' ? 'this text was removed' : 'this text was added or rewritten'} in \`${filePath}\`.\n\n` +
+            '- A simulated answer cannot say what it means.\n- A real agent reads the text in its context.',
+          places: [{ label: `${base(filePath)} lines ${String(range.start)}–${String(range.end)}`, path: filePath, side: range.side, start: range.start, end: range.end }],
+        })),
+      }));
+    }
+    return [
+      {
+        kind: 'walk',
+        title: `What changes in ${base(filePath)}`,
+        question: `What does the change do to ${filePath}, and why?`,
+        purpose: `You will see each change in ${base(filePath)} and what it calls. SIMULATED: written by the presentation adapter, not by a model.`,
+        steps: ranges.map((range, index) => {
+          const lines = linesOf(range.side);
+          const changedText = (lines ?? []).slice(range.start - 1, range.end).join('\n');
+          const definition = lines === null ? null : followCall(reader, range.side, filePath, lines, changedText);
+          const places: unknown[] = [
+            { label: `${base(filePath)} lines ${String(range.start)}–${String(range.end)}`, path: filePath, side: range.side, start: range.start, end: range.end },
+          ];
+          if (definition !== null) {
+            places.push({
+              label: `Where ${definition.name} is defined`,
+              path: definition.path,
+              side: range.side,
+              start: definition.start,
+              end: definition.end,
+              anchor: definition.name,
+              from: { label: `The call of ${definition.name}`, path: filePath, side: range.side, start: range.start, end: range.end },
+            });
+          }
+          return {
+            title: `${range.side === 'base' ? 'Removed' : 'Changed'} lines ${String(range.start)}–${String(range.end)}`,
+            summary: `${range.side === 'base' ? 'The From version had' : 'The To version has'} these lines in ${base(filePath)}.`,
+            body:
+              `**What happens:** ${range.side === 'base' ? 'these lines were removed' : 'these lines were added or changed'} in \`${filePath}\`.\n\n` +
+              (definition === null
+                ? ''
+                : `**What it depends on:** \`${definition.name}\`, defined in \`${definition.path}\` lines ${String(definition.start)}–${String(definition.end)}, which this change does not touch.` +
+                  (definition.returnsNull ? ' It can return `null`.' : '') +
+                  '\n\n') +
+              `**Why:** a simulated answer cannot say; a real agent explains the reason from the code.\n\n` +
+              `**Notice:** step ${String(index + 1)} of this file.`,
+            places,
+          };
+        }),
+      },
+    ];
   });
-  const answer = { overview: `SIMULATED walks over ${String(kept.length)} of ${String(paths.length)} changed file(s).`, walks };
+  const readings = walks.filter((walk) => walk.kind === 'reading').length;
+  const answer = {
+    summary: `SIMULATED: ${String(walks.length - readings)} code walk(s) and ${String(readings)} reading(s) over ${String(kept.length)} of ${String(paths.length)} changed file(s).`,
+    background:
+      'SIMULATED background, shown only on request.\n\nThe presentation adapter proposes one item per changed file: a code walk for code and readings for text. A real agent chooses the form from what changed.',
+    attention: kept.length < paths.length ? [`SIMULATED: ${String(paths.length - kept.length)} changed file(s) are in no walk.`] : [],
+    walks,
+  };
   lastWalks = answer;
   if (process.env['DSPATCH_REVIEW_SIM'] === 'bad-ref-first' && walks[0] !== undefined) {
     const broken = JSON.parse(JSON.stringify(answer)) as { walks: { steps: { places: unknown[] }[] }[] };
@@ -422,7 +513,7 @@ export function simulatedReviewTask(prompt: string, folder: string): SimulatedTa
   if (task === 'prepare-walks') {
     answer = prepareWalks(prompt, reader);
   } else if (task === 'repair-walks') {
-    answer = fence(lastWalks ?? { overview: '', walks: [] });
+    answer = fence(lastWalks ?? { summary: '', walks: [] });
   } else if (task === 'delegated-review') {
     answer = delegatedReview(prompt, reader);
   } else if (task === 'step-question') {

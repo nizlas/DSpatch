@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-10-28 20:21'
-updated_date: '2026-10-28 21:39'
+updated_date: '2026-10-29 19:02'
 labels:
   - review
 dependencies: []
@@ -91,4 +91,6 @@ Remaining differences, known:
 - Gerrit's default whitespace-error marking and tab markers (`showWhitespaceErrors`, `showTabs`) are not adopted: they are not change marks.
 
 Verified (isolated userData, SIMULATED provider for the one explanation, no live calls, real profile untouched): `tests/review-pairs.test.ts` 30/30, with Gerrit's test cases as ranges, the three-for-one block, per-hunk marks and the size limit; `npm run typecheck`; build. New scenario `diff-marks` over `tests/support/marks-fixture.ts` (`seed-pair-kit --fixture marks`) in the real window: each file in both layouts with identical marks; `3` → `30`, the three-for-one block, a rewritten line, an indentation change, a removed and an added function strong throughout, an import line replaced by five with `Any, Dict, ` strong, and a long wrapped prose line; a mouse selection over marked code explained with the highlight shown and the marks unchanged while the panel narrowed the column; a line selected and marked as reviewed with the strip beside the marks. `pair-review` (both phases) passes with its expectations updated to character marks. Not established: Niclas's judgement of the look and contrast in use, and JGit's own output for ties.
+
+29 Oct 2026, after Niclas's first real trial (with DSP-152): *Files changed* is now the diff window's whole-width overview with who handled each file and open findings beside the check, a file's diff goes back to it with ↑ at the list's position, *Code walks* opens the review's one walk window directly (dimmed with "No code walks yet" while there is none), the walk-file chooser is gone from the flow, and the way into review lists ongoing reviews to resume or end. Recorded in VISION.md section 3.4 (clarifications) and in DSP-152's notes, with the verification (scenario `review-flow`, both phases; `pair-review` adapted and passing).
 <!-- SECTION:NOTES:END -->
