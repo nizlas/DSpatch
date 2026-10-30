@@ -1757,6 +1757,7 @@ function OpenReview({
         coverage={coverage}
         onChoose={pair === null ? onChoose : null}
         onDiscussion={() => showPanel(true)}
+        discussionShown={panelState?.visible === true}
         pairWalks={pairWalks}
         onOpenWalk={(definitionPath) => {
           if (pair !== null && pairBridge !== undefined) {
@@ -2287,9 +2288,11 @@ function Header({
   pairWalks,
   onOpenWalk,
   onDiscussion,
+  discussionShown,
 }: {
   /** Show the review's panel, Step and Discussion (30 October 2026). */
   readonly onDiscussion: () => void;
+  readonly discussionShown: boolean;
   readonly bundle: ReviewBundle;
   readonly history: number;
   readonly words: ReviewWords;
@@ -2348,8 +2351,15 @@ function Header({
             <option value="en">English</option>
           </select>
         </label>
-        <button type="button" data-ev="walk-discussion" title="The review's discussion: Step and Discussion" onClick={onDiscussion}>
-          Discussion
+        {/* Hidden or not open yet, it says so: this is the way back to what was discussed. */}
+        <button
+          type="button"
+          className={discussionShown ? undefined : 'rv-show-discussion'}
+          data-ev="walk-discussion"
+          title="The review's discussion: Step and Discussion"
+          onClick={onDiscussion}
+        >
+          {discussionShown ? 'Discussion' : 'Show discussion'}
         </button>
         {onChoose !== null && (
           <button type="button" onClick={onChoose}>

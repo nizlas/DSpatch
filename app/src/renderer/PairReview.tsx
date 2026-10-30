@@ -1178,8 +1178,15 @@ function DiffReview({
           >
             Code walks
           </button>
-          <button type="button" data-ev="pair-discussion" title="The review's discussion: Step and Discussion" onClick={() => showPanel(true)}>
-            Discussion
+          {/* Hidden or not open yet, it says so: this is the way back to what was discussed. */}
+          <button
+            type="button"
+            className={panelState?.visible === true ? undefined : 'rv-show-discussion'}
+            data-ev="pair-discussion"
+            title="The review's discussion: Step and Discussion"
+            onClick={() => showPanel(true)}
+          >
+            {panelState?.visible === true ? 'Discussion' : 'Show discussion'}
           </button>
           <button type="button" className="rv-pair-link" data-ev="pair-change-revisions" onClick={onChangeRevisions}>
             Change revisions

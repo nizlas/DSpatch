@@ -13955,6 +13955,20 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       const dockedAgain = await untilWindow('the docked panel shown again', (rows) => (rows as readonly Row[]).find((row) => row.panel?.visible === true && row.panel.viewVisible === true && row.panel.viewWidth > 0), 10_000);
       record('hidden while docked, shown again', { panel: (dockedAgain as Row).panel, draft: composerOf(await readPairWindow(panelId)) });
       expect((dockedAgain as Row).panel?.place === 'diff' && composerOf(await readPairWindow(panelId)) === 'A draft that moves', 'the docked panel did not come back as it was');
+      // Hidden, both code windows say how to show it, and the walk's button brings the history back: nothing is sent.
+      const promptsHidden = await promptsAt();
+      const questionsHidden = asked(await readPairWindow(panelId)).length;
+      await press(panelId, '[data-ev="panel-hide"]');
+      await untilPair(diffId, 'Show discussion in the diff', (reading) => (reading.text ?? '').includes('Show discussion'), 10_000);
+      await untilPair(walkId, 'Show discussion in the walk', (reading) => (reading.text ?? '').includes('Show discussion'), 10_000);
+      await capture(diffId, 'panel-hidden-diff');
+      await capture(walkId, 'panel-hidden-walk');
+      await press(walkId, '[data-ev="walk-discussion"]');
+      await untilWindow('the panel back from the walk', (rows) => (rows as readonly Row[]).find((row) => row.panel?.visible === true && row.panel.viewVisible === true), 10_000);
+      await untilPair(diffId, 'Discussion again in the diff', (reading) => !(reading.text ?? '').includes('Show discussion'), 10_000);
+      const backFromWalk = await readPairWindow(panelId);
+      record('shown from the walk', { questions: asked(backFromWalk).length, prompts: (await promptsAt()) - promptsHidden });
+      expect(asked(backFromWalk).length === questionsHidden && (await promptsAt()) === promptsHidden, 'showing the discussion sent something, or lost a question');
       // An answer on its way while the panel moves.
       await check({ action: 'type', id: panelId, selector: '[data-ev="discussion-composer"]', text: ' — sent' }, 'finish the draft');
       await pressKey(panelId, '[data-ev="discussion-composer"]', 'Enter');

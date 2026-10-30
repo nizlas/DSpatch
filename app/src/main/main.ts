@@ -2896,9 +2896,21 @@ async function pairWindowCheckIn(request: PairWindowCheckRequest): Promise<Edito
     );
     // The first capture can still hand back the previous frame; the second, a moment
     // later, is the one kept.
-    await entry.contents.capturePage();
+    // A view shown a moment ago may have no frame yet: Electron refuses the capture, so it is retried.
+    const captured = async (tries: number): Promise<Electron.NativeImage> => {
+      try {
+        return await entry.contents.capturePage();
+      } catch (error) {
+        if (tries <= 1) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return captured(tries - 1);
+      }
+    };
+    await captured(5);
     await new Promise((resolve) => setTimeout(resolve, 300));
-    const image = await entry.contents.capturePage();
+    const image = await captured(5);
     const shot = process.env['DSPATCH_CHAT_SHOT'];
     if (shot === undefined || shot === '') {
       return { ok: false, detail: 'no DSPATCH_CHAT_SHOT' };

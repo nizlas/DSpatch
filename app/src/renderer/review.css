@@ -3494,6 +3494,14 @@
   min-width: 0;
 }
 
+/* The way back to a hidden discussion stands out from the tools around it. */
+.rv button.rv-show-discussion {
+  border-color: var(--muted);
+  background: var(--raised);
+  color: var(--text);
+  font-weight: 600;
+}
+
 .rv-panel-places {
   display: inline-flex;
   gap: 0.3rem;
