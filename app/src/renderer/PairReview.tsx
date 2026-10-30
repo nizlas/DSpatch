@@ -13,7 +13,7 @@
  */
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { JSX, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
+import type { JSX, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react';
 
 import { highlightLines, type Token } from '../shared/review-model';
 import {
@@ -229,9 +229,8 @@ export function PairReview(): JSX.Element {
       setPhase({ kind: 'message', text: outcome.kind === 'failed' ? outcome.error : outcome.note });
     }
   };
-  return (
-    <div className="rv rv-pair">
-      {left !== null && phase.kind !== 'review' && <LeftReview review={left.open} onBack={() => void backToReview(left)} />}
+  const shown = (
+    <>
       {phase.kind === 'loading' && <p className="rv-pair-message">Reading the workspace…</p>}
       {phase.kind === 'message' && <p className="rv-pair-message" data-ev="pair-message">{phase.text}</p>}
       {phase.kind === 'ongoing' && (
@@ -280,6 +279,17 @@ export function PairReview(): JSX.Element {
             void showReviews('');
           }}
         />
+      )}
+    </>
+  );
+  return (
+    <div className="rv rv-pair">
+      {left !== null && phase.kind !== 'review' ? (
+        <LeftReview review={left.open} onBack={() => void backToReview(left)}>
+          {shown}
+        </LeftReview>
+      ) : (
+        shown
       )}
     </div>
   );
@@ -401,34 +411,73 @@ function samePair(one: { readonly repository: string; readonly base: string; rea
 }
 
 /**
- * Above the commit log and the list of reviews, once a review was left for them (Niclas's
- * trial, 30 October 2026): choosing nothing is always possible, and the review's discussion
- * can still be shown, whatever happened to its panel.
+ * Where the review's panel is, as this window is told, and the room this view keeps for it
+ * while it is docked here; the panel is drawn over the room.
  */
-function LeftReview({ review, onBack }: { readonly review: OpenPair; readonly onBack: () => void }): JSX.Element {
+function usePanelRoom(): { readonly panelState: PanelState | null; readonly dockedHere: boolean; readonly roomRef: RefObject<HTMLDivElement | null> } {
   const panelBridge = window.dspatchReviewPanel;
   const [panelState, setPanelState] = useState<PanelState | null>(null);
   useEffect(() => {
     if (panelBridge === undefined) {
       return;
     }
-    void panelBridge.state().then(setPanelState);
+    void panelBridge.state().then((known) => {
+      if (known !== null) {
+        setPanelState(known);
+      }
+    });
     return panelBridge.onState(setPanelState);
   }, [panelBridge]);
+  const dockedHere = panelState?.dockedHere === true;
+  const roomRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const room = roomRef.current;
+    if (panelBridge === undefined || room === null || !dockedHere) {
+      return;
+    }
+    const tell = (): void => {
+      const box = room.getBoundingClientRect();
+      panelBridge.slot({ x: box.left, y: box.top, width: box.width, height: box.height });
+    };
+    tell();
+    const observer = new ResizeObserver(tell);
+    observer.observe(room);
+    window.addEventListener('resize', tell);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', tell);
+    };
+  }, [panelBridge, dockedHere]);
+  return { panelState, dockedHere, roomRef };
+}
+
+/**
+ * Around the commit log and the list of reviews, once a review was left for them (Niclas's
+ * trial, 30 October 2026): choosing nothing is always possible, and the review's panel stays
+ * as it was, docked here or hidden, until another review is chosen.
+ */
+function LeftReview({ review, onBack, children }: { readonly review: OpenPair; readonly onBack: () => void; readonly children: ReactNode }): JSX.Element {
+  const { panelState, dockedHere, roomRef } = usePanelRoom();
   return (
-    <div className="rv-pair-left" data-ev="pair-left-review">
-      <button type="button" data-ev="pair-back-review" onClick={onBack}>
-        ← Back to {review.repositoryName} {short(review.pair.base)} → {short(review.pair.target)}
-      </button>
-      <button
-        type="button"
-        className={panelState?.visible === true ? undefined : 'rv-show-discussion'}
-        data-ev="pair-left-discussion"
-        title="The discussion of the review you left"
-        onClick={() => void panelBridge?.show(review.key, true)}
-      >
-        {panelState?.visible === true ? 'Discussion' : 'Show discussion'}
-      </button>
+    <div className="rv-pair-main">
+      <div className="rv-pair-left-body">
+        <div className="rv-pair-left" data-ev="pair-left-review">
+          <button type="button" data-ev="pair-back-review" onClick={onBack}>
+            ← Back to {review.repositoryName} {short(review.pair.base)} → {short(review.pair.target)}
+          </button>
+          <button
+            type="button"
+            className={panelState?.visible === true ? undefined : 'rv-show-discussion'}
+            data-ev="pair-left-discussion"
+            title="The discussion of the review you left"
+            onClick={() => void window.dspatchReviewPanel?.show(review.key, true)}
+          >
+            {panelState?.visible === true ? 'Discussion' : 'Show discussion'}
+          </button>
+        </div>
+        {children}
+      </div>
+      {dockedHere && <div className="rv-pair-room" ref={roomRef} data-ev="panel-room" />}
     </div>
   );
 }
@@ -871,43 +920,7 @@ function DiffReview({
         }
       });
   };
-  const [panelState, setPanelState] = useState<PanelState | null>(null);
-  useEffect(() => {
-    if (panelBridge === undefined) {
-      return;
-    }
-    void panelBridge.state().then((known) => {
-      if (known !== null) {
-        setPanelState(known);
-      }
-    });
-    return panelBridge.onState(setPanelState);
-  }, [panelBridge]);
-  const dockedHere = panelState?.dockedHere === true;
-  // This view is the room for the panel; with it gone, a panel docked here waits in its own window.
-  useEffect(() => {
-    panelBridge?.room(true);
-    return () => panelBridge?.room(false);
-  }, [panelBridge]);
-  const roomRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const room = roomRef.current;
-    if (panelBridge === undefined || room === null || !dockedHere) {
-      return;
-    }
-    const tell = (): void => {
-      const box = room.getBoundingClientRect();
-      panelBridge.slot({ x: box.left, y: box.top, width: box.width, height: box.height });
-    };
-    tell();
-    const observer = new ResizeObserver(tell);
-    observer.observe(room);
-    window.addEventListener('resize', tell);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', tell);
-    };
-  }, [panelBridge, dockedHere]);
+  const { panelState, dockedHere, roomRef } = usePanelRoom();
 
   /*
    * A reference opened from the panel when the review has no walk window (30 October 2026):

@@ -3502,6 +3502,15 @@
   font-weight: 600;
 }
 
+.rv-pair-left-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
 .rv-pair-left {
   display: flex;
   flex-wrap: wrap;

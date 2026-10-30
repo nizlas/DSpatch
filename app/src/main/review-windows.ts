@@ -477,10 +477,14 @@ export class ReviewWindows {
       return other;
     }
     const left = entry.pairKey;
+    if (left !== null && left !== key) {
+      // This window moves on to another review: a panel docked here does not stay in it.
+      this.releasePanelFrom(entry);
+    }
     entry.pairKey = key;
     entry.pairLabel = label;
     if (left !== null && left !== key) {
-      // This window has moved on to another review; the one it left may have no window now.
+      // The review it left may have no window now.
       this.panelAfterLeaving(left);
     }
     this.panelOffersChanged(key);
@@ -933,7 +937,6 @@ export class ReviewWindows {
       return;
     }
     panel.visible = true;
-    panel.dockedBefore = null;
     this.placePanel(panel, place);
     this.focusPanel(panel);
     void this.savePlace(panel.place);
@@ -947,24 +950,6 @@ export class ReviewWindows {
     }
     panel.visible = false;
     this.placePanel(panel, panel.place);
-  }
-
-  /**
-   * The diff window left its review for the commit log or the list of reviews, or came back.
-   * There is no room for the panel while it is away, so it waits in its own window.
-   */
-  panelRoom(host: ReviewWindowEntry, present: boolean): void {
-    const panel = host.pairKey === null ? undefined : this.panels.get(host.pairKey);
-    if (panel === undefined) {
-      return;
-    }
-    if (!present && panel.host === host) {
-      panel.dockedBefore = host;
-      this.placePanel(panel, 'window');
-    } else if (present && panel.dockedBefore === host) {
-      panel.dockedBefore = null;
-      this.placePanel(panel, 'diff');
-    }
   }
 
   /** A code window says where it keeps room for the panel docked in it. */
@@ -1089,7 +1074,7 @@ export class ReviewWindows {
       pairLabel: null,
     };
     this.entries.add(entry);
-    const panel: Panel = { entry, view, frame, place: 'window', visible: false, host: null, slot: null, closing: false, dockedBefore: null };
+    const panel: Panel = { entry, view, frame, place: 'window', visible: false, host: null, slot: null, closing: false };
     this.panels.set(init.pairKey, panel);
     frame.on('page-title-updated', (event) => event.preventDefault());
     frame.on('resize', () => this.layoutPanel(panel));
@@ -1337,6 +1322,4 @@ interface Panel {
   slot: Rectangle | null;
   /** Its review has gone: its window closes for good. */
   closing: boolean;
-  /** The diff window it was docked in when that window left the review; it goes back there. */
-  dockedBefore: ReviewWindowEntry | null;
 }

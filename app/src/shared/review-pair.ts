@@ -1926,7 +1926,6 @@ export const REVIEW_PANEL_CHANNELS = {
   dock: 'dspatch:review-panel-dock',
   hide: 'dspatch:review-panel-hide',
   slot: 'dspatch:review-panel-slot',
-  room: 'dspatch:review-panel-room',
   follow: 'dspatch:review-panel-follow',
   lastFollow: 'dspatch:review-panel-last-follow',
   action: 'dspatch:review-panel-action',
@@ -1943,11 +1942,6 @@ export interface ReviewPanelBridge {
   show(key: string | null, ask: boolean, tab?: 'step' | 'discussion'): Promise<{ readonly ok: boolean; readonly note: string }>;
   /** From the panel: move it to its own window or dock it in a code window of the review. */
   dock(place: PanelPlace): Promise<void>;
-  /**
-   * From the diff window: its review is on screen, or has been left for the commit log or the
-   * list of reviews. Left, a panel docked here goes to its own window, and comes back on return.
-   */
-  room(present: boolean): void;
   /** From the panel: hide it. Nothing running stops; the next show brings it back as it was. */
   hide(): Promise<void>;
   /** From a code window: where it keeps room for the panel docked in it, in its own coordinates. */

@@ -138,9 +138,6 @@ const panelBridge: ReviewPanelBridge = {
   show: (key, ask, tab) => ipcRenderer.invoke('dspatch:review-panel-show', key, ask, tab === 'step' ? 'step' : 'discussion') as ReturnType<ReviewPanelBridge['show']>,
   dock: (place) => ipcRenderer.invoke('dspatch:review-panel-dock', place) as ReturnType<ReviewPanelBridge['dock']>,
   hide: () => ipcRenderer.invoke('dspatch:review-panel-hide') as ReturnType<ReviewPanelBridge['hide']>,
-  room: (present) => {
-    ipcRenderer.send('dspatch:review-panel-room', present === true);
-  },
   slot: (rect) => {
     ipcRenderer.send('dspatch:review-panel-slot', rect);
   },

@@ -13922,19 +13922,29 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       await press(panelId, '[data-ev="panel-own-window"]');
       await untilWindow('the panel in its own window', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'window' && row.panel.frameVisible), 10_000);
 
-      // 3c. Niclas's trial: docked, then Change revisions. The panel waits in its own window,
-      // can be hidden and shown from the commit log, and the review is one action away.
+      // 3c. Niclas's trial: docked, then Change revisions. The panel stays as it was, docked
+      // beside the commit log; hidden there or before, it comes back docked.
       await press(panelId, '[data-ev="panel-dock-diff"]');
       await untilWindow('the panel docked', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'diff' && row.panel.viewVisible === true), 10_000);
       await press(diffId, '[data-ev="pair-change-revisions"]');
       await untilPair(diffId, 'the commit log', (reading) => diffOf(reading).phase === 'log');
-      await untilWindow('the panel in its own window', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'window' && row.panel.frameVisible), 10_000);
-      await press(panelId, '[data-ev="right-tab-discussion"]');
-      await check({ action: 'close', id: panelId }, 'close the panel window from the commit log');
+      const dockedInLog = (rows: readonly PairWindowRow[]): PairWindowRow | undefined => (rows as readonly Row[]).find((row) => row.panel?.place === 'diff' && row.panel.frameVisible === false && row.panel.visible && row.panel.viewVisible === true && row.panel.viewWidth > 0);
+      await untilWindow('the panel still docked beside the commit log', dockedInLog, 10_000);
+      await press(panelId, '[data-ev="panel-hide"]');
       await untilPair(diffId, 'Show discussion in the commit log', (reading) => (reading.text ?? '').includes('Show discussion'), 10_000);
       await capture(diffId, 'panel-hidden-commit-log');
       await press(diffId, '[data-ev="pair-left-discussion"]');
-      await untilWindow('the panel shown from the commit log', (rows) => (rows as readonly Row[]).find((row) => row.panel?.visible === true && row.panel.frameVisible), 10_000);
+      await untilWindow('the panel back docked, shown from the commit log', dockedInLog, 10_000);
+      // Hidden first, then Change revisions (what Niclas did): still docked when it is shown.
+      await press(diffId, '[data-ev="pair-back-review"]');
+      await untilPair(diffId, 'back in the review', (reading) => diffOf(reading).phase === 'review', 20_000);
+      await untilWindow('the panel docked in the review', dockedInLog, 10_000);
+      await press(panelId, '[data-ev="panel-hide"]');
+      await untilPair(diffId, 'Show discussion in the review', (reading) => (reading.text ?? '').includes('Show discussion'), 10_000);
+      await press(diffId, '[data-ev="pair-change-revisions"]');
+      await untilPair(diffId, 'the commit log again', (reading) => diffOf(reading).phase === 'log');
+      await press(diffId, '[data-ev="pair-left-discussion"]');
+      await untilWindow('hidden before leaving, shown docked', dockedInLog, 10_000);
       await press(diffId, '[data-ev="pair-back-review"]');
       const backInReview = await untilPair(diffId, 'back in the review', (reading) => diffOf(reading).phase === 'review' && diffOf(reading).files.length > 0, 20_000);
       const backDocked = await untilWindow('the panel docked again', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'diff' && row.panel.viewVisible === true && row.panel.viewWidth > 0), 10_000);
