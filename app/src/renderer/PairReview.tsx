@@ -104,6 +104,13 @@ function formatDate(iso: string): string {
 export function PairReview(): JSX.Element {
   const bridge = window.dspatchReviewPair;
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
+  // The review this window left for the commit log or the list of reviews: the way back to it.
+  const [left, setLeft] = useState<Extract<Phase, { kind: 'review' }> | null>(null);
+  useEffect(() => {
+    if (phase.kind === 'review') {
+      setLeft(null);
+    }
+  }, [phase.kind]);
 
   const chooseRepository = useCallback(async (): Promise<void> => {
     if (bridge === undefined) {
@@ -214,8 +221,17 @@ export function PairReview(): JSX.Element {
   if (bridge === undefined) {
     return <div className="rv rv-pair"><p className="rv-pair-message">This window has no review connection.</p></div>;
   }
+  const backToReview = async (review: Extract<Phase, { kind: 'review' }>): Promise<void> => {
+    const outcome = await bridge.open(review.open.pair);
+    if (outcome.kind === 'opened') {
+      setPhase({ ...review, open: outcome.open, at: null });
+    } else {
+      setPhase({ kind: 'message', text: outcome.kind === 'failed' ? outcome.error : outcome.note });
+    }
+  };
   return (
     <div className="rv rv-pair">
+      {left !== null && phase.kind !== 'review' && <LeftReview review={left.open} onBack={() => void backToReview(left)} />}
       {phase.kind === 'loading' && <p className="rv-pair-message">Reading the workspace…</p>}
       {phase.kind === 'message' && <p className="rv-pair-message" data-ev="pair-message">{phase.text}</p>}
       {phase.kind === 'ongoing' && (
@@ -225,6 +241,9 @@ export function PairReview(): JSX.Element {
           onResume={(review) => void resume(review)}
           onNew={() => void chooseRepository()}
           onEnd={(review) => {
+            if (left !== null && samePair(left.open.pair, review.pair)) {
+              setLeft(null);
+            }
             void bridge.end(review.pair).then((answer) => {
               void showReviews(isPairError(answer) ? answer.error : '');
             });
@@ -252,8 +271,14 @@ export function PairReview(): JSX.Element {
           bridge={bridge}
           open={phase.open}
           initialAt={phase.at}
-          onChangeRevisions={() => setPhase({ kind: 'log', repository: phase.repository, several: phase.several })}
-          onAllReviews={() => void showReviews('')}
+          onChangeRevisions={() => {
+            setLeft(phase);
+            setPhase({ kind: 'log', repository: phase.repository, several: phase.several });
+          }}
+          onAllReviews={() => {
+            setLeft(phase);
+            void showReviews('');
+          }}
         />
       )}
     </div>
@@ -370,6 +395,43 @@ type ChosenDirection =
   | { readonly kind: 'choose'; readonly first: string; readonly second: string; readonly reason: string };
 
 const ROLE_WORD = { from: 'From', to: 'To', chosen: 'Chosen' } as const;
+
+function samePair(one: { readonly repository: string; readonly base: string; readonly target: string }, other: { readonly repository: string; readonly base: string; readonly target: string }): boolean {
+  return one.repository === other.repository && one.base === other.base && one.target === other.target;
+}
+
+/**
+ * Above the commit log and the list of reviews, once a review was left for them (Niclas's
+ * trial, 30 October 2026): choosing nothing is always possible, and the review's discussion
+ * can still be shown, whatever happened to its panel.
+ */
+function LeftReview({ review, onBack }: { readonly review: OpenPair; readonly onBack: () => void }): JSX.Element {
+  const panelBridge = window.dspatchReviewPanel;
+  const [panelState, setPanelState] = useState<PanelState | null>(null);
+  useEffect(() => {
+    if (panelBridge === undefined) {
+      return;
+    }
+    void panelBridge.state().then(setPanelState);
+    return panelBridge.onState(setPanelState);
+  }, [panelBridge]);
+  return (
+    <div className="rv-pair-left" data-ev="pair-left-review">
+      <button type="button" data-ev="pair-back-review" onClick={onBack}>
+        ← Back to {review.repositoryName} {short(review.pair.base)} → {short(review.pair.target)}
+      </button>
+      <button
+        type="button"
+        className={panelState?.visible === true ? undefined : 'rv-show-discussion'}
+        data-ev="pair-left-discussion"
+        title="The discussion of the review you left"
+        onClick={() => void panelBridge?.show(review.key, true)}
+      >
+        {panelState?.visible === true ? 'Discussion' : 'Show discussion'}
+      </button>
+    </div>
+  );
+}
 
 function CommitLog({
   bridge,
@@ -822,6 +884,11 @@ function DiffReview({
     return panelBridge.onState(setPanelState);
   }, [panelBridge]);
   const dockedHere = panelState?.dockedHere === true;
+  // This view is the room for the panel; with it gone, a panel docked here waits in its own window.
+  useEffect(() => {
+    panelBridge?.room(true);
+    return () => panelBridge?.room(false);
+  }, [panelBridge]);
   const roomRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const room = roomRef.current;

@@ -333,6 +333,12 @@ export function registerReviewIpc(
   });
   ipcMain.handle(REVIEW_PANEL_CHANNELS.lastFollow, (event) => windows.lastFollowFor(entryOf(event)));
   ipcMain.handle(REVIEW_PANEL_CHANNELS.state, (event) => windows.panelStateFor(entryOf(event)));
+  ipcMain.on(REVIEW_PANEL_CHANNELS.room, (event, present: unknown) => {
+    const entry = windows.entryFor(event.sender);
+    if (entry !== null && entry.view === 'diff') {
+      windows.panelRoom(entry, present === true);
+    }
+  });
   ipcMain.on(REVIEW_PANEL_CHANNELS.slot, (event, rect: unknown) => {
     const entry = windows.entryFor(event.sender);
     if (entry === null || entry.view === 'panel') {

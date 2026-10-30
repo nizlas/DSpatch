@@ -3502,6 +3502,13 @@
   font-weight: 600;
 }
 
+.rv-pair-left {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.7rem 1.2rem 0;
+}
+
 .rv-panel-places {
   display: inline-flex;
   gap: 0.3rem;

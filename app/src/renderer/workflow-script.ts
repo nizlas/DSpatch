@@ -13922,6 +13922,28 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       await press(panelId, '[data-ev="panel-own-window"]');
       await untilWindow('the panel in its own window', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'window' && row.panel.frameVisible), 10_000);
 
+      // 3c. Niclas's trial: docked, then Change revisions. The panel waits in its own window,
+      // can be hidden and shown from the commit log, and the review is one action away.
+      await press(panelId, '[data-ev="panel-dock-diff"]');
+      await untilWindow('the panel docked', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'diff' && row.panel.viewVisible === true), 10_000);
+      await press(diffId, '[data-ev="pair-change-revisions"]');
+      await untilPair(diffId, 'the commit log', (reading) => diffOf(reading).phase === 'log');
+      await untilWindow('the panel in its own window', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'window' && row.panel.frameVisible), 10_000);
+      await press(panelId, '[data-ev="right-tab-discussion"]');
+      await check({ action: 'close', id: panelId }, 'close the panel window from the commit log');
+      await untilPair(diffId, 'Show discussion in the commit log', (reading) => (reading.text ?? '').includes('Show discussion'), 10_000);
+      await capture(diffId, 'panel-hidden-commit-log');
+      await press(diffId, '[data-ev="pair-left-discussion"]');
+      await untilWindow('the panel shown from the commit log', (rows) => (rows as readonly Row[]).find((row) => row.panel?.visible === true && row.panel.frameVisible), 10_000);
+      await press(diffId, '[data-ev="pair-back-review"]');
+      const backInReview = await untilPair(diffId, 'back in the review', (reading) => diffOf(reading).phase === 'review' && diffOf(reading).files.length > 0, 20_000);
+      const backDocked = await untilWindow('the panel docked again', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'diff' && row.panel.viewVisible === true && row.panel.viewWidth > 0), 10_000);
+      record('Change revisions and back', { panel: (backDocked as Row).panel, questions: asked(await readPairWindow(panelId)).length, prompts: (await promptsAt()) - prompts0 });
+      expect(JSON.stringify(diffOf(backInReview).files.map((file) => [file.path, file.handled])) === before, 'going to the commit log and back changed the review');
+      await press(panelId, '[data-ev="panel-own-window"]');
+      await untilWindow('the panel in its own window', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'window' && row.panel.frameVisible), 10_000);
+      await openFileHere(diffId, FILE);
+
       // 4. Walks prepared later: the same history, and Step now in the same panel.
       await press(diffId, '[data-ev="pair-prepare-walks"]');
       await untilPair(diffId, 'the agent picker', (reading) => (reading.text ?? '').includes('Model'), 15_000);
