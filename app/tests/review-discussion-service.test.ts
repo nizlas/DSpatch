@@ -39,7 +39,7 @@ import {
   discussionWorkingFolder,
 } from '../src/main/review-discussion-service.ts';
 import { ReviewService } from '../src/main/review-service.ts';
-import type { DiscussionIdentity, DiscussionMessage, ReviewDiscussionEvent } from '../src/shared/review-discussion.ts';
+import { REVIEW_DISCUSSION_CODE_INSTRUCTION, REVIEW_DISCUSSION_INSTRUCTION, type DiscussionIdentity, type DiscussionMessage, type ReviewDiscussionEvent } from '../src/shared/review-discussion.ts';
 import { WORKING_TREE_ONLY, makeReviewFixture, type ReviewFixture } from './support/review-fixture.ts';
 
 /** A provider that does exactly what the test says, and records what it was asked. */
@@ -621,6 +621,10 @@ test('with code access a question runs in the held revisions under the analysis 
     const question = storedMessages(s).find((message) => message.role === 'question');
     assert.equal(question?.codeAccess, true);
     assert.equal(question?.toolPolicy, 'Read, Glob and Grep in the revisions');
+    // The instruction sent first is the one for reading the revisions, and it is what the question records.
+    assert.ok(prompt.includes(REVIEW_DISCUSSION_CODE_INSTRUCTION));
+    assert.ok(!prompt.includes(REVIEW_DISCUSSION_INSTRUCTION), 'the tool-free instruction is not sent with code access');
+    assert.equal(question?.instruction, REVIEW_DISCUSSION_CODE_INSTRUCTION);
 
     // Closing the window closes the session: the adapter first, then the revisions.
     discussions.detach(1);

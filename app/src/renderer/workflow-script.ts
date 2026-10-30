@@ -13664,8 +13664,8 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
         // --- Asking about a selection as a person does it, the short answer first, a simpler
         // explanation of an earlier answer, and the explanation in a window of its own
         // (Niclas's requests of 30 October 2026). Real drags, clicks and keys throughout. ---
-        type Shown = { readonly text: string; readonly details: boolean; readonly more: string; readonly simpler: boolean };
-        type WalkMore = { readonly quoteMark: readonly string[]; readonly docked: boolean; readonly codeWidth: number; readonly answers: readonly Shown[] };
+        type Shown = { readonly text: string; readonly details: boolean; readonly more: string; readonly simpler: boolean; readonly refsOpen: boolean; readonly refsToggle: boolean };
+        type WalkMore = { readonly quoteMark: readonly string[]; readonly docked: boolean; readonly codeWidth: number; readonly answers: readonly Shown[]; readonly noise: readonly string[] };
         type Ex = {
           readonly hasPanel: boolean;
           readonly styled: boolean;
@@ -13678,7 +13678,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
         };
         type Message = { readonly id: string; readonly role: string; readonly status: string; readonly text: string; readonly questionId: string | null };
         const moreOf = (reading: PairWindowReading | null): WalkMore =>
-          (reading as unknown as { walkView?: WalkMore } | null)?.walkView ?? { quoteMark: [], docked: true, codeWidth: 0, answers: [] };
+          (reading as unknown as { walkView?: WalkMore } | null)?.walkView ?? { quoteMark: [], docked: true, codeWidth: 0, answers: [], noise: [] };
         const exOf = (reading: PairWindowReading | null): Ex | null => (reading as unknown as { explanation?: Ex | null } | null)?.explanation ?? null;
         const messagesOf = (reading: PairWindowReading | null): readonly Message[] =>
           (reading as unknown as { discussion?: { messages?: readonly Message[] } | null } | null)?.discussion?.messages ?? [];
@@ -13736,6 +13736,25 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
         expect(opened?.details === true && opened.more === 'Show less' && opened.text.includes('What it means for the change'), 'Show more did not open the details');
         expect(closedAgain?.details === false && closedAgain.more === 'Show more', 'Show less did not fold them');
         expect((await promptsNow()) === promptsA, 'Show more or Show less asked the agent');
+        // The code it rests on: folded at first, opened and closed on its own (30 October 2026).
+        expect(shortA?.refsToggle === true && !shortA.refsOpen, `the references are not folded under their own toggle: ${JSON.stringify(shortA)}`);
+        await press(walkId, '[data-ev="discussion-q-0"] [data-ev="answer-show-code"]');
+        const codeOnly = moreOf(await readPairWindow(walkId)).answers[0];
+        await press(walkId, '[data-ev="discussion-q-0"] [data-ev="answer-show-more"]');
+        const both = moreOf(await readPairWindow(walkId)).answers[0];
+        await press(walkId, '[data-ev="discussion-q-0"] [data-ev="answer-show-more"]');
+        const codeStill = moreOf(await readPairWindow(walkId)).answers[0];
+        record('A: the code it rests on', { codeOnly, both, codeStill, prompts: (await promptsNow()) - promptsA });
+        expect(codeOnly?.refsOpen === true && codeOnly.details === false && both?.refsOpen === true && both.details === true && codeStill?.refsOpen === true && codeStill.details === false, 'Show more and The code it rests on do not open and close on their own');
+        expect((await promptsNow()) === promptsA, 'opening the references asked the agent');
+        const plain = await readPairWindow(walkId);
+        record('A: what the discussion no longer shows', { noise: moreOf(plain).noise });
+        expect(moreOf(plain).noise.length === 0, `technical blocks are still shown: ${JSON.stringify(moreOf(plain).noise)}`);
+        await capture(walkId, 'answer-with-references');
+
+        await check({ action: 'resize', id: walkId, width: 1020, height: 860 }, 'make the walk window narrow');
+        await capture(walkId, 'walk-narrow');
+        await check({ action: 'resize', id: walkId, width: 1500, height: 900 }, 'make it wide again');
 
         // B. Several lines, then across a wrap, the same way.
         await drag(walkId, { selector: row('target', 4), offset: 16 }, { selector: row('target', 5), offset: 20 });
@@ -13790,6 +13809,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
         const draft = 'Ett utkast som inte är skickat.';
         await check({ action: 'type', id: walkId, selector: composer, text: draft }, 'write a draft');
         const docked = await readPairWindow(walkId);
+        expect(moreOf(docked).answers[0]?.refsOpen === true, 'the first answer\'s references are not open before the move');
         await press(walkId, '[data-ev="explanation-detach"]');
         const exRow = await untilWindow('the explanation window', (rows) => rows.find((entry) => (entry.view as string) === 'explanation' && entry.walkId === walkId), 15_000);
         const away = await untilPair(walkId, 'the panel in its own window', (reading) => exOf(reading)?.hasPanel === true);
@@ -13798,9 +13818,13 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
         expect(!moreOf(away).docked && moreOf(away).codeWidth > moreOf(docked).codeWidth + 200, 'the code did not get the panel\'s width');
         expect(exOf(away)?.tab === 'Discussion' && exOf(away)?.composer === draft && (exOf(away)?.chip ?? '').includes('text.slice'), `the tab, the draft or the quote did not move with the panel: ${JSON.stringify(exOf(away))}`);
         expect(exOf(away)?.styled === true, 'the explanation window does not look like the walk window');
+        expect(exOf(away)?.answers[0]?.refsOpen === true, 'the open references closed when the panel moved');
         expect(pendingAtMove === 'streaming', `the answer was not on its way when the panel moved: ${String(pendingAtMove)}`);
         await capture(exRow.id, 'explanation-window');
         await capture(walkId, 'walk-without-panel');
+        await check({ action: 'resize', id: exRow.id, width: 380, height: 760 }, 'make the explanation window narrow');
+        await capture(exRow.id, 'explanation-narrow');
+        await check({ action: 'resize', id: exRow.id, width: 640, height: 820 }, 'make it wide again');
         const answeredD = await answered(walkId, 5, 'the slow answer, in the other window');
         const slowQuestion = messagesOf(answeredD).filter((message) => message.role === 'question').at(-1);
         const slowAnswers = messagesOf(answeredD).filter((message) => message.role === 'answer' && message.questionId === slowQuestion?.id);
@@ -13845,6 +13869,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
         const back = await untilPair(walkId, 'the panel back in the walk window', (reading) => moreOf(reading).docked && exOf(reading) === null);
         record('H: docked', { composer: composerOf(back), window: await explanationOf(walkId) });
         expect(composerOf(back) === draftH && (await explanationOf(walkId)) === null, 'docking lost the draft or left the window open');
+        expect(moreOf(back).answers[0]?.refsOpen === true, 'the open references closed when the panel was docked');
         await press(walkId, '[data-ev="explanation-detach"]');
         const second = await untilWindow('the explanation window again', (rows) => rows.find((entry) => (entry.view as string) === 'explanation' && entry.walkId === walkId), 15_000);
         await untilPair(walkId, 'the panel there again', (reading) => exOf(reading)?.hasPanel === true);
@@ -13876,6 +13901,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
         record('I: Show more after reopening', { answer: exOf(reopened)?.answers[0], messages: messagesOf(reopened).length, prompts: (await promptsNow()) - promptsI });
         expect(exOf(reopened)?.answers[0]?.details === true && messagesOf(reopened).length === 14 && (await promptsNow()) === promptsI, 'reopening asked the agent, lost answers, or Show more did not open the stored details');
         await capture(fourth.id, 'explanation-reopened');
+        expect(moreOf(reopened).noise.length === 0, `the saved conversation still shows technical blocks: ${JSON.stringify(moreOf(reopened).noise)}`);
 
         // J. Two reviews at once: their discussions and selections stay apart.
         await press(MAIN, '[data-ev="open-review"]');
@@ -14168,11 +14194,19 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       expect((answer?.reads ?? []).some((read) => read.includes('target/src/workspace.ts')) && (answer?.reads ?? []).some((read) => read.includes('base/src/workspace.ts')), `the agent did not read the definition at both revisions: ${JSON.stringify(answer?.reads)}`);
       expect(!(answer?.text ?? '').includes('dspatch-references'), 'the references block is shown as text');
       await capture(walkRow.id, 'insight-definition-answer');
+      const stepBefore = stepOf(await readPairWindow(walkRow.id));
+      await press(walkRow.id, `.rv-answer:has([data-ref="${targetRef ?? ''}"]) [data-ev="answer-show-code"]`);
       await press(walkRow.id, `[data-ev="answer-ref"][data-ref="${targetRef ?? ''}"]`);
       const opened = await untilPair(walkRow.id, 'the definition opened', (reading) => visibleOf(reading).includes('lane: string'), 15_000).catch(() => null);
-      record('reference opened', { away: insightOf(opened)?.away, shows: visibleOf(opened).includes('lane: string') });
+      const bar = (opened as unknown as { walkView?: { awayBar?: string } } | null)?.walkView?.awayBar ?? '';
+      record('reference opened', { away: insightOf(opened)?.away, shows: visibleOf(opened).includes('lane: string'), bar });
       expect(opened !== null, 'the To reference did not open the To definition (with its three fields)');
+      expect(bar.includes('workspace.ts') && bar.includes('src/') && bar.includes('To · ') && /lines? \d/.test(bar) && bar.includes(`Back to ${stepBefore ?? ''}`), `the opened code does not say where it is, or the way back: ${bar}`);
       await capture(walkRow.id, 'insight-reference-opened');
+      await press(walkRow.id, '[data-ev="away-back"]');
+      const returnedTo = await untilPair(walkRow.id, 'back where the reference was opened', (reading) => insightOf(reading)?.away === '' || insightOf(reading)?.away === undefined, 10_000).catch(() => null);
+      record('back from the reference', { step: stepOf(returnedTo), before: stepBefore });
+      expect(returnedTo !== null && stepOf(returnedTo) === stepBefore, 'Back did not return to where the reference was opened');
 
       // A follow-up with a table, in the same session.
       const second = await ask('Compare `EditorWorkspace` in From and To in a table', 2);

@@ -19,7 +19,7 @@ Roles, skills, and governing documents describe how the agent interprets the tas
 | DSpatch and Maestro | Calls, sessions, transfers, tool access, state, interruptions, and history. |
 | Provider and model | The underlying agent engine, model behavior, and the provider's own limitations. |
 
-All instructions and controls introduced by DSpatch must be explicit and inspectable. The model and provider also influence behavior, so documents cannot guarantee every individual agent decision. DSpatch must show what it sends and distinguish it from what the provider adds or what remains unknown.
+All instructions and controls introduced by DSpatch must be explicit and inspectable. The model and provider also influence behavior, so documents cannot guarantee every individual agent decision. DSpatch must show what it sends and distinguish it from what the provider adds or what remains unknown. (For the review discussion, Niclas decided on 30 October 2026 that the view no longer shows this; each question keeps its instruction and exact text in the review's stored record. See [VISION.md section 3.4](VISION.md#less-around-the-answer-niclass-decision-after-his-trial-30-october-2026).)
 
 ### Say where a behavior is defined
 

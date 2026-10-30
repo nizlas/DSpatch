@@ -463,6 +463,14 @@ After a walk preparation of 432 changed lines took almost four minutes, Niclas d
 - **Worth checking on request.** Under the walks, one action asks the agent for the whole list (questions, uncertainties and findings) as a job of its own, when the person wants it, perhaps after walking the change, or never. The walks as written go with it, so a point can name the step that shows its context and leave out what a walk already explains; every place is checked against its commit as before. The points are kept beside the walks' definition, so the definition and the review's record of it stay as written; reviews prepared before keep the points they have.
 - **What the agent is doing.** A running agent job says in one line under its spinner what the agent is doing now, from what it actually reports: waiting for it to begin, the file it reads, searching the code, which part of its answer it writes (the summary, walk *n* with its steps so far, point *n*), and what DSpatch then checks. No guessed stages and no estimate of what is left; counts of reads and tool calls stay in the job's details, as decided after the trial of 29 October.
 
+#### Less around the answer (Niclas's decision after his trial, 30 October 2026)
+
+The short answers were right; what surrounded them was noise.
+
+- **The discussion shows the question and the answer.** The subject chain above a question, *About:* above the field, *What it may use here*, *Context* and *Go to point* are no longer shown, docked or in the explanation's own window, and nothing replaces them there. A question still shows the compact quote of what was selected, and the quote can be removed before sending. Everything is still built, sent and kept as before: the subject, the envelope, the instruction sent and the exact text sent are stored with each question. This changes where DSpatch shows what it sends ([AGENT_BEHAVIOUR_AND_ORCHESTRATION.md](AGENT_BEHAVIOUR_AND_ORCHESTRATION.md), section 1): for the discussion it is now in the review's stored record, not in the view.
+- **Two quiet toggles under an answer.** *Show more* opens the details and *The code it rests on* opens the checked references, each on its own, closed at first, shown only when there is something to open, with no new agent call, keeping their state while the answer streams and when the panel moves. References saved before are shown the same way.
+- **An opened reference says where it is.** Above the code: the file, its folder, From or To with the commit, and the lines; the lines are marked and the context can be widened as before. *Back* returns to where it was opened from (another location, or the walk where it was), and the walk keeps its reading position meanwhile. Following a reference changes no review status.
+
 <a id="4-maestro-och-agentnätverket"></a>
 
 ## 4 Maestro and the agent network

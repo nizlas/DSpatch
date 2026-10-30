@@ -7,7 +7,6 @@ import { firstSentence } from './plain-error';
 import type { DiscussionWords } from './review-i18n';
 import {
   PROVIDER_ADDED_CONTEXT_LINE,
-  REVIEW_DISCUSSION_INSTRUCTION,
   subjectLine,
   withoutErrorClass,
   type ContextEnvelope,
@@ -18,6 +17,7 @@ import {
   type EnvelopeRange,
   type ReviewDiscussionBridge,
   type ReviewDiscussionEvent,
+  type EnvelopeQuote,
   type SelectionQuote,
 } from '../shared/review-discussion';
 import { stepsWalks, type CodeLocation, type Lang, type ReviewBundle } from '../shared/review-model';
@@ -72,22 +72,8 @@ declare global {
   }
 }
 
-function short(sha: string): string {
-  return sha.slice(0, 7);
-}
-
 function agentName(provider: DiscussionProvider): string {
   return provider === 'claude' ? 'Claude' : 'Cursor';
-}
-
-/** DSP-132: which agent one question went to, and with what - or that it predates the record. */
-function agentOf(message: DiscussionMessage, words: DiscussionWords): string {
-  if (message.provider === undefined) {
-    return words.recordedBeforeProvider;
-  }
-  const name = agentName(message.provider);
-  const session = message.dspatchSessionId === undefined ? '' : ` · ${message.dspatchSessionId}`;
-  return `${message.toolPolicy === undefined ? name : words.agentPolicy(name, message.toolPolicy)}${session}`;
 }
 
 /**
@@ -154,82 +140,6 @@ function previewLine(bundle: ReviewBundle, request: DiscussionRequest, lang: Lan
   return line.startsWith('the review as a whole') ? `${words.wholeReview}${line.slice('the review as a whole'.length)}` : line;
 }
 
-function rangeText(range: EnvelopeRange): string {
-  const lines = range.start === range.end ? String(range.start) : `${String(range.start)}–${String(range.end)}`;
-  return `${range.role} · ${range.path} ${lines} · ${range.side} @${short(range.sha)}${range.problem === null ? '' : ` (${range.problem})`}`;
-}
-
-/** What one question was sent with. Closed until asked for. */
-function ContextDisclosure({
-  message,
-  words,
-  index,
-}: {
-  readonly message: DiscussionMessage;
-  readonly words: DiscussionWords;
-  readonly index: number;
-}): JSX.Element {
-  const envelope = message.envelope;
-  const labels = words.contextLabels;
-  return (
-    <details className="rv-discussion-context" data-ev={`discussion-context-${String(index)}`}>
-      <summary>{words.context}</summary>
-      <dl>
-        <dt>{labels.subject}</dt>
-        <dd>{message.subject}</dd>
-        {envelope !== undefined && (
-          <>
-            <dt>{labels.revisions}</dt>
-            <dd>
-              {short(envelope.identity.base.sha)}→{short(envelope.identity.target.sha)}
-            </dd>
-            <dt>{labels.code}</dt>
-            <dd>
-              {envelope.ranges.length === 0 ? (
-                words.noCode
-              ) : (
-                <ul>
-                  {envelope.ranges.map((range, at) => (
-                    <li key={at}>{rangeText(range)}</li>
-                  ))}
-                </ul>
-              )}
-            </dd>
-            <dt>{labels.notes}</dt>
-            <dd>
-              {envelope.notes.length === 0 ? (
-                words.noNotes
-              ) : (
-                <ul>
-                  {envelope.notes.map((note, at) => (
-                    <li key={at}>
-                      [{note.kind}, {note.status}] {note.text}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </dd>
-          </>
-        )}
-        <dt>{labels.instruction}</dt>
-        <dd className="rv-discussion-instruction">{REVIEW_DISCUSSION_INSTRUCTION}</dd>
-        <dt>{labels.providerContext}</dt>
-        <dd>{envelope?.providerContext ?? PROVIDER_ADDED_CONTEXT_LINE}</dd>
-        <dt>{labels.agent}</dt>
-        <dd data-ev={`discussion-agent-${String(index)}`}>{agentOf(message, words)}</dd>
-        {message.model !== undefined && (
-          <>
-            <dt>{labels.model}</dt>
-            <dd>{message.model}</dd>
-          </>
-        )}
-        <dt>{labels.sent}</dt>
-        <dd>{message.sentPrompt === undefined ? words.notSent : <pre className="rv-discussion-prompt">{message.sentPrompt}</pre>}</dd>
-      </dl>
-    </details>
-  );
-}
-
 /** One plain sentence, the rest on request. */
 function PlainProblem({ text, words }: { readonly text: string; readonly words: DiscussionWords }): JSX.Element {
   const [open, setOpen] = useState(false);
@@ -247,6 +157,26 @@ function PlainProblem({ text, words }: { readonly text: string; readonly words: 
           {open && <pre className="rv-discussion-detail">{text}</pre>}
         </>
       )}
+    </div>
+  );
+}
+
+/** The quote a sent question carried, compact and read-only: what it was about. */
+function SentQuote({ quote }: { readonly quote: EnvelopeQuote }): JSX.Element {
+  const where =
+    quote.kind === 'text'
+      ? quote.source === 'answer'
+        ? 'From an answer'
+        : 'From the explanation'
+      : quoteWhere({ kind: 'code', text: '', segments: quote.segments });
+  const text = quote.kind === 'text' ? quote.text : quote.segments.map((segment) => segment.text).join('\n');
+  const flat = text.replace(/\s+/g, ' ');
+  return (
+    <div className="rv-quote-chip rv-quote-sent" data-ev="discussion-sent-quote" title={text}>
+      <span className="rv-quote-chip-text">
+        {where}: “{flat.slice(0, 80)}
+        {flat.length > 80 ? '…' : ''}”
+      </span>
     </div>
   );
 }
@@ -611,9 +541,12 @@ export function ReviewDiscussion({
         return button !== null;
       },
       goTo: (questionIndex) => {
-        const button = scope().querySelector<HTMLButtonElement>(`[data-ev="discussion-go-${String(questionIndex)}"]`);
-        button?.click();
-        return button !== null;
+        const question = latest.current.questions[questionIndex];
+        if (question?.envelope === undefined || question.envelope.subject.kind === 'review') {
+          return false;
+        }
+        latest.current.goTo(question);
+        return true;
       },
     };
     return () => {
@@ -667,20 +600,21 @@ export function ReviewDiscussion({
         {questions.length === 0 && <p className="rv-sub">{words.empty}</p>}
         {questions.map((question, index) => (
           <article key={question.id} className="rv-discussion-turn" data-ev={`discussion-q-${String(index)}`}>
+            {/*
+              What was asked, and what it was about when something was selected (Niclas's trial,
+              30 October 2026). The subject, the envelope and the exact text sent are kept with the
+              question and sent as before; the view does not show them.
+            */}
             <div className="rv-discussion-question">
-              <div className="rv-discussion-subject">{question.subject}</div>
+              {question.envelope?.quote != null && <SentQuote quote={question.envelope.quote} />}
               <div className="rv-discussion-text">{question.text}</div>
-              <div className="rv-discussion-meta">
-                {question.status === 'sending' && <span>{words.status.sending}</span>}
-                {question.status === 'failed' && <span className="rv-error">{words.status.failed}</span>}
-                {question.status === 'unknown' && answersOf(question.id).length === 0 && <span>{words.status.unknown}</span>}
-                {question.envelope !== undefined && question.envelope.subject.kind !== 'review' && (
-                  <button type="button" className="rv-link" data-ev={`discussion-go-${String(index)}`} onClick={() => goTo(question)}>
-                    {words.goToPoint}
-                  </button>
-                )}
-              </div>
-              <ContextDisclosure message={question} words={words} index={index} />
+              {(question.status === 'sending' || question.status === 'failed' || (question.status === 'unknown' && answersOf(question.id).length === 0)) && (
+                <div className="rv-discussion-meta">
+                  {question.status === 'sending' && <span>{words.status.sending}</span>}
+                  {question.status === 'failed' && <span className="rv-error">{words.status.failed}</span>}
+                  {question.status === 'unknown' && <span>{words.status.unknown}</span>}
+                </div>
+              )}
             </div>
             {answersOf(question.id).map((answer) => (
               <div key={answer.id} className="rv-discussion-answer" data-status={answer.status}>
@@ -751,12 +685,6 @@ export function ReviewDiscussion({
                 {words.agentUnavailable(agentName(agent.provider), agent.unavailable)}
               </div>
             )}
-            {agent.provider !== null && agent.unavailable === null && agent.policy !== null && (
-              <details className="rv-discussion-agent-policy">
-                <summary>{words.agentLimits}</summary>
-                <div data-ev="discussion-agent-policy">{agent.policy}</div>
-              </details>
-            )}
             {notice !== null && (
               <div className="rv-discussion-switch" data-ev="discussion-switch-notice">
                 <span>
@@ -777,9 +705,6 @@ export function ReviewDiscussion({
             )}
           </div>
         )}
-        <div className="rv-discussion-about" data-ev="discussion-subject" title={line}>
-          {words.about}: {line}
-        </div>
         {request.quote != null && (
           <div className="rv-quote-chip" data-ev="discussion-quote" title={request.quote.text}>
             <span className="rv-quote-chip-text">

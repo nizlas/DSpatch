@@ -4,7 +4,7 @@ title: Understand and review changes through agent-generated code walks
 status: Review
 assignee: []
 created_date: '2026-10-28 22:32'
-updated_date: '2026-10-30 12:12'
+updated_date: '2026-10-30 12:57'
 labels:
   - review
   - code-walks
@@ -438,4 +438,28 @@ Niclas's decision after a real preparation of 432 changed lines took 3 min 47 s 
 
 **Not established**
 - How long a real preparation now takes without the points, and how a real agent's points read when asked for separately; Niclas's trial; Linux.
+
+### Less around the answer, the code it rests on, orientation and two layout faults (30 Oct 2026)
+
+Niclas's request after his real trial (decision in [VISION.md section 3.4](../../docs/VISION.md#less-around-the-answer-niclass-decision-after-his-trial-30-october-2026)); built on 9c2d12f, which contains bede062. The short answers are unchanged.
+
+**Causes found**
+- *The stale instruction.* The Context disclosure always printed the constant `REVIEW_DISCUSSION_INSTRUCTION` (the tool-free text, "cannot … read anything beyond what is supplied"), whatever was sent; one log line did the same. What is sent was right: with code access the Claude path sends `REVIEW_DISCUSSION_CODE_INSTRUCTION` with the analysis policy, and a failure to hold the revisions refuses the question rather than falling back. New questions now store the instruction they were sent with (`instruction`); earlier records keep their exact sent text as it was.
+- *Checkboxes above their labels.* `.rv .rv-check` (column flex, full width, wrapping), added in f757dfb for the Worth checking list's buttons, shared its name with the toolbar's `label.rv-check` and outranked it. The list uses `rv-check-item` now; toolbar boxes stay with their labels (`.rv-check.rv-walk-toggle`).
+- *Agent and model on two lines, the arrow on the text.* `.rv-discussion-agent` was a column; and the review's `.rv select` padding and border replaced the start page's `.provider__select` room for its chevron, inside the pill's own border. Now one row that wraps whole controls, and one plain select with room for the arrow.
+- Seen in the screenshots: in a narrow code column the step name between Previous and Next was squeezed to a letter's width by the buttons' fixed minimum; it now keeps room and the row wraps.
+
+**What changed**
+- The discussion shows the question (with the quote it carried, `SentQuote`) and the answer; no subject chain, *About:*, *What it may use here*, *Context* or *Go to point*. The scenario hook's `goTo` navigates without the button. Everything is still sent and stored.
+- `ShortThenMore` has two independent toggles: *Show more* and *The code it rests on* (references kept in the page while closed, `answer-show-code`), in the discussion, step deepenings, the diff's explanations and step questions.
+- An opened location shows `AwayBar` (file, folder, From/To with commit, lines) and *Back* to where it was opened from (`cameFrom`); the walk stays mounted, hidden, while a location is open.
+- Before the walk window closes, the explanation window's place is saved in the same flush as the review (a last resize was lost before; found by the scenario).
+
+**Verified** (SIMULATED presentation agent, isolated user data; no live provider, Cursor not contacted)
+- Tests: review group 176/176 (the code-access question records and sends the code instruction, not the tool-free one), fast group 1350 passed, 0 failed; typecheck, build.
+- `explain-window`: no technical block docked, detached, or in the reopened saved conversation; the typed question still carries exactly `workspace` at save.ts line 3 (To); references folded at first, *Show more* and *The code it rests on* opened and closed independently with no call; open references stayed open through detaching and docking; screenshots wide, narrow walk window and 380 px explanation window looked right (agent and model on one line, checkboxes beside their labels). `insight`: a reference opened from its toggle showed "workspace.ts src/ To · <commit> lines 2–6" and *Back to W2.1* returned there. `insight-again`, `selection`, `code-walks`, `analysis-access`, `walk-start`: pass. Review status unchanged throughout.
+- The older `review-discussion` scenario stops before the discussion, at opening a revision pair (`pair-open` disabled); whether it passed before this change was not established.
+
+**Not established**
+- Niclas's trial with a real model; UX acceptance; whether the walk's in-pane scroll position survives a long visit to a location in a long file (the fixtures' files are too short to scroll); Linux.
 <!-- SECTION:NOTES:END -->

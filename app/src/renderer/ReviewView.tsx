@@ -67,6 +67,45 @@ declare global {
   }
 }
 
+/**
+ * Where an opened code location is (Niclas's trial, 30 October 2026): the file by name and
+ * its folder, which revision and commit, and the lines; and the way back to where it was
+ * opened from.
+ */
+function AwayBar({
+  away,
+  sha,
+  back,
+  onBack,
+}: {
+  readonly away: CodeLocation;
+  readonly sha: string;
+  /** What Back returns to: a step id or a location, or nothing to return to. */
+  readonly back: string | null;
+  readonly onBack: () => void;
+}): JSX.Element {
+  const folder = away.path.includes('/') ? away.path.slice(0, away.path.lastIndexOf('/') + 1) : '';
+  return (
+    <div className="rv-away" data-ev="away-bar">
+      <span className="rv-away-where">
+        <span className="rv-away-file" title={away.path}>
+          {fileName(away.path)}
+        </span>
+        {folder !== '' && <span className="rv-away-folder">{folder}</span>}
+        <span className={`rv-away-side rv-away-side-${away.side}`} data-ev="away-side">
+          {away.side === 'base' ? 'From' : 'To'} · {sha.slice(0, 7)}
+        </span>
+        <span className="rv-away-lines">{away.start === away.end ? `line ${String(away.start)}` : `lines ${String(away.start)}–${String(away.end)}`}</span>
+      </span>
+      {back !== null && (
+        <button type="button" className="rv-away-back" data-ev="away-back" onClick={onBack}>
+          ← Back to {back}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** Where the explanation's own window was last left (30 October 2026). */
 type ExplanationBounds = NonNullable<ReviewPreferences['explanationBounds']>;
 
@@ -219,16 +258,17 @@ export function ReviewView(): JSX.Element {
 
   // The preferences are saved whole, in the order the host keeps them.
   const savePreferences = useCallback(
-    (next: { readonly language: Lang; readonly explanationWidth: number; readonly navigationWidth: number; readonly explanationDetached: boolean }) => {
-      if (bridge !== undefined) {
-        const { explanationDetached, ...rest } = next;
-        const bounds = explanationBounds.current;
-        void bridge
-          .setPreferences({ ...rest, ...(explanationDetached ? { explanationDetached: true as const } : {}), ...(bounds === null ? {} : { explanationBounds: bounds }) })
-          .then((result) => {
-            setLangError(result.saved ? null : (result.error ?? 'not saved'));
-          });
+    (next: { readonly language: Lang; readonly explanationWidth: number; readonly navigationWidth: number; readonly explanationDetached: boolean }): Promise<void> => {
+      if (bridge === undefined) {
+        return Promise.resolve();
       }
+      const { explanationDetached, ...rest } = next;
+      const bounds = explanationBounds.current;
+      return bridge
+        .setPreferences({ ...rest, ...(explanationDetached ? { explanationDetached: true as const } : {}), ...(bounds === null ? {} : { explanationBounds: bounds }) })
+        .then((result) => {
+          setLangError(result.saved ? null : (result.error ?? 'not saved'));
+        });
     },
     [bridge],
   );
@@ -236,7 +276,7 @@ export function ReviewView(): JSX.Element {
   const setLang = useCallback(
     (next: Lang) => {
       setLangState(next);
-      savePreferences({ language: next, explanationWidth: width, navigationWidth: navWidth, explanationDetached: detachedPref });
+      void savePreferences({ language: next, explanationWidth: width, navigationWidth: navWidth, explanationDetached: detachedPref });
     },
     [savePreferences, width, navWidth, detachedPref],
   );
@@ -246,7 +286,7 @@ export function ReviewView(): JSX.Element {
     (next: number) => {
       const clamped = Math.round(Math.min(EXPLANATION_WIDTH.max, Math.max(EXPLANATION_WIDTH.min, next)));
       setWidthState(clamped);
-      savePreferences({ language: lang, explanationWidth: clamped, navigationWidth: navWidth, explanationDetached: detachedPref });
+      void savePreferences({ language: lang, explanationWidth: clamped, navigationWidth: navWidth, explanationDetached: detachedPref });
     },
     [savePreferences, lang, navWidth, detachedPref],
   );
@@ -256,7 +296,7 @@ export function ReviewView(): JSX.Element {
     (next: number) => {
       const clamped = Math.round(Math.min(NAVIGATION_WIDTH.max, Math.max(NAVIGATION_WIDTH.min, next)));
       setNavWidthState(clamped);
-      savePreferences({ language: lang, explanationWidth: width, navigationWidth: clamped, explanationDetached: detachedPref });
+      void savePreferences({ language: lang, explanationWidth: width, navigationWidth: clamped, explanationDetached: detachedPref });
     },
     [savePreferences, lang, width, detachedPref],
   );
@@ -264,7 +304,7 @@ export function ReviewView(): JSX.Element {
   const setDetachedPref = useCallback(
     (next: boolean) => {
       setDetachedPrefState(next);
-      savePreferences({ language: lang, explanationWidth: width, navigationWidth: navWidth, explanationDetached: next });
+      void savePreferences({ language: lang, explanationWidth: width, navigationWidth: navWidth, explanationDetached: next });
     },
     [savePreferences, lang, width, navWidth],
   );
@@ -273,7 +313,7 @@ export function ReviewView(): JSX.Element {
   const setExplanationBounds = useCallback(
     (next: ExplanationBounds) => {
       explanationBounds.current = next;
-      savePreferences({ language: lang, explanationWidth: width, navigationWidth: navWidth, explanationDetached: detachedPref });
+      return savePreferences({ language: lang, explanationWidth: width, navigationWidth: navWidth, explanationDetached: detachedPref });
     },
     [savePreferences, lang, width, navWidth, detachedPref],
   );
@@ -437,7 +477,7 @@ function OpenReview({
   readonly explanationDetached: boolean;
   readonly onExplanationDetached: (on: boolean) => void;
   readonly explanationBounds: { readonly current: ExplanationBounds | null };
-  readonly onExplanationBounds: (bounds: ExplanationBounds) => void;
+  readonly onExplanationBounds: (bounds: ExplanationBounds) => Promise<void>;
   /** Read this review again as it is on disk: the points worth checking, once found. */
   readonly onReread: () => void;
 }): JSX.Element {
@@ -479,6 +519,8 @@ function OpenReview({
   const [saving, setSaving] = useState(false);
   /** The save on its way, so a flush asked for while one runs waits for it too. */
   const inFlight = useRef<Promise<string> | null>(null);
+  /** What must be kept before the window closes, besides the review itself. */
+  const beforeClose = useRef<(() => Promise<void>) | null>(null);
   const flush = useCallback((): Promise<string> => {
     if (!dirty.current || bridge === undefined) {
       return inFlight.current ?? Promise.resolve('nothing unsaved');
@@ -531,10 +573,15 @@ function OpenReview({
     };
     window.addEventListener('beforeunload', onUnload);
     // Asked for by the main process before the window closes, and awaited there.
-    window.__dspatchReviewFlush = flush;
+    // Before the window closes: what else must be kept first (the explanation window's place).
+    const flushAll = async (): Promise<string> => {
+      await beforeClose.current?.().catch(() => undefined);
+      return flush();
+    };
+    window.__dspatchReviewFlush = flushAll;
     return () => {
       window.removeEventListener('beforeunload', onUnload);
-      if (window.__dspatchReviewFlush === flush) {
+      if (window.__dspatchReviewFlush === flushAll) {
         delete window.__dspatchReviewFlush;
       }
       void flush();
@@ -765,8 +812,22 @@ function OpenReview({
     };
   }, [bundle, goToStep]);
 
+  /*
+   * Where each code location was opened from (Niclas's trial, 30 October 2026): a reference
+   * followed from an answer, a point or the files, and the one before it. *Back* returns to
+   * exactly that place, and the walk keeps its own reading position meanwhile. Following a
+   * reference changes nothing about the review's status.
+   */
+  const cameFrom = useRef<{ readonly stepId: string | null; readonly refIndex: number; readonly away: CodeLocation | null }[]>([]);
   const goAway = useCallback(
     (location: CodeLocation, scope: CodeScope = 'focus') => {
+      const here = latest.current.position;
+      const last = cameFrom.current.at(-1);
+      if (here.away === null || JSON.stringify(here.away) !== JSON.stringify(location)) {
+        if (last === undefined || JSON.stringify(last) !== JSON.stringify({ stepId: here.stepId, refIndex: here.refIndex, away: here.away })) {
+          cameFrom.current = [...cameFrom.current.slice(-19), { stepId: here.stepId, refIndex: here.refIndex, away: here.away }];
+        }
+      }
       setSelection(null);
       setScope(scope);
       update((value) => ({ ...value, position: { ...value.position, away: location } }));
@@ -777,7 +838,21 @@ function OpenReview({
   const returnToWalk = useCallback(() => {
     setSelection(null);
     setScope('focus');
+    cameFrom.current = [];
     update((value) => ({ ...value, position: { ...value.position, away: null } }));
+  }, [update]);
+
+  /** Back to where this location was opened from: another location, or the walk where it was. */
+  const goBack = useCallback(() => {
+    const back = cameFrom.current.at(-1);
+    cameFrom.current = cameFrom.current.slice(0, -1);
+    setSelection(null);
+    setScope('focus');
+    update((value) =>
+      back === undefined
+        ? { ...value, position: { ...value.position, away: null } }
+        : { ...value, position: { ...value.position, stepId: back.stepId ?? value.position.stepId, refIndex: back.refIndex, away: back.away } },
+    );
   }, [update]);
 
   const toggleWalk = useCallback(
@@ -1205,23 +1280,27 @@ function OpenReview({
       });
     };
     child.addEventListener('pagehide', closed);
-    // Where it is now, saved when it was moved or resized (no event says it was moved).
+    // Where it is now, saved when it was moved or resized (no event says it was moved), and
+    // once more before the walk window closes, so a last move is not lost.
+    const place = (): ExplanationBounds => ({ x: child.screenX, y: child.screenY, width: child.outerWidth, height: child.outerHeight });
+    beforeClose.current = () => (child.closed ? Promise.resolve() : onExplanationBounds(place()));
     let last = '';
     const watch = window.setInterval(() => {
       if (child.closed) {
         closed();
         return;
       }
-      const now = { x: child.screenX, y: child.screenY, width: child.outerWidth, height: child.outerHeight };
+      const now = place();
       const said = JSON.stringify(now);
       if (last !== '' && said !== last) {
-        onExplanationBounds(now);
+        void onExplanationBounds(now);
       }
       last = said;
     }, 400);
     return () => {
       child.removeEventListener('pagehide', closed);
       window.clearInterval(watch);
+      beforeClose.current = null;
     };
   }, [detached, panelHost, onExplanationDetached, onExplanationBounds]);
   useEffect(() => {
@@ -1522,18 +1601,20 @@ function OpenReview({
         />
 
         <main className="rv-code">
-          {away !== null && current !== null && (
-            <div className="rv-away">
-              <span>
-                {words.outsideWalk}: {fileName(away.path)}:{rangeText(away)}
-              </span>
-              <button type="button" onClick={returnToWalk}>
-                {words.backTo(current.step.id)}
-              </button>
-            </div>
+          {away !== null && (
+            <AwayBar
+              away={away}
+              sha={away.side === 'base' ? bundle.base.sha : bundle.target.sha}
+              back={(() => {
+                const back = cameFrom.current.at(-1);
+                return back?.away != null ? `${fileName(back.away.path)}:${rangeText(back.away)} (${back.away.side === 'base' ? 'From' : 'To'})` : current === null ? null : (back?.stepId ?? current.step.id);
+              })()}
+              onBack={goBack}
+            />
           )}
-          {away === null && current !== null && activeStation >= 0 ? (
-            <>
+          {current !== null && activeStation >= 0 && (
+            // Kept while a location is open, hidden, so the walk is where it was on the way back.
+            <div className="rv-walk-stage" hidden={away !== null}>
               <WalkNavBar
                 stations={stations}
                 active={activeStation}
@@ -1589,8 +1670,9 @@ function OpenReview({
                 onOpenLocation={goAway}
                 navRequest={navRequest}
               />
-            </>
-          ) : focus === null ? (
+            </div>
+          )}
+          {(away !== null || current === null || activeStation < 0) && (focus === null ? (
             <div className="rv-empty" />
           ) : (
             <CodePane
@@ -1613,7 +1695,7 @@ function OpenReview({
               problem={placeProblem}
               words={words}
             />
-          )}
+          ))}
         </main>
 
         {detached === null && (
@@ -1933,7 +2015,7 @@ function WorthChecking({
             <li key={check.id}>
               <button
                 type="button"
-                className={check.id === open ? 'rv-check rv-check-on' : 'rv-check'}
+                className={check.id === open ? 'rv-check-item rv-check-on' : 'rv-check-item'}
                 data-ev={`check-${check.id}`}
                 aria-current={check.id === open ? 'true' : undefined}
                 onClick={() => onOpen(check)}
@@ -2737,22 +2819,24 @@ function StepCodeQuestion({
           {job.state === 'done' && job.answer !== undefined ? (
             <>
               {job.answer.insufficient && <p className="rv-agent-insufficient">The agent could not settle this from the code it could read.</p>}
-              <ShortThenMore short={job.answer.answer} details={job.answer.details} />
-              {job.answer.references.length > 0 && (
-                <div className="rv-answer-refs">
-                  <span className="rv-sub">The code it rests on:</span>
-                  <ul>
-                    {job.answer.references.map((reference, at) => (
-                      <li key={at}>
-                        <button type="button" className="rv-pair-link" data-ev="step-investigation-ref" onClick={() => onShow(reference.range)}>
-                          {reference.label}
-                        </button>{' '}
-                        <span className="rv-sub">{where(reference.range)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+              <ShortThenMore
+                short={job.answer.answer}
+                details={job.answer.details}
+                rests={
+                  job.answer.references.length === 0 ? undefined : (
+                    <ul>
+                      {job.answer.references.map((reference, at) => (
+                        <li key={at}>
+                          <button type="button" className="rv-pair-link" data-ev="step-investigation-ref" onClick={() => onShow(reference.range)}>
+                            {reference.label}
+                          </button>{' '}
+                          <span className="rv-sub">{where(reference.range)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                }
+              />
               {job.answer.adjustments.length > 0 && (
                 <details className="rv-agent-adjustments">
                   <summary>What DSpatch did not accept from the answer</summary>

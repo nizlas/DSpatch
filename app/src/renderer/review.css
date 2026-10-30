@@ -411,6 +411,17 @@
   align-items: center;
   gap: 0.25rem;
   font-size: 0.82rem;
+  cursor: pointer;
+}
+
+/* In a code toolbar a box and its label stay together when the toolbar wraps. */
+.rv-check.rv-walk-toggle {
+  white-space: nowrap;
+}
+
+.rv .rv-check input[type='checkbox'] {
+  margin: 0;
+  padding: 0;
 }
 
 .rv-browse form,
@@ -1399,7 +1410,7 @@
   padding: 0;
 }
 
-.rv .rv-check {
+.rv .rv-check-item {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
@@ -1415,7 +1426,7 @@
   white-space: normal;
 }
 
-.rv .rv-check:hover {
+.rv .rv-check-item:hover {
   background: var(--raised);
 }
 
@@ -3248,4 +3259,130 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Show more and The code it rests on: two quiet toggles side by side, each on its own. */
+.rv-answer-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 1.1rem;
+}
+
+.rv-answer-refs[hidden] {
+  display: none;
+}
+
+/*
+ * The discussion's agent and its model on one line when there is room (Niclas's trial,
+ * 30 October 2026): whole controls move to the next line when it is narrow. The model list
+ * is the start page's; here it is one plain select like the agent's, with room for its
+ * arrow, not a select inside a pill (the review's own `.rv select` padding and border had
+ * replaced the room the arrow needs).
+ */
+.rv-discussion-agent {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 0.7rem;
+  row-gap: 0.3rem;
+}
+
+.rv-discussion-agent > :not(label):not(.model-pick) {
+  flex-basis: 100%;
+}
+
+.rv-discussion-agent .provider--compact {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
+.rv .rv-discussion-agent .provider__select {
+  margin-left: 0;
+  padding: 0.25rem 1.8rem 0.25rem 0.45rem;
+  max-width: 18rem;
+  text-overflow: ellipsis;
+}
+
+.rv-discussion-agent .provider__chevron {
+  right: 0.45rem;
+}
+
+/* The walk while a code location is open: kept, hidden, so it is where it was on the way back. */
+.rv-walk-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rv-walk-stage[hidden] {
+  display: none;
+}
+
+/* Where an opened location is: the file, its folder, the revision and the lines; and Back. */
+.rv-away {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.rv-away-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.6rem;
+  min-width: 0;
+}
+
+.rv-away-file {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.rv-away-folder {
+  color: var(--muted);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.rv-away-side {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+}
+
+/* From and To keep the before/after colours, always with their words. */
+.rv-away-side-base {
+  background: var(--rv-old);
+}
+
+.rv-away-side-target {
+  background: var(--rv-new);
+}
+
+.rv-away-lines {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/*
+ * The step's name between Previous and Next keeps room in a narrow code column (seen in the
+ * screenshots of 30 October 2026: it was squeezed to a letter's width by the buttons' fixed
+ * minimum). The buttons give way first; only then does Next move to the next line.
+ */
+.rv-navbar-row:first-child {
+  flex-wrap: wrap;
+}
+
+.rv .rv-nav-button {
+  min-width: 6.5rem;
+}
+
+.rv-nav-where {
+  flex: 1 1 9rem;
+  min-width: 9rem;
 }

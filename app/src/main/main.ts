@@ -2899,6 +2899,8 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
                 details: node.querySelector('[data-ev="answer-details"]') !== null,
                 more: text(node.querySelector('[data-ev="answer-show-more"]')),
                 simpler: node.querySelector('[data-ev="answer-simpler"]') !== null,
+                refsOpen: (() => { const refs = node.querySelector('[data-ev="answer-refs"]'); return refs !== null && !refs.hidden; })(),
+                refsToggle: node.querySelector('[data-ev="answer-show-code"]') !== null,
               })),
               scrollTop: panel ? Math.round(panel.scrollTop) : 0,
               width: panel ? Math.round(panel.getBoundingClientRect().width) : 0,
@@ -2970,6 +2972,7 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
                 scrollWidth: activePane.scrollWidth,
                 clientWidth: activePane.clientWidth,
                 path: (activePane.closest('.rv-pane').querySelector('.rv-path') || { title: '' }).title,
+                scrollTop: activePane.scrollTop,
                 focusRows: [...activePane.querySelectorAll('[data-focus="1"]')].map((row) => ({ line: row.getAttribute('data-line'), height: Math.round(row.getBoundingClientRect().height), numbers: text(row.querySelector('.rv-ln')) })),
               },
               stepTitle: text(document.querySelector('.rv-step-on .rv-step-title')),
@@ -2993,6 +2996,8 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
                 details: node.querySelector('[data-ev="answer-details"]') !== null,
                 more: text(node.querySelector('[data-ev="answer-show-more"]')),
                 simpler: node.querySelector('[data-ev="answer-simpler"]') !== null,
+                refsOpen: (() => { const refs = node.querySelector('[data-ev="answer-refs"]'); return refs !== null && !refs.hidden; })(),
+                refsToggle: node.querySelector('[data-ev="answer-show-code"]') !== null,
                 refs: [...node.querySelectorAll('[data-ev="answer-ref"]')].map((ref) => ref.getAttribute('data-ref')),
                 tables: [...node.querySelectorAll('table.markdown__table')].map((table) => {
                   const box = table.closest('.markdown__table-box');
@@ -3011,6 +3016,14 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
                 return mark ? [...mark].map((range) => range.toString()) : [];
               })(),
               docked: document.querySelector('.rv-right-dock .rv-right') !== null,
+              // 30 October 2026: technical blocks no longer shown, in this window or the explanation's own.
+              noise: (() => {
+                const docs = [document, ...(window.__dspatchExplanationWindow && !window.__dspatchExplanationWindow.closed ? [window.__dspatchExplanationWindow.document] : [])];
+                const selector = '.rv-discussion-subject, [data-ev="discussion-subject"], .rv-discussion-context, .rv-discussion-agent-policy, [data-ev^="discussion-go-"], [data-ev="discussion-agent-policy"]';
+                const words = ['What it may use here', 'Go to point', "DSpatch's instruction", 'Exact text sent'];
+                return docs.flatMap((doc) => [...doc.querySelectorAll(selector)].map((node) => node.className || node.getAttribute('data-ev')).concat(words.filter((word) => (doc.body.innerText || '').includes(word))));
+              })(),
+              awayBar: text(document.querySelector('[data-ev="away-bar"]')),
               codeWidth: Math.round((document.querySelector('.rv-code') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width),
               paneRows: [...document.querySelectorAll('.rv-pane-active [data-sel-line]')].map((node) => node.getAttribute('data-sel-side') + ':' + node.getAttribute('data-sel-path') + ':' + node.getAttribute('data-sel-line')),
               position: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read().position : null,

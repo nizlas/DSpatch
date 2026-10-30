@@ -662,6 +662,11 @@ export interface DiscussionMessage {
   readonly envelope?: ContextEnvelope;
   /** For a question: the exact text sent. */
   readonly sentPrompt?: string;
+  /**
+   * For a question: DSpatch's instruction as it was sent first in it (30 October 2026). Older
+   * questions have none; their sent text holds what applied then.
+   */
+  readonly instruction?: string;
   readonly dspatchRunId?: string;
   readonly status: DiscussionStatus;
   /** A plain account of a failure, when there was one. */
@@ -948,6 +953,9 @@ function adoptMessages(value: unknown): DiscussionMessage[] {
     }
     if (typeof entry['sentPrompt'] === 'string') {
       message.sentPrompt = entry['sentPrompt'];
+    }
+    if (typeof entry['instruction'] === 'string') {
+      message.instruction = entry['instruction'];
     }
     if (typeof entry['dspatchRunId'] === 'string') {
       message.dspatchRunId = entry['dspatchRunId'];

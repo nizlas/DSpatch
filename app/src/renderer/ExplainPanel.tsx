@@ -55,26 +55,28 @@ function Answer({ job, canShow, onShowRange }: { readonly job: AgentJob; readonl
   return (
     <>
       {job.answer.insufficient && <p className="rv-agent-insufficient">The agent could not explain this from the code it could read.</p>}
-      <ShortThenMore short={job.answer.answer} details={job.answer.details} />
-      {job.answer.references.length > 0 && (
-        <div className="rv-answer-refs">
-          <span className="rv-sub">The code it rests on:</span>
-          <ul>
-            {job.answer.references.map((reference, at) => (
-              <li key={at} data-ev="explain-ref">
-                {canShow(reference.range) ? (
-                  <button type="button" className="rv-pair-link" onClick={() => onShowRange(reference.range)}>
-                    {reference.label}
-                  </button>
-                ) : (
-                  <span>{reference.label}</span>
-                )}{' '}
-                <span className="rv-sub">{where(reference.range)}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <ShortThenMore
+        short={job.answer.answer}
+        details={job.answer.details}
+        rests={
+          job.answer.references.length === 0 ? undefined : (
+            <ul>
+              {job.answer.references.map((reference, at) => (
+                <li key={at} data-ev="explain-ref">
+                  {canShow(reference.range) ? (
+                    <button type="button" className="rv-pair-link" onClick={() => onShowRange(reference.range)}>
+                      {reference.label}
+                    </button>
+                  ) : (
+                    <span>{reference.label}</span>
+                  )}{' '}
+                  <span className="rv-sub">{where(reference.range)}</span>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+      />
       {job.answer.adjustments.length > 0 && (
         <details className="rv-agent-adjustments">
           <summary>What DSpatch did not accept from the answer</summary>

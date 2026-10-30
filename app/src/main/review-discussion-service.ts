@@ -6,6 +6,7 @@ import { REVIEW_PERMISSIONS } from '../adapter/claude-agent-sdk-adapter';
 import type { AgentEvent, Unsubscribe } from '../adapter/types';
 import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
 import {
+  REVIEW_DISCUSSION_CODE_INSTRUCTION,
   REVIEW_DISCUSSION_INSTRUCTION,
   adoptDiscussionRecord,
   buildEnvelopePrompt,
@@ -810,6 +811,8 @@ export class ReviewDiscussionService {
         subject: subjectLine(envelope),
         envelope,
         sentPrompt: prompt,
+        // The instruction that went first: the one for reading the revisions when it can.
+        instruction: session.revisions === null ? REVIEW_DISCUSSION_INSTRUCTION : REVIEW_DISCUSSION_CODE_INSTRUCTION,
         status: 'sending',
         model: this.model(provider),
         provider,
@@ -837,7 +840,7 @@ export class ReviewDiscussionService {
 
     this.pendingTurn = turn;
     this.pendingSends += 1;
-    this.options.log(`review discussion ${this.identity.key}: ${turn.attemptId} sending a question (${String(prompt.length)} characters, instruction ${String(REVIEW_DISCUSSION_INSTRUCTION.length)})`);
+    this.options.log(`review discussion ${this.identity.key}: ${turn.attemptId} sending a question (${String(prompt.length)} characters, ${this.message(turn.questionId)?.codeAccess === true ? 'the instruction to read the revisions' : 'the tool-free instruction'})`);
     try {
       // DSP-149: the model chosen for this agent now, from this question on.
       session.adapter.setSessionModel?.(session.sessionId, this.model(session.provider));
