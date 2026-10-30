@@ -127,3 +127,7 @@ Record for Part C: `node --version`; for each task the commands Claude ran in or
 ## What to record
 
 Distribution and version, kernel, desktop session (X11 or Wayland), `node --version`, `npm --version`, Electron's version, `git --version`; whether the sandbox step was needed; per step: as expected or what happened instead (a screenshot helps); for Part B, from Session details: the reported model, the `apiKeySource` and account fields if shown, and the tool list the session reported. Anything not tried is "not tried", not "works".
+
+## Ubuntu, a remote host and Copilot
+
+The exact commands for Ubuntu 24.04, for a DSpatch host on another machine and for Copilot are in [REMOTE_TRIAL.md](REMOTE_TRIAL.md). Since 31 October 2026 a window that goes through the Wayland compositor is compared with `--ozone-platform=x11` there, and known remaining Linux differences are listed in that document's section 7. Not fixed, and safe: file names that are not UTF-8 appear replaced in a revision folder, and names with `\` or `C:` are skipped there with a reason that speaks of Windows. A desktop launch does not read a login shell's PATH, so start DSpatch from a terminal when Node comes from nvm.

@@ -21,6 +21,8 @@ git switch trial
 git rev-parse HEAD
 ```
 
+On Windows, if Git says a file name is too long, run `git config core.longpaths true` first.
+
 Expected: the same commit on both machines, the one named in section 7. Without a clone, `git clone /path/to/dspatch-trial.bundle DSpatch` works too.
 
 ## 2. Install
@@ -182,7 +184,7 @@ Candidate commit: see the handover report. Versions: Node 24.21, npm 11.19, Elec
 | Area | Status |
 | --- | --- |
 | Host and client as separate processes on one Windows machine, real TCP, real windows and input, forwarder in the tunnel's place | **Verified** |
-| Remote: diff, expanded context, references, selection, question with Enter, streaming, activity line, Explain more simply, walks, shared panel, docking, delegated review | See the phases in DSP-111's notes: **verified with a simulated provider** |
+| Remote: diff, expanded context, references, selection, question with Enter, streaming, activity line, Explain more simply, walks, shared panel, docking, delegated review | **Verified with a simulated provider**; `selection` failed intermittently, with a scripted drag one character short |
 | Stop; a cut during an answer and during a job; client restart; host restart; a refused version | **Verified with a simulated provider** |
 | The client touched no project file and started no process | **Verified for the paths the scripted runs exercised**: a guard logs every touch. Not a proof for every code path |
 | Copilot runtime: tool lists offered, refused reads and writes, links, repository hooks and instructions, user hook running, stop, no-login sentence, walks job | **Verified against the real runtime 1.0.105 with a local stand-in model**, not a real model |
@@ -194,7 +196,8 @@ Candidate commit: see the handover report. Versions: Node 24.21, npm 11.19, Elec
 | Real model following the tools; hooks with a real account | **Not tried** |
 | Managed hooks at work | **Not tried**, and the scripts have not been seen |
 | Chat and loop runs with Copilot through the real windows | **Not tried**. Same adapter; unit-level only |
-| The chooser that browses the host, and the Remote Session form | **Built, not click-tested** unless DSP-111's notes say otherwise |
+| The host chooser | **Clicked once**: it opened on the host and chose a folder. Going into folders is not tried |
+| The Remote Session form | **Its refusal only**. Connect's restart into a session is not tried; `DSPATCH_REMOTE` is the path the trials used |
 
 ## 8. What stands between this and work code
 

@@ -145,4 +145,15 @@ Open decisions, to settle before or during planning:
 4. **Copilot SDK in the basic installation.** Whether it is part of the basic installation or optional like Claude is an implementation choice within the decided bounds, unless the work environment's rules say otherwise.
 
 Focus (night session 30 Oct 2026, Niclas): build the Copilot adapter dry against SDK 1.0.28, for tomorrow's trial with the host on the work computer and the client on the laptop. Scope widened by Niclas's message of 30 Oct 2026: review flows first; remote host use now applies.
+Night session, 30-31 Oct 2026 (Niclas's instruction). Built dry against `@github/copilot-sdk` 1.0.28, runtime 1.0.105, as a pinned ordinary dependency (the implementer's choice, open decision 4). NOT tried on a real account: no acceptance criterion about the real SDK, login, work account or managed controls is met.
+
+Established from the SDK's typings, `tools.list`, `hooks.discover`, and a local stand-in model behind the real runtime (facts for P3a):
+- Tools are per session through `availableTools`; reading tools are `view` (`path`), `glob` and `grep` (`paths`, a list), which differ from Claude's. The shell is `bash` or `powershell`. Enforcement: `onPermissionRequest`, `onPreToolUse`.
+- A user hook in `COPILOT_HOME/hooks` runs with config discovery off, so native loading is the path and DSpatch adds no bridge. A hook or AGENTS.md in the reviewed folder is not used. Details and uncovered flows: content-exclusion contract section 5.
+- `session.abort()` then `session.idle` with `aborted`; a stop during a model call was confirmed that way. A stop during a real command is not tried.
+- Login: `copilot login` on the machine that runs the host. A VS Code login is not among the documented sources. Steering is left out (`AgentAdapter.steer` absent).
+
+Departures and limits to judge: the review discussion keeps Niclas's 30 Oct decision (read-only code access), as for Claude, not DSP-148's text-only wording. No `task`, `skill` or `web_fetch`, so sub-agents are off. Chat and loop with Copilot are wired, unit-tested only. Decision 1 (the gate for the first external trial) stays open; the prompt and diff flow is uncovered by any control.
+
+Evidence: tests/copilot-sdk-adapter, copilot-runtime, copilot-review-jobs (substitute and stand-in model). Next: docs/REMOTE_TRIAL.md section 6 on the work computer.
 <!-- SECTION:NOTES:END -->

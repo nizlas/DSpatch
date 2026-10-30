@@ -706,7 +706,7 @@ function pickOnHost(options: Electron.OpenDialogOptions & { readonly saving?: bo
         window.close();
       }
     };
-    window.on('closed', () => {
+    window.webContents.once('destroyed', () => {
       answer(null);
     });
     const search = `window=browse&mode=${mode}&title=${encodeURIComponent(options.title ?? '')}`;
