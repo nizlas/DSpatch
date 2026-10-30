@@ -47,7 +47,7 @@ import {
   type ReviewRequirement,
   type RevisionPairIdentity,
 } from '../shared/review-pair';
-import { ORIENTATION_DIFF_CHARS, type AnalysisMaterial } from '../shared/review-agent';
+import { ORIENTATION_DIFF_CHARS, type AnalysisMaterial, type WalkStepOutline } from '../shared/review-agent';
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -765,6 +765,41 @@ export class ReviewPairs {
       body: both(step['body']),
       places,
     };
+  }
+
+  /**
+   * Every walk and step of a definition over exactly this pair, outlined in one language, for
+   * asking what is worth checking beyond them (30 October 2026). Read with {@link stepOf}.
+   */
+  walksOf(key: unknown, definitionPath: unknown, language: 'sv' | 'en'): PairAnswer<readonly { readonly id: string; readonly title: string; readonly steps: readonly WalkStepOutline[] }[]> {
+    if (typeof definitionPath !== 'string') {
+      return { error: 'No walks were named.' };
+    }
+    let raw: Record<string, unknown>;
+    try {
+      raw = JSON.parse(fs.readFileSync(path.resolve(definitionPath), 'utf8')) as Record<string, unknown>;
+    } catch {
+      return { error: 'The walks could not be read.' };
+    }
+    const outline: { id: string; title: string; steps: WalkStepOutline[] }[] = [];
+    for (const walk of Array.isArray(raw['walks']) ? (raw['walks'] as unknown[]) : []) {
+      const walkId = typeof walk === 'object' && walk !== null ? (walk as Record<string, unknown>)['id'] : null;
+      const steps = typeof walk === 'object' && walk !== null && Array.isArray((walk as Record<string, unknown>)['steps']) ? ((walk as Record<string, unknown>)['steps'] as unknown[]) : [];
+      const entry: { id: string; title: string; steps: WalkStepOutline[] } = { id: typeof walkId === 'string' ? walkId : '', title: '', steps: [] };
+      for (const step of steps) {
+        const stepId = typeof step === 'object' && step !== null ? (step as Record<string, unknown>)['id'] : null;
+        const read = this.stepOf(key, definitionPath, walkId, stepId);
+        if (isPairError(read)) {
+          return read;
+        }
+        entry.title = read.walkTitle[language];
+        entry.steps.push({ id: String(stepId), title: read.stepTitle[language], summary: read.summary[language], places: read.places });
+      }
+      if (entry.steps.length > 0) {
+        outline.push(entry);
+      }
+    }
+    return outline.length === 0 ? { error: 'Those walks have no steps to look beyond.' } : outline;
   }
 
   /**

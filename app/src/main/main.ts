@@ -2908,6 +2908,8 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
           })(),
           decisions: [...document.querySelectorAll('.rv-decision')].map((node) => (node.textContent || '').replace(/\s+/g, ' ').trim()),
           showInDiff: document.querySelector('[data-ev="walk-show-in-diff"]') !== null,
+          // 30 October 2026: what each running agent job says it is doing, under its spinner.
+          activities: [...document.querySelectorAll('[data-ev^="agent-job-"][data-ev$="-activity"]')].map((node) => (node.textContent || '').trim()),
           deepenings: [...document.querySelectorAll('[data-ev="step-deepening"]')].map((node) => ({ state: node.getAttribute('data-state'), text: (node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300) })),
           // DSP-152: a step's code questions: state, the answer as drawn, its references and Details.
           investigations: [...document.querySelectorAll('[data-ev="step-investigation"]')].map((node) => ({

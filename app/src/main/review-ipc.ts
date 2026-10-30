@@ -141,6 +141,7 @@ export function registerReviewIpc(
 
   ipcMain.handle(REVIEW_CHANNELS.initial, (event): ReviewOpenOutcome => entryOf(event).initial);
   ipcMain.handle(REVIEW_CHANNELS.choose, (event): Promise<ReviewOpenOutcome> => windows.choose(entryOf(event)));
+  ipcMain.handle(REVIEW_CHANNELS.reread, (event): Promise<ReviewOpenOutcome> => windows.reread(entryOf(event)));
   ipcMain.handle(REVIEW_CHANNELS.readFile, async (event, side: RevisionSide, filePath: string): Promise<ReviewFileOutcome> => {
     const answer = await host.readFile({ sessionId: entryOf(event).sessionId, side, path: filePath });
     return isReviewHostError(answer) ? fileFailure(answer) : answer;

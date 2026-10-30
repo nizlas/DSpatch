@@ -15,6 +15,7 @@ import {
   REVIEW_CHANNELS,
   reviewIdentityLabel,
   adoptPreferences,
+  checksFileOf,
   adoptStoredState,
   buildDiffRows,
   checkFileRequest,
@@ -855,4 +856,9 @@ test('preferences keep the explanation in its own window, and where that window 
   assert.deepEqual(adoptPreferences({ language: 'en', explanationBounds: { x: 0, y: 0, width: 50, height: 640 } }), { language: 'en' });
   assert.deepEqual(adoptPreferences({ language: 'en', explanationBounds: { x: 0.5, y: 0, width: 700, height: 640 } }), { language: 'en' });
   assert.deepEqual(adoptPreferences({ language: 'en', explanationBounds: { ...bounds, extra: 1 } }), { language: 'en' });
+});
+
+test('points worth checking asked for on their own are kept beside the walks, under a name of their own', () => {
+  assert.equal(checksFileOf('C:\\r\\generated\\k\\job-1.review.json'), 'C:\\r\\generated\\k\\job-1.checks.json');
+  assert.equal(checksFileOf('/r/job-1.REVIEW.json'), '/r/job-1.checks.json');
 });

@@ -217,6 +217,17 @@ export interface ReviewDefinition {
   readonly checks: readonly CheckPoint[];
 }
 
+/**
+ * Where the points asked for on their own are kept: beside the walks' definition, so the
+ * definition, and with it the review's record of it, stays as it was written.
+ */
+export function checksFileOf(definitionPath: string): string {
+  return definitionPath.replace(/\.review\.json$/i, '') + '.checks.json';
+}
+
+/** The format of that file. */
+export const CHECKS_FILE_FORMAT = 'dspatch-checks/1';
+
 /** The walks, then the points' own tours: every step a position can name. */
 export function stepsWalks(definition: ReviewDefinition): readonly Walk[] {
   return [...definition.walks, ...definition.checks.flatMap((check) => (check.tour === null ? [] : [check.tour]))];
@@ -1684,6 +1695,7 @@ function findClosingQuote(line: string, from: number, quote: string): number {
 export const REVIEW_CHANNELS = {
   initial: 'dspatch:review-initial',
   choose: 'dspatch:review-choose',
+  reread: 'dspatch:review-reread',
   readFile: 'dspatch:review-read-file',
   listFiles: 'dspatch:review-list-files',
   search: 'dspatch:review-search',
@@ -1906,6 +1918,8 @@ export interface ReviewSearchHit {
 export interface ReviewBridge {
   initial(): Promise<ReviewOpenOutcome>;
   choose(): Promise<ReviewOpenOutcome>;
+  /** The open review read again, as it is now on disk (30 October 2026: points worth checking added beside it). */
+  reread(): Promise<ReviewOpenOutcome>;
   readFile(side: RevisionSide, path: string): Promise<ReviewFileOutcome>;
   listFiles(side: RevisionSide): Promise<readonly string[]>;
   search(side: RevisionSide, query: string): Promise<{ readonly hits: readonly ReviewSearchHit[]; readonly truncated: boolean; readonly error?: string }>;

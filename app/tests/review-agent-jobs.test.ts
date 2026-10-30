@@ -14,12 +14,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
-import { ReviewAgentJobs } from '../src/host/review-agent-jobs';
+import { ReviewAgentJobs, writingNow } from '../src/host/review-agent-jobs';
 import { ReviewPairs } from '../src/host/review-pairs';
 import { RevisionSnapshots } from '../src/host/revision-snapshots';
 import { PresentationAdapter } from '../src/main/presentation-adapter';
-import { parseReviewDefinition, stepsWalks } from '../src/shared/review-model';
-import { answerJson, definitionFrom, readReviewAnswer, readWalksAnswer, walksPrompt, withoutInvalidPlaces } from '../src/shared/review-agent';
+import { checksFileOf, parseReviewDefinition, stepsWalks } from '../src/shared/review-model';
+import { answerJson, definitionFrom, readChecksAnswer, readReviewAnswer, readWalksAnswer, walksPrompt, withoutInvalidPlaces } from '../src/shared/review-agent';
 import { fileProgressOf, isPairError, lineStatusesOf, lineKey, type AgentJob, type OpenPair, type PairRecord } from '../src/shared/review-pair';
 import { makePairFixture, PAIR_WORKING_TREE_ONLY, type PairFixture } from './support/pair-fixture';
 
@@ -118,9 +118,40 @@ describe('preparing code walks', () => {
     assert.ok(kinds.some((entry) => /^R\d+:reading$/.test(entry)) && kinds.some((entry) => /^W\d+:walk$/.test(entry)), kinds.join(', '));
     assert.notEqual(definition.overview.en, definition.overviewSummary.en);
     assert.ok(definition.overview.en.startsWith(definition.overviewSummary.en));
-    assert.match(definition.attention.en, /^- SIMULATED/);
-    // Points worth checking (30 October 2026): one at its step, one with its own tour, both
-    // pointing at code that exists; the tour never counts as walk coverage.
+    // The walks come without points worth checking (30 October 2026): those are asked for on their own.
+    assert.deepEqual(definition.checks, []);
+    assert.equal(definition.attention.en, '');
+    assert.doesNotMatch(sent[0] ?? '', /"checks"|## Worth checking/);
+    assert.match(sent[0] ?? '', /A \*\*reading\*\*/);
+    assert.match(sent[0] ?? '', /Never invent a direction or a call chain/);
+  });
+
+  it('finds what is worth checking on its own, over the walks as written, beside their definition', async () => {
+    const walksJob = (pairs.state(open.key) as PairRecord).jobs.find((entry) => entry.kind === 'walks' && entry.state === 'done');
+    assert.ok(walksJob?.definitionPath != null);
+    const definitionPath = walksJob.definitionPath;
+    const before = fs.readFileSync(definitionPath, 'utf8');
+    sent = [];
+    const started = jobs().start(open.key, { kind: 'checks', provider: 'cursor', model: 'sim-model', definitionPath });
+    assert.ok(!isPairError(started));
+    const job = await settled(open.key, started.id);
+    assert.equal(job.state, 'done', job.note);
+    assert.equal(job.definitionPath, path.resolve(definitionPath));
+    assert.equal(job.activity, undefined, 'what it was doing is not kept once it ended');
+    assert.match(job.note, /^2 point\(s\) worth checking: 1 question\(s\), 1 uncertainty, 0 finding\(s\)\./);
+    // Asked with the walks as written, and their step ids to link to.
+    assert.match(sent[0] ?? '', /## The walks the person has\n### [WR]1: /);
+    assert.match(sent[0] ?? '', /\n- W1\.1 /);
+    assert.match(sent[0] ?? '', /Never link a step only because it is in the same file/);
+    // Kept beside the walks: the definition itself, and so the review's record of it, is unchanged.
+    assert.equal(fs.readFileSync(definitionPath, 'utf8'), before);
+    const kept = JSON.parse(fs.readFileSync(checksFileOf(definitionPath), 'utf8')) as { format: string; checks: unknown[] };
+    assert.equal(kept.format, 'dspatch-checks/1');
+    const parsed = parseReviewDefinition({ ...(JSON.parse(before) as Record<string, unknown>), checks: kept.checks });
+    assert.deepEqual(parsed.problems, []);
+    const definition = parsed.definition;
+    assert.ok(definition !== null);
+    // One at its step, one with its own tour; both point at code that exists, and the tour covers nothing.
     const linked = definition.checks.find((check) => check.stepId !== null);
     const toured = definition.checks.find((check) => check.tour !== null);
     assert.ok(linked !== undefined && definition.walks.some((walk) => walk.steps.some((step) => step.id === linked.stepId)), JSON.stringify(definition.checks));
@@ -128,10 +159,8 @@ describe('preparing code walks', () => {
     assert.ok(toured !== undefined && toured.stepId === null && toured.tour?.steps[0]?.id === `${toured.id}.1`);
     assert.ok(toured.tour.steps.every((step) => step.refs.every((ref) => ref.role === 'context')));
     assert.ok(!definition.walks.some((walk) => walk.kind === 'check'), 'a tour is not one of the walks');
-    assert.match(sent[0] ?? '', /"checks"/);
-    assert.match(sent[0] ?? '', /Never link a step only because it is in the same file/);
-    assert.match(sent[0] ?? '', /A \*\*reading\*\*/);
-    assert.match(sent[0] ?? '', /Never invent a direction or a call chain/);
+    // Walks of other commits, or none, are refused before anything is sent.
+    assert.ok(isPairError(jobs().start(open.key, { kind: 'checks', provider: 'cursor', model: 'sim-model', definitionPath: path.join(records, 'nothing.review.json') })));
   });
 
   it('refuses a second preparation while one runs', () => {
@@ -402,5 +431,25 @@ describe('the agent and model (after the first live trial)', () => {
     assert.deepEqual(built, ['claude']);
     assert.equal((own.state(key) as PairRecord).agentReviews.length, 0);
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('what the agent is doing, and points read on their own', () => {
+  it('says which part of its answer it writes, from the answer so far, and nothing else', () => {
+    assert.equal(writingNow('walks', 'I looked. ```json\n{"summary": "It saves'), 'Writing the summary of the change');
+    assert.equal(writingNow('walks', '{"summary": "x", "walks": [{"kind": "walk", "steps": [{"places": []}, {"places": [] }]}, {"kind": "reading"'), 'Writing walk 2 · 2 step(s) so far');
+    assert.equal(writingNow('checks', '{"checks": [{"reasoning": "a"}, {"title": "b", "reasoning": "'), 'Writing point 2 worth checking');
+    assert.equal(writingNow('checks', 'Looking at it.'), 'Writing its answer');
+    assert.equal(writingNow('explain', '{"answer": "'), 'Writing the explanation');
+  });
+
+  it('keeps a step only when it is one of the walks, and never guesses one', () => {
+    const read = readChecksAnswer(
+      { checks: [{ kind: 'finding', title: 'A', places: [], step: 'W1.1' }, { kind: 'odd', title: 'B', places: [], step: 'W9.9' }, { title: '' }] },
+      new Set(['W1.1']),
+    );
+    assert.deepEqual(read.checks?.map((check) => [check.kind, check.title, check.stepId]), [['finding', 'A', 'W1.1'], ['question', 'B', null]]);
+    assert.deepEqual(read.problems, ['check 3 has no title.']);
+    assert.equal(readChecksAnswer({ walks: [] }, new Set()).checks, null);
   });
 });

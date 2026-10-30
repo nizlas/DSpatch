@@ -1261,7 +1261,9 @@ export function JobLine({ job, onStop }: { readonly job: AgentJob; readonly onSt
   const what =
     job.kind === 'walks'
       ? 'Preparing code walks'
-      : job.kind === 'explain'
+      : job.kind === 'checks'
+        ? 'Looking for what is worth checking'
+        : job.kind === 'explain'
         ? job.selection === undefined
           ? 'Looking into the code'
           : 'Explaining the selected code'
@@ -1278,6 +1280,12 @@ export function JobLine({ job, onStop }: { readonly job: AgentJob; readonly onSt
             <button type="button" data-ev={`agent-job-${job.kind}-stop`} onClick={onStop}>
               Stop
             </button>
+          )}
+          {/* What it is doing now, as it reports it (30 October 2026). */}
+          {job.state === 'running' && job.activity !== undefined && job.activity !== '' && (
+            <span className="rv-agent-activity" data-ev={`agent-job-${job.kind}-activity`}>
+              {job.activity}
+            </span>
           )}
         </>
       ) : (

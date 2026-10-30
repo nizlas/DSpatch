@@ -48,6 +48,7 @@ import {
   type QuoteSegment,
 } from '../shared/review-discussion';
 import type { ReviewIdentity } from '../shared/review-host-contract';
+import { CHECKS_FILE_FORMAT, checksFileOf } from '../shared/review-model';
 
 /**
  * The review surface's access to a repository: read-only git at two fixed commits.
@@ -288,6 +289,23 @@ function overlaps(a: CodeLocation, b: CodeLocation): boolean {
   return a.path === b.path && a.side === b.side && a.start <= b.end && b.start <= a.end;
 }
 
+/**
+ * A definition with the points worth checking that were asked for on their own, when there
+ * are any: they replace those written with the walks. A file that cannot be read changes nothing.
+ */
+function withSeparateChecks(raw: unknown, definitionPath: string): unknown {
+  const file = checksFileOf(definitionPath);
+  if (typeof raw !== 'object' || raw === null || !fs.existsSync(file)) {
+    return raw;
+  }
+  try {
+    const kept = JSON.parse(fs.readFileSync(file, 'utf8')) as { format?: unknown; checks?: unknown };
+    return kept.format === CHECKS_FILE_FORMAT && Array.isArray(kept.checks) ? { ...raw, checks: kept.checks } : raw;
+  } catch {
+    return raw;
+  }
+}
+
 export class ReviewService {
   private open: OpenReview | null = null;
 
@@ -346,7 +364,9 @@ export class ReviewService {
       } catch (error) {
         return { kind: 'failed', error: `${absolute} is not valid JSON: ${String(error)}` };
       }
-      const { definition, problems } = parseReviewDefinition(raw);
+      // Points worth checking asked for on their own (30 October 2026) are kept beside the
+      // definition and read with it; the definition and its hash stay as they were written.
+      const { definition, problems } = parseReviewDefinition(withSeparateChecks(raw, absolute));
       if (definition === null) {
         return { kind: 'failed', error: problems.map((entry) => entry.problem).join(' ') };
       }

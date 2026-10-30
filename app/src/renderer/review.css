@@ -2784,6 +2784,7 @@
 }
 
 .rv-walk-delegate .rv-agent-line,
+.rv-checks-ask .rv-agent-line,
 .rv-agent-review .rv-agent-line {
   padding: 0.2rem 0;
   border-bottom: none;
@@ -3237,4 +3238,14 @@
 
 .rv-right-dock[hidden] {
   display: none;
+}
+
+/* What the agent is doing now: one quiet line under the spinner's line (30 October 2026). */
+.rv-agent-activity {
+  flex-basis: 100%;
+  font-size: 0.8rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

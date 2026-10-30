@@ -347,37 +347,10 @@ function prepareWalks(prompt: string, reader: Reader): string {
     ];
   });
   const readings = walks.filter((walk) => walk.kind === 'reading').length;
-  // Points worth checking: one at the first code walk's first step, one with a tour of its own.
-  const checks: unknown[] = [];
-  const codeWalk = walks.findIndex((walk) => walk.kind === 'walk' && !walk.title.startsWith('What changes in the data'));
-  const linked = codeWalk < 0 ? undefined : (walks[codeWalk]?.steps[0] as { places?: { label: string; path: string; side: string; start: number; end: number }[] } | undefined);
-  if (linked?.places !== undefined && linked.places.length > 0) {
-    checks.push({
-      kind: 'question',
-      title: `SIMULATED: Does every caller handle what ${base(linked.places[linked.places.length - 1]?.path ?? '')} returns?`,
-      detail: 'SIMULATED: a question to look into at this step.',
-      reasoning: 'SIMULATED reasoning: the changed lines depend on code outside the change. A real agent explains why that is worth checking.',
-      places: linked.places.map((place) => ({ label: place.label, path: place.path, side: place.side, start: place.start, end: place.end })),
-      step: { walk: codeWalk, step: 0 },
-    });
-  }
-  for (const filePath of paths.filter((entry) => !kept.includes(entry)).slice(0, 1)) {
-    const first = (byFile.get(filePath) ?? [])[0];
-    if (first !== undefined) {
-      checks.push({
-        kind: 'uncertainty',
-        title: `SIMULATED: ${String(paths.length - kept.length)} changed file(s) are in no walk, among them ${base(filePath)}.`,
-        detail: 'SIMULATED: no step shows it, so it has its own tour.',
-        reasoning: `SIMULATED reasoning: \`${filePath}\` changes, and no walk goes through it.`,
-        places: [{ label: `${base(filePath)} lines ${String(first.start)}–${String(first.end)}`, path: filePath, side: first.side, start: first.start, end: first.end }],
-      });
-    }
-  }
   const answer = {
     summary: `SIMULATED: ${String(walks.length - readings)} code walk(s) and ${String(readings)} reading(s) over ${String(kept.length)} of ${String(paths.length)} changed file(s).`,
     background:
       'SIMULATED background, shown only on request.\n\nThe presentation adapter proposes one item per changed file: a code walk for code and readings for text. A real agent chooses the form from what changed.',
-    checks,
     walks,
   };
   lastWalks = answer;
@@ -522,6 +495,48 @@ const SIM_KIND: Record<SimSegment['kind'], string> = {
   added: 'added: only in To',
   unchanged: 'unchanged in both',
 };
+
+/**
+ * What is worth checking beyond the walks, asked for on its own (30 October 2026): a question
+ * at the first code walk's first step, with its places, and an uncertainty with a tour of its
+ * own for a changed file no step shows. Read from the walks and changed lines in the prompt.
+ */
+function worthChecking(prompt: string): string {
+  const changed = rangesAfter(prompt, '## Changed lines (machine-readable)');
+  const steps = [...prompt.matchAll(/^- ((?:W|R)\d+\.\d+) (.*?) \(([^\n]*)\)$/gm)].map((match) => ({
+    id: match[1] ?? '',
+    places: (match[3] ?? '').split('; ').flatMap((part) => {
+      const found = /^(.+) (From|To) (\d+)–(\d+)$/.exec(part);
+      return found === null ? [] : [{ path: found[1] ?? '', side: found[2] === 'From' ? 'base' : 'target', start: Number(found[3]), end: Number(found[4]) }];
+    }),
+  }));
+  const checks: unknown[] = [];
+  const first = steps.find((step) => step.id.startsWith('W') && step.places.length > 0);
+  if (first !== undefined) {
+    const last = first.places[first.places.length - 1];
+    checks.push({
+      kind: 'question',
+      title: `SIMULATED: Does every caller handle what ${base(last?.path ?? '')} returns?`,
+      detail: 'SIMULATED: a question to look into at this step.',
+      reasoning: 'SIMULATED reasoning: the changed lines depend on code outside the change. A real agent explains why that is worth checking.',
+      places: first.places.map((place) => ({ label: `${base(place.path)} lines ${String(place.start)}–${String(place.end)}`, ...place })),
+      step: first.id,
+    });
+  }
+  const shown = new Set(steps.flatMap((step) => step.places.map((place) => place.path)));
+  const missing = [...new Set(changed.map((range) => range.path))].filter((filePath) => !shown.has(filePath));
+  const range = changed.find((entry) => entry.path === missing[0]);
+  if (range !== undefined) {
+    checks.push({
+      kind: 'uncertainty',
+      title: `SIMULATED: ${String(missing.length)} changed file(s) are in no walk, among them ${base(range.path)}.`,
+      detail: 'SIMULATED: no step shows it, so it has its own tour.',
+      reasoning: `SIMULATED reasoning: \`${range.path}\` changes, and no walk goes through it.`,
+      places: [{ label: `${base(range.path)} lines ${String(range.start)}–${String(range.end)}`, path: range.path, side: range.side, start: range.start, end: range.end }],
+    });
+  }
+  return fence({ checks });
+}
 
 /**
  * An explanation of selected code: each part is read at its side in the folder and its
@@ -753,6 +768,8 @@ export function simulatedReviewTask(prompt: string, folder: string, asked: strin
     answer = delegatedReview(prompt, reader);
   } else if (task === 'step-question') {
     answer = stepQuestion(prompt, reader);
+  } else if (task === 'worth-checking') {
+    answer = worthChecking(prompt);
   } else if (task === 'explain-selection') {
     answer = explainSelection(prompt, reader);
   } else if (task === 'review-question') {

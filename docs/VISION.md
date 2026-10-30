@@ -455,6 +455,14 @@ After his trials with real selections in the walk window, Niclas asked for expla
 - **The explanation in its own window, by choice.** The right panel, with Step and Discussion, can be moved to a window of its own; docked is the default. It is the same panel moved, not a new chat or provider session: an answer on its way, the history, the draft, the quote, the tab and the reading position stay, and moving or reopening never sends a question or starts an agent job. The code gets the panel's width. The window follows the walk window's step and place, a selection in the walk window can be asked about in it, and its links steer that walk window. *Dock* brings it back, and so does closing its window while the walk window is open; closing the walk window closes it without opening anything again. There is one such window per walk window, and reviews keep their conversations and selections apart. The choice and the window's place and size are kept, within the screens there are. Prose keeps a readable measure in a wider window; more room does not make answers longer.
 
 
+#### Worth checking on request, and what the agent is doing (Niclas's decision, 30 October 2026)
+
+After a walk preparation of 432 changed lines took almost four minutes, Niclas decided that the walks come first and alone. This changes the decision above that the preparation also writes the points worth checking; that decision stays as written for reviews prepared before.
+
+- **Walks without points.** Preparing code walks asks only for the summary and the walks.
+- **Worth checking on request.** Under the walks, one action asks the agent for the whole list (questions, uncertainties and findings) as a job of its own, when the person wants it, perhaps after walking the change, or never. The walks as written go with it, so a point can name the step that shows its context and leave out what a walk already explains; every place is checked against its commit as before. The points are kept beside the walks' definition, so the definition and the review's record of it stay as written; reviews prepared before keep the points they have.
+- **What the agent is doing.** A running agent job says in one line under its spinner what the agent is doing now, from what it actually reports: waiting for it to begin, the file it reads, searching the code, which part of its answer it writes (the summary, walk *n* with its steps so far, point *n*), and what DSpatch then checks. No guessed stages and no estimate of what is left; counts of reads and tool calls stay in the job's details, as decided after the trial of 29 October.
+
 <a id="4-maestro-och-agentnätverket"></a>
 
 ## 4 Maestro and the agent network

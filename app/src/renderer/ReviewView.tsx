@@ -394,6 +394,15 @@ export function ReviewView(): JSX.Element {
       onExplanationDetached={setDetachedPref}
       explanationBounds={explanationBounds}
       onExplanationBounds={setExplanationBounds}
+      onReread={() => {
+        if (bridge !== undefined) {
+          void bridge.reread().then((next) => {
+            if (next.kind === 'opened') {
+              setOutcome(next);
+            }
+          });
+        }
+      }}
     />
   );
 }
@@ -413,6 +422,7 @@ function OpenReview({
   onExplanationDetached,
   explanationBounds,
   onExplanationBounds,
+  onReread,
 }: {
   readonly bundle: ReviewBundle;
   readonly bridge: ReviewBridge | undefined;
@@ -428,6 +438,8 @@ function OpenReview({
   readonly onExplanationDetached: (on: boolean) => void;
   readonly explanationBounds: { readonly current: ExplanationBounds | null };
   readonly onExplanationBounds: (bounds: ExplanationBounds) => void;
+  /** Read this review again as it is on disk: the points worth checking, once found. */
+  readonly onReread: () => void;
 }): JSX.Element {
   const words = WORDS[lang];
   const [state, setState] = useState<ReviewState>(bundle.state);
@@ -1235,6 +1247,68 @@ function OpenReview({
       ? null
       : ([...pair.record.jobs].reverse().find((job) => job.kind === 'review' && job.scope?.kind === 'walk' && job.scope.label.startsWith(`walk ${current.walk.id} `)) ?? null);
 
+  /*
+   * What is worth checking, asked for on its own (Niclas's decision of 30 October 2026): the
+   * walks come without it, and the person asks for it when they want it, perhaps after walking
+   * the change. The points are kept beside the walks; when they arrive the review is read again
+   * with them, and nothing else about it changes.
+   */
+  const checksJob =
+    pair === null
+      ? null
+      : ([...pair.record.jobs].reverse().find((job) => job.kind === 'checks' && (job.definitionPath ?? '').toLowerCase() === bundle.definitionPath.toLowerCase()) ?? null);
+  const [askingChecks, setAskingChecks] = useState(false);
+  const [checksProblem, setChecksProblem] = useState<string | null>(null);
+  const checksState = useRef<string | null>(null);
+  useEffect(() => {
+    const now = checksJob?.state ?? null;
+    const before = checksState.current;
+    checksState.current = now;
+    if (before !== null && before !== 'done' && now === 'done') {
+      void flush().then(onReread);
+    }
+  }, [checksJob?.state, flush, onReread]);
+  const checksOffer =
+    pair === null || pairBridge === undefined || bundle.definition.checks.length > 0 ? null : (
+      <div className="rv-checks-ask" data-ev="walk-checks-ask">
+        {checksJob !== null && (!askingChecks || isRunning(checksJob)) && (
+          <JobLine job={checksJob} onStop={() => void pairBridge.cancelJob(pair.key, checksJob.id)} />
+        )}
+        {checksProblem !== null && <p className="rv-error">{checksProblem}</p>}
+        {askingChecks ? (
+          <AgentPicker
+            pairKey={pair.key}
+            action="Find what is worth checking"
+            busy={false}
+            testId="walk-checks-agent"
+            onCancel={() => setAskingChecks(false)}
+            onStart={(choice) => {
+              void pairBridge
+                .startJob(pair.key, { kind: 'checks', ...choice, definitionPath: bundle.definitionPath })
+                .catch((error: unknown) => ({ error: requestFailure(error) }))
+                .then((answer) => {
+                  if (isPairError(answer)) {
+                    setChecksProblem(`It could not be started: ${answer.error}`);
+                  } else {
+                    setChecksProblem(null);
+                    setAskingChecks(false);
+                  }
+                });
+            }}
+          />
+        ) : (
+          (checksJob === null || !isRunning(checksJob)) && (
+            <>
+              <button type="button" className="rv-quiet" data-ev="walk-find-checks" onClick={() => setAskingChecks(true)}>
+                Find what is worth checking…
+              </button>
+              <p className="rv-sub">Questions, uncertainties and findings beyond the walks, from the agent, when you want them.</p>
+            </>
+          )
+        )}
+      </div>
+    );
+
   // The divider between the code and the explanation: dragged, or moved with the arrow keys.
   const drag = useRef<{ readonly x: number; readonly width: number } | null>(null);
   const clampWidth = (value: number): number => Math.round(Math.min(EXPLANATION_WIDTH.max, Math.max(EXPLANATION_WIDTH.min, value)));
@@ -1379,6 +1453,7 @@ function OpenReview({
                 <WorthChecking
                   checks={bundle.definition.checks}
                   attention={pick(bundle.definition.attention, lang)}
+                  offer={checksOffer}
                   open={openCheck?.id ?? null}
                   words={words}
                   lang={lang}
@@ -1822,6 +1897,7 @@ const CHECK_WORD: Record<CheckKind, { readonly sv: string; readonly en: string }
 function WorthChecking({
   checks,
   attention,
+  offer,
   open,
   words,
   lang,
@@ -1829,21 +1905,28 @@ function WorthChecking({
 }: {
   readonly checks: readonly CheckPoint[];
   readonly attention: string;
+  /** Asking for the points, while there are none (30 October 2026). */
+  readonly offer: ReactNode;
   readonly open: string | null;
   readonly words: ReviewWords;
   readonly lang: Lang;
   readonly onOpen: (check: CheckPoint) => void;
 }): JSX.Element | null {
-  if (checks.length === 0 && attention.trim() === '') {
+  if (checks.length === 0 && attention.trim() === '' && offer === null) {
     return null;
   }
   return (
     <section className="rv-checks" data-ev="walk-attention">
       <h2 className="rv-walks-heading">{words.attentionTitle}</h2>
       {checks.length === 0 ? (
-        <div className="rv-explanation">
-          <Markdown text={attention} />
-        </div>
+        <>
+          {attention.trim() !== '' && (
+            <div className="rv-explanation">
+              <Markdown text={attention} />
+            </div>
+          )}
+          {offer}
+        </>
       ) : (
         <ul className="rv-check-list">
           {checks.map((check) => (

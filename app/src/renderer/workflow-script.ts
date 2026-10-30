@@ -14083,10 +14083,44 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       const before = statusRows(review);
       await press(diffId, '[data-ev="pair-prepare-walks"]');
       await untilPair(diffId, 'the agent picker', (reading) => (reading.text ?? '').includes('Model'), 15_000);
+      const promptsBefore = (await reviewPromptsSent()).length;
       await press(diffId, '[data-ev="pair-walks-agent-start"]');
-      const walkRow = await untilWindow('the walk window', (rows) => rows.find((row) => row.view === 'walk'), 90_000);
+      // What the agent is doing, said under the spinner while it works (30 October 2026).
+      const said = new Set<string>();
+      let walkRow: PairWindowRow | undefined;
+      for (const until = performance.now() + 90_000; walkRow === undefined && performance.now() < until; ) {
+        for (const shown of (await readPairWindow(diffId) as unknown as { activities?: readonly string[] } | null)?.activities ?? []) {
+          if (shown.startsWith('Writing walk ') && ![...said].some((line) => line.startsWith('Writing walk '))) {
+            await capture(diffId, 'walks-activity');
+          }
+          said.add(shown.slice(0, 80));
+        }
+        walkRow = (await pairWindows()).find((row) => row.view === 'walk');
+        await sleep(150);
+      }
+      if (walkRow === undefined) {
+        throw new Error('the walk window did not open');
+      }
+      record('walks: what the line said while the agent worked', { said: [...said] });
+      expect([...said].some((line) => line.startsWith('Writing walk ')), `the line under the spinner never said which walk was being written: ${JSON.stringify([...said])}`);
       await check({ action: 'resize', id: walkRow.id, width: 1500, height: 900 }, 'size the walk window');
-      const walk = await untilPair(walkRow.id, 'the walks and the points', (reading) => (insightOf(reading)?.checks.length ?? 0) > 0, 30_000);
+      // The walks come without the points; they are asked for on their own.
+      const bare = await untilPair(walkRow.id, 'the walks without points', (reading) => stepOf(reading) !== null && visibleOf(reading).includes('Find what is worth checking'), 30_000);
+      const walksPrompt = (await reviewPromptsSent()).slice(promptsBefore).find((prompt) => prompt.includes('prepare-walks')) ?? '';
+      record('walks alone', { checks: insightOf(bare)?.checks.length, asksForChecks: walksPrompt.includes('"checks"') });
+      expect((insightOf(bare)?.checks.length ?? 0) === 0 && !walksPrompt.includes('"checks"') && !walksPrompt.includes('## Worth checking'), 'the walks were still asked for or shown with points worth checking');
+      await capture(walkRow.id, 'walks-without-points');
+      await press(walkRow.id, '[data-ev="walk-find-checks"]');
+      await untilPair(walkRow.id, 'the agent picker for the points', (reading) => visibleOf(reading).includes('Find what is worth checking') && (reading.text ?? '').includes('Model'), 15_000);
+      await press(walkRow.id, '[data-ev="walk-checks-agent-start"]');
+      const pointsSaid = await untilPair(walkRow.id, 'what the agent is doing for the points', (reading) => ((reading as unknown as { activities?: readonly string[] }).activities ?? []).length > 0 || (insightOf(reading)?.checks.length ?? 0) > 0, 60_000);
+      record('points: what the line said', { said: (pointsSaid as unknown as { activities?: readonly string[] }).activities ?? [] });
+      if (((pointsSaid as unknown as { activities?: readonly string[] }).activities ?? []).length > 0) {
+        await capture(walkRow.id, 'points-activity');
+      }
+      const walk = await untilPair(walkRow.id, 'the walks and the points', (reading) => (insightOf(reading)?.checks.length ?? 0) > 0, 60_000);
+      const checksPrompt = (await reviewPromptsSent()).find((prompt) => prompt.includes('worth-checking')) ?? '';
+      expect(checksPrompt.includes('## The walks the person has') && checksPrompt.includes('W2.1'), 'the points were not asked with the walks as written');
       record('left column', { order: insightOf(walk)?.leftOrder, checks: insightOf(walk)?.checks });
       expect(JSON.stringify(insightOf(walk)?.leftOrder) === JSON.stringify(['walk-about', 'walks-heading', 'walk-attention', 'walk-files']), `the left column is not About, walks, Worth checking: ${JSON.stringify(insightOf(walk)?.leftOrder)}`);
       expect((insightOf(walk)?.checks ?? []).every((entry) => entry.height < 90), 'a point worth checking is a wall of text in the list');

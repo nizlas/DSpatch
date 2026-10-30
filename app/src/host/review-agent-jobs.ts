@@ -34,12 +34,17 @@ import { ANALYSIS_PERMISSIONS } from '../adapter/claude-agent-sdk-adapter';
 import type { AgentEvent, Unsubscribe } from '../adapter/types';
 import type { ChatAdapter } from '../main/chat-service';
 import {
+  CHECKS_FILE_FORMAT,
   answerJson,
+  checkDefinition,
+  checksFileOf,
+  checksPrompt,
   definitionFrom,
   discussionFolderSection,
   followUpWords,
   linesAround,
   readSelection,
+  readChecksAnswer,
   readReviewAnswer,
   readStepAnswer,
   readWalksAnswer,
@@ -52,6 +57,7 @@ import {
   walksPrompt,
   withCheckedChecks,
   withCheckedFindings,
+  withCheckedStandaloneChecks,
   withoutInvalidPlaces,
   type AnalysisMaterial,
   type ExplainTurn,
@@ -83,14 +89,39 @@ import type { RevisionSnapshots, SnapshotManifest } from './revision-snapshots';
 
 export type AgentProvider = 'cursor' | 'claude';
 
+/** How often what the agent is doing is written to the record, at most. */
+const ACTIVITY_MS = 900;
+
+/**
+ * Which part of its answer the agent is writing, read from the answer so far: the fields
+ * of the JSON it was asked for, in the order it writes them. Nothing is guessed beyond that.
+ */
+export function writingNow(kind: AgentJob['kind'], text: string): string {
+  if (kind === 'walks') {
+    const walks = text.match(/"kind"\s*:\s*"(?:walk|reading)"/g)?.length ?? 0;
+    const steps = text.match(/"places"\s*:/g)?.length ?? 0;
+    if (walks > 0) {
+      return `Writing walk ${String(walks)} · ${String(steps)} step(s) so far`;
+    }
+    return /"summary"\s*:/.test(text) ? 'Writing the summary of the change' : 'Writing its answer';
+  }
+  if (kind === 'checks') {
+    const points = text.match(/"reasoning"\s*:/g)?.length ?? 0;
+    return points > 0 ? `Writing point ${String(points)} worth checking` : 'Writing its answer';
+  }
+  return kind === 'review' ? 'Writing its review' : 'Writing the explanation';
+}
+
 /** What a window asks for. Checked here before anything is written or sent. */
 export interface AgentJobRequest {
-  readonly kind: 'walks' | 'review' | 'explain';
+  readonly kind: 'walks' | 'review' | 'explain' | 'checks';
   readonly provider: AgentProvider;
   readonly model: string;
   readonly scope?: DelegationScope;
   /** For `explain`: the step, by its walk definition and ids, and the person's question. */
   readonly question?: { readonly definitionPath: string; readonly walkId: string; readonly stepId: string; readonly question: string };
+  /** For `checks`: the walk definition whose change is looked over. */
+  readonly definitionPath?: string;
 }
 
 export interface ReviewAgentJobsOptions {
@@ -126,6 +157,11 @@ interface Live {
   readonly refusedCalls: string[];
   /** Each tool call's name and subject, until its result says whether it ran. */
   readonly calls: Map<string, { readonly name: string; readonly subject: string | null }>;
+  /** What the agent is doing now, and what of it the record shows; written at most about once a second. */
+  activity: string;
+  activityShown: string;
+  activityTimer: ReturnType<typeof setTimeout> | null;
+  readonly kind: AgentJob['kind'];
   finished: ((status: 'finished' | 'failed' | 'cancelled' | 'unconfirmed', error: string | null) => void) | null;
 }
 
@@ -351,7 +387,7 @@ export class ReviewAgentJobs {
     const kind = request['kind'];
     const provider = request['provider'];
     const model = typeof request['model'] === 'string' ? request['model'].trim() : '';
-    if (kind !== 'walks' && kind !== 'review' && kind !== 'explain') {
+    if (kind !== 'walks' && kind !== 'review' && kind !== 'explain' && kind !== 'checks') {
       return { error: 'Unknown kind of agent work.' };
     }
     if (provider !== 'cursor' && provider !== 'claude') {
@@ -386,6 +422,16 @@ export class ReviewAgentJobs {
       }
       question = { ...asked, stepTitle: step.stepTitle.en, places: step.places };
     }
+    // What is worth checking is asked over walks of this very pair, read here from their file.
+    let checksOver: string | null = null;
+    if (kind === 'checks') {
+      const named = request['definitionPath'];
+      const outline = this.options.pairs.walksOf(key, named, 'en');
+      if (isPairError(outline)) {
+        return outline;
+      }
+      checksOver = path.resolve(named as string);
+    }
     if (kind === 'review') {
       scope = scopeFrom(request['scope']);
       if (scope === null) {
@@ -411,7 +457,9 @@ export class ReviewAgentJobs {
         error:
           kind === 'walks'
             ? 'Code walks are already being prepared for this change. Wait for them, or stop that first.'
-            : kind === 'explain'
+            : kind === 'checks'
+              ? 'The agent is already looking for what is worth checking. Wait for it, or stop it first.'
+              : kind === 'explain'
               ? 'The agent is already looking into a question about this change. Wait for it, or stop it first.'
               : 'A delegated review is already running for this change. Wait for it, or stop it first.',
       };
@@ -427,7 +475,9 @@ export class ReviewAgentJobs {
       note:
         kind === 'walks'
           ? 'Preparing code walks.'
-          : kind === 'explain'
+          : kind === 'checks'
+            ? 'Looking for what is worth checking.'
+            : kind === 'explain'
             ? prepared === null
               ? 'Looking into the code.'
               : 'Explaining the selected code.'
@@ -435,7 +485,7 @@ export class ReviewAgentJobs {
       detail: '',
       scope,
       result: null,
-      definitionPath: null,
+      definitionPath: checksOver,
       uncovered: [],
       ...(question === null ? {} : { question }),
       ...(prepared === null ? {} : { selection: prepared.selection }),
@@ -464,6 +514,10 @@ export class ReviewAgentJobs {
       refused: 0,
       refusedCalls: [],
       calls: new Map(),
+      activity: '',
+      activityShown: '',
+      activityTimer: null,
+      kind,
     };
     this.live.set(job.id, live);
     void this.run(live, job).finally(() => {
@@ -510,9 +564,45 @@ export class ReviewAgentJobs {
   private setJob(live: Live, change: Partial<AgentJob>): PairRecord | null {
     const written = this.options.pairs.update(live.key, (record) => ({
       ...record,
-      jobs: record.jobs.map((job) => (job.id === live.jobId ? { ...job, ...change } : job)),
+      jobs: record.jobs.map((job) => {
+        if (job.id !== live.jobId) {
+          return job;
+        }
+        const next = { ...job, ...change };
+        // What it is doing is said only while it does it.
+        if (next.state === 'running' || next.state === 'cancelling') {
+          return next;
+        }
+        const { activity: _activity, ...ended } = next;
+        return ended;
+      }),
     }));
     return isPairError(written) ? null : written;
+  }
+
+  /**
+   * What the agent is doing now, said in the window under the spinner (Niclas's request of
+   * 30 October 2026). Only what it reports or what DSpatch itself does: no guessed stages,
+   * no estimate of what is left, and (as since the trial of 29 October) no counts of reads
+   * or tool calls; those stay in the job's Details. Written at most about once a second.
+   */
+  private setActivity(live: Live, activity: string): void {
+    live.activity = activity;
+    if (live.activityTimer !== null) {
+      return;
+    }
+    live.activityTimer = setTimeout(() => {
+      live.activityTimer = null;
+      if (live.activity === live.activityShown) {
+        return;
+      }
+      const current = this.options.pairs.state(live.key);
+      const running = !isPairError(current) && current.jobs.some((job) => job.id === live.jobId && job.state === 'running');
+      if (running) {
+        live.activityShown = live.activity;
+        this.setJob(live, { activity: live.activity });
+      }
+    }, ACTIVITY_MS);
   }
 
   /** The job's final state, once: a later attempt to end it again changes nothing. */
@@ -521,6 +611,10 @@ export class ReviewAgentJobs {
     const job = isPairError(current) ? undefined : current.jobs.find((entry) => entry.id === live.jobId);
     if (job === undefined || (job.state !== 'running' && job.state !== 'cancelling')) {
       return;
+    }
+    if (live.activityTimer !== null) {
+      clearTimeout(live.activityTimer);
+      live.activityTimer = null;
     }
     this.setJob(live, { ...extra, ...this.investigationOf(live), state, note, endedAt: new Date().toISOString() });
     this.options.log(`review agent ${live.jobId}: ${state} - ${note}`);
@@ -633,7 +727,10 @@ export class ReviewAgentJobs {
     }
     if (event.type === 'tool.started') {
       // Counted as read or searched only once its result says it ran.
-      live.calls.set(event.toolCallId, { name: event.name, subject: event.subject === undefined ? null : this.relative(live, event.subject) });
+      const subject = event.subject === undefined ? null : this.relative(live, event.subject);
+      live.calls.set(event.toolCallId, { name: event.name, subject });
+      const file = subject === null ? '' : (subject.split(/[\\/]/).pop() ?? '');
+      this.setActivity(live, (event.name === 'Read' && file !== '' ? `Reading ${file}` : 'Searching the code'));
     } else if (event.type === 'tool.finished') {
       const call = live.calls.get(event.toolCallId) ?? { name: event.name, subject: null };
       live.calls.delete(event.toolCallId);
@@ -653,6 +750,7 @@ export class ReviewAgentJobs {
       }
     } else if (event.type === 'assistant.delta') {
       live.text += event.text;
+      this.setActivity(live, writingNow(live.kind, live.text));
     } else if (event.type === 'assistant.message') {
       live.text = event.text;
     } else if (event.type === 'run.finished') {
@@ -671,6 +769,7 @@ export class ReviewAgentJobs {
     }
     live.text = '';
     live.runId = null;
+    this.setActivity(live, 'Waiting for the agent to begin');
     const ended = new Promise<{ status: 'finished' | 'failed' | 'cancelled' | 'unconfirmed'; error: string | null }>((resolve) => {
       live.finished = (status, error) => {
         live.finished = null;
@@ -752,6 +851,13 @@ export class ReviewAgentJobs {
       }
       if (job.kind === 'walks') {
         await this.prepareWalks(live, job, walksPrompt(material, folder, language), folder);
+      } else if (job.kind === 'checks' && job.definitionPath !== null) {
+        const outline = this.options.pairs.walksOf(live.key, job.definitionPath, language);
+        if (isPairError(outline)) {
+          this.finish(live, 'failed', `${outline.error} Nothing was sent.`);
+          return;
+        }
+        await this.findChecks(live, job.definitionPath, checksPrompt(material, folder, outline, language), new Set(outline.flatMap((walk) => walk.steps.map((step) => step.id))));
       } else if (job.kind === 'explain' && job.selection !== undefined) {
         await this.explain(live, await this.selectionPromptFor(live.key, job, job.selection, material, folder, language));
       } else if (job.kind === 'explain' && job.question !== undefined) {
@@ -844,10 +950,12 @@ export class ReviewAgentJobs {
       return;
     }
     const read = this.reader(live);
+    this.setActivity(live, 'Checking every place against the commits');
     let parsed = readWalksAnswer(answerJson(first.text));
     let invalid = parsed.walks === null ? new Map<string, string>() : await walkPlaceProblems(parsed.walks, read);
     // One repair round, naming what was wrong. Never a loop.
     if (parsed.walks === null || parsed.problems.length > 0 || invalid.size > 0) {
+      this.setActivity(live, `Asking the agent to correct ${String(parsed.problems.length + invalid.size)} problem(s) DSpatch found`);
       const second = await this.turn(live, repairPrompt([...parsed.problems, ...invalid.values()]));
       if (this.endedEarly(live, second)) {
         return;
@@ -895,6 +1003,45 @@ export class ReviewAgentJobs {
         (invalid.size > 0 ? ` ${String(invalid.size)} place(s) were left out because they do not exist at their commit.` : '') +
         (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) could not be given to the agent to read.` : ''),
       { definitionPath, uncovered },
+    );
+  }
+
+  /**
+   * What is worth checking over walks already written (30 October 2026): every place checked
+   * against its commit, kept beside the walks' definition so the definition stays as written.
+   * A point with no place left keeps its text; none is made up.
+   */
+  private async findChecks(live: Live, definitionPath: string, prompt: string, stepIds: ReadonlySet<string>): Promise<void> {
+    const reply = await this.turn(live, prompt);
+    if (this.endedEarly(live, reply)) {
+      return;
+    }
+    this.setActivity(live, 'Checking every place against the commits');
+    const parsed = readChecksAnswer(answerJson(reply.text), stepIds);
+    if (parsed.checks === null) {
+      this.finish(live, 'failed', 'The agent did not answer with points DSpatch could read. Nothing was changed.');
+      return;
+    }
+    const checked = await withCheckedStandaloneChecks(parsed.checks, this.reader(live));
+    if (live.cancelRequested) {
+      this.endedEarly(live, { status: 'finished', error: null });
+      return;
+    }
+    const file = checksFileOf(definitionPath);
+    fs.writeFileSync(
+      file,
+      `${JSON.stringify({ format: CHECKS_FILE_FORMAT, checks: checked.checks.map((check, index) => checkDefinition(check, `C${String(index + 1)}`)) }, null, 2)}\n`,
+      'utf8',
+    );
+    const count = (kind: string): number => checked.checks.filter((check) => check.kind === kind).length;
+    const left = checked.left + parsed.problems.length;
+    this.finish(
+      live,
+      'done',
+      (checked.checks.length === 0
+        ? 'The agent found nothing worth checking beyond the walks.'
+        : `${String(checked.checks.length)} point(s) worth checking: ${String(count('question'))} question(s), ${String(count('uncertainty'))} uncertaint${count('uncertainty') === 1 ? 'y' : 'ies'}, ${String(count('finding'))} finding(s).`) +
+        (left > 0 ? ` ${String(left)} place(s) or point(s) DSpatch could not check were left out.` : ''),
     );
   }
 

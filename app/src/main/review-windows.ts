@@ -346,6 +346,21 @@ export class ReviewWindows {
    * A definition another window already has is not opened here: that window is
    * brought to the front and this one keeps what it shows.
    */
+  /**
+   * The review this window shows, read again by its session (30 October 2026): the points
+   * worth checking asked for on their own are kept beside the definition and read with it.
+   * Nothing else is chosen or opened; the view keeps its own state.
+   */
+  reread(entry: ReviewWindowEntry): Promise<ReviewOpenOutcome> {
+    const definitionPath = entry.identity?.definitionPath ?? null;
+    if (definitionPath === null) {
+      return Promise.resolve(entry.initial);
+    }
+    const next = this.queue.then(() => this.openChosen(entry, definitionPath));
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
   async choose(entry: ReviewWindowEntry): Promise<ReviewOpenOutcome> {
     const startIn =
       entry.identity?.repository ?? (entry.startFolder !== null && fs.existsSync(entry.startFolder) ? entry.startFolder : undefined);

@@ -4,7 +4,7 @@ title: Understand and review changes through agent-generated code walks
 status: Review
 assignee: []
 created_date: '2026-10-28 22:32'
-updated_date: '2026-10-30 11:12'
+updated_date: '2026-10-30 12:12'
 labels:
   - review
   - code-walks
@@ -422,4 +422,20 @@ Niclas's request after his real trial (decision recorded in [VISION.md section 3
 
 **Not established**
 - Real model quality: whether a real agent writes a good short part and places the marker or `details` well; Niclas's trial on his MiniDAWLab pair; UX acceptance of the mark, *Show more*, *Explain more simply* and the separate window; multi-screen restore on real changed screens (checked only on one screen arrangement); Linux.
+
+### Worth checking on request, and a line saying what the agent is doing (30 Oct 2026)
+
+Niclas's decision after a real preparation of 432 changed lines took 3 min 47 s (recorded in [VISION.md section 3.4](../../docs/VISION.md#worth-checking-on-request-and-what-the-agent-is-doing-niclass-decision-30-october-2026)). From his records: a 444-line preparation the day before took about 2 minutes with similar reads and searches; the later one wrote about 50 % more text, the six points worth checking with their reasoning, and its walk answer put `checks` before `walks`. Where the time went within a job is not recorded, so this is the measurable difference, not a breakdown.
+
+**What changed**
+- `walksPrompt` no longer asks for checks. *Find what is worth checking…* under the walks starts a `checks` job (`checksPrompt`, `CHECK_RULES`, `readChecksAnswer`, `withCheckedStandaloneChecks`) with the walks as written (`ReviewPairs.walksOf`), linking points by step id. The points are written beside the definition (`checksFileOf`, `dspatch-checks/1`) and `ReviewService.openDefinition` reads them with it, so the definition's hash and the review record are untouched; the walk window reads its review again (`ReviewBridge.reread`) when the job is done. Reviews prepared before keep their embedded points.
+- Running agent jobs carry `activity`, written by the host at most about once a second from the agent's events (`setActivity`, `writingNow`): waiting for it, reading a file, searching, writing the summary / walk *n* · steps so far / point *n*, checking places, asking for a correction. `JobLine` shows it under the spinner; it is dropped when the job ends. No counts of reads or tool calls are shown (the trial decision of 29 October).
+
+**Verified** (SIMULATED presentation agent, isolated user data; no live provider, Cursor not contacted).
+- Tests: review group 176/176 (new: the checks job over written walks, kept beside an unchanged definition, refused for walks that are not this pair's; the walks job asks for no checks; `writingNow`; `readChecksAnswer`; `checksFileOf`); fast group 1350 passed, 0 failed; typecheck, build.
+- Real windows, phase `insight` (also with slower streaming for screenshots): the walk window opened with no points and *Find what is worth checking…*; the walks prompt held no checks; the line under the spinner went "Writing the summary of the change", "Writing walk 1 · 0 step(s) so far" … "Writing walk 2 · 5 step(s) so far"; the points job said "Writing point 2 worth checking" and its two points (one at W2.1, one with its own tour) appeared without reopening the window; the rest of the phase (linked point, tour, deepening, references) and `insight-again` (restart, points back, no prompts) pass.
+- Regression on the final build: `explain-window`, `selection`, `code-walks` (both), `analysis-access` (both), `walk-start` (three phases).
+
+**Not established**
+- How long a real preparation now takes without the points, and how a real agent's points read when asked for separately; Niclas's trial; Linux.
 <!-- SECTION:NOTES:END -->

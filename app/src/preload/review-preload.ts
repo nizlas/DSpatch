@@ -26,6 +26,7 @@ import type { DiffLocation, PairChangedEvent, ReviewPairBridge } from '../shared
 const reviewBridge: ReviewBridge = {
   initial: () => ipcRenderer.invoke('dspatch:review-initial') as Promise<ReviewOpenOutcome>,
   choose: () => ipcRenderer.invoke('dspatch:review-choose') as Promise<ReviewOpenOutcome>,
+  reread: () => ipcRenderer.invoke('dspatch:review-reread') as Promise<ReviewOpenOutcome>,
   readFile: (side: RevisionSide, filePath: string) =>
     ipcRenderer.invoke('dspatch:review-read-file', side, filePath) as Promise<ReviewFileOutcome>,
   listFiles: (side: RevisionSide) =>

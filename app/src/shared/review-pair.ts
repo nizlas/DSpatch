@@ -107,7 +107,7 @@ export interface ReviewAgents {
 
 /** What a window asks of the host to start agent work over the pair. */
 export interface AgentJobRequestInput {
-  readonly kind: 'walks' | 'review' | 'explain';
+  readonly kind: 'walks' | 'review' | 'explain' | 'checks';
   readonly provider: 'cursor' | 'claude';
   readonly model: string;
   readonly scope?: DelegationScope;
@@ -117,6 +117,8 @@ export interface AgentJobRequestInput {
   readonly selection?: CodeSelectionRequest;
   /** DSP-152, `explain`: a follow-up on an earlier explanation of a selection, by its first job. */
   readonly followUp?: { readonly root: string; readonly action: ExplainAction; readonly question?: string };
+  /** `checks` (30 October 2026): the walk definition whose change is looked over. */
+  readonly definitionPath?: string;
 }
 
 /** What a window sends for a selection: where it is, and the text it saw there. */
@@ -568,8 +570,11 @@ export interface AgentMaterial {
 /** One piece of agent work over the pair, from the press to its recorded outcome. */
 export interface AgentJob {
   readonly id: string;
-  /** Walk preparation, a delegated review, or a question about one step. */
-  readonly kind: 'walks' | 'review' | 'explain';
+  /**
+   * Walk preparation, a delegated review, a question about one step, or what is worth
+   * checking over walks already written (asked for on its own since 30 October 2026).
+   */
+  readonly kind: 'walks' | 'review' | 'explain' | 'checks';
   readonly state: AgentJobState;
   readonly provider: 'cursor' | 'claude';
   readonly model: string;
@@ -595,6 +600,11 @@ export interface AgentJob {
   /** What the agent could read, and what it looked at (DSP-152 analysis access). */
   readonly material?: AgentMaterial;
   readonly investigation?: AgentInvestigation;
+  /**
+   * While it runs: what the agent is doing now, from what it reports (30 October 2026),
+   * for instance the file it reads or the part of its answer it writes. Not kept after.
+   */
+  readonly activity?: string;
 }
 
 /**
@@ -804,7 +814,7 @@ function investigationFrom(raw: unknown): AgentInvestigation | null {
 }
 
 export function jobFrom(raw: unknown): AgentJob | null {
-  if (!isRecordObject(raw) || typeof raw['id'] !== 'string' || (raw['kind'] !== 'walks' && raw['kind'] !== 'review' && raw['kind'] !== 'explain')) {
+  if (!isRecordObject(raw) || typeof raw['id'] !== 'string' || (raw['kind'] !== 'walks' && raw['kind'] !== 'review' && raw['kind'] !== 'explain' && raw['kind'] !== 'checks')) {
     return null;
   }
   // A job is always written with the agent it was started with; one without a known
@@ -863,6 +873,7 @@ export function jobFrom(raw: unknown): AgentJob | null {
         ...(followUp === null ? {} : { followUp }),
         ...(material === null ? {} : { material }),
         ...(investigation === null ? {} : { investigation }),
+        ...(typeof raw['activity'] === 'string' && state === 'running' ? { activity: raw['activity'] } : {}),
       };
     })(),
   };

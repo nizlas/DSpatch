@@ -210,15 +210,6 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
     '- "summary": two or three short sentences a person reads first: what the change does and why.',
     '- "background": only when there is more worth knowing (context, history, consequences), in short Markdown paragraphs. Leave it empty rather than repeating the summary.',
     '',
-    '## Worth checking',
-    'Give the few things worth a reviewer\'s attention across the change as "checks", each an entry into the code. Leave the list empty when there are none; do not repeat what a walk already explains.',
-    '- "kind": "question" for something the reviewer should look into, "uncertainty" for something you could not settle from the code, "finding" for something the code you read shows.',
-    '- "title": a short question or statement understood at a glance, for example "Can restoring lock the track in piano mode?". No file names or line numbers in it.',
-    '- "detail": at most one short sentence more. Optional.',
-    '- "reasoning": why it is worth checking, in short Markdown paragraphs, naming the classes, functions and conditions involved. Keep apart what the code shows and what you could not establish.',
-    '- "places": where it is in the code, as references with a label. Every place must exist at its side.',
-    '- "step": {"walk": the 0-based index of an item in "walks", "step": the 0-based index of its step} when that step shows exactly the context of this check. Leave it out when no step fits: DSpatch then gives the check its own tour through its places. Never link a step only because it is in the same file.',
-    '',
     `## How to write (language: ${language === 'sv' ? 'Swedish' : 'English'})`,
     ...WRITING_RULES.map((rule) => `- ${rule}`),
     '',
@@ -229,16 +220,6 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
       {
         summary: 'Two or three short sentences: what the change does and why.',
         background: 'Optional: more context, in short Markdown paragraphs. Empty when the summary says it.',
-        checks: [
-          {
-            kind: 'question',
-            title: 'Can restoring lock the track in piano mode?',
-            detail: 'Optional: one short sentence.',
-            reasoning: 'Why it is worth checking, in short Markdown paragraphs.',
-            places: [{ label: 'What this place shows', path: 'src/file.ts', side: 'target', start: 20, end: 26 }],
-            step: { walk: 0, step: 1 },
-          },
-        ],
         walks: [
           {
             kind: 'walk',
@@ -289,6 +270,83 @@ export function repairPrompt(problems: readonly string[]): string {
     ...problems.slice(0, 40).map((problem) => `- ${problem}`),
     '',
     'Check the places in the folder if you need to, then answer again with the complete corrected JSON object in a ```json fence, in the same format. Keep every place that was right.',
+  ].join('\n');
+}
+
+/**
+ * What is worth checking, asked for on its own (Niclas's decision of 30 October 2026): the
+ * walks come first and faster, and the person asks for these points when they want them,
+ * perhaps after walking the change. The walks as written go along, so a point can name the
+ * step that shows its context and leave out what a walk already explains.
+ */
+export const CHECK_RULES = [
+  'Give the few things worth a reviewer\'s attention across the change as "checks", each an entry into the code. Leave the list empty when there are none; do not repeat what a walk already explains.',
+  '"kind": "question" for something the reviewer should look into, "uncertainty" for something you could not settle from the code, "finding" for something the code you read shows.',
+  '"title": a short question or statement understood at a glance, for example "Can restoring lock the track in piano mode?". No file names or line numbers in it.',
+  '"detail": at most one short sentence more. Optional.',
+  '"reasoning": why it is worth checking, in short Markdown paragraphs, naming the classes, functions and conditions involved. Keep apart what the code shows and what you could not establish.',
+  '"places": where it is in the code, as references with a label. Every place must exist at its side.',
+  '"step": the id of the walk step below (for example "W1.2") that shows exactly the context of this check. Leave it out when no step fits: DSpatch then gives the check its own tour through its places. Never link a step only because it is in the same file.',
+] as const;
+
+/** One walk step as the checks prompt shows it: its id, title, summary and places. */
+export interface WalkStepOutline {
+  readonly id: string;
+  readonly title: string;
+  readonly summary: string;
+  readonly places: readonly LineRange[];
+}
+
+/** Ask what is worth checking in a change whose walks have been written. */
+export function checksPrompt(
+  material: AnalysisMaterial,
+  folder: AgentMaterial,
+  walks: readonly { readonly id: string; readonly title: string; readonly steps: readonly WalkStepOutline[] }[],
+  language: 'sv' | 'en',
+): string {
+  const where = (range: LineRange): string => `${range.path} ${range.side === 'base' ? 'From' : 'To'} ${String(range.start)}–${String(range.end)}`;
+  return [
+    `${TASK_HEADER} worth-checking`,
+    '',
+    'A person reviewing this change has its code walks and readings, listed below, and asks what is worth checking beyond them. You examine the code yourself with your reading tools, then answer. A point decides nothing: it is not a review and approves nothing.',
+    '',
+    '## The walks the person has',
+    ...walks.flatMap((walk) => [
+      `### ${walk.id}: ${walk.title}`,
+      ...walk.steps.map((step) => `- ${step.id} ${step.title}${step.summary === '' ? '' : ` — ${step.summary}`} (${step.places.map(where).join('; ')})`),
+    ]),
+    '',
+    '## Worth checking',
+    ...CHECK_RULES.map((rule) => `- ${rule}`),
+    '',
+    `## How to write (language: ${language === 'sv' ? 'Swedish' : 'English'})`,
+    ...WRITING_RULES.map((rule) => `- ${rule}`),
+    '',
+    '## Answer format',
+    'When you have examined what you need, answer with one JSON object in a ```json fence and nothing else:',
+    '```json',
+    JSON.stringify(
+      {
+        checks: [
+          {
+            kind: 'question',
+            title: 'Can restoring lock the track in piano mode?',
+            detail: 'Optional: one short sentence.',
+            reasoning: 'Why it is worth checking, in short Markdown paragraphs.',
+            places: [{ label: 'What this place shows', path: 'src/file.ts', side: 'target', start: 20, end: 26 }],
+            step: 'W1.2',
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    '```',
+    'Every place names a path, a side ("base" for From, "target" for To) and 1-based lines that exist at that side; DSpatch checks every place against the commit.',
+    '',
+    folderSection(material, folder),
+    '',
+    changeSection(material),
   ].join('\n');
 }
 
@@ -768,8 +826,24 @@ export function readWalksAnswer(raw: unknown): { readonly walks: ProposedWalks |
   const attention = (Array.isArray(attentionRaw) ? attentionRaw : typeof attentionRaw === 'string' ? [attentionRaw] : [])
     .map((entry: unknown) => text(entry).replace(/^\s*[-*]\s+/, ''))
     .filter((entry) => entry !== '');
-  const checks: ProposedCheck[] = [];
-  const checksRaw = raw['checks'];
+  // Checks in an answer of the older form, written with the walks, by index into them.
+  const checks: ProposedCheck[] = checksOf(raw['checks'], problems).map(({ stepRaw, ...check }) => {
+    const step =
+      isObject(stepRaw) && Number.isInteger(stepRaw['walk']) && Number.isInteger(stepRaw['step'])
+        ? { walk: stepRaw['walk'] as number, step: stepRaw['step'] as number }
+        : null;
+    // An index outside the proposal links nothing; it is not guessed at.
+    return { ...check, step: step !== null && walks[step.walk]?.steps[step.step] !== undefined ? step : null };
+  });
+  return {
+    walks: { overview: text(raw['summary']) || text(raw['overview']), background: text(raw['background']), attention, checks, walks },
+    problems,
+  };
+}
+
+/** The points of an answer as proposed, each with what it said about its step, unread. */
+function checksOf(checksRaw: unknown, problems: string[]): (Omit<ProposedCheck, 'step'> & { readonly stepRaw: unknown })[] {
+  const checks: (Omit<ProposedCheck, 'step'> & { readonly stepRaw: unknown })[] = [];
   for (const [checkIndex, checkRaw] of (Array.isArray(checksRaw) ? checksRaw : []).entries()) {
     const where = `check ${String(checkIndex + 1)}`;
     if (!isObject(checkRaw) || text(checkRaw['title']) === '') {
@@ -786,25 +860,44 @@ export function readWalksAnswer(raw: unknown): { readonly walks: ProposedWalks |
       }
       places.push({ label: text(placeRaw['label']) || `${range.path}:${String(range.start)}`, range });
     }
-    const stepRaw = checkRaw['step'];
-    const step =
-      isObject(stepRaw) && Number.isInteger(stepRaw['walk']) && Number.isInteger(stepRaw['step'])
-        ? { walk: stepRaw['walk'] as number, step: stepRaw['step'] as number }
-        : null;
     checks.push({
       kind: kind === 'uncertainty' || kind === 'finding' ? kind : 'question',
       title: text(checkRaw['title']),
       detail: text(checkRaw['detail']),
       reasoning: text(checkRaw['reasoning']),
       places,
-      // An index outside the proposal links nothing; it is not guessed at.
-      step: step !== null && walks[step.walk]?.steps[step.step] !== undefined ? step : null,
+      stepRaw: checkRaw['step'],
     });
   }
-  return {
-    walks: { overview: text(raw['summary']) || text(raw['overview']), background: text(raw['background']), attention, checks, walks },
-    problems,
-  };
+  return checks;
+}
+
+/** A point asked for on its own: its step is a step id of the walks, or none. */
+export type ProposedStandaloneCheck = Omit<ProposedCheck, 'step'> & { readonly stepId: string | null };
+
+/**
+ * The points an answer to {@link checksPrompt} proposes. A step id that is not one of the
+ * walks' links nothing: the point gets its own tour instead, and nothing is guessed.
+ */
+export function readChecksAnswer(raw: unknown, stepIds: ReadonlySet<string>): { readonly checks: readonly ProposedStandaloneCheck[] | null; readonly problems: readonly string[] } {
+  if (!isObject(raw) || !Array.isArray(raw['checks'])) {
+    return { checks: null, problems: ['The answer was not one JSON object with "checks" in a ```json fence.'] };
+  }
+  const problems: string[] = [];
+  const checks = checksOf(raw['checks'], problems).map(({ stepRaw, ...check }) => {
+    const stepId = typeof stepRaw === 'string' && stepIds.has(stepRaw.trim()) ? stepRaw.trim() : null;
+    return { ...check, stepId };
+  });
+  return { checks, problems };
+}
+
+/** The places of points asked for on their own, checked against the commits like any other. */
+export async function withCheckedStandaloneChecks(
+  checks: readonly ProposedStandaloneCheck[],
+  read: LineReader,
+): Promise<{ readonly checks: readonly ProposedStandaloneCheck[]; readonly left: number }> {
+  const checked = await withCheckedChecks({ overview: '', background: '', attention: [], walks: [], checks: checks.map((check) => ({ ...check, step: null })) }, read);
+  return { checks: checked.walks.checks.map((check, index) => ({ ...check, stepId: checks[index]?.stepId ?? null })), left: checked.left };
 }
 
 /**
@@ -911,6 +1004,42 @@ export function uncoveredBy(walks: ProposedWalks, files: readonly PairFile[]): r
 
 const lang2 = (value: string): { sv: string; en: string } => ({ sv: value, en: value });
 
+/** One point worth checking as the definition format (`dspatch-review/2`) has it. */
+export function checkDefinition(check: ProposedStandaloneCheck, id: string): Record<string, unknown> {
+  const places = check.places.map((place) => ({ path: place.range.path, side: place.range.side, start: place.range.start, end: place.range.end, role: 'context', note: lang2(place.label) }));
+  return {
+    id,
+    kind: check.kind,
+    title: lang2(check.title),
+    ...(check.detail === '' ? {} : { detail: lang2(check.detail) }),
+    ...(check.reasoning === '' ? {} : { reasoning: lang2(check.reasoning) }),
+    ...(check.stepId === null ? {} : { stepId: check.stepId }),
+    places,
+    // No step fits and there is code to show: a tour of its own, one place after another.
+    ...(check.stepId !== null || check.places.length === 0
+      ? {}
+      : {
+          tour: {
+            steps: [
+              {
+                id: `${id}.1`,
+                title: lang2(check.title),
+                summary: lang2(check.detail || check.title),
+                body: lang2(check.reasoning || check.title),
+                places: check.places.map((place, placeIndex) => ({
+                  id: `P${String(placeIndex + 1)}`,
+                  label: lang2(place.label),
+                  focus: { path: place.range.path, side: place.range.side, start: place.range.start, end: place.range.end, role: 'context' },
+                })),
+              },
+            ],
+          },
+        }),
+  };
+}
+
+export { CHECKS_FILE_FORMAT, checksFileOf } from './review-model';
+
 /**
  * The proposal as a review definition (`dspatch-review/2`), so the existing walk window
  * shows it. The text is in the review's language; it is stored under both keys because the
@@ -939,40 +1068,10 @@ export function definitionFrom(
       ? {}
       : { attention: lang2([...walks.attention, ...walks.checks.map((check) => check.title)].map((entry) => `- ${entry}`).join('\n')) }),
     checks: walks.checks.map((check, checkIndex) => {
-      const id = `C${String(checkIndex + 1)}`;
       const linked = check.step === null ? undefined : walks.walks[check.step.walk];
       const ordinal = linked === undefined || check.step === null ? 0 : walks.walks.slice(0, check.step.walk + 1).filter((other) => other.kind === linked.kind).length;
       const stepId = linked === undefined || check.step === null ? null : `${linked.kind === 'reading' ? 'R' : 'W'}${String(ordinal)}.${String(check.step.step + 1)}`;
-      const places = check.places.map((place) => ({ path: place.range.path, side: place.range.side, start: place.range.start, end: place.range.end, role: 'context', note: lang2(place.label) }));
-      return {
-        id,
-        kind: check.kind,
-        title: lang2(check.title),
-        ...(check.detail === '' ? {} : { detail: lang2(check.detail) }),
-        ...(check.reasoning === '' ? {} : { reasoning: lang2(check.reasoning) }),
-        ...(stepId === null ? {} : { stepId }),
-        places,
-        // No step fits and there is code to show: a tour of its own, one place after another.
-        ...(stepId !== null || check.places.length === 0
-          ? {}
-          : {
-              tour: {
-                steps: [
-                  {
-                    id: `${id}.1`,
-                    title: lang2(check.title),
-                    summary: lang2(check.detail || check.title),
-                    body: lang2(check.reasoning || check.title),
-                    places: check.places.map((place, placeIndex) => ({
-                      id: `P${String(placeIndex + 1)}`,
-                      label: lang2(place.label),
-                      focus: { path: place.range.path, side: place.range.side, start: place.range.start, end: place.range.end, role: 'context' },
-                    })),
-                  },
-                ],
-              },
-            }),
-      };
+      return checkDefinition({ ...check, stepId }, `C${String(checkIndex + 1)}`);
     }),
     walks: walks.walks.map((walk, walkIndex) => {
       // Walks and readings are numbered apart: W1, W2 … and R1, R2 … are identifiers.
