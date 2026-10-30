@@ -409,9 +409,10 @@ export class ReviewPairs {
     if (side !== 'base' && side !== 'target') {
       return { error: 'The side must be base or target.' };
     }
-    const known = opened.files.some((file) => (side === 'base' ? file.oldPath : file.newPath) === filePath);
-    if (typeof filePath !== 'string' || !known) {
-      return { error: 'That file is not part of this change.' };
+    // Any file of the chosen commits, read from Git (30 October 2026): a reference may lead
+    // outside the change, and the reader may follow it there. Never the working copy.
+    if (typeof filePath !== 'string' || !safeRepositoryPath(filePath)) {
+      return { error: 'That is not a file of this repository.' };
     }
     try {
       const commit = side === 'base' ? opened.pair.base : opened.pair.target;

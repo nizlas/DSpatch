@@ -473,7 +473,12 @@ export async function readSelection(raw: unknown, files: readonly PairFile[], re
   if (!isObject(raw) || typeof raw['fileKey'] !== 'string' || !Array.isArray(raw['segments']) || typeof raw['text'] !== 'string') {
     return { error: 'No code was selected.' };
   }
-  const file = files.find((entry) => entry.key === raw['fileKey']);
+  // A file outside the change, reached through a reference: there every line is unchanged.
+  const outside = raw['fileKey'].startsWith('outside:') ? raw['fileKey'].slice('outside:'.length) : null;
+  const file: PairFile | undefined =
+    outside !== null && outside !== '' && !files.some((entry) => entry.oldPath === outside || entry.newPath === outside)
+      ? { key: raw['fileKey'], status: 'modified', oldPath: outside, newPath: outside, similarity: null, binary: false, hunks: [], added: 0, deleted: 0 }
+      : files.find((entry) => entry.key === raw['fileKey']);
   if (file === undefined) {
     return { error: `The selected file is not part of this change. ${again}` };
   }
@@ -563,7 +568,10 @@ export interface ExplainTurn {
 }
 
 /** What a follow-up asks, in the words of the plan's step deepenings, said of the code. */
-export function followUpWords(followUp: Pick<ExplainFollowUp, 'action' | 'question'>): string {
+export function followUpWords(followUp: Pick<ExplainFollowUp, 'action' | 'question'>, answered?: string): string {
+  if (followUp.action === 'simpler' && answered !== undefined) {
+    return `Explain your last answer more simply (it answered: "${answered}"): more background, a clearer cause and effect, or a concrete example. Keep the class and method names.`;
+  }
   return followUp.action === 'more'
     ? 'Tell me more about this code: the mechanism, how the code connects, and the details that matter. Do not repeat what was already explained.'
     : followUp.action === 'simpler'
@@ -591,6 +599,8 @@ export function selectionPrompt(
   thread: readonly ExplainTurn[],
   followUp: ExplainFollowUp | null,
   language: 'sv' | 'en',
+  /** For explaining one answer more simply: the question that answer answered. */
+  answered?: string,
 ): string {
   const commit = (side: LineSide): string => (side === 'base' ? `From (base, commit ${material.pair.base})` : `To (target, commit ${material.pair.target})`);
   return [
@@ -629,7 +639,7 @@ export function selectionPrompt(
         ]),
     '',
     '## What the person asks now',
-    followUp === null ? 'Explain the selected code.' : followUpWords(followUp),
+    followUp === null ? 'Explain the selected code.' : followUpWords(followUp, answered),
     '',
     `## How to answer (language: ${language === 'sv' ? 'Swedish' : 'English'})`,
     followUp === null

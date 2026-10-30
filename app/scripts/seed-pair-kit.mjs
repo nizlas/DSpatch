@@ -35,6 +35,7 @@ import { makeHistoryFixture } from '../tests/support/history-fixture';
 import { makeInsightFixture } from '../tests/support/insight-fixture';
 import { makeMarksFixture } from '../tests/support/marks-fixture';
 import { makePairFixture } from '../tests/support/pair-fixture';
+import { makeRoutingFixture } from '../tests/support/routing-fixture';
 
 const kitArgument = process.argv[2];
 if (kitArgument === undefined || kitArgument.trim() === '') {
@@ -55,8 +56,8 @@ const MODEL = option('--model');
 // kit's own pair (the app repository's two commits), as the same review opened again.
 const HISTORY = option('--history');
 const FIXTURE = option('--fixture') ?? 'pair';
-if (FIXTURE !== 'pair' && FIXTURE !== 'analysis' && FIXTURE !== 'marks' && FIXTURE !== 'flow') {
-  console.error('--fixture is pair, analysis, marks or flow');
+if (FIXTURE !== 'pair' && FIXTURE !== 'analysis' && FIXTURE !== 'marks' && FIXTURE !== 'flow' && FIXTURE !== 'routing') {
+  console.error('--fixture is pair, analysis, marks, flow or routing');
   process.exit(2);
 }
 const CLONE = option('--clone');
@@ -77,7 +78,9 @@ const fixture =
     ? makeAnalysisFixture(workspace)
     : FIXTURE === 'marks'
       ? makeMarksFixture(workspace)
-      : FIXTURE === 'flow'
+      : FIXTURE === 'routing'
+        ? makeRoutingFixture(workspace)
+        : FIXTURE === 'flow'
         ? { ...makeFlowFixture(workspace), history: makeHistoryFixture(workspace), insight: makeInsightFixture(workspace) }
         : makePairFixture(workspace);
 let cloned = null;

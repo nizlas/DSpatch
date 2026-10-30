@@ -1124,6 +1124,11 @@ export interface DiscussionTurnView {
   readonly dspatchRunId: string | null;
   /** Stop was pressed and no end has been confirmed yet. */
   readonly stopping: boolean;
+  /**
+   * What the agent is doing now, from what the provider reports (30 October 2026): waiting,
+   * the file it reads, a search, writing. Absent when nothing more specific is known.
+   */
+  readonly activity?: string;
 }
 
 /** One attempt that has not reached a confirmed end, as the window shows it. */
@@ -1153,7 +1158,9 @@ export type ReviewDiscussionEvent =
   | { readonly kind: 'message'; readonly message: DiscussionMessage }
   /** More text for an answer that is arriving. */
   | { readonly kind: 'delta'; readonly messageId: string; readonly text: string }
-  | { readonly kind: 'status'; readonly status: DiscussionStatusView; readonly note?: string };
+  | { readonly kind: 'status'; readonly status: DiscussionStatusView; readonly note?: string }
+  /** What the agent answering this question is doing now; never stored. */
+  | { readonly kind: 'activity'; readonly questionId: string; readonly activity: string };
 
 /** What the window sends with a question. The envelope is built in main from the subject. */
 export interface DiscussionSendInput {

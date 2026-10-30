@@ -507,4 +507,46 @@ describe('DSP-152: explaining selected code', () => {
     const notRoot = await presentationJobs().request(open.key, { kind: 'explain', provider: 'claude', model: 'opus', followUp: { root: more.id, action: 'more' } });
     assert.ok(isPairError(notRoot), 'a follow-up follows the first explanation, not another follow-up');
   });
+
+  it("asks the person's own question about a selection, also in a file outside the change, and marks nothing (30 October 2026)", async () => {
+    const statusBefore = JSON.stringify((pairs.state(open.key) as PairRecord).marks);
+    const own = await presentationJobs().request(open.key, {
+      ...request({ fileKey: 'outside:src/pricing.ts', layout: 'unified', segments: [{ side: 'target', path: 'src/pricing.ts', start: 61, end: 61, from: 0, to: 6 }], text: 'export' }),
+      ask: 'What does this module give the checkout?',
+    });
+    assert.ok(!isPairError(own), JSON.stringify(own));
+    assert.equal(own.asked, 'What does this module give the checkout?');
+    assert.deepEqual(own.selection?.segments.map((segment) => [segment.path, segment.side, segment.start, segment.kind, segment.text]), [['src/pricing.ts', 'target', 61, 'unchanged', 'export']]);
+    const job = await settled(open.key, own.id);
+    assert.equal(job.state, 'done', job.note);
+    // The question is what is asked now, with the selection exactly; not "explain the selected code".
+    assert.ok(job.answer?.answer.includes('What does this module give the checkout?') && job.answer.answer.includes('building on 0 earlier'), job.answer?.answer);
+    // A file outside the change is refused under a key that does not name it, and an empty question is refused.
+    const misnamed = await presentationJobs().request(open.key, request({ fileKey: 'outside:src/other.ts', layout: 'unified', segments: [{ side: 'target', path: 'src/pricing.ts', start: 61, end: 61, from: 0, to: 6 }], text: 'export' }));
+    assert.ok(isPairError(misnamed), 'a selection must be in the file its key names');
+    const blank = await presentationJobs().request(open.key, { ...request({ fileKey, layout: 'split', segments: [{ side: 'target', path: 'src/checkout.ts', start: 4, end: 4, from: 18, to: 36 }], text: 'findDiscount(code)' }), ask: '  ' });
+    assert.ok(isPairError(blank));
+    assert.equal(JSON.stringify((pairs.state(open.key) as PairRecord).marks), statusBefore, 'asking marks nothing');
+  });
+
+  it("explains one answer more simply with that answer's own question and the answers before it only", async () => {
+    const root = await presentationJobs().request(open.key, request({ fileKey, layout: 'split', segments: [{ side: 'target', path: 'src/checkout.ts', start: 4, end: 4, from: 18, to: 36 }], text: 'findDiscount(code)' }));
+    assert.ok(!isPairError(root));
+    await settled(open.key, root.id);
+    const first = await presentationJobs().request(open.key, { kind: 'explain', provider: 'claude', model: 'opus', followUp: { root: root.id, action: 'question', question: 'First question?' } });
+    assert.ok(!isPairError(first));
+    await settled(open.key, first.id);
+    const second = await presentationJobs().request(open.key, { kind: 'explain', provider: 'claude', model: 'opus', followUp: { root: root.id, action: 'question', question: 'Second question?' } });
+    assert.ok(!isPairError(second));
+    await settled(open.key, second.id);
+    const simpler = await presentationJobs().request(open.key, { kind: 'explain', provider: 'claude', model: 'opus', followUp: { root: root.id, action: 'simpler', of: first.id } });
+    assert.ok(!isPairError(simpler), JSON.stringify(simpler));
+    assert.equal(simpler.followUp?.of, first.id);
+    const job = await settled(open.key, simpler.id);
+    // The thread it is given ends with the first follow-up: the root's answer and that one.
+    assert.ok(job.answer?.answer.includes('First question?') && job.answer.answer.includes('building on 2 earlier'), job.answer?.answer);
+    assert.ok(!(job.answer?.answer ?? '').includes('Second question?'), job.answer?.answer);
+    const foreign = await presentationJobs().request(open.key, { kind: 'explain', provider: 'claude', model: 'opus', followUp: { root: root.id, action: 'simpler', of: 'job-not-here' } });
+    assert.ok(isPairError(foreign));
+  });
 });

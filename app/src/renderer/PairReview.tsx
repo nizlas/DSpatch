@@ -29,6 +29,14 @@ import {
   splitRowsOf,
   stripStatusOf,
   unifiedRowsOf,
+  expandGap,
+  gapHiding,
+  MORE_LINES,
+  NO_EXPANSION,
+  CONTEXT_LINES,
+  outsideFileKey,
+  type FileExpansion,
+  type GapRow,
   type ChangedLine,
   type DiffLocation,
   type AgentJob,
@@ -795,7 +803,7 @@ function DiffReview({
    * no usable choice does the picker ask, and the selection waits for it. Never another
    * agent or a fallback model.
    */
-  type ExplainAsk = Pick<AgentJobRequestInput, 'selection' | 'followUp'>;
+  type ExplainAsk = Pick<AgentJobRequestInput, 'selection' | 'followUp' | 'ask'>;
   const [explainActive, setExplainActive] = useState<string | null>(null);
   const [explainOpen, setExplainOpen] = useState(false);
   const [explainProblem, setExplainProblem] = useState<string | null>(null);
@@ -828,6 +836,7 @@ function DiffReview({
   const showAt = (location: DiffLocation): void => {
     const file = open.files.find((candidate) => fileLocationMatch(candidate, location));
     if (file !== undefined) {
+      setAway([]);
       openFile(file.key);
       setTarget((before) => ({ location, nonce: (before?.nonce ?? 0) + 1 }));
     }
@@ -836,9 +845,50 @@ function DiffReview({
     const first = selection.segments[0];
     const file = open.files.find((candidate) => candidate.key === selection.fileKey);
     if (first !== undefined && file !== undefined) {
-      openFile(file.key);
-      setTarget((before) => ({ location: { side: first.side, path: first.path, line: first.start }, nonce: (before?.nonce ?? 0) + 1 }));
+      showAt({ side: first.side, path: first.path, line: first.start });
+    } else if (first !== undefined) {
+      // Asked about in a file outside the change: shown where it was, as a reference is.
+      goAway({ kind: 'lines', side: first.side, path: first.path, start: first.start, end: selection.segments.at(-1)?.end ?? first.end });
     }
+  };
+
+  /*
+   * How each file is opened and where it was read, kept while the review is open, so a
+   * file comes back as it was left, in either layout (30 October 2026).
+   */
+  const [expansions, setExpansions] = useState<ReadonlyMap<string, FileExpansion>>(new Map());
+  const readings = useRef(new Map<string, ReadingSpot>());
+  const expansionOf = (key: string): FileExpansion => expansions.get(key) ?? NO_EXPANSION;
+  const setExpansion = useCallback((key: string, expansion: FileExpansion) => {
+    setExpansions((before) => new Map(before).set(key, expansion));
+  }, []);
+
+  /*
+   * References followed from answers (30 October 2026): each a place of its own, one after
+   * another. Back returns through them to the file's diff, each as it was left.
+   */
+  const [away, setAway] = useState<readonly AwayEntry[]>([]);
+  const goAway = (location: LineRange): void => {
+    setTarget(null);
+    setAway((before) => [...before, { location, more: { above: 0, below: 0 }, whole: false, reading: null }]);
+  };
+  const awayHere = away.at(-1) ?? null;
+  const awayKey = awayHere === null ? '' : `${String(away.length)}:${awayHere.location.side}:${awayHere.location.path}:${String(awayHere.location.start)}`;
+
+  /*
+   * One's own question about selected code (30 October 2026): the selection is quoted, the
+   * question written beside it, and only *Ask* sends it. A new selection replaces the quote;
+   * another file or place drops it, so no earlier quote follows along unseen.
+   */
+  const [quote, setQuote] = useState<{ readonly request: CodeSelectionRequest; readonly open: boolean } | null>(null);
+  const [askText, setAskText] = useState('');
+  useEffect(() => {
+    setQuote(null);
+  }, [fileKey, awayKey]);
+  const askAbout = (request: CodeSelectionRequest): void => {
+    setQuote({ request, open: true });
+    setExplainOpen(true);
+    setExplainProblem(null);
   };
   const stopJob = async (job: AgentJob): Promise<void> => {
     const answer = await bridge.cancelJob(open.key, job.id).catch((error: unknown) => ({ error: requestFailure(error) }));
@@ -846,6 +896,54 @@ function DiffReview({
       setProblem(answer.error);
     }
   };
+
+  /** The explanations beside a code view, with the question being written about a selection. */
+  const panel = (shownKey: string): JSX.Element => (
+    <ExplainPanel
+      pairKey={open.key}
+      threads={threads}
+      fileKey={shownKey}
+      active={explainActive}
+      open={explainOpen}
+      picking={awaitingAgent !== null}
+      busy={explaining}
+      problem={explainProblem}
+      onToggle={() => setExplainOpen((value) => !value)}
+      onActivate={(root) => {
+        setExplainActive(root);
+        const thread = threads.find((entry) => entry.root.id === root);
+        if (thread !== undefined) {
+          showSelection(thread.root.selection);
+        }
+      }}
+      onShowSelection={showSelection}
+      onShowRange={goAway}
+      onFollowUp={(root, action, question, of) =>
+        void explain({ followUp: { root, action, ...(action === 'question' ? { question } : {}), ...(of === undefined ? {} : { of }) } })
+      }
+      quote={quote?.request ?? null}
+      askText={askText}
+      onAskText={setAskText}
+      onClearQuote={() => setQuote(null)}
+      onAsk={() => {
+        const asked = quote;
+        const question = askText.trim();
+        if (asked === null || question === '') {
+          return;
+        }
+        setQuote(null);
+        setAskText('');
+        void explain({ selection: asked.request, ask: question });
+      }}
+      onPick={(choice) => {
+        if (awaitingAgent !== null) {
+          void explainWith(awaitingAgent, choice);
+        }
+      }}
+      onCancelPick={() => setAwaitingAgent(null)}
+      onStop={(job) => void stopJob(job)}
+    />
+  );
 
   const setRequirement = async (requirement: ReviewRequirement): Promise<void> => {
     const answer = await bridge.setRequirement(open.key, requirement);
@@ -965,6 +1063,13 @@ function DiffReview({
           findingPlaces: (job.result?.findings ?? []).map((finding) => ({ severity: finding.severity, location: finding.location })),
           material: job.material ?? null,
           investigation: job.investigation ?? null,
+          // 30 October 2026: what an explanation was about, and the person's own question.
+          selection: job.selection?.segments.map((segment) => ({ side: segment.side, path: segment.path, start: segment.start, end: segment.end, from: segment.from, to: segment.to, kind: segment.kind, text: segment.text })) ?? null,
+          selectionFile: job.selection?.fileKey ?? null,
+          asked: job.asked ?? null,
+          followUp: job.followUp ?? null,
+          refs: job.answer?.references.map((reference) => `${reference.range.side}:${reference.range.path}:${String(reference.range.start)}-${String(reference.range.end)}`) ?? [],
+          activity: job.activity ?? null,
         })),
         agentReviewsShown: document.querySelectorAll('[data-ev="agent-review"]').length,
         findingsShown: [...document.querySelectorAll<HTMLElement>('[data-ev="agent-finding"]')].map((item) => item.textContent ?? ''),
@@ -989,6 +1094,46 @@ function DiffReview({
           .map((cell) => ({ side: cell.dataset['codeSide'] ?? '', line: Number(cell.dataset['codeLine']), length: (cell.textContent ?? '').length, height: Math.round(cell.getBoundingClientRect().height) })),
         fileRows: [...document.querySelectorAll<HTMLElement>('[data-file-row]')].map((row) => (row.innerText || '').replace(/\s+/g, ' ').trim()),
         targetShown: document.querySelector('.rv-pair-target') !== null,
+        // 30 October 2026: what is drawn of the file, the folds and where the reader is.
+        context: ((): unknown => {
+          const root = document.querySelector<HTMLElement>('.rv-pair-diff');
+          if (root === null) {
+            return null;
+          }
+          const top = root.getBoundingClientRect().top;
+          const cells = [...root.querySelectorAll<HTMLElement>('td[data-code-line]')];
+          const first = cells.find((cell) => cell.getBoundingClientRect().bottom > top + 1);
+          const quoteMark = CSS.highlights?.get('rv-quote');
+          return {
+            // Each drawn code cell as side:line, with the From line an unchanged unified row also is.
+            cells: cells.map((cell) => `${cell.dataset['codeSide'] === 'base' ? 'b' : 't'}${cell.dataset['codeLine'] ?? ''}${cell.dataset['codeAlso'] === undefined ? '' : `=b${cell.dataset['codeAlso'].split(':')[1] ?? ''}`}`),
+            gaps: [...root.querySelectorAll<HTMLElement>('tr.rv-pair-gap')].map((row) => ({ id: row.dataset['gap'] ?? '', text: (row.textContent ?? '').replace(/\s+/g, ' ').trim() })),
+            whole: document.querySelector('[data-ev="pair-whole-file"]')?.getAttribute('aria-pressed') === 'true',
+            firstVisible:
+              first === undefined
+                ? null
+                : { side: first.dataset['codeSide'] ?? '', line: Number(first.dataset['codeLine']), offset: Math.round(first.getBoundingClientRect().top - top) },
+            // The cells in view and how far below the top of the view each is.
+            tops: cells
+              .filter((cell) => {
+                const box = cell.getBoundingClientRect();
+                return box.bottom > top && box.top < top + root.clientHeight;
+              })
+              .slice(0, 160)
+              .map((cell) => [`${cell.dataset['codeSide'] === 'base' ? 'b' : 't'}${cell.dataset['codeLine'] ?? ''}`, Math.round(cell.getBoundingClientRect().top - top)]),
+            scrollTop: Math.round(root.scrollTop),
+            scrollHeight: root.scrollHeight,
+            clientHeight: root.clientHeight,
+            away: (document.querySelector('[data-ev="away-bar"]')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+            refLines: [...root.querySelectorAll<HTMLElement>('td.rv-ref-line')].map((cell) => Number(cell.dataset['codeLine'])),
+            quote: (document.querySelector('[data-ev="explain-quote"]')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+            askOpen: document.querySelector('[data-ev="explain-ask-own"]') !== null,
+            askOffered: document.querySelector('[data-ev="ask-this"]') !== null,
+            quoteMark: quoteMark === undefined ? [] : [...quoteMark].map((range) => (range as Range).toString()),
+            activity: [...document.querySelectorAll('.rv-explain .rv-agent-activity')].map((node) => node.textContent ?? ''),
+            focused: document.activeElement?.getAttribute('data-ev') ?? document.activeElement?.tagName ?? '',
+          };
+        })(),
       }),
     };
     return () => {
@@ -1097,6 +1242,36 @@ function DiffReview({
             }
             onStop={(job) => void stopJob(job)}
           />
+        ) : awayHere !== null ? (
+          <ReferenceView
+            key={awayKey}
+            bridge={bridge}
+            pairKey={open.key}
+            pair={open.pair}
+            entry={awayHere}
+            inChange={open.files.find((file) => (awayHere.location.side === 'base' ? file.oldPath : file.newPath) === awayHere.location.path) ?? null}
+            back={(() => {
+              const before = away.at(-2);
+              return before === undefined
+                ? shownPath(current).split('/').pop() ?? shownPath(current)
+                : `${before.location.path.split('/').pop() ?? ''}:${before.location.start === before.location.end ? String(before.location.start) : `${String(before.location.start)}–${String(before.location.end)}`}`;
+            })()}
+            onBack={() => setAway((before) => before.slice(0, -1))}
+            onChange={((at: number) => (entry: AwayEntry) => setAway((before) => before.map((value, index) => (index === at ? entry : value))))(away.length - 1)}
+            onShowInDiff={
+              open.files.some((file) => fileLocationMatch(file, { side: awayHere.location.side, path: awayHere.location.path, line: awayHere.location.start }))
+                ? () => showAt({ side: awayHere.location.side, path: awayHere.location.path, line: awayHere.location.start })
+                : null
+            }
+            explained={threads.find((entry) => entry.root.id === explainActive)?.root.selection ?? null}
+            onExplain={(selection) => void explain({ selection })}
+            quote={quote}
+            onAsk={askAbout}
+            explainPanel={panel(
+              open.files.find((file) => (awayHere.location.side === 'base' ? file.oldPath : file.newPath) === awayHere.location.path)?.key ??
+                outsideFileKey(awayHere.location.path),
+            )}
+          />
         ) : (
           <FileDiff
             key={current.key}
@@ -1114,37 +1289,13 @@ function DiffReview({
             onStop={(job) => void stopJob(job)}
             explained={threads.find((entry) => entry.root.id === explainActive)?.root.selection ?? null}
             onExplain={(selection) => void explain({ selection })}
-            explainPanel={
-              <ExplainPanel
-                pairKey={open.key}
-                threads={threads}
-                fileKey={current.key}
-                active={explainActive}
-                open={explainOpen}
-                picking={awaitingAgent !== null}
-                busy={explaining}
-                problem={explainProblem}
-                canShow={(range) => open.files.some((file) => fileLocationMatch(file, { side: range.side, path: range.path, line: range.start }))}
-                onToggle={() => setExplainOpen((value) => !value)}
-                onActivate={(root) => {
-                  setExplainActive(root);
-                  const thread = threads.find((entry) => entry.root.id === root);
-                  if (thread !== undefined) {
-                    showSelection(thread.root.selection);
-                  }
-                }}
-                onShowSelection={showSelection}
-                onShowRange={(range) => showAt({ side: range.side, path: range.path, line: range.start })}
-                onFollowUp={(root, action, question) => void explain({ followUp: { root, action, ...(action === 'question' ? { question } : {}) } })}
-                onPick={(choice) => {
-                  if (awaitingAgent !== null) {
-                    void explainWith(awaitingAgent, choice);
-                  }
-                }}
-                onCancelPick={() => setAwaitingAgent(null)}
-                onStop={(job) => void stopJob(job)}
-              />
-            }
+            explainPanel={panel(current.key)}
+            expansion={expansionOf(current.key)}
+            onExpansion={(expansion) => setExpansion(current.key, expansion)}
+            reading={readings.current.get(current.key) ?? null}
+            onReading={(spot) => readings.current.set(current.key, spot)}
+            quote={quote}
+            onAsk={askAbout}
             onBack={() => openFile(null)}
             onPrevious={currentIndex > 0 ? () => openFile(open.files[currentIndex - 1]?.key ?? null) : null}
             onNext={currentIndex < open.files.length - 1 ? () => openFile(open.files[currentIndex + 1]?.key ?? null) : null}
@@ -1679,6 +1830,269 @@ function codeCellOf(root: HTMLElement, side: LineSide, line: number): HTMLElemen
   );
 }
 
+/**
+ * Where the reader is in a file's diff (30 October 2026): a line of one side and how far
+ * below the top of the view it is. A line is the same line in either layout and however
+ * much is opened around it, so the place survives both.
+ */
+export interface ReadingSpot {
+  readonly side: LineSide;
+  readonly line: number;
+  readonly offset: number;
+}
+
+/** The first code line at or below the top of the view (or of one row), as a spot. */
+function spotAt(root: HTMLElement, only?: Element | null): ReadingSpot | null {
+  const top = root.getBoundingClientRect().top;
+  const rows = only === undefined ? [...root.querySelectorAll('tr')] : only === null ? [] : [only];
+  for (const row of rows) {
+    const box = row.getBoundingClientRect();
+    if (only === undefined && box.bottom <= top + 1) {
+      continue;
+    }
+    const cell = row.querySelector<HTMLElement>('td[data-code-line]');
+    const line = Number(cell?.dataset['codeLine']);
+    if (cell !== null && cell !== undefined && Number.isInteger(line) && line > 0) {
+      return { side: cell.dataset['codeSide'] === 'base' ? 'base' : 'target', line, offset: box.top - top };
+    }
+  }
+  return null;
+}
+
+/** Scroll so that a spot's line is as far below the top as it was. */
+function restoreSpot(root: HTMLElement, spot: ReadingSpot): boolean {
+  const row = codeCellOf(root, spot.side, spot.line)?.closest('tr');
+  if (row === null || row === undefined) {
+    return false;
+  }
+  root.scrollTop += row.getBoundingClientRect().top - root.getBoundingClientRect().top - spot.offset;
+  return true;
+}
+
+type FoundSelection = { readonly request: CodeSelectionRequest; readonly rect: DOMRect | null; readonly firstCell: HTMLElement };
+
+/**
+ * DSP-152: what is offered for code selected with the mouse (or the keyboard), in every
+ * code view of the diff window (30 October 2026): *Explain this* and *Ask…* beside the
+ * selection, the same in a context menu, and Ctrl+Shift+E. Selecting never selects lines
+ * for review and never marks anything; the actions leave the selection in place. While a
+ * question is being written (`quoteOpen`), a new selection becomes what it is about.
+ */
+function useSelectionOffer({
+  scroller,
+  wrap,
+  read,
+  onExplain,
+  onAsk,
+  quoteOpen,
+  beforeExplain,
+}: {
+  readonly scroller: { readonly current: HTMLDivElement | null };
+  readonly wrap: { readonly current: HTMLDivElement | null };
+  /** The selection in this view, read now; `null` when nothing in its code is selected. */
+  readonly read: () => FoundSelection | null;
+  readonly onExplain: (request: CodeSelectionRequest) => void;
+  readonly onAsk: (request: CodeSelectionRequest) => void;
+  readonly quoteOpen: boolean;
+  readonly beforeExplain?: (request: CodeSelectionRequest) => void;
+}): {
+  readonly readOffer: (menu: boolean, at?: { readonly x: number; readonly y: number }) => boolean;
+  readonly offered: boolean;
+  readonly handlers: {
+    readonly onMouseDown: (event: ReactMouseEvent) => void;
+    readonly onMouseUp: (event: ReactMouseEvent) => void;
+    readonly onKeyUp: (event: ReactKeyboardEvent) => void;
+    readonly onContextMenu: (event: ReactMouseEvent) => void;
+  };
+  readonly view: JSX.Element | null;
+  readonly explainNow: (request: CodeSelectionRequest) => void;
+} {
+  const dragging = useRef(false);
+  const [offer, setOffer] = useState<{ readonly request: CodeSelectionRequest; readonly x: number; readonly y: number; readonly menu: boolean } | null>(null);
+  const menuFirst = useRef<HTMLButtonElement | null>(null);
+  const readOffer = (menu: boolean, at?: { readonly x: number; readonly y: number }): boolean => {
+    const box = wrap.current?.getBoundingClientRect();
+    const found = scroller.current === null || box === undefined ? null : read();
+    if (found === null || box === undefined) {
+      setOffer(null);
+      return false;
+    }
+    const point = at ?? { x: found.rect?.right ?? box.left, y: (found.rect?.bottom ?? box.top) + 4 };
+    setOffer({ request: found.request, x: Math.max(4, Math.min(point.x - box.left, box.width - 200)), y: Math.max(4, Math.min(point.y - box.top, box.height - 90)), menu });
+    if (quoteOpen && !menu) {
+      onAsk(found.request);
+    }
+    return true;
+  };
+  const askNow = (request: CodeSelectionRequest): void => {
+    // The panel opening narrows the code: the selection is kept where it is, as for Explain this.
+    beforeExplain?.(request);
+    setOffer(null);
+    onAsk(request);
+  };
+  const explainNow = (request: CodeSelectionRequest): void => {
+    beforeExplain?.(request);
+    setOffer(null);
+    onExplain(request);
+  };
+  useEffect(() => {
+    const changed = (): void => {
+      if (!dragging.current) {
+        const chosen = window.getSelection();
+        if (chosen === null || chosen.isCollapsed) {
+          setOffer(null);
+        }
+      }
+    };
+    const key = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setOffer((before) => (before?.menu === true ? null : before));
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'e') {
+        const found = scroller.current === null ? null : read();
+        if (found !== null) {
+          event.preventDefault();
+          explainNow(found.request);
+        }
+      }
+    };
+    document.addEventListener('selectionchange', changed);
+    window.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('selectionchange', changed);
+      window.removeEventListener('keydown', key);
+    };
+  });
+  useEffect(() => {
+    if (offer?.menu === true) {
+      menuFirst.current?.focus({ preventScroll: true });
+    }
+  }, [offer]);
+  const handlers = {
+    onMouseDown: (event: ReactMouseEvent): void => {
+      if (event.button !== 0) {
+        return;
+      }
+      dragging.current = true;
+      setOffer(null);
+      // Side by side, a selection stays in the column it starts in.
+      const table = scroller.current?.querySelector<HTMLElement>('table.rv-pair-table-split');
+      const cell = (event.target as Element).closest<HTMLElement>('td[data-code-side]');
+      if (table !== null && table !== undefined) {
+        table.dataset['selectSide'] = cell?.dataset['codeSide'] ?? '';
+      }
+    },
+    onMouseUp: (event: ReactMouseEvent): void => {
+      // A right button's release is followed by the context menu, which this would replace.
+      if (event.button !== 0) {
+        return;
+      }
+      dragging.current = false;
+      // After the browser has settled the selection for this release.
+      setTimeout(() => {
+        readOffer(false);
+      }, 0);
+    },
+    onKeyUp: (event: ReactKeyboardEvent): void => {
+      if (event.shiftKey) {
+        readOffer(false);
+      }
+    },
+    onContextMenu: (event: ReactMouseEvent): void => {
+      const keyboard = event.clientX === 0 && event.clientY === 0;
+      if (readOffer(true, keyboard ? undefined : { x: event.clientX, y: event.clientY })) {
+        event.preventDefault();
+      }
+    },
+  };
+  const view =
+    offer === null ? null : offer.menu ? (
+      <div className="rv-explain-menu" role="menu" data-ev="explain-menu" style={{ left: offer.x, top: offer.y }}>
+        <button type="button" role="menuitem" ref={menuFirst} data-ev="explain-menu-explain" onMouseDown={(event) => event.preventDefault()} onClick={() => explainNow(offer.request)}>
+          Explain this
+        </button>
+        <button type="button" role="menuitem" data-ev="explain-menu-ask" onMouseDown={(event) => event.preventDefault()} onClick={() => askNow(offer.request)}>
+          Ask about this…
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          data-ev="explain-menu-copy"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            void navigator.clipboard?.writeText(offer.request.text).catch(() => undefined);
+            setOffer(null);
+          }}
+        >
+          Copy
+        </button>
+      </div>
+    ) : (
+      <div className="rv-pair-offer" style={{ left: offer.x, top: offer.y }}>
+        <button
+          type="button"
+          className="rv-explain-this"
+          data-ev="explain-this"
+          title="Explain the selected code (Ctrl+Shift+E). Marks nothing."
+          // Pressing it must not take the selection away.
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => explainNow(offer.request)}
+        >
+          Explain this
+        </button>
+        <button
+          type="button"
+          className="rv-explain-this"
+          data-ev="ask-this"
+          title="Write your own question about the selected code. Sends nothing yet."
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => askNow(offer.request)}
+        >
+          Ask…
+        </button>
+      </div>
+    );
+  return { readOffer, offered: offer !== null && !offer.menu, handlers, view, explainNow };
+}
+
+/** Code selected in a view, marked under a highlight name, without touching the DOM. */
+function useMarked(
+  name: string,
+  scroller: { readonly current: HTMLDivElement | null },
+  selection: { readonly fileKey: string; readonly segments: readonly { readonly side: LineSide; readonly start: number; readonly end: number; readonly from: number; readonly to: number }[] } | null,
+  fileKey: string,
+  redraw: readonly unknown[],
+): void {
+  useLayoutEffect(() => {
+    const registry = CSS.highlights;
+    const root = scroller.current;
+    if (registry === undefined) {
+      return;
+    }
+    if (selection === null || selection.fileKey !== fileKey || root === null) {
+      registry.delete(name);
+      return;
+    }
+    const ranges: Range[] = [];
+    for (const segment of selection.segments) {
+      for (let line = segment.start; line <= segment.end; line += 1) {
+        const cell = codeCellOf(root, segment.side, line);
+        const length = cell?.textContent?.length ?? 0;
+        const found = cell === null ? null : rangeInCell(cell, line === segment.start ? segment.from : 0, line === segment.end ? Math.min(segment.to, length) : length);
+        if (found !== null) {
+          ranges.push(found);
+        }
+      }
+    }
+    registry.set(name, new Highlight(...ranges));
+    return () => {
+      registry.delete(name);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, selection, fileKey, ...redraw]);
+}
+
 function FileDiff({
   bridge,
   pairKey,
@@ -1698,11 +2112,30 @@ function FileDiff({
   explained,
   onExplain,
   explainPanel,
+  expansion,
+  onExpansion,
+  reading,
+  onReading,
+  quote,
+  onAsk,
 }: {
   /** DSP-152: the selection of the explanation shown, drawn marked in the code. */
   readonly explained: CodeSelection | null;
   readonly onExplain: (selection: CodeSelectionRequest) => void;
   readonly explainPanel: JSX.Element;
+  /** How far this file is opened, kept by the review for as long as it is open. */
+  readonly expansion: FileExpansion;
+  readonly onExpansion: (expansion: FileExpansion) => void;
+  /** Where the reader last was in this file, to come back to. */
+  readonly reading: ReadingSpot | null;
+  readonly onReading: (spot: ReadingSpot) => void;
+  /**
+   * Code selected to ask one's own question about (30 October 2026), drawn marked while
+   * the question is written; `open` while it is. Then a new selection replaces it.
+   */
+  readonly quote: { readonly request: CodeSelectionRequest; readonly open: boolean } | null;
+  /** Ask about the selection: opens the question with it quoted, and sends nothing. */
+  readonly onAsk: (request: CodeSelectionRequest) => void;
   readonly bridge: ReviewPairBridge;
   readonly pairKey: string;
   readonly file: PairFile;
@@ -1729,7 +2162,6 @@ function FileDiff({
   const target = ownTarget ?? targetProp;
   const [delegating, setDelegating] = useState<DelegationScope | null>(null);
   const fileJobs = [...jobs].reverse().filter((job) => job.kind === 'review' && touchesFile(job, file));
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const anchor = useRef<number | null>(null);
   const scroller = useRef<HTMLDivElement | null>(null);
@@ -1771,23 +2203,32 @@ function FileDiff({
     };
   }, [bridge, pairKey, file]);
 
-  // A place asked for from a walk is always shown, even inside a folded run.
+  // A place asked for from a walk or an answer is always shown: the run hiding it is opened.
   useEffect(() => {
-    if (target === null || text === null || text.base === null) {
+    if (target === null || text === null || text.base === null || text.target === null) {
       return;
     }
-    setExpanded(new Set(['*']));
-  }, [target, text]);
+    const hiding = gapHiding(unifiedRowsOf(file, text.base.length, text.target.length, expansion), target.location.side, target.location.line);
+    if (hiding !== null) {
+      onExpansion(expandGap(expansion, hiding, 'all'));
+    }
+  }, [target, text, file, expansion, onExpansion]);
 
+  // Brought into view once per request, not again whenever more is opened around it.
+  const shownTarget = useRef<number | null>(null);
   useEffect(() => {
-    if (target === null) {
+    if (target === null || shownTarget.current === target.nonce) {
       return;
     }
     const frame = requestAnimationFrame(() => {
-      scroller.current?.querySelector('.rv-pair-target')?.scrollIntoView({ block: 'center' });
+      const found = scroller.current?.querySelector('.rv-pair-target');
+      if (found !== null && found !== undefined) {
+        found.scrollIntoView({ block: 'center' });
+        shownTarget.current = target.nonce;
+      }
     });
     return () => cancelAnimationFrame(frame);
-  }, [target, text, layout, expanded]);
+  }, [target, text, layout, expansion]);
 
   const statuses = useMemo(() => lineStatusesOf(file, record), [file, record]);
   const changed = useMemo(() => changedLinesOf(file), [file]);
@@ -1819,15 +2260,58 @@ function FileDiff({
 
   const baseLength = text?.base?.length ?? 0;
   const targetLength = text?.target?.length ?? 0;
-  const allExpanded = expanded.has('*');
   const unified = useMemo(
-    () => (text === null || text.binary ? [] : unifiedRowsOf(file, baseLength, targetLength, allExpanded ? new Set(['*']) : expanded)),
-    [file, text, baseLength, targetLength, expanded, allExpanded],
+    () => (text === null || text.binary ? [] : unifiedRowsOf(file, baseLength, targetLength, expansion)),
+    [file, text, baseLength, targetLength, expansion],
   );
   const split = useMemo(
-    () => (text === null || text.binary ? [] : splitRowsOf(file, baseLength, targetLength, allExpanded ? new Set(['*']) : expanded)),
-    [file, text, baseLength, targetLength, expanded, allExpanded],
+    () => (text === null || text.binary ? [] : splitRowsOf(file, baseLength, targetLength, expansion)),
+    [file, text, baseLength, targetLength, expansion],
   );
+
+  /*
+   * Opening code above what is read keeps what is read where it is (30 October 2026): the
+   * line below an opened run, or the first line in view, is held at its place on screen.
+   */
+  const hold = useRef<ReadingSpot | null>(null);
+  useLayoutEffect(() => {
+    const root = scroller.current;
+    const spot = hold.current;
+    if (root !== null && spot !== null) {
+      hold.current = null;
+      restoreSpot(root, spot);
+    }
+  }, [unified, split, layout]);
+  const openGap = (gap: GapRow, how: 'down' | 'up' | 'all', row: Element | null): void => {
+    const root = scroller.current;
+    // Lines shown downwards appear below what is read; upwards or all, above the next change.
+    hold.current = root === null || how === 'down' ? null : spotAt(root, row?.nextElementSibling ?? null);
+    onExpansion(expandGap(expansion, gap, how));
+  };
+  const setWhole = (whole: boolean): void => {
+    const root = scroller.current;
+    hold.current = root === null ? null : spotAt(root);
+    onExpansion({ ...expansion, whole });
+  };
+  const changeLayout = (next: 'split' | 'unified'): void => {
+    const root = scroller.current;
+    if (next !== layout) {
+      hold.current = root === null ? null : spotAt(root);
+    }
+    onLayout(next);
+  };
+  // Back in a file within the review: where it was left, once its lines are drawn.
+  const restored = useRef(false);
+  useLayoutEffect(() => {
+    const root = scroller.current;
+    if (restored.current || root === null || text === null) {
+      return;
+    }
+    restored.current = true;
+    if (reading !== null && targetProp === null) {
+      restoreSpot(root, reading);
+    }
+  });
 
   // The changed lines in the order drawn, which is the order a shift-click spans.
   const order = useMemo(() => {
@@ -1989,11 +2473,28 @@ function FileDiff({
     return line !== null && path !== null && selected.has(lineKey({ side, path, line }));
   };
 
-  const gapRow = (id: string, count: number, columns: number): JSX.Element => (
-    <tr key={id} className="rv-pair-gap">
+  /*
+   * A folded run of unchanged lines (30 October 2026): more lines from the change above it
+   * or from the change below it, or all of it. Opened lines are unchanged code, not counted.
+   */
+  const gapRow = (gap: GapRow, columns: number): JSX.Element => (
+    <tr key={gap.id} className="rv-pair-gap" data-gap={gap.id}>
       <td colSpan={columns}>
-        <button type="button" onClick={() => setExpanded((before) => new Set([...before, id]))}>
-          ⋯ {count} unchanged {count === 1 ? 'line' : 'lines'}
+        <span className="rv-pair-gap-count">
+          ⋯ {gap.count} unchanged {gap.count === 1 ? 'line' : 'lines'}
+        </span>
+        {gap.down && gap.count > MORE_LINES && (
+          <button type="button" data-ev="gap-down" title="Show more of the lines below the change above" onClick={(event) => openGap(gap, 'down', event.currentTarget.closest('tr'))}>
+            ↓ Show {MORE_LINES} more lines
+          </button>
+        )}
+        {gap.up && gap.count > MORE_LINES && (
+          <button type="button" data-ev="gap-up" title="Show more of the lines above the change below" onClick={(event) => openGap(gap, 'up', event.currentTarget.closest('tr'))}>
+            ↑ Show {MORE_LINES} more lines
+          </button>
+        )}
+        <button type="button" data-ev="gap-all" onClick={(event) => openGap(gap, 'all', event.currentTarget.closest('tr'))}>
+          Show all {gap.count}
         </button>
       </td>
     </tr>
@@ -2007,9 +2508,6 @@ function FileDiff({
    * lines for review and never marks anything; the action leaves the selection in place.
    */
   const wrap = useRef<HTMLDivElement | null>(null);
-  const dragging = useRef(false);
-  const [offer, setOffer] = useState<{ readonly request: CodeSelectionRequest; readonly x: number; readonly y: number; readonly menu: boolean } | null>(null);
-  const menuFirst = useRef<HTMLButtonElement | null>(null);
   // The row the reader is at, kept where it is when the diff's width changes.
   const anchorRow = useRef<{ readonly row: Element; readonly top: number } | null>(null);
   const rememberRow = (row?: Element | null): void => {
@@ -2020,6 +2518,10 @@ function FileDiff({
     const box = root.getBoundingClientRect();
     const chosen = row ?? [...root.querySelectorAll('tr')].find((entry) => entry.getBoundingClientRect().bottom > box.top + 1);
     anchorRow.current = chosen === undefined || chosen === null ? null : { row: chosen, top: chosen.getBoundingClientRect().top - box.top };
+    const spot = spotAt(root);
+    if (spot !== null) {
+      onReading(spot);
+    }
   };
   useEffect(() => {
     const root = scroller.current;
@@ -2041,98 +2543,29 @@ function FileDiff({
     return () => observer.disconnect();
   }, []);
 
-  const readOffer = (menu: boolean, at?: { readonly x: number; readonly y: number }): boolean => {
-    const root = scroller.current;
-    const box = wrap.current?.getBoundingClientRect();
-    if (root === null || box === undefined || text === null || text.base === null || text.target === null) {
-      setOffer(null);
-      return false;
-    }
-    const found = codeSelectionIn(root, file, layout, text.base, text.target);
-    if (found === null) {
-      setOffer(null);
-      return false;
-    }
-    const point = at ?? { x: found.rect?.right ?? box.left, y: (found.rect?.bottom ?? box.top) + 4 };
-    setOffer({ request: found.request, x: Math.max(4, Math.min(point.x - box.left, box.width - 140)), y: Math.max(4, Math.min(point.y - box.top, box.height - 70)), menu });
-    return true;
-  };
-  const explainNow = (request: CodeSelectionRequest): void => {
-    const root = scroller.current;
-    const first = request.segments[0];
-    if (root !== null && first !== undefined) {
-      // The reading position is the selection's: it stays where it is when the panel opens.
-      rememberRow(codeCellOf(root, first.side, first.start)?.closest('tr'));
-    }
-    setOffer(null);
-    onExplain(request);
-  };
-  useEffect(() => {
-    const changed = (): void => {
-      if (!dragging.current) {
-        const chosen = window.getSelection();
-        if (chosen === null || chosen.isCollapsed) {
-          setOffer(null);
-        }
+  const { readOffer, offered, handlers, view: offerView, explainNow } = useSelectionOffer({
+    scroller,
+    wrap,
+    read: () =>
+      scroller.current === null || text === null || text.base === null || text.target === null
+        ? null
+        : codeSelectionIn(scroller.current, file, layout, text.base, text.target),
+    onExplain,
+    onAsk,
+    quoteOpen: quote?.open === true,
+    beforeExplain: (request) => {
+      const root = scroller.current;
+      const first = request.segments[0];
+      if (root !== null && first !== undefined) {
+        // The reading position is the selection's: it stays where it is when the panel opens.
+        rememberRow(codeCellOf(root, first.side, first.start)?.closest('tr'));
       }
-    };
-    const key = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        setOffer((before) => (before?.menu === true ? null : before));
-        return;
-      }
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'e') {
-        const root = scroller.current;
-        if (root === null || text === null || text.base === null || text.target === null) {
-          return;
-        }
-        const found = codeSelectionIn(root, file, layout, text.base, text.target);
-        if (found !== null) {
-          event.preventDefault();
-          explainNow(found.request);
-        }
-      }
-    };
-    document.addEventListener('selectionchange', changed);
-    window.addEventListener('keydown', key);
-    return () => {
-      document.removeEventListener('selectionchange', changed);
-      window.removeEventListener('keydown', key);
-    };
+    },
   });
-  useEffect(() => {
-    if (offer?.menu === true) {
-      menuFirst.current?.focus({ preventScroll: true });
-    }
-  }, [offer]);
 
-  // The selection of the explanation shown, marked in the code without touching the DOM.
-  useLayoutEffect(() => {
-    const registry = CSS.highlights;
-    const root = scroller.current;
-    if (registry === undefined) {
-      return;
-    }
-    if (explained === null || explained.fileKey !== file.key || root === null) {
-      registry.delete('rv-explained');
-      return;
-    }
-    const ranges: Range[] = [];
-    for (const segment of explained.segments) {
-      for (let line = segment.start; line <= segment.end; line += 1) {
-        const cell = codeCellOf(root, segment.side, line);
-        const length = cell?.textContent?.length ?? 0;
-        const found = cell === null ? null : rangeInCell(cell, line === segment.start ? segment.from : 0, line === segment.end ? Math.min(segment.to, length) : length);
-        if (found !== null) {
-          ranges.push(found);
-        }
-      }
-    }
-    registry.set('rv-explained', new Highlight(...ranges));
-    return () => {
-      registry.delete('rv-explained');
-    };
-  }, [explained, file.key, text, layout, expanded, record]);
+  // The selection of the explanation shown, and what a question being written is about.
+  useMarked('rv-explained', scroller, explained, file.key, [text, layout, expansion, record]);
+  useMarked('rv-quote', scroller, quote?.request ?? null, file.key, [text, layout, expansion]);
 
   /** The changed lines selected for review, as a selection to explain (the keyboard's way). */
   const explainLines = (): void => {
@@ -2173,13 +2606,23 @@ function FileDiff({
         </div>
         <div className="rv-pair-file-tools">
           <div className="rv-pair-toggle" role="group" aria-label="Diff layout">
-            <button type="button" data-ev="pair-layout-split" aria-pressed={layout === 'split'} onClick={() => onLayout('split')}>
+            <button type="button" data-ev="pair-layout-split" aria-pressed={layout === 'split'} onClick={() => changeLayout('split')}>
               Side by side
             </button>
-            <button type="button" data-ev="pair-layout-unified" aria-pressed={layout === 'unified'} onClick={() => onLayout('unified')}>
+            <button type="button" data-ev="pair-layout-unified" aria-pressed={layout === 'unified'} onClick={() => changeLayout('unified')}>
               Unified
             </button>
           </div>
+          <button
+            type="button"
+            className="rv-pair-whole"
+            data-ev="pair-whole-file"
+            aria-pressed={expansion.whole}
+            title={expansion.whole ? 'Fold the unchanged code away again' : 'Show every line of the file, with the changes still marked'}
+            onClick={() => setWhole(!expansion.whole)}
+          >
+            {expansion.whole ? 'Compact diff' : 'Show entire file'}
+          </button>
           <button type="button" data-ev="pair-previous" disabled={onPrevious === null} onClick={() => onPrevious?.()} aria-label="Previous file">
             ‹
           </button>
@@ -2293,46 +2736,19 @@ function FileDiff({
         ref={scroller}
         onScroll={() => {
           rememberRow();
-          if (offer !== null && !offer.menu) {
+          if (offered) {
             readOffer(false);
           }
         }}
-        onMouseDown={(event) => {
-          if (event.button !== 0) {
-            return;
-          }
-          dragging.current = true;
-          setOffer(null);
-          // Side by side, a selection stays in the column it starts in.
-          const table = scroller.current?.querySelector<HTMLElement>('table.rv-pair-table-split');
-          const cell = (event.target as Element).closest<HTMLElement>('td[data-code-side]');
-          if (table !== null && table !== undefined) {
-            table.dataset['selectSide'] = cell?.dataset['codeSide'] ?? '';
-          }
-        }}
+        onMouseDown={handlers.onMouseDown}
         onMouseUp={(event) => {
-          // A right button's release is followed by the context menu, which this would replace.
-          if (event.button !== 0) {
-            return;
-          }
-          dragging.current = false;
-          // After the browser has settled the selection for this release.
-          setTimeout(() => {
-            readOffer(false);
-            rememberRow();
-          }, 0);
-        }}
-        onKeyUp={(event) => {
-          if (event.shiftKey) {
-            readOffer(false);
+          handlers.onMouseUp(event);
+          if (event.button === 0) {
+            setTimeout(() => rememberRow(), 0);
           }
         }}
-        onContextMenu={(event) => {
-          const keyboard = event.clientX === 0 && event.clientY === 0;
-          if (readOffer(true, keyboard ? undefined : { x: event.clientX, y: event.clientY })) {
-            event.preventDefault();
-          }
-        }}
+        onKeyUp={handlers.onKeyUp}
+        onContextMenu={handlers.onContextMenu}
       >
         {text === null && <p className="rv-pair-muted">Reading…</p>}
         {text?.error !== null && text?.error !== undefined && <p className="rv-pair-error">{text.error}</p>}
@@ -2352,11 +2768,11 @@ function FileDiff({
               {sideColumns}
             </colgroup>
             <tbody>
-              {split.map((row, index) =>
+              {split.map((row) =>
                 row.kind === 'gap' && row.gap !== undefined ? (
-                  gapRow(row.gap.id, row.gap.count, 8)
+                  gapRow(row.gap, 8)
                 ) : (
-                  <tr key={index} className={row.kind === 'change' ? 'rv-pair-row-change' : 'rv-pair-row-context'}>
+                  <tr key={`${row.kind}-${String(row.base)}-${String(row.target)}`} className={row.kind === 'change' ? 'rv-pair-row-change' : 'rv-pair-row-context'}>
                     {strip('base', row.base, row.kind === 'change')}
                     {number('base', row.base, row.kind === 'change')}
                     {sign(row.kind !== 'change' ? 'none' : row.base === null ? 'empty' : 'old')}
@@ -2407,15 +2823,15 @@ function FileDiff({
               <col />
             </colgroup>
             <tbody>
-              {unified.map((row, index) => {
+              {unified.map((row) => {
                 if (row.kind === 'gap') {
-                  return gapRow(row.id, row.count, 5);
+                  return gapRow(row, 5);
                 }
                 const side: LineSide = row.kind === 'deleted' ? 'base' : 'target';
                 const line = row.kind === 'deleted' ? row.base : row.target;
                 const changedRow = row.kind !== 'context';
                 return (
-                  <Fragment key={index}>
+                  <Fragment key={row.kind === 'deleted' ? `d-${String(row.base)}` : row.kind === 'added' ? `a-${String(row.target)}` : `c-${String(row.base)}-${String(row.target)}`}>
                     <tr className={changedRow ? 'rv-pair-row-change' : 'rv-pair-row-context'}>
                       {strip(side, line, changedRow)}
                       <td className={`rv-pair-num${row.kind === 'deleted' ? ' rv-pair-num-old' : row.kind === 'added' ? ' rv-pair-num-new' : ''}`}>
@@ -2448,48 +2864,280 @@ function FileDiff({
           </table>
         )}
       </div>
-        {offer !== null &&
-          (offer.menu ? (
-            <div className="rv-explain-menu" role="menu" data-ev="explain-menu" style={{ left: offer.x, top: offer.y }}>
-              <button
-                type="button"
-                role="menuitem"
-                ref={menuFirst}
-                data-ev="explain-menu-explain"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => explainNow(offer.request)}
-              >
-                Explain this
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                data-ev="explain-menu-copy"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  void navigator.clipboard?.writeText(offer.request.text).catch(() => undefined);
-                  setOffer(null);
-                }}
-              >
-                Copy
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="rv-explain-this"
-              data-ev="explain-this"
-              title="Explain the selected code (Ctrl+Shift+E). Marks nothing."
-              style={{ left: offer.x, top: offer.y }}
-              // Pressing it must not take the selection away.
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => explainNow(offer.request)}
-            >
-              Explain this
-            </button>
-          ))}
+        {offerView}
       </div>
       {explainPanel}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * A code reference followed from an answer, in the diff window (30 October 2026): a place
+ * of its own to look around in, not a snippet. The file at the reference's revision is read
+ * from Git, with the code around the referenced lines shown at once, more of it on request
+ * and the whole file if wanted. The referenced lines carry a mark of their own, never the
+ * diff's colours or a review status. Further references open from here; *Back* returns
+ * through each to the diff, where it was left.
+ */
+export interface AwayEntry {
+  readonly location: LineRange;
+  /** Lines opened above and below the referenced ones, or the whole file. */
+  readonly more: { readonly above: number; readonly below: number };
+  readonly whole: boolean;
+  /** Where the reader was in it, to come back to. */
+  readonly reading: ReadingSpot | null;
+}
+
+function ReferenceView({
+  bridge,
+  pairKey,
+  pair,
+  entry,
+  inChange,
+  back,
+  onBack,
+  onChange,
+  onShowInDiff,
+  explained,
+  onExplain,
+  quote,
+  onAsk,
+  explainPanel,
+}: {
+  readonly bridge: ReviewPairBridge;
+  readonly pairKey: string;
+  readonly pair: OpenPair['pair'];
+  readonly entry: AwayEntry;
+  /** The changed file the reference is in, when it is in one at its side. */
+  readonly inChange: PairFile | null;
+  /** What Back returns to, in words. */
+  readonly back: string;
+  readonly onBack: () => void;
+  readonly onChange: (entry: AwayEntry) => void;
+  readonly onShowInDiff: (() => void) | null;
+  readonly explained: CodeSelection | null;
+  readonly onExplain: (selection: CodeSelectionRequest) => void;
+  readonly quote: { readonly request: CodeSelectionRequest; readonly open: boolean } | null;
+  readonly onAsk: (request: CodeSelectionRequest) => void;
+  readonly explainPanel: JSX.Element;
+}): JSX.Element {
+  const { location } = entry;
+  const [lines, setLines] = useState<readonly string[] | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const wrap = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setLines(null);
+    setProblem(null);
+    void bridge
+      .readFile(pairKey, location.side, location.path)
+      .catch((error: unknown) => ({ error: requestFailure(error) }))
+      .then((answer) => {
+        if (cancelled) {
+          return;
+        }
+        if (isPairError(answer)) {
+          setProblem(answer.error);
+        } else if (answer.binary || answer.text === null) {
+          setProblem('Binary file: there is no text to show.');
+        } else {
+          setLines(splitLines(answer.text));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bridge, pairKey, location.side, location.path]);
+  const tokens = useMemo(() => (lines === null ? [] : highlightLines([...lines], location.path)), [lines, location.path]);
+  // A selection here: in the changed file at this side, or in a file outside the change.
+  const file: PairFile = useMemo(
+    () =>
+      inChange ?? {
+        key: outsideFileKey(location.path),
+        status: 'modified',
+        oldPath: location.path,
+        newPath: location.path,
+        similarity: null,
+        binary: false,
+        hunks: [],
+        added: 0,
+        deleted: 0,
+      },
+    [inChange, location.path],
+  );
+  const count = lines?.length ?? 0;
+  const first = entry.whole ? 1 : Math.max(1, location.start - CONTEXT_LINES - entry.more.above);
+  const last = entry.whole ? count : Math.min(count, location.end + CONTEXT_LINES + entry.more.below);
+
+  // Opening code above what is read keeps what is read where it is; back here, where it was left.
+  const hold = useRef<ReadingSpot | null>(null);
+  const placed = useRef(false);
+  useLayoutEffect(() => {
+    const root = scroller.current;
+    if (root === null || lines === null) {
+      return;
+    }
+    if (!placed.current) {
+      placed.current = true;
+      if (entry.reading === null || !restoreSpot(root, entry.reading)) {
+        root.querySelector('.rv-ref-line')?.scrollIntoView({ block: 'center' });
+      }
+      spotNow.current = spotAt(root);
+      return;
+    }
+    const spot = hold.current;
+    if (spot !== null) {
+      hold.current = null;
+      restoreSpot(root, spot);
+    }
+    spotNow.current = spotAt(root);
+  }, [lines, first, last]);
+  // Where it is read, kept when it is left (for a further reference, or Back past it).
+  const spotNow = useRef<ReadingSpot | null>(entry.reading);
+  const leaving = useRef({ entry, onChange });
+  leaving.current = { entry, onChange };
+  useEffect(
+    () => () => {
+      leaving.current.onChange({ ...leaving.current.entry, reading: spotNow.current });
+    },
+    [],
+  );
+  const change = (next: Partial<AwayEntry>, keep: 'view' | 'below' | null): void => {
+    const root = scroller.current;
+    if (root !== null && keep !== null) {
+      hold.current = keep === 'view' ? spotAt(root) : spotAt(root, root.querySelector('tr.rv-ref-row'));
+    }
+    onChange({ ...entry, ...next, reading: root === null ? entry.reading : spotAt(root) });
+  };
+
+  const side: LineSide = location.side;
+  const { readOffer, offered, handlers, view: offerView } = useSelectionOffer({
+    scroller,
+    wrap,
+    read: () => (scroller.current === null || lines === null ? null : codeSelectionIn(scroller.current, file, 'unified', lines, lines)),
+    onExplain,
+    onAsk,
+    quoteOpen: quote?.open === true,
+  });
+  useMarked('rv-explained', scroller, explained, file.key, [lines, first, last]);
+  useMarked('rv-quote', scroller, quote?.request ?? null, file.key, [lines, first, last]);
+
+  const folder = location.path.includes('/') ? location.path.slice(0, location.path.lastIndexOf('/') + 1) : '';
+  const sha = side === 'base' ? pair.base : pair.target;
+  const digits = String(Math.max(count, 1)).length;
+  const gap = (where: 'above' | 'below', hidden: number): JSX.Element => (
+    <tr key={`gap-${where}`} className="rv-pair-gap" data-gap={where}>
+      <td colSpan={2}>
+        <span className="rv-pair-gap-count">
+          ⋯ {hidden} {hidden === 1 ? 'line' : 'lines'} {where}
+        </span>
+        {hidden > MORE_LINES && (
+          <button
+            type="button"
+            data-ev={where === 'above' ? 'gap-up' : 'gap-down'}
+            onClick={() => change({ more: { ...entry.more, [where]: entry.more[where] + MORE_LINES } }, where === 'above' ? 'below' : null)}
+          >
+            {where === 'above' ? '↑' : '↓'} Show {MORE_LINES} more lines
+          </button>
+        )}
+        <button
+          type="button"
+          data-ev="gap-all"
+          onClick={() => change({ more: { ...entry.more, [where]: count } }, where === 'above' ? 'below' : null)}
+        >
+          Show all {hidden}
+        </button>
+      </td>
+    </tr>
+  );
+  const rows: JSX.Element[] = [];
+  if (lines !== null) {
+    if (first > 1) {
+      rows.push(gap('above', first - 1));
+    }
+    for (let line = first; line <= last; line += 1) {
+      const inReference = line >= location.start && line <= location.end;
+      rows.push(
+        <tr key={line} className={inReference ? 'rv-pair-row-context rv-ref-row' : 'rv-pair-row-context'}>
+          <td className="rv-pair-num">{line}</td>
+          <td className={inReference ? 'rv-pair-code rv-ref-line' : 'rv-pair-code'} data-code-side={side} data-code-line={line}>
+            <TokensView tokens={tokens[line - 1]} />
+          </td>
+        </tr>,
+      );
+    }
+    if (last < count) {
+      rows.push(gap('below', count - last));
+    }
+  }
+  return (
+    <section className="rv-pair-file-view rv-pair-away" aria-label={location.path} data-ev="pair-away">
+      <div className="rv-pair-file-head">
+        <div className="rv-away rv-pair-away-bar" data-ev="away-bar">
+          <span className="rv-away-where">
+            <span className="rv-away-file" title={location.path}>
+              {location.path.split('/').pop()}
+            </span>
+            {folder !== '' && <span className="rv-away-folder">{folder}</span>}
+            <span className={`rv-away-side rv-away-side-${side}`} data-ev="away-side">
+              {side === 'base' ? 'From' : 'To'} · {sha.slice(0, 7)}
+            </span>
+            <span className="rv-away-lines">{location.start === location.end ? `line ${String(location.start)}` : `lines ${String(location.start)}–${String(location.end)}`}</span>
+            <span className="rv-pair-muted">{inChange === null ? 'not changed in this review' : 'changed in this review'}</span>
+          </span>
+          <span className="rv-pair-file-tools">
+            {onShowInDiff !== null && (
+              <button type="button" data-ev="away-show-in-diff" onClick={onShowInDiff}>
+                Show in diff
+              </button>
+            )}
+            <button
+              type="button"
+              className="rv-pair-whole"
+              data-ev="pair-whole-file"
+              aria-pressed={entry.whole}
+              onClick={() => change({ whole: !entry.whole }, 'view')}
+            >
+              {entry.whole ? 'Around the reference' : 'Show entire file'}
+            </button>
+            <button type="button" className="rv-away-back" data-ev="away-back" onClick={onBack}>
+              ← Back to {back}
+            </button>
+          </span>
+        </div>
+      </div>
+      <div className="rv-pair-diff-row">
+        <div className="rv-pair-diff-wrap" ref={wrap}>
+          <div
+            className="rv-pair-diff"
+            ref={scroller}
+            onScroll={() => {
+              if (scroller.current !== null && lines !== null) {
+                spotNow.current = spotAt(scroller.current);
+              }
+              if (offered) {
+                readOffer(false);
+              }
+            }}
+            {...handlers}
+          >
+            {lines === null && problem === null && <p className="rv-pair-muted">Reading…</p>}
+            {problem !== null && <p className="rv-pair-error">{problem}</p>}
+            {lines !== null && (
+              <table className="rv-pair-table rv-pair-table-reference">
+                <colgroup>
+                  <col className="rv-pair-col-num" style={{ width: `calc(${String(digits)}ch + 0.8rem)` }} />
+                  <col />
+                </colgroup>
+                <tbody>{rows}</tbody>
+              </table>
+            )}
+          </div>
+          {offerView}
+        </div>
+        {explainPanel}
       </div>
     </section>
   );

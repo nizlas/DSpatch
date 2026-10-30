@@ -13,10 +13,10 @@
  * reading position and never changes what is marked as reviewed.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 
-import { segmentWords, type AgentJob, type CodeSelection, type ExplainAction, type LineRange } from '../shared/review-pair';
+import { segmentWords, type AgentJob, type CodeSelection, type CodeSelectionRequest, type ExplainAction, type LineRange } from '../shared/review-pair';
 import { AgentPicker, type AgentChoice } from './AgentPicker';
 import { ShortThenMore } from './DiscussionAnswer';
 import { attemptLabel, isRunning, JobLine, JobNote } from './PairReview';
@@ -42,7 +42,16 @@ function selectionTitle(selection: CodeSelection): string {
   return `“${text.length > 48 ? `${text.slice(0, 47)}…` : text}”${first === undefined ? '' : ` · line ${String(first.start)}`}`;
 }
 
-function Answer({ job, canShow, onShowRange }: { readonly job: AgentJob; readonly canShow: (range: LineRange) => boolean; readonly onShowRange: (range: LineRange) => void }): JSX.Element {
+function Answer({
+  job,
+  onShowRange,
+  onSimpler,
+}: {
+  readonly job: AgentJob;
+  readonly onShowRange: (range: LineRange) => void;
+  /** Explain this answer more simply, with its own question (30 October 2026). */
+  readonly onSimpler: (() => void) | null;
+}): JSX.Element {
   if (job.state !== 'done' || job.answer === undefined) {
     return (
       <p>
@@ -63,13 +72,15 @@ function Answer({ job, canShow, onShowRange }: { readonly job: AgentJob; readonl
             <ul>
               {job.answer.references.map((reference, at) => (
                 <li key={at} data-ev="explain-ref">
-                  {canShow(reference.range) ? (
-                    <button type="button" className="rv-pair-link" onClick={() => onShowRange(reference.range)}>
-                      {reference.label}
-                    </button>
-                  ) : (
-                    <span>{reference.label}</span>
-                  )}{' '}
+                  <button
+                    type="button"
+                    className="rv-pair-link"
+                    data-ev="answer-ref"
+                    data-ref={`${reference.range.side}:${reference.range.path}:${String(reference.range.start)}-${String(reference.range.end)}`}
+                    onClick={() => onShowRange(reference.range)}
+                  >
+                    {reference.label}
+                  </button>{' '}
                   <span className="rv-sub">{where(reference.range)}</span>
                 </li>
               ))}
@@ -77,6 +88,13 @@ function Answer({ job, canShow, onShowRange }: { readonly job: AgentJob; readonl
           )
         }
       />
+      {onSimpler !== null && (
+        <div className="rv-answer-actions">
+          <button type="button" className="rv-link rv-quiet-link" data-ev="explain-simpler" title="A new answer that explains this one more simply; this one is kept" onClick={onSimpler}>
+            Explain more simply
+          </button>
+        </div>
+      )}
       {job.answer.adjustments.length > 0 && (
         <details className="rv-agent-adjustments">
           <summary>What DSpatch did not accept from the answer</summary>
@@ -100,12 +118,16 @@ export function ExplainPanel({
   picking,
   busy,
   problem,
-  canShow,
   onToggle,
   onActivate,
   onShowSelection,
   onShowRange,
   onFollowUp,
+  quote,
+  askText,
+  onAskText,
+  onClearQuote,
+  onAsk,
   onPick,
   onCancelPick,
   onStop,
@@ -122,20 +144,37 @@ export function ExplainPanel({
   /** An explanation is running for this review: one at a time. */
   readonly busy: boolean;
   readonly problem: string | null;
-  readonly canShow: (range: LineRange) => boolean;
   readonly onToggle: () => void;
   readonly onActivate: (root: string) => void;
   readonly onShowSelection: (selection: CodeSelection) => void;
+  /** A reference of an answer: opened as a place of its own, with the way back. */
   readonly onShowRange: (range: LineRange) => void;
-  readonly onFollowUp: (root: string, action: ExplainAction, question: string) => void;
+  /** `of`: for Explain more simply, the answer it is about. */
+  readonly onFollowUp: (root: string, action: ExplainAction, question: string, of?: string) => void;
+  /**
+   * Selected code to ask one's own question about (30 October 2026), quoted above the
+   * question; removable, and replaced by a new selection. Nothing is sent before *Ask*.
+   */
+  readonly quote: CodeSelectionRequest | null;
+  readonly askText: string;
+  readonly onAskText: (text: string) => void;
+  readonly onClearQuote: () => void;
+  readonly onAsk: () => void;
   readonly onPick: (choice: AgentChoice) => void;
   readonly onCancelPick: () => void;
   readonly onStop: (job: AgentJob) => void;
 }): JSX.Element | null {
   const [question, setQuestion] = useState('');
+  const askField = useRef<HTMLTextAreaElement | null>(null);
+  // A new quote puts the cursor in the question; the code's mark shows what it is about.
+  useEffect(() => {
+    if (quote !== null && open) {
+      askField.current?.focus({ preventScroll: true });
+    }
+  }, [quote, open]);
   const thread = threads.find((entry) => entry.root.id === active) ?? null;
   const here = threads.filter((entry) => entry.root.selection.fileKey === fileKey);
-  if (thread === null && here.length === 0 && !picking && problem === null) {
+  if (thread === null && here.length === 0 && !picking && problem === null && quote === null) {
     return null;
   }
   if (!open) {
@@ -150,6 +189,7 @@ export function ExplainPanel({
   const entries = thread === null ? [] : [thread.root, ...thread.followUps];
   const running = entries.find(isRunning);
   const finished = entries.filter((job) => !isRunning(job));
+  const quoted = quote === null ? '' : quote.text.replace(/\s+/g, ' ').trim();
   return (
     <aside className="rv-explain" data-ev="explain-panel" aria-label="Explanations">
       <header className="rv-explain-head">
@@ -181,27 +221,29 @@ export function ExplainPanel({
           {finished.map((job, index) => (
             <details key={job.id} className="rv-deepening" open={index === finished.length - 1} data-ev="explain-answer" data-state={job.state}>
               <summary>
-                {job.followUp === undefined ? 'Explanation' : FOLLOW_UP_WORD[job.followUp.action]}
+                {job.followUp === undefined ? (job.asked === undefined ? 'Explanation' : 'Your question') : FOLLOW_UP_WORD[job.followUp.action]}
                 {job.followUp?.action === 'question' && <span className="rv-sub"> · “{job.followUp.question.slice(0, 60)}”</span>}
+                {job.followUp === undefined && job.asked !== undefined && <span className="rv-sub"> · “{job.asked.slice(0, 60)}”</span>}
                 {job.state !== 'done' && <span className="rv-sub"> · {job.state}</span>}
               </summary>
-              <Answer job={job} canShow={canShow} onShowRange={onShowRange} />
+              <Answer
+                job={job}
+                onShowRange={onShowRange}
+                onSimpler={job.state === 'done' && job.answer !== undefined && !busy ? () => onFollowUp(thread.root.id, 'simpler', '', job.id) : null}
+              />
             </details>
           ))}
           {running !== undefined && <JobLine job={running} onStop={() => onStop(running)} />}
-          {thread.root.state === 'done' && (
+          {thread.root.state === 'done' && quote === null && (
             <div className="rv-explain-more">
-              <div className="rv-deepen-actions">
-                {/* Show more opens the explanation's own details; Tell me more only where there are none. */}
-                {(thread.root.answer?.details ?? '').trim() === '' && (
+              {/* Show more opens the explanation's own details; Tell me more only where there are none. */}
+              {(thread.root.answer?.details ?? '').trim() === '' && (
+                <div className="rv-deepen-actions">
                   <button type="button" data-ev="explain-more" disabled={busy} onClick={() => onFollowUp(thread.root.id, 'more', '')}>
                     Tell me more
                   </button>
-                )}
-                <button type="button" data-ev="explain-simpler" disabled={busy} onClick={() => onFollowUp(thread.root.id, 'simpler', '')}>
-                  Explain more simply
-                </button>
-              </div>
+                </div>
+              )}
               <form
                 className="rv-explain-ask"
                 onSubmit={(event) => {
@@ -232,6 +274,41 @@ export function ExplainPanel({
             </div>
           )}
         </>
+      )}
+      {quote !== null && (
+        <form
+          className="rv-explain-ask rv-explain-ask-own"
+          data-ev="explain-ask-own"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onAsk();
+          }}
+        >
+          <div className="rv-quote-chip" data-ev="explain-quote" title={quote.text}>
+            <span className="rv-quote-chip-text">“{quoted.length > 70 ? `${quoted.slice(0, 69)}…` : quoted}”</span>
+            <span className="rv-sub"> · {quote.segments.map((segment) => `${segment.path.split('/').pop() ?? ''} ${segment.start === segment.end ? String(segment.start) : `${String(segment.start)}–${String(segment.end)}`} (${segment.side === 'base' ? 'From' : 'To'})`).join(', ')}</span>
+            <button type="button" className="rv-quote-chip-clear" data-ev="explain-quote-remove" aria-label="Remove the quote" title="Remove the quote" onClick={onClearQuote}>
+              ×
+            </button>
+          </div>
+          <textarea
+            ref={askField}
+            data-ev="explain-ask-own-text"
+            rows={3}
+            value={askText}
+            placeholder="Ask about the selected code…"
+            onChange={(event) => onAskText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+          />
+          <button type="submit" data-ev="explain-ask-own-send" disabled={busy || askText.trim() === ''}>
+            Ask
+          </button>
+        </form>
       )}
       {here.filter((entry) => entry.root.id !== active).length > 0 && (
         <div className="rv-explain-list">

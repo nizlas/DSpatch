@@ -28,6 +28,13 @@ import {
   lineKey,
   rangesOf,
   splitRowsOf,
+  expandGap,
+  gapHiding,
+  CONTEXT_LINES,
+  MORE_LINES,
+  NO_EXPANSION,
+  type GapRow,
+  type UnifiedRow,
   stripStatusOf,
   unifiedRowsOf,
   type AgentReview,
@@ -524,8 +531,72 @@ describe('rows for drawing', () => {
     const folded = unifiedRowsOf(long, 100, 100);
     const gaps = folded.filter((row) => row.kind === 'gap');
     assert.equal(gaps.length, 2);
-    assert.ok(folded.length < 20);
+    // Ten unchanged lines on each side of the change stay (30 October 2026).
+    assert.equal(folded.filter((row) => row.kind === 'context').length, 2 * CONTEXT_LINES);
     assert.equal(unifiedRowsOf(long, 100, 100, new Set(['*'])).length, 101);
+  });
+
+  /** Every line of both sides drawn, in order, never twice: the numbers as the rows carry them. */
+  const drawn = (rows: readonly UnifiedRow[]): { base: number[]; target: number[] } => ({
+    base: rows.flatMap((row) => (row.kind === 'context' || row.kind === 'deleted' ? [row.base] : [])),
+    target: rows.flatMap((row) => (row.kind === 'context' || row.kind === 'added' ? [row.target] : [])),
+  });
+  const increasing = (values: readonly number[]): boolean => values.every((value, index) => index === 0 || value > (values[index - 1] as number));
+
+  it('opens a run between two changes from either change, and shows it whole where the two meet', () => {
+    // Changes at base 20 and base 120: a run of 99 unchanged lines between them.
+    const two: PairFile = {
+      ...file,
+      hunks: [
+        { baseStart: 20, baseCount: 1, targetStart: 20, targetCount: 1 },
+        { baseStart: 120, baseCount: 1, targetStart: 120, targetCount: 2 },
+      ],
+    };
+    const compact = unifiedRowsOf(two, 200, 201);
+    const between = compact.find((row): row is GapRow => row.kind === 'gap' && row.down && row.up);
+    assert.ok(between !== undefined);
+    assert.equal(between.count, 99 - 2 * CONTEXT_LINES);
+    const down = expandGap(NO_EXPANSION, between, 'down');
+    const afterDown = unifiedRowsOf(two, 200, 201, down);
+    const stillBetween = afterDown.find((row): row is GapRow => row.kind === 'gap' && row.id === between.id);
+    assert.equal(stillBetween?.count, between.count - MORE_LINES);
+    // The lines below the change above now reach 20 further, with the right numbers on both sides.
+    assert.ok(afterDown.some((row) => row.kind === 'context' && row.base === 21 + CONTEXT_LINES + MORE_LINES - 1 && row.target === row.base));
+    const up = expandGap(down, between, 'up');
+    const afterUp = unifiedRowsOf(two, 200, 201, up);
+    assert.equal(afterUp.find((row): row is GapRow => row.kind === 'gap' && row.id === between.id)?.count, between.count - 2 * MORE_LINES);
+    // Opened until the two meet: the run is shown whole, no fold of one line, no line twice.
+    let meeting = up;
+    for (let press = 0; press < 3; press += 1) {
+      meeting = expandGap(meeting, between, 'down');
+    }
+    const met = unifiedRowsOf(two, 200, 201, meeting);
+    assert.equal(met.filter((row) => row.kind === 'gap' && row.id === between.id).length, 0);
+    for (const rows of [compact, afterDown, afterUp, met]) {
+      const lines = drawn(rows);
+      assert.ok(increasing(lines.base) && increasing(lines.target), 'a line drawn twice or out of order');
+    }
+    assert.deepEqual(drawn(unifiedRowsOf(two, 200, 201, { whole: true, gaps: {} })).base, Array.from({ length: 200 }, (_, index) => index + 1));
+    assert.deepEqual(drawn(unifiedRowsOf(two, 200, 201, { whole: true, gaps: {} })).target, Array.from({ length: 201 }, (_, index) => index + 1));
+  });
+
+  it('opens the first run only upwards and the last only downwards, the same side by side', () => {
+    const long: PairFile = { ...file, hunks: [{ baseStart: 50, baseCount: 1, targetStart: 50, targetCount: 1 }] };
+    const gaps = unifiedRowsOf(long, 100, 100).filter((row): row is GapRow => row.kind === 'gap');
+    assert.deepEqual(gaps.map((gap) => [gap.down, gap.up]), [[false, true], [true, false]]);
+    const first = gaps[0] as GapRow;
+    const opened = expandGap(NO_EXPANSION, first, 'up');
+    const split = splitRowsOf(long, 100, 100, opened);
+    const unified = unifiedRowsOf(long, 100, 100, opened);
+    // Both layouts show the same unchanged lines, each with its number on both sides.
+    assert.deepEqual(
+      split.filter((row) => row.kind === 'context').map((row) => [row.base, row.target]),
+      unified.flatMap((row) => (row.kind === 'context' ? [[row.base, row.target]] : [])),
+    );
+    assert.equal(split.find((row) => row.kind === 'gap' && row.gap?.id === first.id)?.gap?.count, first.count - MORE_LINES);
+    // A line inside a run is found in it, to be opened when asked for.
+    assert.equal(gapHiding(unifiedRowsOf(long, 100, 100), 'target', 5)?.id, first.id);
+    assert.equal(gapHiding(unifiedRowsOf(long, 100, 100), 'target', 45), null);
   });
 });
 

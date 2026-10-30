@@ -4,7 +4,7 @@ title: Understand and review changes through agent-generated code walks
 status: Review
 assignee: []
 created_date: '2026-10-28 22:32'
-updated_date: '2026-10-30 12:57'
+updated_date: '2026-10-30 15:49'
 labels:
   - review
   - code-walks
@@ -462,4 +462,8 @@ Niclas's request after his real trial (decision in [VISION.md section 3.4](../..
 
 **Not established**
 - Niclas's trial with a real model; UX acceptance; whether the walk's in-pane scroll position survives a long visit to a location in a long file (the fixtures' files are too short to scroll); Linux.
+
+30 October 2026, in progress: references opened as places to explore (context, expansion, whole file, back through several references with the reading position); select and ask from every code view; a short activity line for review questions and explanations.
+
+30 October 2026: references are places to explore (diff window: a reference view with context, Show 20 more lines, Show all and the whole file, its own mark apart from diff and review status, files outside the change included; Back through several references to the diff or walk, each where it was read and as shown). Select and ask from every code view: Explain this and Ask… beside a selection, in the context menu and Ctrl+Shift+E; Ask quotes the selection (removable, marked while the question is written, replaced by a new selection, dropped on another file or place) and sends nothing until asked; the host checks it against Git, including selections in files outside the change (fileKey outside:<path>) and across both revisions in Unified. Explain more simply per finished answer, with that answer's question and what came before it (followUp.of). A short activity line from provider events for discussion questions (new activity event from the discussion service, kept with the turn, follows the detached window) and for explanation jobs (first activity told at once). Verified SIMULATED (scenarios review-flow/context and context-walk, selection-explain first/again, explain-window, insight; review and fast unit groups): exact selections and questions at the adapter, activity lines Waiting / Reading / Searching / Writing, Stop clears the line, Back restores scroll (3963 px in a 309-line file) and view mode. Gaps from 071cea0 closed: scroll restore after a reference in a long file now verified; review-discussion fails the same way on a build of 9c2d12f (before 071cea0) because its helper waited for log text removed in e73d66b; the helper is fixed, and the scenario then stops at an older assumption about offering hand-written walks (not repaired). Real model, UX acceptance and Linux remain for Niclas.
 <!-- SECTION:NOTES:END -->

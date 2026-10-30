@@ -509,17 +509,6 @@
   font-size: 0.82rem;
 }
 
-.rv-note-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.rv-note-kind {
-  display: flex;
-  gap: 0.8rem;
-}
-
 /* --- Step panel ------------------------------------------------------------------- */
 
 .rv-walk-title {
@@ -3385,4 +3374,116 @@
 .rv-nav-where {
   flex: 1 1 9rem;
   min-width: 9rem;
+}
+
+/* --- Reading around a change (30 October 2026) -----------------------------------------
+   A folded run says how many unchanged lines it hides and offers more from the change
+   above or below, or all of it. Opened lines are unchanged code, never counted. */
+.rv-pair-gap td {
+  display: table-cell;
+}
+
+.rv-pair .rv-pair-gap td > * {
+  vertical-align: middle;
+}
+
+.rv-pair-gap-count {
+  display: inline-block;
+  padding: 0.1rem 0.6rem 0.1rem 1rem;
+  color: var(--muted);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.8rem;
+}
+
+.rv-pair .rv-pair-gap button {
+  width: auto;
+  display: inline-block;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--accent, var(--text));
+}
+
+.rv-pair .rv-pair-gap button:hover,
+.rv-pair .rv-pair-gap button:focus-visible {
+  text-decoration: underline;
+}
+
+.rv-pair .rv-pair-whole[aria-pressed="true"] {
+  background: var(--panel);
+}
+
+/* Explain this and Ask… beside a selection in the diff window. */
+.rv-pair .rv-pair-offer {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  gap: 0.3rem;
+}
+
+.rv-pair .rv-pair-offer .rv-explain-this {
+  position: static;
+}
+
+/* A reference's own lines: a mark of their own, apart from the diff's colours, the review
+   strip and the gold of a place asked for. */
+:root {
+  --rv-ref: color-mix(in srgb, #4aa3df 75%, var(--bg));
+}
+
+.rv-pair-code.rv-ref-line,
+.rv-ref-mark {
+  box-shadow: inset 3px 0 0 var(--rv-ref);
+  background-image: linear-gradient(color-mix(in srgb, #4aa3df 9%, transparent), color-mix(in srgb, #4aa3df 9%, transparent));
+}
+
+.rv-pair-away .rv-pair-file-head {
+  padding: 0;
+}
+
+.rv-pair-away-bar {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.rv-pair-away-bar .rv-pair-file-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.rv-pair-table-reference td.rv-pair-num {
+  color: var(--muted);
+}
+
+/* What the agent is doing for a question: one quiet line, replaced in place. */
+.rv-activity-line {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.3rem 0;
+  min-width: 0;
+}
+
+.rv-activity-line .rv-agent-activity {
+  flex: 1 1 auto;
+  flex-basis: auto;
+  min-width: 0;
+}
+
+/* One's own question about selected code, beside the diff. */
+.rv-explain-ask-own {
+  margin-top: 0.6rem;
+  align-items: stretch;
+}
+
+.rv-explain-ask-own button[type="submit"] {
+  align-self: flex-end;
+}
+
+.rv-pair .rv-quote-chip-clear {
+  flex: none;
+  border: none;
+  background: transparent;
+  padding: 0 0.3rem;
+  line-height: 1.2;
 }

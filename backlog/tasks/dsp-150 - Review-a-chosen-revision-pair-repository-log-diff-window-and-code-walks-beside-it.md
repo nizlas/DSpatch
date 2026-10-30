@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-10-28 20:21'
-updated_date: '2026-10-29 20:56'
+updated_date: '2026-10-30 15:49'
 labels:
   - review
 dependencies: []
@@ -113,4 +113,8 @@ Niclas's decision of this date, after his trial: he clicked the newest commit fi
 - UX acceptance of the choice, the wording and the widths: Niclas's.
 - A review that is opened and left within a quarter second is not saved and so not listed as ongoing (the position save waits 250 ms); unchanged by this work.
 - Linux.
+
+30 October 2026, in progress: expandable context in the traditional diff (Show 20 more lines, Show all, Show entire file, both layouts), kept per file within the review; ask about selected code from the diff without a walk; the Note a question or finding form removed (saved notes kept).
+
+30 October 2026 (Niclas's trial of src/domain/SessionRouting.h, 8b389c4 → c5dac74): the traditional diff now stands without walks. Ten unchanged lines around every change; per folded run Show 20 more lines from the change above or below and Show all; Show entire file / Compact diff; the same in Side by side and Unified, with each line's own numbers; kept per file within the review (layout switch, back from Files changed), reading position held when code is opened above. Read from the commits only; opened lines are never counted. The Note a question or finding form is removed (saved notes, findings, Worth checking and decisions kept). Verified SIMULATED in real windows (scenario review-flow/context, local fixture tests/support/routing-fixture.ts: a 427-line file with three change blocks, a 5000-line file): runs, gaps and whole file in both layouts without duplicates, reading position on opening above, on layout switch and back from the list, status unchanged, the 5000-line file whole drawn in about 1.1 s. UX acceptance awaits Niclas's trial; Linux not tested.
 <!-- SECTION:NOTES:END -->

@@ -103,7 +103,6 @@ export interface ReviewWords {
   readonly hideSources: string;
   readonly evidenceLabel: Record<EvidenceLabel, string>;
   readonly evidenceMeaning: Record<EvidenceLabel, string>;
-  readonly notesSection: string;
   readonly reviewSection: string;
   /** The right column's two tabs: the step's own text, or the discussion about the code (DSP-127). */
   readonly rightTabs: { readonly step: string; readonly discussion: string };
@@ -210,13 +209,6 @@ export interface ReviewWords {
   readonly note: {
     readonly question: string;
     readonly finding: string;
-    readonly yourQuestion: string;
-    readonly yourFinding: string;
-    readonly at: (where: string) => string;
-    readonly noLocation: string;
-    readonly selectHint: string;
-    readonly yourSelection: string;
-    readonly add: (kind: 'question' | 'finding') => string;
     readonly open: string;
     readonly resolved: string;
     readonly resolution: string;
@@ -319,7 +311,6 @@ const sv: ReviewWords = {
     'test-real-substitute': 'Ett test med en riktig lokal process som står i för en annan. Underlaget nedan säger vad den ersätter och vad som fortfarande var simulerat.',
     'not-observed': 'Ingenting i underlaget har observerat det här.',
   },
-  notesSection: 'Anteckna fråga eller fynd',
   reviewSection: 'Granskning',
   rightTabs: { step: 'Steg', discussion: 'Diskussion' },
   discussion: {
@@ -385,8 +376,8 @@ const sv: ReviewWords = {
     noChangeHere: 'Ingen ändring på det här stället',
     unchangedHere: 'Oförändrad kod',
     unchangedFile: 'Filen är oförändrad mellan versionerna',
-    moreAbove: 'Visa mer ovanför',
-    moreBelow: 'Visa mer nedanför',
+    moreAbove: 'Visa 20 rader till ovanför',
+    moreBelow: 'Visa 20 rader till nedanför',
     wholeContext: 'Visa hela sammanhanget',
     hiddenLines: (count) => `⋯ visa ${String(count)} oförändrade rader`,
     moreLines: (count, hidden) => `⋯ visa ${String(count)} rader till (${String(hidden)} dolda)`,
@@ -472,13 +463,6 @@ const sv: ReviewWords = {
   note: {
     question: 'Fråga',
     finding: 'Fynd',
-    yourQuestion: 'Din fråga …',
-    yourFinding: 'Vad är fel, och varför …',
-    at: (where) => `Gäller: ${where}`,
-    noLocation: 'inget kodställe',
-    selectHint: 'Klicka på radnummer för att välja rader; skift-klick utökar.',
-    yourSelection: 'dina valda rader',
-    add: (kind) => (kind === 'question' ? 'Lägg till fråga' : 'Lägg till fynd'),
     open: 'öppen',
     resolved: 'löst',
     resolution: 'Svar eller lösning (valfritt)',
@@ -601,7 +585,6 @@ const en: ReviewWords = {
     'test-real-substitute': 'A test with a real local process standing in for another. The evidence below says what it stands in for and what was still simulated.',
     'not-observed': 'Nothing in the evidence has observed this.',
   },
-  notesSection: 'Note a question or finding',
   reviewSection: 'Review',
   rightTabs: { step: 'Step', discussion: 'Discussion' },
   discussion: {
@@ -667,8 +650,8 @@ const en: ReviewWords = {
     noChangeHere: 'No change at this place',
     unchangedHere: 'Unchanged code',
     unchangedFile: 'The file is the same in both versions',
-    moreAbove: 'Show more above',
-    moreBelow: 'Show more below',
+    moreAbove: 'Show 20 more lines above',
+    moreBelow: 'Show 20 more lines below',
     wholeContext: 'Show the whole context',
     hiddenLines: (count) => `⋯ show ${String(count)} unchanged lines`,
     moreLines: (count, hidden) => `⋯ show ${String(count)} more lines (${String(hidden)} hidden)`,
@@ -754,13 +737,6 @@ const en: ReviewWords = {
   note: {
     question: 'Question',
     finding: 'Finding',
-    yourQuestion: 'Your question…',
-    yourFinding: 'What is wrong, and why…',
-    at: (where) => `About: ${where}`,
-    noLocation: 'no code place',
-    selectHint: 'Click line numbers to choose lines; shift-click extends.',
-    yourSelection: 'your selected lines',
-    add: (kind) => (kind === 'question' ? 'Add question' : 'Add finding'),
     open: 'open',
     resolved: 'resolved',
     resolution: 'Answer or resolution (optional)',

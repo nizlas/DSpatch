@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react';
 
-import { DiscussionAnswer } from './DiscussionAnswer';
+import { ActivityLine, DiscussionAnswer } from './DiscussionAnswer';
 import { ModelSelect, type ModelApi } from './StartPage';
 import { firstSentence } from './plain-error';
 import type { DiscussionWords } from './review-i18n';
@@ -202,6 +202,7 @@ export function ReviewDiscussion({
   onGoToLocation,
   onClearQuote,
   onMessages,
+  onActivity,
 }: {
   readonly bundle: ReviewBundle;
   readonly request: DiscussionRequest;
@@ -217,6 +218,8 @@ export function ReviewDiscussion({
   readonly onClearQuote?: () => void;
   /** DSP-152: the thread as it stands, for a step to show its own deepenings beside it. */
   readonly onMessages?: (messages: readonly DiscussionMessage[]) => void;
+  /** What the agent answering a question is doing now, for a step that shows the question. */
+  readonly onActivity?: (activity: { readonly questionId: string; readonly text: string } | null) => void;
 }): JSX.Element {
   const bridge = window.dspatchReviewDiscussion;
   // DSP-149: the agent's models from its SDK; the choice is the same one the chat uses.
@@ -258,6 +261,11 @@ export function ReviewDiscussion({
         });
       } else if (event.kind === 'delta') {
         setMessages((current) => current.map((entry) => (entry.id === event.messageId ? { ...entry, text: entry.text + event.text } : entry)));
+      } else if (event.kind === 'activity') {
+        // Only for the turn still going: it ends with the turn, whatever arrives after.
+        setStatus((current) =>
+          current?.turn != null && current.turn.questionId === event.questionId ? { ...current, turn: { ...current.turn, activity: event.activity } } : current,
+        );
       } else {
         setStatus(event.status);
         if (event.note !== undefined) {
@@ -469,6 +477,10 @@ export function ReviewDiscussion({
   const questions = messages.filter((message) => message.role === 'question');
   const answersOf = (id: string): readonly DiscussionMessage[] => messages.filter((message) => message.role === 'answer' && message.questionId === id);
   const turn = status?.turn ?? null;
+  const activityText = turn === null ? null : turn.stopping ? words.stopping : (turn.activity ?? words.answering);
+  useEffect(() => {
+    onActivity?.(turn === null || activityText === null ? null : { questionId: turn.questionId, text: activityText });
+  }, [onActivity, turn?.questionId, activityText]);
   const needs = gate.length > 0 ? gate : (status?.needsAcknowledgement ?? []);
 
   // The scenario's hook: readings, and the gestures a person makes.
@@ -572,15 +584,11 @@ export function ReviewDiscussion({
       </>
     );
   } else if (turn !== null) {
-    statusLine = (
-      <>
-        <span>{turn.stopping ? words.stopping : words.answering}</span>{' '}
-        {!turn.stopping && (
-          <button type="button" data-ev="discussion-stop" onClick={stop}>
-            {words.stop}
-          </button>
-        )}
-      </>
+    // What the agent is doing is said under the question; here only the way to stop it.
+    statusLine = turn.stopping ? null : (
+      <button type="button" data-ev="discussion-stop" onClick={stop}>
+        {words.stop}
+      </button>
     );
   } else if (note !== null) {
     statusLine = <span>{note}</span>;
@@ -630,6 +638,9 @@ export function ReviewDiscussion({
                 )}
               </div>
             ))}
+            {turn?.questionId === question.id && (
+              <ActivityLine text={turn.stopping ? words.stopping : (turn.activity ?? words.answering)} testId="discussion-activity" />
+            )}
           </article>
         ))}
         {goneNote && <p className="rv-sub">{words.pointGone}</p>}

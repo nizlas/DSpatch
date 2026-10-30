@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createContext, useContext } from 'react';
 import type { JSX, ReactNode } from 'react';
 
 import { splitCodeAnswer, splitDetails, type DiscussionMessage } from '../shared/review-discussion';
@@ -64,6 +65,32 @@ export function ShortThenMore({
   );
 }
 
+/**
+ * What the agent is doing now, in one quiet line under what it answers (30 October 2026):
+ * from what the provider reports, never a guessed stage, an estimate or a count. It is
+ * replaced in place rather than added to, and gone when the answer ends.
+ */
+export function ActivityLine({ text, testId }: { readonly text: string; readonly testId: string }): JSX.Element {
+  return (
+    <div className="rv-activity-line" role="status" data-ev={testId}>
+      <span className="rv-agent-spinner" aria-hidden="true" />
+      <span className="rv-agent-activity">{text}</span>
+    </div>
+  );
+}
+
+/** The question being answered now, and what the agent is doing for it, for every view of it. */
+export const DiscussionActivity = createContext<{ readonly questionId: string; readonly text: string } | null>(null);
+
+/** Under a question shown outside the thread: what is happening while its answer is on its way. */
+export function PendingLine({ questionId, pending }: { readonly questionId: string; readonly pending: boolean }): JSX.Element | null {
+  const activity = useContext(DiscussionActivity);
+  if (activity !== null && activity.questionId === questionId) {
+    return <ActivityLine text={activity.text} testId="deepening-activity" />;
+  }
+  return pending ? <p className="rv-sub">…</p> : null;
+}
+
 export function DiscussionAnswer({
   answer,
   onShow,
@@ -82,7 +109,8 @@ export function DiscussionAnswer({
     <div className="rv-answer" data-ev="discussion-answer-body" data-quote-source="answer">
       {answer.insufficient === true && <p className="rv-agent-insufficient">The agent could not settle this from the code it could read.</p>}
       {shown === '' ? (
-        <span className="rv-sub">…</span>
+        // While it is on its way, the activity line beside it says what is happening.
+        answer.status === 'streaming' ? null : <span className="rv-sub">…</span>
       ) : (
         <ShortThenMore
           short={shown}

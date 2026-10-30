@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties, JSX, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
-import { DiscussionAnswer, ShortThenMore } from './DiscussionAnswer';
+import { DiscussionActivity, DiscussionAnswer, PendingLine, ShortThenMore } from './DiscussionAnswer';
 import { Markdown } from './Markdown';
 import { ReviewDiscussion } from './ReviewDiscussion';
 import { AgentPicker } from './AgentPicker';
@@ -161,8 +161,9 @@ const openReviewHooks: {
  * decided. Before/after colours mean old and new code, never accepted or rejected.
  */
 
-const FOCUS_MARGIN = 4;
-const MORE_LINES = 15;
+// Around a place opened on its own, the code that surrounds it is shown at once (30 October 2026).
+const FOCUS_MARGIN = 10;
+const MORE_LINES = 20;
 const GAP_CONTEXT = 3;
 
 type CodeView = 'before' | 'both' | 'after';
@@ -492,6 +493,8 @@ function OpenReview({
   const [selection, setSelection] = useState<CodeLocation | null>(null);
   const [view, setView] = useState<CodeView>('both');
   const [scope, setScope] = useState<CodeScope>('focus');
+  const scopeNow = useRef(scope);
+  scopeNow.current = scope;
   const [noticeOpen, setNoticeOpen] = useState(bundle.stateNotice !== null);
   const files = useFiles(bridge);
   const [treePaths, setTreePaths] = useState<readonly string[]>([]);
@@ -638,6 +641,7 @@ function OpenReview({
    * one question: it changes nothing else about the review.
    */
   const [discussionMessages, setDiscussionMessages] = useState<readonly DiscussionMessage[]>([]);
+  const [discussionActivity, setDiscussionActivity] = useState<{ readonly questionId: string; readonly text: string } | null>(null);
   const [deepenError, setDeepenError] = useState<string | null>(null);
   /*
    * A point worth checking that is open (30 October 2026), and the position it was opened
@@ -818,14 +822,27 @@ function OpenReview({
    * exactly that place, and the walk keeps its own reading position meanwhile. Following a
    * reference changes nothing about the review's status.
    */
-  const cameFrom = useRef<{ readonly stepId: string | null; readonly refIndex: number; readonly away: CodeLocation | null }[]>([]);
+  const cameFrom = useRef<{ readonly stepId: string | null; readonly refIndex: number; readonly away: CodeLocation | null; readonly scope: CodeScope }[]>([]);
+  /*
+   * How each opened location was left (30 October 2026): its lines opened and where it was
+   * scrolled, and where the walk's own panes were. Back restores them as they were.
+   */
+  const paneMemory = useRef(new Map<string, PaneMemory>());
+  const stageScroll = useRef<{ readonly element: Element; readonly top: number; readonly left: number }[]>([]);
+  const stage = useRef<HTMLDivElement | null>(null);
   const goAway = useCallback(
     (location: CodeLocation, scope: CodeScope = 'focus') => {
       const here = latest.current.position;
       const last = cameFrom.current.at(-1);
+      if (here.away === null && stage.current !== null) {
+        stageScroll.current = [stage.current, ...stage.current.querySelectorAll('*')]
+          .filter((element) => element.scrollTop > 0 || element.scrollLeft > 0)
+          .map((element) => ({ element, top: element.scrollTop, left: element.scrollLeft }));
+      }
       if (here.away === null || JSON.stringify(here.away) !== JSON.stringify(location)) {
-        if (last === undefined || JSON.stringify(last) !== JSON.stringify({ stepId: here.stepId, refIndex: here.refIndex, away: here.away })) {
-          cameFrom.current = [...cameFrom.current.slice(-19), { stepId: here.stepId, refIndex: here.refIndex, away: here.away }];
+        const from = { stepId: here.stepId, refIndex: here.refIndex, away: here.away, scope: scopeNow.current };
+        if (last === undefined || JSON.stringify({ ...last, scope: null }) !== JSON.stringify({ ...from, scope: null })) {
+          cameFrom.current = [...cameFrom.current.slice(-19), from];
         }
       }
       setSelection(null);
@@ -842,12 +859,27 @@ function OpenReview({
     update((value) => ({ ...value, position: { ...value.position, away: null } }));
   }, [update]);
 
+  // Back in the walk: its panes where they were scrolled, whatever showing them again did.
+  const awayNow = state.position.away;
+  useLayoutEffect(() => {
+    if (awayNow !== null) {
+      return;
+    }
+    for (const entry of stageScroll.current) {
+      if (entry.element.isConnected) {
+        entry.element.scrollTop = entry.top;
+        entry.element.scrollLeft = entry.left;
+      }
+    }
+    stageScroll.current = [];
+  }, [awayNow]);
+
   /** Back to where this location was opened from: another location, or the walk where it was. */
   const goBack = useCallback(() => {
     const back = cameFrom.current.at(-1);
     cameFrom.current = cameFrom.current.slice(0, -1);
     setSelection(null);
-    setScope('focus');
+    setScope(back?.away != null ? back.scope : 'focus');
     update((value) =>
       back === undefined
         ? { ...value, position: { ...value.position, away: null } }
@@ -968,20 +1000,6 @@ function OpenReview({
       }));
     },
     [record, pair, pairBridge, bundle],
-  );
-
-  const addNote = useCallback(
-    (note: Pick<ReviewNote, 'kind' | 'text' | 'location' | 'stepId'>) => {
-      const at = new Date().toISOString();
-      record((value) => ({
-        ...value,
-        notes: [
-          ...value.notes,
-          { ...note, id: newId(), status: 'open', resolution: '', createdAt: at, updatedAt: at, revisions: value.revisions },
-        ],
-      }));
-    },
-    [record],
   );
 
   const setNoteStatus = useCallback(
@@ -1396,6 +1414,7 @@ function OpenReview({
   const walkKinds = { walks: bundle.definition.walks.filter((walk) => walk.kind === 'walk').length, readings: bundle.definition.walks.filter((walk) => walk.kind === 'reading').length };
 
   return (
+    <DiscussionActivity.Provider value={discussionActivity}>
     <div
       className="rv"
       ref={viewRoot}
@@ -1614,7 +1633,7 @@ function OpenReview({
           )}
           {current !== null && activeStation >= 0 && (
             // Kept while a location is open, hidden, so the walk is where it was on the way back.
-            <div className="rv-walk-stage" hidden={away !== null}>
+            <div className="rv-walk-stage" hidden={away !== null} ref={stage}>
               <WalkNavBar
                 stations={stations}
                 active={activeStation}
@@ -1694,6 +1713,9 @@ function OpenReview({
               onSelect={setSelection}
               problem={placeProblem}
               words={words}
+              referenceMark={away !== null}
+              memory={paneMemory.current.get(`${focus.path}:${focus.side}:${String(focus.start)}:${String(focus.end)}`) ?? null}
+              onLeave={(memory) => paneMemory.current.set(`${focus.path}:${focus.side}:${String(focus.start)}:${String(focus.end)}`, memory)}
             />
           ))}
         </main>
@@ -1782,6 +1804,7 @@ function OpenReview({
             }}
             onGoToLocation={(location) => goAway(location)}
             onMessages={setDiscussionMessages}
+            onActivity={setDiscussionActivity}
             onClearQuote={dropQuote}
           />
           {rightTab === 'step' && (
@@ -1923,15 +1946,6 @@ function OpenReview({
                   words={words}
                 />
               </Collapsible>
-              <Collapsible title={words.notesSection} defaultOpen={false}>
-                <NoteForm
-                  selection={selection}
-                  shown={focus}
-                  stepId={away === null ? (current?.step.id ?? null) : null}
-                  words={words}
-                  onAdd={addNote}
-                />
-              </Collapsible>
               <NotesHere notes={state.notes} location={focus} stepId={current?.step.id ?? null} words={words} onOpen={goAway} />
             </>
           )}
@@ -1940,6 +1954,7 @@ function OpenReview({
         )}
       </div>
     </div>
+    </DiscussionActivity.Provider>
   );
 }
 
@@ -2125,7 +2140,11 @@ function CheckPanel({
               {(status === 'sending' || status === 'streaming') && <span className="rv-sub"> · answering…</span>}
               {(status === 'failed' || status === 'unknown' || status === 'cancelled') && <span className="rv-sub"> · {status}</span>}
             </summary>
-            {entry.answer !== null && entry.answer.text !== '' ? <DiscussionAnswer answer={entry.answer} onShow={onShow} /> : <p className="rv-sub">…</p>}
+            {entry.answer !== null && entry.answer.text !== '' ? (
+              <DiscussionAnswer answer={entry.answer} onShow={onShow} />
+            ) : (
+              <PendingLine questionId={entry.question.id} pending={status === 'sending' || status === 'streaming' || status === 'sent'} />
+            )}
           </details>
         );
       })}
@@ -2770,7 +2789,11 @@ function StepDeepening({
               {(status === 'sending' || status === 'streaming') && <span className="rv-sub"> · answering…</span>}
               {(status === 'failed' || status === 'unknown' || status === 'cancelled') && <span className="rv-sub"> · {status}</span>}
             </summary>
-            {entry.answer !== null && entry.answer.text !== '' ? <DiscussionAnswer answer={entry.answer} onShow={onShow} /> : <p className="rv-sub">…</p>}
+            {entry.answer !== null && entry.answer.text !== '' ? (
+              <DiscussionAnswer answer={entry.answer} onShow={onShow} />
+            ) : (
+              <PendingLine questionId={entry.question.id} pending={status === 'sending' || status === 'streaming' || status === 'sent'} />
+            )}
             {last && (
               <button type="button" className="rv-quiet" data-ev="step-continue-discussion" onClick={onContinue}>
                 Continue in the discussion
@@ -3165,59 +3188,6 @@ function HunkDecision({
   );
 }
 
-function NoteForm({
-  selection,
-  shown,
-  stepId,
-  words,
-  onAdd,
-}: {
-  readonly selection: CodeLocation | null;
-  readonly shown: CodeLocation | null;
-  readonly stepId: string | null;
-  readonly words: ReviewWords;
-  readonly onAdd: (note: Pick<ReviewNote, 'kind' | 'text' | 'location' | 'stepId'>) => void;
-}): JSX.Element {
-  const [kind, setKind] = useState<'question' | 'finding'>('question');
-  const [text, setText] = useState('');
-  const location = selection ?? shown;
-  return (
-    <form
-      className="rv-note-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (text.trim() === '') {
-          return;
-        }
-        onAdd({ kind, text: text.trim(), location, stepId });
-        setText('');
-      }}
-    >
-      <div className="rv-note-kind">
-        {(['question', 'finding'] as const).map((value) => (
-          <label key={value}>
-            <input type="radio" checked={kind === value} onChange={() => setKind(value)} />{' '}
-            {value === 'question' ? words.note.question : words.note.finding}
-          </label>
-        ))}
-      </div>
-      <textarea
-        value={text}
-        rows={3}
-        placeholder={kind === 'question' ? words.note.yourQuestion : words.note.yourFinding}
-        onChange={(event) => setText(event.target.value)}
-      />
-      <div className="rv-sub">
-        {words.note.at(location === null ? words.note.noLocation : `${fileName(location.path)}:${rangeText(location)}`)}
-        {selection === null ? ` — ${words.note.selectHint}` : ` (${words.note.yourSelection})`}
-      </div>
-      <button type="submit" disabled={text.trim() === ''}>
-        {words.note.add(kind)}
-      </button>
-    </form>
-  );
-}
-
 function NotesHere({
   notes,
   location,
@@ -3366,6 +3336,14 @@ function WalkNavBar({
 
 // --- Code ---------------------------------------------------------------------------------
 
+/** How an opened location's pane was left: what was opened in it, and where it was scrolled. */
+interface PaneMemory {
+  readonly extra: { readonly above: number; readonly below: number; readonly context: boolean };
+  readonly openGaps: readonly number[];
+  readonly top: number;
+  readonly left: number;
+}
+
 function CodePane({
   focus,
   contexts,
@@ -3384,7 +3362,15 @@ function CodePane({
   onSelect,
   problem,
   words,
+  referenceMark = false,
+  memory = null,
+  onLeave,
 }: {
+  /** A location opened on its own: its lines carry the reference's own mark (30 October 2026). */
+  readonly referenceMark?: boolean;
+  /** How this pane was left before, to open as it was. */
+  readonly memory?: PaneMemory | null;
+  readonly onLeave?: (memory: PaneMemory) => void;
   readonly focus: CodeLocation;
   readonly contexts: readonly CodeLocation[];
   readonly overlay: readonly CodeLocation[];
@@ -3404,9 +3390,19 @@ function CodePane({
   readonly words: ReviewWords;
 }): JSX.Element {
   const content = useRows(files, focus.path, diffFile, focus.side);
-  const [extra, setExtra] = useState({ above: 0, below: 0, context: false });
-  const [openGaps, setOpenGaps] = useState<ReadonlySet<number>>(new Set());
+  const [extra, setExtra] = useState(memory?.extra ?? { above: 0, below: 0, context: false });
+  const [openGaps, setOpenGaps] = useState<ReadonlySet<number>>(new Set(memory?.openGaps ?? []));
   const container = useRef<HTMLDivElement>(null);
+  const left = useRef({ extra, openGaps, top: memory?.top ?? 0, left: memory?.left ?? 0 });
+  left.current = { ...left.current, extra, openGaps };
+  useEffect(
+    () => () => {
+      onLeave?.({ extra: left.current.extra, openGaps: [...left.current.openGaps], top: left.current.top, left: left.current.left });
+    },
+    // Once, when the pane goes: what it was left as.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
   const rows = content?.rows ?? [];
 
   const focused = useMemo(() => referenceRows(rows, focus), [rows, focus]);
@@ -3513,6 +3509,13 @@ function CodePane({
     }
     const target =
       container.current?.querySelector('[data-focus-change="1"]') ?? container.current?.querySelector('[data-focus="1"]');
+    // Back at a location left before: where it was scrolled, not its first line again.
+    if (memory !== null && scrolledFor.current === '' && container.current !== null && target !== null && target !== undefined) {
+      container.current.scrollTop = memory.top;
+      container.current.scrollLeft = memory.left;
+      scrolledFor.current = scrollKey;
+      return;
+    }
     if (target !== null && target !== undefined) {
       // A new place starts at the left edge: no sideways scroll is carried over from another.
       if (container.current !== null) {
@@ -3611,6 +3614,9 @@ function CodePane({
       }
       if (selectionSet.has(index)) {
         classes.push('rv-row-selected');
+      }
+      if (referenceMark && inFocus) {
+        classes.push('rv-ref-mark');
       }
       const mark = row.kind === 'deleted' ? { sign: '−', word: words.view.before } : row.kind === 'added' ? { sign: '+', word: words.view.after } : null;
       const focusAttrs: Record<string, string> = {};
@@ -3711,7 +3717,14 @@ function CodePane({
         )}
         {highlightWalk && <span className="rv-key rv-walk-mark">{words.view.legendWalk}</span>}
       </div>
-      <div className={wrap ? 'rv-lines rv-lines-wrap' : 'rv-lines'} ref={container} style={{ '--rv-digits': String(lineDigits(rows)) } as CSSProperties}>
+      <div
+        className={wrap ? 'rv-lines rv-lines-wrap' : 'rv-lines'}
+        ref={container}
+        style={{ '--rv-digits': String(lineDigits(rows)) } as CSSProperties}
+        onScroll={(event) => {
+          left.current = { ...left.current, top: event.currentTarget.scrollTop, left: event.currentTarget.scrollLeft };
+        }}
+      >
         {content === null && <div className="rv-empty">{words.view.reading}</div>}
         {content !== null && content.error !== null && (
           <div className="rv-error">

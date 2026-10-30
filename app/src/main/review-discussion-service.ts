@@ -33,7 +33,7 @@ import {
   type SimplifySection,
   type ReviewDiscussionEvent,
 } from '../shared/review-discussion';
-import type { StepAnswer } from '../shared/review-pair';
+import { toolActivity, type StepAnswer } from '../shared/review-pair';
 import { AttemptLedger } from './attempt-ledger';
 // DSP-132: the only thing taken from the chat - its adapter interface, as a type. No route
 // to the chat service or the loop runner exists from here (an import scan pins it).
@@ -218,7 +218,14 @@ interface Turn {
   /** With code access: the files read in this turn, and the tool calls not yet finished. */
   readonly reads: string[];
   readonly calls: Map<string, { readonly name: string; readonly subject: string | null }>;
+  /** What the agent is doing now, and when the window was last told (never stored). */
+  activity?: string;
+  activityTimer?: ReturnType<typeof setTimeout> | null;
+  activityShown?: string;
 }
+
+/** How often the window is told what the agent is doing, at most. */
+const ACTIVITY_MS = 700;
 
 interface Session {
   readonly adapter: ChatAdapter;
@@ -415,6 +422,31 @@ export class ReviewDiscussionService {
     this.emit({ kind: 'message', message: { ...message } });
   }
 
+  /**
+   * What the agent answering is doing, from the provider's events only (30 October 2026).
+   * The first is told at once; later ones at most every {@link ACTIVITY_MS}, the latest
+   * winning, so the window's line changes calmly and never grows into a log.
+   */
+  private setActivity(turn: Turn, activity: string): void {
+    turn.activity = activity;
+    const tell = (): void => {
+      if (this.turn === turn && turn.activity !== undefined && turn.activity !== turn.activityShown) {
+        turn.activityShown = turn.activity;
+        this.emit({ kind: 'activity', questionId: turn.questionId, activity: turn.activity });
+      }
+    };
+    if (turn.activityShown === undefined) {
+      tell();
+      return;
+    }
+    if (turn.activityTimer == null) {
+      turn.activityTimer = setTimeout(() => {
+        turn.activityTimer = null;
+        tell();
+      }, ACTIVITY_MS);
+    }
+  }
+
   private emitStatus(note?: string): void {
     this.emit({ kind: 'status', status: this.status(), ...(note === undefined ? {} : { note }) });
   }
@@ -432,6 +464,7 @@ export class ReviewDiscussionService {
               attemptId: this.turn.attemptId,
               dspatchRunId: this.turn.runId,
               stopping: this.turn.stopping,
+              ...(this.turn.activity === undefined ? {} : { activity: this.turn.activity }),
             },
       unresolved: unresolved.map((attempt) => ({
         attemptId: attempt.attemptId,
@@ -829,6 +862,7 @@ export class ReviewDiscussionService {
       this.switchNotice = null;
       turn = { questionId, answerId: null, attemptId: attempt.attemptId, runId: null, sendPending: true, stopping: false, reads: [], calls: new Map() };
       this.turn = turn;
+      this.setActivity(turn, 'Waiting for the agent…');
       // Before the send, not after it: a question that never reached the disk cannot be
       // reconciled as an unknown outcome after a restart (chat: `sendPrompt`).
       this.save();
@@ -1056,6 +1090,7 @@ export class ReviewDiscussionService {
     if (event.type === 'assistant.delta' && answer !== null) {
       answer.text += event.text;
       this.emit({ kind: 'delta', messageId: answer.id, text: event.text });
+      this.setActivity(turn, this.message(turn.questionId)?.deepen !== undefined ? 'Writing the explanation…' : 'Writing the answer…');
       return;
     }
     if (event.type === 'assistant.message' && answer !== null) {
@@ -1067,6 +1102,7 @@ export class ReviewDiscussionService {
     // With code access: what the agent read, counted once its result says it ran.
     if (event.type === 'tool.started') {
       turn.calls.set(event.toolCallId, { name: event.name, subject: event.subject ?? null });
+      this.setActivity(turn, `${toolActivity(event.name, event.subject ?? null)}…`);
       return;
     }
     if (event.type === 'tool.finished') {
@@ -1079,6 +1115,10 @@ export class ReviewDiscussionService {
     }
     if (event.type !== 'run.finished') {
       return;
+    }
+    if (turn.activityTimer != null) {
+      clearTimeout(turn.activityTimer);
+      turn.activityTimer = null;
     }
 
     const detail =

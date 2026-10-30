@@ -81,6 +81,7 @@ import {
   type ReviewAgentChoice,
   type ReviewAgents,
   type StepQuestion,
+  toolActivity,
 } from '../shared/review-pair';
 import type { HeldRevisions } from '../main/review-discussion-service';
 import type { RevisionPairIdentity } from '../shared/review-pair';
@@ -169,6 +170,8 @@ interface Live {
 export interface PreparedExplanation {
   readonly selection: CodeSelection;
   readonly followUp: ExplainFollowUp | null;
+  /** The person's own question about the selection, asked as the first question. */
+  readonly asked?: string;
 }
 
 const CANCEL_CONFIRM_MS = 15_000;
@@ -373,10 +376,22 @@ export class ReviewAgentJobs {
       if (action === 'question' && question === '') {
         return { error: 'Write your question first.' };
       }
-      return { selection: root.selection, followUp: { root: root.id, action, question: action === 'question' ? question : '' } };
+      // Explain one answer more simply: an answer of this very explanation, done.
+      const of = action === 'simpler' && typeof value['of'] === 'string' ? value['of'] : null;
+      if (of !== null && !record.jobs.some((job) => job.id === of && (job.id === root.id || job.followUp?.root === root.id) && job.state === 'done')) {
+        return { error: 'The answer to explain more simply is not in this explanation.' };
+      }
+      return { selection: root.selection, followUp: { root: root.id, action, question: action === 'question' ? question : '', ...(of === null ? {} : { of }) } };
     }
     const selection = await readSelection(request['selection'], opened.files, (side, filePath) => this.options.pairs.linesAt(key, side, filePath));
-    return isPairError(selection) ? selection : { selection, followUp: null };
+    if (isPairError(selection)) {
+      return selection;
+    }
+    const ask = typeof request['ask'] === 'string' ? request['ask'].trim().slice(0, 4000) : '';
+    if (request['ask'] !== undefined && ask === '') {
+      return { error: 'Write your question first.' };
+    }
+    return { selection, followUp: null, ...(ask === '' ? {} : { asked: ask }) };
   }
 
   private startChecked(key: unknown, raw: unknown, prepared: PreparedExplanation | null): PairAnswer<AgentJob> {
@@ -480,7 +495,9 @@ export class ReviewAgentJobs {
             : kind === 'explain'
             ? prepared === null
               ? 'Looking into the code.'
-              : 'Explaining the selected code.'
+              : prepared.asked !== undefined
+                ? 'Answering your question about the selected code.'
+                : 'Explaining the selected code.'
             : `Reviewing ${scope?.label ?? 'the delegated part'}.`,
       detail: '',
       scope,
@@ -490,6 +507,7 @@ export class ReviewAgentJobs {
       ...(question === null ? {} : { question }),
       ...(prepared === null ? {} : { selection: prepared.selection }),
       ...(prepared?.followUp == null ? {} : { followUp: prepared.followUp }),
+      ...(prepared?.asked === undefined ? {} : { asked: prepared.asked }),
     };
     // Written before anything is sent: a job that never reached the disk could not be
     // reconciled after a restart. The agent and model it was started with become the
@@ -591,8 +609,7 @@ export class ReviewAgentJobs {
     if (live.activityTimer !== null) {
       return;
     }
-    live.activityTimer = setTimeout(() => {
-      live.activityTimer = null;
+    const tell = (): void => {
       if (live.activity === live.activityShown) {
         return;
       }
@@ -602,6 +619,15 @@ export class ReviewAgentJobs {
         live.activityShown = live.activity;
         this.setJob(live, { activity: live.activity });
       }
+    };
+    // The first is said at once (30 October 2026): the wait is what the person sees first.
+    if (live.activityShown === '') {
+      tell();
+      return;
+    }
+    live.activityTimer = setTimeout(() => {
+      live.activityTimer = null;
+      tell();
     }, ACTIVITY_MS);
   }
 
@@ -729,8 +755,7 @@ export class ReviewAgentJobs {
       // Counted as read or searched only once its result says it ran.
       const subject = event.subject === undefined ? null : this.relative(live, event.subject);
       live.calls.set(event.toolCallId, { name: event.name, subject });
-      const file = subject === null ? '' : (subject.split(/[\\/]/).pop() ?? '');
-      this.setActivity(live, (event.name === 'Read' && file !== '' ? `Reading ${file}` : 'Searching the code'));
+      this.setActivity(live, toolActivity(event.name, subject));
     } else if (event.type === 'tool.finished') {
       const call = live.calls.get(event.toolCallId) ?? { name: event.name, subject: null };
       live.calls.delete(event.toolCallId);
@@ -769,7 +794,7 @@ export class ReviewAgentJobs {
     }
     live.text = '';
     live.runId = null;
-    this.setActivity(live, 'Waiting for the agent to begin');
+    this.setActivity(live, 'Waiting for the agent…');
     const ended = new Promise<{ status: 'finished' | 'failed' | 'cancelled' | 'unconfirmed'; error: string | null }>((resolve) => {
       live.finished = (status, error) => {
         live.finished = null;
@@ -908,16 +933,26 @@ export class ReviewAgentJobs {
     const thread: ExplainTurn[] = [];
     const root = job.followUp?.root ?? null;
     const record = this.options.pairs.state(key);
+    // Explain one answer more simply: the thread up to that answer, and the question it answered.
+    const of = job.followUp?.of ?? null;
+    let answered: string | undefined;
     if (root !== null && !isPairError(record)) {
       for (const entry of record.jobs) {
         const inThread = entry.id === root || entry.followUp?.root === root;
         if (!inThread || entry.id === job.id || entry.state !== 'done' || entry.answer === undefined) {
           continue;
         }
-        thread.push({ asked: entry.followUp === undefined ? 'Explain the selected code.' : followUpWords(entry.followUp), answer: entry.answer.answer });
+        const asked = entry.followUp === undefined ? (entry.asked ?? 'Explain the selected code.') : followUpWords(entry.followUp);
+        thread.push({ asked, answer: entry.answer.answer });
+        if (entry.id === of) {
+          answered = asked;
+          break;
+        }
       }
     }
-    return selectionPrompt(material, folder, selection, around, thread.slice(-6), job.followUp ?? null, language);
+    // The person's own first question about the selection is asked as a question.
+    const now = job.followUp ?? (job.asked === undefined ? null : { root: job.id, action: 'question' as const, question: job.asked });
+    return selectionPrompt(material, folder, selection, around, thread.slice(-6), now, language, answered);
   }
 
   private async explain(live: Live, prompt: string): Promise<void> {

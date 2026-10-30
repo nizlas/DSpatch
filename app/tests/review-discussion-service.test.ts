@@ -606,18 +606,35 @@ test('with code access a question runs in the held revisions under the analysis 
     assert.match(prompt, /TEST FOLDER SECTION/);
     assert.match(prompt, /```dspatch-references/);
 
+    // What the agent is doing, from the provider's events only, told calmly (30 October 2026).
+    const activities = (): string[] => window.events.flatMap((event) => (event.kind === 'activity' ? [event.activity] : []));
+    assert.deepEqual(activities(), ['Waiting for the agent…'], 'waiting is said at once');
+    adapter.emit({ type: 'tool.started', toolCallId: 't0', name: 'Read', subject: path.join(folder, 'target', 'src', 'real.ts') } as Partial<AgentEvent> & { type: 'tool.started' });
+    adapter.emit({ type: 'tool.finished', toolCallId: 't0', name: 'Read', status: 'ok' } as Partial<AgentEvent> & { type: 'tool.finished' });
     adapter.emit({ type: 'tool.started', toolCallId: 't1', name: 'Grep', subject: path.join(folder, 'target') } as Partial<AgentEvent> & { type: 'tool.started' });
     adapter.emit({ type: 'tool.finished', toolCallId: 't1', name: 'Grep', status: 'ok' } as Partial<AgentEvent> & { type: 'tool.finished' });
+    // Two calls within the interval: only the latest is told, not a log of both.
+    await until(() => activities().length === 2, 'the next activity');
+    assert.deepEqual(activities(), ['Waiting for the agent…', 'Searching the code…']);
+    assert.equal(service.status().turn?.activity, 'Searching the code…', 'a window arriving now is told too');
+    adapter.emit({ type: 'tool.started', toolCallId: 't2', name: 'Read', subject: path.join(folder, 'target', 'src', 'real.ts') } as Partial<AgentEvent> & { type: 'tool.started' });
+    await until(() => activities().length === 3, 'the read');
+    assert.equal(activities()[2], 'Reading real.ts…');
+    adapter.emit({ type: 'tool.finished', toolCallId: 't2', name: 'Read', status: 'ok' } as Partial<AgentEvent> & { type: 'tool.finished' });
     adapter.delta('`Workspace` is the state kept per project.\n\n```dspatch-references\n');
+    await until(() => activities().length === 4, 'writing');
+    assert.equal(activities()[3], 'Writing the answer…');
     adapter.delta(JSON.stringify({ references: [{ label: 'Its definition', path: 'src/real.ts', side: 'target', start: 3, end: 5 }, { label: 'Made up', path: 'src/made-up.ts', side: 'target', start: 1, end: 1 }], insufficient: false }));
     adapter.delta('\n```');
     adapter.finish();
     await until(() => storedMessages(s).some((message) => message.role === 'answer' && message.references !== undefined), 'the checked answer');
     const answer = storedMessages(s).find((message) => message.role === 'answer');
     assert.equal(answer?.text, '`Workspace` is the state kept per project.', 'the block is not part of the text shown');
+    assert.equal(service.status().turn, null, 'the activity ends with the turn');
+    assert.equal(activities().length, 4, 'nothing is said after the end');
     assert.deepEqual(answer?.references?.map((entry) => entry.range.path), ['src/real.ts'], 'only a checked reference is kept');
     assert.equal(answer?.adjustments?.length, 1, 'what was left out is said');
-    assert.deepEqual(answer?.reads, ['Grep target']);
+    assert.deepEqual(answer?.reads, ['Read target/src/real.ts', 'Grep target', 'Read target/src/real.ts']);
     const question = storedMessages(s).find((message) => message.role === 'question');
     assert.equal(question?.codeAccess, true);
     assert.equal(question?.toolPolicy, 'Read, Glob and Grep in the revisions');

@@ -592,7 +592,8 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     answer = task?.answer ?? answer;
     // An analysis task reads before it answers: long enough to be stopped, as a real one is,
     // whether or not the revision folder had to be written first (a discussion may hold it).
-    const lead = task === null ? 0 : 400;
+    const toolMs = Math.max(0, Number(process.env['DSPATCH_PRESENTATION_TOOL_MS'] ?? '0') || 0);
+    const lead = (task === null ? 0 : 400) + toolMs * (task?.tools.length ?? 0);
     // Chunked on whitespace, so what arrives is the partial text a real stream
     // produces — including a fence that is open for several frames, which is the
     // case the reader has to survive.
@@ -619,11 +620,27 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // run 20261024-070000-dsp121-flow). The reply below keeps its timers as before.
     emit({ ...base, type: 'run.started', at: new Date().toISOString() });
     // DSP-152, SIMULATED: the reads and searches the analysis task made, reported as the
-    // Claude adapter reports its Read and Grep calls, with the path they used.
+    // Claude adapter reports its Read and Grep calls, with the path they used. With
+    // DSPATCH_PRESENTATION_TOOL_MS (30 October 2026) each call takes that long, as a real
+    // read does, so what the agent is doing can be seen while it works; by default none.
     (task?.tools ?? []).forEach((tool, index) => {
       const toolCallId = `${dspatchRunId}-read-${String(index + 1)}`;
-      emit({ ...base, type: 'tool.started', at: new Date().toISOString(), toolCallId, name: tool.name, subject: tool.subject });
-      emit({ ...base, type: 'tool.finished', at: new Date().toISOString(), toolCallId, name: tool.name, status: tool.ok ? 'ok' : 'error' });
+      const call = (): void => {
+        if (state.activeRun !== dspatchRunId) {
+          return;
+        }
+        emit({ ...base, type: 'tool.started', at: new Date().toISOString(), toolCallId, name: tool.name, subject: tool.subject });
+        emit({ ...base, type: 'tool.finished', at: new Date().toISOString(), toolCallId, name: tool.name, status: tool.ok ? 'ok' : 'error' });
+      };
+      if (toolMs === 0) {
+        call();
+        return;
+      }
+      const timer = setTimeout(() => {
+        state.timers.delete(timer);
+        call();
+      }, toolMs * index);
+      state.timers.add(timer);
     });
 
     const reply = (): void => {

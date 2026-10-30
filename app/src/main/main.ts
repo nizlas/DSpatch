@@ -2572,7 +2572,9 @@ async function pressIn(
       const element = document.querySelector(${JSON.stringify(request.selector)});
       // By kind, not by class: an explanation window's elements are made by its walk window's page.
       if (element === null || element.nodeType !== 1 || typeof element.getBoundingClientRect !== 'function') { return null; }
-      element.scrollIntoView({ block: 'center' });
+      // Scrolled to only when it is not already in sight, as a person clicks what they see.
+      const seen = (() => { const b = element.getBoundingClientRect(); const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return b.width > 0 && hit !== null && element.contains(hit); })();
+      if (!seen) { element.scrollIntoView({ block: 'center' }); }
       ${request.action === 'press-key' || request.action === 'type' ? 'element.focus();' : ''}
       const box = element.getBoundingClientRect();
       const x = Math.round(box.left + box.width / 2);
@@ -2626,23 +2628,30 @@ async function textPointIn(contents: Electron.WebContents, point: TextPoint, hal
     `(() => {
       const element = document.querySelector(${JSON.stringify(point.selector)});
       if (element === null || element.nodeType !== 1) { return null; }
-      element.scrollIntoView({ block: 'center' });
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-      let at = 0;
-      const wanted = ${String(point.offset)};
-      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-        const length = (node.textContent || '').length;
-        if (wanted < at + length) {
-          const range = document.createRange();
-          range.setStart(node, wanted - at);
-          range.setEnd(node, wanted - at + 1);
-          const box = range.getBoundingClientRect();
-          const x = ${half === 'left' ? 'box.left + Math.max(1, box.width * 0.25)' : 'box.right - Math.max(1, box.width * 0.25)'};
-          return { x: Math.round(x), y: Math.round(box.top + box.height / 2) };
+      const find = () => {
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        let at = 0;
+        const wanted = ${String(point.offset)};
+        for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+          const length = (node.textContent || '').length;
+          if (wanted < at + length) {
+            const range = document.createRange();
+            range.setStart(node, wanted - at);
+            range.setEnd(node, wanted - at + 1);
+            const box = range.getBoundingClientRect();
+            const x = ${half === 'left' ? 'box.left + Math.max(1, box.width * 0.25)' : 'box.right - Math.max(1, box.width * 0.25)'};
+            return { x: Math.round(x), y: Math.round(box.top + box.height / 2) };
+          }
+          at += length;
         }
-        at += length;
-      }
-      return null;
+        return null;
+      };
+      // Scrolled to only when the character is not already in sight.
+      const first = find();
+      const hit = first === null ? null : document.elementFromPoint(first.x, first.y);
+      if (first !== null && hit !== null && element.contains(hit)) { return first; }
+      element.scrollIntoView({ block: 'center' });
+      return find();
     })()`,
   )) as { x: number; y: number } | null;
 }
@@ -3024,6 +3033,29 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
                 return docs.flatMap((doc) => [...doc.querySelectorAll(selector)].map((node) => node.className || node.getAttribute('data-ev')).concat(words.filter((word) => (doc.body.innerText || '').includes(word))));
               })(),
               awayBar: text(document.querySelector('[data-ev="away-bar"]')),
+              // 30 October 2026: an opened location's pane, and where the walk's own panes are scrolled.
+              awayPane: (() => {
+                const lines = document.querySelector('.rv-code > .rv-code-pane .rv-lines');
+                if (lines === null) {
+                  return null;
+                }
+                const top = lines.getBoundingClientRect().top;
+                const first = [...lines.querySelectorAll('[data-sel-line]')].find((row) => row.getBoundingClientRect().bottom > top + 1);
+                return {
+                  scrollTop: Math.round(lines.scrollTop),
+                  scrollHeight: lines.scrollHeight,
+                  clientHeight: lines.clientHeight,
+                  firstLine: first ? first.getAttribute('data-sel-side') + ':' + first.getAttribute('data-sel-line') : '',
+                  marked: [...lines.querySelectorAll('.rv-ref-mark')].map((row) => Number(row.getAttribute('data-sel-line'))),
+                  rows: lines.querySelectorAll('[data-sel-line]').length,
+                  scope: text(document.querySelector('.rv-code > .rv-code-pane .rv-code-bar .rv-seg:last-of-type .rv-on')),
+                };
+              })(),
+              stageScroll: [...document.querySelectorAll('.rv-walk-stage, .rv-walk-stage *')].filter((node) => node.scrollTop > 0).map((node) => (node.className || node.tagName) + '@' + Math.round(node.scrollTop)),
+              discussionActivity: (() => {
+                const docs = [document, ...(window.__dspatchExplanationWindow && !window.__dspatchExplanationWindow.closed ? [window.__dspatchExplanationWindow.document] : [])];
+                return docs.flatMap((doc) => [...doc.querySelectorAll('[data-ev="discussion-activity"], [data-ev="deepening-activity"]')].map((node) => text(node)));
+              })(),
               codeWidth: Math.round((document.querySelector('.rv-code') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width),
               paneRows: [...document.querySelectorAll('.rv-pane-active [data-sel-line]')].map((node) => node.getAttribute('data-sel-side') + ':' + node.getAttribute('data-sel-path') + ':' + node.getAttribute('data-sel-line')),
               position: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read().position : null,
@@ -3657,7 +3689,7 @@ function registerIpc(): void {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.
-              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' || named === 'selection' || named === 'explain-window' ? named : 'first';
+              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' || named === 'selection' || named === 'explain-window' || named === 'context' || named === 'context-walk' ? named : 'first';
             })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }

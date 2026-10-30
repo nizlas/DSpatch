@@ -116,7 +116,12 @@ export interface AgentJobRequestInput {
   /** DSP-152, `explain`: code selected in the diff, as the window read it (the host checks it). */
   readonly selection?: CodeSelectionRequest;
   /** DSP-152, `explain`: a follow-up on an earlier explanation of a selection, by its first job. */
-  readonly followUp?: { readonly root: string; readonly action: ExplainAction; readonly question?: string };
+  readonly followUp?: { readonly root: string; readonly action: ExplainAction; readonly question?: string; readonly of?: string };
+  /**
+   * `explain` with a selection (30 October 2026): the person's own question about the
+   * selected code, asked without *Explain this* first. Without it the selection is explained.
+   */
+  readonly ask?: string;
   /** `checks` (30 October 2026): the walk definition whose change is looked over. */
   readonly definitionPath?: string;
 }
@@ -508,6 +513,28 @@ export interface ExplainFollowUp {
   readonly action: ExplainAction;
   /** For `question`: what the person asked. */
   readonly question: string;
+  /**
+   * For `simpler` (30 October 2026): the answer, by its job, to explain more simply. The
+   * thread it is given ends with that answer and the question it answered. Absent: the last.
+   */
+  readonly of?: string;
+}
+
+/**
+ * The file key of a selection in a file outside the change (30 October 2026): a reference
+ * followed to a file the change does not touch. Every line there is unchanged.
+ */
+export function outsideFileKey(filePath: string): string {
+  return `outside:${filePath}`;
+}
+
+/**
+ * What a tool call the provider reported says the agent is doing (30 October 2026): the
+ * file it reads, by name, or that it searches. The purpose of a search is not guessed.
+ */
+export function toolActivity(name: string, subject: string | null): string {
+  const file = subject === null ? '' : (subject.split(/[\\/]/).pop() ?? '');
+  return name === 'Read' && file !== '' ? `Reading ${file}` : 'Searching the code';
 }
 
 /** The selected text, segment by segment, as one string. */
@@ -597,6 +624,8 @@ export interface AgentJob {
   /** For an explanation of selected code: the selection, and for a follow-up what it asks. */
   readonly selection?: CodeSelection;
   readonly followUp?: ExplainFollowUp;
+  /** For an explanation of selected code: the person's own question about it, when asked. */
+  readonly asked?: string;
   /** What the agent could read, and what it looked at (DSP-152 analysis access). */
   readonly material?: AgentMaterial;
   readonly investigation?: AgentInvestigation;
@@ -780,7 +809,12 @@ function followUpFrom(raw: unknown): ExplainFollowUp | null {
   if (!isRecordObject(raw) || typeof raw['root'] !== 'string' || (raw['action'] !== 'more' && raw['action'] !== 'simpler' && raw['action'] !== 'question')) {
     return null;
   }
-  return { root: raw['root'], action: raw['action'], question: typeof raw['question'] === 'string' ? raw['question'] : '' };
+  return {
+    root: raw['root'],
+    action: raw['action'],
+    question: typeof raw['question'] === 'string' ? raw['question'] : '',
+    ...(typeof raw['of'] === 'string' ? { of: raw['of'] } : {}),
+  };
 }
 
 function materialFrom(raw: unknown): AgentMaterial | null {
@@ -871,6 +905,7 @@ export function jobFrom(raw: unknown): AgentJob | null {
         ...(answer === null ? {} : { answer }),
         ...(selection === null ? {} : { selection }),
         ...(followUp === null ? {} : { followUp }),
+        ...(typeof raw['asked'] === 'string' && raw['asked'] !== '' ? { asked: raw['asked'] } : {}),
         ...(material === null ? {} : { material }),
         ...(investigation === null ? {} : { investigation }),
         ...(typeof raw['activity'] === 'string' && state === 'running' ? { activity: raw['activity'] } : {}),
@@ -1193,15 +1228,73 @@ export type UnifiedRow =
   | { readonly kind: 'context'; readonly base: number; readonly target: number }
   | { readonly kind: 'deleted'; readonly base: number }
   | { readonly kind: 'added'; readonly target: number }
-  | { readonly kind: 'gap'; readonly id: string; readonly base: number; readonly target: number; readonly count: number };
+  | GapRow;
+
+/**
+ * A run of unchanged lines folded away. `base` and `target` are its first hidden line on
+ * each side. `down` says there is a change above it, from which more lines can be shown
+ * downwards; `up` that there is one below it, from which more can be shown upwards.
+ */
+export interface GapRow {
+  readonly kind: 'gap';
+  readonly id: string;
+  readonly base: number;
+  readonly target: number;
+  readonly count: number;
+  readonly down: boolean;
+  readonly up: boolean;
+}
+
+/**
+ * How far one folded run has been opened (Niclas's trial of 30 October 2026): lines shown
+ * downwards from the change above it and upwards from the change below it, or all of it.
+ */
+export type GapExpansion = { readonly down: number; readonly up: number } | 'all';
+
+/**
+ * How a file's diff is opened: the whole file, or folded runs opened run by run, by the
+ * run's id. Kept per file for as long as the review is open, whichever layout shows it.
+ */
+export interface FileExpansion {
+  readonly whole: boolean;
+  readonly gaps: Readonly<Record<string, GapExpansion>>;
+}
+
+export const NO_EXPANSION: FileExpansion = { whole: false, gaps: {} };
+
+/** How many more lines one press of *Show more lines* opens. */
+export const MORE_LINES = 20;
+
+/** A run opened further in one direction, or all of it. */
+export function expandGap(expansion: FileExpansion, gap: Pick<GapRow, 'id'>, how: 'down' | 'up' | 'all'): FileExpansion {
+  const before = expansion.gaps[gap.id];
+  const opened: GapExpansion =
+    how === 'all' || before === 'all'
+      ? 'all'
+      : { down: (before?.down ?? 0) + (how === 'down' ? MORE_LINES : 0), up: (before?.up ?? 0) + (how === 'up' ? MORE_LINES : 0) };
+  return { ...expansion, gaps: { ...expansion.gaps, [gap.id]: opened } };
+}
+
+/** The run that hides a line of one side, if one does. */
+export function gapHiding(rows: readonly UnifiedRow[], side: LineSide, line: number): GapRow | null {
+  for (const row of rows) {
+    if (row.kind === 'gap') {
+      const first = side === 'base' ? row.base : row.target;
+      if (line >= first && line < first + row.count) {
+        return row;
+      }
+    }
+  }
+  return null;
+}
 
 /** One row of a side-by-side diff; either side may be empty. */
 export interface SplitRow {
   readonly kind: 'context' | 'change' | 'gap';
   readonly base: number | null;
   readonly target: number | null;
-  /** For a gap: its id and how many unchanged lines it hides. */
-  readonly gap?: { readonly id: string; readonly count: number };
+  /** For a gap: the folded run. */
+  readonly gap?: GapRow;
 }
 
 interface Segment {
@@ -1238,39 +1331,55 @@ function segmentsOf(file: PairFile, baseLength: number, targetLength: number): r
   return segments;
 }
 
-/** How many unchanged lines stay visible around a change before the rest fold away. */
-export const CONTEXT_LINES = 3;
+/**
+ * How many unchanged lines stay visible around a change before the rest fold away. Ten
+ * since Niclas's trial of 30 October 2026, where three were too few to read a change by.
+ */
+export const CONTEXT_LINES = 10;
 
 function sameRows(
   segment: Segment,
   first: boolean,
   last: boolean,
-  expanded: ReadonlySet<string>,
-): { readonly lines: readonly { base: number; target: number }[]; readonly gaps: readonly { at: number; id: string; base: number; target: number; count: number }[] } {
+  expansion: FileExpansion,
+): { readonly lines: readonly { base: number; target: number }[]; readonly gap: (GapRow & { readonly at: number }) | null } {
   const count = segment.baseCount;
   const id = `gap-${String(segment.baseStart)}-${String(segment.targetStart)}`;
   const all = Array.from({ length: count }, (_, index) => ({ base: segment.baseStart + index, target: segment.targetStart + index }));
-  const keepBefore = first ? 0 : CONTEXT_LINES;
-  const keepAfter = last ? 0 : CONTEXT_LINES;
-  if (expanded.has(id) || expanded.has('*') || count <= keepBefore + keepAfter + 1) {
-    return { lines: all, gaps: [] };
+  const opened = expansion.gaps[id];
+  if (expansion.whole || opened === 'all') {
+    return { lines: all, gap: null };
+  }
+  // Lines below the change above the run, and above the change below it.
+  const keepBefore = first ? 0 : CONTEXT_LINES + (opened?.down ?? 0);
+  const keepAfter = last ? 0 : CONTEXT_LINES + (opened?.up ?? 0);
+  // Where the two meet, the run is shown whole: never a fold of one line, never a line twice.
+  if (count <= keepBefore + keepAfter + 1) {
+    return { lines: all, gap: null };
   }
   const head = all.slice(0, keepBefore);
   const tail = all.slice(count - keepAfter);
   const hidden = all[keepBefore] as { base: number; target: number };
   return {
     lines: [...head, ...tail],
-    gaps: [{ at: head.length, id, base: hidden.base, target: hidden.target, count: count - keepBefore - keepAfter }],
+    gap: { kind: 'gap', at: head.length, id, base: hidden.base, target: hidden.target, count: count - keepBefore - keepAfter, down: !first, up: !last },
   };
 }
 
-/** The unified rows of a file, with long unchanged runs folded into gaps; `'*'` in `expanded` unfolds every one. */
+/**
+ * The unified rows of a file, with long unchanged runs folded into gaps as `expansion`
+ * leaves them. A set of ids is the earlier form: each named run, or `'*'` for all, opened.
+ */
 export function unifiedRowsOf(
   file: PairFile,
   baseLength: number,
   targetLength: number,
-  expanded: ReadonlySet<string> = new Set(),
+  expansion: FileExpansion | ReadonlySet<string> = NO_EXPANSION,
 ): readonly UnifiedRow[] {
+  const opened: FileExpansion =
+    expansion instanceof Set
+      ? { whole: expansion.has('*'), gaps: Object.fromEntries([...expansion].map((id) => [id, 'all' as const])) }
+      : (expansion as FileExpansion);
   const segments = segmentsOf(file, baseLength, targetLength);
   const rows: UnifiedRow[] = [];
   segments.forEach((segment, index) => {
@@ -1283,19 +1392,17 @@ export function unifiedRowsOf(
       }
       return;
     }
-    const { lines, gaps } = sameRows(segment, index === 0, index === segments.length - 1, expanded);
+    const { lines, gap } = sameRows(segment, index === 0, index === segments.length - 1, opened);
     lines.forEach((line, at) => {
-      for (const gap of gaps) {
-        if (gap.at === at) {
-          rows.push({ kind: 'gap', id: gap.id, base: gap.base, target: gap.target, count: gap.count });
-        }
+      if (gap !== null && gap.at === at) {
+        const { at: _at, ...row } = gap;
+        rows.push(row);
       }
       rows.push({ kind: 'context', base: line.base, target: line.target });
     });
-    for (const gap of gaps) {
-      if (gap.at === lines.length) {
-        rows.push({ kind: 'gap', id: gap.id, base: gap.base, target: gap.target, count: gap.count });
-      }
+    if (gap !== null && gap.at === lines.length) {
+      const { at: _at, ...row } = gap;
+      rows.push(row);
     }
   });
   return rows;
@@ -1306,10 +1413,10 @@ export function splitRowsOf(
   file: PairFile,
   baseLength: number,
   targetLength: number,
-  expanded: ReadonlySet<string> = new Set(),
+  expansion: FileExpansion | ReadonlySet<string> = NO_EXPANSION,
 ): readonly SplitRow[] {
   const rows: SplitRow[] = [];
-  const unified = unifiedRowsOf(file, baseLength, targetLength, expanded);
+  const unified = unifiedRowsOf(file, baseLength, targetLength, expansion);
   let index = 0;
   while (index < unified.length) {
     const row = unified[index] as UnifiedRow;
@@ -1319,7 +1426,7 @@ export function splitRowsOf(
       continue;
     }
     if (row.kind === 'gap') {
-      rows.push({ kind: 'gap', base: row.base, target: row.target, gap: { id: row.id, count: row.count } });
+      rows.push({ kind: 'gap', base: row.base, target: row.target, gap: row });
       index += 1;
       continue;
     }
