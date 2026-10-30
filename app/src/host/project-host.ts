@@ -95,6 +95,13 @@ import {
   describePermissionPolicy,
 } from '../adapter/claude-agent-sdk-adapter';
 import { claudeSupportStatus } from '../adapter/claude-support';
+import {
+  COPILOT_ANALYSIS_POLICY,
+  COPILOT_REVIEW_DENY_REASON,
+  COPILOT_REVIEW_POLICY,
+  copilotRuntimeInstalled,
+  describeCopilotPolicy,
+} from '../adapter/copilot-sdk-adapter';
 import { ChatService, type ChatAdapter } from '../main/chat-service';
 import { ConversationStore } from '../main/conversation-store';
 import { inRecent, ProjectStore, type WorkspaceRecord } from '../main/project-store';
@@ -375,6 +382,7 @@ const CLAUDE_AUTHORIZATION_REFERENCE: string | null =
  * a restart picks it up. A packaged build has none.
  */
 const CLAUDE_SUPPORT = claudeSupportStatus();
+const COPILOT_INSTALLED = copilotRuntimeInstalled();
 
 /**
  * DSP-132: every provider adapter - the chat's and the review discussion's - comes from
@@ -404,6 +412,9 @@ const adapterFactory = providerAdapters({
   },
   claudeAuthorizationReference: CLAUDE_AUTHORIZATION_REFERENCE,
   claudeInstalled: CLAUDE_SUPPORT.installed,
+  copilotInstalled: COPILOT_INSTALLED,
+  copilotRequireManagedHooks: process.env['DSPATCH_COPILOT_REQUIRE_HOOKS'] === '1',
+  log,
 });
 
 /** The main chat's adapter per provider, from the shared factory. */
@@ -431,6 +442,7 @@ function loopRunRequest(input: {
     // DSP-149: Claude's model is the person's choice, as in the chat.
     claudeModel: chatService.modelFor('claude'),
     claudeModels: chatService.knownModelIds('claude'),
+    copilotModel: chatService.modelFor('copilot'),
     sessionProvider: chatService.openSession()?.provider ?? null,
     chosenAgent: chatService.chosenAgent(),
     adapters: {
@@ -562,6 +574,7 @@ function createChatService(): ChatService {
   },
   claudeAuthorizationReference: CLAUDE_AUTHORIZATION_REFERENCE,
   claudeSupport: { installed: CLAUDE_SUPPORT.installed, reason: CLAUDE_SUPPORT.reason },
+  copilotInstalled: COPILOT_INSTALLED,
   agentChoiceStore: { read: () => agentChoiceStore.read(), write: (provider) => agentChoiceStore.write(provider) },
   modelChoice: modelChoiceStore,
   ...(chatRunMode && process.env['DSPATCH_FAIL_MODEL_LIST_ONCE'] === '1' ? { failFirstModelList: true } : {}),
@@ -593,7 +606,7 @@ const modelChoiceStore = {
     try {
       const parsed = JSON.parse(fs.readFileSync(modelChoiceStore.file(), 'utf8')) as { models?: Record<string, unknown> };
       const models: Partial<Record<StoredSessionProvider, string>> = {};
-      for (const provider of ['cursor', 'claude'] as const) {
+      for (const provider of ['cursor', 'claude', 'copilot'] as const) {
         const value = parsed.models?.[provider];
         if (typeof value === 'string' && value !== '') {
           models[provider] = value;
@@ -643,7 +656,7 @@ const agentChoiceStore = {
     }
     try {
       const parsed = JSON.parse(text) as { agent?: unknown };
-      return parsed.agent === 'cursor' || parsed.agent === 'claude' ? parsed.agent : null;
+      return parsed.agent === 'cursor' || parsed.agent === 'claude' || parsed.agent === 'copilot' ? parsed.agent : null;
     } catch {
       return null;
     }
@@ -3911,13 +3924,13 @@ function registerCoreMethods(): void {
    * window states a fact instead of echoing its own request.
    */
   handle('chat.listModels', (_event, provider: unknown): Promise<ModelListing> => {
-    if (provider !== 'cursor' && provider !== 'claude') {
+    if (provider !== 'cursor' && provider !== 'claude' && provider !== 'copilot') {
       throw new Error('Unknown agent.');
     }
     return chatService.listModels(provider);
   });
   handle('chat.chooseModel', (_event, provider: unknown, modelId: unknown): string => {
-    if ((provider !== 'cursor' && provider !== 'claude') || typeof modelId !== 'string') {
+    if ((provider !== 'cursor' && provider !== 'claude' && provider !== 'copilot') || typeof modelId !== 'string') {
       throw new Error('Unknown agent or model.');
     }
     return chatService.setModelFor(provider, modelId);
@@ -3931,7 +3944,7 @@ function registerCoreMethods(): void {
   // DSP-136: an explicit agent choice in *Open a project*. Recorded only; nothing is
   // built and no provider is asked.
   handle('chat.chooseAgent', (_event, provider: unknown): StoredSessionProvider | null => {
-    if (provider !== 'cursor' && provider !== 'claude') {
+    if (provider !== 'cursor' && provider !== 'claude' && provider !== 'copilot') {
       throw new Error('Unknown agent.');
     }
     const chosen = chatService.chooseAgent(provider);
@@ -4352,6 +4365,7 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
       const availability = providerAvailability(provider, {
         claudeAuthorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,
         claudeInstalled: CLAUDE_SUPPORT.installed,
+        copilotInstalled: COPILOT_INSTALLED,
       });
       return availability.choosable && provider === 'cursor' ? { ...availability, choosable: false, reason: CURSOR_ANALYSIS_REFUSAL } : availability;
     },
@@ -4379,29 +4393,33 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
     model: process.env['DSPATCH_CHAT_MODEL'] ?? undefined,
     // DSP-149: the same choice as the chat, in the discussion's own session.
     modelFor: (provider) =>
-      provider === 'claude'
-        ? chatService.modelFor('claude')
+      provider !== 'cursor'
+        ? chatService.modelFor(provider)
         : (modelChoiceStore.read('cursor') ?? process.env['DSPATCH_CHAT_MODEL'] ?? REVIEW_DISCUSSION_DEFAULT_MODEL),
     availability: (provider) =>
       providerAvailability(provider, {
         claudeAuthorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,
         claudeInstalled: CLAUDE_SUPPORT.installed,
+        copilotInstalled: COPILOT_INSTALLED,
       }),
     policyFor: (provider) =>
       provider === 'claude'
         ? `${describePermissionPolicy(REVIEW_PERMISSIONS)}. Deny reason: ${REVIEW_DENY_REASON}`
-        : 'text-only (tools: [])',
+        : provider === 'copilot'
+          ? `${describeCopilotPolicy(COPILOT_REVIEW_POLICY)}. Deny reason: ${COPILOT_REVIEW_DENY_REASON}`
+          : 'text-only (tools: [])',
     // Niclas's decision of 30 October 2026: a question may read the two revisions with the
     // analysis access the walk preparation uses. Only an agent with a read-only analysis
-    // policy gets it (Claude); Cursor has none and stays tool-free.
+    // policy gets it (Claude, Copilot); Cursor has none and stays tool-free.
     codeAccess: {
-      offered: (provider) => provider === 'claude',
+      offered: (provider) => provider !== 'cursor',
       createAdapter: (provider) => {
         log(`[review] building a ${provider} analysis adapter for a discussion${presentationMode ? ' (presentation, simulated)' : ''}`);
         return adapterFactory.createAdapter({ provider, purpose: 'analysis' });
       },
       policy: ANALYSIS_PERMISSIONS,
-      policyLine: `${describePermissionPolicy(ANALYSIS_PERMISSIONS)}, in a folder holding the two revisions only`,
+      policyLine: (provider) =>
+        `${provider === 'copilot' ? describeCopilotPolicy(COPILOT_ANALYSIS_POLICY) : describePermissionPolicy(ANALYSIS_PERMISSIONS)}, in a folder holding the two revisions only`,
       hold: (identity, holder) =>
         requireReviewAgentJobs().holdForDiscussion({ repository: identity.repository, base: identity.base, target: identity.target }, holder),
     },

@@ -13,6 +13,8 @@ import type { StoredSessionProvider } from '../shared/bridge';
  * - **Cursor** is always choosable. Its login is checked only when a Cursor session
  *   is actually used: a session started without one fails at start with Cursor's
  *   own message, and nothing is sent. No feature assumes a working Cursor login.
+ * - **Copilot** is choosable when its runtime is installed here. Like Cursor's, its login
+ *   is checked when a session is used, with a sentence saying where to sign in (DSP-148).
  */
 export interface ProviderAvailability {
   readonly provider: StoredSessionProvider;
@@ -26,6 +28,8 @@ export interface ProviderAvailabilityInput {
   readonly claudeAuthorized: boolean;
   /** Whether Claude support was installed at launch. */
   readonly claudeInstalled: boolean;
+  /** Whether this machine has Copilot's runtime (DSP-148). Absent counts as not. */
+  readonly copilotInstalled?: boolean;
 }
 
 /**
@@ -40,12 +44,20 @@ export const CURSOR_LOGIN_NOTE =
   "Cursor's login is checked only when a Cursor session is used; DSpatch does not " +
   'check it on its own.';
 
+/** Copilot's login is the runtime's, on the machine where the work runs (DSP-148). */
+export const COPILOT_NOT_INSTALLED_TEXT = "Copilot's runtime is not installed for this machine. Run `npm ci` in `app/`, then restart DSpatch.";
+
 export function providerAvailability(
   provider: StoredSessionProvider,
   input: ProviderAvailabilityInput,
 ): ProviderAvailability {
   if (provider === 'cursor') {
     return { provider, choosable: true, reason: null };
+  }
+  if (provider === 'copilot') {
+    return input.copilotInstalled === true
+      ? { provider, choosable: true, reason: null }
+      : { provider, choosable: false, reason: COPILOT_NOT_INSTALLED_TEXT };
   }
   const reason = claudeUnavailableReason({
     authorized: input.claudeAuthorized,
@@ -56,5 +68,5 @@ export function providerAvailability(
 
 /** The display name of a provider. */
 export function providerDisplayName(provider: StoredSessionProvider): string {
-  return provider === 'claude' ? 'Claude' : 'Cursor';
+  return provider === 'claude' ? 'Claude' : provider === 'copilot' ? 'Copilot' : 'Cursor';
 }

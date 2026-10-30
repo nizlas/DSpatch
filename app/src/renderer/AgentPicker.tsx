@@ -23,12 +23,12 @@ import { modelRows } from '../shared/model-rows';
 import { isPairError, type ReviewAgents } from '../shared/review-pair';
 
 export interface AgentChoice {
-  readonly provider: 'cursor' | 'claude';
+  readonly provider: 'cursor' | 'claude' | 'copilot';
   readonly model: string;
 }
 
-function providerName(provider: 'cursor' | 'claude'): string {
-  return provider === 'claude' ? 'Claude' : 'Cursor';
+function providerName(provider: 'cursor' | 'claude' | 'copilot'): string {
+  return provider === 'claude' ? 'Claude' : provider === 'copilot' ? 'Copilot' : 'Cursor';
 }
 
 export function AgentPicker({
@@ -49,15 +49,15 @@ export function AgentPicker({
 }): JSX.Element {
   const [agents, setAgents] = useState<ReviewAgents | null>(null);
   const [readError, setReadError] = useState('');
-  const [provider, setProvider] = useState<'cursor' | 'claude' | null>(null);
+  const [provider, setProvider] = useState<'cursor' | 'claude' | 'copilot' | null>(null);
   const [model, setModel] = useState('');
   const [listing, setListing] = useState<ModelListing | null>(null);
   const [listNote, setListNote] = useState('');
   const [startNote, setStartNote] = useState('');
   // Which listing is wanted now: an answer for an agent no longer chosen is dropped.
-  const wanted = useRef<'cursor' | 'claude' | null>(null);
+  const wanted = useRef<'cursor' | 'claude' | 'copilot' | null>(null);
 
-  const listModels = (next: 'cursor' | 'claude'): void => {
+  const listModels = (next: 'cursor' | 'claude' | 'copilot'): void => {
     wanted.current = next;
     setListing(null);
     setListNote('');
@@ -157,7 +157,7 @@ export function AgentPicker({
           data-ev={`${testId}-provider`}
           value={provider ?? ''}
           onChange={(event) => {
-            const next = event.target.value === 'claude' || event.target.value === 'cursor' ? event.target.value : null;
+            const next = event.target.value === 'claude' || event.target.value === 'cursor' || event.target.value === 'copilot' ? event.target.value : null;
             setProvider(next);
             setStartNote('');
             // A model belongs to its agent: another agent starts with no model chosen,

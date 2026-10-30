@@ -546,7 +546,7 @@ function modelRequested(provider: ExperimentProvider = 'cursor'): string {
 
 // --- Provider choice (DSP-109) ----------------------------------------------
 
-export type ExperimentProvider = 'cursor' | 'claude';
+export type ExperimentProvider = 'cursor' | 'claude' | 'copilot';
 
 /** How a scenario is run. Every default is what the Cursor path always did. */
 export interface ScenarioOptions {

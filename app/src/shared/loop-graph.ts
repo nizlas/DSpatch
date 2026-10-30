@@ -830,7 +830,7 @@ export const CLAUDE_LOOP_STEP_TOOLS: readonly string[] = [
  * while another is passed.
  */
 export function describeRunToolPolicy(
-  provider: 'cursor' | 'claude' | null,
+  provider: 'cursor' | 'claude' | 'copilot' | null,
   policy: 'provider-default' | 'text-only' = LOOP_RUN_TOOL_POLICY,
 ): string {
   if (provider === null) {
@@ -853,6 +853,14 @@ export function describeRunToolPolicy(
       'rather than set by this drawing. A requirement ticked on a step, such as ' +
       '“no-file-writes”, is an instruction the agent is expected to follow, not a restriction ' +
       'these permissions apply.'
+    );
+  }
+  if (provider === 'copilot') {
+    return (
+      'Every agent step of a run with Copilot opens its session with the main chat’s tools: view, ' +
+      'glob, grep, create, edit and the runtime’s own shell, inside the session’s folders, with no ' +
+      'MCP servers, skills, sub-agents or web fetch. DSpatch records each command from the ' +
+      'runtime’s events and does not start it; that is a record, not a sandbox.'
     );
   }
   return policy === 'text-only'
@@ -1073,7 +1081,9 @@ export function capabilityAnswer(
 }
 
 /** The agent a run DSpatch walks goes through (DSP-138). Not a drawing's `target`. */
-export type RunProvider = 'cursor' | 'claude';
+export type RunProvider = 'cursor' | 'claude' | 'copilot';
+
+const COPILOT_EVIDENCE_NOTE = ' Set by DSpatch; tried only with a stand-in model behind the real Copilot runtime, not on an account.';
 
 const CLAUDE_EVIDENCE_NOTE =
   ' Set by DSpatch and passed to the SDK only in offline tests; not observed against the ' +
@@ -1151,6 +1161,35 @@ export const RUN_PROVIDER_CAPABILITIES: Readonly<
         'settings. It is one list for the ' +
         'whole run, not one chosen per step.' +
         CLAUDE_EVIDENCE_NOTE,
+      evidence: 'documentation',
+    },
+  },
+  // DSP-148. Read from SDK 1.0.28's typings and tried with a stand-in model behind the real
+  // runtime; not observed against a real Copilot account.
+  copilot: {
+    'no-file-writes': {
+      status: 'other-means',
+      how: 'nothing applies it on this path: a step has the main chat’s tools, which include create and edit inside the session’s folders, so it is an instruction the agent is trusted to follow.' + COPILOT_EVIDENCE_NOTE,
+      evidence: 'documentation',
+    },
+    'background-execution': {
+      status: 'other-means',
+      how: 'DSpatch answers Copilot’s permission requests from the session’s policy, so nothing waits for a person to approve a tool. It is achieved another way rather than enforced.' + COPILOT_EVIDENCE_NOTE,
+      evidence: 'documentation',
+    },
+    'fixed-model-selection': {
+      status: 'enforced',
+      how: 'the model DSpatch passes to the SDK for the session. Every step runs the one model chosen for Copilot; only the entry step’s fixed model is checked.' + COPILOT_EVIDENCE_NOTE,
+      evidence: 'documentation',
+    },
+    'no-subagent-delegation': {
+      status: 'enforced',
+      how: 'the `availableTools` list DSpatch passes has no `task` tool, so a step cannot start an agent of its own.' + COPILOT_EVIDENCE_NOTE,
+      evidence: 'documentation',
+    },
+    'tool-restriction': {
+      status: 'enforced',
+      how: 'the `availableTools` list DSpatch passes, with no MCP servers, skills or web fetch. It is one list for the whole run, not one chosen per step.' + COPILOT_EVIDENCE_NOTE,
       evidence: 'documentation',
     },
   },

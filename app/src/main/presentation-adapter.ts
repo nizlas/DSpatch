@@ -425,7 +425,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       dspatchSessionId,
       // The provider the session was opened for (DSP-117), so a simulated Claude
       // session is recorded as one. Still SIMULATED: nothing here is either provider.
-      provider: config.provider === 'claude' ? 'claude' : 'cursor',
+      provider: config.provider === 'claude' ? 'claude' : config.provider === 'copilot' ? 'copilot' : 'cursor',
       providerSessionId: `local-${dspatchSessionId}`,
       createdAt: new Date().toISOString(),
     };

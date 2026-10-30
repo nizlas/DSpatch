@@ -271,7 +271,7 @@ function howRequirementHolds(
   status: Exclude<RequirementStanding['enforcement'], 'not-applicable'>,
   how: string,
 ): string {
-  const target = provider === 'claude' ? 'Claude' : 'Cursor';
+  const target = provider === 'claude' ? 'Claude' : provider === 'copilot' ? 'Copilot' : 'Cursor';
   switch (status) {
     case 'enforced':
       return `${target} enforces this itself: ${how}`;

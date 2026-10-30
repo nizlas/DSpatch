@@ -758,7 +758,7 @@ export function deepenFrom(raw: unknown): DeepenRequest | null {
  * chat's `StoredSessionProvider`, spelt here so the review module needs nothing of the
  * chat's.
  */
-export type DiscussionProvider = 'cursor' | 'claude';
+export type DiscussionProvider = 'cursor' | 'claude' | 'copilot';
 
 /** How a question from format 1, which stored no agent, is named in its Context. */
 export const RECORDED_BEFORE_PROVIDER_LINE = 'Cursor (recorded before the provider was stored)';
@@ -999,7 +999,7 @@ function adoptMessages(value: unknown): DiscussionMessage[] {
     if (typeof entry['model'] === 'string') {
       message.model = entry['model'];
     }
-    if (entry['provider'] === 'cursor' || entry['provider'] === 'claude') {
+    if (entry['provider'] === 'cursor' || entry['provider'] === 'claude' || entry['provider'] === 'copilot') {
       message.provider = entry['provider'];
     }
     if (typeof entry['dspatchSessionId'] === 'string') {
@@ -1077,7 +1077,7 @@ export function adoptDiscussionRecord(raw: unknown, expected: DiscussionIdentity
       attempts: adoptAttempts(raw['attempts']),
       draft: stringOr(raw['draft'], ''),
       savedAt: stringOr(raw['savedAt'], ''),
-      ...(provider === 'cursor' || provider === 'claude' ? { provider } : {}),
+      ...(provider === 'cursor' || provider === 'claude' || provider === 'copilot' ? { provider } : {}),
     },
   };
 }

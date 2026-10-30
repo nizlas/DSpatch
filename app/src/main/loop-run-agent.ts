@@ -63,6 +63,8 @@ export interface LoopRunAgentRequest {
    * understandable before anything starts.
    */
   readonly claudeModels?: readonly string[] | null;
+  /** DSP-148: the model chosen for Copilot, or the runtime's default. */
+  readonly copilotModel?: string;
   readonly adapters: LoopRunAdapterSource;
 }
 
@@ -133,7 +135,11 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
     );
   }
   const modelRequested =
-    provider === 'claude' ? modelForChatNode(request.entryNode, request.claudeModel) : request.cursorModel;
+    provider === 'claude'
+      ? modelForChatNode(request.entryNode, request.claudeModel)
+      : provider === 'copilot'
+        ? modelForChatNode(request.entryNode, request.copilotModel ?? '')
+        : request.cursorModel;
   return {
     ok: true,
     provider,

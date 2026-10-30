@@ -77,7 +77,7 @@ export interface RunRecordIdentity {
    * The agent the run's steps went through (DSP-138). Absent in a record written before
    * it was recorded, which reads as **not recorded** and is never taken to mean Cursor.
    */
-  readonly provider?: 'cursor' | 'claude';
+  readonly provider?: 'cursor' | 'claude' | 'copilot';
   readonly appVersion: string;
   readonly startedAtUtc: string;
 }
@@ -646,7 +646,7 @@ function parseIdentity(value: unknown): RunRecordIdentity | null {
     graphVersionId: asString(value['graphVersionId'], ''),
     modelRequested: asString(value['modelRequested'], ''),
     // Only a value this build writes. Anything else, or nothing, stays not recorded.
-    ...(provider === 'cursor' || provider === 'claude' ? { provider } : {}),
+    ...(provider === 'cursor' || provider === 'claude' || provider === 'copilot' ? { provider } : {}),
     appVersion: asString(value['appVersion'], 'unknown'),
     startedAtUtc: asString(value['startedAtUtc'], ''),
   };

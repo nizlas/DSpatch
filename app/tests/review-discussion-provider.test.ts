@@ -275,7 +275,7 @@ test('a stored agent wins on reopen over the opening window, and an unavailable 
     assert.equal(agent.unavailable, 'Claude is not enabled for this launch.');
     assert.deepEqual(
       agent.options.map((option) => [option.provider, option.choosable]),
-      [['cursor', true], ['claude', false]],
+      [['cursor', true], ['claude', false], ['copilot', true]],
     );
     const refused = await off.send({ question: 'Q', subject: POINT, selection: null }, s.review);
     assert.equal(refused.kind, 'refused');

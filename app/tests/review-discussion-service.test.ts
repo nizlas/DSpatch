@@ -573,7 +573,7 @@ test('with code access a question runs in the held revisions under the analysis 
           return adapter;
         },
         policy,
-        policyLine: 'Read, Glob and Grep in the revisions',
+        policyLine: () => 'Read, Glob and Grep in the revisions',
         hold: (identity, holder) => {
           events.push(`held ${identity.base.slice(0, 7)}→${identity.target.slice(0, 7)} for ${holder.startsWith('discussion-') ? 'the discussion' : holder}`);
           return Promise.resolve({
@@ -671,7 +671,7 @@ test('an analysis adapter without the analysis policy is refused, nothing is sen
           return adapter;
         },
         policy: { mode: 'analysis-test' },
-        policyLine: 'analysis',
+        policyLine: () => 'analysis',
         hold: () => Promise.resolve({ folder: s.fixture.records, section: '', check: () => Promise.resolve({ error: 'unused' }), release: () => released.push('released') }),
       },
     });

@@ -365,6 +365,7 @@ describe('the agent and model (after the first live trial)', () => {
     assert.deepEqual(jobsHere.agents(key, { provider: null, model: '' }), {
       options: [
         { provider: 'claude', choosable: true, reason: null },
+        { provider: 'copilot', choosable: true, reason: null },
         { provider: 'cursor', choosable: true, reason: null },
       ],
       current: null,

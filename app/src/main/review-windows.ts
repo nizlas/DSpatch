@@ -103,7 +103,7 @@ export interface ReviewWindowEntry {
   /** The folder the window was opened for, if any: the chooser's start folder. */
   readonly startFolder: string | null;
   /** DSP-132: the main window's agent when it opened this review, else `null`. */
-  readonly defaultProvider: 'cursor' | 'claude' | null;
+  readonly defaultProvider: 'cursor' | 'claude' | 'copilot' | null;
   /** DSP-152: the opener's model for `defaultProvider`, `''` when none was chosen. */
   readonly defaultModel: string;
   /** What `initial` answers: the review opened for it, or the chooser's note. */
@@ -432,7 +432,7 @@ export class ReviewWindows {
    * repository and two commits. One such window waiting for a choice is enough, so a
    * second press brings it to the front.
    */
-  async openDiff(defaultProvider: 'cursor' | 'claude' | null, defaultModel = ''): Promise<ReviewWindowOutcome> {
+  async openDiff(defaultProvider: 'cursor' | 'claude' | 'copilot' | null, defaultModel = ''): Promise<ReviewWindowOutcome> {
     try {
       const waiting = this.list().find((entry) => entry.view === 'diff' && entry.pairKey === null);
       if (waiting !== undefined) {
@@ -724,7 +724,7 @@ export class ReviewWindows {
   private create(init: {
     readonly sessionId: string;
     readonly startFolder: string | null;
-    readonly defaultProvider: 'cursor' | 'claude' | null;
+    readonly defaultProvider: 'cursor' | 'claude' | 'copilot' | null;
     readonly defaultModel: string;
     readonly initial: ReviewOpenOutcome;
     readonly identity: ReviewIdentity | null;
@@ -890,7 +890,7 @@ export class ReviewWindows {
     pairKey: string,
     definitionPath: string,
     ask: boolean,
-    defaults: { readonly provider: 'cursor' | 'claude' | null; readonly model: string },
+    defaults: { readonly provider: 'cursor' | 'claude' | 'copilot' | null; readonly model: string },
     tab: 'step' | 'discussion' = 'discussion',
   ): Promise<{ readonly ok: boolean; readonly note: string }> {
     // The step, shown for a point opened in a code window, takes no focus from it.
@@ -1032,7 +1032,7 @@ export class ReviewWindows {
     readonly initial: ReviewOpenOutcome;
     readonly identity: ReviewIdentity | null;
     readonly pairKey: string;
-    readonly defaults: { readonly provider: 'cursor' | 'claude' | null; readonly model: string };
+    readonly defaults: { readonly provider: 'cursor' | 'claude' | 'copilot' | null; readonly model: string };
   }): Panel {
     const preferences = this.cachedPreferences;
     // Where it was last left, while that is on a screen.

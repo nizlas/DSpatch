@@ -8,8 +8,9 @@
  * plan (section 6) decided: the host writes the two commits to a folder of their own
  * (`RevisionSnapshots`), the session runs there, and the adapter is built from the shared
  * factory for the `analysis` purpose, whose Claude policy (`ANALYSIS_PERMISSIONS`) offers
- * only Claude Code's Read, Glob and Grep, inside that folder. A job refuses an adapter that
- * does not hold exactly that policy. Cursor is refused for this work: DSpatch has no
+ * only Claude Code's Read, Glob and Grep, inside that folder, and whose Copilot policy
+ * (`COPILOT_ANALYSIS_POLICY`) offers the runtime's view, glob and grep likewise. A job refuses
+ * an adapter that does not hold exactly its policy. Cursor is refused for this work: DSpatch has no
  * read-only Cursor policy (`CURSOR_ANALYSIS_REFUSAL`). The prompt opens with the change and
  * its diff for orientation only. The review discussion is separate and stays tool-free.
  *
@@ -31,6 +32,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import { ANALYSIS_PERMISSIONS } from '../adapter/claude-agent-sdk-adapter';
+import { COPILOT_ANALYSIS_POLICY } from '../adapter/copilot-sdk-adapter';
 import type { AgentEvent, Unsubscribe } from '../adapter/types';
 import type { ChatAdapter } from '../main/chat-service';
 import {
@@ -88,7 +90,7 @@ import type { RevisionPairIdentity } from '../shared/review-pair';
 import type { ReviewPairs } from './review-pairs';
 import type { RevisionSnapshots, SnapshotManifest } from './revision-snapshots';
 
-export type AgentProvider = 'cursor' | 'claude';
+export type AgentProvider = 'cursor' | 'claude' | 'copilot';
 
 /** How often what the agent is doing is written to the record, at most. */
 const ACTIVITY_MS = 900;
@@ -206,7 +208,7 @@ function changedPaths(material: AnalysisMaterial): { readonly base: Set<string>;
 }
 
 function providerName(provider: AgentProvider): string {
-  return provider === 'claude' ? 'Claude' : 'Cursor';
+  return provider === 'claude' ? 'Claude' : provider === 'copilot' ? 'Copilot' : 'Cursor';
 }
 
 function describe(error: unknown): string {
@@ -303,7 +305,7 @@ export class ReviewAgentJobs {
     if (isPairError(record)) {
       return record;
     }
-    const options = (['claude', 'cursor'] as const).map((provider) => ({ provider, ...this.options.availability(provider) }));
+    const options = (['claude', 'copilot', 'cursor'] as const).map((provider) => ({ provider, ...this.options.availability(provider) }));
     const fromReview = record.agent;
     const fromOpener = agentChoiceFrom(opener);
     const chosen: { readonly choice: ReviewAgentChoice; readonly from: 'review' | 'opener' } | null =
@@ -405,7 +407,7 @@ export class ReviewAgentJobs {
     if (kind !== 'walks' && kind !== 'review' && kind !== 'explain' && kind !== 'checks') {
       return { error: 'Unknown kind of agent work.' };
     }
-    if (provider !== 'cursor' && provider !== 'claude') {
+    if (provider !== 'cursor' && provider !== 'claude' && provider !== 'copilot') {
       return { error: 'Choose an agent first.' };
     }
     if (model === '' || model.length > 200) {
@@ -728,7 +730,9 @@ export class ReviewAgentJobs {
     const adapter = this.options.createAdapter(provider);
     // The analysis policy exactly, or nothing is sent (fails closed, as the discussion does).
     const policy = adapter.permissionPolicy?.();
-    if ((adapter.id === 'claude-agent-sdk' && policy === undefined) || (policy !== undefined && !isDeepStrictEqual(policy, ANALYSIS_PERMISSIONS))) {
+    const copilotPolicy = adapter.copilotPolicy?.();
+    const copilotWrong = (adapter.id === 'copilot-sdk' && copilotPolicy === undefined) || (copilotPolicy !== undefined && !isDeepStrictEqual(copilotPolicy, COPILOT_ANALYSIS_POLICY));
+    if (copilotWrong || (adapter.id === 'claude-agent-sdk' && policy === undefined) || (policy !== undefined && !isDeepStrictEqual(policy, ANALYSIS_PERMISSIONS))) {
       await adapter.dispose().catch(() => undefined);
       throw new Error('The adapter built for analysis does not hold the read-only analysis policy, so it was not used. Nothing was sent.');
     }

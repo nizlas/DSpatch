@@ -1,3 +1,5 @@
+import { COPILOT_NOT_INSTALLED_TEXT } from './provider-availability';
+import { COPILOT_RUNTIME_DEFAULT_MODEL, describeCopilotPolicy, type CopilotToolPolicy } from '../adapter/copilot-sdk-adapter';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -954,6 +956,10 @@ export interface ChatAdapter {
    * Cursor, whose sessions use the provider's default and say so.
    */
   permissionPolicy?(): ClaudePermissionPolicy;
+  /** The Copilot adapter's policy (DSP-148), checked as {@link permissionPolicy} is. */
+  copilotPolicy?(): CopilotToolPolicy;
+  /** The signed-in account, where the provider says (DSP-148). Never a credential. */
+  account?(): string | null;
   subscribe(sessionId: string, listener: AgentEventListener): Unsubscribe;
   send(sessionId: string, prompt: string): Promise<RunReference>;
   /** DSP-149: see {@link AgentAdapter.setWorkspaceRoots}. */
@@ -1003,6 +1009,8 @@ export interface AgentChoiceStore {
 }
 
 export interface ChatServiceOptions {
+  /** Whether Copilot's runtime is installed here (DSP-148). */
+  readonly copilotInstalled?: boolean;
   /**
    * The boundary the generated sample project and the DSP-1 probe stay outside of.
    *
@@ -1616,6 +1624,9 @@ export class ChatService {
     if (provider === 'claude') {
       return chosen ?? process.env['DSPATCH_CLAUDE_MODEL'] ?? '';
     }
+    if (provider === 'copilot') {
+      return chosen ?? COPILOT_RUNTIME_DEFAULT_MODEL;
+    }
     return chosen ?? this.cursorModelRequested();
   }
 
@@ -1661,7 +1672,9 @@ export class ChatService {
     const source =
       provider === 'claude'
         ? "the Claude Agent SDK's supportedModels(), read without a model turn"
-        : "Cursor's SDK, Cursor.models.list()";
+        : provider === 'copilot'
+          ? "the Copilot runtime's model list, read without a model turn"
+          : "Cursor's SDK, Cursor.models.list()";
     const cached = this.modelLists.get(provider);
     const toListing = (models: readonly ModelInfo[]): ModelListing => ({
       provider,
@@ -1732,26 +1745,40 @@ export class ChatService {
             : 'Claude Agent SDK · not enabled for this launch'
         : provider === 'cursor'
           ? 'Cursor SDK · login checked only when a Cursor session is used'
-          : 'No agent chosen';
+          : provider === 'copilot'
+            ? `Copilot SDK · ${this.copilotAccount() ?? 'login checked when a session starts, on the machine where it runs'}`
+            : 'No agent chosen';
     const policy =
       this.adapter !== null && provider !== null && this.adapterProvider === provider
         ? this.adapter.permissionPolicy?.()
         : undefined;
+    const copilotPolicy = provider === 'copilot' && this.adapterProvider === 'copilot' ? this.adapter?.copilotPolicy?.() : undefined;
+    const copilotInstalled = this.options.copilotInstalled === true;
     return {
+      copilotEnabled: copilotInstalled,
+      copilotNote: copilotInstalled ? "Copilot's login is the runtime's own, on the machine where the work runs." : COPILOT_NOT_INSTALLED_TEXT,
       claudeEnabled,
       claudeInstalled,
       claudeNotInstalledText: claudeInstalled ? null : CLAUDE_NOT_INSTALLED_TEXT,
       claudeNote,
       connectionText,
       toolPolicyText:
-        policy !== undefined
+        copilotPolicy !== undefined
+          ? describeCopilotPolicy(copilotPolicy)
+          : policy !== undefined
           ? describePermissionPolicy(policy)
+          : provider === 'copilot'
+            ? 'the Copilot chat policy (shown once a session is open)'
           : provider === 'claude'
             ? 'the Claude chat policy (shown once a session is open)'
             : provider === 'cursor'
               ? 'provider-default'
               : 'none (no agent chosen)',
     };
+  }
+
+  private copilotAccount(): string | null {
+    return this.adapterProvider === 'copilot' ? (this.adapter?.account?.() ?? null) : null;
   }
 
   private claudeReference(): string | null {
@@ -2316,7 +2343,7 @@ export class ChatService {
         // adapter's own digest where it has one (Claude), `provider-default` where
         // it has none (Cursor).
         toolPolicy: adapter.policyDigest?.() ?? 'provider-default',
-        provider: handle.provider === 'claude' ? 'claude' : 'cursor',
+        provider: handle.provider === 'claude' ? 'claude' : handle.provider === 'copilot' ? 'copilot' : 'cursor',
       };
       this.unsubscribe = adapter.subscribe(handle.dspatchSessionId, (event) => {
         this.onAgentEvent(event);
@@ -2702,7 +2729,7 @@ export class ChatService {
         }
         const classified = classifyResumeFailure(error);
         const { detail } = classified.failure;
-        const provider: StoredSessionProvider = config.provider === 'claude' ? 'claude' : 'cursor';
+        const provider: StoredSessionProvider = config.provider === 'claude' ? 'claude' : config.provider === 'copilot' ? 'copilot' : 'cursor';
         this.options.log(
           `new ${providerName(provider)} session refused (code ` +
             `${classified.failure.providerCode ?? 'none'}): ${detail}; nothing sent, ` +
@@ -2797,7 +2824,7 @@ export class ChatService {
       // any adapter call, so nothing is asked of either provider and nothing is sent.
       const recordedProvider = storedSessionProvider(saved);
       const selectedProvider: StoredSessionProvider =
-        config.provider === 'claude' ? 'claude' : 'cursor';
+        config.provider === 'claude' ? 'claude' : config.provider === 'copilot' ? 'copilot' : 'cursor';
       if (recordedProvider !== selectedProvider) {
         const detail =
           `the recorded session ${previousId} is a ${providerName(recordedProvider)} ` +
@@ -6648,5 +6675,5 @@ function describeRunRefused(holder: { readonly by: 'agent' | 'person'; readonly 
 
 /** A provider's name as the window says it. */
 function providerName(provider: StoredSessionProvider): string {
-  return provider === 'claude' ? 'Claude' : 'Cursor';
+  return provider === 'claude' ? 'Claude' : provider === 'copilot' ? 'Copilot' : 'Cursor';
 }

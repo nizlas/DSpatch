@@ -9,7 +9,7 @@
 
 import type { LoopTarget, ModelPolicy } from './loop-graph';
 
-export type LoopRunProvider = 'cursor' | 'claude';
+export type LoopRunProvider = 'cursor' | 'claude' | 'copilot';
 
 /**
  * What the graph editor tells the main process when it asks for the line: the drawing's
@@ -48,6 +48,14 @@ export function describeLoopRunAgent(input: {
       `Runs with Claude (${input.modelRequested === "" ? "its default model" : input.modelRequested}): its agent steps read and edit files and run ` +
       "builds and tests with Claude Code's own shell tools, which DSpatch records. A gate " +
       "step's command is run by DSpatch itself." +
+      drawn
+    );
+  }
+  if (input.provider === 'copilot') {
+    return (
+      `Runs with Copilot (${input.modelRequested}): its agent steps read and edit files and run ` +
+      "builds and tests with Copilot's own shell tools, which DSpatch records. A gate step's " +
+      'command is run by DSpatch itself.' +
       drawn
     );
   }

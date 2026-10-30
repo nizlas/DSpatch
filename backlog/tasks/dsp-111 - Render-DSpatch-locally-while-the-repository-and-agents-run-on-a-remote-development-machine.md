@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-10-21 15:09'
-updated_date: '2026-10-27 20:50'
+updated_date: '2026-10-30 22:12'
 labels:
   - integration
 dependencies:
@@ -158,4 +158,6 @@ Remaining direct dependencies or departures:
 Still open and needing Niclas's decision (unchanged): the transport and its authentication; what a dropped connection does to work in progress; one or several clients (single writer per conversation and review is not host-enforced yet); where durable history lives and any local caching. Not done: host-side browsing, a remote transport, reconnection, two-machine and Linux trials (DSP-131).
 
 27 Oct 2026, DSP-149 (Niclas's decision): the start page has a Remote Session button beside Open Project, the approved entrance to connecting over SSH and choosing folders on the remote host. Placement, name and SSH as the intended path are approved; authentication details, disconnect behaviour and several clients are not decided. Until this card's remote transport exists the button is shown inactive with a short explanation, and nothing connects. Local and remote workspaces are meant to reopen from the same Recent list, with a remote workspace's connection settings saved with it.
+
+Focus (night session 30 Oct 2026, Niclas): a remote host-client first version. His message settles for this trial: the transport is chosen by the implementer, small and safe, a local endpoint through an SSH tunnel being acceptable; no unauthenticated host on a network; the host owns files, git, providers, jobs and durable review state; work on the host may finish while the client is away and the client recovers state and finished answers; nothing is resent. Use at work with Copilot is now in scope for this trial.
 <!-- SECTION:NOTES:END -->

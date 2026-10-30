@@ -1458,7 +1458,7 @@ function ProgressMark({ progress, compact = false }: { readonly progress: FilePr
 // --- Agent work (DSP-152) ------------------------------------------------------------------
 
 function agentName(job: AgentJob): string {
-  return `${job.provider === 'claude' ? 'Claude' : 'Cursor'} (${job.model})`;
+  return `${job.provider === 'claude' ? 'Claude' : job.provider === 'copilot' ? 'Copilot' : 'Cursor'} (${job.model})`;
 }
 
 /** A request that failed on its way, in the words of what failed: without Electron's wrapping. */
@@ -1478,7 +1478,7 @@ export function isRunning(job: AgentJob): boolean {
  * outcome of the choice shown now.
  */
 export function attemptLabel(job: AgentJob): string {
-  const words = `${job.provider === 'claude' ? 'Claude' : 'Cursor'} · ${job.model} · ${formatDate(job.startedAt)}`;
+  const words = `${job.provider === 'claude' ? 'Claude' : job.provider === 'copilot' ? 'Copilot' : 'Cursor'} · ${job.model} · ${formatDate(job.startedAt)}`;
   return job.state === 'done' ? words : `Last attempt (${words}):`;
 }
 

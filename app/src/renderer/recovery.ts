@@ -637,9 +637,9 @@ export function shouldCheckCursorConnection(input: {
   /** Whether a project (and so a conversation) is open in the window. */
   readonly projectOpen: boolean;
   /** The open conversation's agent, `null` when none is chosen for it. */
-  readonly sessionProvider: 'cursor' | 'claude' | null;
+  readonly sessionProvider: 'cursor' | 'claude' | 'copilot' | null;
   /** The agent chosen in *Open a project*, `null` when none is. */
-  readonly chosenAgent: 'cursor' | 'claude' | null;
+  readonly chosenAgent: 'cursor' | 'claude' | 'copilot' | null;
 }): boolean {
   const agent = input.projectOpen ? input.sessionProvider : input.chosenAgent;
   return agent === 'cursor';

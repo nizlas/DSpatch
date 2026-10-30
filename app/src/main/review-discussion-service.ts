@@ -1,3 +1,4 @@
+import { COPILOT_ANALYSIS_POLICY, COPILOT_REVIEW_POLICY } from '../adapter/copilot-sdk-adapter';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -140,15 +141,15 @@ export type DiscussionAvailability = (provider: DiscussionProvider) => {
 };
 
 /** The agents offered, in this order. */
-const DISCUSSION_PROVIDERS: readonly DiscussionProvider[] = ['cursor', 'claude'];
+const DISCUSSION_PROVIDERS: readonly DiscussionProvider[] = ['cursor', 'claude', 'copilot'];
 
 function providerName(provider: DiscussionProvider): string {
-  return provider === 'claude' ? 'Claude' : 'Cursor';
+  return provider === 'claude' ? 'Claude' : provider === 'copilot' ? 'Copilot' : 'Cursor';
 }
 
 /** What each agent is given here when nothing else is said (tests); main passes the real lines. */
 function defaultPolicyLine(provider: DiscussionProvider): string {
-  return provider === 'claude' ? 'the review policy (no tools)' : 'text-only (tools: [])';
+  return provider === 'cursor' ? 'text-only (tools: [])' : 'the review policy (no tools)';
 }
 
 /**
@@ -173,7 +174,7 @@ export interface DiscussionCodeAccess {
   /** The analysis policy an adapter must hold exactly; anything else is refused. */
   readonly policy: unknown;
   /** The policy as one line, for the window and each question's Context. */
-  readonly policyLine: string;
+  readonly policyLine: (provider: DiscussionProvider) => string;
   /** Write (or share) the two revisions as files, held by `holder` until released. */
   readonly hold: (identity: DiscussionIdentity, holder: string) => Promise<HeldRevisions>;
 }
@@ -501,7 +502,7 @@ export class ReviewDiscussionService {
   private policyLine(provider: DiscussionProvider): string {
     const access = this.options.codeAccess;
     if (access !== undefined && access.offered(provider)) {
-      return access.policyLine;
+      return access.policyLine(provider);
     }
     return this.options.policyFor?.(provider) ?? defaultPolicyLine(provider);
   }
@@ -561,7 +562,7 @@ export class ReviewDiscussionService {
    * an agent that cannot be chosen (its reason is the answer).
    */
   async chooseAgent(provider: unknown): Promise<DiscussionChooseOutcome> {
-    if (provider !== 'cursor' && provider !== 'claude') {
+    if (provider !== 'cursor' && provider !== 'claude' && provider !== 'copilot') {
       return { kind: 'refused', error: 'Unknown agent.' };
     }
     if (this.readOnly !== null) {
@@ -720,7 +721,9 @@ export class ReviewDiscussionService {
         const expected = reads ? access.policy : REVIEW_PERMISSIONS;
         const policy = adapter.permissionPolicy?.();
         const claudeWithoutPolicy = adapter.id === 'claude-agent-sdk' && policy === undefined;
-        if (claudeWithoutPolicy || (policy !== undefined && !isDeepStrictEqual(policy, expected))) {
+        const copilotPolicy = adapter.copilotPolicy?.();
+        const copilotWrong = (adapter.id === 'copilot-sdk' && copilotPolicy === undefined) || (copilotPolicy !== undefined && !isDeepStrictEqual(copilotPolicy, reads ? COPILOT_ANALYSIS_POLICY : COPILOT_REVIEW_POLICY));
+        if (copilotWrong || claudeWithoutPolicy || (policy !== undefined && !isDeepStrictEqual(policy, expected))) {
           throw new Error(
             reads
               ? 'The adapter built to read the revisions does not hold the read-only analysis policy, so it was not used. Nothing was sent.'

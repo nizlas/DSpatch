@@ -834,6 +834,10 @@ export interface ChatSessionInfo {
 
 /** DSP-117: whether Claude can be chosen in this launch, and how that is shown. */
 export interface AgentChoiceInfo {
+  /** DSP-148: whether Copilot's runtime is installed on the machine that does the work. */
+  readonly copilotEnabled: boolean;
+  /** Why Copilot cannot be chosen, or where its login is. Short; for the control's tooltip. */
+  readonly copilotNote: string;
   /**
    * `true` only when this launch was started with a recorded authorization reference
    * **and** Claude support is installed (DSP-133).
@@ -1480,7 +1484,7 @@ export interface StoredProject {
 }
 
 /** The providers a stored session can belong to. `copilot` has no session store yet. */
-export type StoredSessionProvider = Extract<ProviderId, 'cursor' | 'claude'>;
+export type StoredSessionProvider = Extract<ProviderId, 'cursor' | 'claude' | 'copilot'>;
 
 /** The provider session a conversation was last worked in. Identity, not a handle. */
 export interface StoredSession {

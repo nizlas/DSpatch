@@ -411,7 +411,7 @@ export function continuityPanel(
 }
 
 function providerWord(provider: StoredSessionProvider): string {
-  return provider === 'claude' ? 'Claude' : 'Cursor';
+  return provider === 'claude' ? 'Claude' : provider === 'copilot' ? 'Copilot' : 'Cursor';
 }
 
 /** What the window has done with a new session, which the main process does not know. */

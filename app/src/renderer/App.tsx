@@ -3827,7 +3827,7 @@ function AgentChooser({
           disabled={busy}
           onChange={(event) => {
             const value = event.target.value;
-            if ((value === 'cursor' || value === 'claude') && value !== session.provider) {
+            if ((value === 'cursor' || value === 'claude' || value === 'copilot') && value !== session.provider) {
               onSwitch(value);
             }
           }}
@@ -3841,6 +3841,9 @@ function AgentChooser({
           <option value="claude" disabled={!session.agent.claudeEnabled}>
             {/* Short, so the control row does not wrap; the reason is in the tooltip. */}
             {claudeOptionLabel(session.agent)}
+          </option>
+          <option value="copilot" disabled={!session.agent.copilotEnabled} title={session.agent.copilotNote}>
+            {session.agent.copilotEnabled ? 'Copilot' : 'Copilot (not installed)'}
           </option>
         </select>
       </label>
@@ -4034,7 +4037,7 @@ function SessionFacts({
               value={
                 session.provider === null
                   ? 'No agent chosen'
-                  : `${session.provider === 'claude' ? 'Claude' : 'Cursor'} · ${session.agent.connectionText}`
+                  : `${session.provider === 'claude' ? 'Claude' : session.provider === 'copilot' ? 'Copilot' : 'Cursor'} · ${session.agent.connectionText}`
               }
               testId="session-agent"
             />

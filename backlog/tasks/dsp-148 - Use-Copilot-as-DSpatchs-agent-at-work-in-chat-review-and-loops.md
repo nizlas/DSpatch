@@ -1,9 +1,10 @@
 ---
 id: DSP-148
 title: 'Use Copilot as DSpatch''s agent at work, in chat, review and loops'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-10-27 16:09'
+updated_date: '2026-10-30 22:12'
 labels:
   - integration
 dependencies:
@@ -142,4 +143,6 @@ Open decisions, to settle before or during planning:
    - what cancellation guarantees.
    These are facts to establish. If one forces a departure from the decided design, it goes to Niclas.
 4. **Copilot SDK in the basic installation.** Whether it is part of the basic installation or optional like Claude is an implementation choice within the decided bounds, unless the work environment's rules say otherwise.
+
+Focus (night session 30 Oct 2026, Niclas): build the Copilot adapter dry against SDK 1.0.28, for tomorrow's trial with the host on the work computer and the client on the laptop. Scope widened by Niclas's message of 30 Oct 2026: review flows first; remote host use now applies.
 <!-- SECTION:NOTES:END -->

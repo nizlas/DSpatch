@@ -73,7 +73,7 @@ declare global {
 }
 
 function agentName(provider: DiscussionProvider): string {
-  return provider === 'claude' ? 'Claude' : 'Cursor';
+  return provider === 'claude' ? 'Claude' : provider === 'copilot' ? 'Copilot' : 'Cursor';
 }
 
 /**

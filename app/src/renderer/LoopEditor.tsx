@@ -3598,7 +3598,7 @@ function NodeInspector({
   readonly findings: readonly Finding[];
   readonly help: boolean;
   /** The agent a run would use now (DSP-138), or `null` when none would start. */
-  readonly runProvider: 'cursor' | 'claude' | null;
+  readonly runProvider: 'cursor' | 'claude' | 'copilot' | null;
   /** Where this graph's role paths are measured from, or `null` when nothing is open. */
   readonly resourceRoot: string | null;
   readonly onNote: (note: string) => void;
@@ -3861,7 +3861,7 @@ function NodeInspector({
           <p className="muted" data-ev="node-tool-policy-scope">
             {runProvider === null
               ? 'The requirement answers on this step describe the agent a run uses, and no agent is chosen, so they say nothing is established yet.'
-              : `The requirement answers on this step describe ${runProvider === 'claude' ? 'Claude' : 'Cursor'}, the agent a run started now would use, and so does the sentence above. The drawing's target, ${graph.target}, is a label and is not what answers them.`}
+              : `The requirement answers on this step describe ${runProvider === 'claude' ? 'Claude' : runProvider === 'copilot' ? 'Copilot' : 'Cursor'}, the agent a run started now would use, and so does the sentence above. The drawing's target, ${graph.target}, is a label and is not what answers them.`}
           </p>
         </section>
       ) : null}

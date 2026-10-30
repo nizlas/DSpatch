@@ -75,14 +75,14 @@ export interface PairWalk {
 
 /** An agent review can use in this launch (DSP-152), and why not when it cannot. */
 export interface ReviewAgentOption {
-  readonly provider: 'cursor' | 'claude';
+  readonly provider: 'cursor' | 'claude' | 'copilot';
   readonly choosable: boolean;
   readonly reason: string | null;
 }
 
 /** An agent and model, as chosen; the model is the provider's id, never empty. */
 export interface ReviewAgentChoice {
-  readonly provider: 'cursor' | 'claude';
+  readonly provider: 'cursor' | 'claude' | 'copilot';
   readonly model: string;
 }
 
@@ -108,7 +108,7 @@ export interface ReviewAgents {
 /** What a window asks of the host to start agent work over the pair. */
 export interface AgentJobRequestInput {
   readonly kind: 'walks' | 'review' | 'explain' | 'checks';
-  readonly provider: 'cursor' | 'claude';
+  readonly provider: 'cursor' | 'claude' | 'copilot';
   readonly model: string;
   readonly scope?: DelegationScope;
   /** DSP-152, `explain`: the step (by its walk definition and ids) and the person's question. */
@@ -603,7 +603,7 @@ export interface AgentJob {
    */
   readonly kind: 'walks' | 'review' | 'explain' | 'checks';
   readonly state: AgentJobState;
-  readonly provider: 'cursor' | 'claude';
+  readonly provider: 'cursor' | 'claude' | 'copilot';
   readonly model: string;
   readonly startedAt: string;
   readonly endedAt: string | null;
@@ -856,7 +856,7 @@ export function jobFrom(raw: unknown): AgentJob | null {
   }
   // A job is always written with the agent it was started with; one without a known
   // agent cannot be attributed, and is not given one.
-  if (raw['provider'] !== 'claude' && raw['provider'] !== 'cursor') {
+  if (raw['provider'] !== 'claude' && raw['provider'] !== 'cursor' && raw['provider'] !== 'copilot') {
     return null;
   }
   const state = JOB_STATES.includes(raw['state'] as AgentJobState) ? (raw['state'] as AgentJobState) : 'unknown';
@@ -919,7 +919,7 @@ export function jobFrom(raw: unknown): AgentJob | null {
 
 /** A stored agent choice, or `null` for none or one that does not name both. */
 export function agentChoiceFrom(raw: unknown): ReviewAgentChoice | null {
-  if (!isRecordObject(raw) || (raw['provider'] !== 'cursor' && raw['provider'] !== 'claude')) {
+  if (!isRecordObject(raw) || (raw['provider'] !== 'cursor' && raw['provider'] !== 'claude' && raw['provider'] !== 'copilot')) {
     return null;
   }
   const model = typeof raw['model'] === 'string' ? raw['model'].trim() : '';

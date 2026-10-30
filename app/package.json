@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@cursor/sdk": "1.0.31",
+    "@github/copilot-sdk": "1.0.28",
     "diff": "9.0.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"

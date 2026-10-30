@@ -132,6 +132,8 @@ const AREAS = {
   provider: {
     what: 'provider adapters and their experiment scenarios, with a substituted provider',
     files: [
+      'copilot-sdk-adapter.test.ts',
+      { file: 'copilot-runtime.test.ts', heavy: true },
       'claude-agent-sdk-adapter.test.ts',
       'claude-support.test.ts',
       { file: 'claude-agent-sdk-adapter-process.test.ts', heavy: true },

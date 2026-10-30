@@ -198,7 +198,7 @@ export function ProviderSelect({
         disabled={disabled}
         onChange={(event) => {
           const value = event.target.value;
-          if (value === 'cursor' || value === 'claude') {
+          if (value === 'cursor' || value === 'claude' || value === 'copilot') {
             onChoose(value);
           }
         }}
@@ -209,6 +209,9 @@ export function ProviderSelect({
         <option value="cursor">Cursor</option>
         <option value="claude" disabled={!agentChoice.claudeEnabled}>
           {agentChoice.claudeEnabled ? 'Claude' : 'Claude (not available)'}
+        </option>
+        <option value="copilot" disabled={!agentChoice.copilotEnabled} title={agentChoice.copilotNote}>
+          {agentChoice.copilotEnabled ? 'Copilot' : 'Copilot (not available)'}
         </option>
       </select>
       <svg className="provider__chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false">

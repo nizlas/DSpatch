@@ -1884,7 +1884,7 @@ export interface ReviewWindowInput {
    * review discussion. Absent (standalone, example, direct) means none: the discussion
    * then asks for an explicit choice. A discussion's stored agent always wins.
    */
-  readonly defaultProvider?: 'cursor' | 'claude' | null;
+  readonly defaultProvider?: 'cursor' | 'claude' | 'copilot' | null;
   /**
    * DSP-152: the model the opening chat or loop editor uses with `defaultProvider`, the
    * starting choice for the review's agent work. `''` or absent means none was chosen.
