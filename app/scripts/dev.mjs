@@ -41,6 +41,12 @@ const electron = spawn(electronExecutable, [appDir], {
   stdio: 'inherit',
   env: { ...process.env, DSPATCH_RENDERER_URL: rendererUrl },
 });
+// A stop of this script reaches the window, or it is left running on its own.
+for (const signal of /** @type {const} */ (['SIGINT', 'SIGTERM'])) {
+  process.on(signal, () => {
+    electron.kill(signal);
+  });
+}
 
 electron.on('exit', (code) => {
   void server.close().then(() => {

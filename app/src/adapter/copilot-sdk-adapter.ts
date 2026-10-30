@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { hostname } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { AgentAdapter } from './agent-adapter';
@@ -223,6 +223,10 @@ export const COPILOT_POLICY_DENY_REASON = 'DSpatch does not allow this for this 
 
 export const COPILOT_MANAGED_APPROVAL_REASON =
   'A managed policy asks for a person to approve this, and DSpatch has no such approval on this path, so it was not run.';
+
+/** Beside what is sent for review (contract §3): the diff and prompt pass no tool hook. */
+export const COPILOT_EXCLUSION_NOTE =
+  'Content exclusion has not been verified on this path: the diff and the question are sent as the prompt, and DSpatch applies no exclusion rule of its own. Use synthetic material until the enablement gate is met.';
 
 /** A policy as one line a person can read, for Session details and the review's Context. */
 export function describeCopilotPolicy(policy: CopilotToolPolicy): string {
@@ -548,14 +552,16 @@ export class CopilotSdkAdapter implements AgentAdapter {
   }
 
   /** The running runtime, started on first use. One per adapter. */
-  private connect(workingDirectory: string): Promise<CopilotClientLike> {
+  private connect(): Promise<CopilotClientLike> {
     if (this.client === null) {
       const { env, removed } = copilotEnvironment(this.options.env ?? process.env);
       if (removed.length > 0) {
         this.log(`left out of the runtime's environment: ${removed.join(', ')}`);
       }
       const started = (async () => {
-        const client = await (this.options.clientFactory ?? realClient)(env, workingDirectory);
+        // The process stands outside the sessions' folders: on Windows a process's working
+        // folder cannot be removed, and revision folders are written again and removed.
+        const client = await (this.options.clientFactory ?? realClient)(env, tmpdir());
         await client.start();
         return client;
       })();
@@ -596,7 +602,7 @@ export class CopilotSdkAdapter implements AgentAdapter {
   }
 
   async listModels(): Promise<readonly ModelInfo[]> {
-    const client = await this.connect(process.cwd());
+    const client = await this.connect();
     const status = this.options.testProvider === undefined ? await client.getAuthStatus() : { isAuthenticated: true };
     if (!status.isAuthenticated) {
       throw new CopilotAdapterError(copilotNotSignedInText(), 'not-signed-in');
@@ -881,7 +887,7 @@ export class CopilotSdkAdapter implements AgentAdapter {
   async startSession(config: SessionConfig): Promise<SessionHandle> {
     this.refuseIfDisposed();
     const dspatchSessionId = config.dspatchSessionId ?? randomUUID();
-    const client = await this.connect(config.workspacePath);
+    const client = await this.connect();
     await this.ready(client);
     const state = this.newState(config, dspatchSessionId);
     try {
@@ -907,7 +913,7 @@ export class CopilotSdkAdapter implements AgentAdapter {
         'policy-changed',
       );
     }
-    const client = await this.connect(config.workspacePath);
+    const client = await this.connect();
     await this.ready(client);
     const state = this.newState(config, sessionId);
     try {

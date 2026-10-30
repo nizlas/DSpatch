@@ -98,6 +98,7 @@ import { claudeSupportStatus } from '../adapter/claude-support';
 import { browseHostFolder } from './host-browse';
 import {
   COPILOT_ANALYSIS_POLICY,
+  COPILOT_EXCLUSION_NOTE,
   COPILOT_REVIEW_DENY_REASON,
   COPILOT_REVIEW_POLICY,
   copilotRuntimeInstalled,
@@ -4408,7 +4409,7 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
       provider === 'claude'
         ? `${describePermissionPolicy(REVIEW_PERMISSIONS)}. Deny reason: ${REVIEW_DENY_REASON}`
         : provider === 'copilot'
-          ? `${describeCopilotPolicy(COPILOT_REVIEW_POLICY)}. Deny reason: ${COPILOT_REVIEW_DENY_REASON}`
+          ? `${describeCopilotPolicy(COPILOT_REVIEW_POLICY)}. Deny reason: ${COPILOT_REVIEW_DENY_REASON}. ${COPILOT_EXCLUSION_NOTE}`
           : 'text-only (tools: [])',
     // Niclas's decision of 30 October 2026: a question may read the two revisions with the
     // analysis access the walk preparation uses. Only an agent with a read-only analysis
@@ -4421,7 +4422,7 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
       },
       policy: ANALYSIS_PERMISSIONS,
       policyLine: (provider) =>
-        `${provider === 'copilot' ? describeCopilotPolicy(COPILOT_ANALYSIS_POLICY) : describePermissionPolicy(ANALYSIS_PERMISSIONS)}, in a folder holding the two revisions only`,
+        `${provider === 'copilot' ? describeCopilotPolicy(COPILOT_ANALYSIS_POLICY) : describePermissionPolicy(ANALYSIS_PERMISSIONS)}, in a folder holding the two revisions only${provider === 'copilot' ? `. ${COPILOT_EXCLUSION_NOTE}` : ''}`,
       hold: (identity, holder) =>
         requireReviewAgentJobs().holdForDiscussion({ repository: identity.repository, base: identity.base, target: identity.target }, holder),
     },

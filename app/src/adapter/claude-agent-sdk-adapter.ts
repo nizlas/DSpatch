@@ -2290,7 +2290,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     // with EPERM while Claude Code still has the folder as its working directory, and
     // the failure replaced the list Claude had just given (Niclas's trial, 27 Oct 2026:
     // "Models unavailable" over a working login).
-    const folder = path.join(tmpdir(), 'dspatch-claude-models');
+    const folder = path.join(tmpdir(), `dspatch-claude-models-${String(process.getuid?.() ?? 'user')}`);
     mkdirSync(folder, { recursive: true });
     const abortController = new AbortController();
     let release: () => void = () => undefined;

@@ -154,6 +154,15 @@ Still on the client side or not yet done, as next steps: a separate host process
 
   Not verified: Linux, two machines, a real provider, and the person-facing dialogs for a failed start and a lost host (unattended runs exit with a code instead).
 
+**A host on another machine (31 October 2026, DSP-111; tried on one machine, not on two).** Niclas's instruction of 30 October 2026 settles for the first trial what the paragraph above left open: the implementer chooses a small, safe transport, a local endpoint through an SSH tunnel being acceptable; no unauthenticated host on a network; the host owns files, Git, providers, jobs and durable state; work may finish while the client is away and the client recovers it; nothing is resent.
+
+- *Transport.* JSON lines over TCP to `127.0.0.1` on the host (`host/remote-host.ts`, `host/remote-server.ts`, `shared/remote-protocol.ts`), reached through `ssh -L`. The same `HostMessage`s as the local channel.
+- *Authentication.* A token made on the host, proved both ways by HMAC over both sides' nonces; it is not sent. Encryption is SSH's.
+- *Disconnect.* The host goes on. What it sends is numbered and kept until acknowledged, up to a bound. A call is executed once; after a reconnect the host says the last call it received, so a later one is reported as not done. A restarted host reads as lost: unknown, nothing resent.
+- *Clients.* One at a time; a new one replaces the last. Two windows of one client remain one client's. This is simpler than the single-writer rule of DSP-111 #9 and not the same.
+- *History.* On the host only. The client keeps the address and token.
+- *Unattended Maestro* stays out: work started goes on to its end, and nothing new starts without a client.
+
 <!-- pagebreak -->
 
 ## 2. Common architecture and persistence

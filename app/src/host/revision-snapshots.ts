@@ -254,13 +254,25 @@ export function removeTree(folder: string): void {
   fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
 }
 
+async function folderIsCaseBlind(folder: string): Promise<boolean> {
+  await fs.promises.mkdir(folder, { recursive: true });
+  const probe = path.join(folder, `.Case-${String(process.pid)}`);
+  await fs.promises.writeFile(probe, '');
+  try {
+    return fs.existsSync(path.join(folder, `.case-${String(process.pid)}`));
+  } finally {
+    await fs.promises.rm(probe, { force: true });
+  }
+}
+
 /** Write one side's tree under `folder`. Changed paths first, so the size bound never drops them. */
 async function writeSide(repository: string, commit: string, folder: string, changed: ReadonlySet<string>): Promise<SnapshotSide> {
   const tree = (await git(repository, ['rev-parse', '--verify', `${commit}^{tree}`])).trim();
   const entries = parseTree(await git(repository, ['ls-tree', '-r', '-l', '-z', '--full-tree', commit]));
   const skipped: SkippedFile[] = [];
   const caseSeen = new Map<string, string>();
-  const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
+  // Asked of the folder, not the platform: Linux can keep user data on a case-blind volume.
+  const caseBlind = await folderIsCaseBlind(folder);
   const ordered = [...entries].sort((a, b) => Number(changed.has(b.path)) - Number(changed.has(a.path)));
   const wanted: { object: string; file: string }[] = [];
   let bytes = 0;

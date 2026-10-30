@@ -159,6 +159,11 @@ export function openFailureOf(error: ReviewHostError): ReviewOpenOutcome {
     : { kind: 'failed', error: error.message, detail: error.detail };
 }
 
+/** Windows paths differ in case without differing; elsewhere case makes two files. */
+export function samePathHere(one: string, other: string): boolean {
+  return process.platform === 'win32' ? one.toLowerCase() === other.toLowerCase() : one === other;
+}
+
 function titleFor(entry: Pick<ReviewWindowEntry, 'identity' | 'startFolder'> & { readonly view?: 'walk' | 'diff' | 'panel'; readonly pairLabel?: string | null }): string {
   if (entry.view === 'panel') {
     return entry.identity === null
@@ -562,7 +567,7 @@ export class ReviewWindows {
 
   private async openWalkNow(from: ReviewWindowEntry, key: string, definitionPath: string): Promise<{ readonly ok: boolean; readonly note: string }> {
     const same = (entry: ReviewWindowEntry): boolean =>
-      entry.identity !== null && path.resolve(entry.identity.definitionPath).toLowerCase() === path.resolve(definitionPath).toLowerCase();
+      entry.identity !== null && samePathHere(path.resolve(entry.identity.definitionPath), path.resolve(definitionPath));
     const walkWindows = this.list().filter((entry) => entry.view === 'walk');
     // The panel follows the walk opened, whichever it is (30 October 2026).
     this.panelFollowsDefinition(key, definitionPath);
@@ -1028,7 +1033,7 @@ export class ReviewWindows {
       return false;
     }
     const current = panel.entry.identity?.definitionPath ?? '';
-    if (path.resolve(current).toLowerCase() === path.resolve(definitionPath).toLowerCase()) {
+    if (samePathHere(path.resolve(current), path.resolve(definitionPath))) {
       return false;
     }
     void this.options.host.open({ sessionId: panel.entry.sessionId, definitionPath, remember: false }).then((opened) => {

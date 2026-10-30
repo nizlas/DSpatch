@@ -33,7 +33,7 @@ import {
   type PairWindowStart,
   type ReviewRepository,
 } from '../shared/review-pair';
-import type { ReviewWindowEntry, ReviewWindows } from './review-windows';
+import { samePathHere, type ReviewWindowEntry, type ReviewWindows } from './review-windows';
 
 /*
  * The review surface's channels, registered from `main.ts` with one call.
@@ -266,7 +266,7 @@ export function registerReviewIpc(
   );
   const openWalk = async (entry: ReviewWindowEntry, key: string, definitionPath: string): Promise<{ ok: boolean; note: string }> => {
     const matching = (await pairs.call('reviewPair.walks', key, [definitionPath])) as PairAnswer<readonly PairWalk[]>;
-    if (isPairError(matching) || !matching.some((walk) => walk.definitionPath.toLowerCase() === definitionPath.toLowerCase())) {
+    if (isPairError(matching) || !matching.some((walk) => samePathHere(walk.definitionPath, definitionPath))) {
       return { ok: false, note: 'That walk is over another repository or other revisions, so it is not about this change.' };
     }
     const outcome = await windows.openWalkOfPair(entry, key, definitionPath);

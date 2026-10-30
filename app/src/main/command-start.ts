@@ -112,6 +112,10 @@ export function commandLineShape(line: string): CommandLineShape {
       why: 'the line uses shell syntax, so which program runs first is the shell\'s to decide',
     };
   }
+  // What `sh` expands or quotes itself: the program it names cannot be told from the words.
+  if (process.platform !== 'win32' && /^[~'`]|[$]/.test(trimmed.split(/\s/)[0] ?? '')) {
+    return { simple: false, executable: null, why: 'the program is named through the shell, so which one runs is the shell\'s to decide' };
+  }
   let token = '';
   let quoted = false;
   let separated = false;

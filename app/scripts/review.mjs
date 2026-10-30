@@ -56,6 +56,12 @@ if (definition !== undefined) {
 }
 
 const electron = spawn(electronExecutable, [appDir, ...electronArgs], { stdio: 'inherit', env });
+// A stop of this script reaches the window, or it is left running on its own.
+for (const signal of /** @type {const} */ (['SIGINT', 'SIGTERM'])) {
+  process.on(signal, () => {
+    electron.kill(signal);
+  });
+}
 
 electron.on('exit', (code) => {
   void server.close().then(() => {

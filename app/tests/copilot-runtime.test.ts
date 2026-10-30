@@ -183,7 +183,7 @@ describe('the Copilot runtime with a stand-in model', { timeout: 120_000 }, () =
     model.script(
       { tool: 'create', args: { path: inside, file_text: 'made\n' } },
       { tool: 'create', args: { path: out, file_text: 'made\n' } },
-      { tool: shell, args: { command: 'node -e "process.exit(3)"', description: 'exit three', mode: 'sync', initial_wait: 30 } },
+      { tool: shell, args: { command: 'node -e "console.log(process.cwd());process.exit(3)"', description: 'exit three', mode: 'sync', initial_wait: 30 } },
       { text: 'finished' },
     );
     const result = await turn(adapter, root, 'Do it');
@@ -191,9 +191,10 @@ describe('the Copilot runtime with a stand-in model', { timeout: 120_000 }, () =
     assert.equal(fs.existsSync(inside), true);
     assert.equal(fs.existsSync(out), false);
     const command = result.events.find((event) => event.type === 'command.finished');
-    assert.equal(command?.type === 'command.finished' ? command.command.line : '', 'node -e "process.exit(3)"');
+    assert.equal(command?.type === 'command.finished' ? command.command.line : '', 'node -e "console.log(process.cwd());process.exit(3)"');
     assert.equal(command?.type === 'command.finished' ? command.command.requestedBy : '', 'provider-reported');
     assert.equal(command?.type === 'command.finished' ? command.command.exitCode : null, 3);
+    assert.ok((command?.type === 'command.finished' ? command.command.stdout : '').toLowerCase().includes(path.basename(root).toLowerCase()), 'the command ran in the session folder');
     fs.rmSync(inside);
   });
 

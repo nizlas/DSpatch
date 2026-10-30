@@ -124,3 +124,23 @@ Preserve meaningful differences from the original scripts as explicit design dec
 **S1:** Companion [*DSpatch: Runtime, Workspaces and Platform Evolution*](RUNTIME_PLATFORM_ROADMAP.md), v0.4. Existing working-memory and orchestration documents remain the product principles; this draft narrows their application to mandatory control integration.
 
 **Status:** requirements incomplete; no script modification, security verification or workplace deployment performed. This revision updates documentation only.
+
+## 5. Findings from the Copilot SDK path, 31 October 2026
+
+Established with `@github/copilot-sdk` 1.0.28 and runtime 1.0.105, from its typings, `tools.list`, `hooks.discover`, and a local stand-in model behind the real runtime (`app/tests/copilot-runtime.test.ts`). No real account, no managed package. This records facts about the path; it is not a security result and meets no gate of section 4.
+
+**Hooks load natively.** With DSpatch's session settings (`enableConfigDiscovery: false`, `enableFileHooks: false`) a `preToolUse` command hook in `$COPILOT_HOME/hooks/` was found by `hooks.discover` and ran before a tool call. So the runtime's own loading is the path, and DSpatch adds no bridge and matches no rule itself: exactly one invocation. DSpatch does not set `COPILOT_HOME` or `baseDirectory`. Policy hooks in `/etc/github-copilot/policy.d/` and `C:\ProgramData\GitHub\Copilot\policy.d\` were not tried; GitHub documents that they load first and cannot be disabled by `disableAllHooks`. A hook in the repository under review did not run. `DSPATCH_COPILOT_REQUIRE_HOOKS=1` refuses Copilot work unless the runtime reports an enabled `preToolUse` hook from a user or managed source. Whether a hook is the right one is not checked; the requirement only prevents silently working without any.
+
+**GitHub's own content exclusion.** GitHub's documentation says it does not cover the Copilot CLI or agent mode. Do not count on it here. A repository-scoped rule could not follow a revision folder anyway: that folder is outside the repository, and `enableHostGitOperations` is off for review.
+
+| Data flow | What covers it now |
+| --- | --- |
+| `view`, `glob`, `grep` in analysis | The allow-list, `onPreToolUse` and `onPermissionRequest` confine them to the revision folder, links resolved. A managed `preToolUse` hook sees the call too, with a path **inside the revision folder**: a path-pattern rule matches, a repository-relative rule may not. Not tried. |
+| Tool results | Nothing of DSpatch's. A managed `postToolUse` hook sees them; not tried. |
+| The diff and the question sent as a prompt (walks, delegated review, Worth checking, discussion) | **Uncovered.** No tool hook sees it. A file-glob exclusion does not stop it. `userPromptSubmitted` sees the prompt, but GitHub documents `modifiedPrompt` as honoured only for SDK callbacks, and nothing here has tried a deny. The review's Context says so. |
+| Discussion context, the earlier history | Uncovered, as above. |
+| Role and node instructions | Uncovered, as above. |
+| Delegated sub-agents | Not reachable: `task` is off. |
+| Main chat with shell | Commands run with the person's rights; `preToolUse` sees the line, not what the program reads. |
+
+**Remaining obstacles to work code.** The prompt flow above needs a decision or a mechanism; the scripts have not been reviewed; the questions in section 4 are open. Synthetic or public material only until then, which is also what a failed or missing control must not silently change.

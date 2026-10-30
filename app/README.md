@@ -49,6 +49,8 @@ in this repository.
 
 ## Linux (prepared, not yet run)
 
+The exact commands for Ubuntu, for a host on another machine and for Copilot are in [docs/REMOTE_TRIAL.md](../docs/REMOTE_TRIAL.md).
+
 DSpatch has been prepared to start from a clone on Linux in development mode
 (DSP-131). **None of this has been run on Linux yet**; it is what the code and the
 tool documentation lead us to expect, not an observation. Packaging, installers

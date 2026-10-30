@@ -116,19 +116,35 @@ function main(): void {
 
   serveHost(port, methods as HostMethods, log);
 
-  const parentCheck = setInterval(() => {
-    if (closing || processAlive(config.clientPid)) {
+  const closeOnItsOwn = (why: string): void => {
+    if (closing) {
       return;
     }
     closing = true;
     clearInterval(parentCheck);
-    log(`the client process ${String(config.clientPid)} is gone; closing the adapters and ending`);
+    log(`${why}; closing the adapters and ending`);
     setTimeout(() => {
       log(`the adapters did not close within ${String(ORPHAN_CLOSE_BOUND_MS)} ms; ending anyway`);
       process.exit(0);
     }, ORPHAN_CLOSE_BOUND_MS).unref();
-    void endAfter(shutdownProjectHost(false), 'client gone');
+    void endAfter(shutdownProjectHost(false), why);
+  };
+  const parentCheck = setInterval(() => {
+    if (!closing && !processAlive(config.clientPid)) {
+      closeOnItsOwn(`the client process ${String(config.clientPid)} is gone`);
+    }
   }, PARENT_CHECK_MS);
+  // On Linux a dead parent can linger as a zombie the check above still finds; a closed
+  // channel says it at once. A signal gets the same orderly close, so agents' commands end.
+  process.on('disconnect', () => {
+    closeOnItsOwn('the channel to the client closed');
+  });
+  process.on('SIGTERM', () => {
+    closeOnItsOwn('SIGTERM');
+  });
+  process.on('SIGINT', () => {
+    closeOnItsOwn('SIGINT');
+  });
 
   const ready: HostMessage = {
     t: 'ready',
