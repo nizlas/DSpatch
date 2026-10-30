@@ -474,6 +474,38 @@ export function ReviewDiscussion({
     }
   }, [bridge]);
 
+  /**
+   * Explain an earlier answer more simply (30 October 2026): a new question in this
+   * discussion, sent with the context that answer's own question had, whatever the window
+   * shows now. The original answer stays; the person's draft is left as it is.
+   */
+  const simplify = useCallback(
+    async (answer: DiscussionMessage): Promise<void> => {
+      if (bridge === undefined) {
+        return;
+      }
+      setError(null);
+      try {
+        // Which answer, said in the thread: the question it answered, shortened.
+        const asked = messages.find((message) => message.id === answer.questionId)?.text.replace(/\s+/g, ' ').trim() ?? '';
+        const about = asked.length > 90 ? `${asked.slice(0, 89)}…` : asked;
+        const outcome = await bridge.send({
+          question: lang === 'sv' ? `Förklara enklare svaret på: “${about}”` : `Explain more simply the answer to: “${about}”`,
+          subject: request.subject,
+          selection: null,
+          language: lang,
+          simplify: { answerId: answer.id },
+        });
+        if (outcome.kind !== 'sent') {
+          setError(outcome.error);
+        }
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : String(failure));
+      }
+    },
+    [bridge, lang, messages, request.subject],
+  );
+
   const goTo = useCallback(
     (message: DiscussionMessage) => {
       const envelope = message.envelope;
@@ -512,8 +544,11 @@ export function ReviewDiscussion({
   // The scenario's hook: readings, and the gestures a person makes.
   const latest = useRef({ messages, status, text, line, error, note, shown, questions, goTo, stop, submit, needs });
   latest.current = { messages, status, text, line, error, note, shown, questions, goTo, stop, submit, needs };
+  // Its own elements, in whichever window the panel is shown (docked or on its own).
+  const own = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    const field = (): HTMLTextAreaElement | null => document.querySelector<HTMLTextAreaElement>('[data-ev="discussion-composer"]');
+    const scope = (): ParentNode => own.current ?? document;
+    const field = (): HTMLTextAreaElement | null => scope().querySelector<HTMLTextAreaElement>('[data-ev="discussion-composer"]');
     window.__dspatchDiscussionCheck = {
       read: () => {
         const now = latest.current;
@@ -539,10 +574,10 @@ export function ReviewDiscussion({
           status: now.status,
           composer: field()?.value ?? '',
           subjectLine: now.line,
-          statusLine: (document.querySelector('[data-ev="discussion-status"]')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+          statusLine: (scope().querySelector('[data-ev="discussion-status"]')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
           error: now.error ?? '',
-          errorLine: (document.querySelector('[data-ev="discussion-error"] > span')?.textContent ?? '').trim(),
-          contextOpen: document.querySelectorAll('.rv-discussion-context[open]').length,
+          errorLine: (scope().querySelector('[data-ev="discussion-error"] > span')?.textContent ?? '').trim(),
+          contextOpen: scope().querySelectorAll('.rv-discussion-context[open]').length,
           note: now.note ?? '',
         };
       },
@@ -566,17 +601,17 @@ export function ReviewDiscussion({
         return true;
       },
       stop: () => {
-        const button = document.querySelector<HTMLButtonElement>('[data-ev="discussion-stop"]');
+        const button = scope().querySelector<HTMLButtonElement>('[data-ev="discussion-stop"]');
         button?.click();
         return button !== null;
       },
       sendAnyway: () => {
-        const button = document.querySelector<HTMLButtonElement>('[data-ev="discussion-send-anyway"]');
+        const button = scope().querySelector<HTMLButtonElement>('[data-ev="discussion-send-anyway"]');
         button?.click();
         return button !== null;
       },
       goTo: (questionIndex) => {
-        const button = document.querySelector<HTMLButtonElement>(`[data-ev="discussion-go-${String(questionIndex)}"]`);
+        const button = scope().querySelector<HTMLButtonElement>(`[data-ev="discussion-go-${String(questionIndex)}"]`);
         button?.click();
         return button !== null;
       },
@@ -625,7 +660,9 @@ export function ReviewDiscussion({
   const notice = agent?.switchNotice ?? null;
 
   return (
-    <section className="rv-discussion" hidden={!shown} data-ev="discussion">
+    <section className="rv-discussion" hidden={!shown} data-ev="discussion" ref={(node) => {
+      own.current = node;
+    }}>
       <div className="rv-discussion-thread" data-ev="discussion-thread">
         {questions.length === 0 && <p className="rv-sub">{words.empty}</p>}
         {questions.map((question, index) => (
@@ -647,7 +684,11 @@ export function ReviewDiscussion({
             </div>
             {answersOf(question.id).map((answer) => (
               <div key={answer.id} className="rv-discussion-answer" data-status={answer.status}>
-                <DiscussionAnswer answer={answer} onShow={onGoToLocation} />
+                <DiscussionAnswer
+                  answer={answer}
+                  onShow={onGoToLocation}
+                  onSimpler={turn === null && status?.readOnly == null ? () => void simplify(answer) : undefined}
+                />
                 {answer.status !== 'done' && answer.status !== 'streaming' && (
                   <div className="rv-discussion-meta">
                     {answer.status === 'cancelled' ? words.status.cancelled : answer.status === 'failed' ? words.status.failed : words.status.unknown}

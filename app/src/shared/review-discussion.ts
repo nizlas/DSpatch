@@ -59,7 +59,7 @@ export const REFERENCES_FENCE = 'dspatch-references';
  * one fenced block at the end so the answer streams as readable text.
  */
 export const CODE_ANSWER_RULES = [
-  'Start with the short answer, then the cause and effect behind it, with real names and concrete connections.',
+  'Give the cause and effect behind the answer with real names and concrete connections.',
   'Use short paragraphs. Use a list for alternatives and a table only when comparing several things side by side truly helps.',
   'Keep apart what the code shows and what is still uncertain. Name what you could not read or find.',
   'Do not narrate your search ("I read…", "Then I searched…"); give the explanation.',
@@ -69,6 +69,41 @@ export const CODE_ANSWER_RULES = [
     'A path is the repository path without base/ or target/; "side" is "base" for From and "target" for To; lines are 1-based at that side. ' +
     'DSpatch checks every reference against its commit and shows it as a link. Set "insufficient": true when the code you could read does not settle the question.',
 ] as const;
+
+/**
+ * Where an answer's short part ends and its details begin (Niclas's decision of 30 October
+ * 2026): the window shows the short part and offers the rest under *Show more*, from what
+ * was written, without asking again. Not shown; an answer without it is shown whole.
+ */
+export const DETAILS_MARKER = '<!-- dspatch:details -->';
+
+/**
+ * How every answer in the discussion is shaped, with or without code access: a quick
+ * question about a type or a function is understood from the short part alone.
+ */
+export const ANSWER_SHAPE_RULES = [
+  'Answer the question first, in a short part that stands on its own: the concept and the details that matter most, enough to understand it without reading further. Any uncertainty that changes the answer belongs in this part.',
+  `When a fuller account would help (the mechanism step by step, edge cases, more context), put it after the short part, below a line holding only ${DETAILS_MARKER}. The person sees it when they ask for more. Leave the line out when the short part is enough, and do not pad either part.`,
+  'When the person explicitly asks for details or a full account, give them: the short part still answers first, and the details follow below the line.',
+  'Keep established class names and terms. Use short paragraphs, bullets where they help, and bold sparingly.',
+] as const;
+
+/**
+ * An answer's short part and its details, split at {@link DETAILS_MARKER}. A marker still
+ * arriving is cut off, so it never flickers into view; details that are empty are none.
+ */
+export function splitDetails(text: string): { readonly short: string; readonly details: string | null } {
+  const found = /^[ \t]*<!--\s*dspatch:details\s*-->[ \t]*$/m.exec(text);
+  if (found === null) {
+    return { short: text.replace(/\n[ \t]*<!--(?![\s\S]*-->)[^\n]*$/, '').trimEnd(), details: null };
+  }
+  const short = text.slice(0, found.index).trimEnd();
+  const details = text.slice(found.index + found[0].length).trim();
+  if (short === '') {
+    return { short: details, details: null };
+  }
+  return { short, details: details === '' ? null : details };
+}
 
 /**
  * An answer as written, split at its references block: the text to show, and the block's
@@ -445,7 +480,29 @@ export interface CodeAccessSection {
   readonly folder: string;
 }
 
-export function buildEnvelopePrompt(envelope: ContextEnvelope, question: string, recap: string | null, code: CodeAccessSection | null = null): string {
+/**
+ * An earlier answer the person asks to have explained more simply (30 October 2026): its
+ * question and its text as written, sent with the envelope that question was asked with.
+ */
+export interface SimplifySection {
+  readonly question: string;
+  readonly answer: string;
+}
+
+/** What DSpatch says about explaining an earlier answer more simply. Shown in the Context. */
+export const SIMPLIFY_RULES = [
+  'Explain the answer below again, more simply, for the same person: give the background it assumed, make the cause and effect plain, and use a concrete example when it helps.',
+  'Keep every fact as it is. Keep the class, method and file names and the established terms; explain them rather than replacing them with vague words.',
+  'Read the code again when you need to; do not make up what you have not read.',
+] as const;
+
+export function buildEnvelopePrompt(
+  envelope: ContextEnvelope,
+  question: string,
+  recap: string | null,
+  code: CodeAccessSection | null = null,
+  simplify: SimplifySection | null = null,
+): string {
   const parts: string[] = [];
   const identity = envelope.identity;
   if (code !== null) {
@@ -558,9 +615,22 @@ export function buildEnvelopePrompt(envelope: ContextEnvelope, question: string,
   if (recap !== null && recap.trim() !== '') {
     parts.push(`## Earlier in this discussion\n${clip(recap.trim(), ENVELOPE_LIMITS.recapChars)}`);
   }
+  if (simplify !== null) {
+    parts.push(
+      [
+        '## The answer to explain more simply',
+        ...SIMPLIFY_RULES.map((rule) => `- ${rule}`),
+        '',
+        `The person asked: ${clip(simplify.question.trim(), ENVELOPE_LIMITS.questionChars)}`,
+        '',
+        'The answer was:',
+        clip(simplify.answer.trim(), ENVELOPE_LIMITS.recapChars),
+      ].join('\n'),
+    );
+  }
   parts.push(`## Question\n${clip(question.trim(), ENVELOPE_LIMITS.questionChars)}`);
+  parts.push(['## How to answer', ...[...ANSWER_SHAPE_RULES, ...(code === null ? [] : CODE_ANSWER_RULES)].map((rule) => `- ${rule}`)].join('\n'));
   if (code !== null) {
-    parts.push(['## How to answer', ...CODE_ANSWER_RULES.map((rule) => `- ${rule}`)].join('\n'));
     parts.push(code.folder);
   }
   return `${parts.join('\n\n')}\n`;
@@ -622,6 +692,8 @@ export interface DiscussionMessage {
    * action asked it, so the step can show its answer as a deepening beside it.
    */
   readonly deepen?: DeepenRequest;
+  /** For a question: it asks for this earlier answer to be explained more simply (30 October 2026). */
+  readonly simplifies?: string;
 }
 
 /** Which deepening a question is, and the selected text for Explain this. */
@@ -899,6 +971,9 @@ function adoptMessages(value: unknown): DiscussionMessage[] {
     if (deepen !== null) {
       message.deepen = deepen;
     }
+    if (typeof entry['simplifies'] === 'string') {
+      message.simplifies = entry['simplifies'];
+    }
     if (entry['codeAccess'] === true) {
       message.codeAccess = true;
     }
@@ -1082,6 +1157,11 @@ export interface DiscussionSendInput {
   readonly language?: Lang;
   /** DSP-152: asked from a walk step's own deepening action. */
   readonly deepen?: DeepenRequest;
+  /**
+   * Explain this earlier answer more simply (30 October 2026). The question goes with the
+   * envelope the answer's own question was sent with, not with what the window shows now.
+   */
+  readonly simplify?: { readonly answerId: string };
 }
 
 export type DiscussionSendOutcome =

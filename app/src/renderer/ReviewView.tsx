@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, JSX, ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
-import { DiscussionAnswer } from './DiscussionAnswer';
+import { DiscussionAnswer, ShortThenMore } from './DiscussionAnswer';
 import { Markdown } from './Markdown';
 import { ReviewDiscussion } from './ReviewDiscussion';
 import { AgentPicker } from './AgentPicker';
@@ -31,6 +32,7 @@ import {
   type DiffRow,
   type HunkCoverage,
   type Lang,
+  type ReviewPreferences,
   type Place,
   type PlanState,
   type ReviewBridge,
@@ -45,7 +47,8 @@ import {
   type WalkStep,
 } from '../shared/review-model';
 import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuote } from '../shared/review-discussion';
-import { readQuote } from './walk-selection';
+import { quoteRanges, readQuote } from './walk-selection';
+import { movePanel, openExplanationWindow, type DetachedPanel } from './explanation-window';
 import { isPairError, type AgentJob, type LineRange, type PairRecord, type PairWalk, type ReviewPairBridge } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
 
@@ -59,8 +62,13 @@ declare global {
     __dspatchReviewFlush?: () => Promise<string>;
     /** What the scripted `review-window` scenario reads and drives, from the main process. */
     __dspatchReviewCheck?: ReviewCheck;
+    /** The explanation's own window while it is open, for the scenario's readings. */
+    __dspatchExplanationWindow?: Window;
   }
 }
+
+/** Where the explanation's own window was last left (30 October 2026). */
+type ExplanationBounds = NonNullable<ReviewPreferences['explanationBounds']>;
 
 /** The scenario's view of a review window: readings, and the two gestures it makes. */
 export interface ReviewCheckReading {
@@ -183,6 +191,10 @@ export function ReviewView(): JSX.Element {
   const [lang, setLangState] = useState<Lang>(DEFAULT_PREFERENCES.language);
   const [width, setWidthState] = useState<number>(EXPLANATION_WIDTH.initial);
   const [navWidth, setNavWidthState] = useState<number>(NAVIGATION_WIDTH.initial);
+  // The explanation in a window of its own (30 October 2026); docked unless chosen.
+  const [detachedPref, setDetachedPrefState] = useState(false);
+  // Where that window was last left; read when it opens, so not a state that redraws.
+  const explanationBounds = useRef<ExplanationBounds | null>(null);
   const [langError, setLangError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -195,6 +207,8 @@ export function ReviewView(): JSX.Element {
         setLangState(preferences.language);
         setWidthState(preferences.explanationWidth ?? EXPLANATION_WIDTH.initial);
         setNavWidthState(preferences.navigationWidth ?? NAVIGATION_WIDTH.initial);
+        setDetachedPrefState(preferences.explanationDetached === true);
+        explanationBounds.current = preferences.explanationBounds ?? null;
       },
       (error: unknown) => {
         setLangError(String(error));
@@ -205,11 +219,15 @@ export function ReviewView(): JSX.Element {
 
   // The preferences are saved whole, in the order the host keeps them.
   const savePreferences = useCallback(
-    (next: { readonly language: Lang; readonly explanationWidth: number; readonly navigationWidth: number }) => {
+    (next: { readonly language: Lang; readonly explanationWidth: number; readonly navigationWidth: number; readonly explanationDetached: boolean }) => {
       if (bridge !== undefined) {
-        void bridge.setPreferences(next).then((result) => {
-          setLangError(result.saved ? null : (result.error ?? 'not saved'));
-        });
+        const { explanationDetached, ...rest } = next;
+        const bounds = explanationBounds.current;
+        void bridge
+          .setPreferences({ ...rest, ...(explanationDetached ? { explanationDetached: true as const } : {}), ...(bounds === null ? {} : { explanationBounds: bounds }) })
+          .then((result) => {
+            setLangError(result.saved ? null : (result.error ?? 'not saved'));
+          });
       }
     },
     [bridge],
@@ -218,9 +236,9 @@ export function ReviewView(): JSX.Element {
   const setLang = useCallback(
     (next: Lang) => {
       setLangState(next);
-      savePreferences({ language: next, explanationWidth: width, navigationWidth: navWidth });
+      savePreferences({ language: next, explanationWidth: width, navigationWidth: navWidth, explanationDetached: detachedPref });
     },
-    [savePreferences, width, navWidth],
+    [savePreferences, width, navWidth, detachedPref],
   );
 
   // DSP-152: the explanation column's width, as the reviewer left it.
@@ -228,9 +246,9 @@ export function ReviewView(): JSX.Element {
     (next: number) => {
       const clamped = Math.round(Math.min(EXPLANATION_WIDTH.max, Math.max(EXPLANATION_WIDTH.min, next)));
       setWidthState(clamped);
-      savePreferences({ language: lang, explanationWidth: clamped, navigationWidth: navWidth });
+      savePreferences({ language: lang, explanationWidth: clamped, navigationWidth: navWidth, explanationDetached: detachedPref });
     },
-    [savePreferences, lang, navWidth],
+    [savePreferences, lang, navWidth, detachedPref],
   );
 
   // The left column's width, as the reviewer left it (Niclas's trial feedback, 29 October 2026).
@@ -238,9 +256,26 @@ export function ReviewView(): JSX.Element {
     (next: number) => {
       const clamped = Math.round(Math.min(NAVIGATION_WIDTH.max, Math.max(NAVIGATION_WIDTH.min, next)));
       setNavWidthState(clamped);
-      savePreferences({ language: lang, explanationWidth: width, navigationWidth: clamped });
+      savePreferences({ language: lang, explanationWidth: width, navigationWidth: clamped, explanationDetached: detachedPref });
     },
-    [savePreferences, lang, width],
+    [savePreferences, lang, width, detachedPref],
+  );
+
+  const setDetachedPref = useCallback(
+    (next: boolean) => {
+      setDetachedPrefState(next);
+      savePreferences({ language: lang, explanationWidth: width, navigationWidth: navWidth, explanationDetached: next });
+    },
+    [savePreferences, lang, width, navWidth],
+  );
+
+  // Where the explanation's window was left, saved with the other preferences.
+  const setExplanationBounds = useCallback(
+    (next: ExplanationBounds) => {
+      explanationBounds.current = next;
+      savePreferences({ language: lang, explanationWidth: width, navigationWidth: navWidth, explanationDetached: detachedPref });
+    },
+    [savePreferences, lang, width, navWidth, detachedPref],
   );
 
   // What the last choice said when it opened nothing here: dismissed, or already
@@ -355,6 +390,10 @@ export function ReviewView(): JSX.Element {
       onExplanationWidth={setWidth}
       navigationWidth={navWidth}
       onNavigationWidth={setNavWidth}
+      explanationDetached={detachedPref}
+      onExplanationDetached={setDetachedPref}
+      explanationBounds={explanationBounds}
+      onExplanationBounds={setExplanationBounds}
     />
   );
 }
@@ -370,6 +409,10 @@ function OpenReview({
   onExplanationWidth,
   navigationWidth,
   onNavigationWidth,
+  explanationDetached,
+  onExplanationDetached,
+  explanationBounds,
+  onExplanationBounds,
 }: {
   readonly bundle: ReviewBundle;
   readonly bridge: ReviewBridge | undefined;
@@ -381,6 +424,10 @@ function OpenReview({
   readonly onExplanationWidth: (width: number) => void;
   readonly navigationWidth: number;
   readonly onNavigationWidth: (width: number) => void;
+  readonly explanationDetached: boolean;
+  readonly onExplanationDetached: (on: boolean) => void;
+  readonly explanationBounds: { readonly current: ExplanationBounds | null };
+  readonly onExplanationBounds: (bounds: ExplanationBounds) => void;
 }): JSX.Element {
   const words = WORDS[lang];
   const [state, setState] = useState<ReviewState>(bundle.state);
@@ -547,8 +594,25 @@ function OpenReview({
    * lines for review and decides nothing.
    */
   const [quote, setQuote] = useState<SelectionQuote | null>(null);
-  const [quoteOffer, setQuoteOffer] = useState<{ readonly x: number; readonly y: number; readonly menu: boolean } | null>(null);
+  /** Where the offer is drawn; `detached` when the selection is in the explanation's own window. */
+  const [quoteOffer, setQuoteOffer] = useState<{ readonly x: number; readonly y: number; readonly menu: boolean; readonly detached: boolean } | null>(null);
   const viewRoot = useRef<HTMLDivElement | null>(null);
+  /** A selection of prose as it was made, to keep it marked (code is found again by its place). */
+  const quoteMark = useRef<Range | null>(null);
+  /*
+   * The right panel, docked or in its own window (30 October 2026). Its elements live in one
+   * element, rendered through a portal and moved between the walk window and the other
+   * window; the React tree is the same either way, so nothing in it starts over.
+   */
+  const panelHost = useMemo(() => {
+    const node = document.createElement('div');
+    node.className = 'rv-right-host';
+    return node;
+  }, []);
+  const dockSlot = useRef<HTMLDivElement | null>(null);
+  const [detached, setDetached] = useState<DetachedPanel | null>(null);
+  /** The walk window is going away: its explanation window closes with it and the choice stays. */
+  const leaving = useRef(false);
   const [checkReturn, setCheckReturn] = useState<{ readonly stepId: string | null; readonly refIndex: number; readonly away: CodeLocation | null } | null>(null);
   const [delegatingWalk, setDelegatingWalk] = useState(false);
   const [liveWidth, setLiveWidth] = useState(explanationWidth);
@@ -889,8 +953,44 @@ function OpenReview({
   const dropQuote = useCallback(() => {
     setQuote(null);
     setQuoteOffer(null);
+    quoteMark.current = null;
     window.getSelection()?.removeAllRanges();
+    window.__dspatchExplanationWindow?.getSelection()?.removeAllRanges();
   }, []);
+
+  /*
+   * The kept selection stays marked where it is, quietly, when the window's own selection is
+   * gone: the focus in the question field, another window, rows drawn again. Code is found by
+   * its file, side, lines and characters; prose is the range as it was selected.
+   */
+  useEffect(() => {
+    const root = viewRoot.current;
+    if (quote === null || root === null) {
+      return;
+    }
+    const prose = quote.kind === 'text' ? quoteMark.current : null;
+    const view = (prose?.startContainer.ownerDocument?.defaultView ?? window) as Window & typeof globalThis;
+    const registry = view.CSS.highlights;
+    if (registry === undefined) {
+      return;
+    }
+    let frame = 0;
+    const paint = (): void => {
+      const ranges = quote.kind === 'code' ? quoteRanges(root, quote) : prose !== null && !prose.collapsed ? [prose] : [];
+      registry.set('rv-quote', new view.Highlight(...ranges));
+    };
+    paint();
+    const observer = new MutationObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(paint);
+    });
+    observer.observe(root, { childList: true, subtree: true, characterData: true });
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      registry.delete('rv-quote');
+    };
+  }, [quote]);
 
   // Another step, place or location: a selection made for the last one does not go along.
   useEffect(() => {
@@ -986,36 +1086,140 @@ function OpenReview({
   );
 
   // Read what is selected now; offer the action beside it, or in place of the context menu.
-  const takeSelection = useCallback((menuAt: { readonly x: number; readonly y: number } | null): SelectionQuote | null => {
-    const root = viewRoot.current;
-    const found = root === null ? null : readQuote(root);
-    if (found === null) {
-      if (menuAt === null && (window.getSelection()?.isCollapsed ?? true)) {
-        setQuoteOffer(null);
+  // In the explanation's own window, the panel's element is the root to read from.
+  const takeSelection = useCallback(
+    (menuAt: { readonly x: number; readonly y: number } | null, inDetached = false): SelectionQuote | null => {
+      const root = inDetached ? panelHost : viewRoot.current;
+      const found = root === null ? null : readQuote(root);
+      if (found === null) {
+        if (menuAt === null && (root?.ownerDocument.getSelection()?.isCollapsed ?? true)) {
+          setQuoteOffer(null);
+        }
+        return null;
       }
-      return null;
-    }
-    setQuote(found.quote);
-    setQuoteOffer(menuAt === null ? { x: found.rect.right, y: found.rect.bottom, menu: false } : { ...menuAt, menu: true });
-    return found.quote;
-  }, []);
+      quoteMark.current = found.quote.kind === 'text' ? found.range : null;
+      setQuote(found.quote);
+      setQuoteOffer(menuAt === null ? { x: found.rect.right, y: found.rect.bottom, menu: false, detached: inDetached } : { ...menuAt, menu: true, detached: inDetached });
+      return found.quote;
+    },
+    [panelHost],
+  );
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.ctrlKey && event.shiftKey && (event.key === 'E' || event.key === 'e')) {
-        // What is selected now, if anything; else the selection kept for the question.
-        const selected = takeSelection(null) ?? quote;
-        if (selected !== null) {
-          event.preventDefault();
-          explainQuote(selected);
+    const listen = (target: Window, inDetached: boolean): (() => void) => {
+      const onKey = (event: KeyboardEvent): void => {
+        if (event.ctrlKey && event.shiftKey && (event.key === 'E' || event.key === 'e')) {
+          // What is selected now, if anything; else the selection kept for the question.
+          const selected = takeSelection(null, inDetached) ?? quote;
+          if (selected !== null) {
+            event.preventDefault();
+            explainQuote(selected);
+          }
+        } else if (event.key === 'Escape') {
+          setQuoteOffer(null);
         }
-      } else if (event.key === 'Escape') {
-        setQuoteOffer(null);
-      }
+      };
+      target.addEventListener('keydown', onKey);
+      return () => target.removeEventListener('keydown', onKey);
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [explainQuote, takeSelection, quote]);
+    const own = listen(window, false);
+    const other = detached === null ? null : listen(detached.window, true);
+    return () => {
+      own();
+      other?.();
+    };
+  }, [explainQuote, takeSelection, quote, detached]);
+
+  // --- The explanation in its own window (30 October 2026) ---
+  const detach = useCallback(() => {
+    if (detached !== null) {
+      detached.window.focus();
+      return;
+    }
+    const opened = openExplanationWindow(`Explanation · ${pick(bundle.definition.title, lang) || 'review'}`, explanationBounds.current);
+    if (opened === null) {
+      setDiffNote('The explanation could not be opened in its own window; it stays here.');
+      return;
+    }
+    setDetached(opened);
+    onExplanationDetached(true);
+  }, [detached, bundle, lang, onExplanationDetached, explanationBounds]);
+
+  const dock = useCallback(() => {
+    const was = detached;
+    setDetached(null);
+    onExplanationDetached(false);
+    was?.window.close();
+  }, [detached, onExplanationDetached]);
+
+  // Opened as it was left: once, when the walk window opens with the choice made.
+  const reopened = useRef(false);
+  useEffect(() => {
+    if (explanationDetached && !reopened.current && detached === null) {
+      reopened.current = true;
+      detach();
+    }
+  }, [explanationDetached, detached, detach]);
+
+  // The panel's element goes where the panel is now, before anything is painted.
+  useLayoutEffect(() => {
+    const target = detached?.root ?? dockSlot.current;
+    if (target !== null) {
+      movePanel(panelHost, target);
+    }
+    window.__dspatchExplanationWindow = detached?.window;
+  }, [detached, panelHost]);
+
+  // Closing the explanation's window docks it back; closing the walk window closes both.
+  useEffect(() => {
+    if (detached === null) {
+      return;
+    }
+    const child = detached.window;
+    const closed = (): void => {
+      if (leaving.current) {
+        return;
+      }
+      setDetached((now) => {
+        if (now?.window === child) {
+          // Back before its window's document goes, so nothing in it is lost.
+          if (dockSlot.current !== null) {
+            movePanel(panelHost, dockSlot.current);
+          }
+          onExplanationDetached(false);
+          return null;
+        }
+        return now;
+      });
+    };
+    child.addEventListener('pagehide', closed);
+    // Where it is now, saved when it was moved or resized (no event says it was moved).
+    let last = '';
+    const watch = window.setInterval(() => {
+      if (child.closed) {
+        closed();
+        return;
+      }
+      const now = { x: child.screenX, y: child.screenY, width: child.outerWidth, height: child.outerHeight };
+      const said = JSON.stringify(now);
+      if (last !== '' && said !== last) {
+        onExplanationBounds(now);
+      }
+      last = said;
+    }, 400);
+    return () => {
+      child.removeEventListener('pagehide', closed);
+      window.clearInterval(watch);
+    };
+  }, [detached, panelHost, onExplanationDetached, onExplanationBounds]);
+  useEffect(() => {
+    const away = (): void => {
+      leaving.current = true;
+      window.__dspatchExplanationWindow?.close();
+    };
+    window.addEventListener('pagehide', away);
+    return () => window.removeEventListener('pagehide', away);
+  }, []);
 
   // The changed lines the current walk covers, for delegating the walk (DSP-152).
   const walkScope = useMemo(() => {
@@ -1042,29 +1246,35 @@ function OpenReview({
     <div
       className="rv"
       ref={viewRoot}
+      // The panel's events arrive here too, from its own window when it has one.
       onMouseUp={(event) => {
         if (event.button === 0 && !(event.target as Element).closest('[data-ev="walk-quote-offer"]')) {
+          const inDetached = panelHost.ownerDocument !== document && panelHost.contains(event.target as Node);
           // After the browser has settled the selection for this release.
-          setTimeout(() => takeSelection(null), 0);
+          setTimeout(() => takeSelection(null, inDetached), 0);
         }
       }}
       onKeyUp={(event) => {
         if (event.shiftKey && !event.ctrlKey) {
-          takeSelection(null);
+          takeSelection(null, panelHost.ownerDocument !== document && panelHost.contains(event.target as Node));
         }
       }}
       onContextMenu={(event) => {
-        if (takeSelection({ x: event.clientX, y: event.clientY }) !== null) {
+        const inDetached = panelHost.ownerDocument !== document && panelHost.contains(event.target as Node);
+        if (takeSelection({ x: event.clientX, y: event.clientY }, inDetached) !== null) {
           event.preventDefault();
         }
       }}
     >
-      {quoteOffer !== null && quote !== null && (
+      {quoteOffer !== null && quote !== null && (quoteOffer.detached && detached !== null ? (offer: JSX.Element) => createPortal(offer, detached.root) : (offer: JSX.Element) => offer)(
         <div
           className={quoteOffer.menu ? 'rv-explain-menu' : 'rv-explain-offer'}
           data-ev="walk-quote-offer"
           role={quoteOffer.menu ? 'menu' : undefined}
-          style={{ left: Math.min(quoteOffer.x, window.innerWidth - 220), top: Math.min(quoteOffer.y + 4, window.innerHeight - 80) }}
+          style={{
+            left: Math.min(quoteOffer.x, (quoteOffer.detached && detached !== null ? detached.window : window).innerWidth - 220),
+            top: Math.min(quoteOffer.y + 4, (quoteOffer.detached && detached !== null ? detached.window : window).innerHeight - 80),
+          }}
         >
           <button
             type="button"
@@ -1086,13 +1296,14 @@ function OpenReview({
               onClick={() => {
                 setQuoteOffer(null);
                 setRightTab('discussion');
-                setTimeout(() => document.querySelector<HTMLTextAreaElement>('[data-ev="discussion-composer"]')?.focus(), 0);
+                detached?.window.focus();
+                setTimeout(() => panelHost.querySelector<HTMLTextAreaElement>('[data-ev="discussion-composer"]')?.focus(), 0);
               }}
             >
               Ask about this…
             </button>
           )}
-        </div>
+        </div>,
       )}
       <Header
         bundle={bundle}
@@ -1125,7 +1336,7 @@ function OpenReview({
         </div>
       )}
       <div
-        className={tab === 'coverage' || tab === 'notes' ? 'rv-body rv-body-wide' : 'rv-body'}
+        className={`${tab === 'coverage' || tab === 'notes' ? 'rv-body rv-body-wide' : 'rv-body'}${detached === null ? '' : ' rv-body-detached'}`}
         style={{ '--rv-right-width': `${String(liveWidth)}px`, '--rv-left-width': `${String(liveNavWidth)}px` } as CSSProperties}
       >
         <nav className="rv-left">
@@ -1330,6 +1541,7 @@ function OpenReview({
           )}
         </main>
 
+        {detached === null && (
         <div
           className="rv-divider"
           role="separator"
@@ -1363,7 +1575,11 @@ function OpenReview({
             }
           }}
         />
+        )}
+        {/* Kept while the panel is away, hidden: closing its window brings the panel back here at once. */}
+        <div className="rv-right-dock" ref={dockSlot} hidden={detached !== null} />
 
+        {createPortal(
         <aside className="rv-right">
           <div className="rv-tabs rv-right-tabs" role="tablist">
             {(['step', 'discussion'] as const).map((key) => (
@@ -1379,6 +1595,22 @@ function OpenReview({
                 {words.rightTabs[key]}
               </button>
             ))}
+            {detached === null ? (
+              <button
+                type="button"
+                className="rv-panel-window"
+                data-ev="explanation-detach"
+                title="Open the explanation in its own window (the code gets this width)"
+                aria-label="Open the explanation in its own window"
+                onClick={detach}
+              >
+                ⧉
+              </button>
+            ) : (
+              <button type="button" className="rv-panel-window rv-panel-dock" data-ev="explanation-dock" title="Put the explanation back into the walk window" onClick={dock}>
+                Dock
+              </button>
+            )}
           </div>
           <ReviewDiscussion
             bundle={bundle}
@@ -1546,7 +1778,9 @@ function OpenReview({
               <NotesHere notes={state.notes} location={focus} stepId={current?.step.id ?? null} words={words} onOpen={goAway} />
             </>
           )}
-        </aside>
+        </aside>,
+        panelHost,
+        )}
       </div>
     </div>
   );
@@ -2420,7 +2654,7 @@ function StepCodeQuestion({
           {job.state === 'done' && job.answer !== undefined ? (
             <>
               {job.answer.insufficient && <p className="rv-agent-insufficient">The agent could not settle this from the code it could read.</p>}
-              <Markdown text={job.answer.answer} />
+              <ShortThenMore short={job.answer.answer} details={job.answer.details} />
               {job.answer.references.length > 0 && (
                 <div className="rv-answer-refs">
                   <span className="rv-sub">The code it rests on:</span>

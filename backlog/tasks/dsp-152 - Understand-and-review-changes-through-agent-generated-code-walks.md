@@ -4,7 +4,7 @@ title: Understand and review changes through agent-generated code walks
 status: Review
 assignee: []
 created_date: '2026-10-28 22:32'
-updated_date: '2026-10-29 22:53'
+updated_date: '2026-10-30 11:12'
 labels:
   - review
   - code-walks
@@ -402,4 +402,24 @@ Niclas's trial: he selected `midiEditorWorkspace` in a walk's code pane; no Expl
 
 **Not established**
 - A trial with a real model on Niclas's MiniDAWLab pair; UX acceptance of the offer, the menu and the quote; Linux.
+
+### Short answers first, Explain more simply on any answer, and the explanation in its own window (30 Oct 2026)
+
+Niclas's request after his real trial (decision recorded in [VISION.md section 3.4](../../docs/VISION.md#short-answers-first-simpler-explanations-and-the-explanation-in-its-own-window-niclass-decision-30-october-2026)). In his trial the selection "disappeared" when he began writing his own question in the discussion.
+
+**What the lost selection was (investigated through the whole flow).** With real drags, clicks and keystrokes, including Shift for capitals and "?", the question kept its context in every re-created flow: the quote stayed above the field through clicking into it, writing several sentences and switching Step/Discussion, and the adapter received exactly the selected text, file, side and characters. What did disappear was the visible selection: once the focus is in the field, the window's own selection is empty (`windowSelection` read as `''` right after the click) and the walk window drew no mark of its own, so the code looked unselected. That is the established cause; a loss of context in Niclas's build was not reproduced. The scenario harness had also typed with character events only, so the earlier check of a typed question did not exercise real key events; it now sends key down, character and key up with Shift as a keyboard does.
+
+**What changed**
+- The kept selection is marked quietly where it is drawn (`::highlight(rv-quote)`, `quoteRanges` in `walk-selection.ts`, redrawn as rows are drawn again; prose as the range selected). The diff window's `rangeInCell` moved there and is shared.
+- Answers start with a short part: `ANSWER_SHAPE_RULES` in every discussion prompt's *How to answer* (with or without code access) asks for details below `DETAILS_MARKER`; `splitDetails` shows them under *Show more* / *Show less* (`ShortThenMore`), with no new call. *Explain this* in the diff and step questions get a `details` field (`DETAILS_RULES`, `StepAnswer.details`). Earlier answers have neither and are shown whole. In the diff's explanation panel *Tell me more* is not offered when the explanation has details.
+- *Explain more simply* on every finished answer in the discussion: `DiscussionSendInput.simplify` names the answer; the service sends it with the envelope its own question was sent with (`simplifiedOf`), and the prompt's *The answer to explain more simply* section (`SIMPLIFY_RULES`) carries the question and the answer. The question is stored with `simplifies`; the original stays.
+- The right panel can be moved to a window of its own (`explanation-window.ts`): the panel is rendered through a portal into one element that is moved between the walk window and a `window.open` window of the walk window's page, so the same React tree, bridges and session carry on. `review-windows.ts` allows only that window name, one per walk window, keeps it on a screen and closes it with the walk window. The choice and the window's place and size are review preferences (`explanationDetached`, `explanationBounds`) saved through the host, so `review-windows.ts` still uses the file system only for the chooser's start folder. The window inherits the page's Content-Security-Policy (no inline styles), so it gets the page's stylesheets as constructed stylesheets (`adoptedStyleSheets`, CSS imported `?inline`); the policy is unchanged.
+
+**Verified** (SIMULATED presentation agent, isolated user data, no live provider, Cursor not contacted; the real profile and the MiniDAWLab working copy untouched).
+- Tests: review group 172/172 (new: answer shape and simplify prompt, `splitDetails`, the preferences, a service test that a simpler explanation goes with its first question's envelope, keeps the original and refuses what is not a finished answer); fast group 1349 passed, 0 failed; typecheck and build.
+- Real windows, `review-flow` phase `explain-window` on the insight fixture: a word selected, Discussion, a click into the field, three sentences typed: the quote and its mark stayed and the adapter got exactly `workspace` at save.ts line 3, characters 43–51 (To), before the step's code; the same over two lines and across a wrapped line. The answer showed its short part with *Show more*; opening and folding asked nothing. *Explain more simply* on the first answer from another step sent that answer's question, selection and subject, kept the original and left the walk where it was. Moved to its own window while an answer was arriving, with a draft and a quote: the code got about 530 px more, the tab, draft and quote moved, the answer arrived once and nothing was sent again. A selection in the walk window was asked about in the other window; *Show more* and *Explain more simply* worked there; selected answer text there was quoted as text. *Dock* and closing the window brought the panel back with the draft and all 14 messages. Closing the walk window closed both and opened nothing; reopening it opened the explanation window where it was left and *Show more* opened stored details with no call. A second review (shop) had its own window and conversation; a question there carried no selection from the first. Review status unchanged.
+- Regression on the final build: `selection`, `insight`, `insight-again`, `code-walks` (both), `analysis-access` (both), `walk-start` (three phases).
+
+**Not established**
+- Real model quality: whether a real agent writes a good short part and places the marker or `details` well; Niclas's trial on his MiniDAWLab pair; UX acceptance of the mark, *Show more*, *Explain more simply* and the separate window; multi-screen restore on real changed screens (checked only on one screen arrangement); Linux.
 <!-- SECTION:NOTES:END -->

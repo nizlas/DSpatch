@@ -57,6 +57,7 @@ import {
 import { TokensView } from './review-code';
 import { AgentPicker, type AgentChoice } from './AgentPicker';
 import { ExplainPanel, explanationThreads } from './ExplainPanel';
+import { rangeInCell } from './walk-selection';
 import { changedRangesOf } from '../shared/review-agent';
 
 declare global {
@@ -1660,27 +1661,6 @@ function selectedTextOf(
         .join('\n'),
     )
     .join('\n');
-}
-
-/** A range over characters `from`–`to` of a code cell's text, across its token spans. */
-function rangeInCell(cell: HTMLElement, from: number, to: number): Range | null {
-  const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
-  const range = document.createRange();
-  let at = 0;
-  let started = false;
-  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-    const length = node.textContent?.length ?? 0;
-    if (!started && from <= at + length) {
-      range.setStart(node, from - at);
-      started = true;
-    }
-    if (started && to <= at + length) {
-      range.setEnd(node, to - at);
-      return range;
-    }
-    at += length;
-  }
-  return null;
 }
 
 /** The code cell that shows a line of one side, in either layout. */

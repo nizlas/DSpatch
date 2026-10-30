@@ -18,7 +18,7 @@ import type { JSX } from 'react';
 
 import { segmentWords, type AgentJob, type CodeSelection, type ExplainAction, type LineRange } from '../shared/review-pair';
 import { AgentPicker, type AgentChoice } from './AgentPicker';
-import { Markdown } from './Markdown';
+import { ShortThenMore } from './DiscussionAnswer';
 import { attemptLabel, isRunning, JobLine, JobNote } from './PairReview';
 
 const FOLLOW_UP_WORD: Record<ExplainAction, string> = { more: 'Tell me more', simpler: 'Explain more simply', question: 'Your question' };
@@ -55,7 +55,7 @@ function Answer({ job, canShow, onShowRange }: { readonly job: AgentJob; readonl
   return (
     <>
       {job.answer.insufficient && <p className="rv-agent-insufficient">The agent could not explain this from the code it could read.</p>}
-      <Markdown text={job.answer.answer} />
+      <ShortThenMore short={job.answer.answer} details={job.answer.details} />
       {job.answer.references.length > 0 && (
         <div className="rv-answer-refs">
           <span className="rv-sub">The code it rests on:</span>
@@ -190,9 +190,12 @@ export function ExplainPanel({
           {thread.root.state === 'done' && (
             <div className="rv-explain-more">
               <div className="rv-deepen-actions">
-                <button type="button" data-ev="explain-more" disabled={busy} onClick={() => onFollowUp(thread.root.id, 'more', '')}>
-                  Tell me more
-                </button>
+                {/* Show more opens the explanation's own details; Tell me more only where there are none. */}
+                {(thread.root.answer?.details ?? '').trim() === '' && (
+                  <button type="button" data-ev="explain-more" disabled={busy} onClick={() => onFollowUp(thread.root.id, 'more', '')}>
+                    Tell me more
+                  </button>
+                )}
                 <button type="button" data-ev="explain-simpler" disabled={busy} onClick={() => onFollowUp(thread.root.id, 'simpler', '')}>
                   Explain more simply
                 </button>

@@ -662,3 +662,41 @@ test('an analysis adapter without the analysis policy is refused, nothing is sen
     fs.rmSync(s.fixture.root, { recursive: true, force: true });
   }
 });
+
+test('Explain more simply asks about that answer with its own question\'s context, keeps it, and refuses one that is not finished', async () => {
+  const s = await setup();
+  try {
+    const service = s.discussions().attach(1, s.identity, () => undefined, 'cursor');
+    assert.equal((await service.send({ question: 'Why 20?', subject: POINT, selection: null }, s.review)).kind, 'sent');
+    const adapter = s.adapters[0];
+    assert.ok(adapter !== undefined);
+    const pending = storedMessages(s).find((message) => message.role === 'question');
+    adapter.delta('Because the target says so.');
+    adapter.finish();
+    const answer = storedMessages(s).find((message) => message.role === 'answer');
+    assert.equal(answer?.status, 'done');
+
+    // The window has moved elsewhere; the simpler explanation still goes with the first context.
+    const simpler = await service.send({ question: 'Explain more simply the answer to: “Why 20?”', subject: AWAY, selection: null, simplify: { answerId: answer?.id ?? '' } }, s.review);
+    assert.equal(simpler.kind, 'sent');
+    const prompt = adapter.sent[1] ?? '';
+    assert.match(prompt, /## The answer to explain more simply\n- Explain the answer below again, more simply/);
+    assert.match(prompt, /The person asked: Why 20\?\n\nThe answer was:\nBecause the target says so\./);
+    assert.match(prompt, /## Subject\nWalk 1 › b changes › /);
+    assert.ok(!prompt.includes('src/untouched.ts'), 'what the window shows now is not the context');
+    const asked = storedMessages(s).filter((message) => message.role === 'question').at(-1);
+    assert.equal(asked?.simplifies, answer?.id);
+    assert.equal(asked?.envelope?.subject.kind, 'point');
+    assert.equal(asked?.deepen, undefined);
+    adapter.finish();
+    // The original is kept as it was.
+    assert.equal(storedMessages(s).find((message) => message.id === answer?.id)?.text, 'Because the target says so.');
+
+    // An id that is not an answer (here: the question): refused, nothing recorded or sent.
+    const refused = await service.send({ question: 'Simpler', subject: POINT, selection: null, simplify: { answerId: pending?.id ?? '' } }, s.review);
+    assert.equal(refused.kind, 'refused');
+    assert.equal(adapter.sent.length, 2);
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});

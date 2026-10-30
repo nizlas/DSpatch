@@ -27,7 +27,9 @@ import {
   type DiscussionSendOutcome,
   type DiscussionStatus,
   type DiscussionStatusView,
+  type ContextEnvelope,
   type EnvelopeOutcome,
+  type SimplifySection,
   type ReviewDiscussionEvent,
 } from '../shared/review-discussion';
 import type { StepAnswer } from '../shared/review-pair';
@@ -688,6 +690,28 @@ export class ReviewDiscussionService {
   }
 
   /**
+   * The earlier answer a question asks to have explained more simply, with the envelope its
+   * own question was sent with; `null` when the question asks for no such thing.
+   */
+  private simplifiedOf(
+    raw: unknown,
+  ): { readonly answerId: string; readonly envelope: ContextEnvelope; readonly section: SimplifySection } | { readonly error: string } | null {
+    if (typeof raw !== 'object' || raw === null || typeof (raw as { answerId?: unknown }).answerId !== 'string') {
+      return null;
+    }
+    const answerId = (raw as { answerId: string }).answerId;
+    const answer = this.message(answerId);
+    if (answer === null || answer.role !== 'answer' || answer.status !== 'done') {
+      return { error: 'That answer is not a finished answer in this discussion; nothing was sent.' };
+    }
+    const asked = answer.questionId === undefined ? null : this.message(answer.questionId);
+    if (asked === null || asked.envelope === undefined) {
+      return { error: 'The question that answer belongs to has no stored context to send again; nothing was sent.' };
+    }
+    return { answerId, envelope: asked.envelope, section: { question: asked.text, answer: splitCodeAnswer(answer.text).shown } };
+  }
+
+  /**
    * Ask a question about what the window is showing. Nothing is sent on open, load or
    * navigation; only this, from an explicit action.
    */
@@ -728,7 +752,16 @@ export class ReviewDiscussionService {
     let session: Session;
     let prompt: string;
     try {
-      const built = await envelopes.envelopeFor({ subject: raw.subject, selection: raw.selection ?? null, language: raw.language, quote: raw.quote ?? null });
+      // Explain an earlier answer more simply: with the envelope its own question was sent
+      // with (its subject, selection and code), whatever the window shows now.
+      const simplified = this.simplifiedOf(raw.simplify);
+      if (simplified !== null && 'error' in simplified) {
+        return { kind: 'refused', error: simplified.error };
+      }
+      const built: EnvelopeOutcome =
+        simplified !== null
+          ? { kind: 'built', envelope: simplified.envelope }
+          : await envelopes.envelopeFor({ subject: raw.subject, selection: raw.selection ?? null, language: raw.language, quote: raw.quote ?? null });
       // A quit while the envelope was read: no adapter may be created after `dispose`.
       if (this.closedForQuit) {
         return closing;
@@ -760,7 +793,13 @@ export class ReviewDiscussionService {
       // A new session has been told nothing: earlier questions and answers go in front, bounded and shown.
       // DSP-132: after a switch the person may have left it out.
       const recap = session.sends === 0 && this.switchNotice?.leftOut !== true ? recapFor(this.messages) : '';
-      prompt = buildEnvelopePrompt(envelope, question, recap === '' ? null : recap, session.revisions === null ? null : { folder: session.revisions.section });
+      prompt = buildEnvelopePrompt(
+        envelope,
+        question,
+        recap === '' ? null : recap,
+        session.revisions === null ? null : { folder: session.revisions.section },
+        simplified === null ? null : simplified.section,
+      );
       const questionId = this.nextId('q');
       const attempt = this.ledger.open('agent-turn', `Review question: ${question.split('\n')[0]?.slice(0, 70) ?? ''}`);
       const message: MutableMessage = {
@@ -779,8 +818,9 @@ export class ReviewDiscussionService {
         ...(session.revisions === null ? {} : { codeAccess: true }),
         ...((): { deepen?: NonNullable<DiscussionMessage['deepen']> } => {
           const deepen = deepenFrom(raw.deepen);
-          return deepen === null ? {} : { deepen };
+          return deepen === null || simplified !== null ? {} : { deepen };
         })(),
+        ...(simplified === null ? {} : { simplifies: simplified.answerId }),
       };
       this.messages.push(message);
       this.switchNotice = null;

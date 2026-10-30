@@ -846,3 +846,13 @@ test('the chosen code level is kept with the view arrangement', () => {
   assert.equal(adoptStoredState(JSON.parse(JSON.stringify(stored)), REVISIONS)?.ui.level, 'file');
   assert.equal(adoptStoredState({ ...state, ui: { openWalks: [], highlightWalk: false, level: 'everything' } }, REVISIONS), null);
 });
+
+test('preferences keep the explanation in its own window, and where that window was left, only as stated', () => {
+  const bounds = { x: -1200, y: 40, width: 700, height: 640 };
+  assert.deepEqual(adoptPreferences({ language: 'en', explanationDetached: true, explanationBounds: bounds }), { language: 'en', explanationDetached: true, explanationBounds: bounds });
+  // Docked is the default: anything but `true` is not kept, nor is a place that is not whole numbers of a usable size.
+  assert.deepEqual(adoptPreferences({ language: 'en', explanationDetached: 'yes' }), { language: 'en' });
+  assert.deepEqual(adoptPreferences({ language: 'en', explanationBounds: { x: 0, y: 0, width: 50, height: 640 } }), { language: 'en' });
+  assert.deepEqual(adoptPreferences({ language: 'en', explanationBounds: { x: 0.5, y: 0, width: 700, height: 640 } }), { language: 'en' });
+  assert.deepEqual(adoptPreferences({ language: 'en', explanationBounds: { ...bounds, extra: 1 } }), { language: 'en' });
+});

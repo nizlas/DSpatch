@@ -531,6 +531,8 @@ export interface AnswerReference {
 export interface StepAnswer {
   /** Markdown: the explanation, written to the plan's rules. */
   readonly answer: string;
+  /** Markdown: more detail, shown under Show more (30 October 2026). Absent on earlier answers. */
+  readonly details?: string;
   /** References that exist at their commit. */
   readonly references: readonly AnswerReference[];
   /** The agent could not establish an answer from the code it could read. */
@@ -737,6 +739,7 @@ function answerFrom(raw: unknown): StepAnswer | null {
   }
   return {
     answer: raw['answer'],
+    ...(typeof raw['details'] === 'string' && raw['details'].trim() !== '' ? { details: raw['details'] } : {}),
     references: (Array.isArray(raw['references']) ? raw['references'] : []).filter(isRecordObject).flatMap((entry) => {
       const range = rangeFrom(entry['range']);
       return range === null ? [] : [{ label: typeof entry['label'] === 'string' ? entry['label'] : '', range }];

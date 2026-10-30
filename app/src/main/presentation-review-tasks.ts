@@ -49,6 +49,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { TASK_HEADER } from '../shared/review-agent';
+import { DETAILS_MARKER } from '../shared/review-discussion';
 
 interface SimRange {
   readonly path: string;
@@ -564,7 +565,13 @@ function explainSelection(prompt: string, reader: Reader): string {
       ? 'It calls nothing defined in another file of this revision.'
       : `It calls \`${definition.name}\`, defined in \`${definition.path}\` lines ${String(definition.start)}–${String(definition.end)}, outside the change.` +
         (definition.returnsNull ? ' That function can return `null`.' : '');
-  return fence({ answer: `${opening}\n\nWhat was selected:\n${found.join('\n')}\n\n${dependency}`, references, insufficient: false });
+  return fence({
+    answer: `${opening}\n\nWhat was selected:\n${found.join('\n')}`,
+    // The short part says what was selected; the dependency is the detail behind it.
+    details: `SIMULATED details. ${dependency}`,
+    references,
+    insufficient: false,
+  });
 }
 
 interface Found {
@@ -609,6 +616,20 @@ function definitionAt(reader: Reader, side: 'base' | 'target', name: string): Fo
 /** A question in the review discussion, answered by searching and reading both revisions. */
 function reviewQuestion(prompt: string, reader: Reader, asked: string[]): string {
   const question = /## Question\n([\s\S]*?)(?:\n\n## |\n*$)/.exec(prompt)?.[1]?.trim() ?? '';
+  // An earlier answer to explain more simply (30 October 2026): say which, from what was sent.
+  const simpler = /## The answer to explain more simply\n[\s\S]*?\nThe person asked: ([^\n]*)\n\nThe answer was:\n([\s\S]*?)\n\n## Question/.exec(prompt);
+  if (simpler !== null) {
+    asked.push(question);
+    const selection = /Selected code, ([^\n]*?) @ \w+:\n(`{3,})\n([\s\S]*?)\n\2/.exec(prompt);
+    return [
+      `SIMULATED simpler explanation of the answer to “${(simpler[1] ?? '').slice(0, 120)}”.`,
+      `The answer it explains began: “${(simpler[2] ?? '').replace(/\s+/g, ' ').slice(0, 80)}”.`,
+      selection === null ? 'It was about no selection.' : `It was about the selection \`${selection[3] ?? ''}\` (${selection[1] ?? ''}).`,
+      `Subject: ${/## Subject\n([^\n]*)/.exec(prompt)?.[1] ?? ''}`,
+      DETAILS_MARKER,
+      'SIMULATED details of the simpler explanation: a real agent gives the background and an example here.',
+    ].join('\n\n');
+  }
   const before = asked.length;
   asked.push(question);
   const sessionWords = before === 0 ? 'This is the first question in this session.' : `This session has had ${String(before)} question(s) before this one; the last was “${(asked[before - 1] ?? '').slice(0, 60)}”.`;
@@ -693,8 +714,10 @@ function reviewQuestion(prompt: string, reader: Reader, asked: string[]): string
     parts.push(`\`${name}\` is defined only in From, in \`${fromDefinition.path}\` lines ${String(fromDefinition.start)}–${String(fromDefinition.end)}: the change removes it.`);
   }
   const use = toDefinition?.use ?? fromDefinition?.use ?? null;
+  // A table asked for is part of the answer itself; the rest is the detail behind it.
+  const details: string[] = [];
   if (use !== null) {
-    parts.push(`It is used in \`${use.path}\` line ${String(use.line)}.`);
+    details.push(`It is used in \`${use.path}\` line ${String(use.line)}.`);
   }
   if (/\b(compare|table|jämför|tabell)\b/i.test(question)) {
     parts.push(
@@ -706,8 +729,8 @@ function reviewQuestion(prompt: string, reader: Reader, asked: string[]): string
       ].join('\n'),
     );
   }
-  parts.push('What it means for the change is for a real agent to explain; this answer only shows where it is.');
-  return `${parts.join('\n\n')}${refs(references, false)}`;
+  details.push('What it means for the change is for a real agent to explain; this answer only shows where it is.');
+  return `${parts.join('\n\n')}\n\n${DETAILS_MARKER}\n\n${details.join('\n\n')}${refs(references, false)}`;
 }
 
 /**

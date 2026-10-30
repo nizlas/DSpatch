@@ -2570,7 +2570,8 @@ async function pressIn(
   const place = (await contents.executeJavaScript(
     `(() => {
       const element = document.querySelector(${JSON.stringify(request.selector)});
-      if (!(element instanceof HTMLElement)) { return null; }
+      // By kind, not by class: an explanation window's elements are made by its walk window's page.
+      if (element === null || element.nodeType !== 1 || typeof element.getBoundingClientRect !== 'function') { return null; }
       element.scrollIntoView({ block: 'center' });
       ${request.action === 'press-key' || request.action === 'type' ? 'element.focus();' : ''}
       const box = element.getBoundingClientRect();
@@ -2578,7 +2579,7 @@ async function pressIn(
       const y = Math.round(box.top + box.height / 2);
       const hit = document.elementFromPoint(x, y);
       const covered = hit === null || element.contains(hit) ? null : (hit.tagName.toLowerCase() + (hit.getAttribute('data-ev') ? '[data-ev=' + hit.getAttribute('data-ev') + ']' : '') + (typeof hit.className === 'string' && hit.className !== '' ? '.' + hit.className.split(' ').join('.') : ''));
-      return { x, y, disabled: (element instanceof HTMLButtonElement || element instanceof HTMLSelectElement) && element.disabled, focused: document.activeElement === element, covered };
+      return { x, y, disabled: (element.tagName === 'BUTTON' || element.tagName === 'SELECT') && element.disabled === true, focused: document.activeElement === element, covered };
     })()`,
   )) as { x: number; y: number; disabled: boolean; focused: boolean; covered: string | null } | null;
   if (place === null) {
@@ -2597,8 +2598,15 @@ async function pressIn(
     contents.sendInputEvent({ type: 'mouseDown', x: place.x, y: place.y, button: 'left', clickCount: 1 });
     contents.sendInputEvent({ type: 'mouseUp', x: place.x, y: place.y, button: 'left', clickCount: 1 });
   } else if (request.action === 'type') {
+    // As a keyboard gives it: the key down, the character, the key up, with Shift held for a
+    // capital or a shifted sign, so handlers of key events see what a person's typing makes.
     for (const character of request.text ?? '') {
-      contents.sendInputEvent({ type: 'char', keyCode: character });
+      const shifted = character !== character.toLowerCase() || '?!:"()&%'.includes(character);
+      const modifiers: ('shift')[] = shifted ? ['shift'] : [];
+      const key = character === ' ' ? 'Space' : character;
+      contents.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers });
+      contents.sendInputEvent({ type: 'char', keyCode: character, modifiers });
+      contents.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers });
     }
   } else {
     contents.sendInputEvent({ type: 'keyDown', keyCode: request.key ?? '' });
@@ -2617,7 +2625,7 @@ async function textPointIn(contents: Electron.WebContents, point: TextPoint, hal
   return (await contents.executeJavaScript(
     `(() => {
       const element = document.querySelector(${JSON.stringify(point.selector)});
-      if (!(element instanceof HTMLElement)) { return null; }
+      if (element === null || element.nodeType !== 1) { return null; }
       element.scrollIntoView({ block: 'center' });
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
       let at = 0;
@@ -2685,7 +2693,7 @@ async function pointerIn(window: BrowserWindow, contents: Electron.WebContents, 
     const centre = (await contents.executeJavaScript(
       `(() => {
         const element = document.querySelector(${JSON.stringify(request.selector)});
-        if (!(element instanceof HTMLElement)) { return null; }
+        if (element === null || element.nodeType !== 1) { return null; }
         const box = element.getBoundingClientRect();
         return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + Math.min(box.height / 2, 200)) };
       })()`,
@@ -2735,10 +2743,23 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
         pairKey: entry.pairKey,
         title: entry.window.getTitle(),
         focused: entry.window.isFocused(),
-      })),
+      })).concat(
+        // 30 October 2026: a walk window's explanation in a window of its own.
+        windows.explanationWindows().map((entry) => ({
+          id: entry.contents.id,
+          view: 'explanation' as 'walk',
+          pairKey: entry.walk.pairKey,
+          title: entry.window.getTitle(),
+          focused: entry.window.isFocused(),
+          walkId: entry.walk.contents.id,
+          bounds: entry.window.getBounds(),
+        })),
+      ),
     };
   }
-  const entry = windows.list().find((candidate) => candidate.contents.id === request.id);
+  const entry =
+    windows.list().find((candidate) => candidate.contents.id === request.id) ??
+    windows.explanationWindows().find((candidate) => candidate.contents.id === request.id);
   if (entry === undefined || entry.contents.isDestroyed()) {
     return { ok: false, detail: `no review window ${String(request.id)}` };
   }
@@ -2856,6 +2877,35 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
           walk: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read() : null,
           // 30 October 2026: the discussion's messages, with what each answer rests on.
           discussion: window.__dspatchDiscussionCheck ? window.__dspatchDiscussionCheck.read() : null,
+          // 30 October 2026: the explanation in a window of its own, as drawn there.
+          explanation: (() => {
+            const other = window.__dspatchExplanationWindow;
+            if (!other || other.closed) { return null; }
+            const doc = other.document;
+            const panel = doc.querySelector('.rv-right');
+            const text = (node) => (node ? (node.textContent || '').replace(/\s+/g, ' ').trim() : '');
+            const mark = other.CSS && other.CSS.highlights && other.CSS.highlights.get('rv-quote');
+            return {
+              title: doc.title,
+              hasPanel: panel !== null,
+              // The walk window's look reached it: its surface is laid out as the review's.
+              styled: (() => { const surface = doc.querySelector('.rv-detached'); return surface !== null && other.getComputedStyle(surface).display === 'flex' && other.getComputedStyle(surface).backgroundColor !== 'rgba(0, 0, 0, 0)'; })(),
+              tab: text(doc.querySelector('.rv-right-tabs .rv-tab-on')),
+              composer: (doc.querySelector('[data-ev="discussion-composer"]') || { value: null }).value,
+              focused: doc.activeElement ? doc.activeElement.getAttribute('data-ev') : null,
+              chip: text(doc.querySelector('[data-ev="discussion-quote"]')),
+              answers: [...doc.querySelectorAll('[data-ev="discussion-answer-body"]')].filter((node) => node.offsetParent !== null).map((node) => ({
+                text: text(node).slice(0, 600),
+                details: node.querySelector('[data-ev="answer-details"]') !== null,
+                more: text(node.querySelector('[data-ev="answer-show-more"]')),
+                simpler: node.querySelector('[data-ev="answer-simpler"]') !== null,
+              })),
+              scrollTop: panel ? Math.round(panel.scrollTop) : 0,
+              width: panel ? Math.round(panel.getBoundingClientRect().width) : 0,
+              quoteMark: mark ? [...mark].map((range) => range.toString()) : [],
+              selection: (other.getSelection() || { toString: () => '' }).toString(),
+            };
+          })(),
           decisions: [...document.querySelectorAll('.rv-decision')].map((node) => (node.textContent || '').replace(/\s+/g, ' ').trim()),
           showInDiff: document.querySelector('[data-ev="walk-show-in-diff"]') !== null,
           deepenings: [...document.querySelectorAll('[data-ev="step-deepening"]')].map((node) => ({ state: node.getAttribute('data-state'), text: (node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300) })),
@@ -2938,6 +2988,9 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
               })(),
               answers: [...document.querySelectorAll('[data-ev="discussion-answer-body"]')].filter((node) => node.offsetParent !== null).map((node) => ({
                 text: text(node).slice(0, 600),
+                details: node.querySelector('[data-ev="answer-details"]') !== null,
+                more: text(node.querySelector('[data-ev="answer-show-more"]')),
+                simpler: node.querySelector('[data-ev="answer-simpler"]') !== null,
                 refs: [...node.querySelectorAll('[data-ev="answer-ref"]')].map((ref) => ref.getAttribute('data-ref')),
                 tables: [...node.querySelectorAll('table.markdown__table')].map((table) => {
                   const box = table.closest('.markdown__table-box');
@@ -2948,8 +3001,15 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
               away: (document.querySelector('.rv-code-pane .rv-path') || { title: '' }).title,
               // What is selected to ask about: the action beside it, and the quote above the field.
               quoteOffer: [...document.querySelectorAll('[data-ev="walk-quote-offer"] button')].map((node) => node.getAttribute('data-ev')),
-              quoteChip: text(document.querySelector('[data-ev="discussion-quote"]')),
+              quoteChip: text(document.querySelector('[data-ev="discussion-quote"]') || (window.__dspatchExplanationWindow && !window.__dspatchExplanationWindow.closed ? window.__dspatchExplanationWindow.document.querySelector('[data-ev="discussion-quote"]') : null)),
               windowSelection: (window.getSelection() || { toString: () => '' }).toString(),
+              // The kept selection's quiet mark in the code: how many pieces, and their text.
+              quoteMark: (() => {
+                const mark = CSS.highlights && CSS.highlights.get('rv-quote');
+                return mark ? [...mark].map((range) => range.toString()) : [];
+              })(),
+              docked: document.querySelector('.rv-right-dock .rv-right') !== null,
+              codeWidth: Math.round((document.querySelector('.rv-code') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width),
               paneRows: [...document.querySelectorAll('.rv-pane-active [data-sel-line]')].map((node) => node.getAttribute('data-sel-side') + ':' + node.getAttribute('data-sel-path') + ':' + node.getAttribute('data-sel-line')),
               position: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read().position : null,
               chooseOffered: [...document.querySelectorAll('button')].some((button) => /Open another review/.test(button.textContent || '')),
@@ -3582,7 +3642,7 @@ function registerIpc(): void {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.
-              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' || named === 'selection' ? named : 'first';
+              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' || named === 'selection' || named === 'explain-window' ? named : 'first';
             })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }

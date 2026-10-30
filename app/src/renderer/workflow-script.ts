@@ -11568,10 +11568,13 @@ async function runEditorJoinsRunScenario(plan: ScriptedRunPlan): Promise<Scripte
 
 interface PairWindowRow {
   readonly id: number;
-  readonly view: 'walk' | 'diff';
+  readonly view: 'walk' | 'diff' | 'explanation';
   readonly pairKey: string | null;
   readonly title: string;
   readonly focused: boolean;
+  /** An explanation window: the walk window it belongs to, and where it is. */
+  readonly walkId?: number;
+  readonly bounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
 }
 
 interface PairFileReading {
@@ -13480,7 +13483,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
   const steps: unknown[] = [];
   const failures: string[] = [];
   const phase =
-    plan.flowPhase === 'again' || plan.flowPhase === 'direction' || plan.flowPhase === 'columns' || plan.flowPhase === 'insight' || plan.flowPhase === 'insight-again' || plan.flowPhase === 'selection'
+    plan.flowPhase === 'again' || plan.flowPhase === 'direction' || plan.flowPhase === 'columns' || plan.flowPhase === 'insight' || plan.flowPhase === 'insight-again' || plan.flowPhase === 'selection' || plan.flowPhase === 'explain-window'
       ? plan.flowPhase
       : 'first';
   const observations: Record<string, unknown> = {
@@ -13612,7 +13615,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     await press(MAIN, '[data-ev="open-review"]');
     const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
 
-    if (phase === 'selection') {
+    if (phase === 'selection' || phase === 'explain-window') {
       // --- Selecting text in the walk window to ask about it (Niclas's trial, 30 October 2026) ---
       type Sel = { readonly quoteOffer: readonly string[]; readonly quoteChip: string; readonly windowSelection: string; readonly paneRows: readonly string[]; readonly position: { readonly stepId: string | null } | null };
       const selOf = (reading: PairWindowReading | null): Sel => ((reading as unknown as { walkView?: Sel } | null)?.walkView ?? { quoteOffer: [], quoteChip: '', windowSelection: '', paneRows: [], position: null });
@@ -13656,6 +13659,261 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       await untilPair(walkId, 'the walks', (reading) => stepAt(reading) !== null, 30_000);
       await showRow(walkId, 'target:src/save.ts:3', 'next');
       let prompts = (await reviewPromptsSent()).length;
+
+      if (phase === 'explain-window') {
+        // --- Asking about a selection as a person does it, the short answer first, a simpler
+        // explanation of an earlier answer, and the explanation in a window of its own
+        // (Niclas's requests of 30 October 2026). Real drags, clicks and keys throughout. ---
+        type Shown = { readonly text: string; readonly details: boolean; readonly more: string; readonly simpler: boolean };
+        type WalkMore = { readonly quoteMark: readonly string[]; readonly docked: boolean; readonly codeWidth: number; readonly answers: readonly Shown[] };
+        type Ex = {
+          readonly hasPanel: boolean;
+          readonly styled: boolean;
+          readonly tab: string;
+          readonly composer: string | null;
+          readonly chip: string;
+          readonly answers: readonly Shown[];
+          readonly scrollTop: number;
+          readonly quoteMark: readonly string[];
+        };
+        type Message = { readonly id: string; readonly role: string; readonly status: string; readonly text: string; readonly questionId: string | null };
+        const moreOf = (reading: PairWindowReading | null): WalkMore =>
+          (reading as unknown as { walkView?: WalkMore } | null)?.walkView ?? { quoteMark: [], docked: true, codeWidth: 0, answers: [] };
+        const exOf = (reading: PairWindowReading | null): Ex | null => (reading as unknown as { explanation?: Ex | null } | null)?.explanation ?? null;
+        const messagesOf = (reading: PairWindowReading | null): readonly Message[] =>
+          (reading as unknown as { discussion?: { messages?: readonly Message[] } | null } | null)?.discussion?.messages ?? [];
+        const composerOf = (reading: PairWindowReading | null): string => (reading as unknown as { discussion?: { composer?: string } | null } | null)?.discussion?.composer ?? '';
+        const promptsNow = async (): Promise<number> => (await reviewPromptsSent()).length;
+        const explanationOf = async (walk: number): Promise<PairWindowRow | null> =>
+          (await pairWindows()).find((row) => (row.view as string) === 'explanation' && row.walkId === walk) ?? null;
+        const answered = (walk: number, count: number, what: string): Promise<PairWindowReading> =>
+          untilPair(walk, what, (reading) => {
+            const done = messagesOf(reading).filter((message) => message.role === 'answer');
+            return done.length >= count && done[count - 1]?.status === 'done';
+          }, 90_000);
+        const composer = '[data-ev="discussion-composer"]';
+        // The mark's pieces as distinct texts: a line drawn in two panes is marked in both.
+        const marked = (pieces: readonly string[]): string => [...new Set(pieces)].join('|');
+
+        // A. A word in the code; Discussion; a click into the field; several sentences; Enter.
+        const line3 = 'export function saveProject(name: string, workspace: EditorWorkspace | null): string {';
+        const at = line3.indexOf('workspace');
+        const picked = await drag(walkId, { selector: row('target', 3), offset: at }, { selector: row('target', 3), offset: at + 'workspace'.length });
+        await press(walkId, '[data-ev="right-tab-discussion"]');
+        await press(walkId, composer);
+        const clicked = await readPairWindow(walkId);
+        record('A: the focus in the field', { picked, chip: selOf(clicked).quoteChip, windowSelection: selOf(clicked).windowSelection, mark: moreOf(clicked).quoteMark });
+        expect(picked === 'workspace', `the drag selected ${picked}`);
+        expect(selOf(clicked).quoteChip.includes('save.ts:3 (To)') && selOf(clicked).quoteChip.includes('workspace'), `the quote is not at the field: ${selOf(clicked).quoteChip}`);
+        expect(marked(moreOf(clicked).quoteMark) === 'workspace', `the code does not keep the selection marked: ${JSON.stringify(moreOf(clicked).quoteMark)}`);
+        const sentences = 'Vad är den här variabeln? Den skickas vidare till JSON.stringify. Förklara gärna typen också, och vad null betyder här.';
+        await check({ action: 'type', id: walkId, selector: composer, text: sentences }, 'write several sentences');
+        await press(walkId, '[data-ev="right-tab-step"]');
+        await press(walkId, '[data-ev="right-tab-discussion"]');
+        const typed = await readPairWindow(walkId);
+        record('A: written, Step and back', { chip: selOf(typed).quoteChip, composer: composerOf(typed), mark: moreOf(typed).quoteMark });
+        expect(selOf(typed).quoteChip.includes('workspace') && composerOf(typed) === sentences && marked(moreOf(typed).quoteMark) === 'workspace', 'the quote, its mark or the draft did not survive writing and the tabs');
+        await capture(walkId, 'typed-with-quote');
+        const beforeA = await promptsNow();
+        await pressKey(walkId, composer, 'Enter');
+        const sentA = await lastPrompt(beforeA + 1);
+        record('A: what reached the adapter', { selection: selected(sentA) });
+        expect(
+          selected(sentA).includes('Selected code, src/save.ts line 3, characters 43–51 · target (To) @') && /\n(`{3,})\nworkspace\n\1/.test(selected(sentA)) && sentA.includes(sentences),
+          `the typed question did not carry exactly the selection: ${selected(sentA)}`,
+        );
+        expect(sentA.indexOf('## What the person selected') < sentA.indexOf('## Code'), 'the selection is not before the step\'s code');
+        const answeredA = await answered(walkId, 1, 'the answer to the typed question');
+        const shortA = moreOf(answeredA).answers[0];
+        record('A: the answer as shown', { answer: shortA });
+        expect(shortA?.more === 'Show more' && !shortA.details && !shortA.text.includes('What it means for the change'), `the answer is not short first with Show more: ${JSON.stringify(shortA)}`);
+        const promptsA = await promptsNow();
+        await press(walkId, '[data-ev="discussion-q-0"] [data-ev="answer-show-more"]');
+        const opened = moreOf(await readPairWindow(walkId)).answers[0];
+        await press(walkId, '[data-ev="discussion-q-0"] [data-ev="answer-show-more"]');
+        const closedAgain = moreOf(await readPairWindow(walkId)).answers[0];
+        record('A: Show more, Show less', { opened, closedAgain, prompts: (await promptsNow()) - promptsA });
+        expect(opened?.details === true && opened.more === 'Show less' && opened.text.includes('What it means for the change'), 'Show more did not open the details');
+        expect(closedAgain?.details === false && closedAgain.more === 'Show more', 'Show less did not fold them');
+        expect((await promptsNow()) === promptsA, 'Show more or Show less asked the agent');
+
+        // B. Several lines, then across a wrap, the same way.
+        await drag(walkId, { selector: row('target', 4), offset: 16 }, { selector: row('target', 5), offset: 20 });
+        await press(walkId, composer);
+        expect(new Set(moreOf(await readPairWindow(walkId)).quoteMark).size === 2, 'two selected lines are not kept marked');
+        await check({ action: 'type', id: walkId, selector: composer, text: 'Hur hänger de två raderna ihop?' }, 'write a question');
+        const beforeB = await promptsNow();
+        await pressKey(walkId, composer, 'Enter');
+        const sentB = selected(await lastPrompt(beforeB + 1));
+        record('B: two lines', { selection: sentB });
+        expect(sentB.includes('src/save.ts lines 4–5, characters 17–20 (of the first and last line) · target (To)'), `two lines did not reach the adapter as selected: ${sentB}`);
+        await answered(walkId, 2, 'the answer about two lines');
+        await showRow(walkId, 'target:src/save.ts:8', 'next');
+        await press(walkId, '[data-ev="walk-wrap"]');
+        const wrapped = await drag(walkId, { selector: row('target', 8), offset: 30 }, { selector: row('target', 8), offset: 190 });
+        await press(walkId, composer);
+        await check({ action: 'type', id: walkId, selector: composer, text: 'Varför är raden så lång?' }, 'write a question');
+        const beforeWrap = await promptsNow();
+        await pressKey(walkId, composer, 'Enter');
+        const sentWrap = selected(await lastPrompt(beforeWrap + 1));
+        record('B: across a wrap', { selected: wrapped.length, selection: sentWrap.slice(0, 160) });
+        expect(wrapped.length === 160 && sentWrap.includes('src/save.ts line 8, characters 31–190 · target (To)'), `a wrapped selection did not reach the adapter whole: ${sentWrap.slice(0, 200)}`);
+        await answered(walkId, 3, 'the answer about the wrapped line');
+
+        // C. Explain more simply on the first answer, from another step.
+        await showRow(walkId, 'base:src/load.ts:2', 'previous');
+        const stepC = stepAt(await readPairWindow(walkId));
+        const firstAnswer = messagesOf(await readPairWindow(walkId)).find((message) => message.role === 'answer');
+        const beforeC = await promptsNow();
+        await press(walkId, '[data-ev="discussion-q-0"] [data-ev="answer-simpler"]');
+        const sentC = await lastPrompt(beforeC + 1);
+        const subjectC = /## Subject\n([^\n]*)/.exec(sentC)?.[1] ?? '';
+        record('C: simpler, from another step', { step: stepC, subject: subjectC, selection: selected(sentC) });
+        expect(sentC.includes('## The answer to explain more simply') && sentC.includes(`The person asked: ${sentences}`), 'the simpler explanation was not asked about the first answer');
+        expect(/\n(`{3,})\nworkspace\n\1/.test(selected(sentC)) && subjectC.includes('save.ts') && !subjectC.includes('load.ts'), `the simpler explanation did not get the first answer's own context: ${subjectC}`);
+        const answeredC = await answered(walkId, 4, 'the simpler explanation');
+        const answersC = messagesOf(answeredC).filter((message) => message.role === 'answer');
+        expect(
+          (answersC[3]?.text ?? '').startsWith('SIMULATED simpler explanation of the answer to “Vad är den här variabeln?') && (answersC[3]?.text ?? '').includes('the selection `workspace`'),
+          `the simpler answer is not about the first answer: ${(answersC[3]?.text ?? '').slice(0, 200)}`,
+        );
+        expect(answersC[0]?.text === firstAnswer?.text && stepAt(answeredC) === stepC, 'the original answer changed, or the walk moved');
+
+        // D. The explanation to its own window while an answer is on its way, with a draft and a selection.
+        const removed = '  return text.slice(8);';
+        await drag(walkId, { selector: row('base', 2), offset: removed.indexOf('text.slice') }, { selector: row('base', 2), offset: removed.indexOf('text.slice') + 'text.slice'.length });
+        await press(walkId, composer);
+        await check({ action: 'type', id: walkId, selector: composer, text: 'Vad gör text.slice här? [[very-slow]]' }, 'write a slow question');
+        const beforeD = await promptsNow();
+        await pressKey(walkId, composer, 'Enter');
+        await untilPair(walkId, 'the slow answer to start', (reading) => messagesOf(reading).some((message) => message.role === 'answer' && message.status === 'streaming'), 30_000);
+        const draft = 'Ett utkast som inte är skickat.';
+        await check({ action: 'type', id: walkId, selector: composer, text: draft }, 'write a draft');
+        const docked = await readPairWindow(walkId);
+        await press(walkId, '[data-ev="explanation-detach"]');
+        const exRow = await untilWindow('the explanation window', (rows) => rows.find((entry) => (entry.view as string) === 'explanation' && entry.walkId === walkId), 15_000);
+        const away = await untilPair(walkId, 'the panel in its own window', (reading) => exOf(reading)?.hasPanel === true);
+        const pendingAtMove = messagesOf(away).filter((message) => message.role === 'answer').at(-1)?.status;
+        record('D: detached', { codeBefore: moreOf(docked).codeWidth, codeAfter: moreOf(away).codeWidth, docked: moreOf(away).docked, explanation: exOf(away), pendingAtMove });
+        expect(!moreOf(away).docked && moreOf(away).codeWidth > moreOf(docked).codeWidth + 200, 'the code did not get the panel\'s width');
+        expect(exOf(away)?.tab === 'Discussion' && exOf(away)?.composer === draft && (exOf(away)?.chip ?? '').includes('text.slice'), `the tab, the draft or the quote did not move with the panel: ${JSON.stringify(exOf(away))}`);
+        expect(exOf(away)?.styled === true, 'the explanation window does not look like the walk window');
+        expect(pendingAtMove === 'streaming', `the answer was not on its way when the panel moved: ${String(pendingAtMove)}`);
+        await capture(exRow.id, 'explanation-window');
+        await capture(walkId, 'walk-without-panel');
+        const answeredD = await answered(walkId, 5, 'the slow answer, in the other window');
+        const slowQuestion = messagesOf(answeredD).filter((message) => message.role === 'question').at(-1);
+        const slowAnswers = messagesOf(answeredD).filter((message) => message.role === 'answer' && message.questionId === slowQuestion?.id);
+        record('D: delivered', { answers: slowAnswers.length, prompts: (await promptsNow()) - beforeD });
+        expect(slowAnswers.length === 1 && (await promptsNow()) === beforeD + 1, 'the move sent again or delivered twice');
+
+        // E. A new selection in the walk window, asked about in the explanation window.
+        await drag(walkId, { selector: row('base', 2), offset: removed.indexOf('return') }, { selector: row('base', 2), offset: removed.indexOf('return') + 'return'.length });
+        await press(exRow.id, composer);
+        const across = await readPairWindow(walkId);
+        record('E: selected here, field there', { chip: exOf(across)?.chip, mark: moreOf(across).quoteMark });
+        expect((exOf(across)?.chip ?? '').includes('load.ts:2 (From)') && (exOf(across)?.chip ?? '').includes('return') && marked(moreOf(across).quoteMark) === 'return', 'the selection in the walk window did not reach the other window\'s field');
+        await check({ action: 'type', id: exRow.id, selector: composer, text: ' Och vad returneras?' }, 'write in the explanation window');
+        const beforeE = await promptsNow();
+        await pressKey(exRow.id, composer, 'Enter');
+        const sentE = await lastPrompt(beforeE + 1);
+        record('E: what reached the adapter', { selection: selected(sentE) });
+        expect(selected(sentE).includes('src/load.ts line 2, characters 3–8 · base (From) @') && /\n(`{3,})\nreturn\n\1/.test(selected(sentE)) && sentE.includes(`${draft} Och vad returneras?`), `the question from the other window did not carry the selection: ${selected(sentE)}`);
+        await answered(walkId, 6, 'the answer in the other window');
+
+        // F. Show more and Explain more simply in the explanation window.
+        const promptsF = await promptsNow();
+        await press(exRow.id, '[data-ev="discussion-q-0"] [data-ev="answer-show-more"]');
+        const openedThere = exOf(await readPairWindow(walkId))?.answers[0];
+        expect(openedThere?.details === true && (await promptsNow()) === promptsF, 'Show more in the other window did not open the details, or asked the agent');
+        await press(exRow.id, '[data-ev="discussion-q-5"] [data-ev="answer-simpler"]');
+        const sentF = await lastPrompt(promptsF + 1);
+        expect(sentF.includes('## The answer to explain more simply') && sentF.includes('Och vad returneras?') && /\n(`{3,})\nreturn\n\1/.test(selected(sentF)), 'Explain more simply in the other window did not take that answer and its selection');
+        await answered(walkId, 7, 'the simpler answer in the other window');
+
+        // G. Prose in the explanation window: an answer's text, quoted with no place in the code.
+        await drag(exRow.id, { selector: '[data-ev="discussion-q-0"] [data-quote-source="answer"]', offset: 0 }, { selector: '[data-ev="discussion-q-0"] [data-quote-source="answer"]', offset: 24 });
+        const prose = await readPairWindow(walkId);
+        record('G: answer text selected there', { chip: exOf(prose)?.chip, mark: exOf(prose)?.quoteMark });
+        expect((exOf(prose)?.chip ?? '').startsWith('From an answer'), `selected answer text was not quoted as text: ${exOf(prose)?.chip ?? ''}`);
+        await press(exRow.id, '[data-ev="discussion-quote-clear"]');
+
+        // H. Dock with the button; then away again, and closing that window docks it too.
+        const draftH = 'Utkast före dockning.';
+        await check({ action: 'type', id: exRow.id, selector: composer, text: draftH }, 'write a draft there');
+        await press(exRow.id, '[data-ev="explanation-dock"]');
+        const back = await untilPair(walkId, 'the panel back in the walk window', (reading) => moreOf(reading).docked && exOf(reading) === null);
+        record('H: docked', { composer: composerOf(back), window: await explanationOf(walkId) });
+        expect(composerOf(back) === draftH && (await explanationOf(walkId)) === null, 'docking lost the draft or left the window open');
+        await press(walkId, '[data-ev="explanation-detach"]');
+        const second = await untilWindow('the explanation window again', (rows) => rows.find((entry) => (entry.view as string) === 'explanation' && entry.walkId === walkId), 15_000);
+        await untilPair(walkId, 'the panel there again', (reading) => exOf(reading)?.hasPanel === true);
+        await check({ action: 'close', id: second.id }, 'close the explanation window');
+        const closedBack = await untilPair(walkId, 'the panel back after closing its window', (reading) => moreOf(reading).docked);
+        record('H: closed', { composer: composerOf(closedBack), messages: messagesOf(closedBack).length });
+        expect(composerOf(closedBack) === draftH && messagesOf(closedBack).length === 14, 'closing the explanation window lost the draft or the discussion');
+
+        // I. The walk window closed with the explanation on its own: nothing opens again; reopened, it is as left.
+        await press(walkId, '[data-ev="explanation-detach"]');
+        const third = await untilWindow('the explanation window to keep', (rows) => rows.find((entry) => (entry.view as string) === 'explanation' && entry.walkId === walkId), 15_000);
+        await check({ action: 'resize', id: third.id, width: 700, height: 640 }, 'size the explanation window');
+        const sized = await explanationOf(walkId);
+        const promptsI = await promptsNow();
+        await check({ action: 'close', id: walkId }, 'close the walk window');
+        await sleep(1500);
+        const left = await pairWindows();
+        record('I: after closing the walk window', { rows: left.map((entry) => entry.view) });
+        expect(!left.some((entry) => entry.view === 'walk' || (entry.view as string) === 'explanation'), 'a walk or explanation window is still open or opened again');
+        await press(diffId, '[data-ev="pair-walks"]');
+        const walkAgain = (await untilWindow('the walk window again', (rows) => rows.find((entry) => entry.view === 'walk'), 30_000)).id;
+        const fourth = await untilWindow('the explanation window as it was left', (rows) => rows.find((entry) => (entry.view as string) === 'explanation' && entry.walkId === walkAgain), 15_000);
+        await untilPair(walkAgain, 'the panel in its window again', (reading) => exOf(reading)?.hasPanel === true);
+        record('I: reopened', { before: sized?.bounds, after: fourth.bounds });
+        expect(Math.abs((fourth.bounds?.width ?? 0) - (sized?.bounds?.width ?? -99)) <= 2 && Math.abs((fourth.bounds?.x ?? 0) - (sized?.bounds?.x ?? -99)) <= 2, 'the explanation window did not open where and as large as it was left');
+        await press(fourth.id, '[data-ev="right-tab-discussion"]');
+        await press(fourth.id, '[data-ev="discussion-q-0"] [data-ev="answer-show-more"]');
+        const reopened = await readPairWindow(walkAgain);
+        record('I: Show more after reopening', { answer: exOf(reopened)?.answers[0], messages: messagesOf(reopened).length, prompts: (await promptsNow()) - promptsI });
+        expect(exOf(reopened)?.answers[0]?.details === true && messagesOf(reopened).length === 14 && (await promptsNow()) === promptsI, 'reopening asked the agent, lost answers, or Show more did not open the stored details');
+        await capture(fourth.id, 'explanation-reopened');
+
+        // J. Two reviews at once: their discussions and selections stay apart.
+        await press(MAIN, '[data-ev="open-review"]');
+        const diffTwo = (await untilWindow('a second diff window', (rows) => rows.find((entry) => entry.view === 'diff' && entry.id !== diffId))).id;
+        await startReview(diffTwo, 'shop', null);
+        await press(diffTwo, '[data-ev="pair-prepare-walks"]');
+        await untilPair(diffTwo, 'the agent picker', (reading) => (reading.text ?? '').includes('Model'), 15_000);
+        await press(diffTwo, '[data-ev="pair-walks-agent-start"]');
+        const walkTwo = (await untilWindow('the second walk window', (rows) => rows.find((entry) => entry.view === 'walk' && entry.id !== walkAgain), 120_000)).id;
+        await untilPair(walkTwo, 'the second walks', (reading) => stepAt(reading) !== null, 30_000);
+        // The choice holds for every walk window: the second opens its explanation on its own too, one window each.
+        const twoEx = await untilWindow('the second explanation window', (rows) => rows.find((entry) => entry.view === 'explanation' && entry.walkId === walkTwo), 15_000);
+        await untilPair(walkTwo, 'the second panel in its window', (reading) => exOf(reading)?.hasPanel === true);
+        const perWalk = (await pairWindows()).filter((entry) => entry.view === 'explanation').map((entry) => entry.walkId);
+        expect(perWalk.length === 2 && new Set(perWalk).size === 2, `not one explanation window per walk window: ${JSON.stringify(perWalk)}`);
+        await showRow(walkAgain, 'base:src/load.ts:2', 'previous');
+        await drag(walkAgain, { selector: row('base', 2), offset: removed.indexOf('text') }, { selector: row('base', 2), offset: removed.indexOf('text') + 4 });
+        const one = await readPairWindow(walkAgain);
+        const two = await readPairWindow(walkTwo);
+        record('J: two reviews', { oneChip: exOf(one)?.chip, twoChip: exOf(two)?.chip, twoMessages: messagesOf(two).length });
+        expect((exOf(one)?.chip ?? '').includes('load.ts:2') && exOf(two)?.chip === '' && messagesOf(two).length === 0, 'the reviews share a selection or a discussion');
+        await press(twoEx.id, '[data-ev="right-tab-discussion"]');
+        await press(twoEx.id, composer);
+        await check({ action: 'type', id: twoEx.id, selector: composer, text: 'En fråga i den andra granskningen.' }, 'ask in the second review');
+        const beforeJ = await promptsNow();
+        await pressKey(twoEx.id, composer, 'Enter');
+        const sentJ = await lastPrompt(beforeJ + 1);
+        await answered(walkTwo, 1, 'the second review\'s answer');
+        const oneAfter = await readPairWindow(walkAgain);
+        record('J: asked in the second', { selection: selected(sentJ), oneMessages: messagesOf(oneAfter).length });
+        expect(selected(sentJ) === '' && messagesOf(oneAfter).length === 14 && (exOf(oneAfter)?.chip ?? '').includes('load.ts:2'), 'asking in one review reached the other');
+
+        const statusAfter = JSON.stringify(diffOf(await readPairWindow(diffId)).files.map((file) => [file.path, file.handled]));
+        record('status', { before: statusBefore, after: statusAfter });
+        expect(statusBefore === statusAfter, `asking, moving and closing changed the review status: ${statusBefore} → ${statusAfter}`);
+        return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+      }
+
 
       // 1–2. Only the variable `workspace` (line 3, characters 43–51, To), then Explain this.
       const line3 = 'export function saveProject(name: string, workspace: EditorWorkspace | null): string {';

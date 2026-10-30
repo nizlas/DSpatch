@@ -16,6 +16,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import {
+  ANSWER_SHAPE_RULES,
+  DETAILS_MARKER,
   ENVELOPE_LIMITS,
   PROVIDER_ADDED_CONTEXT_LINE,
   REVIEW_DISCUSSION_CHANNELS,
@@ -27,6 +29,7 @@ import {
   emptyDiscussionRecord,
   recapFor,
   splitCodeAnswer,
+  splitDetails,
   subjectLine,
   withoutErrorClass,
   type ContextEnvelope,
@@ -98,7 +101,9 @@ test('the prompt starts with DSpatch\'s instruction verbatim and names both revi
   assert.ok(prompt.includes('121 | line 121'));
   assert.ok(prompt.includes('What happens:\nThe service calls cancel.'));
   assert.ok(prompt.includes('- Read from the code: Read, not run.'));
-  assert.ok(prompt.trimEnd().endsWith('## Question\nWhy is cancel called here?'));
+  // The question last, then only how to answer it: short first (30 October 2026).
+  assert.ok(prompt.includes('## Question\nWhy is cancel called here?\n\n## How to answer\n'));
+  assert.ok(prompt.trimEnd().endsWith(ANSWER_SHAPE_RULES.at(-1) ?? '-'));
   assert.ok(!prompt.includes('[truncated'));
 });
 
@@ -348,4 +353,27 @@ test('a stored answer keeps its checked references, and a malformed one is left 
   assert.equal(answer?.insufficient, true);
   assert.deepEqual(answer?.adjustments, ['left out']);
   assert.deepEqual(answer?.reads, ['Read target/src/a.ts']);
+});
+
+test('an answer is its short part, with details below the marker shown only on request', () => {
+  assert.deepEqual(splitDetails(`Short.\n\n${DETAILS_MARKER}\n\nMore.`), { short: 'Short.', details: 'More.' });
+  // An earlier answer, or one that needs no more: shown whole.
+  assert.deepEqual(splitDetails('Just this.'), { short: 'Just this.', details: null });
+  // Empty details are none; a marker still arriving is not shown.
+  assert.deepEqual(splitDetails(`Short.\n${DETAILS_MARKER}\n`), { short: 'Short.', details: null });
+  assert.deepEqual(splitDetails('Short.\n<!-- dspat'), { short: 'Short.', details: null });
+  // Nothing before the marker: the details are the answer.
+  assert.deepEqual(splitDetails(`${DETAILS_MARKER}\nAll of it.`), { short: 'All of it.', details: null });
+});
+
+test('every question is told to answer short first, and a simpler explanation carries the earlier answer', () => {
+  const plain = buildEnvelopePrompt(envelope(), 'What is it?', null);
+  assert.ok(plain.includes(`## How to answer\n- ${ANSWER_SHAPE_RULES[0]}`));
+  assert.ok(plain.includes(DETAILS_MARKER));
+  assert.ok(!plain.includes('## The answer to explain more simply'));
+  const simpler = buildEnvelopePrompt(envelope(), 'Explain more simply', null, null, { question: 'What is it?', answer: 'It is the cache.' });
+  const section = simpler.indexOf('## The answer to explain more simply');
+  assert.ok(section > 0 && section < simpler.indexOf('## Question'));
+  assert.match(simpler, /Keep every fact as it is\. Keep the class, method and file names/);
+  assert.match(simpler, /The person asked: What is it\?\n\nThe answer was:\nIt is the cache\./);
 });

@@ -163,6 +163,17 @@ export const WRITING_RULES = [
 ] as const;
 
 /**
+ * An answer's short part and its details (Niclas's decision of 30 October 2026): the
+ * explanation is read first, and the details are shown under *Show more* from what was
+ * written, without asking again.
+ */
+export const DETAILS_RULES = [
+  '"answer" is the short part and stands on its own: the concept and the details that matter most, enough to understand it without reading further. Any uncertainty that changes the answer belongs there.',
+  '"details" is a fuller account for when the person asks for more: the mechanism step by step, edge cases, more context. Leave it empty when the short part is enough, and do not repeat the short part in it.',
+  'When the person explicitly asks for details, give them: the short part still answers first.',
+] as const;
+
+/**
  * How the form follows the content (Niclas's trial feedback, 29 October 2026): a code walk
  * follows execution, a reading takes a coherent change of text in its context. The agent
  * chooses per part, and a commit may get both.
@@ -363,6 +374,7 @@ export function stepQuestionPrompt(
     `## How to answer (language: ${language === 'sv' ? 'Swedish' : 'English'})`,
     'Answer this question, for this step. Start with the short answer, then the cause and effect behind it, with the context needed before the details. Do not rewrite the whole walk or change its level.',
     ...WRITING_RULES.map((rule) => `- ${rule}`),
+    ...DETAILS_RULES.map((rule) => `- ${rule}`),
     'If the code you could read does not settle the question, say what is missing and set "insufficient": true.',
     '',
     'Answer with one JSON object in a ```json fence and nothing else:',
@@ -370,6 +382,7 @@ export function stepQuestionPrompt(
     JSON.stringify(
       {
         answer: 'The answer in Markdown.',
+        details: 'More detail in Markdown, or an empty string.',
         references: [{ label: 'What this place shows', path: 'src/file.ts', side: 'target', start: 10, end: 14 }],
         insufficient: false,
       },
@@ -566,6 +579,7 @@ export function selectionPrompt(
       : 'Answer what is asked now, for this selection, building on the earlier answers without repeating them.',
     'Keep the revisions apart: say which revision each statement is about. Never describe removed code as what the code does now, or added code as what it did before. When the selection holds both, say what was replaced by what.',
     ...WRITING_RULES.map((rule) => `- ${rule}`),
+    ...DETAILS_RULES.map((rule) => `- ${rule}`),
     'If the code you could read does not settle it, say what is missing and set "insufficient": true.',
     '',
     'Answer with one JSON object in a ```json fence and nothing else:',
@@ -573,6 +587,7 @@ export function selectionPrompt(
     JSON.stringify(
       {
         answer: 'The explanation in Markdown.',
+        details: 'More detail in Markdown, or an empty string.',
         references: [{ label: 'What this place shows', path: 'src/file.ts', side: 'target', start: 10, end: 14 }],
         insufficient: false,
       },
@@ -1109,7 +1124,8 @@ export async function readStepAnswer(raw: unknown, read: LineReader): Promise<St
     insufficient = true;
     adjustments.push('The answer had no text.');
   }
-  return { answer, references, insufficient, adjustments };
+  const details = text(raw['details']);
+  return { answer, ...(details === '' ? {} : { details }), references, insufficient, adjustments };
 }
 
 /**

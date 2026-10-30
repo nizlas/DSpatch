@@ -3134,3 +3134,107 @@
 .rv-lines-wrap .rv-row > .rv-gutter {
   align-self: flex-start;
 }
+
+/* --- The explanation in its own window (Niclas's decision of 30 October 2026) -------
+   Docked is the default: the panel's element sits in the grid's last column. Moved to
+   its own window, the column and its divider go, and the code takes the width. */
+
+.rv-right-dock {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+}
+
+.rv-right-host {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.rv-right-host > .rv-right {
+  flex: 1;
+  min-width: 0;
+}
+
+.rv-body.rv-body-detached {
+  grid-template-columns: minmax(13rem, min(var(--rv-left-width, 340px), 34vw)) 6px minmax(0, 1fr);
+}
+
+.rv-body-wide.rv-body-detached {
+  grid-template-columns: minmax(22rem, min(max(var(--rv-left-width, 340px), 26rem), 44vw)) 6px minmax(0, 1fr);
+}
+
+.rv-detached {
+  height: 100vh;
+}
+
+.rv-detached .rv-right {
+  border-left: none;
+}
+
+/* More room is not longer answers: prose keeps a readable measure, tables and code the width. */
+.rv-detached .rv-answer p,
+.rv-detached .rv-answer li,
+.rv-detached .rv-explanation p,
+.rv-detached .rv-summary,
+.rv-detached .rv-discussion-text {
+  max-width: 78ch;
+}
+
+.rv-right-tabs .rv-panel-window {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.95rem;
+  padding: 0.1rem 0.45rem;
+}
+
+.rv-right-tabs .rv-panel-window:hover,
+.rv-right-tabs .rv-panel-window:focus-visible {
+  color: var(--text);
+  background: var(--raised);
+}
+
+.rv-right-tabs .rv-panel-dock {
+  font-size: 0.8rem;
+}
+
+/* The selection a question carries, kept marked while the focus is elsewhere. */
+::highlight(rv-quote) {
+  background-color: color-mix(in srgb, #6aa9ff 30%, transparent);
+}
+
+/* --- An answer's short part, its details, and a simpler explanation of it ------------- */
+
+.rv-answer .rv-show-more,
+.rv-deepening .rv-show-more {
+  display: inline-block;
+  margin: 0.15rem 0 0.35rem;
+  font-size: 0.82rem;
+}
+
+.rv-answer-details {
+  border-left: 2px solid var(--line);
+  padding-left: 0.7rem;
+  margin: 0.2rem 0 0.3rem;
+}
+
+.rv-answer-actions {
+  margin-top: 0.25rem;
+}
+
+.rv-answer-actions .rv-quiet-link {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.rv-answer-actions .rv-quiet-link:hover,
+.rv-answer-actions .rv-quiet-link:focus-visible {
+  color: var(--text);
+}
+
+.rv-right-dock[hidden] {
+  display: none;
+}

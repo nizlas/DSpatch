@@ -1699,6 +1699,10 @@ export interface ReviewPreferences {
   readonly explanationWidth?: number;
   /** The width of the walk window's left column (walks, About the change, files), in pixels. */
   readonly navigationWidth?: number;
+  /** The walk window's explanation in a window of its own (30 October 2026); docked when absent. */
+  readonly explanationDetached?: true;
+  /** Where that window was last left, in screen coordinates; checked against the screens when it opens. */
+  readonly explanationBounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
 }
 
 export const DEFAULT_PREFERENCES: ReviewPreferences = { language: 'en' };
@@ -1721,7 +1725,22 @@ export function adoptPreferences(raw: unknown): ReviewPreferences {
     language: raw['language'],
     ...(within(width, EXPLANATION_WIDTH) ? { explanationWidth: width } : {}),
     ...(within(navigation, NAVIGATION_WIDTH) ? { navigationWidth: navigation } : {}),
+    ...(raw['explanationDetached'] === true ? { explanationDetached: true as const } : {}),
+    ...(boundsOf(raw['explanationBounds']) === null ? {} : { explanationBounds: boundsOf(raw['explanationBounds']) as NonNullable<ReviewPreferences['explanationBounds']> }),
   };
+}
+
+/** A window's place and size as saved: whole numbers, a usable size, and nothing else. */
+function boundsOf(raw: unknown): ReviewPreferences['explanationBounds'] | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  const { x, y, width, height } = raw;
+  const whole = (value: unknown, min: number, max: number): value is number => Number.isInteger(value) && (value as number) >= min && (value as number) <= max;
+  if (!whole(x, -100_000, 100_000) || !whole(y, -100_000, 100_000) || !whole(width, 200, 20_000) || !whole(height, 200, 20_000) || Object.keys(raw).length !== 4) {
+    return null;
+  }
+  return { x, y, width, height };
 }
 
 /** Validate a renderer-supplied revision side and repository path before git sees them. */

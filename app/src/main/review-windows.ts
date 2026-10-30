@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { BrowserWindow, Menu, app, dialog, type MenuItemConstructorOptions, type WebContents } from 'electron';
+import { BrowserWindow, Menu, app, dialog, screen, type MenuItemConstructorOptions, type Rectangle, type WebContents } from 'electron';
 
 import {
   isReviewHostError,
@@ -43,6 +43,54 @@ import { REVIEW_PAIR_NAVIGATE } from '../shared/review-pair';
 
 /** How long closing waits for the view to save what it has not saved yet. */
 const CLOSE_FLUSH_TIMEOUT_MS = 3_000;
+
+/**
+ * The walk window's explanation in a window of its own (Niclas's decision of 30 October
+ * 2026): the one window name a walk window may open (`renderer/explanation-window.ts`).
+ * The place and size it was last left at are a review preference, kept by the host like
+ * the columns' widths; the page asks for them when it opens the window (`window.open`'s
+ * features), and here they are only kept on a screen.
+ */
+export const EXPLANATION_FRAME = 'dspatch-explanation';
+const EXPLANATION_SIZE = { width: 640, height: 820, minWidth: 360, minHeight: 320 } as const;
+
+/** The place and size `window.open` asked for (`left=…,top=…,width=…,height=…`). */
+export function askedBounds(features: string): Record<string, number> {
+  const asked: Record<string, number> = {};
+  for (const part of features.split(',')) {
+    const [key = '', value = ''] = part.split('=').map((text) => text.trim());
+    const name = key === 'left' ? 'x' : key === 'top' ? 'y' : key;
+    if ((name === 'x' || name === 'y' || name === 'width' || name === 'height') && /^-?\d+$/.test(value)) {
+      asked[name] = Number(value);
+    }
+  }
+  return asked;
+}
+
+/**
+ * Where the explanation's window opens: where it was left when that is still on a screen
+ * (enough of it to take hold of), else its size centred on the main screen.
+ */
+export function explanationBounds(saved: unknown, displays: readonly Rectangle[], primary: Rectangle): Partial<Rectangle> {
+  const record = typeof saved === 'object' && saved !== null ? (saved as Record<string, unknown>) : {};
+  const whole = (key: string): number | null => (Number.isInteger(record[key]) ? (record[key] as number) : null);
+  const width = Math.min(Math.max(whole('width') ?? EXPLANATION_SIZE.width, EXPLANATION_SIZE.minWidth), primary.width);
+  const height = Math.min(Math.max(whole('height') ?? EXPLANATION_SIZE.height, EXPLANATION_SIZE.minHeight), primary.height);
+  const x = whole('x');
+  const y = whole('y');
+  if (x !== null && y !== null) {
+    const seen = displays.some((area) => {
+      const across = Math.min(x + width, area.x + area.width) - Math.max(x, area.x);
+      const down = Math.min(y + height, area.y + area.height) - Math.max(y, area.y);
+      // The title bar must be reachable: some width, and the top within the screen.
+      return across >= 120 && down >= 60 && y >= area.y && y < area.y + area.height - 40;
+    });
+    if (seen) {
+      return { x, y, width, height };
+    }
+  }
+  return { x: Math.round(primary.x + (primary.width - width) / 2), y: Math.round(primary.y + (primary.height - height) / 2), width, height };
+}
 
 export interface ReviewWindowsOptions {
   /** The review host: repository access and the review records. */
@@ -134,6 +182,8 @@ export class ReviewWindows {
   private readonly options: ReviewWindowsOptions;
 
   private readonly entries = new Set<ReviewWindowEntry>();
+  /** Each walk window's explanation window, while it is open (30 October 2026). */
+  private readonly explanations = new Map<ReviewWindowEntry, BrowserWindow>();
 
   /** Opens one at a time, so two quick presses cannot both create a window. */
   private queue: Promise<unknown> = Promise.resolve();
@@ -161,6 +211,13 @@ export class ReviewWindows {
   /** Every open review window. */
   list(): readonly ReviewWindowEntry[] {
     return [...this.entries].filter((entry) => !entry.window.isDestroyed());
+  }
+
+  /** The explanation windows open now, each with the walk window it belongs to. */
+  explanationWindows(): readonly { readonly window: BrowserWindow; readonly contents: WebContents; readonly walk: ReviewWindowEntry }[] {
+    return [...this.explanations]
+      .filter(([, child]) => !child.isDestroyed())
+      .map(([walk, child]) => ({ window: child, contents: child.webContents, walk }));
   }
 
   /**
@@ -684,7 +741,41 @@ export class ReviewWindows {
     this.entries.add(entry);
 
     window.setMenu(this.viewMenu());
-    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    // A walk window may open its explanation in a window of its own, one at a time; nothing else.
+    window.webContents.setWindowOpenHandler((details) => {
+      const open = this.explanations.get(entry);
+      if (entry.view !== 'walk' || details.frameName !== EXPLANATION_FRAME || details.url !== 'about:blank' || (open !== undefined && !open.isDestroyed())) {
+        return { action: 'deny' };
+      }
+      const bounds = explanationBounds(
+        askedBounds(details.features),
+        screen.getAllDisplays().map((display) => display.workArea),
+        screen.getPrimaryDisplay().workArea,
+      );
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          ...bounds,
+          minWidth: EXPLANATION_SIZE.minWidth,
+          minHeight: EXPLANATION_SIZE.minHeight,
+          backgroundColor: '#101317',
+          title: 'Explanation',
+          show: true,
+        },
+      };
+    });
+    window.webContents.on('did-create-window', (child) => {
+      this.explanations.set(entry, child);
+      child.setMenu(this.viewMenu());
+      child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      child.on('closed', () => {
+        if (this.explanations.get(entry) === child) {
+          this.explanations.delete(entry);
+        }
+        this.options.log('explanation window closed; the discussion and any answer were not affected');
+      });
+      this.options.log(`explanation window opened for ${window.getTitle()}`);
+    });
     // The title says which review this is; the page's own <title> must not replace it.
     window.on('page-title-updated', (event) => {
       event.preventDefault();
@@ -712,6 +803,11 @@ export class ReviewWindows {
     });
     window.on('closed', () => {
       this.entries.delete(entry);
+      // Its explanation window goes with it; nothing is opened again.
+      const child = this.explanations.get(entry);
+      if (child !== undefined && !child.isDestroyed()) {
+        child.close();
+      }
       // The view has saved (or given up) by now; the host lets the window's session go.
       void this.options.host.closeSession({ sessionId: entry.sessionId });
       this.options.log('review window closed; the chat and any run were not affected');
