@@ -43,6 +43,8 @@ export interface RemoteLinkOptions {
 
 const ACK_MS = 1_000;
 
+const HANDSHAKE_MS = 8_000;
+
 export class RemoteLink implements HostProcess {
   private readonly options: RemoteLinkOptions;
 
@@ -175,8 +177,17 @@ export class RemoteLink implements HostProcess {
     this.socket = socket;
     socket.setNoDelay(true);
     let hostNonce: string | null = null;
+    // A connection that takes the handshake nowhere (a tunnel with nothing behind it).
+    const handshake = setTimeout(() => {
+      this.lastFailure = 'The connection opened, and nothing answered.';
+      socket.destroy();
+    }, HANDSHAKE_MS);
+    handshake.unref();
+    this.handshakeTimer = handshake;
+    socket.on('close', () => {
+      clearTimeout(handshake);
+    });
     const reader = new FrameReader((frame) => {
-      this.lastHeard = Date.now();
       const message = frame as (RemoteHandshake | RemoteControl | RemoteHostFrame) & { readonly t: string };
       if (this.open) {
         this.received(message);
@@ -219,6 +230,8 @@ export class RemoteLink implements HostProcess {
       socket.write(encodeFrame({ t: 'hello', build: this.options.build, nonce } satisfies RemoteHandshake));
     });
     socket.on('data', (chunk: Buffer) => {
+      // On every chunk: one large frame can take longer than the silence bound.
+      this.lastHeard = Date.now();
       try {
         reader.push(chunk);
       } catch (error) {
@@ -259,6 +272,7 @@ export class RemoteLink implements HostProcess {
       this.exitListener?.(null);
       return;
     }
+    clearTimeout(this.handshakeTimer ?? undefined);
     this.instance = welcome.instance;
     this.hostPid = welcome.pid;
     this.open = true;
@@ -278,6 +292,8 @@ export class RemoteLink implements HostProcess {
   }
 
   private lastPing = 0;
+
+  private handshakeTimer: NodeJS.Timeout | null = null;
 
   private heartbeat(): void {
     const now = Date.now();

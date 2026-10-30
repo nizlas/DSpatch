@@ -84,9 +84,9 @@ export function encodeFrame(value: unknown): string {
     // `Buffer` has a `toJSON`, already applied to `current`: the holder has the original.
     const original = this[key];
     if (original instanceof Uint8Array) {
-      return { $bytes: bytesToBase64(original) };
+      return { $dspatchBytes: bytesToBase64(original) };
     }
-    return current === undefined ? { $undefined: true } : current;
+    return current === undefined ? { $dspatchUndefined: true } : current;
   })}\n`;
 }
 
@@ -94,10 +94,10 @@ export function decodeFrame(line: string): unknown {
   return JSON.parse(line, (_key, value: unknown) => {
     if (typeof value === 'object' && value !== null) {
       const fields = value as Record<string, unknown>;
-      if (typeof fields['$bytes'] === 'string') {
-        return base64ToBytes(fields['$bytes']);
+      if (typeof fields['$dspatchBytes'] === 'string') {
+        return base64ToBytes(fields['$dspatchBytes']);
       }
-      if (fields['$undefined'] === true) {
+      if (fields['$dspatchUndefined'] === true) {
         return undefined;
       }
     }

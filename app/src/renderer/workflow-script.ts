@@ -10183,7 +10183,17 @@ async function runWorkspaceFlowScenario(plan: ScriptedRunPlan): Promise<Scripted
       expect(element(gone) === null, `the start page has the old "${gone}" panel`);
     }
     expect(element('open-project') !== null && element('remote-session') !== null, 'both entrances are on the start page');
-    expect(attributeOf('remote-session', 'aria-disabled') === 'true', 'Remote Session is shown inactive');
+    // The Remote Session form: only the tunnel's local end, and a refusal in a sentence (DSP-111).
+    await click('remote-session');
+    await waitFor('the Remote Session form', () => element('remote-form') !== null, 5_000);
+    await typeIntoField('remote-address', '10.0.0.5:22');
+    await typeIntoField('remote-token', 'not-a-token');
+    await click('remote-connect');
+    await waitFor('the refusal', () => (element('remote-form')?.textContent ?? '').includes('SSH tunnel: a port'), 5_000);
+    await window.dspatch.captureWindow('remote-form');
+    record('Remote Session form', { refused: true });
+    await click('remote-cancel');
+    await waitFor('the entrances again', () => element('open-project') !== null, 5_000);
     record('start page read', { text, leftovers, recentRows: document.querySelectorAll('[data-ev^="open-project-"]').length });
     await captureStartPage(phase === 'first' ? 'start-empty' : 'start-recent', record);
 
@@ -13932,6 +13942,19 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
         const walkPrompts = await promptsAt();
         record('a job across a cut', { prompts: walkPrompts - promptsBefore });
         expect(walkPrompts - promptsBefore <= 3, `the job was started again: ${String(walkPrompts - promptsBefore)} prompts`);
+        // The chooser browses the host: the same call Open Project makes.
+        const picking = window.dspatch.pickProjectFolder();
+        let page: string | null = null;
+        for (const until = performance.now() + 15_000; performance.now() < until && (page === null || page === ''); ) {
+          page = (await window.dspatch.pairWindowCheck({ action: 'browser-text' })).detail as string | null;
+          await sleep(200);
+        }
+        record('the host chooser', { lines: (page ?? '').split('\n').length, opensOn: (page ?? '').slice(0, 120) });
+        expect((page ?? '').includes('Choose this folder'), `the chooser did not open: ${String(page)}`);
+        await press(-1, '[data-ev="host-browser-choose"]');
+        const picked = await picking;
+        record('chosen on the host', picked);
+        expect(picked.kind === 'chosen', `nothing was chosen: ${JSON.stringify(picked)}`);
         return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
       }
 

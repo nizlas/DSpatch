@@ -100,6 +100,7 @@ interface Rig {
   readonly server: RemoteServer;
   readonly tunnel: Tunnel;
   release: () => void;
+  releaseSecond: () => void;
 }
 
 const open: (() => void)[] = [];
@@ -107,7 +108,7 @@ const open: (() => void)[] = [];
 async function rig(token = TOKEN, build = BUILD, serverBuild = BUILD): Promise<Rig> {
   const done: string[] = [];
   const server = new RemoteServer({ token: TOKEN, build: serverBuild, closeWithinMs: 100, log: () => undefined });
-  const state: Rig = { connection: null as unknown as HostConnection, events: [], links: [], lost: [], done, server, tunnel: null as unknown as Tunnel, release: () => undefined };
+  const state: Rig = { connection: null as unknown as HostConnection, events: [], links: [], lost: [], done, server, tunnel: null as unknown as Tunnel, release: () => undefined, releaseSecond: () => undefined };
   const methods = {
     work: (name: string) => {
       done.push(name);
@@ -120,6 +121,12 @@ async function rig(token = TOKEN, build = BUILD, serverBuild = BUILD): Promise<R
       });
       server.port.post({ t: 'event', to: { kind: 'every-window' }, channel: 'progress', payload: `${name} finished` });
       return `did ${name}`;
+    },
+    slow2: async (name: string) => {
+      await new Promise<void>((resolve) => {
+        state.releaseSecond = resolve;
+      });
+      return `second did ${name}`;
     },
   };
   serveHost(server.port, methods as unknown as HostMethods, () => undefined);
@@ -143,7 +150,7 @@ async function rig(token = TOKEN, build = BUILD, serverBuild = BUILD): Promise<R
     tunnel.close();
     server.close();
   });
-  return { ...state, connection, tunnel, get release() { return state.release; }, set release(value) { state.release = value; } };
+  return { ...state, connection, tunnel, get release() { return state.release; }, set release(value) { state.release = value; }, get releaseSecond() { return state.releaseSecond; }, set releaseSecond(value) { state.releaseSecond = value; } };
 }
 
 describe('the remote transport', () => {
@@ -272,6 +279,27 @@ describe('the remote transport', () => {
     assert.match(outcome.message, /unknown/);
     assert.deepEqual(restarted, []);
     assert.deepEqual(r.lost, [1]);
+  });
+
+  it("the answer to a client that has gone never reaches the next one, whose ids start again", async () => {
+    const r = await rig();
+    await r.connection.start();
+    void r.connection.answer('slow', 'old job');
+    await until('the job to start', () => r.done.includes('old job'));
+    const second = new HostConnection({
+      spawn: () => new RemoteLink({ endpoint: { host: '127.0.0.1', port: r.tunnel.port, token: TOKEN }, build: BUILD, log: () => undefined }),
+      startTimeoutMs: 4_000,
+      onEvent: () => undefined,
+      onLost: () => undefined,
+      log: () => undefined,
+    });
+    await second.start();
+    const waiting = second.call('slow2', 'new job');
+    r.release();
+    await wait(100);
+    r.releaseSecond();
+    assert.equal(await waiting, 'second did new job');
+    await second.shutdown('host.shutdown', [{}], 500);
   });
 
   it('leaving asks nothing of the host: it keeps running', async () => {

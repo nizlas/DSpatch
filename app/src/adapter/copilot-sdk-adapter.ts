@@ -126,6 +126,8 @@ export interface CopilotHookReading {
 
 export interface CopilotClientLike {
   start(): Promise<void>;
+  /** Asked while a run is active: a runtime that died says nothing by itself. */
+  ping(): Promise<unknown>;
   stop(): Promise<readonly Error[]>;
   forceStop(): Promise<void>;
   getAuthStatus(): Promise<CopilotAuthStatus>;
@@ -279,8 +281,14 @@ function confinedPattern(pattern: unknown): boolean {
   if (typeof pattern !== 'string') {
     return false;
   }
-  return !path.isAbsolute(pattern) && !/^[a-zA-Z]:/.test(pattern) && !pattern.split(/[\\/]/).includes('..');
+  return !path.isAbsolute(pattern) && !/^[a-zA-Z]:/.test(pattern) && !pattern.includes('..');
 }
+
+const READING_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  view: ['path', 'view_range', 'forceReadLargeFiles'],
+  glob: ['pattern', 'paths'],
+  grep: ['pattern', 'paths', 'output_mode', 'glob', 'type', '-i', '-A', '-B', '-C', '-n', 'head_limit', 'multiline'],
+};
 
 /**
  * Whether a call to one of the reading tools keeps to the folders. The parameters are the
@@ -292,6 +300,10 @@ export function copilotReadAllowed(toolName: string, args: unknown, folders: rea
     return false;
   }
   const fields = typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {};
+  // A field this check does not know could name a place it does not look at.
+  if (Object.keys(fields).some((name) => !READING_FIELDS[toolName]?.includes(name))) {
+    return false;
+  }
   if (toolName === 'view') {
     return typeof fields['path'] === 'string' && inside(fields['path'], folders, cwd, platform);
   }
@@ -433,6 +445,9 @@ export const COPILOT_RUNTIME_DEFAULT_MODEL = 'copilot-default';
 
 const OUTPUT_LIMIT = 64 * 1024;
 
+/** How often a runtime with work is asked, and how long it may take to answer. */
+const RUNTIME_CHECK_MS = 10_000;
+
 export interface CopilotSdkAdapterOptions {
   readonly policy: CopilotToolPolicy;
   /** Environment for the runtime, before {@link copilotEnvironment}. Defaults to `process.env`. */
@@ -442,6 +457,8 @@ export interface CopilotSdkAdapterOptions {
   /** A substitute SDK client. Production passes nothing. */
   readonly clientFactory?: CopilotClientFactory;
   readonly toolFactory?: CopilotToolFactory;
+  /** How often a runtime with work is asked. A test seam. */
+  readonly runtimeCheckMs?: number;
   /** A stand-in model for tests of the real runtime. No launch setting reaches this. */
   readonly testProvider?: Readonly<Record<string, unknown>>;
   readonly log?: (message: string) => void;
@@ -510,6 +527,10 @@ export class CopilotSdkAdapter implements AgentAdapter {
   private client: Promise<CopilotClientLike> | null = null;
 
   private disposed = false;
+
+  private watch: NodeJS.Timeout | null = null;
+
+  private pingFailures = 0;
 
   private accountLine: string | null = null;
 
@@ -851,9 +872,13 @@ export class CopilotSdkAdapter implements AgentAdapter {
         return;
       }
       case 'session.idle':
-        if (run.cancelRequested) {
+        if (run.cancelRequested && data['aborted'] === true) {
           this.finish(state, 'cancelled', event, 'stopped');
+        } else if (data['aborted'] === true) {
+          run.error ??= { message: 'Copilot ended this turn before it was finished.', providerCode: 'aborted' };
+          this.finish(state, 'error', event);
         } else {
+          // A stop that came too late for the turn: it ended on its own, and says so.
           this.finish(state, run.error === null ? 'finished' : 'error', event);
         }
         return;
@@ -876,6 +901,65 @@ export class CopilotSdkAdapter implements AgentAdapter {
     };
     this.sessions.set(dspatchSessionId, state);
     return state;
+  }
+
+  /** While a run is active, ask the runtime now and then: a dead one sends no event. */
+  private watchRuntime(): void {
+    if (this.watch !== null) {
+      return;
+    }
+    this.watch = setInterval(() => {
+      void this.checkRuntime();
+    }, this.options.runtimeCheckMs ?? RUNTIME_CHECK_MS);
+    this.watch.unref();
+  }
+
+  private async checkRuntime(): Promise<void> {
+    const active = [...this.sessions.values()].filter((state) => state.run !== null);
+    if (active.length === 0) {
+      if (this.watch !== null) {
+        clearInterval(this.watch);
+        this.watch = null;
+      }
+      this.pingFailures = 0;
+      return;
+    }
+    try {
+      const client = await this.client;
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        client?.ping(),
+        new Promise((_resolve, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error('no answer'));
+          }, this.options.runtimeCheckMs ?? RUNTIME_CHECK_MS);
+          timer.unref();
+        }),
+      ]).finally(() => {
+        clearTimeout(timer);
+      });
+      this.pingFailures = 0;
+    } catch (error) {
+      this.pingFailures += 1;
+      if (this.pingFailures >= 2) {
+        this.log(`the runtime does not answer: ${String(error)}`);
+        this.runtimeGone(active);
+      }
+    }
+  }
+
+  /** The runtime ended under these runs. How far they got is not known. */
+  private runtimeGone(active: readonly CopilotSessionState[]): void {
+    this.client = null;
+    this.pingFailures = 0;
+    for (const state of active) {
+      state.session = null;
+      const run = state.run;
+      if (run !== null) {
+        run.error = { message: "Copilot's runtime stopped during this turn. How far it got is unknown, and nothing was sent again.", providerCode: 'runtime-gone' };
+        this.finish(state, 'error', null, 'unconfirmed');
+      }
+    }
   }
 
   private refuseIfDisposed(): void {
@@ -915,6 +999,7 @@ export class CopilotSdkAdapter implements AgentAdapter {
     }
     const client = await this.connect();
     await this.ready(client);
+    await this.sessions.get(sessionId)?.session?.disconnect().catch(() => undefined);
     const state = this.newState(config, sessionId);
     try {
       state.session = await client.resumeSession(sessionId, await this.sessionOptions(state, false));
@@ -956,6 +1041,7 @@ export class CopilotSdkAdapter implements AgentAdapter {
     const dspatchRunId = randomUUID();
     state.run = { dspatchRunId, cancelRequested: false, error: null, calls: new Map(), graceTimer: null };
     this.emit(state, { type: 'run.started', dspatchSessionId: sessionId, dspatchRunId, at: this.now(), rawProviderEvent: null });
+    this.watchRuntime();
     try {
       await session.send({ prompt });
     } catch (error) {
@@ -1023,6 +1109,8 @@ export class CopilotSdkAdapter implements AgentAdapter {
       state.unconfirmedEnd = true;
     }
     this.finish(state, 'cancelled', null, ended ? 'forced' : 'unconfirmed');
+    // The runtime is shared by the adapter's sessions, and it is gone for all of them.
+    this.runtimeGone([...this.sessions.values()].filter((other) => other !== state && (other.run !== null || other.session !== null)));
   }
 
   setSessionModel(sessionId: DspatchSessionId, modelId: string): void {
@@ -1065,6 +1153,10 @@ export class CopilotSdkAdapter implements AgentAdapter {
       return;
     }
     this.disposed = true;
+    if (this.watch !== null) {
+      clearInterval(this.watch);
+      this.watch = null;
+    }
     for (const state of this.sessions.values()) {
       if (state.run !== null) {
         state.run.cancelRequested = true;

@@ -115,6 +115,13 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => {
     stop('SIGTERM');
   });
+  // A host started in an SSH session must outlive that session: the design's whole point.
+  process.on('SIGHUP', () => {
+    log('SIGHUP: the terminal went away; going on');
+  });
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on('error', () => undefined);
+  }
 }
 
 void main();

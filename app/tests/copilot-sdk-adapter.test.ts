@@ -48,7 +48,7 @@ class FakeSession implements CopilotSessionLike {
   abort(): Promise<void> {
     this.aborts += 1;
     if (this.idleOnAbort) {
-      this.emit({ type: 'session.idle' });
+      this.emit({ type: 'session.idle', data: { aborted: true } });
     }
     return Promise.resolve();
   }
@@ -79,6 +79,7 @@ function fakeClient(auth: { isAuthenticated: boolean; login?: string } = { isAut
   };
   const client: CopilotClientLike = {
     start: () => Promise.resolve(),
+    ping: () => Promise.resolve({}),
     stop: () => Promise.resolve([]),
     forceStop: () => Promise.resolve(),
     getAuthStatus: () => Promise.resolve(auth),
@@ -113,6 +114,8 @@ describe('Copilot policies', () => {
     assert.equal(allowed('glob', { pattern: '**/*.ts' }), true);
     assert.equal(allowed('glob', { pattern: '../**/*.ts' }), false);
     assert.equal(allowed('glob', { pattern: OUT }), false);
+    assert.equal(allowed('glob', { pattern: '{..,x}/**' }), false);
+    assert.equal(allowed('grep', { pattern: 'x', somewhere: OUT }), false, 'a field the check does not know');
     assert.equal(allowed('create', { path: `${CWD}/x` }), false);
     assert.equal(allowed('bash', { command: 'cat x' }), false);
   });
@@ -257,6 +260,23 @@ describe('the Copilot adapter on a substituted client', () => {
     const end = events.at(-1);
     assert.equal(end?.type === 'run.finished' ? end.status : '', 'cancelled');
     assert.equal(end?.type === 'run.finished' ? end.end : '', 'stopped');
+  });
+
+  it('a runtime that stopped under a turn ends it as unknown, not as work still going', async () => {
+    const fake = fakeClient();
+    const client = { ...fake.client, ping: () => Promise.reject(new Error('gone')) };
+    const adapter = new CopilotSdkAdapter({ policy: COPILOT_ANALYSIS_POLICY, env: {}, clientFactory: () => Promise.resolve(client), runtimeCheckMs: 10 });
+    const handle = await adapter.startSession(session);
+    const events: AgentEvent[] = [];
+    adapter.subscribe(handle.dspatchSessionId, (event) => events.push(event));
+    await adapter.send(handle.dspatchSessionId, 'hello');
+    for (const until = Date.now() + 3_000; events.at(-1)?.type !== 'run.finished' && Date.now() < until; ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const end = events.at(-1);
+    assert.equal(end?.type === 'run.finished' ? end.status : '', 'error');
+    assert.equal(end?.type === 'run.finished' ? end.end : '', 'unconfirmed');
+    assert.match(end?.type === 'run.finished' ? (end.error?.message ?? '') : '', /unknown/);
   });
 
   it('a session recorded under another policy is not resumed; the same policy is, by the runtime', async () => {

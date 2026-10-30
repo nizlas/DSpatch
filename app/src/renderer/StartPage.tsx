@@ -54,7 +54,7 @@ function RemoteSessionForm({ onClose }: { readonly onClose: () => void }): JSX.E
       {note !== '' && <p className="start__remote-note">{note}</p>}
       <div className="start__remote-buttons">
         <button type="submit" data-ev="remote-connect">Connect</button>
-        <button type="button" onClick={onClose}>Cancel</button>
+        <button type="button" data-ev="remote-cancel" onClick={onClose}>Cancel</button>
       </div>
     </form>
   );

@@ -2103,7 +2103,11 @@ export type PairWindowCheckRequest =
   /** A remote trial (`scripts/remote-trial.mjs`): ask its forwarder to cut, mend or restart. */
   | { readonly action: 'trial'; readonly path: string }
   /** What the windows are told of the connection to the host. */
-  | { readonly action: 'host-link' };
+  | { readonly action: 'host-link' }
+  /** The text of the host chooser, or `null` while it is not open. */
+  | { readonly action: 'browser-text' }
+  /** The text of the main window. */
+  | { readonly action: 'main-text' };
 
 /** A character in an element's text, for real mouse input (DSP-152). */
 export interface TextPoint {

@@ -5,6 +5,8 @@ import { hostname } from 'node:os';
 import type { HostMessage } from '../shared/host-protocol';
 import {
   FrameReader,
+  REMOTE_FRAME_LIMIT,
+  REMOTE_SILENCE_MS,
   buildMismatch,
   encodeFrame,
   type RemoteBuild,
@@ -76,6 +78,15 @@ export class RemoteServer {
 
   private lastCall = 0;
 
+  /**
+   * Calls being worked on, by the id the host's methods know them by. A client's ids start
+   * again when it does, so an answer goes only to the client that asked, under its own id, and
+   * the answer to a call of a client that has gone is dropped.
+   */
+  private readonly running = new Map<number, { readonly clientId: string; readonly id: number }>();
+
+  private nextRunning = 1;
+
   constructor(options: RemoteServerOptions) {
     this.options = options;
     this.port = {
@@ -109,9 +120,27 @@ export class RemoteServer {
     this.server?.close();
   }
 
-  private send(message: HostMessage): void {
+  private send(original: HostMessage): void {
+    let message = original;
+    if (message.t === 'result') {
+      const call = this.running.get(message.id);
+      this.running.delete(message.id);
+      if (call === undefined || call.clientId !== this.clientId) {
+        this.options.log(`[remote] dropped an answer for a client that has gone (${String(message.id)})`);
+        return;
+      }
+      message = { ...message, id: call.id };
+    }
     this.seq += 1;
     const line = encodeFrame({ ...message, seq: this.seq });
+    if (Buffer.byteLength(line) > REMOTE_FRAME_LIMIT) {
+      // `serveHost` answers an answer that cannot be sent: put the call back for that.
+      this.seq -= 1;
+      if (original.t === 'result' && message.t === 'result') {
+        this.running.set(original.id, { clientId: this.clientId ?? '', id: message.id });
+      }
+      throw new Error('The message is larger than DSpatch sends over a connection.');
+    }
     this.kept.push({ seq: this.seq, line });
     this.keptBytes += line.length;
     while (this.keptBytes > KEPT_BYTES && this.kept.length > 1) {
@@ -119,7 +148,13 @@ export class RemoteServer {
       this.keptBytes -= dropped?.line.length ?? 0;
       this.overflowed = true;
     }
-    this.attached?.socket.write(line);
+    const socket = this.attached?.socket;
+    socket?.write(line);
+    if (socket !== undefined && socket.writableLength > KEPT_BYTES) {
+      // A stalled connection: what it has not taken is kept above, for the reconnect.
+      this.options.log('[remote] the client is not taking what is sent; dropping the connection');
+      socket.destroy();
+    }
   }
 
   private acknowledged(seq: number): void {
@@ -138,6 +173,14 @@ export class RemoteServer {
     const nonce = randomBytes(24).toString('hex');
     let clientNonce: string | null = null;
     let session: Attached | null = null;
+    let heard = Date.now();
+    const silence = setInterval(() => {
+      if (session !== null && Date.now() - heard > REMOTE_SILENCE_MS * 2) {
+        this.options.log('[remote] nothing heard from the client; dropping the connection');
+        socket.destroy();
+      }
+    }, REMOTE_SILENCE_MS);
+    silence.unref();
     const refuse = (code: 'version' | 'auth', message: string): void => {
       this.options.log(`[remote] refused a connection (${code}): ${message}`);
       socket.end(encodeFrame({ t: 'refused', code, message } satisfies RemoteHandshake));
@@ -183,6 +226,7 @@ export class RemoteServer {
       refuse('auth', 'The connection did not follow the handshake.');
     });
     socket.on('data', (chunk: Buffer) => {
+      heard = Date.now();
       try {
         reader.push(chunk);
       } catch (error) {
@@ -193,6 +237,7 @@ export class RemoteServer {
     socket.on('error', () => undefined);
     socket.on('close', () => {
       clearTimeout(deadline);
+      clearInterval(silence);
       if (session !== null && this.attached === session) {
         this.attached = null;
         this.options.log('[remote] the client is away; work goes on and its answers are kept');
@@ -258,8 +303,11 @@ export class RemoteServer {
         return;
       }
       this.lastCall = call.id;
+      const running = this.nextRunning;
+      this.nextRunning += 1;
+      this.running.set(running, { clientId: session.clientId, id: call.id });
       for (const listener of this.listeners) {
-        listener(call);
+        listener({ ...call, id: running });
       }
     }
   }

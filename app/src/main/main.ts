@@ -426,7 +426,21 @@ const NO_SENDER = { senderId: null } as const;
 
 /** The call's context for a window's request: which renderer events about it go back to. */
 function from(event: Electron.IpcMainInvokeEvent): { readonly senderId: number } {
-  return { senderId: event.sender.id };
+  return { senderId: event.sender.id + senderBase() };
+}
+
+/**
+ * Window ids start again with every launch, and a remote host outlives the launch: without
+ * this, an event for a window of the last client would reach a window of this one.
+ */
+const SENDER_SPAN = 1_000_000;
+let senderOffset: number | null = null;
+
+function senderBase(): number {
+  if (senderOffset === null) {
+    senderOffset = remoteSession() === null ? 0 : (1 + Math.floor(Math.random() * 1_000_000)) * SENDER_SPAN;
+  }
+  return senderOffset;
 }
 
 /** Restart into this computer's own host. */
@@ -614,13 +628,14 @@ function publishLink(change: Pick<HostLinkState, 'phase' | 'note'>): void {
 /** The connection came or went. Windows keep what they show; nothing is sent again. */
 function linkChanged(event: HostLinkEvent): void {
   if (event.kind === 'disconnected') {
-    publishLink({ phase: 'reconnecting', note: 'Connection lost. Work on the host goes on, and nothing is sent until it is back.' });
+    publishLink({ phase: 'reconnecting', note: 'Connection lost. This does not stop work on the host; how it stands is unknown until the connection is back. Nothing is sent meanwhile.' });
   } else if (event.kind === 'refused') {
     publishLink({ phase: 'stopped', note: event.message });
   } else {
     publishLink({ phase: 'connected', note: '' });
     if (!event.first && !event.resumed) {
       // Too much happened while away to replay: the windows read what the host has now.
+      void reviewWindows?.reattach(true);
       reloadOpenWindows();
     }
   }
@@ -659,6 +674,8 @@ const pickers = {
 
 let browseDone: ((chosen: string | null) => void) | null = null;
 
+let browseWindow: BrowserWindow | null = null;
+
 /** The host chooser, one at a time, in a window of its own. */
 function pickOnHost(options: Electron.OpenDialogOptions & { readonly saving?: boolean }): Promise<Electron.OpenDialogReturnValue> {
   return new Promise((resolve) => {
@@ -674,6 +691,7 @@ function pickOnHost(options: Electron.OpenDialogOptions & { readonly saving?: bo
       webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
     window.removeMenu();
+    browseWindow = window;
     let answered = false;
     const answer = (chosen: string | null): void => {
       if (!answered) {
@@ -736,7 +754,8 @@ function deliverHostEvent(to: HostEventTarget, channel: string, payload: unknown
     case 'contents': {
       // The window that started the work, if it is still there: what
       // `event.sender.isDestroyed()` guarded when the work ran in this process.
-      const contents = webContents.fromId(to.id);
+      const local = to.id - senderBase();
+      const contents = local > 0 && local < SENDER_SPAN ? webContents.fromId(local) : undefined;
       if (contents !== undefined && !contents.isDestroyed()) {
         contents.send(channel, payload);
       }
@@ -991,9 +1010,10 @@ const reviewDiscussionClient: ReviewDiscussionClient = {
   listModels: (provider) => hostCall('chat.listModels', NO_SENDER, provider as StoredSessionProvider),
   chooseModel: (provider, modelId) =>
     hostCall('chat.chooseModel', NO_SENDER, provider as StoredSessionProvider, String(modelId)),
-  call: (method, target: DiscussionTarget, argument) => hostCall(`discussion.${method}`, NO_SENDER, target, argument),
+  call: (method, target: DiscussionTarget, argument) =>
+    hostCall(`discussion.${method}`, NO_SENDER, { ...target, targetId: target.targetId + senderBase() }, argument),
   detach: (targetId) => {
-    logIfFailed('detaching a review window from its discussion', hostCall('discussion.detach', NO_SENDER, targetId));
+    logIfFailed('detaching a review window from its discussion', hostCall('discussion.detach', NO_SENDER, targetId + senderBase()));
   },
 };
 
@@ -3072,7 +3092,14 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
 
 async function pairWindowCheckIn(request: PairWindowCheckRequest): Promise<EditorWindowCheckAnswer> {
   // DSP-152: id 0 is the main window, for real input from where a person starts.
-  if ((request.action === 'press' || request.action === 'press-key') && request.id === 0) {
+  if (request.action === 'browser-text' || request.action === 'main-text') {
+    const window = request.action === 'main-text' ? liveMainWindow() : browseWindow;
+    return { ok: true, detail: window === null || window.isDestroyed() ? null : await window.webContents.executeJavaScript('document.body.innerText') };
+  }
+  if ((request.action === 'press' || request.action === 'type') && request.id === -1) {
+    return browseWindow === null ? { ok: false, detail: 'no chooser' } : pressIn(browseWindow, browseWindow.webContents, request);
+  }
+  if ((request.action === 'press' || request.action === 'press-key' || request.action === 'type') && request.id === 0) {
     const main = liveMainWindow();
     return main === null ? { ok: false, detail: 'no main window' } : pressIn(main, main.webContents, request);
   }
@@ -3844,7 +3871,7 @@ function registerIpc(): void {
    */
   ipcMain.handle(PICK_PROJECT, async (): Promise<ProjectPickOutcome> => {
     // A scripted run answers from its queue, as the editor's choosers do (DSP-147's trial).
-    if (chatRunMode) {
+    if (chatRunMode && remoteSession() === null) {
       const scripted = scriptedFilePick('Open Project…');
       return scripted === null ? { kind: 'cancelled' } : { kind: 'chosen', path: scripted };
     }

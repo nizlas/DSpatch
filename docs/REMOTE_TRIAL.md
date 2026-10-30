@@ -112,7 +112,7 @@ cd DSpatch/app
 npm run host
 ```
 
-It prints its address, data folder and commit. It listens on `127.0.0.1:47917` only and has no option for anything else. Data: `~/.local/share/dspatch-host` (Windows: `%LOCALAPPDATA%\dspatch-host`), or `--data <folder>`; another port with `npm run host -- --port <n>`. Ctrl+C closes the adapters and ends it.
+Start it so that it outlives your SSH session: inside `tmux` on Linux (`tmux new -s dspatch`, then the command), or from a local desktop session on the machine. It prints its address, data folder and commit. It listens on `127.0.0.1:47917` only and has no option for anything else. Data: `~/.local/share/dspatch-host` (Windows: `%LOCALAPPDATA%\dspatch-host`), or `--data <folder>`; another port with `npm run host -- --port <n>`. Ctrl+C closes the adapters and ends it.
 
 Print the token once, and carry it to the client as you would a password:
 
@@ -120,12 +120,12 @@ Print the token once, and carry it to the client as you would a password:
 npm run host -- --print-token
 ```
 
-To require the managed hooks before any Copilot work starts, start the host with `DSPATCH_COPILOT_REQUIRE_HOOKS=1`.
+To refuse Copilot work unless the runtime reports an enabled pre-tool hook from a user or managed source, start the host with `DSPATCH_COPILOT_REQUIRE_HOOKS=1`. It checks that one exists, not what it does.
 
 ### The tunnel, on the CLIENT
 
 ```bash
-ssh -N -L 47917:127.0.0.1:47917 <user>@<host>
+ssh -N -o ServerAliveInterval=15 -o ExitOnForwardFailure=yes -L 47917:127.0.0.1:47917 <user>@<host>
 ```
 
 Leave it running. **The laptop must be able to reach the host's SSH server.** That is not given by being on the VPN: check `ssh <user>@<host> exit` first. A Windows host needs its OpenSSH Server feature enabled and running. If the work network blocks SSH to the host, there is no connection, and DSpatch has no other route.
@@ -148,7 +148,7 @@ DSPATCH_REMOTE=127.0.0.1:47917 DSPATCH_REMOTE_TOKEN_FILE=/path/to/token npm star
 ## 5. What to expect
 
 - **Open Project** browses the host, in a small window, by name only. Nothing on the laptop is read as a project.
-- **A lost connection** reads *Disconnected from \<machine\>, reconnecting…* along the bottom. Work on the host goes on. Nothing is sent, and a new action says it was not sent. On reconnection the missed events and answers arrive; nothing is resent.
+- **A lost connection** reads *Disconnected from \<machine\>, reconnecting…* along the bottom. A drop does not stop work on the host, but how it stands is unknown until the connection is back. Nothing is sent, and a new action says it was not sent. On reconnection the missed events and answers arrive; nothing is resent. A client that was **restarted** does not get those back: it reads what the host has saved.
 - **A host restarted** ends what ran there: the windows reload and what was running reads as unknown, never as finished.
 - **One client at a time.** A second client takes over; the first says so and stops.
 - **Different commits** with the same contract connect, and the line says so. Another protocol or contract is refused with a sentence, before any work.
@@ -184,7 +184,7 @@ Candidate commit: see the handover report. Versions: Node 24.21, npm 11.19, Elec
 | Host and client as separate processes on one Windows machine, real TCP, real windows and input, forwarder in the tunnel's place | **Verified** |
 | Remote: diff, expanded context, references, selection, question with Enter, streaming, activity line, Explain more simply, walks, shared panel, docking, delegated review | See the phases in DSP-111's notes: **verified with a simulated provider** |
 | Stop; a cut during an answer and during a job; client restart; host restart; a refused version | **Verified with a simulated provider** |
-| The client touched no project file and started no process | **Verified**: a guard in the scripted run logs every touch |
+| The client touched no project file and started no process | **Verified for the paths the scripted runs exercised**: a guard logs every touch. Not a proof for every code path |
 | Copilot runtime: tool lists offered, refused reads and writes, links, repository hooks and instructions, user hook running, stop, no-login sentence, walks job | **Verified against the real runtime 1.0.105 with a local stand-in model**, not a real model |
 | Docked panel, its layout beside diff and commit log | **Seen** in desktop captures, simulated answers |
 | Real SSH tunnel | **Not tried** (no SSH server here) |
