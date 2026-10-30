@@ -181,7 +181,7 @@ interface Setup {
   readonly adapters: ScriptedAdapter[];
   /** The send mode adapters are created with. */
   sendMode: ScriptedAdapter['sendMode'];
-  discussions(timings?: { cancelConfirmMs?: number }): ReviewDiscussions;
+  discussions(timings?: { cancelConfirmMs?: number }, earlier?: () => readonly DiscussionMessage[]): ReviewDiscussions;
 }
 
 async function setup(): Promise<Setup> {
@@ -198,7 +198,7 @@ async function setup(): Promise<Setup> {
     identity: identity.identity,
     adapters,
     sendMode: 'ok',
-    discussions: (timings) =>
+    discussions: (timings, earlier) =>
       new ReviewDiscussions({
         recordsDir: fixture.records,
         log: () => undefined,
@@ -209,6 +209,7 @@ async function setup(): Promise<Setup> {
           return adapter;
         },
         ...(timings === undefined ? {} : { timings }),
+        ...(earlier === undefined ? {} : { earlier }),
       }),
   };
   return result;
@@ -752,6 +753,20 @@ test('the windows of one review share what the next question is about and the dr
     assert.equal((diff.events.filter((event) => event.kind === 'quote').at(-1) as { quote: unknown } | undefined)?.quote, null, 'the quote went with the question');
     assert.equal((await one.load(null, s.review) as { quote?: unknown }).quote, null);
     s.adapters[0]?.finish();
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});
+
+// Niclas's trial, 30 October 2026: a new review's discussion lost its agent when history came with it.
+test('history brought into a discussion does not take its agent away: the last one used, else the default', async () => {
+  const s = await setup();
+  try {
+    const before = { id: 'q', role: 'question' as const, text: 'Earlier', at: '', subject: '' };
+    const withAgent = s.discussions(undefined, () => [{ ...before, provider: 'claude' as const }]);
+    assert.equal(withAgent.attach(1, s.identity, () => undefined, 'cursor').status().agent.provider, 'claude');
+    const without = s.discussions(undefined, () => [before]);
+    assert.equal(without.attach(1, s.identity, () => undefined, 'cursor').status().agent.provider, 'cursor');
   } finally {
     fs.rmSync(s.fixture.root, { recursive: true, force: true });
   }

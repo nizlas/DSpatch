@@ -13831,7 +13831,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       // --- The review's panel: its own window, docked, moved, hidden, and one per review (30 October 2026) ---
       type Seg = { readonly side: string; readonly path: string; readonly start: number; readonly from: number; readonly to: number; readonly text: string };
       type Msg = { readonly id: string; readonly role: string; readonly status: string; readonly text: string; readonly quote: { readonly segments?: readonly Seg[] } | null };
-      type Row = PairWindowRow & { readonly panel?: { readonly place: string; readonly visible: boolean; readonly frameVisible: boolean } | null };
+      type Row = PairWindowRow & { readonly panel?: { readonly place: string; readonly visible: boolean; readonly frameVisible: boolean; readonly viewVisible: boolean; readonly viewWidth: number } | null };
       const FILE = 'src/domain/sessionRouting.ts';
       const msgsOf = (reading: PairWindowReading | null): readonly Msg[] => ((reading as unknown as { discussion?: { messages?: readonly Msg[] } | null } | null)?.discussion?.messages ?? []);
       const asked = (reading: PairWindowReading | null): readonly Msg[] => msgsOf(reading).filter((message) => message.role === 'question');
@@ -13903,6 +13903,25 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       const direct = await answered(panelId, 3, 'the direct question');
       expect(asked(direct)[2]?.quote?.segments?.[0]?.text === 'return' && asked(direct)[2]?.quote?.segments?.[0]?.path === FILE, `the direct question lost its selection: ${JSON.stringify(asked(direct)[2]?.quote)}`);
 
+      // 3b. Niclas's trial: no walk, docked in the diff, hidden, and back by Discussion and by Ask….
+      const drawn = (rows: readonly PairWindowRow[]): PairWindowRow | undefined => (rows as readonly Row[]).find((row) => row.panel?.visible === true && row.panel.viewVisible === true && row.panel.viewWidth > 0);
+      await press(panelId, '[data-ev="panel-dock-diff"]');
+      await untilWindow('the panel drawn in the diff', drawn, 10_000);
+      await press(panelId, '[data-ev="panel-hide"]');
+      await untilWindow('the panel hidden', (rows) => (rows as readonly Row[]).find((row) => row.panel?.visible === false), 10_000);
+      await press(diffId, '[data-ev="pair-discussion"]');
+      const byDiscussion = await untilWindow('the panel back by Discussion', drawn, 10_000);
+      await press(panelId, '[data-ev="panel-hide"]');
+      await untilWindow('the panel hidden again', (rows) => (rows as readonly Row[]).find((row) => row.panel?.visible === false), 10_000);
+      await check({ action: 'drag', id: diffId, from: { selector: cellAt(191), offset: 8 }, to: { selector: cellAt(191), offset: 13 } }, 'select while hidden');
+      await untilPair(diffId, 'Ask beside the selection', (reading) => (diffOf(reading) as unknown as { context?: { askOffered?: boolean } }).context?.askOffered === true);
+      await press(diffId, '[data-ev="ask-this"]');
+      const byAsk = await untilWindow('the panel back by Ask', drawn, 10_000);
+      record('hidden with no walk', { byDiscussion: (byDiscussion as Row).panel, byAsk: (byAsk as Row).panel });
+      await press(panelId, '[data-ev="discussion-quote-clear"]');
+      await press(panelId, '[data-ev="panel-own-window"]');
+      await untilWindow('the panel in its own window', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'window' && row.panel.frameVisible), 10_000);
+
       // 4. Walks prepared later: the same history, and Step now in the same panel.
       await press(diffId, '[data-ev="pair-prepare-walks"]');
       await untilPair(diffId, 'the agent picker', (reading) => (reading.text ?? '').includes('Model'), 15_000);
@@ -13928,6 +13947,14 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       expect(draftInDiff === 'A draft that moves', `the draft did not move with the panel: ${draftInDiff}`);
       await capture(diffId, 'panel-docked-diff-room');
       await capture(panelId, 'panel-docked-diff');
+      // Hidden while docked, and back from the diff: where it was, with the draft (Niclas's trial, 30 October 2026).
+      await untilWindow('the docked panel drawn', (rows) => (rows as readonly Row[]).find((row) => row.panel?.viewVisible === true && row.panel.viewWidth > 0), 10_000);
+      await press(panelId, '[data-ev="panel-hide"]');
+      await untilWindow('the panel hidden', (rows) => (rows as readonly Row[]).find((row) => row.panel?.visible === false && row.panel.viewVisible === false), 10_000);
+      await press(diffId, '[data-ev="pair-discussion"]');
+      const dockedAgain = await untilWindow('the docked panel shown again', (rows) => (rows as readonly Row[]).find((row) => row.panel?.visible === true && row.panel.viewVisible === true && row.panel.viewWidth > 0), 10_000);
+      record('hidden while docked, shown again', { panel: (dockedAgain as Row).panel, draft: composerOf(await readPairWindow(panelId)) });
+      expect((dockedAgain as Row).panel?.place === 'diff' && composerOf(await readPairWindow(panelId)) === 'A draft that moves', 'the docked panel did not come back as it was');
       // An answer on its way while the panel moves.
       await check({ action: 'type', id: panelId, selector: '[data-ev="discussion-composer"]', text: ' — sent' }, 'finish the draft');
       await pressKey(panelId, '[data-ev="discussion-composer"]', 'Enter');

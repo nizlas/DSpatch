@@ -828,9 +828,11 @@ export class ReviewWindows {
   }
 
   /** Where the panel of an entry is, for the scenarios' readings. */
-  panelReading(entry: ReviewWindowEntry): { readonly place: PanelPlace; readonly visible: boolean; readonly frameVisible: boolean } | null {
+  panelReading(entry: ReviewWindowEntry): { readonly place: PanelPlace; readonly visible: boolean; readonly frameVisible: boolean; readonly viewVisible: boolean; readonly viewWidth: number } | null {
     const panel = entry.pairKey === null ? undefined : this.panels.get(entry.pairKey);
-    return panel === undefined || panel.entry !== entry ? null : { place: panel.place, visible: panel.visible, frameVisible: !panel.frame.isDestroyed() && panel.frame.isVisible() };
+    return panel === undefined || panel.entry !== entry
+      ? null
+      : { place: panel.place, visible: panel.visible, frameVisible: !panel.frame.isDestroyed() && panel.frame.isVisible(), viewVisible: panel.view.getVisible(), viewWidth: panel.view.getBounds().width };
   }
 
   /** The panel over a pair, if it is open. */

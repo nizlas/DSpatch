@@ -540,18 +540,18 @@ export class ReviewDiscussionService {
 
   /**
    * The main window's agent, offered as the default when this window opened review
-   * (DSP-132). Taken only by a new discussion - nothing stored, no agent chosen - and
-   * only in memory: nothing is written until a real write. A default that cannot be
-   * used in this launch is not taken (R-1): the discussion then asks for a choice.
+   * (DSP-132). Taken only by a discussion with no agent of its own, and only in memory:
+   * nothing is written until a real write. History brought in from the pair's earlier
+   * discussions and explanations names no agent for the discussion (30 October 2026), so
+   * the agent last used in it comes first. One that cannot be used in this launch is not
+   * taken (R-1): the discussion then asks for a choice.
    */
   offerDefault(provider: DiscussionProvider | null | undefined): void {
-    if (provider === undefined || provider === null || this.provider !== null || this.messages.length > 0) {
+    if (this.provider !== null) {
       return;
     }
-    if (!this.availabilityOf(provider).choosable) {
-      return;
-    }
-    this.provider = provider;
+    const used = this.messages.findLast((message) => message.provider !== undefined)?.provider;
+    this.provider = [used, provider].find((candidate) => candidate !== undefined && candidate !== null && this.availabilityOf(candidate).choosable) ?? null;
   }
 
   /**
