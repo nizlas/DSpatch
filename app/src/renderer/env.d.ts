@@ -1,3 +1,4 @@
+import type { HostLinkBridge } from '../shared/host-link';
 import type { DspatchBridge, LoopGraphOpenRequest } from '../shared/bridge';
 import type { EditorRunSummary } from '../shared/loop-editor-run';
 
@@ -134,6 +135,8 @@ declare global {
   interface Window {
     /** All main-process access available to the renderer. Set by preload. */
     readonly dspatch: DspatchBridge;
+    /** The connection to a host and the host's chooser (DSP-111). Set by both preloads. */
+    readonly dspatchHost?: HostLinkBridge;
     /** Present only while a graph is open; used by DSPATCH_EDITOR_AUTORUN. */
     __dspatchEditorCheck?: {
       dryRunCurrent: () => Promise<EditorRunSummary | null>;

@@ -1,0 +1,123 @@
+import { useEffect, useState } from 'react';
+import type { JSX } from 'react';
+
+import type { HostBrowsePage, HostLinkState } from '../shared/host-link';
+
+/**
+ * The connection to a host on another machine, in every window (DSP-111). Draws nothing on a
+ * local start. It says which machine the work is on and whether it can be reached; a lost
+ * connection is never drawn as work having ended.
+ */
+export function HostLinkLine(): JSX.Element | null {
+  const [state, setState] = useState<HostLinkState | null>(null);
+  useEffect(() => {
+    const bridge = window.dspatchHost;
+    if (bridge === undefined) {
+      return;
+    }
+    void bridge.state().then(setState);
+    return bridge.onState(setState);
+  }, []);
+  const inPanel = new URLSearchParams(window.location.search).get('view') === 'panel';
+  // The panel sits beside a window that already says it; it speaks up only when it matters.
+  if (state === null || !state.remote || (inPanel && state.phase === 'connected')) {
+    return null;
+  }
+  const words = state.phase === 'connected' ? `On ${state.machine}` : state.phase === 'connecting' ? `Connecting to ${state.machine}…` : state.phase === 'reconnecting' ? `Disconnected from ${state.machine}, reconnecting…` : `Disconnected from ${state.machine}`;
+  return (
+    <div className={`host-link host-link--${state.phase}`} data-ev="host-link" data-phase={state.phase}>
+      <span className="host-link__dot" aria-hidden="true" />
+      <span>{words}</span>
+      {state.note !== '' && <span className="host-link__note">{state.note}</span>}
+      {state.phase === 'reconnecting' && (
+        <button type="button" data-ev="host-link-retry" onClick={() => window.dspatchHost?.retry()}>
+          Try now
+        </button>
+      )}
+      <button type="button" data-ev="host-link-leave" title="Close this session and work on this computer" onClick={() => window.dspatchHost?.leave()}>
+        Leave
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Choosing a folder or file on the host, in a window of its own: the paths mean something only
+ * there, so the machine in front of the person is never browsed. Names only.
+ */
+export function HostBrowser(): JSX.Element {
+  const search = new URLSearchParams(window.location.search);
+  const mode = search.get('mode') ?? 'folder';
+  const [page, setPage] = useState<HostBrowsePage | null>(null);
+  const [fileName, setFileName] = useState('');
+  const [typed, setTyped] = useState('');
+  const go = (folder: string | null): void => {
+    void window.dspatchHost?.browse(folder).then((next) => {
+      setPage(next);
+      setTyped(next.path);
+    });
+  };
+  useEffect(() => {
+    go(null);
+  }, []);
+  const separator = page?.path.includes('\\') === true ? '\\' : '/';
+  const join = (name: string): string => `${(page?.path ?? '').replace(/[\\/]$/, '')}${separator}${name}`;
+  const chosen = mode === 'folder' ? page?.path : fileName === '' ? null : join(fileName);
+  return (
+    <div className="host-browser" data-ev="host-browser">
+      <h1>{search.get('title') ?? 'Choose on the host'}</h1>
+      <form
+        className="host-browser__path"
+        onSubmit={(event) => {
+          event.preventDefault();
+          go(typed);
+        }}
+      >
+        <input data-ev="host-browser-path" value={typed} onChange={(event) => setTyped(event.target.value)} spellCheck={false} />
+        <button type="submit">Go</button>
+      </form>
+      {page?.error !== null && page?.error !== undefined && <p className="host-browser__error">{page.error}</p>}
+      <ul className="host-browser__list">
+        {page?.parent !== null && page?.parent !== undefined && (
+          <li>
+            <button type="button" onClick={() => go(page.parent)}>
+              ..
+            </button>
+          </li>
+        )}
+        {page?.entries.map((entry) => (
+          <li key={entry.name}>
+            <button
+              type="button"
+              className={entry.kind === 'file' ? 'host-browser__file' : undefined}
+              disabled={entry.kind === 'file' && mode === 'folder'}
+              onClick={() => {
+                if (entry.kind === 'folder') {
+                  go(join(entry.name));
+                } else {
+                  setFileName(entry.name);
+                }
+              }}
+            >
+              {entry.kind === 'folder' ? `${entry.name}/` : entry.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {mode !== 'folder' && (
+        <label className="host-browser__name">
+          File
+          <input data-ev="host-browser-name" value={fileName} onChange={(event) => setFileName(event.target.value)} spellCheck={false} />
+        </label>
+      )}
+      <div className="host-browser__buttons">
+        <button type="button" data-ev="host-browser-choose" disabled={chosen === null || chosen === undefined} onClick={() => window.dspatchHost?.browseDone(chosen ?? null)}>
+          {mode === 'folder' ? 'Choose this folder' : mode === 'save' ? 'Save here' : 'Open'}
+        </button>
+        <button type="button" onClick={() => window.dspatchHost?.browseDone(null)}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}

@@ -3,6 +3,7 @@ import type { JSX } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import { HostBrowser, HostLinkLine } from './HostLink';
 import { LoopEditor } from './LoopEditor';
 import { PairReview } from './PairReview';
 import { ReviewView } from './ReviewView';
@@ -38,6 +39,8 @@ function chosenView(): 'editor' | 'chat' {
  * the chat's *Open review* button or `npm run review`, both of which open such a
  * window; it is no longer a view the chat window can switch to.
  */
+const isBrowseWindow = new URLSearchParams(window.location.search).get('window') === 'browse';
+
 const isReviewWindow = new URLSearchParams(window.location.search).get('window') === 'review';
 
 /** A review window over a chosen revision pair (DSP-150): the diff review, not a walk. */
@@ -98,6 +101,11 @@ function Surfaces(): JSX.Element {
   );
 }
 
+// The panel is a page beside the code: its thread scrolls, the page itself never does.
+if (new URLSearchParams(window.location.search).get('view') === 'panel') {
+  document.documentElement.classList.add('panel-window');
+}
+
 createRoot(host).render(
-  <StrictMode>{isDiffReview ? <PairReview /> : isReviewWindow ? <ReviewView /> : <Surfaces />}</StrictMode>,
+  <StrictMode>{isBrowseWindow ? <HostBrowser /> : <><HostLinkLine />{isDiffReview ? <PairReview /> : isReviewWindow ? <ReviewView /> : <Surfaces />}</>}</StrictMode>,
 );

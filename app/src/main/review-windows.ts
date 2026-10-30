@@ -83,6 +83,11 @@ export interface ReviewWindowsOptions {
   /** Development builds get reload and developer tools in the View menu. */
   readonly development: boolean;
   /**
+   * A remote session's chooser: it browses the host, because the paths are the host's.
+   * Absent on a local start, where the native dialog is right.
+   */
+  readonly pickOnHost?: (options: Electron.OpenDialogOptions) => Promise<{ readonly canceled: boolean; readonly filePaths: readonly string[] }>;
+  /**
    * The file chooser's answer during a scripted run, or `null` for the real dialog.
    * Called only while a scripted run is on; see `DSPATCH_PICK_FILE` in `main.ts`.
    */
@@ -360,7 +365,7 @@ export class ReviewWindows {
 
   async choose(entry: ReviewWindowEntry): Promise<ReviewOpenOutcome> {
     const startIn =
-      entry.identity?.repository ?? (entry.startFolder !== null && fs.existsSync(entry.startFolder) ? entry.startFolder : undefined);
+      entry.identity?.repository ?? (entry.startFolder !== null && (this.options.pickOnHost !== undefined || fs.existsSync(entry.startFolder)) ? entry.startFolder : undefined);
     let chosen: string | undefined;
     if (this.options.scriptedPick !== null) {
       chosen = this.options.scriptedPick() ?? undefined;
@@ -373,7 +378,8 @@ export class ReviewWindows {
         ...(startIn === undefined ? {} : { defaultPath: startIn }),
       };
       const parent = entry.window.isDestroyed() ? null : entry.window;
-      const result = parent === null ? await dialog.showOpenDialog(dialogOptions) : await dialog.showOpenDialog(parent, dialogOptions);
+      const onHost = this.options.pickOnHost;
+      const result = onHost !== undefined ? await onHost(dialogOptions) : parent === null ? await dialog.showOpenDialog(dialogOptions) : await dialog.showOpenDialog(parent, dialogOptions);
       chosen = result.canceled ? undefined : result.filePaths[0];
     }
     if (chosen === undefined) {
@@ -650,7 +656,7 @@ export class ReviewWindows {
    * window holds on screen is left as it is, and its next save goes to the new session,
    * so a reviewer's unsaved work is kept rather than lost to an `unknown-session`.
    */
-  async reattach(): Promise<void> {
+  async reattach(reload = false): Promise<void> {
     for (const entry of this.list()) {
       try {
         const sessionId = await this.newSession();
@@ -671,6 +677,15 @@ export class ReviewWindows {
         }
       } catch (error) {
         this.options.log(`review window ${String(entry.contents.id)} got no session on the restarted host: ${String(error)}`);
+      }
+    }
+    if (reload) {
+      // What a window holds of work on the old host is gone with it: a turn or a job must not
+      // go on looking alive. Each reads what the new host has.
+      for (const entry of this.list()) {
+        if (!entry.contents.isDestroyed()) {
+          entry.contents.reload();
+        }
       }
     }
   }

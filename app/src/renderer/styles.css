@@ -1723,3 +1723,139 @@ body {
 .loop-control__note {
   color: var(--text);
 }
+/* The connection to a host on another machine (DSP-111). Quiet while all is well. */
+.host-link {
+  position: fixed;
+  left: 0.5rem;
+  bottom: 0.5rem;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: calc(100vw - 1rem);
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.host-link button {
+  padding: 0 0.4rem;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.host-link__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #4fb286;
+}
+
+.host-link--connecting .host-link__dot,
+.host-link--reconnecting .host-link__dot {
+  background: #d9a441;
+}
+
+.host-link--stopped .host-link__dot {
+  background: #d9534f;
+}
+
+.host-link--reconnecting,
+.host-link--stopped {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-width: none;
+  border-width: 1px 0 0;
+  border-radius: 0;
+  color: var(--text);
+}
+
+.host-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  height: 100vh;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+.host-browser h1 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.host-browser__path {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.host-browser input {
+  flex: 1;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.host-browser__list {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  list-style: none;
+}
+
+.host-browser__list button {
+  display: block;
+  width: 100%;
+  padding: 0.25rem 0.6rem;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.host-browser__list button:hover:not(:disabled) {
+  background: var(--raised);
+}
+
+.host-browser__list button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.host-browser__file {
+  color: var(--muted);
+}
+
+.host-browser__name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.host-browser__error {
+  margin: 0;
+  color: #d9a441;
+}
+
+.host-browser__buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+html.panel-window,
+html.panel-window body {
+  overflow: hidden;
+}

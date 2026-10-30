@@ -13151,7 +13151,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
   const steps: unknown[] = [];
   const failures: string[] = [];
   const phase =
-    plan.flowPhase === 'again' || plan.flowPhase === 'direction' || plan.flowPhase === 'columns' || plan.flowPhase === 'insight' || plan.flowPhase === 'insight-again' || plan.flowPhase === 'selection' || plan.flowPhase === 'context' || plan.flowPhase === 'context-walk' || plan.flowPhase === 'panel'
+    plan.flowPhase === 'again' || plan.flowPhase === 'direction' || plan.flowPhase === 'columns' || plan.flowPhase === 'insight' || plan.flowPhase === 'insight-again' || plan.flowPhase === 'selection' || plan.flowPhase === 'context' || plan.flowPhase === 'context-walk' || plan.flowPhase === 'panel' || plan.flowPhase === 'remote' || plan.flowPhase === 'remote-again' || plan.flowPhase === 'remote-restart'
       ? plan.flowPhase
       : 'first';
   const observations: Record<string, unknown> = {
@@ -13827,6 +13827,139 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
     }
 
+    if (phase === 'remote' || phase === 'remote-again' || phase === 'remote-restart') {
+      // --- A remote session (DSP-111): a host in a process of its own, a real connection, cut for real ---
+      type Msg = { readonly id: string; readonly role: string; readonly status: string; readonly text: string };
+      const FILE = 'src/domain/sessionRouting.ts';
+      const cellAt = (line: number): string => `.rv-pair-diff td[data-code-side="target"][data-code-line="${String(line)}"]`;
+      const msgsOf = (reading: PairWindowReading | null): readonly Msg[] => ((reading as unknown as { discussion?: { messages?: readonly Msg[] } | null } | null)?.discussion?.messages ?? []);
+      const asked = (reading: PairWindowReading | null): readonly Msg[] => msgsOf(reading).filter((message) => message.role === 'question');
+      const answers = (reading: PairWindowReading | null): readonly Msg[] => msgsOf(reading).filter((message) => message.role === 'answer');
+      const link = async (): Promise<{ readonly phase: string; readonly note: string; readonly machine: string }> => (await window.dspatch.pairWindowCheck({ action: 'host-link' })).detail as never;
+      const untilLink = async (wanted: string, ms = 20_000): Promise<{ readonly phase: string; readonly note: string }> => {
+        for (const until = performance.now() + ms; performance.now() < until; ) {
+          const now = await link();
+          if (now.phase === wanted) {
+            return now;
+          }
+          await sleep(100);
+        }
+        throw new Error(`the connection never read ${wanted}: ${JSON.stringify(await link())}`);
+      };
+      const trial = (what: string): Promise<unknown> => check({ action: 'trial', path: what }, `ask the trial for ${what}`);
+      const promptsAt = async (): Promise<number> => (await reviewPromptsSent()).length;
+      const askInPanel = async (panelId: number, text: string): Promise<void> => {
+        await press(panelId, '[data-ev="right-tab-discussion"]');
+        await check({ action: 'type', id: panelId, selector: '[data-ev="discussion-composer"]', text }, 'type a question');
+        await pressKey(panelId, '[data-ev="discussion-composer"]', 'Enter');
+      };
+      const answerCame = async (panelId: number, count: number, what: string, ms = 60_000): Promise<PairWindowReading> =>
+        untilPair(panelId, what, (reading) => answers(reading)[count - 1]?.status === 'done', ms);
+      const panelRow = (rows: readonly PairWindowRow[]): PairWindowRow | undefined => rows.find((row) => row.view === ('panel' as string));
+
+      const connected = await untilLink('connected');
+      record('connected', connected);
+      await capture(diffId, 'remote-connected');
+      // The host was restarted under a running answer, and this window was reloaded: this is the
+      // scenario's second part. Nothing is resent, and what was running does not read as done.
+      if (phase === 'remote-restart' && connected.note.includes('restarted')) {
+        await sleep(3_000);
+        const panelId = (await untilWindow('the review panel again', panelRow, 20_000)).id;
+        await press(panelId, '[data-ev="right-tab-discussion"]');
+        const saved = await untilPair(panelId, 'the saved history', (reading) => asked(reading).length >= 2, 20_000);
+        const last = msgsOf(saved).at(-1);
+        record('after the host restarted', { questions: asked(saved).map((entry) => entry.text), answers: answers(saved).map((entry) => entry.status), last: last?.status, prompts: await promptsAt() });
+        expect((await promptsAt()) === 0, 'the new host sent something');
+        expect(!(last?.role === 'answer' && last.status === 'done' && asked(saved).at(-1)?.text.startsWith('One more') === true), 'a question lost with the host read as answered');
+        await capture(diffId, 'remote-host-restarted');
+        await capture(panelId, 'remote-host-restarted-panel');
+        return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+      }
+      await startReview(diffId, 'routing', null, [2, 1]);
+      await check({ action: 'resize', id: diffId, width: 1400, height: 900 }, 'size the diff window');
+      await openFileHere(diffId, FILE);
+
+      if (phase === 'remote') {
+        const prompts0 = await promptsAt();
+        await check({ action: 'drag', id: diffId, from: { selector: cellAt(191), offset: 8 }, to: { selector: cellAt(191), offset: 13 } }, 'select part of line 191');
+        await untilPair(diffId, 'Ask beside the selection', (reading) => (diffOf(reading) as unknown as { context?: { askOffered?: boolean } }).context?.askOffered === true);
+        await press(diffId, '[data-ev="ask-this"]');
+        const panelId = (await untilWindow('the review panel', panelRow, 20_000)).id;
+
+        // 7. Stop a question: the agent's turn ends as stopped, and that is what it says.
+        await askInPanel(panelId, 'Why is this capped?');
+        await untilPair(panelId, 'the answer on its way', (reading) => ((reading as unknown as { activityLines?: readonly string[] }).activityLines ?? []).length > 0 || (reading.text ?? '').includes('Stop'), 20_000);
+        await press(panelId, '[data-ev="discussion-stop"]');
+        const stopped = await untilPair(panelId, 'the stop', (reading) => !(reading.text ?? '').includes('Stopping') && (answers(reading)[0]?.status ?? 'answering') !== 'answering', 30_000);
+        record('a question stopped', { answer: answers(stopped)[0]?.status, prompts: (await promptsAt()) - prompts0 });
+        expect(answers(stopped)[0]?.status !== 'done', 'a stopped question read as answered');
+
+        // 8a. The connection cut while an answer streams: the window says so, nothing is sent,
+        // the host goes on, and the answer is there afterwards, once.
+        const promptsBefore = await promptsAt();
+        await askInPanel(panelId, 'What does the cap protect?');
+        await untilPair(panelId, 'the second answer on its way', (reading) => asked(reading).length === 2 && (reading.text ?? '').includes('Stop'), 20_000);
+        await trial('/cut');
+        const lost = await untilLink('reconnecting');
+        await sleep(600);
+        const whileDown = await readPairWindow(diffId);
+        record('cut during an answer', { link: lost, line: (whileDown?.text ?? '').includes('Disconnected') });
+        expect((whileDown?.text ?? '').includes('Disconnected'), 'the window does not say the connection is lost');
+        await capture(diffId, 'remote-disconnected');
+        const pressed = await window.dspatch.pairWindowCheck({ action: 'press', id: panelId, selector: '[data-ev="right-tab-discussion"]' });
+        record('the window still answers', { ok: pressed.ok });
+        await sleep(4_000);
+        await trial('/mend');
+        await untilLink('connected');
+        const recovered = await answerCame(panelId, 2, 'the answer finished while away');
+        record('reconnected', { questions: asked(recovered).length, answers: answers(recovered).map((entry) => entry.status), prompts: (await promptsAt()) - promptsBefore });
+        expect(asked(recovered).length === 2, 'the question appeared twice');
+        expect((await promptsAt()) === promptsBefore + 1, 'the question was sent again');
+
+        // 8b. Walks prepared, the connection cut during the job: one job, finished on the host.
+        await press(diffId, '[data-ev="pair-prepare-walks"]');
+        await untilPair(diffId, 'the agent picker', (reading) => (reading.text ?? '').includes('Model'), 15_000);
+        await press(diffId, '[data-ev="pair-walks-agent-start"]');
+        await untilPair(diffId, 'the job running', (reading) => (reading.text ?? '').includes('Stop'), 20_000);
+        await sleep(600);
+        await trial('/cut');
+        await untilLink('reconnecting');
+        await sleep(5_000);
+        await trial('/mend');
+        await untilLink('connected');
+        const walkRow = await untilWindow('the walk window after the job', (rows) => rows.find((row) => row.view === 'walk'), 120_000);
+        await capture(walkRow.id, 'remote-walk');
+        const walkPrompts = await promptsAt();
+        record('a job across a cut', { prompts: walkPrompts - promptsBefore });
+        expect(walkPrompts - promptsBefore <= 3, `the job was started again: ${String(walkPrompts - promptsBefore)} prompts`);
+        return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+      }
+
+      if (phase === 'remote-again') {
+        // 9. A new client process on the same host: the saved review and answers, nothing sent.
+        const prompts0 = await promptsAt();
+        await press(diffId, '[data-ev="pair-discussion"]');
+        const panelId = (await untilWindow('the review panel', panelRow, 20_000)).id;
+        await press(panelId, '[data-ev="right-tab-discussion"]');
+        const history = await untilPair(panelId, 'the history', (reading) => asked(reading).length >= 2, 20_000);
+        record('reopened', { questions: asked(history).map((entry) => entry.text), answers: answers(history).map((entry) => entry.status), prompts: (await promptsAt()) - prompts0 });
+        expect((await promptsAt()) === prompts0, 'reopening sent something');
+        await capture(panelId, 'remote-reopened');
+        return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+      }
+
+      // 10. The host restarted under a running answer: unknown, not finished; saved work is there.
+      await press(diffId, '[data-ev="pair-discussion"]');
+      const panelId = (await untilWindow('the review panel', panelRow, 20_000)).id;
+      const before = await untilPair(panelId, 'the history', (reading) => asked(reading).length >= 2, 20_000);
+      await askInPanel(panelId, 'One more, while the host goes away');
+      await untilPair(panelId, 'the answer on its way', (reading) => asked(reading).length === asked(before).length + 1 && (reading.text ?? '').includes('Stop'), 20_000);
+      // The reload that follows ends this run of the script; the part above takes over.
+      await trial('/restart-host');
+      await sleep(60_000);
+      throw new Error('the windows were not reloaded after the host restarted');
+    }
+
     if (phase === 'panel') {
       // --- The review's panel: its own window, docked, moved, hidden, and one per review (30 October 2026) ---
       type Seg = { readonly side: string; readonly path: string; readonly start: number; readonly from: number; readonly to: number; readonly text: string };
@@ -13930,6 +14063,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       await untilPair(diffId, 'the commit log', (reading) => diffOf(reading).phase === 'log');
       const dockedInLog = (rows: readonly PairWindowRow[]): PairWindowRow | undefined => (rows as readonly Row[]).find((row) => row.panel?.place === 'diff' && row.panel.frameVisible === false && row.panel.visible && row.panel.viewVisible === true && row.panel.viewWidth > 0);
       await untilWindow('the panel still docked beside the commit log', dockedInLog, 10_000);
+      await check({ action: 'screen', id: diffId, label: 'panel-docked-log-screen' }, 'see the commit log with the panel docked');
       await press(panelId, '[data-ev="panel-hide"]');
       await untilPair(diffId, 'Show discussion in the commit log', (reading) => (reading.text ?? '').includes('Show discussion'), 10_000);
       await capture(diffId, 'panel-hidden-commit-log');
@@ -13978,6 +14112,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       expect(inDiff?.panel?.place === 'diff' && inDiff.panel.frameVisible === false, `the panel did not dock in the diff: ${JSON.stringify(inDiff?.panel)}`);
       expect(draftInDiff === 'A draft that moves', `the draft did not move with the panel: ${draftInDiff}`);
       await capture(diffId, 'panel-docked-diff-room');
+      await check({ action: 'screen', id: diffId, label: 'panel-docked-diff-screen' }, 'see the diff with the panel docked');
       await capture(panelId, 'panel-docked-diff');
       // Hidden while docked, and back from the diff: where it was, with the draft (Niclas's trial, 30 October 2026).
       await untilWindow('the docked panel drawn', (rows) => (rows as readonly Row[]).find((row) => row.panel?.viewVisible === true && row.panel.viewWidth > 0), 10_000);

@@ -25,9 +25,43 @@ import { modelRows } from '../shared/model-rows';
  * pointer events and adds no scroll area; narrow and low windows get less of it.
  */
 
+/**
+ * Connect to a host on another machine (DSP-111): the local end of the SSH tunnel and the host's
+ * token. DSpatch restarts into that session; every window then works on the host.
+ */
+function RemoteSessionForm({ onClose }: { readonly onClose: () => void }): JSX.Element {
+  const [address, setAddress] = useState('127.0.0.1:47917');
+  const [token, setToken] = useState('');
+  const [note, setNote] = useState('');
+  return (
+    <form
+      className="start__remote-form"
+      data-ev="remote-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setNote('Connecting…');
+        void window.dspatchHost?.connect(address, token).then(setNote);
+      }}
+    >
+      <label>
+        Local end of the SSH tunnel
+        <input data-ev="remote-address" value={address} onChange={(event) => setAddress(event.target.value)} spellCheck={false} />
+      </label>
+      <label>
+        Host token
+        <input data-ev="remote-token" type="password" value={token} onChange={(event) => setToken(event.target.value)} spellCheck={false} />
+      </label>
+      {note !== '' && <p className="start__remote-note">{note}</p>}
+      <div className="start__remote-buttons">
+        <button type="submit" data-ev="remote-connect">Connect</button>
+        <button type="button" onClick={onClose}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
 /** Shown on the inactive Remote Session button, on hover and on focus. */
-export const REMOTE_SESSION_NOTE =
-  'Remote sessions over SSH are not available yet. They are planned (DSP-111); nothing here connects anywhere.';
+export const REMOTE_SESSION_NOTE = 'Work on a DSpatch host on another machine, through an SSH tunnel.';
 
 function FolderIcon(): JSX.Element {
   return (
@@ -221,7 +255,7 @@ export function ProviderSelect({
   );
 }
 
-/** Open Project and Remote Session, side by side and equal. Remote is inactive for now. */
+/** Open Project and Remote Session, side by side and equal. */
 export function WorkspaceEntrances({
   busy,
   onOpenProject,
@@ -230,6 +264,10 @@ export function WorkspaceEntrances({
   readonly onOpenProject: () => void;
 }): JSX.Element {
   const noteId = useId();
+  const [connecting, setConnecting] = useState(false);
+  if (connecting) {
+    return <RemoteSessionForm onClose={() => setConnecting(false)} />;
+  }
   return (
     <div className="start__actions">
       <button type="button" className="start__action" data-ev="open-project" disabled={busy} onClick={onOpenProject}>
@@ -240,13 +278,10 @@ export function WorkspaceEntrances({
       <span className="start__remote">
         <button
           type="button"
-          className="start__action start__action--inactive"
+          className="start__action"
           data-ev="remote-session"
-          aria-disabled="true"
           aria-describedby={noteId}
-          onClick={(event) => {
-            event.preventDefault();
-          }}
+          onClick={() => setConnecting(true)}
         >
           <TerminalIcon />
           Remote Session

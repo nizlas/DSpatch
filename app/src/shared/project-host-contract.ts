@@ -1,3 +1,4 @@
+import type { HostBrowsePage } from './host-link';
 import type {
   AddLoopInstructionRequest,
   SteerTurnRequest,
@@ -231,6 +232,9 @@ export type ProjectHostMethods = ReviewMethods & {
     readonly adapterSent: unknown;
   };
 
+  // --- Choosing a place on the host (DSP-111) -------------------------------------------
+  readonly 'files.browse': (folder: string | null) => HostBrowsePage;
+
   // --- Closing -------------------------------------------------------------------------
   readonly 'host.shutdown': (request: { readonly observeConversationFiles: boolean }) => HostShutdownAnswer;
 };
@@ -362,5 +366,6 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'scripted.conversationFiles': true,
   'scripted.resumeChoice': true,
   'scripted.reviewReading': true,
+  'files.browse': true,
   'host.shutdown': true,
 } satisfies Record<ProjectHostMethodName, true>) as ProjectHostMethodName[];

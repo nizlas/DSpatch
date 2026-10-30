@@ -95,6 +95,7 @@ import {
   describePermissionPolicy,
 } from '../adapter/claude-agent-sdk-adapter';
 import { claudeSupportStatus } from '../adapter/claude-support';
+import { browseHostFolder } from './host-browse';
 import {
   COPILOT_ANALYSIS_POLICY,
   COPILOT_REVIEW_DENY_REASON,
@@ -3914,6 +3915,7 @@ function registerReviewMethods(): void {
 /* --------------------------------------------------------------------------- */
 
 function registerCoreMethods(): void {
+  handle('files.browse', (_event, folder: unknown) => browseHostFolder(typeof folder === 'string' ? folder : null));
   handle('chat.environment', (): HostEnvironmentFacts => environmentFacts());
   handle('chat.getConnection', () => chatService.getConnection());
 

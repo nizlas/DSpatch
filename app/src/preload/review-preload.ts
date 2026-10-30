@@ -1,3 +1,4 @@
+import type { HostBrowsePage, HostLinkBridge, HostLinkState } from '../shared/host-link';
 import { contextBridge, ipcRenderer } from 'electron';
 
 import type {
@@ -158,3 +159,27 @@ contextBridge.exposeInMainWorld('dspatchReview', reviewBridge);
 contextBridge.exposeInMainWorld('dspatchReviewPanel', panelBridge);
 contextBridge.exposeInMainWorld('dspatchReviewPair', pairBridge);
 contextBridge.exposeInMainWorld('dspatchReviewDiscussion', discussionBridge);
+
+contextBridge.exposeInMainWorld('dspatchHost', {
+  state: () => ipcRenderer.invoke('dspatch:host-link-state') as Promise<HostLinkState>,
+  onState: (listener: (state: HostLinkState) => void) => {
+    const handler = (_event: unknown, state: HostLinkState): void => {
+      listener(state);
+    };
+    ipcRenderer.on('dspatch:host-link', handler);
+    return () => {
+      ipcRenderer.removeListener('dspatch:host-link', handler);
+    };
+  },
+  retry: () => {
+    ipcRenderer.send('dspatch:host-link-retry');
+  },
+  connect: (address: string, token: string) => ipcRenderer.invoke('dspatch:remote-connect', address, token) as Promise<string>,
+  leave: () => {
+    ipcRenderer.send('dspatch:remote-leave');
+  },
+  browse: (folder: string | null) => ipcRenderer.invoke('dspatch:host-browse', folder) as Promise<HostBrowsePage>,
+  browseDone: (chosen: string | null) => {
+    ipcRenderer.send('dspatch:host-browse-done', chosen);
+  },
+} satisfies HostLinkBridge);

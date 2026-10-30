@@ -2066,6 +2066,8 @@ export type PairWindowCheckRequest =
   | { readonly action: 'select'; readonly id: number; readonly selector: string; readonly value: string }
   | { readonly action: 'go-to-step'; readonly id: number; readonly stepId: string }
   | { readonly action: 'capture'; readonly id: number; readonly label: string }
+  /** The window as the desktop shows it, with a docked panel: `capture` reads one page only. */
+  | { readonly action: 'screen'; readonly id: number; readonly label: string }
   | { readonly action: 'focus'; readonly id: number }
   /** Set the window's content size, as a person resizing it would. */
   | { readonly action: 'resize'; readonly id: number; readonly width: number; readonly height: number }
@@ -2097,7 +2099,11 @@ export type PairWindowCheckRequest =
   | { readonly action: 'pointer-drag'; readonly id: number; readonly selector: string; readonly dx: number }
   /** The mouse wheel turned over an element's centre; a positive `deltaY` scrolls down. */
   | { readonly action: 'wheel'; readonly id: number; readonly selector: string; readonly deltaY: number }
-  | { readonly action: 'close'; readonly id: number };
+  | { readonly action: 'close'; readonly id: number }
+  /** A remote trial (`scripts/remote-trial.mjs`): ask its forwarder to cut, mend or restart. */
+  | { readonly action: 'trial'; readonly path: string }
+  /** What the windows are told of the connection to the host. */
+  | { readonly action: 'host-link' };
 
 /** A character in an element's text, for real mouse input (DSP-152). */
 export interface TextPoint {
@@ -2243,7 +2249,7 @@ export interface ScriptedRunPlan {
    */
   readonly resumeHold?: boolean;
   /** DSP-149 `workspace-flow`: which process this is, and the folder its projects are in. */
-  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked' | 'pick' | 'direction' | 'columns' | 'insight' | 'insight-again' | 'selection' | 'context' | 'context-walk' | 'panel';
+  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked' | 'pick' | 'direction' | 'columns' | 'insight' | 'insight-again' | 'selection' | 'context' | 'context-walk' | 'panel' | 'remote' | 'remote-again' | 'remote-restart';
   readonly flowRoot?: string;
 }
 

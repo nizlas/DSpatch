@@ -79,6 +79,8 @@ test("the client loads none of the project's services and no provider SDK", () =
   const clientFiles = new Set([
     'main/main.ts',
     'main/host-connection.ts',
+    'main/remote-link.ts',
+    'main/remote-session.ts',
     'main/launch-mode.ts',
     'main/own-repository.ts',
     'main/probe-exit.ts',

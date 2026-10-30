@@ -15,7 +15,7 @@
   // typecheck instead of a failure inside the packaged artifact.
   "exclude": [
     "src/adapter/cursor-sdk-adapter.ts",
-    "src/adapter/claude-agent-sdk-adapter.ts", "src/adapter/copilot-sdk-adapter.ts",
+    "src/adapter/claude-agent-sdk-adapter.ts", "src/adapter/copilot-sdk-adapter.ts", "src/shared/remote-protocol.ts", "src/shared/remote-proof.ts", "src/shared/remote-build.ts",
     "src/adapter/claude-support.ts",
     "src/adapter/claude-sdk-shapes.ts"
   ]

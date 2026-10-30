@@ -30,7 +30,17 @@ export interface HostProcess {
   pid(): number | undefined;
   /** The last part of what the process wrote to stderr, for a failure's details. */
   stderrTail(): string;
+  /** A host on another machine: its connection comes and goes while the host goes on. */
+  onLink?(listener: (event: HostLinkEvent) => void): void;
 }
+
+/** What a remote connection did. A local process has none of these. */
+export type HostLinkEvent =
+  | { readonly kind: 'disconnected' }
+  /** The host's `lastCall` is the last call it received; later ones never reached it. */
+  | { readonly kind: 'connected'; readonly first: boolean; readonly resumed: boolean; readonly lastCall: number }
+  /** This client will not reconnect, and why. */
+  | { readonly kind: 'refused'; readonly message: string };
 
 export type HostState = 'not-started' | 'starting' | 'ready' | 'failed' | 'lost' | 'stopping' | 'stopped';
 
@@ -53,6 +63,8 @@ export interface HostConnectionOptions {
   readonly onEvent: (to: HostEventTarget, channel: string, payload: unknown) => void;
   readonly onLost: (loss: HostLoss) => void;
   readonly log: (message: string) => void;
+  /** After a {@link HostLinkEvent}, once the connection has acted on it. */
+  readonly onLink?: (event: HostLinkEvent) => void;
 }
 
 interface Pending {
@@ -95,6 +107,9 @@ export class HostConnection {
 
   /** The host's own close bound, from its ready message; `null` until a host has said. */
   private closeWithinMs: number | null = null;
+
+  /** `false` while a remote connection is down. A local process is always linked. */
+  private linked = true;
 
   constructor(options: HostConnectionOptions) {
     this.options = options;
@@ -158,6 +173,11 @@ export class HostConnection {
         return;
       }
       this.process = child;
+      child.onLink?.((event) => {
+        if (child === this.process) {
+          this.linkChanged(event);
+        }
+      });
       timer = setTimeout(() => {
         this.stateNow = 'failed';
         this.lastFailure = unavailable(
@@ -234,6 +254,9 @@ export class HostConnection {
         ? unavailable(`${HOST} is not running, so "${method}" was not done.`)
         : unavailable(`${why.message} "${method}" was not done.`, why.detail);
     }
+    if (!this.linked) {
+      return unavailable(`The connection to the host is lost, so "${method}" was not sent.`);
+    }
     const id = this.nextId;
     this.nextId += 1;
     return new Promise<unknown>((resolve) => {
@@ -296,6 +319,46 @@ export class HostConnection {
     return outcome;
   }
 
+  /**
+   * A remote connection came or went. **Nothing is sent again.** A call waiting across a drop
+   * stays waiting, because the host answers it when it comes back: unless the host never
+   * received it, which is then known and said, or the place could not be kept, when its
+   * answer is gone and the outcome is unknown.
+   */
+  private linkChanged(event: HostLinkEvent): void {
+    if (event.kind === 'disconnected') {
+      this.linked = false;
+    } else if (event.kind === 'connected') {
+      this.linked = true;
+      for (const [id, pending] of this.pending) {
+        if (id > event.lastCall && event.resumed) {
+          this.pending.delete(id);
+          pending.resolve(unavailable(`The connection dropped before "${pending.method}" reached the host. It was not done, and nothing was sent again.`));
+        } else if (!event.resumed) {
+          this.pending.delete(id);
+          pending.resolve({
+            kind: 'host-error',
+            code: 'host-lost',
+            message: `The answer to "${pending.method}" could not be recovered from the host. Whether it was done is unknown, and nothing was sent again.`,
+          } satisfies HostCallFailure);
+        }
+      }
+    } else {
+      this.linked = false;
+      this.lastFailure = unavailable(event.message);
+      this.stateNow = 'failed';
+      for (const [id, pending] of this.pending) {
+        this.pending.delete(id);
+        pending.resolve({
+          kind: 'host-error',
+          code: 'host-lost',
+          message: `${event.message} Whether "${pending.method}" was done is unknown, and nothing was sent again.`,
+        } satisfies HostCallFailure);
+      }
+    }
+    this.options.onLink?.(event);
+  }
+
   private receive(message: unknown, onReady: (pid: number) => void): void {
     if (typeof message !== 'object' || message === null) {
       return;
@@ -346,6 +409,7 @@ export class HostConnection {
       this.stateNow = 'stopped';
       return;
     }
+    this.linked = true;
     if (this.stateNow === 'failed') {
       // A start that already failed (and was reported) ending its process: not a loss.
       return;

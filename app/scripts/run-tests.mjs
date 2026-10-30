@@ -146,6 +146,7 @@ const AREAS = {
       'project-host-boundary.test.ts',
       { file: 'host-connection.test.ts', heavy: true },
       { file: 'project-host-process.test.ts', heavy: true },
+      { file: 'remote-transport.test.ts', heavy: true },
     ],
   },
   project: {

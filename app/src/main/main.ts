@@ -1,8 +1,14 @@
+import childProcess from 'node:child_process';
+import type { HostLinkState } from '../shared/host-link';
+import { remoteBuild } from '../shared/remote-build';
+import { RemoteLink, type RemoteEndpoint } from './remote-link';
+import { endRemoteSession, parseRemoteAddress, readRemoteSession, saveRemoteSession } from './remote-session';
+import type { HostLinkEvent } from './host-connection';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { BrowserWindow, Menu, app, clipboard, dialog, ipcMain, shell, utilityProcess, webContents } from 'electron';
+import { BrowserWindow, Menu, app, clipboard, desktopCapturer, dialog, ipcMain, shell, utilityProcess, webContents } from 'electron';
 
 import type {
   AddLoopInstructionOutcome,
@@ -423,6 +429,74 @@ function from(event: Electron.IpcMainInvokeEvent): { readonly senderId: number }
   return { senderId: event.sender.id };
 }
 
+/** Restart into this computer's own host. */
+function leaveRemoteSession(): void {
+  endRemoteSession(app.getPath('userData'));
+  log('left the remote session; restarting on this computer');
+  app.relaunch();
+  app.exit(0);
+}
+
+/** The connection line and the host chooser, for every window (DSP-111). */
+function registerHostLinkIpc(): void {
+  ipcMain.handle('dspatch:host-link-state', () => hostLink);
+  ipcMain.on('dspatch:host-link-retry', () => {
+    remoteLink?.retryNow();
+  });
+  ipcMain.on('dspatch:remote-leave', () => {
+    leaveRemoteSession();
+  });
+  ipcMain.handle('dspatch:remote-connect', (_event, address: unknown, token: unknown): string => {
+    if (typeof address !== 'string' || typeof token !== 'string' || token.trim() === '') {
+      return 'Give the address and the token.';
+    }
+    const parsed = parseRemoteAddress(address);
+    if ('error' in parsed) {
+      return parsed.error;
+    }
+    saveRemoteSession(app.getPath('userData'), `${parsed.host}:${String(parsed.port)}`, token.trim());
+    log(`connecting to the host at ${parsed.host}:${String(parsed.port)}; restarting into that session`);
+    app.relaunch();
+    app.exit(0);
+    return '';
+  });
+  ipcMain.handle('dspatch:host-browse', (_event, folder: unknown) => hostCall('files.browse', NO_SENDER, typeof folder === 'string' ? folder : null));
+  ipcMain.on('dspatch:host-browse-done', (_event, chosen: unknown) => {
+    browseDone?.(typeof chosen === 'string' ? chosen : null);
+  });
+}
+
+/**
+ * A remote trial's proof that this process leaves the project alone (`scripts/remote-trial.mjs`).
+ * Read only in a scripted run. Every touch of a path under the root is logged and refused, and
+ * every child process logged, so a client that quietly read the project shows in the trial.
+ */
+function guardProjectFiles(root: string): void {
+  const inside = (candidate: unknown): boolean => {
+    const text = typeof candidate === 'string' ? candidate : candidate instanceof URL ? candidate.pathname : '';
+    return text !== '' && path.resolve(text).toLowerCase().startsWith(path.resolve(root).toLowerCase());
+  };
+  const files = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
+  for (const name of ['readFileSync', 'existsSync', 'statSync', 'lstatSync', 'readdirSync', 'openSync', 'realpathSync', 'accessSync', 'writeFileSync']) {
+    const original = files[name] as (...args: unknown[]) => unknown;
+    files[name] = (...args: unknown[]) => {
+      if (inside(args[0])) {
+        log(`the client touched the project: ${name} ${String(args[0])}`);
+        throw new Error(`The client may not touch ${String(args[0])}.`);
+      }
+      return original(...args);
+    };
+  }
+  const children = childProcess as unknown as Record<string, (...args: unknown[]) => unknown>;
+  for (const name of ['spawn', 'execFile']) {
+    const original = children[name] as (...args: unknown[]) => unknown;
+    children[name] = (...args: unknown[]) => {
+      log(`the client touched the project: it started ${String(args[0])}`);
+      return original(...args);
+    };
+  }
+}
+
 /** What the host is told at start: the values the Electron `app` object holds. */
 function hostStartConfig(): HostStartConfig {
   return {
@@ -488,7 +562,15 @@ function spawnUtilityHost(): HostProcess {
  * system can do.
  */
 const host = new HostConnection({
-  spawn: spawnUtilityHost,
+  spawn: () => {
+    const remote = remoteSession();
+    if (remote === null) {
+      return spawnUtilityHost();
+    }
+    publishLink({ phase: 'connecting', note: '' });
+    remoteLink = new RemoteLink({ endpoint: remote, build: remoteBuild(app.getAppPath()), log });
+    return remoteLink;
+  },
   startTimeoutMs: HOST_START_TIMEOUT_MS,
   onEvent: (to, channel, payload) => {
     deliverHostEvent(to, channel, payload);
@@ -496,8 +578,128 @@ const host = new HostConnection({
   onLost: (loss) => {
     void hostLost(loss);
   },
+  onLink: (event) => {
+    linkChanged(event);
+  },
   log,
 });
+
+/** The host on another machine this launch uses, or `null` for this computer's own. */
+let remoteEndpoint: RemoteEndpoint | null | undefined;
+
+let remoteLink: RemoteLink | null = null;
+
+function remoteSession(): RemoteEndpoint | null {
+  if (remoteEndpoint === undefined) {
+    remoteEndpoint = readRemoteSession(app.getPath('userData'), process.env);
+  }
+  return remoteEndpoint;
+}
+
+/** What every window shows of the connection (DSP-111). */
+let hostLink: HostLinkState = { remote: false, phase: 'connected', machine: '', address: '', note: '' };
+
+function publishLink(change: Pick<HostLinkState, 'phase' | 'note'>): void {
+  const remote = remoteSession();
+  const address = remote === null ? '' : `${remote.host}:${String(remote.port)}`;
+  hostLink = { remote: remote !== null, address, machine: remoteLink?.machineName() || address, ...change };
+  log(`host link: ${hostLink.phase}${hostLink.note === '' ? '' : ` (${hostLink.note})`}`);
+  for (const contents of webContents.getAllWebContents()) {
+    if (!contents.isDestroyed()) {
+      contents.send('dspatch:host-link', hostLink);
+    }
+  }
+}
+
+/** The connection came or went. Windows keep what they show; nothing is sent again. */
+function linkChanged(event: HostLinkEvent): void {
+  if (event.kind === 'disconnected') {
+    publishLink({ phase: 'reconnecting', note: 'Connection lost. Work on the host goes on, and nothing is sent until it is back.' });
+  } else if (event.kind === 'refused') {
+    publishLink({ phase: 'stopped', note: event.message });
+  } else {
+    publishLink({ phase: 'connected', note: '' });
+    if (!event.first && !event.resumed) {
+      // Too much happened while away to replay: the windows read what the host has now.
+      reloadOpenWindows();
+    }
+  }
+}
+
+function reloadOpenWindows(): void {
+  const main = liveMainWindow();
+  if (main !== null) {
+    main.webContents.reload();
+  }
+  if (editorWindow !== null && !editorWindow.isDestroyed()) {
+    editorWindow.webContents.reload();
+  }
+}
+
+/**
+ * The file choosers. Local: the native dialog. In a remote session the paths are the host's,
+ * so a small window browses the host; a path on this machine would mean nothing there.
+ */
+const pickers = {
+  showOpenDialog: (first: BrowserWindow | Electron.OpenDialogOptions, second?: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> => {
+    const options = second ?? (first as Electron.OpenDialogOptions);
+    if (remoteSession() !== null) {
+      return pickOnHost(options);
+    }
+    return second === undefined ? dialog.showOpenDialog(options) : dialog.showOpenDialog(first as BrowserWindow, options);
+  },
+  showSaveDialog: (first: BrowserWindow | Electron.SaveDialogOptions, second?: Electron.SaveDialogOptions): Promise<Electron.SaveDialogReturnValue> => {
+    const options = second ?? (first as Electron.SaveDialogOptions);
+    if (remoteSession() !== null) {
+      return pickOnHost({ ...options, properties: ['openFile'], ...{ saving: true } }).then((picked) => ({ canceled: picked.canceled, filePath: picked.filePaths[0] ?? '' }));
+    }
+    return second === undefined ? dialog.showSaveDialog(options) : dialog.showSaveDialog(first as BrowserWindow, options);
+  },
+};
+
+let browseDone: ((chosen: string | null) => void) | null = null;
+
+/** The host chooser, one at a time, in a window of its own. */
+function pickOnHost(options: Electron.OpenDialogOptions & { readonly saving?: boolean }): Promise<Electron.OpenDialogReturnValue> {
+  return new Promise((resolve) => {
+    browseDone?.(null);
+    const mode = options.saving === true ? 'save' : options.properties?.includes('openDirectory') === true ? 'folder' : 'file';
+    const parent = liveMainWindow();
+    const window = new BrowserWindow({
+      width: 620,
+      height: 520,
+      title: options.title ?? 'Choose on the host',
+      backgroundColor: '#101317',
+      ...(parent === null ? {} : { parent, modal: true }),
+      webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    window.removeMenu();
+    let answered = false;
+    const answer = (chosen: string | null): void => {
+      if (!answered) {
+        answered = true;
+        browseDone = null;
+        resolve({ canceled: chosen === null, filePaths: chosen === null ? [] : [chosen] });
+      }
+    };
+    browseDone = (chosen) => {
+      answer(chosen);
+      if (!window.isDestroyed()) {
+        window.close();
+      }
+    };
+    window.on('closed', () => {
+      answer(null);
+    });
+    const search = `window=browse&mode=${mode}&title=${encodeURIComponent(options.title ?? '')}`;
+    if (rendererUrl === undefined) {
+      void window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { search });
+    } else {
+      const base = rendererUrl.split('#')[0] ?? rendererUrl;
+      void window.loadURL(`${base}${base.includes('?') ? '&' : '?'}${search}`);
+    }
+  });
+}
 
 /** Deliver an event from the host to the windows of the audience it names. */
 function deliverHostEvent(to: HostEventTarget, channel: string, payload: unknown): void {
@@ -567,12 +769,40 @@ async function startHostOrQuit(): Promise<boolean> {
   for (;;) {
     const started = await host.start();
     if (started.ok) {
+      if (remoteSession() !== null) {
+        const hostBuild = remoteLink?.build();
+        const mine = remoteBuild(app.getAppPath());
+        publishLink({ phase: 'connected', note: hostBuild !== null && hostBuild !== undefined && hostBuild.commit !== mine.commit ? `The host is at ${hostBuild.commit}, this client at ${mine.commit}.` : '' });
+      }
       return true;
     }
     log(`project host could not be started: ${started.failure.message} ${started.failure.detail ?? ''}`.trim());
     if (unattended()) {
       app.exit(HOST_EXIT_START_FAILED);
       return false;
+    }
+    const remote = remoteSession();
+    if (remote !== null) {
+      const response = await askPerson({
+        type: 'error',
+        buttons: ['Try again', 'Work on this computer', 'Quit DSpatch'],
+        defaultId: 0,
+        cancelId: 2,
+        title: 'DSpatch could not reach the host',
+        message: `No DSpatch host answered at ${remote.host}:${String(remote.port)}.`,
+        detail:
+          'Check that the host is running on the other machine and that the SSH tunnel is up. ' +
+          `Nothing was sent.\n\n${started.failure.detail ?? started.failure.message}`,
+      });
+      if (response === 1) {
+        leaveRemoteSession();
+        return false;
+      }
+      if (response !== 0) {
+        app.exit(HOST_EXIT_START_FAILED);
+        return false;
+      }
+      continue;
     }
     const response = await askPerson({
       type: 'error',
@@ -611,6 +841,21 @@ async function startHostOrQuit(): Promise<boolean> {
  * fresh sessions on the new host.
  */
 async function hostLost(loss: HostLoss): Promise<void> {
+  if (remoteSession() !== null) {
+    // A host on another machine that was restarted: every call waiting has its answer, and
+    // the windows read what it saved. Nothing is started or sent again, so nothing to ask.
+    log(`the remote host was restarted; ${String(loss.unanswered.length)} unanswered call(s) read as unknown`);
+    publishLink({ phase: 'reconnecting', note: 'The host was restarted. What was running there has ended with an unknown outcome.' });
+    if (!(await startHostOrQuit())) {
+      return;
+    }
+    if (reviewWindows !== null) {
+      await reviewWindows.reattach(true);
+    }
+    publishLink({ phase: 'connected', note: 'The host was restarted. What was running there ended with an unknown outcome; saved work is there.' });
+    reloadOpenWindows();
+    return;
+  }
   if (unattended()) {
     log(`project host lost during an unattended run; exiting with ${String(HOST_EXIT_LOST)}`);
     exitNow(HOST_EXIT_LOST);
@@ -776,7 +1021,7 @@ let probeStarted = false;
 async function addWorkspaceFolder(folderPath: string | null): Promise<WorkspaceView> {
   let chosen = folderPath;
   if (chosen === null) {
-    const picked = await dialog.showOpenDialog({
+    const picked = await pickers.showOpenDialog({
       title: 'Add a folder to the workspace',
       properties: ['openDirectory'],
     });
@@ -792,7 +1037,7 @@ async function addWorkspaceFolder(folderPath: string | null): Promise<WorkspaceV
 async function openWorkspace(filePath: string | null): Promise<WorkspaceView> {
   let target = filePath;
   if (target === null) {
-    const picked = await dialog.showOpenDialog({
+    const picked = await pickers.showOpenDialog({
       title: 'Open a workspace',
       filters: [{ name: 'DSpatch workspace', extensions: ['json'] }],
       properties: ['openFile'],
@@ -815,7 +1060,7 @@ async function saveWorkspace(filePath: string | null): Promise<WorkspaceView> {
   let target = filePath;
   if (target === null) {
     const current = await hostCall('workspace.view', NO_SENDER);
-    const picked = await dialog.showSaveDialog({
+    const picked = await pickers.showSaveDialog({
       title: 'Save workspace',
       defaultPath: current.filePath ?? `my.${WORKSPACE_FILE_EXTENSION}`,
       filters: [{ name: 'DSpatch workspace', extensions: ['json'] }],
@@ -914,8 +1159,8 @@ async function exportConversation(
     };
     const chosen =
       window === null
-        ? await dialog.showSaveDialog(options)
-        : await dialog.showSaveDialog(window, options);
+        ? await pickers.showSaveDialog(options)
+        : await pickers.showSaveDialog(window, options);
     if (chosen.canceled || chosen.filePath === undefined || chosen.filePath === '') {
       return {
         kind: 'cancelled',
@@ -1632,7 +1877,7 @@ async function openGraphFileForEditing(): Promise<void> {
   if (chatRunMode) {
     chosen = scriptedFilePick('Open Graph File…');
   } else {
-    const picked = await dialog.showOpenDialog({
+    const picked = await pickers.showOpenDialog({
       title: 'Open a graph file for editing',
       defaultPath:
         ownRepoRoot === null ? undefined : path.join(ownRepoRoot, 'docs', 'loop', 'graphs'),
@@ -2832,6 +3077,17 @@ async function pairWindowCheckIn(request: PairWindowCheckRequest): Promise<Edito
     return main === null ? { ok: false, detail: 'no main window' } : pressIn(main, main.webContents, request);
   }
   const windows = requireReviewWindows();
+  if (request.action === 'trial') {
+    const control = process.env['DSPATCH_TRIAL_CONTROL'];
+    if (control === undefined) {
+      return { ok: false, detail: 'not a remote trial' };
+    }
+    await fetch(`${control}${request.path}`);
+    return { ok: true, detail: request.path };
+  }
+  if (request.action === 'host-link') {
+    return { ok: true, detail: hostLink };
+  }
   if (request.action === 'windows') {
     return {
       ok: true,
@@ -2885,6 +3141,20 @@ async function pairWindowCheckIn(request: PairWindowCheckRequest): Promise<Edito
   }
   if (request.action === 'drag' || request.action === 'right-click' || request.action === 'chord' || request.action === 'pointer-drag' || request.action === 'wheel') {
     return pointerIn(shown, entry.contents, request);
+  }
+  if (request.action === 'screen') {
+    shown.show();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const [width, height] = shown.getSize();
+    const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: width ?? 1400, height: height ?? 900 } });
+    const source = sources.find((candidate) => candidate.id === shown.getMediaSourceId());
+    const base = process.env['DSPATCH_CHAT_SHOT'];
+    if (source === undefined || base === undefined) {
+      return { ok: false, detail: 'the window is not among the desktop sources' };
+    }
+    const file = `${base.replace(/\.png$/i, '')}-${request.label}.png`;
+    fs.writeFileSync(file, source.thumbnail.toPNG());
+    return { ok: true, detail: file };
   }
   if (request.action === 'capture') {
     // Two frames painted first: a capture taken at once can return the frame before the
@@ -3586,8 +3856,8 @@ function registerIpc(): void {
     };
     const result =
       window === null
-        ? await dialog.showOpenDialog(options)
-        : await dialog.showOpenDialog(window, options);
+        ? await pickers.showOpenDialog(options)
+        : await pickers.showOpenDialog(window, options);
     const chosen = result.filePaths[0];
     if (result.canceled || chosen === undefined) {
       log('folder picker cancelled');
@@ -3635,6 +3905,9 @@ function registerIpc(): void {
           `There is no file at ${filePath}, so there is nothing to show. The ` +
           'conversation may already have been moved or deleted from outside DSpatch.',
       };
+    }
+    if (remoteSession() !== null) {
+      return { revealed: false, note: `The file is on the host, at ${filePath}.` };
     }
     shell.showItemInFolder(filePath);
     return {
@@ -3785,7 +4058,7 @@ function registerIpc(): void {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.
-              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' || named === 'selection' || named === 'context' || named === 'context-walk' || named === 'panel' ? named : 'first';
+              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' || named === 'selection' || named === 'context' || named === 'context-walk' || named === 'panel' || named === 'remote' || named === 'remote-again' || named === 'remote-restart' ? named : 'first';
             })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }
@@ -3986,7 +4259,7 @@ function registerLoopGraphIpc(): void {
         return hostCall('loop.openGraph', NO_SENDER, request);
       }
       // A dialog taking either kind; the host decides by what the file says it is.
-      const picked = await dialog.showOpenDialog({
+      const picked = await pickers.showOpenDialog({
         title: 'Open a loop or a graph',
         defaultPath: ownRoot === null ? undefined : path.join(ownRoot, '.dspatch', 'loops'),
         filters: [{ name: 'Loop definition or graph', extensions: ['json'] }],
@@ -4060,6 +4333,9 @@ function registerLoopGraphIpc(): void {
       if (!('target' in located)) {
         return located;
       }
+      if (remoteSession() !== null) {
+        return { revealed: false, note: `The file is on the host, at ${located.target}.` };
+      }
       shell.showItemInFolder(located.target);
       return { revealed: true, note: `Opened the folder containing ${located.target} and selected it there.` };
     },
@@ -4088,7 +4364,7 @@ function registerLoopGraphIpc(): void {
       if (asked === null && chatRunMode) {
         asked = scriptedFilePick('Open loop…');
       } else if (asked === null) {
-        const picked = await dialog.showOpenDialog({
+        const picked = await pickers.showOpenDialog({
           title: 'Open a loop definition',
           defaultPath: ownRoot === null ? undefined : path.join(ownRoot, '.dspatch', 'loops'),
           filters: [{ name: 'Loop definition', extensions: ['json'] }],
@@ -4270,6 +4546,10 @@ function registerLifecycle(): void {
 }
 
 function main(): void {
+  const forbidden = process.env['DSPATCH_CLIENT_FORBIDDEN_ROOT'];
+  if (chatRunMode && forbidden !== undefined && forbidden !== '') {
+    guardProjectFiles(forbidden);
+  }
   const modes = [smokeMode, probeMode, chatRunMode].filter(Boolean).length;
   if (modes > 1) {
     log(
@@ -4373,6 +4653,7 @@ function main(): void {
         }
       },
       development: !app.isPackaged,
+      ...(remoteSession() === null ? {} : { pickOnHost: (options: Electron.OpenDialogOptions) => pickOnHost(options) }),
       // A held window is a person's: their review chooser is the real dialog, never the queue.
       scriptedPick: chatRunMode && !chatRunHold ? () => scriptedFilePick('review definition') : null,
       log: (message) => {
@@ -4389,6 +4670,7 @@ function main(): void {
       log,
     );
     registerIpc();
+    registerHostLinkIpc();
     if (reviewAskedAtStart && !directReviewMode) {
       log(
         'DSPATCH_REVIEW_DEFINITION or #review was set and is ignored: this launch is a ' +
