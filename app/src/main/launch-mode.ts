@@ -88,8 +88,6 @@ export const chatRunScenario: ScriptedScenario =
                                 ? 'walk-start'
                                 : chatRunValue === 'analysis-access'
                                 ? 'analysis-access'
-                                : chatRunValue === 'selection-explain'
-                                ? 'selection-explain'
                                 : chatRunValue === 'diff-marks'
                                 ? 'diff-marks'
                                 : chatRunValue === 'review-flow'
@@ -194,8 +192,6 @@ export const presentationMode =
   chatRunScenario === 'walk-start' ||
   // DSP-152: the analysis agent reads the revisions the host wrote (SIMULATED answers over real reads).
   chatRunScenario === 'analysis-access' ||
-  // DSP-152: explaining code selected in the diff, with real selections (SIMULATED answers over real reads).
-  chatRunScenario === 'selection-explain' ||
   // DSP-150 follow-up: the diff's change marks in the real window (one SIMULATED explanation).
   chatRunScenario === 'diff-marks' ||
   // The review flow after Niclas's first real trial (SIMULATED walks, readings, reviews and explanations).

@@ -23,6 +23,7 @@ import {
 import type { ModelListing } from '../shared/bridge';
 import {
   REVIEW_PAIR_CHANNELS,
+  REVIEW_PANEL_CHANNELS,
   isPairError,
   type DiffLocation,
   type OpenPair,
@@ -71,7 +72,7 @@ function fileFailure(error: ReviewHostError): ReviewFileOutcome {
  */
 export interface ReviewDiscussionClient {
   call(
-    method: 'load' | 'send' | 'cancel' | 'acknowledge' | 'draft' | 'chooseAgent' | 'recap',
+    method: 'load' | 'send' | 'cancel' | 'acknowledge' | 'draft' | 'quote' | 'chooseAgent' | 'recap',
     target: DiscussionTarget,
     argument?: unknown,
   ): Promise<unknown>;
@@ -114,12 +115,18 @@ export function reviewSenderRefusal(windows: ReviewWindows, sender: WebContents)
     : null;
 }
 
-/** The discussion identity of the review a window shows, or `null` while it is choosing. */
+/**
+ * The discussion identity of the review a window shows, or `null` while it is choosing.
+ * A walk names its definition, a diff window none: the host gives both the one discussion
+ * of their revision pair (30 October 2026).
+ */
 function discussionIdentityOf(entry: ReviewWindowEntry): DiscussionIdentity | null {
   const identity = entry.identity;
-  return identity === null
-    ? null
-    : { key: identity.key, repository: identity.repository, base: identity.base, target: identity.target, definitionPath: identity.definitionPath };
+  if (identity !== null) {
+    return { key: identity.key, repository: identity.repository, base: identity.base, target: identity.target, definitionPath: identity.definitionPath };
+  }
+  const pair = entry.view === 'diff' ? entry.pairIdentity : null;
+  return pair === null ? null : { key: entry.pairKey ?? '', repository: pair.repository, base: pair.base, target: pair.target, definitionPath: '' };
 }
 
 export function registerReviewIpc(
@@ -211,6 +218,9 @@ export function registerReviewIpc(
       return { kind: 'failed', error: opened.error };
     }
     const other = windows.claimPair(entry, opened.key, pairLabel(opened));
+    if (other === null) {
+      entry.pairIdentity = opened.pair;
+    }
     if (other !== null) {
       return { kind: 'focused', note: 'This change is already open in another review window, which has been brought to the front.' };
     }
@@ -219,7 +229,7 @@ export function registerReviewIpc(
   ipcMain.handle(REVIEW_PAIR_CHANNELS.forWalk, async (event): Promise<PairAnswer<OpenPair>> => {
     const entry = entryOf(event);
     const identity = entry.identity;
-    if (entry.view !== 'walk' || identity === null) {
+    if (entry.view === 'diff' || identity === null) {
       return { error: 'No walk is open in this window.' };
     }
     const opened = (await pairs.call('reviewPair.openForWalk', {
@@ -238,9 +248,6 @@ export function registerReviewIpc(
   ipcMain.handle(REVIEW_PAIR_CHANNELS.state, async (event, key: unknown) => pairs.call('reviewPair.state', keyOf(entryOf(event), key)));
   ipcMain.handle(REVIEW_PAIR_CHANNELS.mark, async (event, key: unknown, request: unknown) =>
     pairs.call('reviewPair.mark', keyOf(entryOf(event), key), request),
-  );
-  ipcMain.handle(REVIEW_PAIR_CHANNELS.setRequirement, async (event, key: unknown, requirement: unknown) =>
-    pairs.call('reviewPair.setRequirement', keyOf(entryOf(event), key), requirement),
   );
   ipcMain.handle(REVIEW_PAIR_CHANNELS.savePosition, async (event, key: unknown, position: unknown) => {
     const entry = entryOf(event);
@@ -284,6 +291,90 @@ export function registerReviewIpc(
       return { ok: false, note: chosen.error };
     }
     return chosen.definitionPath === null ? { ok: false, note: 'No code walks yet.' } : openWalk(entry, pairKey, chosen.definitionPath);
+  });
+  /*
+   * The review's panel, Step and Discussion (Niclas's decision of 30 October 2026): it
+   * belongs to the review, in its own window by default or docked in a code window of the
+   * review. Shown from any window of the review; opened over the walk the walk window shows,
+   * or the walks prepared, or before any walk over a definition of the pair with none.
+   */
+  ipcMain.handle(REVIEW_PANEL_CHANNELS.show, async (event, key: unknown, ask: unknown, tab: unknown) => {
+    const entry = entryOf(event);
+    // The panel and a walk window ask for their own review; the diff window names its pair.
+    const pairKey = entry.view === 'panel' || (entry.view === 'walk' && key === null) ? entry.pairKey : keyOf(entry, key);
+    if (pairKey === null || pairKey === '') {
+      return { ok: false, note: 'No review is open in this window.' };
+    }
+    let definitionPath = windows.list().find((other) => other.view === 'walk' && other.pairKey === pairKey)?.identity?.definitionPath ?? null;
+    if (definitionPath === null && windows.panelFor(pairKey) === null) {
+      const chosen = (await pairs.call('reviewPair.walkToOpen', pairKey, openWalkDefinitions())) as PairAnswer<{ readonly definitionPath: string | null }>;
+      definitionPath = isPairError(chosen) ? null : chosen.definitionPath;
+      if (definitionPath === null) {
+        const empty = (await pairs.call('reviewPair.discussionWalk', pairKey)) as PairAnswer<{ readonly definitionPath: string }>;
+        if (isPairError(empty)) {
+          return { ok: false, note: empty.error };
+        }
+        definitionPath = empty.definitionPath;
+      }
+    }
+    return windows.showPanel(pairKey, definitionPath ?? '', ask === true, { provider: entry.defaultProvider, model: entry.defaultModel }, tab === 'step' ? 'step' : 'discussion');
+  });
+  ipcMain.handle(REVIEW_PANEL_CHANNELS.dock, (event, place: unknown) => {
+    const entry = entryOf(event);
+    if (entry.view === 'panel' && (place === 'window' || place === 'diff' || place === 'walk')) {
+      windows.dockPanel(entry, place);
+    }
+  });
+  ipcMain.handle(REVIEW_PANEL_CHANNELS.hide, (event) => {
+    const entry = entryOf(event);
+    if (entry.view === 'panel') {
+      windows.hidePanel(entry);
+    }
+  });
+  ipcMain.handle(REVIEW_PANEL_CHANNELS.lastFollow, (event) => windows.lastFollowFor(entryOf(event)));
+  ipcMain.handle(REVIEW_PANEL_CHANNELS.state, (event) => windows.panelStateFor(entryOf(event)));
+  ipcMain.on(REVIEW_PANEL_CHANNELS.slot, (event, rect: unknown) => {
+    const entry = windows.entryFor(event.sender);
+    if (entry === null || entry.view === 'panel') {
+      return;
+    }
+    const value = typeof rect === 'object' && rect !== null ? (rect as Record<string, unknown>) : null;
+    const ok = value !== null && ['x', 'y', 'width', 'height'].every((name) => typeof value[name] === 'number' && Number.isFinite(value[name] as number));
+    windows.panelSlot(entry, ok && value !== null ? { x: value['x'] as number, y: value['y'] as number, width: value['width'] as number, height: value['height'] as number } : null);
+  });
+  ipcMain.on(REVIEW_PANEL_CHANNELS.follow, (event, position: unknown) => {
+    const entry = windows.entryFor(event.sender);
+    const value = typeof position === 'object' && position !== null ? (position as Record<string, unknown>) : null;
+    if (entry === null || entry.view !== 'walk' || value === null || typeof value['definitionPath'] !== 'string') {
+      return;
+    }
+    windows.panelFollow(entry, {
+      definitionPath: value['definitionPath'],
+      stepId: typeof value['stepId'] === 'string' ? value['stepId'] : null,
+      placeIndex: Number.isInteger(value['placeIndex']) ? (value['placeIndex'] as number) : 0,
+      refIndex: Number.isInteger(value['refIndex']) ? (value['refIndex'] as number) : 0,
+      checkId: typeof value['checkId'] === 'string' ? value['checkId'] : null,
+      checkBack: typeof value['checkBack'] === 'string' ? value['checkBack'].slice(0, 200) : null,
+    });
+  });
+  ipcMain.on(REVIEW_PANEL_CHANNELS.action, (event, action: unknown) => {
+    const entry = windows.entryFor(event.sender);
+    const value = typeof action === 'object' && action !== null ? (action as Record<string, unknown>) : null;
+    if (entry === null || entry.view !== 'panel' || value === null) {
+      return;
+    }
+    if (value['kind'] === 'goToStep' && typeof value['stepId'] === 'string') {
+      windows.panelAction(entry, { kind: 'goToStep', stepId: value['stepId'], placeIndex: Number.isInteger(value['placeIndex']) ? (value['placeIndex'] as number) : 0 });
+    } else if (value['kind'] === 'closeCheck') {
+      windows.panelAction(entry, { kind: 'closeCheck' });
+    } else if (value['kind'] === 'openCheck' && typeof value['checkId'] === 'string') {
+      windows.panelAction(entry, { kind: 'openCheck', checkId: value['checkId'] });
+    } else if (value['kind'] === 'openLocation') {
+      const location = typeof value['location'] === 'object' && value['location'] !== null ? (value['location'] as Record<string, unknown>) : {};
+      if ((location['side'] === 'base' || location['side'] === 'target') && typeof location['path'] === 'string' && Number.isInteger(location['start']) && Number.isInteger(location['end'])) {
+        windows.panelAction(entry, { kind: 'openLocation', location: { side: location['side'], path: location['path'], start: location['start'] as number, end: location['end'] as number } });
+      }
+    }
   });
   // The way into review: reviews not ended, and ending one. Neither starts agent work.
   ipcMain.handle(REVIEW_PAIR_CHANNELS.ongoing, async (event) => {
@@ -357,9 +448,20 @@ export function registerReviewIpc(
   const noReview = 'No review is open in this window, so there is nothing to discuss yet.';
 
   ipcMain.handle(REVIEW_DISCUSSION_CHANNELS.load, async (event, request: unknown): Promise<DiscussionLoadOutcome> => {
-    const target = targetOf(entryOf(event));
+    const entry = entryOf(event);
+    const target = targetOf(entry);
     if (target === null) {
       return { kind: 'refused', error: noReview };
+    }
+    // The panel, opened to be asked in: once its discussion has loaded, it is shown so.
+    const show = entry.showDiscussionOnLoad;
+    if (show !== null) {
+      entry.showDiscussionOnLoad = null;
+      setTimeout(() => {
+        if (!entry.contents.isDestroyed()) {
+          entry.contents.send(REVIEW_DISCUSSION_CHANNELS.event, show);
+        }
+      }, 300);
     }
     return (await discussions.call('load', target, request)) as DiscussionLoadOutcome;
   });
@@ -384,6 +486,12 @@ export function registerReviewIpc(
   ipcMain.handle(REVIEW_DISCUSSION_CHANNELS.draft, async (event, text: unknown) => {
     const target = targetOf(entryOf(event));
     return target === null ? { saved: false, error: noReview } : discussions.call('draft', target, text);
+  });
+  ipcMain.handle(REVIEW_DISCUSSION_CHANNELS.quote, async (event, quote: unknown) => {
+    const target = targetOf(entryOf(event));
+    if (target !== null) {
+      await discussions.call('quote', target, quote);
+    }
   });
   // DSP-132: choosing the agent records it and builds nothing.
   ipcMain.handle(REVIEW_DISCUSSION_CHANNELS.chooseAgent, async (event, provider: unknown): Promise<DiscussionChooseOutcome> => {

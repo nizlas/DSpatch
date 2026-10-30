@@ -637,12 +637,15 @@ export interface AgentJob {
 }
 
 /**
- * What counts as handled. Exempted lines are handled under both.
+ * What was once a choice of what counts as handled, kept only as it is stored.
  *
- * `manual` (the default since DSP-152, Niclas's decision of 29 October 2026): the person's
- * review, or an agent's approval where the person explicitly delegated that part.
- * `manual-or-agent`: the DSP-150 default, kept as stored for a record that has it, so an
- * older review keeps its meaning; any recorded agent review counts there.
+ * Niclas's decision of 30 October 2026 makes one rule for every review, old or new: a line
+ * is reviewed when the person reviewed it, or when an agent approved it in a review the
+ * person explicitly delegated; an exempted line is handled as exempted. There is no setting.
+ * A record that stored `manual-or-agent` (the DSP-150 default) keeps the value on disk, with
+ * its decisions, actors and history, but nothing reads it: an agent review that no delegated
+ * job recorded counts nowhere, so a hidden old value never gives other results than what
+ * the window shows. Nothing is approved anew when an older review opens.
  */
 export type ReviewRequirement = 'manual' | 'manual-or-agent';
 
@@ -1046,13 +1049,23 @@ export function stripStatusOf(status: LineStatus): StripStatus {
   return status.agent.length > 0 ? 'agent' : 'none';
 }
 
-export function isHandled(status: LineStatus, requirement: ReviewRequirement): boolean {
+/**
+ * Whether a line is handled, by the one rule (30 October 2026): a decision of the person's
+ * (reviewed or exempted), or an approval from a review the person delegated, which carries
+ * the job of that mandate. Approvals exist only for what a finished delegated review
+ * approved within its scope: a failed, stopped, insufficient or unconfirmed job, a walk, an
+ * explanation or a discussion approves nothing.
+ */
+export function isHandled(status: LineStatus): boolean {
   if (status.decision !== null) {
     return true;
   }
-  // An agent approval counts where the person delegated that part (it carries the job of
-  // that mandate), or anywhere under the older `manual-or-agent` requirement.
-  return status.agent.some((review) => requirement === 'manual-or-agent' || review.jobId !== undefined);
+  return status.agent.some(isDelegatedApproval);
+}
+
+/** An agent's approval that counts: recorded by a review the person delegated. */
+export function isDelegatedApproval(review: Pick<AgentReview, 'jobId'>): boolean {
+  return review.jobId !== undefined;
 }
 
 /** What has been decided about one line: the latest decision over it, and agent reviews. */
@@ -1112,7 +1125,7 @@ export function fileProgressOf(file: PairFile, record: PairRecord): FileProgress
   let exempted = 0;
   let agent = 0;
   for (const status of statuses.values()) {
-    if (!isHandled(status, record.requirement)) {
+    if (!isHandled(status)) {
       continue;
     }
     handled += 1;
@@ -1152,9 +1165,9 @@ export interface FileReviewFacts {
 export function fileReviewFactsOf(file: PairFile, record: PairRecord): FileReviewFacts {
   const agents = new Set<string>();
   for (const status of lineStatusesOf(file, record).values()) {
-    if (status.decision === null && isHandled(status, record.requirement)) {
+    if (status.decision === null && isHandled(status)) {
       for (const review of status.agent) {
-        if (record.requirement === 'manual-or-agent' || review.jobId !== undefined) {
+        if (isDelegatedApproval(review)) {
           agents.add(review.reviewer === '' ? 'Agent' : review.reviewer);
         }
       }
@@ -1502,7 +1515,6 @@ export const REVIEW_PAIR_CHANNELS = {
   readFile: 'dspatch:review-pair-read-file',
   state: 'dspatch:review-pair-state',
   mark: 'dspatch:review-pair-mark',
-  setRequirement: 'dspatch:review-pair-set-requirement',
   savePosition: 'dspatch:review-pair-save-position',
   walks: 'dspatch:review-pair-walks',
   openWalk: 'dspatch:review-pair-open-walk',
@@ -1543,7 +1555,6 @@ export interface ReviewPairBridge {
   readFile(key: string, side: LineSide, path: string): Promise<PairAnswer<{ readonly text: string | null; readonly binary: boolean }>>;
   state(key: string): Promise<PairAnswer<PairRecord>>;
   mark(key: string, request: MarkRequestInput): Promise<PairAnswer<PairRecord>>;
-  setRequirement(key: string, requirement: ReviewRequirement): Promise<PairAnswer<PairRecord>>;
   savePosition(key: string, position: PairPosition): Promise<PairAnswer<{ readonly saved: true }>>;
   walks(key: string): Promise<PairAnswer<readonly PairWalk[]>>;
   /**
@@ -1870,4 +1881,80 @@ export function changeMarksOf(
     });
   }
   return marks;
+}
+
+// --- The review's panel (Niclas's decision of 30 October 2026) ---------------------------
+
+/**
+ * Where the review's panel is: the whole right panel, Step and Discussion, belongs to the
+ * review (repository and revision pair), not to a window. It is in a window of its own by
+ * default, or docked in the review's diff window or its walk window, one place at a time.
+ */
+export type PanelPlace = 'window' | 'diff' | 'walk';
+
+/** What the panel, and a window it may dock in, are told about where it is. */
+export interface PanelState {
+  readonly place: PanelPlace;
+  readonly visible: boolean;
+  /** The windows of the same review it may dock in now. */
+  readonly offers: { readonly diff: boolean; readonly walk: boolean };
+  /** For a code window: the panel is docked here, in the slot this window keeps for it. */
+  readonly dockedHere: boolean;
+}
+
+/** Where the walk window is, so the panel's Step follows it. */
+export interface PanelFollow {
+  readonly definitionPath: string;
+  readonly stepId: string | null;
+  readonly placeIndex: number;
+  readonly refIndex: number;
+  readonly checkId: string | null;
+  /** The way back from the open point, as the walk window names it; `null` when there is none. */
+  readonly checkBack: string | null;
+}
+
+/** What the panel asks a code window of the same review to do. */
+export type PanelAction =
+  | { readonly kind: 'goToStep'; readonly stepId: string; readonly placeIndex: number }
+  | { readonly kind: 'openLocation'; readonly location: { readonly side: LineSide; readonly path: string; readonly start: number; readonly end: number } }
+  | { readonly kind: 'openCheck'; readonly checkId: string }
+  /** Close the open point and go back to where it was opened from. */
+  | { readonly kind: 'closeCheck' };
+
+export const REVIEW_PANEL_CHANNELS = {
+  show: 'dspatch:review-panel-show',
+  dock: 'dspatch:review-panel-dock',
+  hide: 'dspatch:review-panel-hide',
+  slot: 'dspatch:review-panel-slot',
+  follow: 'dspatch:review-panel-follow',
+  lastFollow: 'dspatch:review-panel-last-follow',
+  action: 'dspatch:review-panel-action',
+  state: 'dspatch:review-panel-state',
+} as const;
+
+/** The review panel's bridge (`window.dspatchReviewPanel`), in every review window. */
+export interface ReviewPanelBridge {
+  /**
+   * Show the review's panel where it is, opening it when it is not open; `ask` puts the
+   * cursor in the discussion's question. From a code window, `key` is its pair's. `tab`
+   * `'step'` shows the step (a point worth checking opened), without taking the focus.
+   */
+  show(key: string | null, ask: boolean, tab?: 'step' | 'discussion'): Promise<{ readonly ok: boolean; readonly note: string }>;
+  /** From the panel: move it to its own window or dock it in a code window of the review. */
+  dock(place: PanelPlace): Promise<void>;
+  /** From the panel: hide it. Nothing running stops; the next show brings it back as it was. */
+  hide(): Promise<void>;
+  /** From a code window: where it keeps room for the panel docked in it, in its own coordinates. */
+  slot(rect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number } | null): void;
+  /** From the walk window: where it is, for the panel's Step. */
+  follow(position: PanelFollow): void;
+  /** From the panel: the walk window's last position, when it opens. */
+  lastFollow(): Promise<PanelFollow | null>;
+  /** Where the review's panel is now, as this window is to know it; `null` when it is not open. */
+  state(): Promise<PanelState | null>;
+  /** From the panel: something for a code window of the review to do. */
+  action(action: PanelAction): void;
+  onFollow(listener: (position: PanelFollow) => void): () => void;
+  onAction(listener: (action: PanelAction) => void): () => void;
+  onState(listener: (state: PanelState) => void): () => void;
 }

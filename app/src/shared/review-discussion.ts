@@ -171,6 +171,39 @@ export type SelectionQuote =
 /** Bounds on a quote: longer is refused, not cut silently. */
 export const QUOTE_LIMITS = { characters: 20_000, segments: 40, contextChars: 1_500 } as const;
 
+/**
+ * A selection to ask about as a window sends it to be shared with the review's other
+ * windows, or `null` when it is not one. Only its shape is checked here; the commits check
+ * the text when a question is sent with it.
+ */
+export function quoteFrom(raw: unknown): SelectionQuote | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return null;
+  }
+  const value = raw as Record<string, unknown>;
+  const text = value['text'];
+  if (typeof text !== 'string' || text.trim() === '' || text.length > QUOTE_LIMITS.characters) {
+    return null;
+  }
+  if (value['kind'] === 'text') {
+    return { kind: 'text', text, source: value['source'] === 'answer' ? 'answer' : 'explanation', context: typeof value['context'] === 'string' ? value['context'].slice(0, QUOTE_LIMITS.contextChars) : '' };
+  }
+  const segments = value['segments'];
+  if (value['kind'] !== 'code' || !Array.isArray(segments) || segments.length === 0 || segments.length > QUOTE_LIMITS.segments) {
+    return null;
+  }
+  const read: QuoteSegment[] = [];
+  for (const entry of segments as unknown[]) {
+    const segment = typeof entry === 'object' && entry !== null ? (entry as Record<string, unknown>) : {};
+    const { side, path, start, end, from, to } = segment;
+    if ((side !== 'base' && side !== 'target') || typeof path !== 'string' || ![start, end, from, to].every((number) => Number.isInteger(number) && (number as number) >= 0)) {
+      return null;
+    }
+    read.push({ side, path, start: start as number, end: end as number, from: from as number, to: to as number });
+  }
+  return { kind: 'code', text, segments: read };
+}
+
 /** What the window sends to have an envelope built: the subject, and a selection if any. */
 export interface DiscussionRequest {
   readonly subject: DiscussionSubject;
@@ -1069,6 +1102,8 @@ export const REVIEW_DISCUSSION_CHANNELS = {
   load: 'dspatch:review-discussion-load',
   acknowledge: 'dspatch:review-discussion-acknowledge',
   draft: 'dspatch:review-discussion-draft',
+  /** What the next question is about, shared by every window of the review (30 October 2026). */
+  quote: 'dspatch:review-discussion-quote',
   event: 'dspatch:review-discussion-event',
   /** DSP-132: choose the discussion's agent. Records the choice; builds nothing. */
   chooseAgent: 'dspatch:review-discussion-choose-agent',
@@ -1160,7 +1195,19 @@ export type ReviewDiscussionEvent =
   | { readonly kind: 'delta'; readonly messageId: string; readonly text: string }
   | { readonly kind: 'status'; readonly status: DiscussionStatusView; readonly note?: string }
   /** What the agent answering this question is doing now; never stored. */
-  | { readonly kind: 'activity'; readonly questionId: string; readonly activity: string };
+  | { readonly kind: 'activity'; readonly questionId: string; readonly activity: string }
+  /**
+   * What the next question is about, chosen in another window of the same review (30 October
+   * 2026): one discussion per revision pair, one selection to ask about. `null` when it was let go.
+   */
+  | { readonly kind: 'quote'; readonly quote: SelectionQuote | null }
+  /** The draft as another window of the same review has it now. */
+  | { readonly kind: 'draft'; readonly text: string }
+  /**
+   * Show the review's panel (30 October 2026): the discussion, with the cursor in its question
+   * unless `quiet`; or, with `tab` `'step'`, the step, quietly.
+   */
+  | { readonly kind: 'show'; readonly quiet?: true; readonly tab?: 'step' };
 
 /** What the window sends with a question. The envelope is built in main from the subject. */
 export interface DiscussionSendInput {
@@ -1196,6 +1243,8 @@ export type DiscussionLoadOutcome =
       readonly kind: 'loaded';
       readonly messages: readonly DiscussionMessage[];
       readonly draft: string;
+      /** What the next question is about, as any window of the review last chose it. */
+      readonly quote?: SelectionQuote | null;
       readonly status: DiscussionStatusView;
       /** The subject line for the request given, when one was given and could be built. */
       readonly subjectLine: string | null;
@@ -1211,6 +1260,8 @@ export interface ReviewDiscussionBridge {
   cancel(): Promise<DiscussionCancelOutcome>;
   acknowledge(attemptIds: readonly string[]): Promise<DiscussionStatusView>;
   saveDraft(text: string): Promise<{ readonly saved: boolean; readonly error?: string }>;
+  /** What the next question is about, for every window of the review; `null` lets it go. */
+  setQuote(quote: SelectionQuote | null): Promise<void>;
   /** DSP-132: choose the agent. Creates no adapter and no session. */
   chooseAgent(provider: DiscussionProvider): Promise<DiscussionChooseOutcome>;
   /** DSP-132: leave the recap out of the next new session's first question, or put it back. */

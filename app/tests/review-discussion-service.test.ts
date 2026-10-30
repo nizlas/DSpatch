@@ -721,3 +721,38 @@ test('Explain more simply asks about that answer with its own question\'s contex
     fs.rmSync(s.fixture.root, { recursive: true, force: true });
   }
 });
+
+// Niclas's decision of 30 October 2026: one discussion per revision pair, its windows sharing
+// what the next question is about and its draft. SIMULATED: a scripted adapter.
+test('the windows of one review share what the next question is about and the draft; a send lets the quote go', async () => {
+  const s = await setup();
+  try {
+    const discussions = s.discussions();
+    const walk = recorder();
+    const diff = recorder();
+    const one = discussions.attach(1, s.identity, walk.send, 'cursor');
+    const two = discussions.attach(2, s.identity, diff.send, 'cursor');
+    assert.equal(one, two, 'both windows reach the same discussion');
+    const quote = { kind: 'code' as const, text: 'export', segments: [{ side: 'target' as const, path: 'src/untouched.ts', start: 1, end: 1, from: 0, to: 6 }] };
+    two.setQuote(quote, 2);
+    assert.deepEqual(walk.events.flatMap((event) => (event.kind === 'quote' ? [event.quote] : [])), [quote]);
+    assert.equal(diff.events.filter((event) => event.kind === 'quote').length, 0, 'the window that chose it is not told again');
+    const loaded = await one.load(null, s.review);
+    assert.ok(loaded.kind === 'loaded');
+    assert.deepEqual(loaded.quote, quote, 'a window opened later shows it too');
+    one.saveDraft('Why is this exported?', 1);
+    assert.deepEqual(diff.events.flatMap((event) => (event.kind === 'draft' ? [event.text] : [])), ['Why is this exported?']);
+    assert.equal(walk.events.filter((event) => event.kind === 'draft').length, 0);
+    // Something that is not a selection lets it go, everywhere else.
+    two.setQuote({ kind: 'nonsense' }, 2);
+    assert.equal(walk.events.filter((event) => event.kind === 'quote').at(-1)?.kind === 'quote' && (walk.events.filter((event) => event.kind === 'quote').at(-1) as { quote: unknown }).quote, null);
+    two.setQuote(quote, 2);
+    const sent = await one.send({ question: 'What is this?', subject: AWAY, selection: null, quote }, s.review);
+    assert.equal(sent.kind, 'sent', JSON.stringify(sent));
+    assert.equal((diff.events.filter((event) => event.kind === 'quote').at(-1) as { quote: unknown } | undefined)?.quote, null, 'the quote went with the question');
+    assert.equal((await one.load(null, s.review) as { quote?: unknown }).quote, null);
+    s.adapters[0]?.finish();
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});

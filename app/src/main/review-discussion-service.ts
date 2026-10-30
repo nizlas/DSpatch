@@ -32,6 +32,8 @@ import {
   type EnvelopeOutcome,
   type SimplifySection,
   type ReviewDiscussionEvent,
+  type SelectionQuote,
+  quoteFrom,
 } from '../shared/review-discussion';
 import { toolActivity, type StepAnswer } from '../shared/review-pair';
 import { AttemptLedger } from './attempt-ledger';
@@ -185,6 +187,11 @@ export interface EnvelopeSource {
 export type DiscussionTargetSend = (event: ReviewDiscussionEvent) => void;
 
 export interface ReviewDiscussionServiceOptions {
+  /**
+   * The history a discussion starts from when it has no record of its own yet: for the one
+   * discussion of a revision pair, what was discussed and explained before (30 October 2026).
+   */
+  readonly earlier?: (identity: DiscussionIdentity) => readonly DiscussionMessage[];
   readonly identity: DiscussionIdentity;
   /** `userData/reviews`. */
   readonly recordsDir: string;
@@ -289,6 +296,8 @@ export class ReviewDiscussionService {
   private readonly abandoned = new Set<string>();
 
   private readonly targets = new Map<number, DiscussionTargetSend>();
+  /** What the next question is about, shared by the review's windows; not stored. */
+  private quote: SelectionQuote | null = null;
 
   private closedForQuit = false;
 
@@ -315,6 +324,10 @@ export class ReviewDiscussionService {
   private readStored(): void {
     const file = this.recordPath();
     if (!fs.existsSync(file)) {
+      // The first time the pair's one discussion opens: the earlier history it continues,
+      // read from the records it replaces, which stay as they are (30 October 2026).
+      this.messages = (this.options.earlier?.(this.identity) ?? []).map((message) => ({ ...message }));
+      this.messageCounter = this.messages.length;
       return;
     }
     let raw: unknown = null;
@@ -603,13 +616,14 @@ export class ReviewDiscussionService {
       kind: 'loaded',
       messages: this.messages.map((message) => ({ ...message })),
       draft: this.draft,
+      quote: this.quote,
       status: this.status(),
       subjectLine: line,
       note,
     };
   }
 
-  saveDraft(text: unknown): { saved: boolean; error?: string } {
+  saveDraft(text: unknown, fromTarget?: number): { saved: boolean; error?: string } {
     if (typeof text !== 'string') {
       return { saved: false, error: 'A draft is text.' };
     }
@@ -619,7 +633,33 @@ export class ReviewDiscussionService {
       return { saved: true };
     }
     this.draft = text;
+    // The same draft in every window of the review (30 October 2026).
+    this.emitExcept(fromTarget, { kind: 'draft', text });
     return this.save();
+  }
+
+  /**
+   * What the next question is about (30 October 2026): code selected in any window of the
+   * review, its diff, a walk or an opened reference. Shown above the question in every
+   * window; sent with whichever window sends it, and checked against Git there. Never stored.
+   */
+  setQuote(raw: unknown, fromTarget?: number): void {
+    const quote = quoteFrom(raw);
+    this.quote = quote;
+    this.emitExcept(fromTarget, { kind: 'quote', quote });
+  }
+
+  private emitExcept(targetId: number | undefined, event: ReviewDiscussionEvent): void {
+    for (const [id, send] of this.targets) {
+      if (id === targetId) {
+        continue;
+      }
+      try {
+        send(event);
+      } catch (error) {
+        this.options.log(`review discussion ${this.identity.key}: an event could not be delivered (${describeError(error)})`);
+      }
+    }
   }
 
   /** The person has seen these unknown outcomes and asks the next question anyway (DSP-124's pattern). */
@@ -804,11 +844,9 @@ export class ReviewDiscussionService {
         return { kind: 'refused', error: built.error };
       }
       const envelope = built.envelope;
-      if (
-        envelope.identity.base.sha !== this.identity.base ||
-        envelope.identity.target.sha !== this.identity.target ||
-        envelope.identity.definitionPath !== this.identity.definitionPath
-      ) {
+      // One discussion per revision pair (30 October 2026): any walk of the pair, or its diff,
+      // may ask; the commits are what must be the discussion's.
+      if (envelope.identity.base.sha !== this.identity.base || envelope.identity.target.sha !== this.identity.target) {
         return { kind: 'refused', error: 'The window is showing another review than this discussion belongs to; nothing was sent.' };
       }
       try {
@@ -898,6 +936,11 @@ export class ReviewDiscussionService {
       }
       this.save();
       this.emitStatus();
+      // The selection it was about goes with the question: no window offers it for the next one.
+      if (this.quote !== null) {
+        this.quote = null;
+        this.emitExcept(undefined, { kind: 'quote', quote: null });
+      }
       return { kind: 'sent', questionId: turn.questionId, dspatchRunId: reference.dspatchRunId };
     } catch (error) {
       let message = describeError(error);

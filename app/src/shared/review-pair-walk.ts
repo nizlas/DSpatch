@@ -12,7 +12,7 @@
  */
 
 import type { DiffFile, DiffHunk, ReviewDecision, RevisionPair } from './review-model';
-import { lineStatusOf, type LineRange, type PairRecord } from './review-pair';
+import { isDelegatedApproval, lineStatusOf, type LineRange, type PairRecord } from './review-pair';
 
 /** The changed lines of a hunk as ranges: its deletions at From, its additions at To. */
 export function hunkRanges(hunk: DiffHunk): readonly LineRange[] {
@@ -26,23 +26,46 @@ export function hunkRanges(hunk: DiffHunk): readonly LineRange[] {
   return ranges;
 }
 
-/** The reviewer's decision over every changed line of a hunk, when it is one decision. */
-function hunkOutcome(hunk: DiffHunk, record: PairRecord): { readonly op: 'manual' | 'exempt'; readonly reason: string; readonly at: string } | null {
-  let shared: { op: 'manual' | 'exempt'; reason: string; at: string } | null = null;
+/**
+ * The outcome over every changed line of a hunk, when it is one, by the one rule of what is
+ * reviewed (Niclas's decision of 30 October 2026): each line reviewed by the person or
+ * approved in a review the person delegated makes the hunk reviewed; each line exempted
+ * makes it exempted. Who reviewed is kept: the agents and the jobs of their mandates.
+ */
+function hunkOutcome(
+  hunk: DiffHunk,
+  record: PairRecord,
+): { readonly op: 'manual' | 'exempt'; readonly reason: string; readonly at: string; readonly agents: readonly string[]; readonly jobs: readonly string[]; readonly person: boolean } | null {
+  let op: 'manual' | 'exempt' | null = null;
+  let reason = '';
+  let at = '';
+  let person = false;
+  const agents = new Set<string>();
+  const jobs = new Set<string>();
   for (const range of hunkRanges(hunk)) {
     for (let line = range.start; line <= range.end; line += 1) {
-      const decision = lineStatusOf({ side: range.side, path: range.path, line }, record).decision;
-      if (decision === null || decision.op === 'clear') {
+      const status = lineStatusOf({ side: range.side, path: range.path, line }, record);
+      const decision = status.decision;
+      const approvals = status.agent.filter(isDelegatedApproval);
+      const lineOp: 'manual' | 'exempt' | null = decision !== null && decision.op !== 'clear' ? decision.op : approvals.length > 0 ? 'manual' : null;
+      if (lineOp === null || (op !== null && op !== lineOp)) {
         return null;
       }
-      if (shared === null) {
-        shared = { op: decision.op, reason: decision.reason, at: decision.at };
-      } else if (shared.op !== decision.op) {
-        return null;
+      op = lineOp;
+      if (decision !== null && decision.op !== 'clear') {
+        person = true;
+        reason = reason === '' ? decision.reason : reason;
+        at = decision.at > at ? decision.at : at;
+      } else {
+        for (const review of approvals) {
+          agents.add(review.reviewer === '' ? 'Agent' : review.reviewer);
+          jobs.add(review.jobId ?? '');
+          at = review.recordedAt > at ? review.recordedAt : at;
+        }
       }
     }
   }
-  return shared;
+  return op === null ? null : { op, reason, at, agents: [...agents], jobs: [...jobs], person };
 }
 
 /**
@@ -62,7 +85,8 @@ export function hunkDecisionsFromPair(files: readonly DiffFile[], record: PairRe
           scope: { kind: 'hunk', path: hunk.path, hunkId: hunk.id },
           outcome: outcome.op === 'manual' ? 'accepted' : 'exempted',
           reason: outcome.reason,
-          by: { kind: 'human' },
+          // Shown, never saved from here: the pair record keeps the decisions and approvals.
+          by: outcome.agents.length > 0 && !outcome.person ? { kind: 'agent-delegated', adapterId: outcome.agents.join(', '), mandate: outcome.jobs.join(', ') } : { kind: 'human' },
           at: outcome.at,
           revisions,
         });

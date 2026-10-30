@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { BrowserWindow, Menu, app, dialog, screen, type MenuItemConstructorOptions, type Rectangle, type WebContents } from 'electron';
+import { BrowserWindow, Menu, WebContentsView, app, dialog, screen, type MenuItemConstructorOptions, type Rectangle, type WebContents } from 'electron';
 
 import {
   isReviewHostError,
@@ -15,8 +15,9 @@ import {
   type ReviewWindowInput,
   type ReviewWindowOutcome,
 } from '../shared/review-model';
-import type { DiffLocation, PairWindowStart, RevisionPairIdentity } from '../shared/review-pair';
-import { REVIEW_PAIR_NAVIGATE } from '../shared/review-pair';
+import type { DiffLocation, PairWindowStart, PanelAction, PanelFollow, PanelPlace, PanelState, RevisionPairIdentity } from '../shared/review-pair';
+import { REVIEW_PAIR_NAVIGATE, REVIEW_PANEL_CHANNELS } from '../shared/review-pair';
+import { REVIEW_DISCUSSION_CHANNELS, type ReviewDiscussionEvent } from '../shared/review-discussion';
 
 /*
  * Review windows: the review module's own windows, and the only way into it.
@@ -44,38 +45,18 @@ import { REVIEW_PAIR_NAVIGATE } from '../shared/review-pair';
 /** How long closing waits for the view to save what it has not saved yet. */
 const CLOSE_FLUSH_TIMEOUT_MS = 3_000;
 
-/**
- * The walk window's explanation in a window of its own (Niclas's decision of 30 October
- * 2026): the one window name a walk window may open (`renderer/explanation-window.ts`).
- * The place and size it was last left at are a review preference, kept by the host like
- * the columns' widths; the page asks for them when it opens the window (`window.open`'s
- * features), and here they are only kept on a screen.
- */
-export const EXPLANATION_FRAME = 'dspatch-explanation';
-const EXPLANATION_SIZE = { width: 640, height: 820, minWidth: 360, minHeight: 320 } as const;
-
-/** The place and size `window.open` asked for (`left=…,top=…,width=…,height=…`). */
-export function askedBounds(features: string): Record<string, number> {
-  const asked: Record<string, number> = {};
-  for (const part of features.split(',')) {
-    const [key = '', value = ''] = part.split('=').map((text) => text.trim());
-    const name = key === 'left' ? 'x' : key === 'top' ? 'y' : key;
-    if ((name === 'x' || name === 'y' || name === 'width' || name === 'height') && /^-?\d+$/.test(value)) {
-      asked[name] = Number(value);
-    }
-  }
-  return asked;
-}
+const PANEL_SIZE = { width: 560, height: 820, minWidth: 360, minHeight: 420 } as const;
 
 /**
- * Where the explanation's window opens: where it was left when that is still on a screen
- * (enough of it to take hold of), else its size centred on the main screen.
+ * Where the review panel's own window opens: where it was left when that is still on a screen
+ * (enough of it to take hold of), else its size centred on the main screen. The place is kept
+ * in the review preferences under its earlier name, `explanationBounds`.
  */
-export function explanationBounds(saved: unknown, displays: readonly Rectangle[], primary: Rectangle): Partial<Rectangle> {
+export function panelBounds(saved: unknown, displays: readonly Rectangle[], primary: Rectangle): Partial<Rectangle> {
   const record = typeof saved === 'object' && saved !== null ? (saved as Record<string, unknown>) : {};
   const whole = (key: string): number | null => (Number.isInteger(record[key]) ? (record[key] as number) : null);
-  const width = Math.min(Math.max(whole('width') ?? EXPLANATION_SIZE.width, EXPLANATION_SIZE.minWidth), primary.width);
-  const height = Math.min(Math.max(whole('height') ?? EXPLANATION_SIZE.height, EXPLANATION_SIZE.minHeight), primary.height);
+  const width = Math.min(Math.max(whole('width') ?? PANEL_SIZE.width, PANEL_SIZE.minWidth), primary.width);
+  const height = Math.min(Math.max(whole('height') ?? PANEL_SIZE.height, PANEL_SIZE.minHeight), primary.height);
   const x = whole('x');
   const y = whole('y');
   if (x !== null && y !== null) {
@@ -98,7 +79,7 @@ export interface ReviewWindowsOptions {
   /** The compiled review preload. */
   readonly preloadPath: string;
   /** Load the renderer into a new review window (`?window=review#review`). */
-  readonly load: (window: BrowserWindow, view: 'walk' | 'diff') => void;
+  readonly load: (target: Pick<WebContents, 'loadFile' | 'loadURL'>, view: 'walk' | 'diff' | 'panel') => void;
   /** Development builds get reload and developer tools in the View menu. */
   readonly development: boolean;
   /**
@@ -135,10 +116,17 @@ export interface ReviewWindowEntry {
   focusCount: number;
   /** Set once the view has been asked to save before the window goes. */
   flushedForClose: boolean;
-  /** A walk window (a review definition) or a diff window (a chosen revision pair, DSP-150). */
-  readonly view: 'walk' | 'diff';
+  /**
+   * A walk window (a review definition), a diff window (a chosen revision pair, DSP-150), or
+   * the review's panel, Step and Discussion, in its own window or docked (30 October 2026).
+   */
+  readonly view: 'walk' | 'diff' | 'panel';
   /** The revision pair this window is over, once known: chosen in a diff window, or a walk's own pair. */
   pairKey: string | null;
+  /** A diff window's repository and commits, once it has chosen them: what its discussion is about. */
+  pairIdentity: RevisionPairIdentity | null;
+  /** The panel, opened to be shown so: it is told once its discussion has loaded. */
+  showDiscussionOnLoad: ReviewDiscussionEvent | null;
   /** What a diff window starts with. */
   pairStart: PairWindowStart;
   /** A short label for the title of a diff window over a pair. */
@@ -166,7 +154,12 @@ export function openFailureOf(error: ReviewHostError): ReviewOpenOutcome {
     : { kind: 'failed', error: error.message, detail: error.detail };
 }
 
-function titleFor(entry: Pick<ReviewWindowEntry, 'identity' | 'startFolder'> & { readonly view?: 'walk' | 'diff'; readonly pairLabel?: string | null }): string {
+function titleFor(entry: Pick<ReviewWindowEntry, 'identity' | 'startFolder'> & { readonly view?: 'walk' | 'diff' | 'panel'; readonly pairLabel?: string | null }): string {
+  if (entry.view === 'panel') {
+    return entry.identity === null
+      ? 'DSpatch — discussion'
+      : `DSpatch — discussion · ${reviewIdentityLabel(entry.identity.repository, entry.identity.base, entry.identity.target)}`;
+  }
   if (entry.view === 'diff') {
     return entry.pairLabel === null || entry.pairLabel === undefined ? 'DSpatch — review' : `DSpatch — review · ${entry.pairLabel}`;
   }
@@ -182,14 +175,15 @@ export class ReviewWindows {
   private readonly options: ReviewWindowsOptions;
 
   private readonly entries = new Set<ReviewWindowEntry>();
-  /** Each walk window's explanation window, while it is open (30 October 2026). */
-  private readonly explanations = new Map<ReviewWindowEntry, BrowserWindow>();
 
   /** Opens one at a time, so two quick presses cannot both create a window. */
   private queue: Promise<unknown> = Promise.resolve();
 
   /** A quit was asked for while a review window held its close to save. */
   private quitRequested = false;
+
+  /** Each review's panel, by its pair's key (30 October 2026). */
+  private readonly panels = new Map<string, Panel>();
 
   constructor(options: ReviewWindowsOptions) {
     this.options = options;
@@ -211,13 +205,6 @@ export class ReviewWindows {
   /** Every open review window. */
   list(): readonly ReviewWindowEntry[] {
     return [...this.entries].filter((entry) => !entry.window.isDestroyed());
-  }
-
-  /** The explanation windows open now, each with the walk window it belongs to. */
-  explanationWindows(): readonly { readonly window: BrowserWindow; readonly contents: WebContents; readonly walk: ReviewWindowEntry }[] {
-    return [...this.explanations]
-      .filter(([, child]) => !child.isDestroyed())
-      .map(([walk, child]) => ({ window: child, contents: child.webContents, walk }));
   }
 
   /**
@@ -356,6 +343,16 @@ export class ReviewWindows {
     if (definitionPath === null) {
       return Promise.resolve(entry.initial);
     }
+    if (entry.view === 'panel') {
+      // Its own session is read again; the walk window over the same review is no reason to refuse.
+      return this.options.host.open({ sessionId: entry.sessionId, definitionPath, remember: false }).then((opened) => {
+        if (isReviewHostError(opened)) {
+          return entry.initial;
+        }
+        entry.initial = opened.outcome;
+        return opened.outcome;
+      });
+    }
     const next = this.queue.then(() => this.openChosen(entry, definitionPath));
     this.queue = next.catch(() => undefined);
     return next;
@@ -481,6 +478,7 @@ export class ReviewWindows {
     }
     entry.pairKey = key;
     entry.pairLabel = label;
+    this.panelOffersChanged(key);
     if (!entry.window.isDestroyed()) {
       entry.window.setTitle(titleFor(entry));
     }
@@ -490,6 +488,9 @@ export class ReviewWindows {
   /** A walk window learned which pair it is over. */
   joinPair(entry: ReviewWindowEntry, key: string): void {
     entry.pairKey = key;
+    if (entry.view === 'walk') {
+      this.panelOffersChanged(key);
+    }
   }
 
   /**
@@ -548,6 +549,8 @@ export class ReviewWindows {
     const same = (entry: ReviewWindowEntry): boolean =>
       entry.identity !== null && path.resolve(entry.identity.definitionPath).toLowerCase() === path.resolve(definitionPath).toLowerCase();
     const walkWindows = this.list().filter((entry) => entry.view === 'walk');
+    // The panel follows the walk opened, whichever it is (30 October 2026).
+    this.panelFollowsDefinition(key, definitionPath);
     const showing = walkWindows.find(same);
     if (showing !== undefined) {
       showing.pairKey = key;
@@ -692,14 +695,14 @@ export class ReviewWindows {
 
   private byIdentity(key: string): ReviewWindowEntry | null {
     for (const entry of this.entries) {
-      if (entry.identity?.key === key && !entry.window.isDestroyed()) {
+      if (entry.identity?.key === key && entry.view !== 'panel' && !entry.window.isDestroyed()) {
         return entry;
       }
     }
     return null;
   }
 
-  private focus(entry: ReviewWindowEntry): void {
+  focus(entry: ReviewWindowEntry): void {
     entry.focusCount += 1;
     if (entry.window.isMinimized()) {
       entry.window.restore();
@@ -750,47 +753,16 @@ export class ReviewWindows {
       flushedForClose: false,
       view: init.view ?? 'walk',
       pairKey: null,
+      pairIdentity: null,
+      showDiscussionOnLoad: null,
       pairStart: init.pairStart ?? { kind: 'choose' },
       pairLabel: null,
     };
     this.entries.add(entry);
 
     window.setMenu(this.viewMenu());
-    // A walk window may open its explanation in a window of its own, one at a time; nothing else.
-    window.webContents.setWindowOpenHandler((details) => {
-      const open = this.explanations.get(entry);
-      if (entry.view !== 'walk' || details.frameName !== EXPLANATION_FRAME || details.url !== 'about:blank' || (open !== undefined && !open.isDestroyed())) {
-        return { action: 'deny' };
-      }
-      const bounds = explanationBounds(
-        askedBounds(details.features),
-        screen.getAllDisplays().map((display) => display.workArea),
-        screen.getPrimaryDisplay().workArea,
-      );
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: {
-          ...bounds,
-          minWidth: EXPLANATION_SIZE.minWidth,
-          minHeight: EXPLANATION_SIZE.minHeight,
-          backgroundColor: '#101317',
-          title: 'Explanation',
-          show: true,
-        },
-      };
-    });
-    window.webContents.on('did-create-window', (child) => {
-      this.explanations.set(entry, child);
-      child.setMenu(this.viewMenu());
-      child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-      child.on('closed', () => {
-        if (this.explanations.get(entry) === child) {
-          this.explanations.delete(entry);
-        }
-        this.options.log('explanation window closed; the discussion and any answer were not affected');
-      });
-      this.options.log(`explanation window opened for ${window.getTitle()}`);
-    });
+    // A review window opens no window of its own; the review's panel is made here.
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     // The title says which review this is; the page's own <title> must not replace it.
     window.on('page-title-updated', (event) => {
       event.preventDefault();
@@ -800,6 +772,8 @@ export class ReviewWindows {
     });
     window.on('close', (event) => {
       if (entry.flushedForClose) {
+        // The panel docked here moves to its own window, or goes with the review's last window.
+        this.releasePanelFrom(entry);
         return;
       }
       // Held open until the view has saved: a position changed a moment ago is
@@ -818,11 +792,7 @@ export class ReviewWindows {
     });
     window.on('closed', () => {
       this.entries.delete(entry);
-      // Its explanation window goes with it; nothing is opened again.
-      const child = this.explanations.get(entry);
-      if (child !== undefined && !child.isDestroyed()) {
-        child.close();
-      }
+      this.panelAfterClose(entry);
       // The view has saved (or given up) by now; the host lets the window's session go.
       void this.options.host.closeSession({ sessionId: entry.sessionId });
       this.options.log('review window closed; the chat and any run were not affected');
@@ -832,9 +802,454 @@ export class ReviewWindows {
         `review window did-fail-load url=${validatedURL} code=${String(errorCode)} description=${errorDescription}`,
       );
     });
-    this.options.load(window, entry.view);
+    this.options.load(window.webContents, entry.view);
     this.options.log(`review window opened: ${window.getTitle()}`);
     return entry;
+  }
+
+  // --- The review's panel (Niclas's decision of 30 October 2026) --------------------------
+  //
+  // The whole right panel, Step and Discussion, belongs to the review: its repository and
+  // revision pair. It is one page in a view of its own, which is moved, never rebuilt: in its
+  // own window by default, or docked in the diff window or the walk window of the same review,
+  // one place at a time. Moving it keeps everything in it (history, draft, quote, an answer on
+  // its way, where it is read, what is opened). Closing its window hides it, nothing stops; it
+  // goes only with the review's last code window.
+
+  /** The window an entry is seen in: for the panel, the code window it is docked in, or its own. */
+  shownWindowOf(entry: ReviewWindowEntry): BrowserWindow {
+    if (entry.view === 'panel' && entry.pairKey !== null) {
+      const panel = this.panels.get(entry.pairKey);
+      if (panel?.host != null && !panel.host.window.isDestroyed()) {
+        return panel.host.window;
+      }
+    }
+    return entry.window;
+  }
+
+  /** Where the panel of an entry is, for the scenarios' readings. */
+  panelReading(entry: ReviewWindowEntry): { readonly place: PanelPlace; readonly visible: boolean; readonly frameVisible: boolean } | null {
+    const panel = entry.pairKey === null ? undefined : this.panels.get(entry.pairKey);
+    return panel === undefined || panel.entry !== entry ? null : { place: panel.place, visible: panel.visible, frameVisible: !panel.frame.isDestroyed() && panel.frame.isVisible() };
+  }
+
+  /** The panel over a pair, if it is open. */
+  panelFor(pairKey: string): ReviewWindowEntry | null {
+    const panel = this.panels.get(pairKey);
+    return panel === undefined || panel.entry.contents.isDestroyed() ? null : panel.entry;
+  }
+
+  /** Where the panel of a pair is now, as the panel and a code window of the pair are told. */
+  private stateFor(panel: Panel, recipient: ReviewWindowEntry): PanelState {
+    const key = panel.entry.pairKey ?? '';
+    return {
+      place: panel.place,
+      visible: panel.visible,
+      offers: { diff: this.codeWindow(key, 'diff') !== null, walk: this.codeWindow(key, 'walk') !== null },
+      dockedHere: panel.host === recipient && panel.visible,
+    };
+  }
+
+  private codeWindow(pairKey: string, view: 'diff' | 'walk'): ReviewWindowEntry | null {
+    return this.list().find((entry) => entry.view === view && entry.pairKey === pairKey) ?? null;
+  }
+
+  /** Tell the panel and every code window of its review where the panel is. */
+  private tellPanelState(panel: Panel): void {
+    const key = panel.entry.pairKey ?? '';
+    for (const entry of [panel.entry, ...this.list().filter((other) => other.view !== 'panel' && other.pairKey === key)]) {
+      if (!entry.contents.isDestroyed()) {
+        entry.contents.send(REVIEW_PANEL_CHANNELS.state, this.stateFor(panel, entry));
+      }
+    }
+  }
+
+  /** The state a window asks for when it opens: its review's panel, if there is one. */
+  panelStateFor(entry: ReviewWindowEntry): PanelState | null {
+    const panel = entry.pairKey === null ? undefined : this.panels.get(entry.pairKey);
+    return panel === undefined ? null : this.stateFor(panel, entry);
+  }
+
+  /**
+   * Show the review's panel where it is, opening it when it is not open: over `definitionPath`,
+   * the walk shown in the review's walk window, or a definition of the pair with no walks yet.
+   * `ask`: the cursor goes into the discussion's question.
+   */
+  async showPanel(
+    pairKey: string,
+    definitionPath: string,
+    ask: boolean,
+    defaults: { readonly provider: 'cursor' | 'claude' | null; readonly model: string },
+    tab: 'step' | 'discussion' = 'discussion',
+  ): Promise<{ readonly ok: boolean; readonly note: string }> {
+    // The step, shown for a point opened in a code window, takes no focus from it.
+    const show: ReviewDiscussionEvent = tab === 'step' ? { kind: 'show', quiet: true, tab: 'step' } : { kind: 'show', ...(ask ? {} : { quiet: true as const }) };
+    const existing = this.panels.get(pairKey);
+    if (existing !== undefined && !existing.entry.contents.isDestroyed()) {
+      existing.visible = true;
+      this.placePanel(existing, existing.place);
+      if (tab !== 'step') {
+        this.focusPanel(existing);
+      }
+      existing.entry.contents.send(REVIEW_DISCUSSION_CHANNELS.event, show);
+      return { ok: true, note: '' };
+    }
+    const sessionId = await this.newSession();
+    let handedOver = false;
+    try {
+      const opened = await this.options.host.open({ sessionId, definitionPath, remember: false });
+      const outcome = isReviewHostError(opened) ? openFailureOf(opened) : opened.outcome;
+      if (outcome.kind !== 'opened' || isReviewHostError(opened)) {
+        return { ok: false, note: outcome.kind === 'failed' ? outcome.error : outcome.kind === 'none' ? outcome.note : 'The discussion could not be opened.' };
+      }
+      const panel = this.createPanel({ sessionId, initial: outcome, identity: opened.identity, pairKey, defaults });
+      handedOver = true;
+      panel.entry.showDiscussionOnLoad = show;
+      const preferred = await this.preferredPlace();
+      panel.visible = true;
+      this.placePanel(panel, preferred);
+      if (tab !== 'step') {
+        this.focusPanel(panel);
+      }
+      return { ok: true, note: '' };
+    } finally {
+      if (!handedOver) {
+        void this.options.host.closeSession({ sessionId });
+      }
+    }
+  }
+
+  /** Dock the panel in a code window of its review, or move it to its own window. Saved as the choice. */
+  dockPanel(panelEntry: ReviewWindowEntry, place: PanelPlace): void {
+    const panel = panelEntry.pairKey === null ? undefined : this.panels.get(panelEntry.pairKey);
+    if (panel === undefined || panel.entry !== panelEntry) {
+      return;
+    }
+    panel.visible = true;
+    this.placePanel(panel, place);
+    this.focusPanel(panel);
+    void this.savePlace(panel.place);
+  }
+
+  /** Hide the panel. Nothing running stops; the next show brings it back where it was. */
+  hidePanel(panelEntry: ReviewWindowEntry): void {
+    const panel = panelEntry.pairKey === null ? undefined : this.panels.get(panelEntry.pairKey);
+    if (panel === undefined || panel.entry !== panelEntry) {
+      return;
+    }
+    panel.visible = false;
+    this.placePanel(panel, panel.place);
+  }
+
+  /** A code window says where it keeps room for the panel docked in it. */
+  panelSlot(host: ReviewWindowEntry, rect: Rectangle | null): void {
+    const panel = host.pairKey === null ? undefined : this.panels.get(host.pairKey);
+    if (panel === undefined || panel.host !== host) {
+      return;
+    }
+    panel.slot = rect;
+    this.layoutPanel(panel);
+  }
+
+  /** The walk window says where it is: the panel's Step follows it. */
+  panelFollow(walk: ReviewWindowEntry, position: PanelFollow): void {
+    if (walk.pairKey === null) {
+      return;
+    }
+    this.lastFollows.set(walk.pairKey, position);
+    const panel = this.panels.get(walk.pairKey);
+    if (panel === undefined || panel.entry.contents.isDestroyed()) {
+      return;
+    }
+    if (!this.panelFollowsDefinition(walk.pairKey, position.definitionPath)) {
+      panel.entry.contents.send(REVIEW_PANEL_CHANNELS.follow, position);
+    }
+  }
+
+  private readonly lastFollows = new Map<string, PanelFollow>();
+
+  /** Where the walk window over the panel's pair last was, for a panel that has just opened. */
+  lastFollowFor(panelEntry: ReviewWindowEntry): PanelFollow | null {
+    return panelEntry.pairKey === null ? null : (this.lastFollows.get(panelEntry.pairKey) ?? null);
+  }
+
+  /** From the panel: something for a code window of its review to do. The walk's when there is one. */
+  panelAction(panelEntry: ReviewWindowEntry, action: PanelAction): void {
+    const key = panelEntry.pairKey;
+    if (key === null) {
+      return;
+    }
+    const target = this.codeWindow(key, 'walk') ?? (action.kind === 'openLocation' ? this.codeWindow(key, 'diff') : null);
+    if (target === null) {
+      return;
+    }
+    target.contents.send(REVIEW_PANEL_CHANNELS.action, action);
+    // Seen where it happens: the code window comes forward unless the panel is docked in it.
+    const panel = this.panels.get(key);
+    if (panel?.host !== target) {
+      this.focus(target);
+    }
+  }
+
+  /**
+   * The walk window over the pair shows another definition: the panel's Step is that walk's.
+   * Its page is read again over it; what the discussion holds is the service's and stays.
+   * True when the panel was changed over.
+   */
+  private panelFollowsDefinition(pairKey: string, definitionPath: string): boolean {
+    const panel = this.panels.get(pairKey);
+    if (panel === undefined || panel.entry.contents.isDestroyed()) {
+      return false;
+    }
+    const current = panel.entry.identity?.definitionPath ?? '';
+    if (path.resolve(current).toLowerCase() === path.resolve(definitionPath).toLowerCase()) {
+      return false;
+    }
+    void this.options.host.open({ sessionId: panel.entry.sessionId, definitionPath, remember: false }).then((opened) => {
+      if (isReviewHostError(opened) || opened.outcome.kind !== 'opened' || panel.entry.contents.isDestroyed()) {
+        return;
+      }
+      panel.entry.initial = opened.outcome;
+      panel.entry.identity = opened.identity;
+      panel.entry.contents.reload();
+    });
+    return true;
+  }
+
+  private createPanel(init: {
+    readonly sessionId: string;
+    readonly initial: ReviewOpenOutcome;
+    readonly identity: ReviewIdentity | null;
+    readonly pairKey: string;
+    readonly defaults: { readonly provider: 'cursor' | 'claude' | null; readonly model: string };
+  }): Panel {
+    const preferences = this.cachedPreferences;
+    // Where it was last left, while that is on a screen.
+    const bounds = panelBounds(
+      preferences?.explanationBounds,
+      screen.getAllDisplays().map((display) => display.workArea),
+      screen.getPrimaryDisplay().workArea,
+    );
+    const frame = new BrowserWindow({
+      ...bounds,
+      minWidth: PANEL_SIZE.minWidth,
+      minHeight: PANEL_SIZE.minHeight,
+      show: false,
+      backgroundColor: '#101317',
+      title: titleFor({ identity: init.identity, startFolder: null, view: 'panel' }),
+    });
+    frame.setMenu(this.viewMenu());
+    const view = new WebContentsView({
+      webPreferences: { preload: this.options.preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    view.setBackgroundColor('#101317');
+    const entry: ReviewWindowEntry = {
+      window: frame,
+      contents: view.webContents,
+      sessionId: init.sessionId,
+      startFolder: null,
+      defaultProvider: init.defaults.provider,
+      defaultModel: init.defaults.model,
+      initial: init.initial,
+      identity: init.identity,
+      chooserKey: null,
+      focusCount: 0,
+      flushedForClose: false,
+      view: 'panel',
+      pairKey: init.pairKey,
+      pairIdentity: null,
+      showDiscussionOnLoad: null,
+      pairStart: { kind: 'choose' },
+      pairLabel: null,
+    };
+    this.entries.add(entry);
+    const panel: Panel = { entry, view, frame, place: 'window', visible: false, host: null, slot: null, closing: false };
+    this.panels.set(init.pairKey, panel);
+    frame.on('page-title-updated', (event) => event.preventDefault());
+    frame.on('resize', () => this.layoutPanel(panel));
+    // Closing its own window hides it (30 October 2026): not a Stop, and not a dock.
+    frame.on('close', (event) => {
+      if (panel.closing || this.quitRequested) {
+        return;
+      }
+      event.preventDefault();
+      this.saveBounds(frame);
+      panel.visible = false;
+      frame.hide();
+      this.tellPanelState(panel);
+    });
+    frame.on('closed', () => {
+      this.entries.delete(entry);
+      if (this.panels.get(init.pairKey) === panel) {
+        this.panels.delete(init.pairKey);
+      }
+      if (!view.webContents.isDestroyed()) {
+        view.webContents.close();
+      }
+      void this.options.host.closeSession({ sessionId: entry.sessionId });
+      this.options.log('review panel closed with its review');
+    });
+    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    view.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+      this.options.log(`review panel did-fail-load url=${validatedURL} code=${String(errorCode)} description=${errorDescription}`);
+    });
+    view.webContents.on('did-finish-load', () => this.tellPanelState(panel));
+    this.options.load(view.webContents, 'panel');
+    this.options.log(`review panel opened: ${frame.getTitle()}`);
+    return panel;
+  }
+
+  /** Put the panel in its place: its own window, or docked in a code window of its review. */
+  private placePanel(panel: Panel, wanted: PanelPlace): void {
+    const key = panel.entry.pairKey ?? '';
+    const target = wanted === 'window' ? null : this.codeWindow(key, wanted);
+    const place: PanelPlace = target === null ? 'window' : wanted;
+    const host = place === 'window' ? null : target;
+    if (panel.host !== null && panel.host !== host && !panel.host.window.isDestroyed()) {
+      panel.host.window.contentView.removeChildView(panel.view);
+    }
+    if (panel.host === null && host !== null && !panel.frame.isDestroyed()) {
+      panel.frame.contentView.removeChildView(panel.view);
+    }
+    panel.place = place;
+    panel.host = host;
+    if (host === null) {
+      if (!panel.frame.isDestroyed()) {
+        panel.frame.contentView.addChildView(panel.view);
+        if (panel.visible) {
+          // Shown without taking the focus; it is focused when that is asked for.
+          if (!panel.frame.isVisible()) {
+            panel.frame.showInactive();
+          }
+        } else {
+          panel.frame.hide();
+        }
+      }
+    } else {
+      if (!panel.frame.isDestroyed()) {
+        panel.frame.hide();
+      }
+      host.window.contentView.addChildView(panel.view);
+      // Until the window says where its room is, the panel is not drawn over its code.
+      panel.slot = null;
+    }
+    this.layoutPanel(panel);
+    this.tellPanelState(panel);
+  }
+
+  private layoutPanel(panel: Panel): void {
+    if (panel.host === null) {
+      if (panel.frame.isDestroyed()) {
+        return;
+      }
+      const size = panel.frame.getContentBounds();
+      panel.view.setBounds({ x: 0, y: 0, width: size.width, height: size.height });
+      panel.view.setVisible(panel.visible);
+      return;
+    }
+    const slot = panel.slot;
+    panel.view.setVisible(panel.visible && slot !== null);
+    if (slot !== null) {
+      panel.view.setBounds({ x: Math.round(slot.x), y: Math.round(slot.y), width: Math.round(slot.width), height: Math.round(slot.height) });
+    }
+  }
+
+  private focusPanel(panel: Panel): void {
+    const window = panel.host === null ? panel.frame : panel.host.window;
+    if (window.isDestroyed() || !panel.visible) {
+      return;
+    }
+    if (window.isMinimized()) {
+      window.restore();
+    }
+    window.show();
+    window.focus();
+    panel.entry.contents.focus();
+    panel.entry.focusCount += 1;
+  }
+
+  /** A code window is closing: a panel docked in it moves to its own window, keeping all it holds. */
+  private releasePanelFrom(entry: ReviewWindowEntry): void {
+    if (entry.view === 'panel' || entry.pairKey === null) {
+      return;
+    }
+    const panel = this.panels.get(entry.pairKey);
+    if (panel === undefined || panel.host !== entry) {
+      return;
+    }
+    const others = this.list().some((other) => other !== entry && other.view !== 'panel' && other.pairKey === entry.pairKey);
+    if (others && !this.quitRequested) {
+      this.placePanel(panel, 'window');
+    } else {
+      entry.window.contentView.removeChildView(panel.view);
+      panel.host = null;
+    }
+  }
+
+  /** After a code window has gone: the panel goes with the review's last one. */
+  private panelAfterClose(entry: ReviewWindowEntry): void {
+    if (entry.view === 'panel' || entry.pairKey === null) {
+      return;
+    }
+    const panel = this.panels.get(entry.pairKey);
+    if (panel === undefined) {
+      return;
+    }
+    const others = this.list().some((other) => other.view !== 'panel' && other.pairKey === entry.pairKey);
+    if (!others) {
+      panel.closing = true;
+      if (!panel.frame.isDestroyed()) {
+        panel.frame.close();
+      }
+      return;
+    }
+    this.tellPanelState(panel);
+  }
+
+  /** A code window of the review opened or learned its pair: the panel may now dock there. */
+  panelOffersChanged(pairKey: string | null): void {
+    const panel = pairKey === null ? undefined : this.panels.get(pairKey);
+    if (panel !== undefined) {
+      this.tellPanelState(panel);
+    }
+  }
+
+  private cachedPreferences: { readonly explanationBounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }; readonly discussionPlace?: 'diff' | 'walk' } | null = null;
+
+  /** Where the person last put the panel; its own window the first time, and when that window is gone. */
+  private async preferredPlace(): Promise<PanelPlace> {
+    const answer = await this.options.host.getPreferences();
+    if (isReviewHostError(answer)) {
+      return 'window';
+    }
+    this.cachedPreferences = answer;
+    return answer.discussionPlace ?? 'window';
+  }
+
+  private async savePlace(place: PanelPlace): Promise<void> {
+    const answer = await this.options.host.getPreferences();
+    if (isReviewHostError(answer)) {
+      return;
+    }
+    const { discussionPlace: _old, ...rest } = answer;
+    const next = place === 'window' ? rest : { ...rest, discussionPlace: place };
+    this.cachedPreferences = next;
+    await this.options.host.setPreferences({ preferences: next });
+  }
+
+  private saveBounds(frame: BrowserWindow): void {
+    if (frame.isDestroyed()) {
+      return;
+    }
+    const bounds = frame.getBounds();
+    void this.options.host.getPreferences().then((answer) => {
+      if (isReviewHostError(answer)) {
+        return;
+      }
+      const next = { ...answer, explanationBounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height } };
+      this.cachedPreferences = next;
+      return this.options.host.setPreferences({ preferences: next });
+    });
   }
 
   /** Ask the view to save what it holds and wait for the answer, within a bound. */
@@ -876,4 +1291,19 @@ export class ReviewWindows {
     const answer = await this.options.host.lastReviewFor({ folder });
     return isReviewHostError(answer) ? null : answer.definitionPath;
   }
+}
+
+/** The review's panel: its page, its own window, and where it is. */
+interface Panel {
+  readonly entry: ReviewWindowEntry;
+  readonly view: WebContentsView;
+  readonly frame: BrowserWindow;
+  place: PanelPlace;
+  visible: boolean;
+  /** The code window it is docked in, or `null` in its own window. */
+  host: ReviewWindowEntry | null;
+  /** Where that window keeps room for it, in the window's coordinates. */
+  slot: Rectangle | null;
+  /** Its review has gone: its window closes for good. */
+  closing: boolean;
 }

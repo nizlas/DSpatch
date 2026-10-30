@@ -1715,6 +1715,11 @@ export interface ReviewPreferences {
   readonly explanationDetached?: true;
   /** Where that window was last left, in screen coordinates; checked against the screens when it opens. */
   readonly explanationBounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+  /**
+   * Where the review's panel was last put (30 October 2026): docked in the diff window or the
+   * walk window. Absent: its own window, the default; also when that window is not open.
+   */
+  readonly discussionPlace?: 'diff' | 'walk';
 }
 
 export const DEFAULT_PREFERENCES: ReviewPreferences = { language: 'en' };
@@ -1738,6 +1743,7 @@ export function adoptPreferences(raw: unknown): ReviewPreferences {
     ...(within(width, EXPLANATION_WIDTH) ? { explanationWidth: width } : {}),
     ...(within(navigation, NAVIGATION_WIDTH) ? { navigationWidth: navigation } : {}),
     ...(raw['explanationDetached'] === true ? { explanationDetached: true as const } : {}),
+    ...(raw['discussionPlace'] === 'diff' || raw['discussionPlace'] === 'walk' ? { discussionPlace: raw['discussionPlace'] } : {}),
     ...(boundsOf(raw['explanationBounds']) === null ? {} : { explanationBounds: boundsOf(raw['explanationBounds']) as NonNullable<ReviewPreferences['explanationBounds']> }),
   };
 }

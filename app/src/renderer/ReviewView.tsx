@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, JSX, ReactNode } from 'react';
+import type { CSSProperties, JSX, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { DiscussionActivity, DiscussionAnswer, PendingLine, ShortThenMore } from './DiscussionAnswer';
@@ -48,13 +48,14 @@ import {
 } from '../shared/review-model';
 import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuote } from '../shared/review-discussion';
 import { quoteRanges, readQuote } from './walk-selection';
-import { movePanel, openExplanationWindow, type DetachedPanel } from './explanation-window';
-import { isPairError, type AgentJob, type LineRange, type PairRecord, type PairWalk, type ReviewPairBridge } from '../shared/review-pair';
+import { isPairError, type AgentJob, type LineRange, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
 
 declare global {
   interface Window {
     readonly dspatchReview?: ReviewBridge;
+    /** The review's panel, Step and Discussion (30 October 2026). */
+    readonly dspatchReviewPanel?: ReviewPanelBridge;
     /**
      * Save whatever the open review has not saved yet, and say when it is done. The
      * main process calls it before a review window closes (`review-windows.ts`).
@@ -62,10 +63,16 @@ declare global {
     __dspatchReviewFlush?: () => Promise<string>;
     /** What the scripted `review-window` scenario reads and drives, from the main process. */
     __dspatchReviewCheck?: ReviewCheck;
-    /** The explanation's own window while it is open, for the scenario's readings. */
-    __dspatchExplanationWindow?: Window;
   }
 }
+
+/**
+ * This page is the review's panel (Niclas's decision of 30 October 2026): the whole right
+ * panel, Step and Discussion, belonging to the review, in its own window or docked in a code
+ * window of it. It shows no walk of its own: Step follows the walk window, and what it asks
+ * of the code (a step, a place, a reference) is done there. It keeps no record of its own.
+ */
+const PANEL_MODE = new URLSearchParams(window.location.search).get('view') === 'panel';
 
 /**
  * Where an opened code location is (Niclas's trial, 30 October 2026): the file by name and
@@ -105,9 +112,6 @@ function AwayBar({
     </div>
   );
 }
-
-/** Where the explanation's own window was last left (30 October 2026). */
-type ExplanationBounds = NonNullable<ReviewPreferences['explanationBounds']>;
 
 /** The scenario's view of a review window: readings, and the two gestures it makes. */
 export interface ReviewCheckReading {
@@ -231,10 +235,6 @@ export function ReviewView(): JSX.Element {
   const [lang, setLangState] = useState<Lang>(DEFAULT_PREFERENCES.language);
   const [width, setWidthState] = useState<number>(EXPLANATION_WIDTH.initial);
   const [navWidth, setNavWidthState] = useState<number>(NAVIGATION_WIDTH.initial);
-  // The explanation in a window of its own (30 October 2026); docked unless chosen.
-  const [detachedPref, setDetachedPrefState] = useState(false);
-  // Where that window was last left; read when it opens, so not a state that redraws.
-  const explanationBounds = useRef<ExplanationBounds | null>(null);
   const [langError, setLangError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -247,8 +247,6 @@ export function ReviewView(): JSX.Element {
         setLangState(preferences.language);
         setWidthState(preferences.explanationWidth ?? EXPLANATION_WIDTH.initial);
         setNavWidthState(preferences.navigationWidth ?? NAVIGATION_WIDTH.initial);
-        setDetachedPrefState(preferences.explanationDetached === true);
-        explanationBounds.current = preferences.explanationBounds ?? null;
       },
       (error: unknown) => {
         setLangError(String(error));
@@ -257,16 +255,24 @@ export function ReviewView(): JSX.Element {
     void bridge.initial().then(setOutcome);
   }, [bridge]);
 
-  // The preferences are saved whole, in the order the host keeps them.
+  /*
+   * The preferences are saved whole, so this window's own are put into what is kept now:
+   * where the review's panel is and its window's place are kept by the main process
+   * (`review-windows.ts`), and a language or a width chosen here must not undo them.
+   */
   const savePreferences = useCallback(
-    (next: { readonly language: Lang; readonly explanationWidth: number; readonly navigationWidth: number; readonly explanationDetached: boolean }): Promise<void> => {
+    (next: { readonly language: Lang; readonly explanationWidth: number; readonly navigationWidth: number }): Promise<void> => {
       if (bridge === undefined) {
         return Promise.resolve();
       }
-      const { explanationDetached, ...rest } = next;
-      const bounds = explanationBounds.current;
       return bridge
-        .setPreferences({ ...rest, ...(explanationDetached ? { explanationDetached: true as const } : {}), ...(bounds === null ? {} : { explanationBounds: bounds }) })
+        .getPreferences()
+        .catch(() => ({}))
+        .then((kept) => {
+          // The explanation's own window of earlier is gone; its choice means nothing now.
+          const { explanationDetached: _gone, ...rest } = kept as ReviewPreferences;
+          return bridge.setPreferences({ ...rest, ...next });
+        })
         .then((result) => {
           setLangError(result.saved ? null : (result.error ?? 'not saved'));
         });
@@ -277,9 +283,9 @@ export function ReviewView(): JSX.Element {
   const setLang = useCallback(
     (next: Lang) => {
       setLangState(next);
-      void savePreferences({ language: next, explanationWidth: width, navigationWidth: navWidth, explanationDetached: detachedPref });
+      void savePreferences({ language: next, explanationWidth: width, navigationWidth: navWidth });
     },
-    [savePreferences, width, navWidth, detachedPref],
+    [savePreferences, width, navWidth],
   );
 
   // DSP-152: the explanation column's width, as the reviewer left it.
@@ -287,9 +293,9 @@ export function ReviewView(): JSX.Element {
     (next: number) => {
       const clamped = Math.round(Math.min(EXPLANATION_WIDTH.max, Math.max(EXPLANATION_WIDTH.min, next)));
       setWidthState(clamped);
-      void savePreferences({ language: lang, explanationWidth: clamped, navigationWidth: navWidth, explanationDetached: detachedPref });
+      void savePreferences({ language: lang, explanationWidth: clamped, navigationWidth: navWidth });
     },
-    [savePreferences, lang, navWidth, detachedPref],
+    [savePreferences, lang, navWidth],
   );
 
   // The left column's width, as the reviewer left it (Niclas's trial feedback, 29 October 2026).
@@ -297,27 +303,12 @@ export function ReviewView(): JSX.Element {
     (next: number) => {
       const clamped = Math.round(Math.min(NAVIGATION_WIDTH.max, Math.max(NAVIGATION_WIDTH.min, next)));
       setNavWidthState(clamped);
-      void savePreferences({ language: lang, explanationWidth: width, navigationWidth: clamped, explanationDetached: detachedPref });
+      void savePreferences({ language: lang, explanationWidth: width, navigationWidth: clamped });
     },
-    [savePreferences, lang, width, detachedPref],
+    [savePreferences, lang, width],
   );
 
-  const setDetachedPref = useCallback(
-    (next: boolean) => {
-      setDetachedPrefState(next);
-      void savePreferences({ language: lang, explanationWidth: width, navigationWidth: navWidth, explanationDetached: next });
-    },
-    [savePreferences, lang, width, navWidth],
-  );
 
-  // Where the explanation's window was left, saved with the other preferences.
-  const setExplanationBounds = useCallback(
-    (next: ExplanationBounds) => {
-      explanationBounds.current = next;
-      return savePreferences({ language: lang, explanationWidth: width, navigationWidth: navWidth, explanationDetached: detachedPref });
-    },
-    [savePreferences, lang, width, navWidth, detachedPref],
-  );
 
   // What the last choice said when it opened nothing here: dismissed, or already
   // open in another window (which was brought to the front instead).
@@ -431,10 +422,6 @@ export function ReviewView(): JSX.Element {
       onExplanationWidth={setWidth}
       navigationWidth={navWidth}
       onNavigationWidth={setNavWidth}
-      explanationDetached={detachedPref}
-      onExplanationDetached={setDetachedPref}
-      explanationBounds={explanationBounds}
-      onExplanationBounds={setExplanationBounds}
       onReread={() => {
         if (bridge !== undefined) {
           void bridge.reread().then((next) => {
@@ -459,10 +446,6 @@ function OpenReview({
   onExplanationWidth,
   navigationWidth,
   onNavigationWidth,
-  explanationDetached,
-  onExplanationDetached,
-  explanationBounds,
-  onExplanationBounds,
   onReread,
 }: {
   readonly bundle: ReviewBundle;
@@ -475,10 +458,6 @@ function OpenReview({
   readonly onExplanationWidth: (width: number) => void;
   readonly navigationWidth: number;
   readonly onNavigationWidth: (width: number) => void;
-  readonly explanationDetached: boolean;
-  readonly onExplanationDetached: (on: boolean) => void;
-  readonly explanationBounds: { readonly current: ExplanationBounds | null };
-  readonly onExplanationBounds: (bounds: ExplanationBounds) => Promise<void>;
   /** Read this review again as it is on disk: the points worth checking, once found. */
   readonly onReread: () => void;
 }): JSX.Element {
@@ -522,9 +501,10 @@ function OpenReview({
   const [saving, setSaving] = useState(false);
   /** The save on its way, so a flush asked for while one runs waits for it too. */
   const inFlight = useRef<Promise<string> | null>(null);
-  /** What must be kept before the window closes, besides the review itself. */
-  const beforeClose = useRef<(() => Promise<void>) | null>(null);
   const flush = useCallback((): Promise<string> => {
+    if (PANEL_MODE) {
+      return Promise.resolve('the review panel keeps no record of its own');
+    }
     if (!dirty.current || bridge === undefined) {
       return inFlight.current ?? Promise.resolve('nothing unsaved');
     }
@@ -576,15 +556,10 @@ function OpenReview({
     };
     window.addEventListener('beforeunload', onUnload);
     // Asked for by the main process before the window closes, and awaited there.
-    // Before the window closes: what else must be kept first (the explanation window's place).
-    const flushAll = async (): Promise<string> => {
-      await beforeClose.current?.().catch(() => undefined);
-      return flush();
-    };
-    window.__dspatchReviewFlush = flushAll;
+    window.__dspatchReviewFlush = flush;
     return () => {
       window.removeEventListener('beforeunload', onUnload);
-      if (window.__dspatchReviewFlush === flushAll) {
+      if (window.__dspatchReviewFlush === flush) {
         delete window.__dspatchReviewFlush;
       }
       void flush();
@@ -657,15 +632,44 @@ function OpenReview({
    * lines for review and decides nothing.
    */
   const [quote, setQuote] = useState<SelectionQuote | null>(null);
-  /** Where the offer is drawn; `detached` when the selection is in the explanation's own window. */
-  const [quoteOffer, setQuoteOffer] = useState<{ readonly x: number; readonly y: number; readonly menu: boolean; readonly detached: boolean } | null>(null);
+  /**
+   * One selection to ask about for the whole review (30 October 2026): chosen here, it is
+   * what the next question is about in every window of the review, the diff's included.
+   */
+  const shareQuote = useCallback((next: SelectionQuote | null) => {
+    setQuote(next);
+    void window.dspatchReviewDiscussion?.setQuote(next).catch(() => undefined);
+  }, []);
+  /** Where the offer is drawn, beside the selection or in place of the context menu. */
+  const [quoteOffer, setQuoteOffer] = useState<{ readonly x: number; readonly y: number; readonly menu: boolean } | null>(null);
   const viewRoot = useRef<HTMLDivElement | null>(null);
+  /*
+   * The walk window shows no discussion of its own, but hears the review's (30 October 2026):
+   * a quote chosen, sent or removed in another window takes this window's selection and its
+   * mark away, as in the diff window. The panel hears it through its discussion.
+   */
+  useEffect(() => {
+    const discussion = window.dspatchReviewDiscussion;
+    if (PANEL_MODE || discussion === undefined) {
+      return;
+    }
+    const unsubscribe = discussion.onEvent((event) => {
+      if (event.kind === 'quote') {
+        quoteMark.current = null;
+        setQuote(null);
+        setQuoteOffer(null);
+        // Left selected, the next drag over it would move the text instead of selecting.
+        window.getSelection()?.removeAllRanges();
+      }
+    });
+    void discussion.load(null).catch(() => undefined);
+    return unsubscribe;
+  }, []);
   /** A selection of prose as it was made, to keep it marked (code is found again by its place). */
   const quoteMark = useRef<Range | null>(null);
   /*
-   * The right panel, docked or in its own window (30 October 2026). Its elements live in one
-   * element, rendered through a portal and moved between the walk window and the other
-   * window; the React tree is the same either way, so nothing in it starts over.
+   * The right panel's element, rendered through a portal into the review panel's page
+   * (30 October 2026). The page itself is what moves between windows (`review-windows.ts`).
    */
   const panelHost = useMemo(() => {
     const node = document.createElement('div');
@@ -673,9 +677,6 @@ function OpenReview({
     return node;
   }, []);
   const dockSlot = useRef<HTMLDivElement | null>(null);
-  const [detached, setDetached] = useState<DetachedPanel | null>(null);
-  /** The walk window is going away: its explanation window closes with it and the choice stays. */
-  const leaving = useRef(false);
   const [checkReturn, setCheckReturn] = useState<{ readonly stepId: string | null; readonly refIndex: number; readonly away: CodeLocation | null } | null>(null);
   const [delegatingWalk, setDelegatingWalk] = useState(false);
   const [liveWidth, setLiveWidth] = useState(explanationWidth);
@@ -774,6 +775,10 @@ function OpenReview({
   const [navRequest, setNavRequest] = useState(0);
   const goToStep = useCallback(
     (stepId: string, placeIndex = 0) => {
+      if (PANEL_MODE) {
+        window.dspatchReviewPanel?.action({ kind: 'goToStep', stepId, placeIndex });
+        return;
+      }
       const found = findStep(bundle, stepId);
       if (found === null) {
         return;
@@ -832,6 +837,10 @@ function OpenReview({
   const stage = useRef<HTMLDivElement | null>(null);
   const goAway = useCallback(
     (location: CodeLocation, scope: CodeScope = 'focus') => {
+      if (PANEL_MODE) {
+        window.dspatchReviewPanel?.action({ kind: 'openLocation', location: { side: location.side, path: location.path, start: location.start, end: location.end } });
+        return;
+      }
       const here = latest.current.position;
       const last = cameFrom.current.at(-1);
       if (here.away === null && stage.current !== null) {
@@ -955,13 +964,6 @@ function OpenReview({
     return () => window.removeEventListener('keydown', onKey);
   }, [moveStation]);
 
-  const setHighlightWalk = useCallback(
-    (on: boolean) => {
-      update((value) => ({ ...value, ui: { ...value.ui, highlightWalk: on } }));
-    },
-    [update],
-  );
-
   const toggleWalked = useCallback(
     (stepId: string) => {
       record((value) => {
@@ -1026,13 +1028,6 @@ function OpenReview({
 
   const diffFile = focus === null ? null : (bundle.files.find((file) => file.path === focus.path) ?? null);
 
-  // The light purple overview: every place of the current walk, focus and context.
-  const walkOverlay: readonly CodeLocation[] = useMemo(() => {
-    if (!state.ui.highlightWalk || current === null) {
-      return [];
-    }
-    return current.walk.steps.flatMap((step) => step.places.flatMap((entry) => [entry.focus, ...entry.context].map(asLocation)));
-  }, [state.ui.highlightWalk, current]);
 
   const revisionText = `${short(bundle.base.sha)}→${short(bundle.target.sha)}`;
 
@@ -1056,11 +1051,10 @@ function OpenReview({
 
   /** Let go of the selection: the kept quote and the window's own, which would otherwise be read again. */
   const dropQuote = useCallback(() => {
-    setQuote(null);
+    shareQuote(null);
     setQuoteOffer(null);
     quoteMark.current = null;
     window.getSelection()?.removeAllRanges();
-    window.__dspatchExplanationWindow?.getSelection()?.removeAllRanges();
   }, []);
 
   /*
@@ -1098,7 +1092,14 @@ function OpenReview({
   }, [quote]);
 
   // Another step, place or location: a selection made for the last one does not go along.
+  // Not on opening, and not in the review's panel, which only follows the walk window: the
+  // quote is the review's, and a window opening must not take it away from the others.
+  const placeSeen = useRef(false);
   useEffect(() => {
+    if (!placeSeen.current || PANEL_MODE) {
+      placeSeen.current = true;
+      return;
+    }
     dropQuote();
   }, [dropQuote, current?.step.id, placeIndex, away?.path, away?.side, away?.start, away?.end]);
 
@@ -1121,6 +1122,10 @@ function OpenReview({
       setCheckReturn((before) => (openCheckId !== null && before !== null ? before : { stepId: here.stepId, refIndex: here.refIndex, away: here.away }));
       setOpenCheckId(check.id);
       setRightTab('step');
+      // Its reasoning is shown in the review's panel, on the step; shown if it is not.
+      if (!PANEL_MODE) {
+        void window.dspatchReviewPanel?.show(null, false, 'step');
+      }
       const target = check.stepId ?? check.tour?.steps[0]?.id ?? null;
       if (target !== null) {
         goToStep(target);
@@ -1144,6 +1149,91 @@ function OpenReview({
       setNavRequest((count) => count + 1);
     }
   }, [checkReturn, goAway, goToStep]);
+
+  /*
+   * The review's panel (30 October 2026). Here in the panel: Step follows the walk window.
+   * In the walk window: where it is goes to the panel, and what the panel asks is done here.
+   */
+  const panelBridge = window.dspatchReviewPanel;
+  // The way back from an open point: the walk window's, named here and in the panel.
+  const pointBack = checkReturn === null ? null : checkReturn.away !== null ? words.backToCode : checkReturn.stepId === null ? null : words.backTo(checkReturn.stepId);
+  const [followedBack, setFollowedBack] = useState<string | null>(null);
+  const rereadFor = useRef<string | null>(null);
+  const [panelState, setPanelState] = useState<PanelState | null>(null);
+  useEffect(() => {
+    if (panelBridge === undefined) {
+      return;
+    }
+    void panelBridge.state().then((known) => {
+      if (known !== null) {
+        setPanelState(known);
+      }
+    });
+    return panelBridge.onState(setPanelState);
+  }, [panelBridge]);
+  useEffect(() => {
+    if (!PANEL_MODE || panelBridge === undefined) {
+      return;
+    }
+    const follow = (position: PanelFollow): void => {
+      if (position.definitionPath.toLowerCase() !== bundle.definitionPath.toLowerCase()) {
+        return;
+      }
+      const found = position.stepId === null ? null : findStep(bundle, position.stepId);
+      update((value) => ({
+        ...value,
+        position: { ...value.position, walkId: found?.walk.id ?? value.position.walkId, stepId: position.stepId ?? value.position.stepId, refIndex: position.refIndex, away: null },
+      }));
+      setOpenCheckId(position.checkId);
+      setFollowedBack(position.checkBack);
+      // A point found after this panel opened: the review is read again, once for each.
+      if (position.checkId !== null && !bundle.definition.checks.some((entry) => entry.id === position.checkId) && rereadFor.current !== position.checkId) {
+        rereadFor.current = position.checkId;
+        onReread();
+      }
+    };
+    void panelBridge.lastFollow().then((position) => {
+      if (position !== null) {
+        follow(position);
+      }
+    });
+    return panelBridge.onFollow(follow);
+  }, [panelBridge, bundle, update, onReread]);
+  useEffect(() => {
+    if (PANEL_MODE || panelBridge === undefined) {
+      return;
+    }
+    panelBridge.follow({ definitionPath: bundle.definitionPath, stepId: state.position.stepId, placeIndex: state.position.refIndex, refIndex: state.position.refIndex, checkId: openCheckId, checkBack: pointBack });
+  }, [panelBridge, bundle.definitionPath, state.position.stepId, state.position.refIndex, openCheckId, pointBack]);
+  const panelAsks = useRef({ goToStep, goAway, openPoint, closePoint });
+  panelAsks.current = { goToStep, goAway, openPoint, closePoint };
+  useEffect(() => {
+    if (PANEL_MODE || panelBridge === undefined) {
+      return;
+    }
+    return panelBridge.onAction((action) => {
+      if (action.kind === 'goToStep') {
+        panelAsks.current.goToStep(action.stepId, action.placeIndex);
+        setNavRequest((count) => count + 1);
+      } else if (action.kind === 'openLocation') {
+        panelAsks.current.goAway(action.location);
+      } else if (action.kind === 'closeCheck') {
+        panelAsks.current.closePoint();
+      } else {
+        const check = bundle.definition.checks.find((entry) => entry.id === action.checkId);
+        if (check !== undefined) {
+          panelAsks.current.openPoint(check);
+        }
+      }
+    });
+  }, [panelBridge, bundle]);
+  /** Show the review's panel, from this window; `ask` puts the cursor in the discussion's question. */
+  const showPanel = useCallback(
+    (ask: boolean) => {
+      void window.dspatchReviewPanel?.show(null, ask);
+    },
+    [],
+  );
 
   /** A deepening of the step, or (`fromPoint`) of the open point worth checking at it. */
   const deepen = useCallback(
@@ -1191,10 +1281,9 @@ function OpenReview({
   );
 
   // Read what is selected now; offer the action beside it, or in place of the context menu.
-  // In the explanation's own window, the panel's element is the root to read from.
   const takeSelection = useCallback(
-    (menuAt: { readonly x: number; readonly y: number } | null, inDetached = false): SelectionQuote | null => {
-      const root = inDetached ? panelHost : viewRoot.current;
+    (menuAt: { readonly x: number; readonly y: number } | null): SelectionQuote | null => {
+      const root = viewRoot.current;
       const found = root === null ? null : readQuote(root);
       if (found === null) {
         if (menuAt === null && (root?.ownerDocument.getSelection()?.isCollapsed ?? true)) {
@@ -1203,132 +1292,36 @@ function OpenReview({
         return null;
       }
       quoteMark.current = found.quote.kind === 'text' ? found.range : null;
-      setQuote(found.quote);
-      setQuoteOffer(menuAt === null ? { x: found.rect.right, y: found.rect.bottom, menu: false, detached: inDetached } : { ...menuAt, menu: true, detached: inDetached });
+      shareQuote(found.quote);
+      setQuoteOffer(menuAt === null ? { x: found.rect.right, y: found.rect.bottom, menu: false } : { ...menuAt, menu: true });
       return found.quote;
     },
-    [panelHost],
+    [],
   );
 
   useEffect(() => {
-    const listen = (target: Window, inDetached: boolean): (() => void) => {
-      const onKey = (event: KeyboardEvent): void => {
-        if (event.ctrlKey && event.shiftKey && (event.key === 'E' || event.key === 'e')) {
-          // What is selected now, if anything; else the selection kept for the question.
-          const selected = takeSelection(null, inDetached) ?? quote;
-          if (selected !== null) {
-            event.preventDefault();
-            explainQuote(selected);
-          }
-        } else if (event.key === 'Escape') {
-          setQuoteOffer(null);
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.ctrlKey && event.shiftKey && (event.key === 'E' || event.key === 'e')) {
+        // What is selected now, if anything; else the selection kept for the question.
+        const selected = takeSelection(null) ?? quote;
+        if (selected !== null) {
+          event.preventDefault();
+          explainQuote(selected);
         }
-      };
-      target.addEventListener('keydown', onKey);
-      return () => target.removeEventListener('keydown', onKey);
+      } else if (event.key === 'Escape') {
+        setQuoteOffer(null);
+      }
     };
-    const own = listen(window, false);
-    const other = detached === null ? null : listen(detached.window, true);
-    return () => {
-      own();
-      other?.();
-    };
-  }, [explainQuote, takeSelection, quote, detached]);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [explainQuote, takeSelection, quote]);
 
-  // --- The explanation in its own window (30 October 2026) ---
-  const detach = useCallback(() => {
-    if (detached !== null) {
-      detached.window.focus();
-      return;
-    }
-    const opened = openExplanationWindow(`Explanation · ${pick(bundle.definition.title, lang) || 'review'}`, explanationBounds.current);
-    if (opened === null) {
-      setDiffNote('The explanation could not be opened in its own window; it stays here.');
-      return;
-    }
-    setDetached(opened);
-    onExplanationDetached(true);
-  }, [detached, bundle, lang, onExplanationDetached, explanationBounds]);
-
-  const dock = useCallback(() => {
-    const was = detached;
-    setDetached(null);
-    onExplanationDetached(false);
-    was?.window.close();
-  }, [detached, onExplanationDetached]);
-
-  // Opened as it was left: once, when the walk window opens with the choice made.
-  const reopened = useRef(false);
-  useEffect(() => {
-    if (explanationDetached && !reopened.current && detached === null) {
-      reopened.current = true;
-      detach();
-    }
-  }, [explanationDetached, detached, detach]);
-
-  // The panel's element goes where the panel is now, before anything is painted.
+  // The panel's element goes into the review panel's page before anything is painted.
   useLayoutEffect(() => {
-    const target = detached?.root ?? dockSlot.current;
-    if (target !== null) {
-      movePanel(panelHost, target);
+    if (dockSlot.current !== null && panelHost.parentNode !== dockSlot.current) {
+      dockSlot.current.appendChild(panelHost);
     }
-    window.__dspatchExplanationWindow = detached?.window;
-  }, [detached, panelHost]);
-
-  // Closing the explanation's window docks it back; closing the walk window closes both.
-  useEffect(() => {
-    if (detached === null) {
-      return;
-    }
-    const child = detached.window;
-    const closed = (): void => {
-      if (leaving.current) {
-        return;
-      }
-      setDetached((now) => {
-        if (now?.window === child) {
-          // Back before its window's document goes, so nothing in it is lost.
-          if (dockSlot.current !== null) {
-            movePanel(panelHost, dockSlot.current);
-          }
-          onExplanationDetached(false);
-          return null;
-        }
-        return now;
-      });
-    };
-    child.addEventListener('pagehide', closed);
-    // Where it is now, saved when it was moved or resized (no event says it was moved), and
-    // once more before the walk window closes, so a last move is not lost.
-    const place = (): ExplanationBounds => ({ x: child.screenX, y: child.screenY, width: child.outerWidth, height: child.outerHeight });
-    beforeClose.current = () => (child.closed ? Promise.resolve() : onExplanationBounds(place()));
-    let last = '';
-    const watch = window.setInterval(() => {
-      if (child.closed) {
-        closed();
-        return;
-      }
-      const now = place();
-      const said = JSON.stringify(now);
-      if (last !== '' && said !== last) {
-        void onExplanationBounds(now);
-      }
-      last = said;
-    }, 400);
-    return () => {
-      child.removeEventListener('pagehide', closed);
-      window.clearInterval(watch);
-      beforeClose.current = null;
-    };
-  }, [detached, panelHost, onExplanationDetached, onExplanationBounds]);
-  useEffect(() => {
-    const away = (): void => {
-      leaving.current = true;
-      window.__dspatchExplanationWindow?.close();
-    };
-    window.addEventListener('pagehide', away);
-    return () => window.removeEventListener('pagehide', away);
-  }, []);
+  });
 
   // The changed lines the current walk covers, for delegating the walk (DSP-152).
   const walkScope = useMemo(() => {
@@ -1413,39 +1406,273 @@ function OpenReview({
   const clampNav = (value: number): number => Math.round(Math.min(NAVIGATION_WIDTH.max, Math.max(NAVIGATION_WIDTH.min, value)));
   const walkKinds = { walks: bundle.definition.walks.filter((walk) => walk.kind === 'walk').length, readings: bundle.definition.walks.filter((walk) => walk.kind === 'reading').length };
 
-  return (
-    <DiscussionActivity.Provider value={discussionActivity}>
-    <div
-      className="rv"
-      ref={viewRoot}
-      // The panel's events arrive here too, from its own window when it has one.
-      onMouseUp={(event) => {
-        if (event.button === 0 && !(event.target as Element).closest('[data-ev="walk-quote-offer"]')) {
-          const inDetached = panelHost.ownerDocument !== document && panelHost.contains(event.target as Node);
-          // After the browser has settled the selection for this release.
-          setTimeout(() => takeSelection(null, inDetached), 0);
-        }
-      }}
-      onKeyUp={(event) => {
-        if (event.shiftKey && !event.ctrlKey) {
-          takeSelection(null, panelHost.ownerDocument !== document && panelHost.contains(event.target as Node));
-        }
-      }}
-      onContextMenu={(event) => {
-        const inDetached = panelHost.ownerDocument !== document && panelHost.contains(event.target as Node);
-        if (takeSelection({ x: event.clientX, y: event.clientY }, inDetached) !== null) {
-          event.preventDefault();
-        }
-      }}
-    >
-      {quoteOffer !== null && quote !== null && (quoteOffer.detached && detached !== null ? (offer: JSX.Element) => createPortal(offer, detached.root) : (offer: JSX.Element) => offer)(
+  const noWalks = bundle.definition.walks.length === 0;
+  useEffect(() => {
+    if (noWalks) {
+      setRightTab('discussion');
+    }
+  }, [noWalks]);
+  /*
+   * A walk is read with its step's explanation, which is in the review's panel. Opening a walk
+   * opens the panel on Step, without taking the focus, when the review has none yet; one the
+   * person has hidden stays hidden. A walk that belongs to no revision pair has no review
+   * panel to show, and keeps the panel here in its own window.
+   */
+  const [panelHere, setPanelHere] = useState(!PANEL_MODE && panelBridge === undefined);
+  useEffect(() => {
+    if (PANEL_MODE || panelBridge === undefined || noWalks) {
+      return;
+    }
+    void panelBridge.state().then(async (known) => {
+      if (known === null && !(await panelBridge.show(null, false, 'step')).ok) {
+        setPanelHere(true);
+      }
+    });
+  }, [panelBridge, noWalks]);
+  /** The walk window keeps room for the panel while it is docked here, and says where the room is. */
+  const dockedHere = !PANEL_MODE && (panelHere || panelState?.dockedHere === true);
+  const roomRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const room = roomRef.current;
+    if (PANEL_MODE || panelBridge === undefined || room === null || !dockedHere || panelHere) {
+      return;
+    }
+    const tell = (): void => {
+      const box = room.getBoundingClientRect();
+      panelBridge.slot({ x: box.left, y: box.top, width: box.width, height: box.height });
+    };
+    tell();
+    const observer = new ResizeObserver(tell);
+    observer.observe(room);
+    window.addEventListener('resize', tell);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', tell);
+    };
+  }, [panelBridge, dockedHere, panelHere]);
+  const rightPanel = (
+        <aside className="rv-right">
+          <div className="rv-tabs rv-right-tabs" role="tablist">
+            {(noWalks ? (['discussion'] as const) : (['step', 'discussion'] as const)).map((key) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                data-ev={`right-tab-${key}`}
+                aria-selected={rightTab === key}
+                className={rightTab === key ? 'rv-tab rv-tab-on' : 'rv-tab'}
+                onClick={() => setRightTab(key)}
+              >
+                {words.rightTabs[key]}
+              </button>
+            ))}
+            {/* Where the panel is: its own window, or docked in a code window of the review (30 October 2026). */}
+            <span className="rv-panel-places" role="group" aria-label="Where this panel is">
+              {panelState !== null && panelState.place !== 'window' && (
+                <button type="button" className="rv-panel-window" data-ev="panel-own-window" title="Move this panel to a window of its own" onClick={() => void panelBridge?.dock('window')}>
+                  ⧉
+                </button>
+              )}
+              {panelState?.offers.diff === true && panelState.place !== 'diff' && (
+                <button type="button" className="rv-panel-window rv-panel-dock" data-ev="panel-dock-diff" title="Dock this panel in the diff window" onClick={() => void panelBridge?.dock('diff')}>
+                  Dock in diff
+                </button>
+              )}
+              {panelState?.offers.walk === true && panelState.place !== 'walk' && (
+                <button type="button" className="rv-panel-window rv-panel-dock" data-ev="panel-dock-walk" title="Dock this panel in the walk window" onClick={() => void panelBridge?.dock('walk')}>
+                  Dock in walk
+                </button>
+              )}
+              {panelState !== null && panelState.place !== 'window' && (
+                <button type="button" className="rv-panel-window" data-ev="panel-hide" title="Hide this panel; nothing in it stops" onClick={() => void panelBridge?.hide()}>
+                  Hide
+                </button>
+              )}
+            </span>
+          </div>
+          <ReviewDiscussion
+            bundle={bundle}
+            request={discussionRequest}
+            lang={lang}
+            words={words.discussion}
+            shown={rightTab === 'discussion'}
+            flush={flush}
+            onGoToPoint={(stepId, index) => {
+              goToStep(stepId, index);
+              setNavRequest((count) => count + 1);
+            }}
+            onGoToLocation={(location) => goAway(location)}
+            onMessages={setDiscussionMessages}
+            onActivity={setDiscussionActivity}
+            onClearQuote={dropQuote}
+            onShow={(quiet, tab) => {
+              // Asked for from a window of the review: the discussion, and the cursor in its question;
+              // or the step, for a point opened in the walk window.
+              setRightTab(tab);
+              if (!quiet && tab === 'discussion') {
+                setTimeout(() => panelHost.querySelector<HTMLTextAreaElement>('[data-ev="discussion-composer"]')?.focus(), 0);
+              }
+            }}
+            onSharedQuote={(shared) => {
+              // Chosen in another window: what the question is about here too, with no mark of
+              // its own in this window's code.
+              quoteMark.current = null;
+              setQuote(shared);
+            }}
+          />
+          {rightTab === 'step' && (
+            <>
+              {pair !== null && pairBridge !== undefined && focus !== null && (
+                <div className="rv-show-in-diff">
+                  <button
+                    type="button"
+                    data-ev="walk-show-in-diff"
+                    onClick={() => {
+                      void pairBridge
+                        .showInDiff({ side: focus.side, path: focus.path, line: focus.start })
+                        .then((answer) => setDiffNote(answer.ok ? '' : answer.note));
+                    }}
+                  >
+                    Show in diff
+                  </button>
+                  {diffNote !== '' && <span className="rv-sub">{diffNote}</span>}
+                </div>
+              )}
+              {pair !== null && pairBridge !== undefined && current !== null && away === null && walkScope !== null && (
+                <div className="rv-walk-delegate">
+                  {walkJob !== null && (!delegatingWalk || isRunning(walkJob)) && (
+                    <JobLine job={walkJob} onStop={() => void pairBridge.cancelJob(pair.key, walkJob.id)} />
+                  )}
+                  {delegatingWalk ? (
+                    <AgentPicker
+                      pairKey={pair.key}
+                      action="Delegate this walk"
+                      busy={false}
+                      testId="walk-delegate-agent"
+                      onCancel={() => setDelegatingWalk(false)}
+                      onStart={(choice) => {
+                        void pairBridge
+                          .startJob(pair.key, { kind: 'review', ...choice, scope: walkScope })
+                          .catch((error: unknown) => ({ error: requestFailure(error) }))
+                          .then((answer) => {
+                          if (isPairError(answer)) {
+                            setDiffNote(`The review could not be started: ${answer.error}`);
+                          } else {
+                            setDelegatingWalk(false);
+                          }
+                        });
+                      }}
+                    />
+                  ) : (
+                    walkJob?.state !== 'running' &&
+                    walkJob?.state !== 'cancelling' && (
+                      <button type="button" className="rv-quiet" data-ev="walk-delegate" onClick={() => setDelegatingWalk(true)}>
+                        Delegate this walk to the agent…
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+              {openCheck !== null && (
+                <CheckPanel
+                  check={openCheck}
+                  inTour={current?.walk.kind === 'check' && current.walk.id === openCheck.id}
+                  exchanges={pointExchanges(discussionMessages, openCheck.id)}
+                  error={deepenError}
+                  backLabel={PANEL_MODE ? followedBack : pointBack}
+                  lang={lang}
+                  onBack={PANEL_MODE ? () => panelBridge?.action({ kind: 'closeCheck' }) : closePoint}
+                  onShow={goAway}
+                  onDeepen={(request) => void deepen(request, true)}
+                  onAsk={async (question) => {
+                    const discussion = window.dspatchReviewDiscussion;
+                    if (discussion === undefined) {
+                      return 'The discussion is not available in this window.';
+                    }
+                    await flush();
+                    const outcome = await discussion.send({ question, subject: discussionRequest.subject, selection: discussionRequest.selection, language: lang });
+                    return outcome.kind === 'sent' ? null : outcome.error;
+                  }}
+                />
+              )}
+              {current !== null && away === null && place !== null && (
+                <StepPanel
+                  codeQuestion={
+                    pair === null || pairBridge === undefined
+                      ? undefined
+                      : () => (
+                          <StepCodeQuestion
+                            pairKey={pair.key}
+                            bridge={pairBridge}
+                            jobs={pair.record.jobs.filter(
+                              (job) => job.kind === 'explain' && job.question?.definitionPath === bundle.definitionPath && job.question.stepId === current.step.id,
+                            )}
+                            onShow={(range) => goAway({ path: range.path, side: range.side, start: range.start, end: range.end })}
+                          />
+                        )
+                  }
+                  deepenings={deepeningsFor(discussionMessages, current.step.id)}
+                  deepenError={deepenError}
+                  onDeepen={(request) => void deepen(request, false, request.action === 'explain' ? quote : null)}
+                  onContinue={() => setRightTab('discussion')}
+                  walk={current.walk}
+                  step={current.step}
+                  index={current.index}
+                  placeIndex={placeIndex}
+                  referenceProblems={bundle.referenceProblems}
+                  state={state}
+                  words={words}
+                  lang={lang}
+                  onPlace={(index) => {
+                    goToStep(current.step.id, index);
+                    setNavRequest((count) => count + 1);
+                  }}
+                  onOpenEvidence={goAway}
+                  quoteText={quote?.text ?? ''}
+                />
+              )}
+              {away !== null && current !== null && (
+                <section className="rv-step-panel">
+                  <div className="rv-walk-title">{words.outsideWalk}</div>
+                  <button type="button" onClick={returnToWalk}>
+                    {words.backTo(current.step.id)}
+                  </button>
+                </section>
+              )}
+              <Collapsible title={words.reviewSection} defaultOpen={false} ev="walk-review-section">
+                {current !== null && away === null && (
+                  <div className="rv-walked">
+                    <button type="button" onClick={() => toggleWalked(current.step.id)}>
+                      {state.walkedSteps[current.step.id] === undefined ? words.markWalked : words.walkedUndo}
+                    </button>
+                    <span className="rv-sub">{words.walkedNote}</span>
+                  </div>
+                )}
+                <HunkDecisions
+                  focus={focus}
+                  diffFile={diffFile}
+                  files={files}
+                  coverage={coverageByHunk}
+                  decisions={shownState.decisions}
+                  onDecide={decide}
+                  revisionText={revisionText}
+                  words={words}
+                />
+              </Collapsible>
+              <NotesHere notes={state.notes} location={focus} stepId={current?.step.id ?? null} words={words} onOpen={goAway} />
+            </>
+          )}
+        </aside>
+  );
+  const quoteOfferView = (
+    quoteOffer !== null && quote !== null && (
         <div
           className={quoteOffer.menu ? 'rv-explain-menu' : 'rv-explain-offer'}
           data-ev="walk-quote-offer"
           role={quoteOffer.menu ? 'menu' : undefined}
           style={{
-            left: Math.min(quoteOffer.x, (quoteOffer.detached && detached !== null ? detached.window : window).innerWidth - 220),
-            top: Math.min(quoteOffer.y + 4, (quoteOffer.detached && detached !== null ? detached.window : window).innerHeight - 80),
+            left: Math.min(quoteOffer.x, window.innerWidth - 220),
+            top: Math.min(quoteOffer.y + 4, window.innerHeight - 80),
           }}
         >
           <button
@@ -1455,7 +1682,10 @@ function OpenReview({
             title="Explain exactly what is selected (Ctrl+Shift+E)"
             // Not a focus change: the selection stays as it is.
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => explainQuote()}
+            onClick={() => {
+              explainQuote();
+              showPanel(false);
+            }}
           >
             Explain this
           </button>
@@ -1467,16 +1697,54 @@ function OpenReview({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
                 setQuoteOffer(null);
-                setRightTab('discussion');
-                detached?.window.focus();
-                setTimeout(() => panelHost.querySelector<HTMLTextAreaElement>('[data-ev="discussion-composer"]')?.focus(), 0);
+                if (PANEL_MODE) {
+                  setRightTab('discussion');
+                  setTimeout(() => panelHost.querySelector<HTMLTextAreaElement>('[data-ev="discussion-composer"]')?.focus(), 0);
+                } else {
+                  showPanel(true);
+                }
               }}
             >
               Ask about this…
             </button>
           )}
-        </div>,
-      )}
+        </div>
+    )
+  );
+  const rootHandlers = {
+    onMouseUp: (event: ReactMouseEvent<HTMLDivElement>): void => {
+      if (event.button === 0 && !(event.target as Element).closest('[data-ev="walk-quote-offer"]')) {
+        // After the browser has settled the selection for this release.
+        setTimeout(() => takeSelection(null), 0);
+      }
+    },
+    onKeyUp: (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+      if (event.shiftKey && !event.ctrlKey) {
+        takeSelection(null);
+      }
+    },
+    onContextMenu: (event: ReactMouseEvent<HTMLDivElement>): void => {
+      if (takeSelection({ x: event.clientX, y: event.clientY }) !== null) {
+        event.preventDefault();
+      }
+    },
+  };
+  if (PANEL_MODE) {
+    return (
+      <DiscussionActivity.Provider value={discussionActivity}>
+        <div className="rv rv-panel-only" ref={viewRoot} {...rootHandlers}>
+          {quoteOfferView}
+          <div className="rv-right-dock rv-panel-slot" ref={dockSlot} />
+          {createPortal(rightPanel, panelHost)}
+        </div>
+      </DiscussionActivity.Provider>
+    );
+  }
+
+  return (
+    <DiscussionActivity.Provider value={discussionActivity}>
+    <div className="rv" ref={viewRoot} {...rootHandlers}    >
+      {quoteOfferView}
       <Header
         bundle={bundle}
         history={state.previousDefinitionHashes.length}
@@ -1488,6 +1756,7 @@ function OpenReview({
         saving={saving}
         coverage={coverage}
         onChoose={pair === null ? onChoose : null}
+        onDiscussion={() => showPanel(true)}
         pairWalks={pairWalks}
         onOpenWalk={(definitionPath) => {
           if (pair !== null && pairBridge !== undefined) {
@@ -1508,7 +1777,7 @@ function OpenReview({
         </div>
       )}
       <div
-        className={`${tab === 'coverage' || tab === 'notes' ? 'rv-body rv-body-wide' : 'rv-body'}${detached === null ? '' : ' rv-body-detached'}`}
+        className={`${tab === 'coverage' || tab === 'notes' ? 'rv-body rv-body-wide' : 'rv-body'}${dockedHere ? '' : ' rv-body-detached'}`}
         style={{ '--rv-right-width': `${String(liveWidth)}px`, '--rv-left-width': `${String(liveNavWidth)}px` } as CSSProperties}
       >
         <nav className="rv-left">
@@ -1651,8 +1920,6 @@ function OpenReview({
                 onLevel={setLevel}
                 view={view}
                 onView={setView}
-                highlightWalk={state.ui.highlightWalk}
-                onHighlightWalk={setHighlightWalk}
                 wrap={place === null ? false : wrapsLines(state.ui, place.focus.path)}
                 onWrap={(on) => {
                   if (place !== null) {
@@ -1681,7 +1948,6 @@ function OpenReview({
                 files={files}
                 level={level}
                 view={view}
-                highlightWalk={state.ui.highlightWalk}
                 wrapProse={wrapProse}
                 wrapCode={wrapCode}
                 words={words}
@@ -1698,15 +1964,12 @@ function OpenReview({
               key={`${focus.path}:${focus.side}:${String(focus.start)}:${String(focus.end)}`}
               focus={focus}
               contexts={contexts}
-              overlay={walkOverlay}
               diffFile={diffFile}
               files={files}
               view={view}
               onView={setView}
               scope={scope}
               onScope={setScope}
-              highlightWalk={state.ui.highlightWalk}
-              onHighlightWalk={current === null ? null : setHighlightWalk}
               wrap={wrapsLines(state.ui, focus.path)}
               onWrap={(on) => setWrap(focus.path, on)}
               selection={selection}
@@ -1720,7 +1983,7 @@ function OpenReview({
           ))}
         </main>
 
-        {detached === null && (
+        {dockedHere && (
         <div
           className="rv-divider"
           role="separator"
@@ -1755,203 +2018,12 @@ function OpenReview({
           }}
         />
         )}
-        {/* Kept while the panel is away, hidden: closing its window brings the panel back here at once. */}
-        <div className="rv-right-dock" ref={dockSlot} hidden={detached !== null} />
+        {/* Room for the review's panel while it is docked in this window; the panel is drawn over it. */}
+        <div className="rv-right-dock rv-panel-room" ref={roomRef} data-ev="panel-room" hidden={!dockedHere}>
+          {panelHere && <div className="rv-right-dock rv-panel-slot" ref={dockSlot} />}
+        </div>
+        {panelHere && createPortal(rightPanel, panelHost)}
 
-        {createPortal(
-        <aside className="rv-right">
-          <div className="rv-tabs rv-right-tabs" role="tablist">
-            {(['step', 'discussion'] as const).map((key) => (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                data-ev={`right-tab-${key}`}
-                aria-selected={rightTab === key}
-                className={rightTab === key ? 'rv-tab rv-tab-on' : 'rv-tab'}
-                onClick={() => setRightTab(key)}
-              >
-                {words.rightTabs[key]}
-              </button>
-            ))}
-            {detached === null ? (
-              <button
-                type="button"
-                className="rv-panel-window"
-                data-ev="explanation-detach"
-                title="Open the explanation in its own window (the code gets this width)"
-                aria-label="Open the explanation in its own window"
-                onClick={detach}
-              >
-                ⧉
-              </button>
-            ) : (
-              <button type="button" className="rv-panel-window rv-panel-dock" data-ev="explanation-dock" title="Put the explanation back into the walk window" onClick={dock}>
-                Dock
-              </button>
-            )}
-          </div>
-          <ReviewDiscussion
-            bundle={bundle}
-            request={discussionRequest}
-            lang={lang}
-            words={words.discussion}
-            shown={rightTab === 'discussion'}
-            flush={flush}
-            onGoToPoint={(stepId, index) => {
-              goToStep(stepId, index);
-              setNavRequest((count) => count + 1);
-            }}
-            onGoToLocation={(location) => goAway(location)}
-            onMessages={setDiscussionMessages}
-            onActivity={setDiscussionActivity}
-            onClearQuote={dropQuote}
-          />
-          {rightTab === 'step' && (
-            <>
-              {pair !== null && pairBridge !== undefined && focus !== null && (
-                <div className="rv-show-in-diff">
-                  <button
-                    type="button"
-                    data-ev="walk-show-in-diff"
-                    onClick={() => {
-                      void pairBridge
-                        .showInDiff({ side: focus.side, path: focus.path, line: focus.start })
-                        .then((answer) => setDiffNote(answer.ok ? '' : answer.note));
-                    }}
-                  >
-                    Show in diff
-                  </button>
-                  {diffNote !== '' && <span className="rv-sub">{diffNote}</span>}
-                </div>
-              )}
-              {pair !== null && pairBridge !== undefined && current !== null && away === null && walkScope !== null && (
-                <div className="rv-walk-delegate">
-                  {walkJob !== null && (!delegatingWalk || isRunning(walkJob)) && (
-                    <JobLine job={walkJob} onStop={() => void pairBridge.cancelJob(pair.key, walkJob.id)} />
-                  )}
-                  {delegatingWalk ? (
-                    <AgentPicker
-                      pairKey={pair.key}
-                      action="Delegate this walk"
-                      busy={false}
-                      testId="walk-delegate-agent"
-                      onCancel={() => setDelegatingWalk(false)}
-                      onStart={(choice) => {
-                        void pairBridge
-                          .startJob(pair.key, { kind: 'review', ...choice, scope: walkScope })
-                          .catch((error: unknown) => ({ error: requestFailure(error) }))
-                          .then((answer) => {
-                          if (isPairError(answer)) {
-                            setDiffNote(`The review could not be started: ${answer.error}`);
-                          } else {
-                            setDelegatingWalk(false);
-                          }
-                        });
-                      }}
-                    />
-                  ) : (
-                    walkJob?.state !== 'running' &&
-                    walkJob?.state !== 'cancelling' && (
-                      <button type="button" className="rv-quiet" data-ev="walk-delegate" onClick={() => setDelegatingWalk(true)}>
-                        Delegate this walk to the agent…
-                      </button>
-                    )
-                  )}
-                </div>
-              )}
-              {openCheck !== null && (
-                <CheckPanel
-                  check={openCheck}
-                  inTour={current?.walk.kind === 'check' && current.walk.id === openCheck.id}
-                  exchanges={pointExchanges(discussionMessages, openCheck.id)}
-                  error={deepenError}
-                  backLabel={checkReturn === null ? null : checkReturn.away !== null ? words.backToCode : checkReturn.stepId === null ? null : words.backTo(checkReturn.stepId)}
-                  lang={lang}
-                  onBack={closePoint}
-                  onShow={goAway}
-                  onDeepen={(request) => void deepen(request, true)}
-                  onAsk={async (question) => {
-                    const discussion = window.dspatchReviewDiscussion;
-                    if (discussion === undefined) {
-                      return 'The discussion is not available in this window.';
-                    }
-                    await flush();
-                    const outcome = await discussion.send({ question, subject: discussionRequest.subject, selection: discussionRequest.selection, language: lang });
-                    return outcome.kind === 'sent' ? null : outcome.error;
-                  }}
-                />
-              )}
-              {current !== null && away === null && place !== null && (
-                <StepPanel
-                  codeQuestion={
-                    pair === null || pairBridge === undefined
-                      ? undefined
-                      : () => (
-                          <StepCodeQuestion
-                            pairKey={pair.key}
-                            bridge={pairBridge}
-                            jobs={pair.record.jobs.filter(
-                              (job) => job.kind === 'explain' && job.question?.definitionPath === bundle.definitionPath && job.question.stepId === current.step.id,
-                            )}
-                            onShow={(range) => goAway({ path: range.path, side: range.side, start: range.start, end: range.end })}
-                          />
-                        )
-                  }
-                  deepenings={deepeningsFor(discussionMessages, current.step.id)}
-                  deepenError={deepenError}
-                  onDeepen={(request) => void deepen(request, false, request.action === 'explain' ? quote : null)}
-                  onContinue={() => setRightTab('discussion')}
-                  walk={current.walk}
-                  step={current.step}
-                  index={current.index}
-                  placeIndex={placeIndex}
-                  referenceProblems={bundle.referenceProblems}
-                  state={state}
-                  words={words}
-                  lang={lang}
-                  onPlace={(index) => {
-                    goToStep(current.step.id, index);
-                    setNavRequest((count) => count + 1);
-                  }}
-                  onOpenEvidence={goAway}
-                  quoteText={quote?.text ?? ''}
-                />
-              )}
-              {away !== null && current !== null && (
-                <section className="rv-step-panel">
-                  <div className="rv-walk-title">{words.outsideWalk}</div>
-                  <button type="button" onClick={returnToWalk}>
-                    {words.backTo(current.step.id)}
-                  </button>
-                </section>
-              )}
-              <Collapsible title={words.reviewSection} defaultOpen={false} ev="walk-review-section">
-                {current !== null && away === null && (
-                  <div className="rv-walked">
-                    <button type="button" onClick={() => toggleWalked(current.step.id)}>
-                      {state.walkedSteps[current.step.id] === undefined ? words.markWalked : words.walkedUndo}
-                    </button>
-                    <span className="rv-sub">{words.walkedNote}</span>
-                  </div>
-                )}
-                <HunkDecisions
-                  focus={focus}
-                  diffFile={diffFile}
-                  files={files}
-                  coverage={coverageByHunk}
-                  decisions={shownState.decisions}
-                  onDecide={decide}
-                  revisionText={revisionText}
-                  words={words}
-                />
-              </Collapsible>
-              <NotesHere notes={state.notes} location={focus} stepId={current?.step.id ?? null} words={words} onOpen={goAway} />
-            </>
-          )}
-        </aside>,
-        panelHost,
-        )}
       </div>
     </div>
     </DiscussionActivity.Provider>
@@ -2214,7 +2286,10 @@ function Header({
   onChoose,
   pairWalks,
   onOpenWalk,
+  onDiscussion,
 }: {
+  /** Show the review's panel, Step and Discussion (30 October 2026). */
+  readonly onDiscussion: () => void;
   readonly bundle: ReviewBundle;
   readonly history: number;
   readonly words: ReviewWords;
@@ -2230,10 +2305,9 @@ function Header({
   readonly pairWalks: readonly PairWalk[];
   readonly onOpenWalk: (definitionPath: string) => void;
 }): JSX.Element {
-  const [details, setDetails] = useState(false);
-  const references = bundle.definition.walks.flatMap((walk) => walk.steps.flatMap((step) => step.refs));
-  const anchored = references.filter((ref) => ref.anchor !== undefined).length;
-  const problems = bundle.definitionProblems.length + bundle.referenceProblems.length;
+  // No Details panel (Niclas's decision of 30 October 2026): the identity above says what the
+  // review is about; hashes, paths and how the walks were made stay in the record.
+  void history;
   return (
     <header className="rv-header">
       <div className="rv-header-title">
@@ -2274,74 +2348,16 @@ function Header({
             <option value="en">English</option>
           </select>
         </label>
-        <button type="button" onClick={() => setDetails(!details)} aria-expanded={details}>
-          {details ? words.hideDetails : words.details}
-          {problems > 0 ? ` (${String(problems)} !)` : ''}
+        <button type="button" data-ev="walk-discussion" title="The review's discussion: Step and Discussion" onClick={onDiscussion}>
+          Discussion
         </button>
+        {onChoose !== null && (
+          <button type="button" onClick={onChoose}>
+            {words.openAnother}
+          </button>
+        )}
       </div>
       {langError !== null && <div className="rv-error rv-full">{words.notSaved(langError)}</div>}
-      {details && (
-        <div className="rv-details">
-          <dl>
-            <dt>{words.detailsPanel.revisions}</dt>
-            <dd>
-              {words.detailsPanel.base}: <code>{bundle.base.sha}</code> {bundle.base.subject}
-              <br />
-              {words.detailsPanel.target}: <code>{bundle.target.sha}</code> {bundle.target.subject}
-              <br />
-              {bundle.singleCommit ? words.detailsPanel.oneCommit : words.detailsPanel.severalCommits}{' '}
-              {words.detailsPanel.readFromGit}
-            </dd>
-            <dt>{words.detailsPanel.repository}</dt>
-            <dd>
-              <code>{bundle.repository}</code>
-            </dd>
-            <dt>{words.detailsPanel.definition}</dt>
-            <dd>
-              <code>{bundle.definitionPath}</code>
-              <br />
-              {pick(bundle.definition.provenance, lang)}
-              {history > 0 && (
-                <>
-                  <br />
-                  {words.detailsPanel.definitionHistory(history)}
-                </>
-              )}
-              {bundle.definition.languages.length < 2 && (
-                <>
-                  <br />
-                  {words.detailsPanel.languagesMissing}
-                </>
-              )}
-            </dd>
-          </dl>
-          <p>{words.detailsPanel.explanations(bundle.definition.teachingMode || '–')}</p>
-          <p>{words.detailsPanel.decisionsInfo}</p>
-          <p>{words.detailsPanel.validated(references.length, anchored)}</p>
-          {problems > 0 && (
-            <>
-              <p className="rv-error">{words.detailsPanel.problems}</p>
-              <ul className="rv-error">
-                {bundle.definitionProblems.map((problem) => (
-                  <li key={`${problem.where}${problem.problem}`}>
-                    {problem.where}: {problem.problem}
-                  </li>
-                ))}
-                {bundle.referenceProblems.map((problem) => (
-                  <li key={`${problem.stepId}#${problem.refId}`}>
-                    {problem.stepId} {problem.refId}: {problem.problem}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {onChoose !== null && (
-            <button type="button" onClick={onChoose}>
-              {words.openAnother}
-            </button>
-          )}
-        </div>
-      )}
     </header>
   );
 }
@@ -3254,8 +3270,6 @@ function WalkNavBar({
   onLevel,
   view,
   onView,
-  highlightWalk,
-  onHighlightWalk,
   wrap,
   onWrap,
   words,
@@ -3274,8 +3288,6 @@ function WalkNavBar({
   readonly onLevel: (level: CodeLevel) => void;
   readonly view: CodeView;
   readonly onView: (view: CodeView) => void;
-  readonly highlightWalk: boolean;
-  readonly onHighlightWalk: (on: boolean) => void;
   readonly wrap: boolean;
   readonly onWrap: (on: boolean) => void;
   readonly words: ReviewWords;
@@ -3283,19 +3295,17 @@ function WalkNavBar({
 }): JSX.Element {
   void stations;
   void active;
+  void place;
+  void lang;
   return (
     <div className="rv-navbar">
       <div className="rv-navbar-row">
         <button type="button" className="rv-nav-button rv-nav-previous" disabled={!canBack} onClick={() => onMove(-1)}>
           {words.nav.previous}
         </button>
+        {/* Where in the walk, compactly; the place's own name is not repeated above the code (30 October 2026). */}
         <div className="rv-nav-where">
           <span className="rv-sub">{words.nav.placeOf(stepId, placeIndex + 1, placeCount)}</span>
-          {place !== null && (
-            <span className="rv-nav-label" title={pick(place.label, lang).replace(/`/g, '')}>
-              <Inline text={pick(place.label, lang)} />
-            </span>
-          )}
         </div>
         <button type="button" className="rv-nav-button rv-nav-next" disabled={!canForward} onClick={() => onMove(1)}>
           {words.nav.next}
@@ -3323,9 +3333,6 @@ function WalkNavBar({
             </button>
           ))}
         </span>
-        <label className="rv-check rv-walk-toggle">
-          <input type="checkbox" checked={highlightWalk} onChange={(event) => onHighlightWalk(event.target.checked)} /> {words.view.highlightWalk}
-        </label>
         <label className="rv-check rv-walk-toggle" title={words.wrapLinesTitle}>
           <input type="checkbox" data-ev="walk-wrap" checked={wrap} onChange={(event) => onWrap(event.target.checked)} /> {words.wrapLines}
         </label>
@@ -3347,15 +3354,12 @@ interface PaneMemory {
 function CodePane({
   focus,
   contexts,
-  overlay,
   diffFile,
   files,
   view,
   onView,
   scope,
   onScope,
-  highlightWalk,
-  onHighlightWalk,
   wrap,
   onWrap,
   selection,
@@ -3373,15 +3377,12 @@ function CodePane({
   readonly onLeave?: (memory: PaneMemory) => void;
   readonly focus: CodeLocation;
   readonly contexts: readonly CodeLocation[];
-  readonly overlay: readonly CodeLocation[];
   readonly diffFile: DiffFile | null;
   readonly files: Files;
   readonly view: CodeView;
   readonly onView: (view: CodeView) => void;
   readonly scope: CodeScope;
   readonly onScope: (scope: CodeScope) => void;
-  readonly highlightWalk: boolean;
-  readonly onHighlightWalk: ((on: boolean) => void) | null;
   readonly wrap: boolean;
   readonly onWrap: (on: boolean) => void;
   readonly selection: CodeLocation | null;
@@ -3394,6 +3395,15 @@ function CodePane({
   const [openGaps, setOpenGaps] = useState<ReadonlySet<number>>(new Set(memory?.openGaps ?? []));
   const container = useRef<HTMLDivElement>(null);
   const left = useRef({ extra, openGaps, top: memory?.top ?? 0, left: memory?.left ?? 0 });
+  const wrapHold = useRef<{ readonly row: HTMLElement; readonly offset: number } | null>(null);
+  useLayoutEffect(() => {
+    const held = wrapHold.current;
+    const element = container.current;
+    wrapHold.current = null;
+    if (held !== null && element !== null && held.row.isConnected) {
+      element.scrollTop += held.row.getBoundingClientRect().top - element.getBoundingClientRect().top - held.offset;
+    }
+  }, [wrap]);
   left.current = { ...left.current, extra, openGaps };
   useEffect(
     () => () => {
@@ -3407,15 +3417,6 @@ function CodePane({
 
   const focused = useMemo(() => referenceRows(rows, focus), [rows, focus]);
   const focusSet = useMemo(() => new Set(focused.indexes), [focused]);
-  const overlaySet = useMemo(() => {
-    const set = new Set<number>();
-    for (const location of overlay) {
-      if (location.path === focus.path) {
-        referenceRows(rows, location).indexes.forEach((index) => set.add(index));
-      }
-    }
-    return set;
-  }, [overlay, rows, focus.path]);
   // Each context range on its own: separate ranges never merge into one long span.
   const contextRows = useMemo(
     () =>
@@ -3606,11 +3607,6 @@ function CodePane({
         classes.push(inFocus ? 'rv-new' : 'rv-new-faint');
       } else if (inFocus) {
         classes.push('rv-neutral-focus');
-      } else if (highlightWalk && overlaySet.has(index)) {
-        classes.push('rv-walk-mark');
-      }
-      if (row.kind !== 'context' && !inFocus && highlightWalk && overlaySet.has(index)) {
-        classes.push('rv-walk-edge');
       }
       if (selectionSet.has(index)) {
         classes.push('rv-row-selected');
@@ -3694,14 +3690,23 @@ function CodePane({
             </button>
           ))}
         </span>
-        {onHighlightWalk !== null && (
-          <label className="rv-check rv-walk-toggle">
-            <input type="checkbox" checked={highlightWalk} onChange={(event) => onHighlightWalk(event.target.checked)} />{' '}
-            {words.view.highlightWalk}
-          </label>
-        )}
         <label className="rv-check rv-walk-toggle" title={words.wrapLinesTitle}>
-          <input type="checkbox" data-ev="code-wrap" checked={wrap} onChange={(event) => onWrap(event.target.checked)} /> {words.wrapLines}
+          <input
+            type="checkbox"
+            data-ev="code-wrap"
+            checked={wrap}
+            onChange={(event) => {
+              // The line being read stays where it is when rows change height (30 October 2026).
+              const element = container.current;
+              if (element !== null) {
+                const top = element.getBoundingClientRect().top;
+                const row = [...element.querySelectorAll<HTMLElement>('[data-sel-line]')].find((entry) => entry.getBoundingClientRect().bottom > top + 1);
+                wrapHold.current = row === undefined ? null : { row, offset: row.getBoundingClientRect().top - top };
+              }
+              onWrap(event.target.checked);
+            }}
+          />{' '}
+          {words.wrapLines}
         </label>
       </div>
       {problem !== null && <div className="rv-error rv-problem">{words.view.invalidReference(problem)}</div>}
@@ -3715,7 +3720,6 @@ function CodePane({
         {focused.indexes.some((index) => rows[index]?.kind === 'context') && (
           <span className="rv-key rv-neutral-focus">{words.view.legendFocus}</span>
         )}
-        {highlightWalk && <span className="rv-key rv-walk-mark">{words.view.legendWalk}</span>}
       </div>
       <div
         className={wrap ? 'rv-lines rv-lines-wrap' : 'rv-lines'}

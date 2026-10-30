@@ -2736,7 +2736,96 @@ async function pointerIn(window: BrowserWindow, contents: Electron.WebContents, 
   return { ok: false, detail: 'not a pointer action' };
 }
 
+/**
+ * The walk window and the review's panel, as one surface for the scripted scenarios (30
+ * October 2026). Step and Discussion moved from the walk window into the review's panel; a
+ * step of an older scenario that names an element only the panel has is done in the panel,
+ * with the same real input, and the panel is first shown by the walk's own Discussion button
+ * when it is not open, as a person would open it. A reading of the walk window is completed
+ * from the panel's where the walk window has nothing of its own.
+ */
 async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorWindowCheckAnswer> {
+  const windows = reviewWindows;
+  const id = 'id' in request ? request.id : 0;
+  const walk = windows === null || id === 0 ? undefined : windows.list().find((candidate) => candidate.contents.id === id && candidate.view === 'walk');
+  if (windows === null || walk === undefined || walk.pairKey === null) {
+    return pairWindowCheckIn(request);
+  }
+  const pairKey = walk.pairKey;
+  if (request.action === 'read') {
+    const own = await pairWindowCheckIn(request);
+    const panel = windows.panelFor(pairKey);
+    if (!own.ok || panel === null) {
+      return own;
+    }
+    const theirs = await pairWindowCheckIn({ action: 'read', id: panel.contents.id });
+    if (!theirs.ok) {
+      return own;
+    }
+    const empty = (value: unknown): boolean => value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0);
+    const fill = (mine: Record<string, unknown>, other: Record<string, unknown>): Record<string, unknown> => {
+      const merged: Record<string, unknown> = { ...mine };
+      for (const [key, value] of Object.entries(other)) {
+        if (empty(merged[key]) && !empty(value)) {
+          merged[key] = value;
+        }
+      }
+      return merged;
+    };
+    const mine = (own.detail ?? {}) as Record<string, unknown>;
+    const other = (theirs.detail ?? {}) as Record<string, unknown>;
+    const merged = fill(mine, other);
+    // Readings grouped under a name (the walk view, the points worth checking) are filled one level down.
+    const isGroup = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+    for (const key of Object.keys(mine)) {
+      if (isGroup(mine[key]) && isGroup(other[key])) {
+        merged[key] = fill(mine[key], other[key]);
+      }
+    }
+    // The quote above the question is the panel's: read there as `quoteChipText`.
+    const view = merged['walkView'];
+    if (isGroup(view) && empty(view['quoteChip']) && !empty(other['quoteChipText'])) {
+      merged['walkView'] = { ...view, quoteChip: other['quoteChipText'] };
+    }
+    merged['text'] = `${String(mine['text'] ?? '')} ${String(other['text'] ?? '')}`;
+    merged['visibleText'] = `${String(mine['visibleText'] ?? '')} ${String(other['visibleText'] ?? '')}`;
+    merged['rightWidth'] = mine['rightWidth'] === 0 ? other['rightWidth'] : mine['rightWidth'];
+    if (other['focusedEv'] === 'discussion-composer') {
+      merged['focusedEv'] = other['focusedEv'];
+    }
+    return { ok: true, detail: merged };
+  }
+  const selector =
+    'selector' in request ? request.selector : request.action === 'drag' ? request.from.selector : request.action === 'right-click' ? request.at.selector : null;
+  if (selector === null) {
+    return pairWindowCheckIn(request);
+  }
+  const here = (await walk.contents.executeJavaScript(`!!document.querySelector(${JSON.stringify(selector)})`).catch(() => true)) as boolean;
+  if (here) {
+    return pairWindowCheckIn(request);
+  }
+  let panel = windows.panelFor(pairKey);
+  if (panel === null) {
+    await pairWindowCheckIn({ action: 'press', id, selector: '[data-ev="walk-discussion"]' });
+    for (let wait = 0; wait < 40 && panel === null; wait += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      panel = windows.panelFor(pairKey);
+    }
+  }
+  if (panel === null) {
+    return pairWindowCheckIn(request);
+  }
+  for (let wait = 0; wait < 40; wait += 1) {
+    const there = (await panel.contents.executeJavaScript(`!!document.querySelector(${JSON.stringify(selector)})`).catch(() => false)) as boolean;
+    if (there) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return pairWindowCheckIn({ ...request, id: panel.contents.id } as PairWindowCheckRequest);
+}
+
+async function pairWindowCheckIn(request: PairWindowCheckRequest): Promise<EditorWindowCheckAnswer> {
   // DSP-152: id 0 is the main window, for real input from where a person starts.
   if ((request.action === 'press' || request.action === 'press-key') && request.id === 0) {
     const main = liveMainWindow();
@@ -2751,28 +2840,24 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
         view: entry.view,
         pairKey: entry.pairKey,
         title: entry.window.getTitle(),
-        focused: entry.window.isFocused(),
-      })).concat(
-        // 30 October 2026: a walk window's explanation in a window of its own.
-        windows.explanationWindows().map((entry) => ({
-          id: entry.contents.id,
-          view: 'explanation' as 'walk',
-          pairKey: entry.walk.pairKey,
-          title: entry.window.getTitle(),
-          focused: entry.window.isFocused(),
-          walkId: entry.walk.contents.id,
-          bounds: entry.window.getBounds(),
-        })),
-      ),
+        focused: windows.shownWindowOf(entry).isFocused(),
+        // 30 October 2026: the review's panel, where it is and whether it is shown.
+        panel: windows.panelReading(entry),
+      })),
     };
   }
   const entry =
-    windows.list().find((candidate) => candidate.contents.id === request.id) ??
-    windows.explanationWindows().find((candidate) => candidate.contents.id === request.id);
+    windows.list().find((candidate) => candidate.contents.id === request.id);
   if (entry === undefined || entry.contents.isDestroyed()) {
     return { ok: false, detail: `no review window ${String(request.id)}` };
   }
   if (request.action === 'close') {
+    // The review's panel is hidden by closing its window, not closed (30 October 2026).
+    if ('view' in entry && entry.view === 'panel') {
+      entry.window.close();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return { ok: true, detail: entry.window.isDestroyed() ? 'closed' : 'hidden' };
+    }
     const closed = new Promise<void>((resolve) => {
       entry.window.once('closed', () => {
         resolve();
@@ -2782,22 +2867,24 @@ async function pairWindowCheck(request: PairWindowCheckRequest): Promise<EditorW
     await closed;
     return { ok: true, detail: 'closed' };
   }
+  // The review's panel is seen in the window it is docked in, or its own (30 October 2026).
+  const shown = 'window' in entry && windows.list().includes(entry as never) ? windows.shownWindowOf(entry as never) : entry.window;
   if (request.action === 'focus') {
-    entry.window.show();
-    entry.window.focus();
+    shown.show();
+    shown.focus();
     return { ok: true, detail: 'focused' };
   }
   if (request.action === 'resize') {
-    entry.window.setContentSize(Math.round(request.width), Math.round(request.height));
+    shown.setContentSize(Math.round(request.width), Math.round(request.height));
     await new Promise((resolve) => setTimeout(resolve, 400));
-    const [width, height] = entry.window.getContentSize();
+    const [width, height] = shown.getContentSize();
     return { ok: true, detail: { width, height } };
   }
   if (request.action === 'press' || request.action === 'press-key' || request.action === 'type') {
-    return pressIn(entry.window, entry.contents, request);
+    return pressIn(shown, entry.contents, request);
   }
   if (request.action === 'drag' || request.action === 'right-click' || request.action === 'chord' || request.action === 'pointer-drag' || request.action === 'wheel') {
-    return pointerIn(entry.window, entry.contents, request);
+    return pointerIn(shown, entry.contents, request);
   }
   if (request.action === 'capture') {
     // Two frames painted first: a capture taken at once can return the frame before the
@@ -2886,37 +2973,10 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
           walk: window.__dspatchReviewCheck ? window.__dspatchReviewCheck.read() : null,
           // 30 October 2026: the discussion's messages, with what each answer rests on.
           discussion: window.__dspatchDiscussionCheck ? window.__dspatchDiscussionCheck.read() : null,
-          // 30 October 2026: the explanation in a window of its own, as drawn there.
-          explanation: (() => {
-            const other = window.__dspatchExplanationWindow;
-            if (!other || other.closed) { return null; }
-            const doc = other.document;
-            const panel = doc.querySelector('.rv-right');
-            const text = (node) => (node ? (node.textContent || '').replace(/\s+/g, ' ').trim() : '');
-            const mark = other.CSS && other.CSS.highlights && other.CSS.highlights.get('rv-quote');
-            return {
-              title: doc.title,
-              hasPanel: panel !== null,
-              // The walk window's look reached it: its surface is laid out as the review's.
-              styled: (() => { const surface = doc.querySelector('.rv-detached'); return surface !== null && other.getComputedStyle(surface).display === 'flex' && other.getComputedStyle(surface).backgroundColor !== 'rgba(0, 0, 0, 0)'; })(),
-              tab: text(doc.querySelector('.rv-right-tabs .rv-tab-on')),
-              composer: (doc.querySelector('[data-ev="discussion-composer"]') || { value: null }).value,
-              focused: doc.activeElement ? doc.activeElement.getAttribute('data-ev') : null,
-              chip: text(doc.querySelector('[data-ev="discussion-quote"]')),
-              answers: [...doc.querySelectorAll('[data-ev="discussion-answer-body"]')].filter((node) => node.offsetParent !== null).map((node) => ({
-                text: text(node).slice(0, 600),
-                details: node.querySelector('[data-ev="answer-details"]') !== null,
-                more: text(node.querySelector('[data-ev="answer-show-more"]')),
-                simpler: node.querySelector('[data-ev="answer-simpler"]') !== null,
-                refsOpen: (() => { const refs = node.querySelector('[data-ev="answer-refs"]'); return refs !== null && !refs.hidden; })(),
-                refsToggle: node.querySelector('[data-ev="answer-show-code"]') !== null,
-              })),
-              scrollTop: panel ? Math.round(panel.scrollTop) : 0,
-              width: panel ? Math.round(panel.getBoundingClientRect().width) : 0,
-              quoteMark: mark ? [...mark].map((range) => range.toString()) : [],
-              selection: (other.getSelection() || { toString: () => '' }).toString(),
-            };
-          })(),
+          focusedEv: document.activeElement ? document.activeElement.getAttribute('data-ev') : null,
+          // The review's panel (30 October 2026): the quote above the question and the activity line, wherever the panel is.
+          quoteChipText: (() => { const node = document.querySelector('[data-ev="discussion-quote"]'); return node ? (node.textContent || '').replace(/\s+/g, ' ').trim() : ''; })(),
+          activityLines: [...document.querySelectorAll('[data-ev="discussion-activity"], [data-ev="deepening-activity"]')].map((node) => (node.textContent || '').trim()),
           decisions: [...document.querySelectorAll('.rv-decision')].map((node) => (node.textContent || '').replace(/\s+/g, ' ').trim()),
           showInDiff: document.querySelector('[data-ev="walk-show-in-diff"]') !== null,
           // 30 October 2026: what each running agent job says it is doing, under its spinner.
@@ -2952,13 +3012,14 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
           jobDetails: [...document.querySelectorAll('.rv-agent-detail')].map((node) => ({ open: node.open, text: (node.textContent || '').replace(/\s+/g, ' ').trim() })),
           // Niclas's trial feedback (29 October 2026): the walk window's left column, list and code panes.
           walkView: (() => {
-            const left = document.querySelector('.rv-left');
+            // The walk window, or the review's panel (its step and discussion, 30 October 2026).
+            const left = document.querySelector('.rv-left') || document.querySelector('.rv-panel-only .rv-right');
             if (!left) { return null; }
             const text = (node) => ((node && (node.innerText || node.textContent)) || '').replace(/\s+/g, ' ').trim();
             const activePane = document.querySelector('.rv-pane-active .rv-pane-lines');
             return {
-              leftWidth: Math.round(left.getBoundingClientRect().width),
-              leftOverflowX: left.scrollWidth > left.clientWidth + 1,
+              leftWidth: left.classList.contains('rv-left') ? Math.round(left.getBoundingClientRect().width) : 0,
+              leftOverflowX: left.classList.contains('rv-left') && left.scrollWidth > left.clientWidth + 1,
               heading: text(document.querySelector('[data-ev="walks-heading"]')),
               items: [...document.querySelectorAll('.rv-walk')].map((walk) => ({
                 id: text(walk.querySelector('.rv-walk-meta .rv-step-id')),
@@ -3017,7 +3078,7 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
               away: (document.querySelector('.rv-code-pane .rv-path') || { title: '' }).title,
               // What is selected to ask about: the action beside it, and the quote above the field.
               quoteOffer: [...document.querySelectorAll('[data-ev="walk-quote-offer"] button')].map((node) => node.getAttribute('data-ev')),
-              quoteChip: text(document.querySelector('[data-ev="discussion-quote"]') || (window.__dspatchExplanationWindow && !window.__dspatchExplanationWindow.closed ? window.__dspatchExplanationWindow.document.querySelector('[data-ev="discussion-quote"]') : null)),
+              quoteChip: text(document.querySelector('[data-ev="discussion-quote"]')),
               windowSelection: (window.getSelection() || { toString: () => '' }).toString(),
               // The kept selection's quiet mark in the code: how many pieces, and their text.
               quoteMark: (() => {
@@ -3025,14 +3086,37 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
                 return mark ? [...mark].map((range) => range.toString()) : [];
               })(),
               docked: document.querySelector('.rv-right-dock .rv-right') !== null,
-              // 30 October 2026: technical blocks no longer shown, in this window or the explanation's own.
+              // 30 October 2026: technical blocks no longer shown.
               noise: (() => {
-                const docs = [document, ...(window.__dspatchExplanationWindow && !window.__dspatchExplanationWindow.closed ? [window.__dspatchExplanationWindow.document] : [])];
+                const docs = [document];
                 const selector = '.rv-discussion-subject, [data-ev="discussion-subject"], .rv-discussion-context, .rv-discussion-agent-policy, [data-ev^="discussion-go-"], [data-ev="discussion-agent-policy"]';
                 const words = ['What it may use here', 'Go to point', "DSpatch's instruction", 'Exact text sent'];
                 return docs.flatMap((doc) => [...doc.querySelectorAll(selector)].map((node) => node.className || node.getAttribute('data-ev')).concat(words.filter((word) => (doc.body.innerText || '').includes(word))));
               })(),
               awayBar: text(document.querySelector('[data-ev="away-bar"]')),
+              // 30 October 2026: where each code pane of the walk is and how wide, the dividers,
+              // and the first line read in the active pane, to see what wrapping lines changes.
+              paneBoxes: [...document.querySelectorAll('.rv-pane')].map((pane) => {
+                const box = pane.getBoundingClientRect();
+                return Math.round(box.left) + ':' + Math.round(box.width);
+              }),
+              dividers: [...document.querySelectorAll('.rv-divider, [data-ev="walk-divider"]')].map((node) => Math.round(node.getBoundingClientRect().left)),
+              activeFirst: (() => {
+                const lines = document.querySelector('.rv-pane-active .rv-pane-lines');
+                if (lines === null) {
+                  return null;
+                }
+                const top = lines.getBoundingClientRect().top;
+                const row = [...lines.querySelectorAll('[data-row]')].find((entry) => entry.getBoundingClientRect().bottom > top + 1);
+                return row ? { row: Number(row.getAttribute('data-row')), offset: Math.round(row.getBoundingClientRect().top - top), wrap: lines.getAttribute('data-wrap'), scrollWidth: lines.scrollWidth, clientWidth: lines.clientWidth } : null;
+              })(),
+              // What is no longer there (30 October 2026): the place's own heading, the whole-walk
+              // highlight, and Details.
+              removed: {
+                placeHeading: document.querySelector('.rv-nav-label') !== null,
+                highlightWalk: /Highlight entire walk/.test(document.body.innerText || ''),
+                details: [...document.querySelectorAll('.rv-header button')].some((button) => /Details/.test(button.textContent || '')),
+              },
               // 30 October 2026: an opened location's pane, and where the walk's own panes are scrolled.
               awayPane: (() => {
                 const lines = document.querySelector('.rv-code > .rv-code-pane .rv-lines');
@@ -3053,7 +3137,7 @@ const READ_PAIR_WINDOW = String.raw`(() => ({
               })(),
               stageScroll: [...document.querySelectorAll('.rv-walk-stage, .rv-walk-stage *')].filter((node) => node.scrollTop > 0).map((node) => (node.className || node.tagName) + '@' + Math.round(node.scrollTop)),
               discussionActivity: (() => {
-                const docs = [document, ...(window.__dspatchExplanationWindow && !window.__dspatchExplanationWindow.closed ? [window.__dspatchExplanationWindow.document] : [])];
+                const docs = [document];
                 return docs.flatMap((doc) => [...doc.querySelectorAll('[data-ev="discussion-activity"], [data-ev="deepening-activity"]')].map((node) => text(node)));
               })(),
               codeWidth: Math.round((document.querySelector('.rv-code') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width),
@@ -3684,12 +3768,12 @@ function registerIpc(): void {
               .filter((entry) => entry !== ''),
           }
         : {}),
-      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice' || chatRunScenario === 'walk-start' || chatRunScenario === 'analysis-access' || chatRunScenario === 'selection-explain' || chatRunScenario === 'review-flow'
+      ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice' || chatRunScenario === 'walk-start' || chatRunScenario === 'analysis-access' || chatRunScenario === 'review-flow'
         ? {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.
-              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' || named === 'selection' || named === 'explain-window' || named === 'context' || named === 'context-walk' ? named : 'first';
+              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' || named === 'selection' || named === 'context' || named === 'context-walk' || named === 'panel' ? named : 'first';
             })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }
@@ -4263,8 +4347,9 @@ function main(): void {
       preloadPath: path.join(__dirname, '..', 'preload', 'review-preload.js'),
       load: (window, view) => {
         // `window=review` makes the renderer mount review alone (`renderer/main.tsx`);
-        // `view=diff` (DSP-150) mounts the diff review of a chosen revision pair.
-        const search = view === 'diff' ? 'window=review&view=diff' : 'window=review';
+        // `view=diff` (DSP-150) mounts the diff review of a chosen revision pair, and
+        // `view=panel` the review's panel, Step and Discussion (30 October 2026).
+        const search = view === 'diff' ? 'window=review&view=diff' : view === 'panel' ? 'window=review&view=panel' : 'window=review';
         if (rendererUrl === undefined) {
           void window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), {
             hash: 'review',

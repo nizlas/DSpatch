@@ -81,7 +81,14 @@ function agentName(provider: DiscussionProvider): string {
  * has, so moving around asks nothing of the main process. The envelope that is
  * actually sent is built in main, from git; this is only its one-line name.
  */
-function previewLine(bundle: ReviewBundle, request: DiscussionRequest, lang: Lang, words: DiscussionWords): string {
+function previewLine(bundle: ReviewBundle | null, request: DiscussionRequest, lang: Lang, words: DiscussionWords): string {
+  if (bundle === null) {
+    // The diff window has no walk: the question is about a place in the change, or all of it.
+    const subject = request.subject;
+    return subject.kind === 'away'
+      ? `${subject.location.path} ${subject.location.start === subject.location.end ? `line ${String(subject.location.start)}` : `lines ${String(subject.location.start)}–${String(subject.location.end)}`} (${subject.location.side === 'base' ? 'From' : 'To'})`
+      : words.wholeReview;
+  }
   const sha = (side: 'base' | 'target'): string => (side === 'base' ? bundle.base.sha : bundle.target.sha);
   const range = (role: EnvelopeRange['role'], location: CodeLocation): EnvelopeRange => ({
     role,
@@ -203,8 +210,11 @@ export function ReviewDiscussion({
   onClearQuote,
   onMessages,
   onActivity,
+  onSharedQuote,
+  onShow,
 }: {
-  readonly bundle: ReviewBundle;
+  /** The walk the window shows; `null` in the diff window, which has none (30 October 2026). */
+  readonly bundle: ReviewBundle | null;
   readonly request: DiscussionRequest;
   readonly lang: Lang;
   readonly words: DiscussionWords;
@@ -220,6 +230,13 @@ export function ReviewDiscussion({
   readonly onMessages?: (messages: readonly DiscussionMessage[]) => void;
   /** What the agent answering a question is doing now, for a step that shows the question. */
   readonly onActivity?: (activity: { readonly questionId: string; readonly text: string } | null) => void;
+  /**
+   * What the next question is about, as another window of the same review chose it (30
+   * October 2026): one discussion per revision pair. `null` when it was let go there.
+   */
+  readonly onSharedQuote?: (quote: SelectionQuote | null) => void;
+  /** Asked from another window to show the discussion, with the cursor in its question. */
+  readonly onShow?: (quiet: boolean, tab: 'step' | 'discussion') => void;
 }): JSX.Element {
   const bridge = window.dspatchReviewDiscussion;
   // DSP-149: the agent's models from its SDK; the choice is the same one the chat uses.
@@ -246,6 +263,12 @@ export function ReviewDiscussion({
   const [recapShown, setRecapShown] = useState(false);
   const sending = useRef(false);
   const loaded = useRef(false);
+  /** The draft as it came from the record or another window: not saved back. */
+  const fromElsewhere = useRef<string | null>(null);
+  const sharedQuote = useRef(onSharedQuote);
+  sharedQuote.current = onSharedQuote;
+  const showMe = useRef(onShow);
+  showMe.current = onShow;
 
   // Read the stored thread and draft. No adapter is involved in this.
   useEffect(() => {
@@ -266,6 +289,14 @@ export function ReviewDiscussion({
         setStatus((current) =>
           current?.turn != null && current.turn.questionId === event.questionId ? { ...current, turn: { ...current.turn, activity: event.activity } } : current,
         );
+      } else if (event.kind === 'quote') {
+        sharedQuote.current?.(event.quote);
+      } else if (event.kind === 'show') {
+        showMe.current?.(event.quiet === true, event.tab ?? 'discussion');
+      } else if (event.kind === 'draft') {
+        // Written in another window of the review: shown here, and not saved back from here.
+        fromElsewhere.current = event.text;
+        setText(event.text);
       } else {
         setStatus(event.status);
         if (event.note !== undefined) {
@@ -281,7 +312,11 @@ export function ReviewDiscussion({
         }
         setMessages(outcome.messages);
         setStatus(outcome.status);
+        fromElsewhere.current = outcome.draft;
         setText(outcome.draft);
+        if (outcome.quote != null) {
+          sharedQuote.current?.(outcome.quote);
+        }
         setNote(outcome.note);
         loaded.current = true;
       },
@@ -294,9 +329,10 @@ export function ReviewDiscussion({
 
   // The draft is kept per review, in the discussion's own record.
   useEffect(() => {
-    if (!loaded.current || bridge === undefined) {
+    if (!loaded.current || bridge === undefined || text === fromElsewhere.current) {
       return;
     }
+    fromElsewhere.current = null;
     const timer = window.setTimeout(() => {
       void bridge.saveDraft(text);
     }, 400);
@@ -459,7 +495,7 @@ export function ReviewDiscussion({
       if (subject.kind !== 'point') {
         return;
       }
-      const step = stepsWalks(bundle.definition).find((walk) => walk.id === subject.walkId)?.steps.find((entry) => entry.id === subject.stepId);
+      const step = bundle === null ? undefined : stepsWalks(bundle.definition).find((walk) => walk.id === subject.walkId)?.steps.find((entry) => entry.id === subject.stepId);
       if (step?.places[subject.placeIndex] !== undefined) {
         onGoToPoint(subject.stepId, subject.placeIndex);
         return;
@@ -512,6 +548,9 @@ export function ReviewDiscussion({
             insufficient: message.insufficient === true,
             adjustments: message.adjustments ?? [],
             reads: message.reads ?? [],
+            // 30 October 2026: what each question was about, exactly, with its revisions.
+            quote: message.envelope?.quote ?? null,
+            simplifies: message.simplifies ?? null,
           })),
           status: now.status,
           composer: field()?.value ?? '',

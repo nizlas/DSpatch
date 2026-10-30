@@ -9,7 +9,7 @@ import type {
   RevisionSide,
 } from '../shared/review-model';
 import type { ReviewDiscussionBridge, ReviewDiscussionEvent } from '../shared/review-discussion';
-import type { DiffLocation, PairChangedEvent, ReviewPairBridge } from '../shared/review-pair';
+import type { DiffLocation, PairChangedEvent, PanelAction, PanelFollow, PanelState, ReviewPairBridge, ReviewPanelBridge } from '../shared/review-pair';
 
 /**
  * The review window's preload, and the only bridge a review window has.
@@ -53,6 +53,7 @@ const discussionBridge: ReviewDiscussionBridge = {
   acknowledge: (attemptIds) =>
     ipcRenderer.invoke('dspatch:review-discussion-acknowledge', attemptIds) as ReturnType<ReviewDiscussionBridge['acknowledge']>,
   saveDraft: (text) => ipcRenderer.invoke('dspatch:review-discussion-draft', text) as ReturnType<ReviewDiscussionBridge['saveDraft']>,
+  setQuote: (quote) => ipcRenderer.invoke('dspatch:review-discussion-quote', quote) as ReturnType<ReviewDiscussionBridge['setQuote']>,
   // DSP-132: the discussion's agent, and leaving the recap out after a switch.
   chooseAgent: (provider) =>
     ipcRenderer.invoke('dspatch:review-discussion-choose-agent', provider) as ReturnType<ReviewDiscussionBridge['chooseAgent']>,
@@ -88,8 +89,6 @@ const pairBridge: ReviewPairBridge = {
     ipcRenderer.invoke('dspatch:review-pair-read-file', key, side, filePath) as ReturnType<ReviewPairBridge['readFile']>,
   state: (key) => ipcRenderer.invoke('dspatch:review-pair-state', key) as ReturnType<ReviewPairBridge['state']>,
   mark: (key, request) => ipcRenderer.invoke('dspatch:review-pair-mark', key, request) as ReturnType<ReviewPairBridge['mark']>,
-  setRequirement: (key, requirement) =>
-    ipcRenderer.invoke('dspatch:review-pair-set-requirement', key, requirement) as ReturnType<ReviewPairBridge['setRequirement']>,
   savePosition: (key, position) =>
     ipcRenderer.invoke('dspatch:review-pair-save-position', key, position) as ReturnType<ReviewPairBridge['savePosition']>,
   walks: (key) => ipcRenderer.invoke('dspatch:review-pair-walks', key) as ReturnType<ReviewPairBridge['walks']>,
@@ -125,6 +124,37 @@ const pairBridge: ReviewPairBridge = {
   },
 };
 
+/** The review's panel, Step and Discussion (30 October 2026). The channels are spelt out: a sandboxed preload imports nothing. */
+function listen<T>(channel: string, listener: (payload: T) => void): () => void {
+  const handler = (_event: unknown, payload: T): void => {
+    listener(payload);
+  };
+  ipcRenderer.on(channel, handler);
+  return () => {
+    ipcRenderer.removeListener(channel, handler);
+  };
+}
+const panelBridge: ReviewPanelBridge = {
+  show: (key, ask, tab) => ipcRenderer.invoke('dspatch:review-panel-show', key, ask, tab === 'step' ? 'step' : 'discussion') as ReturnType<ReviewPanelBridge['show']>,
+  dock: (place) => ipcRenderer.invoke('dspatch:review-panel-dock', place) as ReturnType<ReviewPanelBridge['dock']>,
+  hide: () => ipcRenderer.invoke('dspatch:review-panel-hide') as ReturnType<ReviewPanelBridge['hide']>,
+  slot: (rect) => {
+    ipcRenderer.send('dspatch:review-panel-slot', rect);
+  },
+  follow: (position) => {
+    ipcRenderer.send('dspatch:review-panel-follow', position);
+  },
+  lastFollow: () => ipcRenderer.invoke('dspatch:review-panel-last-follow') as ReturnType<ReviewPanelBridge['lastFollow']>,
+  state: () => ipcRenderer.invoke('dspatch:review-panel-state') as ReturnType<ReviewPanelBridge['state']>,
+  action: (action) => {
+    ipcRenderer.send('dspatch:review-panel-action', action);
+  },
+  onFollow: (listener) => listen<PanelFollow>('dspatch:review-panel-follow', listener),
+  onAction: (listener) => listen<PanelAction>('dspatch:review-panel-action', listener),
+  onState: (listener) => listen<PanelState>('dspatch:review-panel-state', listener),
+};
+
 contextBridge.exposeInMainWorld('dspatchReview', reviewBridge);
+contextBridge.exposeInMainWorld('dspatchReviewPanel', panelBridge);
 contextBridge.exposeInMainWorld('dspatchReviewPair', pairBridge);
 contextBridge.exposeInMainWorld('dspatchReviewDiscussion', discussionBridge);

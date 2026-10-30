@@ -44,7 +44,6 @@ import {
   type PairPosition,
   type PairRecord,
   type ReviewRepository,
-  type ReviewRequirement,
   type RevisionPairIdentity,
 } from '../shared/review-pair';
 import { ORIENTATION_DIFF_CHARS, type AnalysisMaterial, type WalkStepOutline } from '../shared/review-agent';
@@ -445,18 +444,6 @@ export class ReviewPairs {
     const record = this.readRecord(opened.key, opened.pair);
     const marks: PairMark[] = request.scopes.map((scope) => ({ id: randomUUID(), op: request.op, scope, reason: request.reason, at }));
     return this.write(opened.key, { ...record, marks: [...record.marks, ...marks] }, true);
-  }
-
-  setRequirement(key: unknown, requirement: unknown): PairAnswer<PairRecord> {
-    const opened = this.openOf(key);
-    if (opened === null) {
-      return { error: 'That review is not open.' };
-    }
-    if (requirement !== 'manual' && requirement !== 'manual-or-agent') {
-      return { error: 'Unknown requirement.' };
-    }
-    const record = this.readRecord(opened.key, opened.pair);
-    return this.write(opened.key, { ...record, requirement: requirement as ReviewRequirement }, true);
   }
 
   /** Where the diff window is. Not news to anyone else, so no other window is told. */
@@ -918,5 +905,10 @@ export class ReviewPairs {
   /** The open pair under a key, if any. */
   opened(key: string): OpenPair | null {
     return this.open.get(key) ?? null;
+  }
+
+  /** A pair's stored record, read without opening the pair; an empty one when there is none. */
+  storedRecord(pair: RevisionPairIdentity): PairRecord {
+    return this.readRecord(pairKeyOf(pair), pair);
   }
 }

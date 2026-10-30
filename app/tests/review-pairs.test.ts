@@ -367,15 +367,31 @@ describe('requirements and agent review', () => {
     summary: 'fine',
   };
 
-  it('counts an agent review where the person delegated it, or anywhere under the older requirement', () => {
-    // DSP-152: manual is the default; an approval from a delegated review carries its job.
+  it("counts the person's review or a delegated approval, by one rule, also in an older review", () => {
+    // Niclas's decision of 30 October 2026: no setting; an approval counts when a review the
+    // person delegated recorded it (it carries that job).
     const withAgent: PairRecord = { ...emptyRecord(pair), agentReviews: [agent] };
-    assert.equal(withAgent.requirement, 'manual');
-    assert.equal(fileProgressOf(file, withAgent).handled, 0, 'an agent review without a mandate does not count under manual review');
-    assert.equal(fileProgressOf(file, { ...withAgent, agentReviews: [{ ...agent, jobId: 'job-1' }] }).handled, 2);
-    // A DSP-150 record that stored the older requirement keeps its meaning.
-    assert.equal(fileProgressOf(file, { ...withAgent, requirement: 'manual-or-agent' }).handled, 2);
-    assert.equal(adoptPairRecord({ ...withAgent, requirement: 'manual-or-agent' }, pair).requirement, 'manual-or-agent');
+    assert.equal(fileProgressOf(file, withAgent).handled, 0, 'an agent review without a mandate does not count');
+    const delegated: PairRecord = { ...withAgent, agentReviews: [{ ...agent, jobId: 'job-1' }] };
+    assert.equal(fileProgressOf(file, delegated).handled, 2);
+    assert.equal(fileProgressOf(file, delegated).done, false, 'the removed line was not in the delegated scope');
+    // A DSP-150 record that stored the older requirement keeps the value, its reviews and its
+    // history, and is counted by the same rule as any other: the hidden value changes nothing.
+    const older = adoptPairRecord({ ...withAgent, requirement: 'manual-or-agent' }, pair);
+    assert.equal(older.requirement, 'manual-or-agent');
+    assert.equal(older.agentReviews.length, 1);
+    assert.equal(fileProgressOf(file, older).handled, 0);
+    assert.equal(fileProgressOf(file, { ...older, agentReviews: [{ ...agent, jobId: 'job-1' }] }).handled, 2);
+    // Mixed: the person reviewed the removed line, the agent approved the added ones.
+    const mixed: PairRecord = {
+      ...delegated,
+      marks: [{ id: 'm', op: 'manual', scope: { kind: 'lines', side: 'base', path: 'a.ts', start: 2, end: 2 }, reason: '', at: '' }],
+    };
+    const progress = fileProgressOf(file, mixed);
+    assert.deepEqual([progress.handled, progress.manual, progress.agent, progress.done], [3, 1, 2, true]);
+    // Exempted is handled, and stays apart from reviewed.
+    const exempted = fileProgressOf(file, { ...emptyRecord(pair), marks: [{ id: 'x', op: 'exempt', scope: { kind: 'lines', side: 'base', path: 'a.ts', start: 2, end: 2 }, reason: 'generated', at: '' }] });
+    assert.deepEqual([exempted.handled, exempted.exempted, exempted.manual], [1, 1, 0]);
   });
 
   it('draws manual over agent in the strip, and keeps both in the details', () => {
@@ -492,6 +508,27 @@ describe('requirements and agent review', () => {
       { base: pair.base, target: pair.target },
     );
     assert.deepEqual(decisions.map((decision) => decision.outcome), ['accepted']);
+  });
+
+  it('shows a hunk approved in a delegated review as reviewed in the walk, by the agent; an approval without a job does not count', () => {
+    const hunk = { id: 'H1', path: 'a.ts', baseStart: 2, baseCount: 1, targetStart: 2, targetCount: 2 };
+    const files = [{ path: 'a.ts', status: 'modified' as const, binary: false, hunks: [hunk], added: 2, deleted: 1 }];
+    const approvals = hunkRanges(hunk).map((scope) => ({ ...agent, scope, reviewer: 'Claude · opus', jobId: 'job-1' }));
+    const delegated = hunkDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: approvals }, { base: pair.base, target: pair.target });
+    assert.deepEqual(
+      delegated.map((decision) => [decision.outcome, decision.by]),
+      [['accepted', { kind: 'agent-delegated', adapterId: 'Claude · opus', mandate: 'job-1' }]],
+    );
+    // An older agent review with no delegated job behind it approves nothing.
+    const undelegated = approvals.map(({ jobId: _job, ...rest }) => rest);
+    assert.deepEqual(hunkDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: undelegated }, { base: pair.base, target: pair.target }), []);
+    // A person's decision on one line and the delegated approval on the rest: reviewed, and by the person.
+    const mixed: PairRecord = {
+      ...emptyRecord(pair),
+      agentReviews: approvals,
+      marks: [{ id: 'm', op: 'manual', scope: { kind: 'lines', side: 'target', path: 'a.ts', start: 2, end: 2 }, reason: '', at: 't' }],
+    };
+    assert.deepEqual(hunkDecisionsFromPair(files, mixed, { base: pair.base, target: pair.target }).map((decision) => decision.by.kind), ['human']);
   });
 });
 

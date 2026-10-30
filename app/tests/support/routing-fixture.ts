@@ -23,6 +23,8 @@ export interface RoutingFixture {
   readonly routing: string;
   readonly base: string;
   readonly target: string;
+  /** A third commit: a second review is `target` → `later`. */
+  readonly later: string;
 }
 
 export const ROUTING_FILE = 'src/domain/sessionRouting.ts';
@@ -179,5 +181,10 @@ export function makeRoutingFixture(workspace: string = fs.mkdtempSync(path.join(
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'Route sessions by lane through the route table');
   const target = git(repo, 'rev-parse', 'HEAD');
-  return { workspace, routing: repo, base, target };
+  // A later change, for a second review over the same repository: its own pair, its own discussion.
+  write(repo, 'src/domain/lanes.ts', lanes().map((line) => (line === '  return lane.trim().toLowerCase();' ? "  return lane.trim().toLowerCase().replace(/_/g, '-');" : line)));
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'Lane names use dashes');
+  const later = git(repo, 'rev-parse', 'HEAD');
+  return { workspace, routing: repo, base, target, later };
 }

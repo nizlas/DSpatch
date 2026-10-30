@@ -190,7 +190,6 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'reviewPair.readFile': (key: unknown, side: unknown, path: unknown) => PairAnswer<{ readonly text: string | null; readonly binary: boolean }>;
   readonly 'reviewPair.state': (key: unknown) => PairAnswer<PairRecord>;
   readonly 'reviewPair.mark': (key: unknown, request: unknown) => PairAnswer<PairRecord>;
-  readonly 'reviewPair.setRequirement': (key: unknown, requirement: unknown) => PairAnswer<PairRecord>;
   readonly 'reviewPair.savePosition': (key: unknown, position: unknown) => PairAnswer<{ readonly saved: true }>;
   readonly 'reviewPair.walks': (key: unknown, also: unknown) => PairAnswer<readonly PairWalk[]>;
   readonly 'reviewPair.walkToOpen': (key: unknown, also: unknown) => PairAnswer<{ readonly definitionPath: string | null }>;
@@ -204,7 +203,9 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'discussion.send': (target: DiscussionTarget, input: unknown) => DiscussionSendOutcome;
   readonly 'discussion.cancel': (target: DiscussionTarget) => DiscussionCancelOutcome;
   readonly 'discussion.acknowledge': (target: DiscussionTarget, attemptIds: unknown) => DiscussionStatusView;
+  readonly 'reviewPair.discussionWalk': (key: unknown) => PairAnswer<{ readonly definitionPath: string }>;
   readonly 'discussion.draft': (target: DiscussionTarget, text: unknown) => { readonly saved: boolean; readonly error?: string };
+  readonly 'discussion.quote': (target: DiscussionTarget, quote: unknown) => void;
   readonly 'discussion.chooseAgent': (target: DiscussionTarget, provider: unknown) => DiscussionChooseOutcome;
   readonly 'discussion.recap': (target: DiscussionTarget, leftOut: unknown) => DiscussionStatusView;
   readonly 'discussion.detach': (targetId: number) => void;
@@ -335,7 +336,6 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'reviewPair.readFile': true,
   'reviewPair.state': true,
   'reviewPair.mark': true,
-  'reviewPair.setRequirement': true,
   'reviewPair.savePosition': true,
   'reviewPair.walks': true,
   'reviewPair.walkToOpen': true,
@@ -351,6 +351,8 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'discussion.cancel': true,
   'discussion.acknowledge': true,
   'discussion.draft': true,
+  'reviewPair.discussionWalk': true,
+  'discussion.quote': true,
   'discussion.chooseAgent': true,
   'discussion.recap': true,
   'discussion.detach': true,

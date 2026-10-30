@@ -292,7 +292,6 @@ export function WalkTimeline({
   files,
   level,
   view,
-  highlightWalk,
   wrapProse,
   wrapCode,
   entry,
@@ -315,7 +314,6 @@ export function WalkTimeline({
   readonly files: Files;
   readonly level: CodeLevel;
   readonly view: CodeView;
-  readonly highlightWalk: boolean;
   /** Whether long lines wrap in Markdown panes and in code panes. */
   readonly wrapProse: boolean;
   readonly wrapCode: boolean;
@@ -326,6 +324,8 @@ export function WalkTimeline({
   /** Counts explicit choices of a step or place: each one shows the active place, also when it is already active. */
   readonly navRequest: number;
 }): JSX.Element {
+  // The walk is the key of this view; its places are not marked as a whole any more (30 October 2026).
+  void walk;
   const viewport = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const [viewWidth, setViewWidth] = useState(0);
@@ -359,10 +359,12 @@ export function WalkTimeline({
     for (const [index, width] of autoWidths) {
       map.set(index, Math.max(defaultWidth, Math.min(width, roomCap)));
     }
-    // A pane whose lines wrap takes the whole view: wrapped in half of it, a long line of
-    // prose becomes a narrow column of a few words a row (Niclas's trial, 29 October 2026).
+    // A pane of prose takes the whole view from the start: in half of it a long line of prose
+    // becomes a narrow column of a few words a row (Niclas's trial, 29 October 2026). Whether
+    // lines wrap never sets a width (30 October 2026): Wrap lines breaks lines within the
+    // width each pane already has, so the panes, the dividers and the map stay where they are.
     for (const station of stations) {
-      if (isProsePath(station.place.focus.path) ? wrapProse : wrapCode) {
+      if (isProsePath(station.place.focus.path)) {
         map.set(station.index, Math.max(defaultWidth, viewWidth));
       }
     }
@@ -370,7 +372,7 @@ export function WalkTimeline({
       map.set(index, width);
     }
     return map;
-  }, [autoWidths, widths, defaultWidth, roomCap, stations, wrapProse, wrapCode, viewWidth]);
+  }, [autoWidths, widths, defaultWidth, roomCap, stations, viewWidth]);
   const layout = useMemo(() => layoutOf(stations.length, effectiveWidths, defaultWidth), [stations.length, effectiveWidths, defaultWidth]);
   /** Asks for room for a pane's change; true when the pane will get wider. */
   const roomFor = useCallback(
@@ -743,17 +745,6 @@ export function WalkTimeline({
     return box;
   };
   const changedFiles = useMemo(() => new Map(diffFiles.map((file) => [file.path, file])), [diffFiles]);
-  const overlayByPath = useMemo(() => {
-    const map = new Map<string, Place[]>();
-    if (highlightWalk) {
-      for (const step of walk.steps) {
-        for (const place of step.places) {
-          map.set(place.focus.path, [...(map.get(place.focus.path) ?? []), place]);
-        }
-      }
-    }
-    return map;
-  }, [walk, highlightWalk]);
 
   const renderFrom = mapX - viewWidth;
   const renderTo = mapX + viewWidth * 2;
@@ -888,7 +879,6 @@ export function WalkTimeline({
                     files={files}
                     level={level}
                     view={view}
-                    overlay={overlayByPath.get(path) ?? []}
                     wrap={isProsePath(path) ? wrapProse : wrapCode}
                     sameFile={stations.filter((other) => other.key === station.key && other.index !== station.index)}
                     selection={selection}
@@ -985,7 +975,6 @@ function TimelinePaneView({
   files,
   level,
   view,
-  overlay,
   wrap,
   sameFile,
   selection,
@@ -1014,7 +1003,6 @@ function TimelinePaneView({
   readonly files: Files;
   readonly level: CodeLevel;
   readonly view: CodeView;
-  readonly overlay: readonly Place[];
   /**
    * Long lines wrap within the pane (Niclas's trial feedback, 29 October 2026). A file's
    * line may then take several rows on screen and keeps its own Git line number; every row
@@ -1075,18 +1063,6 @@ function TimelinePaneView({
     }
     return set;
   }, [rows, sameFile]);
-  const overlaySet = useMemo(() => {
-    const set = new Set<number>();
-    for (const place of overlay) {
-      rowsOf(rows, place.focus).indexes.forEach((row) => set.add(row));
-      for (const ref of place.context) {
-        if (ref.path === path) {
-          rowsOf(rows, ref).indexes.forEach((row) => set.add(row));
-        }
-      }
-    }
-    return set;
-  }, [overlay, rows, path]);
   // The active place's call is marked; the latest navigation's call stays unfolded.
   const fromSet = useMemo(() => (fromHere === null ? new Set<number>() : new Set(rowsOf(rows, fromHere).indexes)), [fromHere, rows]);
   const callRows = useMemo(() => {
@@ -1155,7 +1131,8 @@ function TimelinePaneView({
   // changes. A pane that was scrolled and then left the rendered range comes back
   // where it was. Neither the active place nor its link is part of the key, so panning
   // past a pane — or past a place called from it — leaves its scroll alone.
-  const scrollKey = `${level}:${view}:${String(rows.length)}:${wrap ? 'wrap' : 'nowrap'}`;
+  // Wrapping is not part of the key: turning it on or off keeps the line being read (below).
+  const scrollKey = `${level}:${view}:${String(rows.length)}`;
   const scrolledFor = useRef('');
   const scrollTimer = useRef<number | null>(null);
   // Set when this pane has just been placed for the first time; read by the arrival below.
@@ -1209,6 +1186,44 @@ function TimelinePaneView({
     },
     [],
   );
+  /*
+   * The line being read: the first row at or below the top of the pane, and how far below
+   * the top it is. When lines start or stop wrapping, rows change height; the pane is
+   * scrolled so that this row stays where it was (30 October 2026).
+   */
+  const reading = useRef<{ readonly index: number; readonly offset: number } | null>(null);
+  const noteReading = (): void => {
+    const element = scroller.current;
+    if (element === null) {
+      return;
+    }
+    const top = element.getBoundingClientRect().top;
+    const row = [...element.querySelectorAll<HTMLElement>('[data-row]')].find((entry) => entry.getBoundingClientRect().bottom > top + 1);
+    reading.current = row === undefined ? null : { index: Number(row.dataset['row']), offset: row.getBoundingClientRect().top - top };
+  };
+  const wrapSeen = useRef(wrap);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (wrapSeen.current === wrap || element === null) {
+      return;
+    }
+    wrapSeen.current = wrap;
+    const held = reading.current;
+    if (held === null) {
+      return;
+    }
+    if (!wrap) {
+      // Unwrapped, every row has the same height and is placed by it.
+      const at = items.findIndex((item) => item.kind === 'row' && item.index === held.index);
+      if (at >= 0) {
+        element.scrollTop = Math.max(0, (tops[at] ?? 0) - held.offset);
+      }
+    }
+    const row = element.querySelector<HTMLElement>(`[data-row="${String(held.index)}"]`);
+    if (row !== null) {
+      element.scrollTop += row.getBoundingClientRect().top - element.getBoundingClientRect().top - held.offset;
+    }
+  });
   // Arriving by navigation, or as the pane the map opens on: room for the change, and
   // the change in view — vertically, and sideways to where Before and After differ.
   // A pane the reader pans to is left exactly as it was.
@@ -1537,11 +1552,6 @@ function TimelinePaneView({
       classes.push('rv-old-faint');
     } else if (row.kind === 'added') {
       classes.push('rv-new-faint');
-    } else if (overlaySet.has(index)) {
-      classes.push('rv-walk-mark');
-    }
-    if (overlaySet.has(index) && !inShown && row.kind !== 'context') {
-      classes.push('rv-walk-edge');
     }
     const isFrom = fromSet.has(index);
     if (isFrom) {
@@ -1585,6 +1595,7 @@ function TimelinePaneView({
         className={classes.join(' ')}
         {...attrs}
         // Where this row's text is, for a text selection to ask about (`walk-selection.ts`).
+        data-row={index}
         data-sel-side={rowSide}
         data-sel-path={path}
         data-sel-line={String((rowSide === 'target' ? row.targetLine : row.baseLine) ?? '')}
@@ -1645,6 +1656,7 @@ function TimelinePaneView({
         data-wrap={wrap ? '1' : '0'}
         ref={scroller}
         onScroll={(event) => {
+          noteReading();
           handlers.current.scrollTop(event.currentTarget.scrollTop, event.currentTarget.scrollLeft);
           handlers.current.scrolled();
           follow();

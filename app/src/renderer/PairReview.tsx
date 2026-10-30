@@ -59,12 +59,12 @@ import {
   type PairRecord,
   type ReviewPairBridge,
   type ReviewRepository,
-  type ReviewRequirement,
   type StripStatus,
 } from '../shared/review-pair';
 import { TokensView } from './review-code';
 import { AgentPicker, type AgentChoice } from './AgentPicker';
-import { ExplainPanel, explanationThreads } from './ExplainPanel';
+import type { SelectionQuote } from '../shared/review-discussion';
+import type { PanelState } from '../shared/review-pair';
 import { rangeInCell } from './walk-selection';
 import { changedRangesOf } from '../shared/review-agent';
 
@@ -778,17 +778,11 @@ function DiffReview({
   /** The one way this window starts agent work; a refusal or a failed request is said. */
   const sendJob = async (request: AgentJobRequestInput): Promise<AgentJob | null> => {
     setProblem(null);
-    setExplainProblem(null);
     // A request that fails on its way (IPC or the host) is said, as a refusal is: a press
     // that starts nothing must never leave the window as it was.
     const answer = await bridge.startJob(open.key, request).catch((error: unknown) => ({ error: requestFailure(error) }));
     if (isPairError(answer)) {
-      if (request.kind === 'explain') {
-        setExplainProblem(`The explanation could not be started: ${answer.error}`);
-        setExplainOpen(true);
-      } else {
-        setProblem(`${request.kind === 'walks' ? 'The code walks could not be started' : 'The review could not be started'}: ${answer.error}`);
-      }
+      setProblem(`${request.kind === 'walks' ? 'The code walks could not be started' : 'The review could not be started'}: ${answer.error}`);
       return null;
     }
     if (request.kind === 'walks') {
@@ -798,59 +792,86 @@ function DiffReview({
   };
 
   /*
-   * DSP-152: explanations of selected code. Started with the review's current agent and
-   * model, the ones the picker would start from, without asking again; only when there is
-   * no usable choice does the picker ask, and the selection waits for it. Never another
-   * agent or a fallback model.
+   * The review's panel, Step and Discussion (Niclas's decision of 30 October 2026): it
+   * belongs to the review, in its own window or docked in this window or the walk window.
+   * This window has no chat of its own. What is selected here is what the next question is
+   * about; Discussion and Ask… show the panel (Ask… with the cursor in the question), and
+   * Explain this asks there once.
    */
-  type ExplainAsk = Pick<AgentJobRequestInput, 'selection' | 'followUp' | 'ask'>;
-  const [explainActive, setExplainActive] = useState<string | null>(null);
-  const [explainOpen, setExplainOpen] = useState(false);
-  const [explainProblem, setExplainProblem] = useState<string | null>(null);
-  const [awaitingAgent, setAwaitingAgent] = useState<ExplainAsk | null>(null);
-  const threads = useMemo(() => explanationThreads(record.jobs), [record.jobs]);
-  const explaining = record.jobs.some((job) => job.kind === 'explain' && isRunning(job));
-  const explainWith = async (asked: ExplainAsk, choice: AgentChoice): Promise<void> => {
-    const job = await sendJob({ kind: 'explain', ...choice, ...asked });
-    if (job !== null) {
-      setAwaitingAgent(null);
-      setExplainActive(job.followUp?.root ?? job.id);
-    }
+  const panelBridge = window.dspatchReviewPanel;
+  const showPanel = (ask: boolean): void => {
+    void panelBridge
+      ?.show(open.key, ask)
+      .catch((error: unknown) => ({ ok: false, note: requestFailure(error) }))
+      .then((answer) => {
+        if (!answer.ok) {
+          setProblem(`The discussion could not be shown: ${answer.note}`);
+        }
+      });
   };
-  const explain = async (asked: ExplainAsk): Promise<void> => {
-    setExplainOpen(true);
-    setExplainProblem(null);
-    const agents = await bridge.agents(open.key).catch((error: unknown) => ({ error: requestFailure(error) }));
-    if (isPairError(agents)) {
-      setExplainProblem(`The explanation could not be started: ${agents.error}`);
+  const [panelState, setPanelState] = useState<PanelState | null>(null);
+  useEffect(() => {
+    if (panelBridge === undefined) {
       return;
     }
-    const chosen = agents.current;
-    if (chosen === null || !chosen.choosable || chosen.model.trim() === '') {
-      setAwaitingAgent(asked);
+    void panelBridge.state().then((known) => {
+      if (known !== null) {
+        setPanelState(known);
+      }
+    });
+    return panelBridge.onState(setPanelState);
+  }, [panelBridge]);
+  const dockedHere = panelState?.dockedHere === true;
+  const roomRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const room = roomRef.current;
+    if (panelBridge === undefined || room === null || !dockedHere) {
       return;
     }
-    await explainWith(asked, { provider: chosen.provider, model: chosen.model });
+    const tell = (): void => {
+      const box = room.getBoundingClientRect();
+      panelBridge.slot({ x: box.left, y: box.top, width: box.width, height: box.height });
+    };
+    tell();
+    const observer = new ResizeObserver(tell);
+    observer.observe(room);
+    window.addEventListener('resize', tell);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', tell);
+    };
+  }, [panelBridge, dockedHere]);
+
+  /*
+   * A reference opened from the panel when the review has no walk window (30 October 2026):
+   * a place of its own, then further ones; Back returns through them to the diff.
+   */
+  const [away, setAway] = useState<readonly AwayEntry[]>([]);
+  const goAway = (location: LineRange): void => {
+    setTarget(null);
+    setAway((before) => [...before, { location, more: { above: 0, below: 0 }, whole: false, reading: null }]);
   };
-  /** A place in the diff, in this file or another of the change, as Show in diff goes there. */
-  const showAt = (location: DiffLocation): void => {
-    const file = open.files.find((candidate) => fileLocationMatch(candidate, location));
-    if (file !== undefined) {
-      setAway([]);
-      openFile(file.key);
-      setTarget((before) => ({ location, nonce: (before?.nonce ?? 0) + 1 }));
+  const awayHere = away.at(-1) ?? null;
+  const awayKey = awayHere === null ? '' : `${String(away.length)}:${awayHere.location.side}:${awayHere.location.path}:${String(awayHere.location.start)}`;
+  useEffect(() => {
+    if (panelBridge === undefined) {
+      return;
     }
-  };
-  const showSelection = (selection: CodeSelection): void => {
-    const first = selection.segments[0];
-    const file = open.files.find((candidate) => candidate.key === selection.fileKey);
-    if (first !== undefined && file !== undefined) {
-      showAt({ side: first.side, path: first.path, line: first.start });
-    } else if (first !== undefined) {
-      // Asked about in a file outside the change: shown where it was, as a reference is.
-      goAway({ kind: 'lines', side: first.side, path: first.path, start: first.start, end: selection.segments.at(-1)?.end ?? first.end });
-    }
-  };
+    return panelBridge.onAction((action) => {
+      if (action.kind !== 'openLocation') {
+        return;
+      }
+      const { location } = action;
+      if (current === null) {
+        // From the list of files, a place opens in its file first.
+        const file = open.files.find((candidate) => fileLocationMatch(candidate, { side: location.side, path: location.path, line: location.start }));
+        if (file !== undefined) {
+          openFile(file.key);
+        }
+      }
+      goAway({ kind: 'lines', side: location.side, path: location.path, start: location.start, end: location.end });
+    });
+  });
 
   /*
    * How each file is opened and where it was read, kept while the review is open, so a
@@ -864,91 +885,84 @@ function DiffReview({
   }, []);
 
   /*
-   * References followed from answers (30 October 2026): each a place of its own, one after
-   * another. Back returns through them to the file's diff, each as it was left.
-   */
-  const [away, setAway] = useState<readonly AwayEntry[]>([]);
-  const goAway = (location: LineRange): void => {
-    setTarget(null);
-    setAway((before) => [...before, { location, more: { above: 0, below: 0 }, whole: false, reading: null }]);
-  };
-  const awayHere = away.at(-1) ?? null;
-  const awayKey = awayHere === null ? '' : `${String(away.length)}:${awayHere.location.side}:${awayHere.location.path}:${String(awayHere.location.start)}`;
-
-  /*
-   * One's own question about selected code (30 October 2026): the selection is quoted, the
-   * question written beside it, and only *Ask* sends it. A new selection replaces the quote;
-   * another file or place drops it, so no earlier quote follows along unseen.
+   * What the next question is about (30 October 2026): code selected here becomes the quote
+   * in the review's chat, in the walk window. `quote` is that selection, kept marked in this
+   * window's code until it is sent, removed, replaced, or another file is opened, so no quote
+   * follows along unseen.
    */
   const [quote, setQuote] = useState<{ readonly request: CodeSelectionRequest; readonly open: boolean } | null>(null);
-  const [askText, setAskText] = useState('');
+  const shareQuote = (next: CodeSelectionRequest | null): void => {
+    const shared: SelectionQuote | null = next === null ? null : { kind: 'code', text: next.text, segments: next.segments.map((segment) => ({ ...segment })) };
+    setQuote(next === null ? null : { request: next, open: true });
+    void window.dspatchReviewDiscussion?.setQuote(shared).catch(() => undefined);
+  };
+  // This window hears the chat (it is the review's): a quote chosen, sent or removed elsewhere
+  // takes this window's mark away.
   useEffect(() => {
-    setQuote(null);
+    const discussion = window.dspatchReviewDiscussion;
+    if (discussion === undefined) {
+      return;
+    }
+    const unsubscribe = discussion.onEvent((event) => {
+      if (event.kind === 'quote') {
+        setQuote(null);
+        // Left selected, the next drag over it would move the text instead of selecting.
+        window.getSelection()?.removeAllRanges();
+      }
+    });
+    void discussion.load(null).catch(() => undefined);
+    return unsubscribe;
+  }, []);
+  const placeSeen = useRef(false);
+  useEffect(() => {
+    if (!placeSeen.current) {
+      placeSeen.current = true;
+      return;
+    }
+    if (quote !== null) {
+      shareQuote(null);
+    }
+    // Only a move to another file or place lets the quote go.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileKey, awayKey]);
-  const askAbout = (request: CodeSelectionRequest): void => {
-    setQuote({ request, open: true });
-    setExplainOpen(true);
-    setExplainProblem(null);
+  // Ask… shows the discussion and puts the cursor in it; a selection made while the
+  // discussion is shown only becomes what the question is about, so the selection and
+  // Explain this stay where they are.
+  const askAbout = (request: CodeSelectionRequest, explicit: boolean): void => {
+    shareQuote(request);
+    if (explicit) {
+      showPanel(true);
+    }
+  };
+  /** Explain this: a question in the discussion, about exactly the selection. */
+  const explainInDiscussion = async (request: CodeSelectionRequest): Promise<void> => {
+    const discussion = window.dspatchReviewDiscussion;
+    const first = request.segments[0];
+    if (discussion === undefined || first === undefined) {
+      return;
+    }
+    const quoted: SelectionQuote = { kind: 'code', text: request.text, segments: request.segments.map((segment) => ({ ...segment })) };
+    const outcome = await discussion
+      .send({
+        question: `Explain this: "${request.text.replace(/\s+/g, ' ').trim().slice(0, 300)}"`,
+        subject: { kind: 'away', location: { side: first.side, path: first.path, start: first.start, end: request.segments.at(-1)?.end ?? first.end } },
+        selection: null,
+        quote: quoted,
+        language: 'en',
+        deepen: { action: 'explain', text: request.text.slice(0, 2000) },
+      })
+      .catch((error: unknown) => ({ kind: 'failed' as const, error: requestFailure(error) }));
+    if (outcome.kind !== 'sent') {
+      setProblem(`The question could not be sent: ${outcome.error}`);
+      return;
+    }
+    // Sent once; the panel shows it, opened where it is when it was not open.
+    showPanel(false);
   };
   const stopJob = async (job: AgentJob): Promise<void> => {
     const answer = await bridge.cancelJob(open.key, job.id).catch((error: unknown) => ({ error: requestFailure(error) }));
     if (isPairError(answer)) {
       setProblem(answer.error);
-    }
-  };
-
-  /** The explanations beside a code view, with the question being written about a selection. */
-  const panel = (shownKey: string): JSX.Element => (
-    <ExplainPanel
-      pairKey={open.key}
-      threads={threads}
-      fileKey={shownKey}
-      active={explainActive}
-      open={explainOpen}
-      picking={awaitingAgent !== null}
-      busy={explaining}
-      problem={explainProblem}
-      onToggle={() => setExplainOpen((value) => !value)}
-      onActivate={(root) => {
-        setExplainActive(root);
-        const thread = threads.find((entry) => entry.root.id === root);
-        if (thread !== undefined) {
-          showSelection(thread.root.selection);
-        }
-      }}
-      onShowSelection={showSelection}
-      onShowRange={goAway}
-      onFollowUp={(root, action, question, of) =>
-        void explain({ followUp: { root, action, ...(action === 'question' ? { question } : {}), ...(of === undefined ? {} : { of }) } })
-      }
-      quote={quote?.request ?? null}
-      askText={askText}
-      onAskText={setAskText}
-      onClearQuote={() => setQuote(null)}
-      onAsk={() => {
-        const asked = quote;
-        const question = askText.trim();
-        if (asked === null || question === '') {
-          return;
-        }
-        setQuote(null);
-        setAskText('');
-        void explain({ selection: asked.request, ask: question });
-      }}
-      onPick={(choice) => {
-        if (awaitingAgent !== null) {
-          void explainWith(awaitingAgent, choice);
-        }
-      }}
-      onCancelPick={() => setAwaitingAgent(null)}
-      onStop={(job) => void stopJob(job)}
-    />
-  );
-
-  const setRequirement = async (requirement: ReviewRequirement): Promise<void> => {
-    const answer = await bridge.setRequirement(open.key, requirement);
-    if (!isPairError(answer)) {
-      setRecord(answer);
     }
   };
 
@@ -1019,25 +1033,6 @@ function DiffReview({
             material: job.material ?? null,
             investigation: job.investigation ?? null,
           })),
-        explainActive,
-        explainPanel: ((): unknown => {
-          const panel = document.querySelector<HTMLElement>('.rv-explain');
-          return panel === null
-            ? null
-            : {
-                open: panel.dataset['ev'] === 'explain-panel',
-                text: (panel.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 4000),
-                segments: [...panel.querySelectorAll('[data-ev="explain-segment"]')].map((node) => node.textContent ?? ''),
-                answers: [...panel.querySelectorAll<HTMLDetailsElement>('[data-ev="explain-answer"]')].map((node) => ({
-                  state: node.dataset['state'] ?? '',
-                  open: node.open,
-                  text: (node.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 1500),
-                })),
-                reopen: [...panel.querySelectorAll('[data-ev="explain-reopen"]')].map((node) => node.textContent ?? ''),
-                picker: panel.querySelector('[data-ev="explain-agent"]') !== null,
-                width: Math.round(panel.getBoundingClientRect().width),
-              };
-        })(),
         // The text selected in the window now, and whether the action is offered for it.
         textSelection: window.getSelection()?.toString() ?? '',
         explainOffered: document.querySelector('[data-ev="explain-this"]') !== null,
@@ -1094,6 +1089,8 @@ function DiffReview({
           .map((cell) => ({ side: cell.dataset['codeSide'] ?? '', line: Number(cell.dataset['codeLine']), length: (cell.textContent ?? '').length, height: Math.round(cell.getBoundingClientRect().height) })),
         fileRows: [...document.querySelectorAll<HTMLElement>('[data-file-row]')].map((row) => (row.innerText || '').replace(/\s+/g, ' ').trim()),
         targetShown: document.querySelector('.rv-pair-target') !== null,
+        // 30 October 2026: room kept for the review's panel docked here.
+        panelRoom: document.querySelector('[data-ev="panel-room"]') !== null,
         // 30 October 2026: what is drawn of the file, the folds and where the reader is.
         context: ((): unknown => {
           const root = document.querySelector<HTMLElement>('.rv-pair-diff');
@@ -1126,11 +1123,11 @@ function DiffReview({
             clientHeight: root.clientHeight,
             away: (document.querySelector('[data-ev="away-bar"]')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
             refLines: [...root.querySelectorAll<HTMLElement>('td.rv-ref-line')].map((cell) => Number(cell.dataset['codeLine'])),
-            quote: (document.querySelector('[data-ev="explain-quote"]')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
-            askOpen: document.querySelector('[data-ev="explain-ask-own"]') !== null,
+            quote: (document.querySelector('[data-ev="pair-discussion"] [data-ev="discussion-quote"]')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+            askOpen: document.querySelector('[data-ev="pair-discussion"]:not([hidden])') !== null,
             askOffered: document.querySelector('[data-ev="ask-this"]') !== null,
             quoteMark: quoteMark === undefined ? [] : [...quoteMark].map((range) => (range as Range).toString()),
-            activity: [...document.querySelectorAll('.rv-explain .rv-agent-activity')].map((node) => node.textContent ?? ''),
+            activity: [...document.querySelectorAll('[data-ev="pair-discussion"] [data-ev="discussion-activity"]')].map((node) => node.textContent ?? ''),
             focused: document.activeElement?.getAttribute('data-ev') ?? document.activeElement?.tagName ?? '',
           };
         })(),
@@ -1139,7 +1136,7 @@ function DiffReview({
     return () => {
       delete window.__dspatchPairCheck;
     };
-  }, [open, fileKey, layout, record, progress, explainActive, walksNote, walkCount]);
+  }, [open, fileKey, layout, record, progress, walksNote, walkCount]);
 
   const totals = useMemo(() => {
     let total = 0;
@@ -1164,16 +1161,6 @@ function DiffReview({
           </span>
         </h1>
         <div className="rv-pair-tools">
-          <label
-            className="rv-pair-requirement"
-            title="What counts as handled. Exempted lines count either way. An agent's approval counts only for parts you delegated to it, unless you choose any recorded agent review."
-          >
-            Counts as handled
-            <select data-ev="pair-requirement" value={record.requirement} onChange={(event) => void setRequirement(event.target.value as ReviewRequirement)}>
-              <option value="manual">Your review, or the agent's where you delegate</option>
-              <option value="manual-or-agent">Your review or any recorded agent review</option>
-            </select>
-          </label>
           {/* While choosing, the picker's own button is the one that starts: no second one by the same name. */}
           {!preparing && (
             <button type="button" data-ev="pair-prepare-walks" disabled={walksJob?.state === 'running' || walksJob?.state === 'cancelling'} onClick={() => setPreparing(true)}>
@@ -1190,6 +1177,9 @@ function DiffReview({
             onClick={openWalks}
           >
             Code walks
+          </button>
+          <button type="button" data-ev="pair-discussion" title="The review's discussion: Step and Discussion" onClick={() => showPanel(true)}>
+            Discussion
           </button>
           <button type="button" className="rv-pair-link" data-ev="pair-change-revisions" onClick={onChangeRevisions}>
             Change revisions
@@ -1227,80 +1217,84 @@ function DiffReview({
         </p>
       )}
       {problem !== null && <p className="rv-pair-error">{problem}</p>}
+      <div className="rv-pair-main">
       <div className="rv-pair-body" ref={body}>
-        {current === null ? (
-          <FilesChanged
-            pairKey={open.key}
-            files={open.files}
-            progress={progress}
-            record={record}
-            totals={totals}
-            jobs={record.jobs}
-            onOpen={(file) => openFile(file.key)}
-            onDelegate={(choice) =>
-              startJob({ kind: 'review', ...choice, scope: { kind: 'file', label: 'the whole change', ranges: changedRangesOf(open.files) } })
-            }
-            onStop={(job) => void stopJob(job)}
-          />
-        ) : awayHere !== null ? (
-          <ReferenceView
-            key={awayKey}
-            bridge={bridge}
-            pairKey={open.key}
-            pair={open.pair}
-            entry={awayHere}
-            inChange={open.files.find((file) => (awayHere.location.side === 'base' ? file.oldPath : file.newPath) === awayHere.location.path) ?? null}
-            back={(() => {
-              const before = away.at(-2);
-              return before === undefined
-                ? shownPath(current).split('/').pop() ?? shownPath(current)
-                : `${before.location.path.split('/').pop() ?? ''}:${before.location.start === before.location.end ? String(before.location.start) : `${String(before.location.start)}–${String(before.location.end)}`}`;
-            })()}
-            onBack={() => setAway((before) => before.slice(0, -1))}
-            onChange={((at: number) => (entry: AwayEntry) => setAway((before) => before.map((value, index) => (index === at ? entry : value))))(away.length - 1)}
-            onShowInDiff={
-              open.files.some((file) => fileLocationMatch(file, { side: awayHere.location.side, path: awayHere.location.path, line: awayHere.location.start }))
-                ? () => showAt({ side: awayHere.location.side, path: awayHere.location.path, line: awayHere.location.start })
-                : null
-            }
-            explained={threads.find((entry) => entry.root.id === explainActive)?.root.selection ?? null}
-            onExplain={(selection) => void explain({ selection })}
-            quote={quote}
-            onAsk={askAbout}
-            explainPanel={panel(
-              open.files.find((file) => (awayHere.location.side === 'base' ? file.oldPath : file.newPath) === awayHere.location.path)?.key ??
-                outsideFileKey(awayHere.location.path),
-            )}
-          />
-        ) : (
-          <FileDiff
-            key={current.key}
-            bridge={bridge}
-            pairKey={open.key}
-            file={current}
-            record={record}
-            layout={layout}
-            target={target !== null && fileLocationMatch(current, target.location) ? target : null}
-            progress={progress.get(current.key) as FileProgress}
-            onLayout={setLayout}
-            onMark={mark}
-            jobs={record.jobs}
-            onDelegate={(choice, scope) => startJob({ kind: 'review', ...choice, scope })}
-            onStop={(job) => void stopJob(job)}
-            explained={threads.find((entry) => entry.root.id === explainActive)?.root.selection ?? null}
-            onExplain={(selection) => void explain({ selection })}
-            explainPanel={panel(current.key)}
-            expansion={expansionOf(current.key)}
-            onExpansion={(expansion) => setExpansion(current.key, expansion)}
-            reading={readings.current.get(current.key) ?? null}
-            onReading={(spot) => readings.current.set(current.key, spot)}
-            quote={quote}
-            onAsk={askAbout}
-            onBack={() => openFile(null)}
-            onPrevious={currentIndex > 0 ? () => openFile(open.files[currentIndex - 1]?.key ?? null) : null}
-            onNext={currentIndex < open.files.length - 1 ? () => openFile(open.files[currentIndex + 1]?.key ?? null) : null}
-          />
-        )}
+          {current === null ? (
+            <FilesChanged
+              pairKey={open.key}
+              files={open.files}
+              progress={progress}
+              record={record}
+              totals={totals}
+              jobs={record.jobs}
+              onOpen={(file) => openFile(file.key)}
+              onDelegate={(choice) =>
+                startJob({ kind: 'review', ...choice, scope: { kind: 'file', label: 'the whole change', ranges: changedRangesOf(open.files) } })
+              }
+              onStop={(job) => void stopJob(job)}
+            />
+          ) : awayHere !== null ? (
+            <ReferenceView
+              key={awayKey}
+              bridge={bridge}
+              pairKey={open.key}
+              pair={open.pair}
+              entry={awayHere}
+              inChange={open.files.find((file) => (awayHere.location.side === 'base' ? file.oldPath : file.newPath) === awayHere.location.path) ?? null}
+              back={(() => {
+                const before = away.at(-2);
+                return before === undefined
+                  ? shownPath(current).split('/').pop() ?? shownPath(current)
+                  : `${before.location.path.split('/').pop() ?? ''}:${before.location.start === before.location.end ? String(before.location.start) : `${String(before.location.start)}–${String(before.location.end)}`}`;
+              })()}
+              onBack={() => setAway((before) => before.slice(0, -1))}
+              onChange={((at: number) => (entry: AwayEntry) => setAway((before) => before.map((value, index) => (index === at ? entry : value))))(away.length - 1)}
+              onShowInDiff={
+                open.files.some((file) => fileLocationMatch(file, { side: awayHere.location.side, path: awayHere.location.path, line: awayHere.location.start }))
+                  ? () => {
+                      setAway([]);
+                      setTarget((before) => ({ location: { side: awayHere.location.side, path: awayHere.location.path, line: awayHere.location.start }, nonce: (before?.nonce ?? 0) + 1 }));
+                    }
+                  : null
+              }
+              explained={null}
+              onExplain={(selection) => void explainInDiscussion(selection)}
+              quote={quote}
+              onAsk={askAbout}
+              explainPanel={<></>}
+            />
+          ) : (
+            <FileDiff
+              key={current.key}
+              bridge={bridge}
+              pairKey={open.key}
+              file={current}
+              record={record}
+              layout={layout}
+              target={target !== null && fileLocationMatch(current, target.location) ? target : null}
+              progress={progress.get(current.key) as FileProgress}
+              onLayout={setLayout}
+              onMark={mark}
+              jobs={record.jobs}
+              onDelegate={(choice, scope) => startJob({ kind: 'review', ...choice, scope })}
+              onStop={(job) => void stopJob(job)}
+              explained={null}
+              onExplain={(selection) => void explainInDiscussion(selection)}
+              explainPanel={<></>}
+              expansion={expansionOf(current.key)}
+              onExpansion={(expansion) => setExpansion(current.key, expansion)}
+              reading={readings.current.get(current.key) ?? null}
+              onReading={(spot) => readings.current.set(current.key, spot)}
+              quote={quote}
+              onAsk={askAbout}
+              onBack={() => openFile(null)}
+              onPrevious={currentIndex > 0 ? () => openFile(open.files[currentIndex - 1]?.key ?? null) : null}
+              onNext={currentIndex < open.files.length - 1 ? () => openFile(open.files[currentIndex + 1]?.key ?? null) : null}
+            />
+          )}
+        </div>
+        {/* Room for the review's panel while it is docked in this window; the panel is drawn over it. */}
+        {dockedHere && <div className="rv-pair-room" ref={roomRef} data-ev="panel-room" />}
       </div>
     </div>
   );
@@ -1876,7 +1870,8 @@ type FoundSelection = { readonly request: CodeSelectionRequest; readonly rect: D
  * code view of the diff window (30 October 2026): *Explain this* and *Ask…* beside the
  * selection, the same in a context menu, and Ctrl+Shift+E. Selecting never selects lines
  * for review and never marks anything; the actions leave the selection in place. While a
- * question is being written (`quoteOpen`), a new selection becomes what it is about.
+ * question is being written or the discussion is open (`quoteOpen`), a new selection becomes
+ * what it is about, without a further press.
  */
 function useSelectionOffer({
   scroller,
@@ -1892,7 +1887,8 @@ function useSelectionOffer({
   /** The selection in this view, read now; `null` when nothing in its code is selected. */
   readonly read: () => FoundSelection | null;
   readonly onExplain: (request: CodeSelectionRequest) => void;
-  readonly onAsk: (request: CodeSelectionRequest) => void;
+  /** `explicit`: Ask… was pressed, and the question takes the focus. */
+  readonly onAsk: (request: CodeSelectionRequest, explicit: boolean) => void;
   readonly quoteOpen: boolean;
   readonly beforeExplain?: (request: CodeSelectionRequest) => void;
 }): {
@@ -1920,7 +1916,7 @@ function useSelectionOffer({
     const point = at ?? { x: found.rect?.right ?? box.left, y: (found.rect?.bottom ?? box.top) + 4 };
     setOffer({ request: found.request, x: Math.max(4, Math.min(point.x - box.left, box.width - 200)), y: Math.max(4, Math.min(point.y - box.top, box.height - 90)), menu });
     if (quoteOpen && !menu) {
-      onAsk(found.request);
+      onAsk(found.request, false);
     }
     return true;
   };
@@ -1928,7 +1924,7 @@ function useSelectionOffer({
     // The panel opening narrows the code: the selection is kept where it is, as for Explain this.
     beforeExplain?.(request);
     setOffer(null);
-    onAsk(request);
+    onAsk(request, true);
   };
   const explainNow = (request: CodeSelectionRequest): void => {
     beforeExplain?.(request);
@@ -2135,7 +2131,7 @@ function FileDiff({
    */
   readonly quote: { readonly request: CodeSelectionRequest; readonly open: boolean } | null;
   /** Ask about the selection: opens the question with it quoted, and sends nothing. */
-  readonly onAsk: (request: CodeSelectionRequest) => void;
+  readonly onAsk: (request: CodeSelectionRequest, explicit: boolean) => void;
   readonly bridge: ReviewPairBridge;
   readonly pairKey: string;
   readonly file: PairFile;
@@ -2552,7 +2548,8 @@ function FileDiff({
         : codeSelectionIn(scroller.current, file, layout, text.base, text.target),
     onExplain,
     onAsk,
-    quoteOpen: quote?.open === true,
+    // Every selection is what the review's next question is about, wherever it is asked (30 October 2026).
+    quoteOpen: true,
     beforeExplain: (request) => {
       const root = scroller.current;
       const first = request.segments[0];
@@ -2873,7 +2870,8 @@ function FileDiff({
 }
 
 /**
- * A code reference followed from an answer, in the diff window (30 October 2026): a place
+ * A code reference followed from an answer, opened in the diff window when the review has no
+ * walk window to open it in (30 October 2026): a place
  * of its own to look around in, not a snippet. The file at the reference's revision is read
  * from Git, with the code around the referenced lines shown at once, more of it on request
  * and the whole file if wanted. The referenced lines carry a mark of their own, never the
@@ -2919,7 +2917,7 @@ function ReferenceView({
   readonly explained: CodeSelection | null;
   readonly onExplain: (selection: CodeSelectionRequest) => void;
   readonly quote: { readonly request: CodeSelectionRequest; readonly open: boolean } | null;
-  readonly onAsk: (request: CodeSelectionRequest) => void;
+  readonly onAsk: (request: CodeSelectionRequest, explicit: boolean) => void;
   readonly explainPanel: JSX.Element;
 }): JSX.Element {
   const { location } = entry;
@@ -3019,7 +3017,8 @@ function ReferenceView({
     read: () => (scroller.current === null || lines === null ? null : codeSelectionIn(scroller.current, file, 'unified', lines, lines)),
     onExplain,
     onAsk,
-    quoteOpen: quote?.open === true,
+    // Every selection is what the review's next question is about (30 October 2026).
+    quoteOpen: true,
   });
   useMarked('rv-explained', scroller, explained, file.key, [lines, first, last]);
   useMarked('rv-quote', scroller, quote?.request ?? null, file.key, [lines, first, last]);

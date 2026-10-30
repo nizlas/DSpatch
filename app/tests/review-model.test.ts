@@ -10,6 +10,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { REVIEW_PANEL_CHANNELS } from '../src/shared/review-pair';
 
 import {
   REVIEW_CHANNELS,
@@ -433,8 +434,11 @@ test('the review preload repeats every review channel name exactly, and the chat
   }
   // The discussion's channels are compared with their own constant in review-discussion.test.ts.
   const literal = (preload.match(/'dspatch:review-[a-z-]+'/g) ?? []).filter(
-    (channel) => !channel.startsWith("'dspatch:review-discussion-") && !channel.startsWith("'dspatch:review-pair-"),
+    (channel) => !channel.startsWith("'dspatch:review-discussion-") && !channel.startsWith("'dspatch:review-pair-") && !channel.startsWith("'dspatch:review-panel-"),
   );
+  // The review panel's channels (30 October 2026), each once.
+  const panel = [...new Set(preload.match(/'dspatch:review-panel-[a-z-]+'/g) ?? [])].sort();
+  assert.deepEqual(panel, Object.values(REVIEW_PANEL_CHANNELS).map((channel) => `'${channel}'`).sort());
   assert.deepEqual([...new Set(literal)].sort(), Object.values(REVIEW_CHANNELS).map((channel) => `'${channel}'`).sort());
   // The chat and editor windows' preload exposes no review bridge and no review channel.
   const chatPreload = fs.readFileSync(new URL('../src/preload/preload.ts', import.meta.url), 'utf8');

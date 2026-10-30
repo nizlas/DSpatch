@@ -74,7 +74,7 @@ import {
 import { describeLoopRunAgent, type LoopRunAgentInfo } from '../shared/loop-run-agent-text';
 import type { RunResult, RunStatus } from '../shared/loop-run';
 import type { LiveRunAnnouncement } from '../shared/loop-run-view';
-import { REVIEW_DISCUSSION_CHANNELS, type DiscussionTarget } from '../shared/review-discussion';
+import { REVIEW_DISCUSSION_CHANNELS, type DiscussionIdentity, type DiscussionTarget } from '../shared/review-discussion';
 import { isReviewHostError, REVIEW_HOST_METHODS } from '../shared/review-host-contract';
 import { workingRootsFrom } from '../shared/working-roots';
 import {
@@ -154,7 +154,9 @@ import {
 import type { SampleProjectListing } from '../main/sample-projects';
 import { readDirectoryPage, readFileForViewing } from '../main/workspace-tree';
 import { ReviewHost } from './review-host';
-import { ReviewPairs } from './review-pairs';
+import { ReviewPairs, pairKeyOf } from './review-pairs';
+import { earlierDiscussion, pairEnvelopeSource } from './review-pair-discussion';
+import { definitionFrom } from '../shared/review-agent';
 import { ReviewAgentJobs } from './review-agent-jobs';
 import { RevisionSnapshots } from './revision-snapshots';
 import { REVIEW_PAIR_CHANGED } from '../shared/review-pair';
@@ -3653,6 +3655,17 @@ function reconciled<T>(answer: T): T {
   return answer;
 }
 
+/** Where the definitions with no walks that carry a review's discussion are written. */
+function discussionDefinitionsDir(): string {
+  return path.join(userDataDir(), 'reviews', 'discussion');
+}
+
+/** A definition written only to carry a review's discussion before any walk; never walks. */
+function isDiscussionDefinition(definition: string): boolean {
+  const resolved = path.resolve(definition);
+  return path.dirname(resolved).toLowerCase() === path.resolve(discussionDefinitionsDir()).toLowerCase() || path.basename(resolved).toLowerCase() === 'discussion.review.json';
+}
+
 /** Walk definitions prepared for one pair (DSP-152), newest first. */
 function generatedWalkDefinitions(key: unknown): readonly string[] {
   if (typeof key !== 'string' || !/^[0-9a-f]{24}$/.test(key)) {
@@ -3727,11 +3740,28 @@ function envelopeSourceFor(sessionId: string): EnvelopeSource {
  * The discussion of the review this window shows, with the window bound as its event
  * target. A window that comes back while an answer is still arriving is rebound here.
  */
+/**
+ * One discussion per repository and revision pair (Niclas's decision of 30 October 2026): a
+ * walk window and the diff window over the same pair reach the same discussion, whatever
+ * walk the walk window shows. The pair's key is the one its review record has.
+ */
+function pairDiscussionIdentity(identity: DiscussionIdentity): DiscussionIdentity {
+  const pair = { repository: identity.repository, base: identity.base, target: identity.target };
+  return { key: pairKeyOf(pair), ...pair, definitionPath: '' };
+}
+
+/** Where a window's question gets its context: a walk's review, or the diff's revision pair. */
+function envelopeSourceOf(target: DiscussionTarget): EnvelopeSource {
+  return target.identity.definitionPath === ''
+    ? pairEnvelopeSource(requireReviewPairs(), pairDiscussionIdentity(target.identity).key)
+    : envelopeSourceFor(target.sessionId);
+}
+
 function discussionOf(target: DiscussionTarget): ReviewDiscussionService {
   const targetId = target.targetId;
   return requireReviewDiscussions().attach(
     targetId,
-    target.identity,
+    pairDiscussionIdentity(target.identity),
     (payload) => {
       sendToContents(targetId, REVIEW_DISCUSSION_CHANNELS.event, payload);
     },
@@ -3781,22 +3811,42 @@ function registerReviewMethods(): void {
   );
   handle('reviewPair.state', (_event, key: unknown) => requireReviewPairs().state(key));
   handle('reviewPair.mark', (_event, key: unknown, request: unknown) => requireReviewPairs().mark(key, request));
-  handle('reviewPair.setRequirement', (_event, key: unknown, requirement: unknown) =>
-    requireReviewPairs().setRequirement(key, requirement),
-  );
   handle('reviewPair.savePosition', (_event, key: unknown, position: unknown) =>
     requireReviewPairs().savePosition(key, position),
   );
+  // The definition that carries a review's discussion before any walk is never offered as walks.
   const walksOver = async (key: unknown, also: unknown): Promise<ReturnType<ReviewPairs['walksFor']>> =>
-    requireReviewPairs().walksFor(key, [
-      ...generatedWalkDefinitions(key),
-      ...(await knownWalkDefinitions(Array.isArray(also) ? also.filter((entry): entry is string => typeof entry === 'string') : [])),
-    ]);
+    requireReviewPairs().walksFor(
+      key,
+      [
+        ...generatedWalkDefinitions(key),
+        ...(await knownWalkDefinitions(Array.isArray(also) ? also.filter((entry): entry is string => typeof entry === 'string') : [])),
+      ].filter((definition) => !isDiscussionDefinition(definition)),
+    );
   handle('reviewPair.walks', (_event, key: unknown, also: unknown) => walksOver(key, also));
   // *Code walks* opens the walk last opened from this review, else the newest prepared one.
   handle('reviewPair.walkToOpen', async (_event, key: unknown, also: unknown) => {
     const walks = await walksOver(key, also);
     return 'error' in walks ? walks : { definitionPath: requireReviewPairs().walkToOpen(key, walks) };
+  });
+  /*
+   * The review's panel carries its one discussion (Niclas's decision of 30 October 2026).
+   * Before any walk is prepared it opens over a definition of the pair with no walks, written
+   * once in a folder of its own and never offered as walks; walks prepared later take over.
+   */
+  handle('reviewPair.discussionWalk', (_event, key: unknown) => {
+    const open = typeof key === 'string' ? requireReviewPairs().opened(key) : null;
+    if (open === null || typeof key !== 'string') {
+      return { error: 'That review is not open.' };
+    }
+    const file = path.join(discussionDefinitionsDir(), `${key}.review.json`);
+    if (!fs.existsSync(file)) {
+      const heading = `Discussion · ${open.repositoryName} ${open.pair.base.slice(0, 7)}→${open.pair.target.slice(0, 7)}`;
+      const provenance = 'No code walks yet: the review\'s discussion is here. Walks prepared later open in this window, and the discussion goes on.';
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${JSON.stringify(definitionFrom({ overview: '', background: '', attention: [], checks: [], walks: [] }, open.pair, heading, provenance), null, 2)}\n`, 'utf8');
+    }
+    return { definitionPath: file };
   });
   handle('reviewPair.walkOpened', (_event, key: unknown, definitionPath: unknown) => {
     requireReviewPairs().walkOpened(key, definitionPath);
@@ -3819,17 +3869,20 @@ function registerReviewMethods(): void {
   handle('discussion.load', (_event, target: DiscussionTarget, request: unknown) =>
     discussionOf(target).load(
       typeof request === 'object' && request !== null ? (request as never) : null,
-      envelopeSourceFor(target.sessionId),
+      envelopeSourceOf(target),
     ),
   );
   handle('discussion.send', (_event, target: DiscussionTarget, input: unknown) =>
-    discussionOf(target).send(input, envelopeSourceFor(target.sessionId)),
+    discussionOf(target).send(input, envelopeSourceOf(target)),
   );
   handle('discussion.cancel', (_event, target: DiscussionTarget) => discussionOf(target).cancel());
   handle('discussion.acknowledge', (_event, target: DiscussionTarget, attemptIds: unknown) =>
     discussionOf(target).acknowledge(attemptIds),
   );
-  handle('discussion.draft', (_event, target: DiscussionTarget, text: unknown) => discussionOf(target).saveDraft(text));
+  handle('discussion.draft', (_event, target: DiscussionTarget, text: unknown) => discussionOf(target).saveDraft(text, target.targetId));
+  handle('discussion.quote', (_event, target: DiscussionTarget, quote: unknown) => {
+    discussionOf(target).setQuote(quote, target.targetId);
+  });
   // DSP-132: choosing the agent records it and builds nothing.
   handle('discussion.chooseAgent', (_event, target: DiscussionTarget, provider: unknown) =>
     discussionOf(target).chooseAgent(provider),
@@ -4313,6 +4366,11 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
   });
   reviewDiscussions = new ReviewDiscussions({
     recordsDir: path.join(userDataDir(), 'reviews'),
+    // The pair's one discussion starts from what was discussed and explained before (30 October 2026).
+    earlier: (identity) =>
+      reviewPairs === null
+        ? []
+        : earlierDiscussion(path.join(userDataDir(), 'reviews'), identity, (other) => pairKeyOf(other) === identity.key, reviewPairs),
     // DSP-132: the shared factory; ReviewDiscussions binds the review purpose itself.
     createAdapter: (request) => {
       log(`[review] building a ${request.provider} review adapter${presentationMode ? ' (presentation, simulated)' : ''}`);

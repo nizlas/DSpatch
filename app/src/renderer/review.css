@@ -2058,14 +2058,6 @@
   gap: 0.7rem;
 }
 
-.rv-pair-requirement {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
 .rv-pair-walks {
   padding: 0.5rem 1.2rem;
   border-bottom: 1px solid var(--line);
@@ -3166,20 +3158,13 @@
   grid-template-columns: minmax(22rem, min(max(var(--rv-left-width, 340px), 26rem), 44vw)) 6px minmax(0, 1fr);
 }
 
-.rv-detached {
-  height: 100vh;
-}
-
-.rv-detached .rv-right {
-  border-left: none;
-}
-
-/* More room is not longer answers: prose keeps a readable measure, tables and code the width. */
-.rv-detached .rv-answer p,
-.rv-detached .rv-answer li,
-.rv-detached .rv-explanation p,
-.rv-detached .rv-summary,
-.rv-detached .rv-discussion-text {
+/* More room is not longer answers: in the review's panel, prose keeps a readable measure,
+   tables and code the width. */
+.rv-panel-only .rv-answer p,
+.rv-panel-only .rv-answer li,
+.rv-panel-only .rv-explanation p,
+.rv-panel-only .rv-summary,
+.rv-panel-only .rv-discussion-text {
   max-width: 78ch;
 }
 
@@ -3486,4 +3471,51 @@
   background: transparent;
   padding: 0 0.3rem;
   line-height: 1.2;
+}
+
+/* --- The review's panel (30 October 2026) ---------------------------------------------
+   Step and Discussion belong to the review: the panel fills a window of its own, or the
+   room a code window keeps for it while it is docked there. */
+.rv.rv-panel-only {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.rv-panel-only > .rv-panel-slot {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.rv-panel-only > .rv-panel-slot > .rv-right-host,
+.rv-panel-only .rv-right {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rv-panel-places {
+  display: inline-flex;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+
+.rv-pair-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.rv-pair-main > .rv-pair-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rv-pair-room {
+  flex: 0 0 min(32rem, 42vw);
+  border-left: 1px solid var(--line);
+}
+
+.rv-panel-room[hidden] {
+  display: none;
 }

@@ -1793,8 +1793,6 @@ export type ScriptedScenario =
   | 'walk-start'
   /** DSP-152: the analysis agent reads the two revisions; walk, step question, delegated review, stop and restart. SIMULATED provider. */
   | 'analysis-access'
-  /** DSP-152: code selected in the diff explained, in both layouts, with follow-ups, reopened after a restart. SIMULATED provider. */
-  | 'selection-explain'
   /** DSP-150 follow-up: how the diff marks what changed (Gerrit's behaviour), in both layouts, with selection and review marks. SIMULATED provider. */
   | 'diff-marks'
   /** Niclas's first real trial of the review flow (29 October 2026): file list, walk window, readings, resuming. SIMULATED provider. */
@@ -2241,7 +2239,7 @@ export interface ScriptedRunPlan {
    */
   readonly resumeHold?: boolean;
   /** DSP-149 `workspace-flow`: which process this is, and the folder its projects are in. */
-  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked' | 'pick' | 'direction' | 'columns' | 'insight' | 'insight-again' | 'selection' | 'explain-window' | 'context' | 'context-walk';
+  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked' | 'pick' | 'direction' | 'columns' | 'insight' | 'insight-again' | 'selection' | 'context' | 'context-walk' | 'panel';
   readonly flowRoot?: string;
 }
 

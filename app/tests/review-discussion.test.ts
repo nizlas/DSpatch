@@ -277,6 +277,8 @@ test('the discussion channels are its own, and the review preload uses exactly t
     'dspatch:review-discussion-load',
     'dspatch:review-discussion-acknowledge',
     'dspatch:review-discussion-draft',
+    // 30 October 2026: what the next question is about, shared by the review's windows.
+    'dspatch:review-discussion-quote',
     'dspatch:review-discussion-event',
     // DSP-132 (S5): the agent choice and the recap after a switch.
     'dspatch:review-discussion-choose-agent',
