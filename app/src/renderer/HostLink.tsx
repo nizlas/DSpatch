@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 
-import type { HostBrowsePage, HostLinkState } from '../shared/host-link';
+import type { HostBrowsePage, HostLinkState, SshQuestion } from '../shared/host-link';
 
 /**
  * The connection to a host on another machine, in every window (DSP-111). Draws nothing on a
@@ -37,6 +37,44 @@ export function HostLinkLine(): JSX.Element | null {
       <button type="button" data-ev="host-link-leave" title="Close this session and work on this computer" onClick={() => window.dspatchHost?.leave()}>
         Leave
       </button>
+    </div>
+  );
+}
+
+/**
+ * What ssh asks the person, in the main window, whenever it asks: a new machine's fingerprint, a
+ * password, a one-time code, or whether to replace another version of the host. What is typed
+ * goes to ssh and is not kept in this window.
+ */
+export function SshQuestions(): JSX.Element | null {
+  const [question, setQuestion] = useState<SshQuestion | null>(null);
+  const [typed, setTyped] = useState('');
+  useEffect(() => window.dspatchSetup?.onSshQuestion(setQuestion), []);
+  if (question === null) {
+    return null;
+  }
+  const answer = (value: string | null): void => {
+    window.dspatchSetup?.sshAnswer(question.id, value);
+    setQuestion(null);
+    setTyped('');
+  };
+  return (
+    <div className="ssh-question" role="dialog" aria-modal="true" data-ev="ssh-question" data-kind={question.kind}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          answer(question.kind === 'confirm' ? 'yes' : typed);
+        }}
+      >
+        <p className="ssh-question__text">{question.text}</p>
+        {question.kind === 'secret' && (
+          <input data-ev="ssh-secret" type="password" autoFocus autoComplete="off" value={typed} onChange={(event) => setTyped(event.target.value)} />
+        )}
+        <div className="ssh-question__buttons">
+          <button type="submit" data-ev="ssh-yes">{question.kind === 'confirm' ? 'Yes' : 'Continue'}</button>
+          <button type="button" data-ev="ssh-no" onClick={() => answer(question.kind === 'confirm' ? 'no' : null)}>{question.kind === 'confirm' ? 'No' : 'Cancel'}</button>
+        </div>
+      </form>
     </div>
   );
 }

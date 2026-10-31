@@ -1,3 +1,5 @@
+import type { ProviderLoginStep } from './bridge';
+
 /*
  * What a window knows of the connection to a host on another machine (DSP-111), and the
  * chooser that browses that machine. Types only: the renderer imports this too.
@@ -35,10 +37,29 @@ export interface HostLinkBridge {
   state(): Promise<HostLinkState>;
   onState(listener: (state: HostLinkState) => void): () => void;
   retry(): void;
-  /** Connect to a host, restarting DSpatch into that session. Answers only if it could not. */
+  /** Connect to a host by address and token. Answers only if it could not. */
   connect(address: string, token: string): Promise<string>;
-  /** Leave the remote session, restarting DSpatch on this computer. */
+  /** Leave the remote session and work on this computer. */
   leave(): void;
   browse(folder: string | null): Promise<HostBrowsePage>;
   browseDone(chosen: string | null): void;
+}
+
+/** One thing ssh needs from the person. */
+export interface SshQuestion {
+  readonly id: number;
+  readonly kind: 'secret' | 'confirm';
+  readonly text: string;
+}
+
+/** On `window.dspatchSetup`, in the main window (DSP-153). */
+export interface SetupBridge {
+  sshConnect(target: string): Promise<string>;
+  sshRecent(): Promise<readonly string[]>;
+  sshAnswer(id: number, answer: string | null): void;
+  onSshStatus(listener: (text: string) => void): () => void;
+  onSshQuestion(listener: (question: SshQuestion) => void): () => void;
+  providerCall<T>(method: string, argument?: unknown): Promise<T>;
+  onProviderStep(listener: (update: { readonly tool: 'claude' | 'copilot'; readonly step: ProviderLoginStep }) => void): () => void;
+  openLink(url: string): Promise<void>;
 }

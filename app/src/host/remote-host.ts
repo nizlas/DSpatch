@@ -55,9 +55,24 @@ function tokenIn(dataDir: string): { readonly token: string; readonly file: stri
   return { token, file };
 }
 
+/** Two hosts over one data folder would each overwrite what the other saved. */
+function refuseSecondHost(runningFile: string): void {
+  let pid = 0;
+  try {
+    pid = (JSON.parse(fs.readFileSync(runningFile, 'utf8')) as { pid?: number }).pid ?? 0;
+    process.kill(pid, 0);
+  } catch {
+    return;
+  }
+  process.stderr.write(`A DSpatch host (pid ${String(pid)}) already runs over this data folder.\n`);
+  process.exit(3);
+}
+
 async function main(): Promise<void> {
   const dataDir = path.resolve(argument('--data') ?? process.env['DSPATCH_HOST_DATA'] ?? defaultDataDir());
   const { token, file } = tokenIn(dataDir);
+  const runningFile = path.join(dataDir, 'host-running.json');
+  refuseSecondHost(runningFile);
   if (process.argv.includes('--print-token')) {
     process.stdout.write(`${token}\n`);
     return;
@@ -67,7 +82,14 @@ async function main(): Promise<void> {
   const server = new RemoteServer({ token, build, closeWithinMs: DISPOSE_TIMEOUT_MS, log });
   const methods: Record<string, (...args: never[]) => unknown> = {
     ...startProjectHost({
-      config: { userDataDir: dataDir, appVersion: build.appVersion, appPath, clientPid: process.pid },
+      config: {
+        userDataDir: dataDir,
+        appVersion: build.appVersion,
+        appPath,
+        clientPid: process.pid,
+        // The installed package carries its loops beside the code; a working copy has them in Git.
+        ...(fs.existsSync(path.join(appPath, '..', 'bundled')) ? { bundledRoot: path.join(appPath, '..', 'bundled') } : {}),
+      },
       emit: (to, channel, payload) => {
         emitTo(server.port, log, to, channel, payload);
       },
@@ -91,6 +113,13 @@ async function main(): Promise<void> {
   }
   log(`serving pid=${String(process.pid)} on 127.0.0.1:${String(port)}, data in ${dataDir}, ${build.appVersion} at ${build.commit}`);
   log(`the client's token is in ${file}`);
+  // Written last, whole: a client that finds this finds a host listening.
+  const running = { pid: process.pid, port, ...build, startedAtUtc: new Date().toISOString() };
+  fs.writeFileSync(`${runningFile}.tmp`, `${JSON.stringify(running, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(`${runningFile}.tmp`, runningFile);
+  process.on('exit', () => {
+    fs.rmSync(runningFile, { force: true });
+  });
 
   let closing = false;
   const stop = (signal: string): void => {

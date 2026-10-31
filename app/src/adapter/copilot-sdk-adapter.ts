@@ -368,7 +368,7 @@ export function copilotEnvironment(env: Readonly<Record<string, string | undefin
 // --- Plain errors ---------------------------------------------------------------------
 
 export function copilotNotSignedInText(machine: string = hostname()): string {
-  return `Copilot is not signed in on ${machine}, where this work runs. Run \`npx @github/copilot@1.0.105 login\` there, then try again. Nothing was sent.`;
+  return `Copilot is not signed in on ${machine}, where this work runs. Use Sign in to Copilot on the start page, then try again. Nothing was sent.`;
 }
 
 /** One plain sentence for a provider failure; the original stays in the error's cause. */

@@ -3318,7 +3318,25 @@ export interface StoredSteering {
  * be a value, which cannot be imported into sandboxed preload. The type catches
  * misspellings during type checking instead.
  */
+/** What one sign-in needs from the person next (DSP-153). */
+export type ProviderLoginStep =
+  | { readonly kind: 'open-url'; readonly url: string; readonly code?: string }
+  | { readonly kind: 'input'; readonly prompt: string }
+  | { readonly kind: 'fetching'; readonly done: number; readonly total: number }
+  | { readonly kind: 'done' }
+  | { readonly kind: 'failed'; readonly message: string };
+
+/** Whether each provider is ready on the machine where work runs. `null` is not known. */
+export interface ProviderSetupState {
+  readonly machine: string;
+  readonly copilot: { readonly program: boolean; readonly signedIn: boolean | null };
+  readonly claude: { readonly program: boolean; readonly consent: boolean; readonly signedIn: boolean | null };
+}
+
 export type BridgeChannel =
+  | 'dspatch:provider-step'
+  | 'dspatch:ssh-status'
+  | 'dspatch:ssh-question'
   | 'dspatch:get-environment'
   | 'dspatch:renderer-ready'
   | 'dspatch:get-connection'

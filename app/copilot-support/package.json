@@ -1,0 +1,10 @@
+{
+  "name": "dspatch-copilot-support",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Copilot CLI, used only for `copilot login` on the machine where work runs. An installed DSpatch fetches it when a person asks to sign in.",
+  "license": "MIT",
+  "dependencies": {
+    "@github/copilot": "1.0.105"
+  }
+}

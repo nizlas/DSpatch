@@ -1,3 +1,4 @@
+import { hostname } from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -26,6 +27,8 @@ import type {
   LoopGraphSaveRequest,
   LoopInstructionEventPayload,
   ModelListing,
+  ProviderLoginStep,
+  ProviderSetupState,
   RecentWorkspaceEntry,
   RecentWorkspaces,
   ResolvedRoleEntry,
@@ -94,7 +97,8 @@ import {
   REVIEW_PERMISSIONS,
   describePermissionPolicy,
 } from '../adapter/claude-agent-sdk-adapter';
-import { claudeSupportStatus } from '../adapter/claude-support';
+import { claudeSupportStatus, useClaudeSupportDir } from '../adapter/claude-support';
+import { ProviderSetup, type SupportTool } from '../main/provider-setup';
 import { browseHostFolder } from './host-browse';
 import {
   COPILOT_ANALYSIS_POLICY,
@@ -395,8 +399,9 @@ function probeRepoRoot(): string {
  * the adapter's own credential rule still decides whether a session may start.
  * There is no API-key path.
  */
-const CLAUDE_AUTHORIZATION_REFERENCE: string | null =
-  (process.env['DSPATCH_CLAUDE_AUTHORIZATION'] ?? '').trim() || null;
+function claudeAuthorizationReference(): string | null {
+  return (process.env['DSPATCH_CLAUDE_AUTHORIZATION'] ?? '').trim() || (providerSetup?.claudeReference() ?? null);
+}
 
 /**
  * DSP-133: whether Claude support (`app/claude-support/`) is installed, read once
@@ -404,7 +409,12 @@ const CLAUDE_AUTHORIZATION_REFERENCE: string | null =
  * or when the agent choice renders: `npm run claude:install` in `app/` does, and
  * a restart picks it up. A packaged build has none.
  */
-const CLAUDE_SUPPORT = claudeSupportStatus();
+function claudeInstalledNow(): boolean {
+  return claudeSupportStatus().installed;
+}
+
+/** Fetching a provider's program and signing in to it (DSP-153). Set when the host starts. */
+let providerSetup: ProviderSetup | null = null;
 const COPILOT_INSTALLED = copilotRuntimeInstalled();
 
 /**
@@ -433,8 +443,12 @@ const adapterFactory = providerAdapters({
       return Number.isFinite(parsed) && parsed > 0 ? { deltaMs: parsed } : {};
     })(),
   },
-  claudeAuthorizationReference: CLAUDE_AUTHORIZATION_REFERENCE,
-  claudeInstalled: CLAUDE_SUPPORT.installed,
+  get claudeAuthorizationReference() {
+    return claudeAuthorizationReference();
+  },
+  get claudeInstalled() {
+    return claudeInstalledNow();
+  },
   copilotInstalled: COPILOT_INSTALLED,
   copilotRequireManagedHooks: process.env['DSPATCH_COPILOT_REQUIRE_HOOKS'] === '1',
   log,
@@ -594,8 +608,13 @@ function createChatService(): ChatService {
     log(`[chat] building a ${provider} chat adapter${presentationMode ? ' (presentation, simulated)' : ''}`);
     return createChatAdapter(provider);
   },
-  claudeAuthorizationReference: CLAUDE_AUTHORIZATION_REFERENCE,
-  claudeSupport: { installed: CLAUDE_SUPPORT.installed, reason: CLAUDE_SUPPORT.reason },
+  get claudeAuthorizationReference() {
+    return claudeAuthorizationReference();
+  },
+  get claudeSupport() {
+    const { installed, reason } = claudeSupportStatus();
+    return { installed, reason };
+  },
   copilotInstalled: COPILOT_INSTALLED,
   agentChoiceStore: { read: () => agentChoiceStore.read(), write: (provider) => agentChoiceStore.write(provider) },
   modelChoice: modelChoiceStore,
@@ -1814,6 +1833,89 @@ function resumeChoiceLastMessage(): { readonly prompt: string; readonly resentCo
 type HostMethod = (context: HostCallContext, ...args: never[]) => unknown;
 
 const methods: Record<string, HostMethod> = {};
+
+/** Whether Copilot has a login on this machine, by asking the runtime the adapter uses. */
+async function copilotSignedIn(): Promise<boolean> {
+  const adapter = adapterFactory.createAdapter({ provider: 'copilot', purpose: 'chat' });
+  try {
+    await adapter.listModels();
+    return true;
+  } catch (error) {
+    if ((error as { providerCode?: string }).providerCode === 'not-signed-in') {
+      return false;
+    }
+    throw error;
+  } finally {
+    await adapter.dispose();
+  }
+}
+
+/** `DSPATCH_PRESENTATION_LOGIN=1`, SIMULATED: a machine with no provider signed in, until asked. */
+const presentationLogin = { wanted: presentationMode && process.env['DSPATCH_PRESENTATION_LOGIN'] === '1', signedIn: new Set<SupportTool>() };
+
+async function providerSetupState(): Promise<ProviderSetupState> {
+  const setup = providerSetup;
+  if (setup === null) {
+    throw new Error('The project host has not started.');
+  }
+  const claudeProgram = claudeInstalledNow();
+  if (presentationLogin.wanted) {
+    return {
+      machine: hostname(),
+      copilot: { program: true, signedIn: presentationLogin.signedIn.has('copilot') },
+      claude: { program: true, consent: setup.claudeConsent(), signedIn: presentationLogin.signedIn.has('claude') },
+    };
+  }
+  return {
+    machine: hostname(),
+    copilot: { program: setup.installed('copilot'), signedIn: await copilotSignedIn().catch(() => null) },
+    claude: {
+      program: claudeProgram,
+      consent: claudeAuthorizationReference() !== null,
+      signedIn: await setup.claudeSignedIn(),
+    },
+  };
+}
+
+function registerProviderSetup(): void {
+  const setup = (): ProviderSetup => {
+    if (providerSetup === null) {
+      throw new Error('The project host has not started.');
+    }
+    return providerSetup;
+  };
+  handle('provider.status', () => providerSetupState());
+  handle('provider.install', async (_context, tool) => {
+    await setup().install(tool, (done, total) => {
+      sendToEveryWindow('dspatch:provider-step', { tool, step: { kind: 'fetching', done, total } });
+    });
+    return providerSetupState();
+  });
+  handle('provider.acceptClaude', () => {
+    setup().recordClaudeConsent();
+    return providerSetupState();
+  });
+  handle('provider.loginStart', (_context, tool) => {
+    const step = (next: ProviderLoginStep): void => {
+      sendToEveryWindow('dspatch:provider-step', { tool, step: next });
+    };
+    if (presentationLogin.wanted) {
+      step({ kind: 'open-url', url: 'https://github.com/login/device', code: 'SIMU-LATE' });
+      setTimeout(() => {
+        presentationLogin.signedIn.add(tool);
+        step({ kind: 'done' });
+      }, 1_500);
+      return;
+    }
+    setup().startLogin(tool, step);
+  });
+  handle('provider.loginAnswer', (_context, text) => {
+    setup().answerLogin(text);
+  });
+  handle('provider.loginCancel', () => {
+    setup().cancelLogin();
+  });
+}
 
 function handle<K extends ProjectHostMethodName>(
   name: K,
@@ -3947,6 +4049,7 @@ function registerCoreMethods(): void {
     }
     return chatService.listModels(provider);
   });
+  registerProviderSetup();
   handle('chat.chooseModel', (_event, provider: unknown, modelId: unknown): string => {
     if ((provider !== 'cursor' && provider !== 'claude' && provider !== 'copilot') || typeof modelId !== 'string') {
       throw new Error('Unknown agent or model.');
@@ -4321,7 +4424,17 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
   }
   hostConfig = start.config;
   emitEvent = start.emit;
-  ownRepoRoot = ownRepositoryRoot(start.config.appPath);
+  // An installed DSpatch has no repository: its bundled folder holds what the code looks for in one.
+  ownRepoRoot = ownRepositoryRoot(start.config.appPath) ?? start.config.bundledRoot ?? null;
+  providerSetup = new ProviderSetup({
+    supportDir: path.join(start.config.userDataDir, 'provider-support'),
+    pinnedDir: start.config.bundledRoot ?? start.config.appPath,
+    dataDir: start.config.userDataDir,
+    log,
+  });
+  if (start.config.bundledRoot !== undefined) {
+    useClaudeSupportDir(providerSetup.folderOf('claude'));
+  }
   chatService = createChatService();
 
   log(
@@ -4382,8 +4495,10 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
     // The factory's own rule for analysis: Cursor is refused, with its reason, before a start.
     availability: (provider) => {
       const availability = providerAvailability(provider, {
-        claudeAuthorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,
-        claudeInstalled: CLAUDE_SUPPORT.installed,
+        claudeAuthorized: claudeAuthorizationReference() !== null,
+        get claudeInstalled() {
+    return claudeInstalledNow();
+  },
         copilotInstalled: COPILOT_INSTALLED,
       });
       return availability.choosable && provider === 'cursor' ? { ...availability, choosable: false, reason: CURSOR_ANALYSIS_REFUSAL } : availability;
@@ -4417,8 +4532,10 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
         : (modelChoiceStore.read('cursor') ?? process.env['DSPATCH_CHAT_MODEL'] ?? REVIEW_DISCUSSION_DEFAULT_MODEL),
     availability: (provider) =>
       providerAvailability(provider, {
-        claudeAuthorized: CLAUDE_AUTHORIZATION_REFERENCE !== null,
-        claudeInstalled: CLAUDE_SUPPORT.installed,
+        claudeAuthorized: claudeAuthorizationReference() !== null,
+        get claudeInstalled() {
+    return claudeInstalledNow();
+  },
         copilotInstalled: COPILOT_INSTALLED,
       }),
     policyFor: (provider) =>

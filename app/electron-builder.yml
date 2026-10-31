@@ -1,5 +1,7 @@
-# Package DSpatch as a runnable directory. Installers, signing and automatic
-# updates are outside DSP-1.
+# Package the DSpatch client: a .deb for Ubuntu/Debian x64 and a per-user NSIS installer for
+# Windows x64 (DSP-153). Other platforms and architectures are not built or tried. Signing and
+# automatic updates are not part of this. `npm run package:client` is the way in; it gathers
+# build/bundled first. The host is packaged apart, by scripts/build-host-package.mjs.
 #
 # A separate YAML file allows comments, including the packaging traps below,
 # which strict JSON in package.json could not carry.
@@ -32,41 +34,68 @@ directories:
 #
 # A successful build is not evidence that a dependency is in the archive. Check
 # the contents:
-#   npx asar list release/win-unpacked/resources/app.asar
+#   ls release/linux-unpacked/resources/app/node_modules
 files:
   # dist/build-identity.json is part of this and is meant to be: it is the only
   # thing inside the artifact that says which sources it was built from. See
   # scripts/build-identity.mjs.
   - dist/**/*
   - package.json
+  - '!dist/**/*.map'
 
-asar: true
+# No archive. The provider runtimes are programs that have to be real files: an asar with them
+# unpacked beside it still gives them paths inside the archive, where Copilot's SDK fails at
+# `chmod` (ENOTDIR, seen in the installed .deb, DSP-153) and Cursor's ripgrep lookup fails too.
+asar: false
 
-# Native executables and native modules cannot be loaded from inside an asar
-# archive. @cursor/sdk-win32-x64 carries four of them, measured on 1.0.31:
-#
-#   bin/cursorsandbox.exe                    3 372 032 B
-#   bin/rg.exe                               5 344 768 B
-#   vendor/tree-sitter/binding.node            476 160 B
-#   vendor/tree-sitter-bash/binding.node     1 555 456 B
-#
-# Left inside the archive, the ripgrep lookup falls back to `rg` on PATH and
-# sandboxOptions throws ConfigurationError. Unpacked, they sit beside the
-# archive in resources/app.asar.unpacked/ and resolve normally.
-asarUnpack:
-  - node_modules/@cursor/sdk-win32-x64/**/*
-  - node_modules/@cursor/sdk-linux-x64/**/*
-  - node_modules/@github/copilot-sdk-win32-x64/**/*
-  - node_modules/@github/copilot-sdk-linux-x64/**/*
+# The loops, their graphs and roles, Claude's pinned list and the host manifest. Read-only in
+# an installation: a person's own loops live in their projects, so an update cannot touch them.
+extraResources:
+  - from: build/bundled
+    to: bundled
 
 linux:
   target:
-    - target: dir
+    - target: deb
       arch:
         - x64
+  executableName: dspatch
+  category: Development
+  icon: build/icon.png
+  synopsis: A workspace for agent-assisted development
+  maintainer: Niclas Danielsson <niclas.danielsson@users.noreply.github.com>
+
+deb:
+  afterInstall: build/after-install.tpl
+  # electron-builder's list covers Electron itself, and its postinst (ours differs on one point)
+  # sets up the sandbox and, on Ubuntu 24.04, the AppArmor profile. `ssh` is Connect's; git is a
+  # project's.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libasound2 | libasound2t64
+    - libgbm1
+    - openssh-client
+    - git
 
 win:
   target:
-    - target: dir
+    - target: nsis
       arch:
         - x64
+  icon: build/icon.png
+  # Off so the installer can be built on Linux without Wine. The executable then has Electron's
+  # icon and no version resource; a Windows build (.github/workflows/package.yml) turns this on.
+  signAndEditExecutable: false
+
+nsis:
+  # Per user: no administrator rights, installed under LocalAppData.
+  oneClick: true
+  perMachine: false

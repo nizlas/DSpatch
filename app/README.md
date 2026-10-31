@@ -49,6 +49,8 @@ in this repository.
 
 ## Linux (Ubuntu status)
 
+To install DSpatch instead of running it from a clone, and to connect to another machine with `user@machine`, see [docs/INSTALL.md](../docs/INSTALL.md).
+
 The exact commands for Ubuntu, for a host on another machine and for Copilot are in [docs/REMOTE_TRIAL.md](../docs/REMOTE_TRIAL.md).
 
 DSpatch starts from a clone on Linux in development mode (DSP-131). Packaging,

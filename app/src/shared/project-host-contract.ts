@@ -12,6 +12,7 @@ import type {
   LoopGraphSaveRequest,
   ScriptedRunReport,
   StartSessionRequest,
+  ProviderSetupState,
   StoredSessionProvider,
   WorkspaceOpenRequest,
   TestRunRequest,
@@ -93,6 +94,12 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'chat.setModel': (modelId: string) => string;
   readonly 'chat.listModels': (provider: StoredSessionProvider) => BridgeAnswer<'listModels'>;
   readonly 'chat.chooseModel': (provider: StoredSessionProvider, modelId: string) => string;
+  readonly 'provider.status': () => ProviderSetupState;
+  readonly 'provider.install': (tool: 'claude' | 'copilot') => ProviderSetupState;
+  readonly 'provider.acceptClaude': () => ProviderSetupState;
+  readonly 'provider.loginStart': (tool: 'claude' | 'copilot') => void;
+  readonly 'provider.loginAnswer': (text: string) => void;
+  readonly 'provider.loginCancel': () => void;
   readonly 'chat.chooseAgent': (provider: unknown) => StoredSessionProvider | null;
   readonly 'chat.conversationSaveStatus': () => BridgeAnswer<'conversationSaveStatus'>;
   readonly 'chat.resumeConversation': (conversationId: string) => BridgeAnswer<'resumeConversation'>;
@@ -277,6 +284,12 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'chat.setModel': true,
   'chat.listModels': true,
   'chat.chooseModel': true,
+  'provider.status': true,
+  'provider.install': true,
+  'provider.acceptClaude': true,
+  'provider.loginStart': true,
+  'provider.loginAnswer': true,
+  'provider.loginCancel': true,
   'chat.chooseAgent': true,
   'chat.conversationSaveStatus': true,
   'chat.resumeConversation': true,

@@ -1,4 +1,4 @@
-import type { HostBrowsePage, HostLinkBridge, HostLinkState } from '../shared/host-link';
+import type { HostBrowsePage, HostLinkBridge, HostLinkState, SetupBridge, SshQuestion } from '../shared/host-link';
 import { contextBridge, ipcRenderer } from 'electron';
 
 import type {
@@ -66,6 +66,7 @@ import type {
   PairWindowCheckRequest,
   UiAgentEvent,
   WorkspaceReport,
+  ProviderLoginStep,
 } from '../shared/bridge';
 import type { StepActivity } from '../shared/loop-activity';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
@@ -434,6 +435,31 @@ const bridge: DspatchBridge = {
 
 // The renderer has no Node access and no other Electron access.
 contextBridge.exposeInMainWorld('dspatch', bridge);
+
+function listen<T>(channel: string): (listener: (value: T) => void) => () => void {
+  return (listener) => {
+    const handler = (_event: unknown, value: T): void => {
+      listener(value);
+    };
+    ipcRenderer.on(channel, handler);
+    return () => {
+      ipcRenderer.removeListener(channel, handler);
+    };
+  };
+}
+
+contextBridge.exposeInMainWorld('dspatchSetup', {
+  sshConnect: (target: string) => ipcRenderer.invoke('dspatch:ssh-connect', target) as Promise<string>,
+  sshRecent: () => ipcRenderer.invoke('dspatch:ssh-recent') as Promise<readonly string[]>,
+  sshAnswer: (id: number, answer: string | null) => {
+    ipcRenderer.send('dspatch:ssh-answer', id, answer);
+  },
+  onSshStatus: listen<string>('dspatch:ssh-status'),
+  onSshQuestion: listen<SshQuestion>('dspatch:ssh-question'),
+  providerCall: <T,>(method: string, argument?: unknown) => ipcRenderer.invoke('dspatch:provider-call', method, argument) as Promise<T>,
+  onProviderStep: listen<{ readonly tool: 'claude' | 'copilot'; readonly step: ProviderLoginStep }>('dspatch:provider-step'),
+  openLink: (url: string) => ipcRenderer.invoke('dspatch:open-link', url) as Promise<void>,
+} satisfies SetupBridge);
 
 contextBridge.exposeInMainWorld('dspatchHost', {
   state: () => ipcRenderer.invoke('dspatch:host-link-state') as Promise<HostLinkState>,

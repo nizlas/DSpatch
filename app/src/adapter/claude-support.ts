@@ -25,8 +25,8 @@ export const CLAUDE_SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
 /** The visible line when Claude support is missing. */
 export const CLAUDE_NOT_INSTALLED_TEXT =
-  'Claude support is not installed. To install it, run `npm run claude:install` in ' +
-  '`app/`, then restart DSpatch.';
+  'Claude support is not installed. Use Set up Claude on the start page, or in a working copy ' +
+  'run `npm run claude:install` in `app/` and restart DSpatch.';
 
 /**
  * A failure inside the Claude adapter or while loading its SDK. Defined here so
@@ -48,6 +48,13 @@ export class ClaudeAdapterError extends Error implements AdapterError {
   }
 }
 
+/** An installed DSpatch keeps it in its data folder, where a person's request fetched it. */
+let claudeSupportOverride: string | null = null;
+
+export function useClaudeSupportDir(folder: string): void {
+  claudeSupportOverride = folder;
+}
+
 /**
  * `app/claude-support`. The compiled module lives in `app/dist/adapter` and the
  * source in `app/src/adapter`, so the folder is two levels up from either. Under
@@ -56,6 +63,9 @@ export class ClaudeAdapterError extends Error implements AdapterError {
  * the module is inside the archive and the folder does not exist: no Claude.
  */
 export function claudeSupportDir(): string {
+  if (claudeSupportOverride !== null) {
+    return claudeSupportOverride;
+  }
   return typeof __dirname === 'string'
     ? path.resolve(__dirname, '..', '..', 'claude-support')
     : path.resolve(process.cwd(), 'claude-support');

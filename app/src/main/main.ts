@@ -2,6 +2,8 @@ import childProcess from 'node:child_process';
 import type { HostLinkState } from '../shared/host-link';
 import { remoteBuild } from '../shared/remote-build';
 import { RemoteLink, probeHost, type RemoteEndpoint } from './remote-link';
+import { findHostPackage, readHostManifest, type HostPackage } from './host-packages';
+import { SshConnection, validTarget, type SshPrompt } from './ssh-connection';
 import { endRemoteSession, parseRemoteAddress, readRemoteSession, saveRemoteSession } from './remote-session';
 import type { HostLinkEvent } from './host-connection';
 import { createHash } from 'node:crypto';
@@ -401,7 +403,12 @@ function log(message: string): void {
  * honest answer and it refuses nothing: see `own-repository.ts` for why this test
  * is a second direction on top of the content walk rather than the guard itself.
  */
-const ownRepoRoot = ownRepositoryRoot(app.getAppPath());
+const ownRepoRoot = ownRepositoryRoot(app.getAppPath()) ?? bundledRoot();
+
+/** An installed DSpatch's read-only loops, graphs, roles and pinned lists (DSP-153). */
+function bundledRoot(): string | null {
+  return app.isPackaged ? path.join(process.resourcesPath, 'bundled') : null;
+}
 
 const pathsAreCaseInsensitive = process.platform === 'win32';
 
@@ -451,6 +458,8 @@ const HOST_MOVE_WINDOW_MS = 3_000;
 
 /** Stop using the current host's connection; the next start uses `next`. */
 function forgetHost(next: RemoteEndpoint | null): void {
+  sshSession?.close();
+  sshSession = null;
   remoteLink?.kill();
   remoteLink = null;
   remoteEndpoint = next;
@@ -519,6 +528,121 @@ async function moveToHost(next: RemoteEndpoint | null, remember: () => void, rea
   }
 }
 
+/** The SSH connection this client works through, when it does (DSP-153). */
+let sshSession: SshConnection | null = null;
+
+/** The connection being made, and the questions ssh is waiting on the person for. */
+let sshConnecting: SshConnection | null = null;
+const sshQuestions = new Map<number, (answer: string | null) => void>();
+let sshQuestionId = 0;
+
+function askAboutSsh(prompt: SshPrompt): Promise<string | null> {
+  const id = (sshQuestionId += 1);
+  return new Promise((resolve) => {
+    sshQuestions.set(id, resolve);
+    sendToEveryWindow('dspatch:ssh-question', { id, ...prompt });
+  });
+}
+
+function sshRecentFile(): string {
+  return path.join(app.getPath('userData'), 'ssh-recent.json');
+}
+
+function sshRecent(): readonly string[] {
+  try {
+    const saved = JSON.parse(fs.readFileSync(sshRecentFile(), 'utf8')) as { targets?: unknown };
+    return Array.isArray(saved.targets) ? saved.targets.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberSsh(target: string): void {
+  // The name only. A password never reaches this file, and the token stays on the host.
+  const targets = [target, ...sshRecent().filter((entry) => entry !== target)].slice(0, 8);
+  fs.writeFileSync(sshRecentFile(), `${JSON.stringify({ targets }, null, 2)}\n`, { mode: 0o600 });
+}
+
+/** The manifest of this build, and the folders a package may already be in. */
+function hostPackageFor(platform: string, arch: string, status: (text: string) => void): Promise<HostPackage | string> {
+  const cacheDir = path.join(app.getPath('userData'), 'host-packages');
+  const own = process.env['DSPATCH_HOST_PACKAGES'];
+  const developing = path.join(app.getAppPath(), 'release', 'host');
+  return findHostPackage({
+    manifest: readHostManifest(path.join(bundledRoot() ?? developing, 'host-manifest.json')),
+    platform,
+    arch,
+    folders: [...(own === undefined || own === '' ? [] : [own]), cacheDir, developing],
+    cacheDir,
+    status,
+  });
+}
+
+/** Connect to `user@machine`: everything from sign-in to a window on the host. */
+async function connectOverSsh(target: string): Promise<string> {
+  const value = target.trim();
+  if (!validTarget(value)) {
+    return 'Give a machine as user@machine, or an alias from your SSH config.';
+  }
+  if (sshConnecting !== null) {
+    return 'DSpatch is already connecting.';
+  }
+  const status = (text: string): void => {
+    sendToEveryWindow('dspatch:ssh-status', text);
+  };
+  const session = new SshConnection({
+    target: value,
+    build: remoteBuild(app.getAppPath()),
+    log: (message) => {
+      log(`[ssh] ${message}`);
+    },
+    status,
+    ask: askAboutSsh,
+    packageFor: (platform, arch) => hostPackageFor(platform, arch, status),
+    askpassScript: path.join(__dirname, 'ssh-askpass.js'),
+    nodeRunner: process.execPath,
+    ...(process.env['DSPATCH_SSH_CONFIG'] === undefined ? {} : { configFile: process.env['DSPATCH_SSH_CONFIG'] }),
+    onBroken: (message) => {
+      publishLink({ phase: 'stopped', note: message });
+    },
+  });
+  sshConnecting = session;
+  try {
+    const endpoint = await session.connect();
+    const refused = await probeHost({ endpoint, build: remoteBuild(app.getAppPath()), log }, HOST_PROBE_MS * 2);
+    if (refused !== null) {
+      session.close();
+      return refused;
+    }
+    const answer = await moveToHost(
+      endpoint,
+      () => {
+        sshSession = session;
+        rememberSsh(value);
+      },
+      `connecting to ${value} over SSH`,
+    );
+    if (answer !== '') {
+      session.close();
+    }
+    return answer;
+  } catch (error) {
+    session.close();
+    const message = error instanceof Error ? error.message : String(error);
+    log(`[ssh] Connect stopped: ${message}`);
+    return `${message} You are still on this computer.`;
+  } finally {
+    sshConnecting = null;
+    for (const [id, waiting] of sshQuestions) {
+      sshQuestions.delete(id);
+      waiting(null);
+    }
+  }
+}
+
+/** What a window may ask the host about a provider's program and sign-in. */
+const PROVIDER_CALLS = ['provider.status', 'provider.install', 'provider.acceptClaude', 'provider.loginStart', 'provider.loginAnswer', 'provider.loginCancel'] as const;
+
 /** Back to this computer's own host. */
 function leaveRemoteSession(): Promise<string> {
   return moveToHost(
@@ -560,6 +684,28 @@ function registerHostLinkIpc(): void {
       },
       `connecting to the host at ${parsed.host}:${String(parsed.port)}`,
     );
+  });
+  ipcMain.handle('dspatch:ssh-connect', (_event, target: unknown) => (typeof target === 'string' ? connectOverSsh(target) : 'Give a machine.'));
+  ipcMain.handle('dspatch:ssh-recent', () => sshRecent());
+  ipcMain.on('dspatch:ssh-answer', (_event, id: unknown, answer: unknown) => {
+    const waiting = typeof id === 'number' ? sshQuestions.get(id) : undefined;
+    if (waiting !== undefined) {
+      sshQuestions.delete(id as number);
+      waiting(typeof answer === 'string' ? answer : null);
+    }
+  });
+  ipcMain.handle('dspatch:provider-call', (_event, method: unknown, argument: unknown) => {
+    const name = PROVIDER_CALLS.find((known) => known === method);
+    if (name === undefined) {
+      throw new Error('Unknown request.');
+    }
+    return host.call(name, NO_SENDER, ...(argument === undefined ? [] : [argument]));
+  });
+  ipcMain.handle('dspatch:open-link', (_event, url: unknown) => {
+    // The sign-in page opens in the browser of the person at this computer, wherever the host is.
+    if (typeof url === 'string' && url.startsWith('https://')) {
+      void shell.openExternal(url);
+    }
   });
   ipcMain.handle('dspatch:host-browse', (_event, folder: unknown) => hostCall('files.browse', NO_SENDER, typeof folder === 'string' ? folder : null));
   ipcMain.on('dspatch:host-browse-done', (_event, chosen: unknown) => {
@@ -604,6 +750,7 @@ function hostStartConfig(): HostStartConfig {
     userDataDir: app.getPath('userData'),
     appVersion: app.getVersion(),
     appPath: app.getAppPath(),
+    ...(bundledRoot() === null ? {} : { bundledRoot: bundledRoot() ?? '' }),
     clientPid: process.pid,
   };
 }
@@ -715,6 +862,7 @@ function publishLink(change: Pick<HostLinkState, 'phase' | 'note'>): void {
 /** The connection came or went. Windows keep what they show; nothing is sent again. */
 function linkChanged(event: HostLinkEvent): void {
   if (event.kind === 'disconnected') {
+    void sshSession?.repair();
     publishLink({ phase: 'reconnecting', note: 'Connection lost. This does not stop work on the host; how it stands is unknown until the connection is back. Nothing is sent meanwhile.' });
   } else if (event.kind === 'refused') {
     publishLink({ phase: 'stopped', note: event.message });

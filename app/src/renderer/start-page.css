@@ -807,3 +807,20 @@
   color: var(--muted);
   font-size: 0.85rem;
 }
+
+.start__remote-advanced {
+  margin-top: 0.5rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.start__setup {
+  flex-basis: 100%;
+  margin-top: 0.5rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.start__setup p {
+  margin: 0.25rem 0;
+}

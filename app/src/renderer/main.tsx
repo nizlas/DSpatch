@@ -3,7 +3,7 @@ import type { JSX } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
-import { HostBrowser, HostLinkLine } from './HostLink';
+import { HostBrowser, HostLinkLine, SshQuestions } from './HostLink';
 import { LoopEditor } from './LoopEditor';
 import { PairReview } from './PairReview';
 import { ReviewView } from './ReviewView';
@@ -107,5 +107,5 @@ if (new URLSearchParams(window.location.search).get('view') === 'panel') {
 }
 
 createRoot(host).render(
-  <StrictMode>{isBrowseWindow ? <HostBrowser /> : <><HostLinkLine />{isDiffReview ? <PairReview /> : isReviewWindow ? <ReviewView /> : <Surfaces />}</>}</StrictMode>,
+  <StrictMode>{isBrowseWindow ? <HostBrowser /> : <><HostLinkLine /><SshQuestions />{isDiffReview ? <PairReview /> : isReviewWindow ? <ReviewView /> : <Surfaces />}</>}</StrictMode>,
 );

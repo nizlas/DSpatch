@@ -88,6 +88,11 @@ export interface HostStartConfig {
   readonly userDataDir: string;
   /** Stamped into conversation files and run records. */
   readonly appVersion: string;
+  /**
+   * An installed DSpatch's read-only folder of loops, graphs, roles and pinned provider lists.
+   * Absent when running from a working copy, which has them in the repository.
+   */
+  readonly bundledRoot?: string;
   /** Where the application's sources are, for finding DSpatch's own working copy. */
   readonly appPath: string;
   /**
@@ -119,7 +124,7 @@ export function parseHostStartConfig(text: string | undefined): HostStartConfig 
   if (typeof appVersion !== 'string' || typeof appPath !== 'string' || typeof clientPid !== 'number') {
     return { error: `${HOST_CONFIG_ENV} lacks appVersion, appPath or clientPid.` };
   }
-  return { userDataDir, appVersion, appPath, clientPid };
+  return { userDataDir, appVersion, appPath, clientPid, ...(typeof record.bundledRoot === 'string' ? { bundledRoot: record.bundledRoot } : {}) };
 }
 
 /**

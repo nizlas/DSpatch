@@ -81,6 +81,8 @@ test("the client loads none of the project's services and no provider SDK", () =
     'main/host-connection.ts',
     'main/remote-link.ts',
     'main/remote-session.ts',
+    'main/host-packages.ts',
+    'main/ssh-connection.ts',
     'main/launch-mode.ts',
     'main/own-repository.ts',
     'main/probe-exit.ts',

@@ -3,7 +3,12 @@
   "productName": "DSpatch",
   "version": "0.1.0",
   "private": true,
-  "description": "DSpatch – a workspace for agent-assisted development. Runnable skeleton from DSP-1 substep 2.",
+  "description": "DSpatch – a workspace for agent-assisted development.",
+  "homepage": "https://github.com/nizlas/DSpatch",
+  "author": {
+    "name": "Niclas Danielsson",
+    "email": "niclas.danielsson@users.noreply.github.com"
+  },
   "license": "MIT",
   "main": "dist/main/main.js",
   "engines": {
@@ -33,6 +38,8 @@
     "test:host": "node scripts/run-tests.mjs host",
     "test:list": "node scripts/run-tests.mjs --list",
     "package": "npm run typecheck && npm run test && npm run build && electron-builder --config electron-builder.yml",
+    "package:host": "npm run build:host && node scripts/build-host-package.mjs",
+    "package:client": "npm run build && node scripts/prepare-bundled.mjs && electron-builder --config electron-builder.yml --publish never",
     "typecheck": "npm run typecheck:node && npm run typecheck:renderer && npm run typecheck:tools",
     "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
     "typecheck:renderer": "tsc -p tsconfig.renderer.json",
