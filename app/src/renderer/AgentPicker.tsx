@@ -22,7 +22,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 
 import type { ModelListing } from '../shared/bridge';
-import { listedDefault, modelRows } from '../shared/model-rows';
+import { isDefaultRow, listedDefault, modelRows } from '../shared/model-rows';
 import { isPairError, type ReviewAgents } from '../shared/review-pair';
 
 export interface AgentChoice {
@@ -81,6 +81,9 @@ export function AgentPicker({
         if (followsDefault.current) {
           followsDefault.current = false;
           setModel(listedDefault(answer));
+        } else {
+          // An inherited "no model named" is the default row, which now says what it means.
+          setModel((current) => (answer.models.some((entry) => isDefaultRow(entry) && entry.id === current) ? listedDefault(answer) : current));
         }
         if (answer.error !== null) {
           setListNote(`${providerName(next)}'s models could not be listed: ${answer.error}`);

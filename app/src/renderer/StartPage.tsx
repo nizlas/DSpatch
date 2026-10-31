@@ -13,7 +13,7 @@ import {
   moreFoldersLabel,
   startPageSelection,
 } from '../shared/recent-workspaces';
-import { modelRows } from '../shared/model-rows';
+import { isDefaultRow, modelRows } from '../shared/model-rows';
 
 /**
  * The start page (DSP-149): the provider, the wordmark, Open Project and Remote Session,
@@ -27,7 +27,7 @@ import { modelRows } from '../shared/model-rows';
 
 /**
  * Connect to a host on another machine (DSP-111): the local end of the SSH tunnel and the host's
- * token. DSpatch restarts into that session; every window then works on the host.
+ * token. The window then works on the host, without a restart.
  */
 function RemoteSessionForm({ onClose }: { readonly onClose: () => void }): JSX.Element {
   const [address, setAddress] = useState('127.0.0.1:47917');
@@ -709,8 +709,8 @@ export function ModelSelect({
   const shown = loading || failed ? null : modelRows(listing, chosen);
   const nameOf = (id: string): string => {
     const models = listing?.models ?? [];
-    const exact = models.find((model) => model.id === id && model.id !== 'default');
-    const aliases = models.filter((model) => model.resolvedId === id && model.id !== 'default');
+    const exact = models.find((model) => model.id === id && !isDefaultRow(model));
+    const aliases = models.filter((model) => model.resolvedId === id && !isDefaultRow(model));
     return (exact ?? aliases[0])?.displayName ?? id;
   };
   const fallbackLabel = loading

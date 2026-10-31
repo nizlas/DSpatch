@@ -1664,6 +1664,7 @@ export class ChatService {
         displayName: model.displayName === '' ? model.id : model.displayName,
         ...(model.description === undefined ? {} : { description: model.description }),
         ...(model.resolvedId === undefined ? {} : { resolvedId: model.resolvedId }),
+        ...(model.providerDefault === undefined ? {} : { providerDefault: model.providerDefault }),
       })),
     });
     if (cached !== undefined && Date.now() - (this.modelListRead.get(provider) ?? 0) < MODEL_LIST_REUSE_MS) {
@@ -6534,7 +6535,7 @@ export function toUiEvent(event: AgentEvent): UiAgentEvent {
     case 'reasoning.delta':
       return { ...base, text: event.text };
     case 'tool.started':
-      return { ...base, toolName: event.name };
+      return { ...base, toolName: event.name, ...(event.subject === undefined ? {} : { toolSubject: event.subject }) };
     case 'tool.finished':
       return { ...base, toolName: event.name, toolStatus: event.status };
     case 'command.started':

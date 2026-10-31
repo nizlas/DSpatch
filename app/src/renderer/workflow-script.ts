@@ -13987,7 +13987,7 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     if (phase === 'panel-copilot') {
       // --- Copilot chosen and used in the Discussion panel, in its own window and docked (SIMULATED) ---
       type Msg = { readonly role: string; readonly status: string; readonly text: string };
-      type Discussion = { readonly messages?: readonly Msg[]; readonly agentChosen?: string; readonly modelChosen?: string };
+      type Discussion = { readonly messages?: readonly Msg[]; readonly agentChosen?: string; readonly modelChosen?: string; readonly modelShown?: string };
       type Row = PairWindowRow & { readonly panel?: { readonly place: string; readonly frameVisible: boolean; readonly viewVisible: boolean; readonly viewWidth: number } | null };
       const FILE = 'src/domain/sessionRouting.ts';
       const discussionOf = (reading: PairWindowReading | null): Discussion => (reading as unknown as { discussion?: Discussion | null } | null)?.discussion ?? {};
@@ -14012,7 +14012,8 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       for (let tries = 0; tries < 3 && discussionOf(await readPairWindow(panelId)).agentChosen !== 'copilot'; tries += 1) {
         await pressKey(panelId, '[data-ev="discussion-agent-select"]', 'Down');
       }
-      await untilPair(panelId, "Copilot's models", (reading) => discussionOf(reading).agentChosen === 'copilot' && discussionOf(reading).modelChosen === 'copilot-default', 20_000);
+      const models = await untilPair(panelId, "Copilot's models", (reading) => discussionOf(reading).agentChosen === 'copilot' && discussionOf(reading).modelChosen === 'copilot-default', 20_000);
+      record("Copilot's default as the control says it", { model: discussionOf(models).modelChosen, shown: discussionOf(models).modelShown });
       await pressKey(panelId, '[data-ev="model-select"]', 'Down');
       await pressKey(panelId, '[data-ev="model-select"]', 'Down');
       const chosen = await untilPair(panelId, 'the chosen model', (reading) => discussionOf(reading).modelChosen === 'sonnet', 10_000);

@@ -139,7 +139,7 @@ cd DSpatch/app
 npm start
 ```
 
-On the start page choose **Remote Session**, keep `127.0.0.1:47917`, paste the token, **Connect**. DSpatch restarts into the session. Every window then shows *On \<machine\>* at the bottom left. **Leave** there ends the session and restarts on this computer. The address and token are in `remote-session.json` in the client's own data, readable by this user only, until then.
+On the start page choose **Remote Session**, keep `127.0.0.1:47917`, paste the token, **Connect**. The same DSpatch process moves to the host, without a restart, and keeps logging in the terminal. Every window then shows *On \<machine\>* at the bottom left. **Leave** there ends the session and returns to this computer, the same way. Review and editor windows close when the host changes. The address and token are in `remote-session.json` in the client's own data, readable by this user only, until then.
 
 Scripted alternative, one launch:
 
@@ -197,7 +197,7 @@ Candidate commit: see the handover report. Versions: Node 24.21, npm 11.19, Elec
 | Managed hooks at work | **Not tried**, and the scripts have not been seen |
 | Chat and loop runs with Copilot through the real windows | **Not tried**. Same adapter; unit-level only |
 | The host chooser | **Clicked once**: it opened on the host and chose a folder. Going into folders is not tried |
-| The Remote Session form | **Its refusal only**. Connect's restart into a session is not tried; `DSPATCH_REMOTE` is the path the trials used |
+| The Remote Session form | **Connect, Leave and Connect again in a real Linux window** against a host in its own process on the same machine, simulated provider, without a restart. Real SSH with this build, Windows, and the dialog for a host that does not answer are **not tried** |
 
 ## 8. What stands between this and work code
 

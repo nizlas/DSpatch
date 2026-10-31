@@ -560,6 +560,7 @@ export function ReviewDiscussion({
           errorLine: (scope().querySelector('[data-ev="discussion-error"] > span')?.textContent ?? '').trim(),
           agentChosen: scope().querySelector<HTMLSelectElement>('[data-ev="discussion-agent-select"]')?.value ?? '',
           modelChosen: scope().querySelector<HTMLSelectElement>('[data-ev="model-select"]')?.value ?? '',
+          modelShown: scope().querySelector<HTMLSelectElement>('[data-ev="model-select"]')?.selectedOptions[0]?.textContent ?? '',
           contextOpen: scope().querySelectorAll('.rv-discussion-context[open]').length,
           note: now.note ?? '',
         };

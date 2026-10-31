@@ -443,12 +443,88 @@ function senderBase(): number {
   return senderOffset;
 }
 
-/** Restart into this computer's own host. */
-function leaveRemoteSession(): void {
-  endRemoteSession(app.getPath('userData'));
-  log('left the remote session; restarting on this computer');
-  app.relaunch();
-  app.exit(0);
+/** How long a review window may take to save its view when the host changes under it. */
+const HOST_MOVE_WINDOW_MS = 3_000;
+
+/** Stop using the current host's connection; the next start uses `next`. */
+function forgetHost(next: RemoteEndpoint | null): void {
+  remoteLink?.kill();
+  remoteLink = null;
+  remoteEndpoint = next;
+  senderOffset = null;
+}
+
+let hostMoving = false;
+
+/**
+ * Change which host this client works on, in this process.
+ *
+ * It was `app.relaunch()` and `app.exit(0)`, and that is what the first real trial tripped on:
+ * the relaunched client is detached from the terminal, so its log goes to /dev/null and the
+ * prompt comes back whether or not a window ever appears, and on one laptop none did. The exit
+ * also killed the local host without its orderly close, which read as a crash. Here the
+ * process, its log and its environment stay: windows that belong to the old host save and
+ * close, the old host closes the way a quit closes it (a remote one is left running), and the
+ * chat window reloads against the new one. Nothing is sent again: no call crosses the change,
+ * and a window reloaded here reads what its host saved.
+ *
+ * Answers a sentence for the window when the change did not happen, otherwise `''`.
+ */
+async function moveToHost(next: RemoteEndpoint | null, remember: () => void, reason: string): Promise<string> {
+  if (hostMoving) {
+    return 'DSpatch is already changing host.';
+  }
+  hostMoving = true;
+  try {
+    const drawing = unsavedDrawing;
+    if (drawing !== null) {
+      const answer = await askAboutUnsavedDrawing(drawing, 'reload');
+      if (answer === 'cancel') {
+        return 'Stayed where you are: the loop editor holds unsaved changes.';
+      }
+      if (answer === 'discard') {
+        unsavedDrawing = null;
+      } else {
+        const failure = await writeUnsavedDrawing(drawing, 'reload');
+        if (failure !== null) {
+          return `Stayed where you are: the loop editor's drawing could not be saved. ${failure}`;
+        }
+      }
+    }
+    log(reason);
+    // The last window closing would quit: a launch of the review alone has no chat window.
+    if (liveMainWindow() === null) {
+      mainWindow = createWindow();
+    }
+    await reviewWindows?.closeAll(HOST_MOVE_WINDOW_MS);
+    if (editorWindow !== null && !editorWindow.isDestroyed()) {
+      editorWindow.close();
+    }
+    const boundMs = (host.closeBoundMs() ?? 0) + HOST_CLOSE_MARGIN_MS;
+    await host.shutdown('host.shutdown', [NO_SENDER, { observeConversationFiles: false }], boundMs);
+    forgetHost(next);
+    remember();
+    if (await startHostOrQuit()) {
+      if (remoteSession() === null) {
+        publishLink({ phase: 'connected', note: '' });
+      }
+      liveMainWindow()?.webContents.reload();
+    }
+    return '';
+  } finally {
+    hostMoving = false;
+  }
+}
+
+/** Back to this computer's own host. */
+function leaveRemoteSession(): Promise<string> {
+  return moveToHost(
+    null,
+    () => {
+      endRemoteSession(app.getPath('userData'));
+    },
+    'leaving the remote session; working on this computer',
+  );
 }
 
 /** The connection line and the host chooser, for every window (DSP-111). */
@@ -458,9 +534,9 @@ function registerHostLinkIpc(): void {
     remoteLink?.retryNow();
   });
   ipcMain.on('dspatch:remote-leave', () => {
-    leaveRemoteSession();
+    void leaveRemoteSession();
   });
-  ipcMain.handle('dspatch:remote-connect', (_event, address: unknown, token: unknown): string => {
+  ipcMain.handle('dspatch:remote-connect', (_event, address: unknown, token: unknown): Promise<string> | string => {
     if (typeof address !== 'string' || typeof token !== 'string' || token.trim() === '') {
       return 'Give the address and the token.';
     }
@@ -468,11 +544,13 @@ function registerHostLinkIpc(): void {
     if ('error' in parsed) {
       return parsed.error;
     }
-    saveRemoteSession(app.getPath('userData'), `${parsed.host}:${String(parsed.port)}`, token.trim());
-    log(`connecting to the host at ${parsed.host}:${String(parsed.port)}; restarting into that session`);
-    app.relaunch();
-    app.exit(0);
-    return '';
+    return moveToHost(
+      { ...parsed, token: token.trim() },
+      () => {
+        saveRemoteSession(app.getPath('userData'), `${parsed.host}:${String(parsed.port)}`, token.trim());
+      },
+      `connecting to the host at ${parsed.host}:${String(parsed.port)}`,
+    );
   });
   ipcMain.handle('dspatch:host-browse', (_event, folder: unknown) => hostCall('files.browse', NO_SENDER, typeof folder === 'string' ? folder : null));
   ipcMain.on('dspatch:host-browse-done', (_event, chosen: unknown) => {
@@ -814,8 +892,10 @@ async function startHostOrQuit(): Promise<boolean> {
           `Nothing was sent.\n\n${started.failure.detail ?? started.failure.message}`,
       });
       if (response === 1) {
-        leaveRemoteSession();
-        return false;
+        // Here, not through `moveToHost`: this may be the launch's own start, with no window yet.
+        endRemoteSession(app.getPath('userData'));
+        forgetHost(null);
+        continue;
       }
       if (response !== 0) {
         app.exit(HOST_EXIT_START_FAILED);
@@ -866,6 +946,13 @@ async function hostLost(loss: HostLoss): Promise<void> {
     log(`the remote host was restarted; ${String(loss.unanswered.length)} unanswered call(s) read as unknown`);
     publishLink({ phase: 'reconnecting', note: 'The host was restarted. What was running there has ended with an unknown outcome.' });
     if (!(await startHostOrQuit())) {
+      return;
+    }
+    if (remoteSession() === null) {
+      // The person chose this computer instead: what the review windows show is the other host's.
+      await reviewWindows?.closeAll(HOST_MOVE_WINDOW_MS);
+      publishLink({ phase: 'connected', note: '' });
+      reloadOpenWindows();
       return;
     }
     if (reviewWindows !== null) {
@@ -4679,7 +4766,7 @@ function main(): void {
         }
       },
       development: !app.isPackaged,
-      ...(remoteSession() === null ? {} : { pickOnHost: (options: Electron.OpenDialogOptions) => pickOnHost(options) }),
+      hostPicker: () => (remoteSession() === null ? undefined : (options: Electron.OpenDialogOptions) => pickOnHost(options)),
       // A held window is a person's: their review chooser is the real dialog, never the queue.
       scriptedPick: chatRunMode && !chatRunHold ? () => scriptedFilePick('review definition') : null,
       log: (message) => {

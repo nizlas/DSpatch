@@ -156,4 +156,6 @@ Established from the SDK's typings, `tools.list`, `hooks.discover`, and a local 
 Departures and limits to judge: the review discussion keeps Niclas's 30 Oct decision (read-only code access), as for Claude, not DSP-148's text-only wording. No `task`, `skill` or `web_fetch`, so sub-agents are off. Chat and loop with Copilot are wired, unit-tested only. Decision 1 (the gate for the first external trial) stays open; the prompt and diff flow is uncovered by any control.
 
 Evidence: tests/copilot-sdk-adapter, copilot-runtime, copilot-review-jobs (substitute and stand-in model). Next: docs/REMOTE_TRIAL.md section 6 on the work computer.
+
+Trial feedback of 31 October 2026 on the default model and the chat's activity line: see DSP-111's notes.
 <!-- SECTION:NOTES:END -->

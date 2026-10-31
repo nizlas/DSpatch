@@ -44,10 +44,10 @@ import type {
   TestOutcome,
   TestVerdict,
   AgentCommandsReport,
-  UiCommandLine,
   WorkspaceChange,
   WorkspaceReport,
 } from '../shared/bridge';
+import { ActivityLine } from './DiscussionAnswer';
 import {
   clampSidebarWidth,
   describeDirectoryCap,
@@ -94,7 +94,6 @@ import {
   attachUsage,
   currentTurn as currentTurnOf,
   describeActivity,
-  describeCommandLine,
   emptyChatState,
   markCancelRequested,
   routeEvent,
@@ -706,16 +705,18 @@ function Workbench({
    * it is safe to let it because the loop turn above it carries the assignment, every
    * reply and the recorded ending, and the run record on disk outlives the window.
    */
+  // Once a turn is going, its activity line in the conversation is the one place that says so.
+  const turnSaysIt = activeTurn !== null && (activity.kind === 'tool' || activity.kind === 'streaming');
   const running = useMemo(
     () =>
       activityLine({
         loopLines,
         loopRunning: loopBusy,
         loopStepText: liveStanding?.text ?? null,
-        chatActivityText: sendWait?.text ?? activity.text,
-        chatRunning: sendPending || activeTurn !== null,
+        chatActivityText: turnSaysIt ? '' : (sendWait?.text ?? activity.text),
+        chatRunning: !turnSaysIt && (sendPending || activeTurn !== null),
       }),
-    [loopLines, loopBusy, liveStanding, sendWait, activity.text, sendPending, activeTurn],
+    [loopLines, loopBusy, liveStanding, sendWait, activity.text, sendPending, activeTurn, turnSaysIt],
   );
   /**
    * The status beside the composer: the working step's line, or the run's.
@@ -4755,35 +4756,6 @@ function ReconciliationRow({
  * `data-ev` name appearing twice on one screen would make every scripted reading of
  * it ambiguous. The panel keeps the names it has always had.
  */
-/**
- * DSP-145: what the agent ran in a turn, one short line each - the verb, the command line
- * and how it ended. Shared by live and reopened replies; nothing when there were none.
- */
-function CommandLines({
-  commands,
-  testId,
-}: {
-  readonly commands: readonly UiCommandLine[];
-  readonly testId: string;
-}): JSX.Element | null {
-  if (commands.length === 0) {
-    return null;
-  }
-  return (
-    <ul className="turn__commands" data-ev={testId}>
-      {commands.map((command) => {
-        const said = describeCommandLine(command);
-        return (
-          <li key={command.commandId} className="turn__command">
-            {said.verb} <code>{command.line}</code>
-            {said.after}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
 function RestoredMessage({
   message,
   prefix = 'restored-turn',
@@ -4860,18 +4832,6 @@ function RestoredMessage({
           <pre className="turn__answer">{message.resentContext}</pre>
         </details>
       )}
-      {/* DSP-145: the commands the agent ran, as the same quiet lines a live reply has. */}
-      <CommandLines
-        commands={(message.commands ?? []).map((record) => ({
-          commandId: record.commandId,
-          line: record.line,
-          ending: record.ending,
-          exitCode: record.exitCode,
-          durationMs: record.durationMs,
-          ...(record.ending === 'stopped' && !record.killedByDspatch ? { stopConfirmed: false } : {}),
-        }))}
-        testId={`${at}-commands`}
-      />
       {/* DSP-147: steering sent into this turn whose place in the answer is not known (or
           that has no answer to sit in), after it, and the last thing known about each. */}
       {(message.steering ?? []).map((entry, position) => {
@@ -7391,11 +7351,13 @@ function Turn({
         />
       )}
       {/*
-        DSP-145: what the agent ran, one short line each, under its reply. The whole
-        record - folder, output, snapshots, whether it is still current - is in
-        Session details; nothing opens by itself.
+        What the agent is doing, one line replaced in place and gone with the run, as in the
+        review. What it ran is in Session details; the conversation is the question and the
+        answer.
       */}
-      <CommandLines commands={turn.commands ?? []} testId={`turn-${String(index)}-commands`} />
+      {active && turn.status === 'streaming' && !turn.cancelRequested && !turn.superseded && (
+        <ActivityLine text={turn.activity ?? 'Waiting for the agent…'} testId="turn-activity" />
+      )}
       {/*
         The state of the turn stays in the column; the counting moves behind a
         disclosure. How many fragments a reply arrived in and how many tool calls

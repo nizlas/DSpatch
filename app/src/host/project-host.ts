@@ -288,15 +288,28 @@ function presentationAdapterOptions(): {
   const raw = process.env['DSPATCH_PRESENTATION_DELTA_MS'] ?? '';
   const parsed = Number.parseInt(raw, 10);
   // DSP-152: `claude` lists models shaped like a Claude account's, arriving after a while;
-  // `copilot` the same list under the row the Copilot adapter puts first.
+  // `copilot` the same list under the row the Copilot adapter puts first, which names no
+  // model; `copilot-named` and `copilot-auto` have that row say a model, and say routing.
   const shaped = process.env['DSPATCH_PRESENTATION_MODELS'];
   const listMs = Number.parseInt(process.env['DSPATCH_PRESENTATION_LIST_MS'] ?? '', 10);
   return {
     ...(Number.isFinite(parsed) && parsed > 0 ? { deltaMs: parsed } : {}),
     resume: presentationResume,
-    ...(shaped === 'claude' || shaped === 'copilot'
+    ...(shaped === 'claude' || shaped?.startsWith('copilot') === true
       ? {
-          models: shaped === 'claude' ? CLAUDE_SHAPED_MODELS : [{ id: COPILOT_RUNTIME_DEFAULT_MODEL, displayName: "Copilot's default", provider: 'copilot' as const }, ...CLAUDE_SHAPED_MODELS.filter((model) => model.id !== 'default')],
+          models:
+            shaped === 'claude'
+              ? CLAUDE_SHAPED_MODELS
+              : [
+                  {
+                    id: COPILOT_RUNTIME_DEFAULT_MODEL,
+                    displayName: 'Default',
+                    provider: 'copilot' as const,
+                    providerDefault: true as const,
+                    ...(shaped === 'copilot-named' ? { resolvedId: 'haiku' } : shaped === 'copilot-auto' ? { resolvedId: 'auto' } : {}),
+                  },
+                  ...CLAUDE_SHAPED_MODELS.filter((model) => model.id !== 'default'),
+                ],
           listDelayMs: Number.isFinite(listMs) && listMs > 0 ? listMs : 1500,
         }
       : {}),

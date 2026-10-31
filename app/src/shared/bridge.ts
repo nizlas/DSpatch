@@ -160,6 +160,8 @@ export interface ModelChoice {
   readonly description?: string;
   /** The provider's own id an alias resolves to, when it says (DSP-149). */
   readonly resolvedId?: string;
+  /** This row stands for "no model named": what it means is in `resolvedId`, when the provider says. */
+  readonly providerDefault?: true;
 }
 
 /**
@@ -1687,6 +1689,8 @@ export interface UiAgentEvent {
   readonly at: string;
   readonly text?: string;
   readonly toolName?: string;
+  /** What a tool call works on, when the provider's event says: a path for a read. */
+  readonly toolSubject?: string;
   readonly toolStatus?: 'ok' | 'error';
   readonly approvalSummary?: string;
   readonly readings?: readonly UsageReading[];

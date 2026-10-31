@@ -144,6 +144,36 @@ test('the dropdown names the default model and never shows "Provider\'s default"
   }
 });
 
+test("the provider's default says a model, says Auto, or says it is not known, and is never guessed", () => {
+  const base = { provider: 'copilot' as const, chosen: '', error: null, source: 'test' };
+  const models = [{ id: 'one', displayName: 'One' }, { id: 'two', displayName: 'Two' }];
+  const row = (resolvedId?: string) => ({ id: 'copilot-default', displayName: 'Default', providerDefault: true as const, ...(resolvedId === undefined ? {} : { resolvedId }) });
+
+  const named = modelRows({ ...base, models: [row('two'), ...models] }, '');
+  assert.equal(named.value, 'two');
+  assert.deepEqual(named.rows.map((entry) => entry.label), ['One', 'Two · default']);
+
+  const auto = modelRows({ ...base, models: [row('auto'), ...models] }, '');
+  assert.equal(auto.value, 'copilot-default', 'asks for no model: the routing stays the provider\'s');
+  assert.equal(auto.rows[0]?.label, 'Auto · default');
+  assert.doesNotMatch(auto.rows.map((entry) => entry.label).slice(1).join(), /default/);
+
+  const listedAuto = modelRows({ ...base, models: [row('auto'), { id: 'auto', displayName: 'Auto' }, ...models] }, '');
+  assert.equal(listedAuto.value, 'auto');
+  assert.equal(listedAuto.rows[0]?.label, 'Auto · default');
+
+  const unknown = modelRows({ ...base, models: [row(), ...models] }, '');
+  assert.equal(unknown.value, 'copilot-default');
+  assert.equal(unknown.rows[0]?.label, 'Default model (not identified by the provider)');
+  assert.equal(listedDefault({ ...base, models: [row(), ...models] }), 'copilot-default', 'a review\'s start can use it');
+
+  const elsewhere = modelRows({ ...base, models: [row('three'), ...models] }, '');
+  assert.equal(elsewhere.rows[0]?.label, 'three · default', 'a default the list does not hold keeps its name');
+
+  assert.equal(modelRows({ ...base, models: [row('two'), ...models] }, 'copilot-default').value, 'two', 'a stored no-choice stays no choice');
+  assert.equal(modelRows({ ...base, models: [row('two'), ...models] }, 'one').value, 'one', 'a choice is kept');
+});
+
 test('a list is read again after a while, so a login needs no restart', async () => {
   let offered: readonly ModelInfo[] = MODELS.slice(0, 1);
   let reads = 0;

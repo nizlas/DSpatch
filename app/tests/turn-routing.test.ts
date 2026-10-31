@@ -24,7 +24,6 @@ import {
   attachUsage,
   currentTurn,
   describeActivity,
-  describeCommandLine,
   emptyChatState,
   markCancelRequested,
   routeEvent,
@@ -270,14 +269,14 @@ test('activity reads as waiting while waiting, and names the running tool', () =
 
   let state = routeEvent(emptyChatState(SESSION), event('run.started', RUN_A), 'hi');
   assert.equal(describeActivity(state).kind, 'streaming');
-  assert.match(describeActivity(state).text, /first text/);
+  assert.equal(describeActivity(state).text, '', 'the activity line in the conversation says it');
 
   state = routeEvent(state, event('assistant.delta', RUN_A, { text: 'x' }), '');
-  assert.match(describeActivity(state).text, /1 fragments/);
+  assert.equal(describeActivity(state).text, '');
 
   state = routeEvent(state, event('tool.started', RUN_A, { toolName: 'Read' }), '');
   assert.equal(describeActivity(state).kind, 'tool');
-  assert.match(describeActivity(state).text, /Read/);
+  assert.equal(describeActivity(state).text, '');
 
   state = routeEvent(
     state,
@@ -347,32 +346,26 @@ test('a cancelled run keeps the end its adapter reported, and each end reads dif
   assert.equal(turnStatusLabel({ status: 'streaming' }), 'streaming …');
 });
 
-test('DSP-145: a command the agent ran becomes one readable line on its turn, updated in place when it ends', () => {
+test('what the agent does is one line, replaced in place and gone with the run, for every provider', () => {
   let state = routeEvent(emptyChatState(SESSION), event('run.started', RUN_A), 'fix it');
+  assert.equal(state.turns[0]?.activity, null);
+  state = routeEvent(state, event('tool.started', RUN_A, { toolName: 'Read', toolSubject: 'docs/README.md' }), '');
+  assert.equal(state.turns[0]?.activity, 'Reading README.md…');
+  state = routeEvent(state, event('tool.started', RUN_A, { toolName: 'Grep', toolSubject: 'needle' }), '');
+  assert.equal(state.turns[0]?.activity, 'Searching the code…');
+  state = routeEvent(state, event('tool.started', RUN_A, { toolName: 'read_file' }), '');
+  assert.equal(state.turns[0]?.activity, 'Reading a file…');
   const command = { commandId: 'c1', line: 'npm test', ending: null, exitCode: null, durationMs: null } as const;
+  state = routeEvent(state, event('tool.started', RUN_A, { toolName: 'Bash' }), '');
   state = routeEvent(state, event('command.started', RUN_A, { command }), '');
-  assert.deepEqual(describeCommandLine(state.turns[0]?.commands?.[0] ?? command), { verb: 'Running', after: '…' });
-  state = routeEvent(
-    state,
-    event('command.finished', RUN_A, { command: { ...command, ending: 'exited', exitCode: 1, durationMs: 1200 } }),
-    '',
-  );
-  const lines = state.turns[0]?.commands ?? [];
-  assert.equal(lines.length, 1, 'the same command, not a second line');
-  assert.deepEqual(describeCommandLine(lines[0] ?? command), { verb: 'Ran', after: ': exit 1 (1.2 s)' });
-  assert.doesNotMatch(JSON.stringify(describeCommandLine(lines[0] ?? command)), /mcp__/);
-  assert.deepEqual(
-    describeCommandLine({ ...command, ending: 'stopped', durationMs: 300 }),
-    { verb: 'Stopped', after: ' (0.3 s)' },
-  );
-  // DSP-146: a provider-reported command whose end nobody reported claims neither a stop
-  // nor a run.
-  assert.deepEqual(
-    describeCommandLine({ ...command, ending: 'stopped', durationMs: 300, stopConfirmed: false }),
-    { verb: 'Cancelled', after: ' (end not confirmed) (0.3 s)' },
-  );
-  assert.deepEqual(
-    describeCommandLine({ ...command, ending: 'not-reported', durationMs: 300 }),
-    { verb: 'Requested', after: ': how it ended was not reported (0.3 s)' },
-  );
+  assert.equal(state.turns[0]?.activity, 'Running a command…');
+  state = routeEvent(state, event('command.finished', RUN_A, { command: { ...command, ending: 'exited', exitCode: 1, durationMs: 1200 } }), '');
+  assert.doesNotMatch(JSON.stringify(state.turns[0]), /npm test/, 'the command line stays out of the turn');
+  state = routeEvent(state, event('tool.started', RUN_A, { toolName: 'something_new' }), '');
+  assert.equal(state.turns[0]?.activity, 'Working…');
+  state = routeEvent(state, event('assistant.delta', RUN_A, { text: 'x' }), '');
+  assert.equal(state.turns[0]?.activity, 'Writing the answer…');
+  for (const status of ['finished', 'cancelled', 'error'] as const) {
+    assert.equal(routeEvent(state, event('run.finished', RUN_A, { status }), '').turns[0]?.activity, null);
+  }
 });

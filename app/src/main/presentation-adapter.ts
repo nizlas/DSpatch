@@ -1,4 +1,5 @@
 import type {
+  AgentCommandRecord,
   AgentEvent,
   AgentEventListener,
   CapabilityReport,
@@ -13,6 +14,13 @@ import type {
 import type { AgentAdapter } from '../adapter/agent-adapter';
 import { simulatedReviewTask } from './presentation-review-tasks';
 import type { AuthStatusReading, ChatAdapter } from './chat-service';
+
+/** SIMULATED: what `[[tools]]` reports for a chat turn. */
+const CHAT_TURN_TOOLS = [
+  { name: 'Read', subject: 'README.md', ok: true },
+  { name: 'Grep', subject: 'share', ok: true },
+  { name: 'Bash', subject: 'cd /tmp && ls && cat README.md', ok: true },
+] as const;
 
 /**
  * A local adapter that streams a fixed reply, for looking at the window.
@@ -603,7 +611,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // An analysis task reads before it answers: long enough to be stopped, as a real one is,
     // whether or not the revision folder had to be written first (a discussion may hold it).
     const toolMs = Math.max(0, Number(process.env['DSPATCH_PRESENTATION_TOOL_MS'] ?? '0') || 0);
-    const lead = (task === null ? 0 : 400) + toolMs * (task?.tools.length ?? 0);
+    const lead = (task === null ? 0 : 400) + toolMs * (task?.tools.length ?? (prompt.includes('[[tools]]') ? CHAT_TURN_TOOLS.length : 0));
     // Chunked on whitespace, so what arrives is the partial text a real stream
     // produces — including a fence that is open for several frames, which is the
     // case the reader has to survive.
@@ -633,13 +641,44 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // Claude adapter reports its Read and Grep calls, with the path they used. With
     // DSPATCH_PRESENTATION_TOOL_MS (30 October 2026) each call takes that long, as a real
     // read does, so what the agent is doing can be seen while it works; by default none.
-    (task?.tools ?? []).forEach((tool, index) => {
+    // `[[tools]]`: the same for a chat turn, with a command among them.
+    const tools = task?.tools ?? (prompt.includes('[[tools]]') ? CHAT_TURN_TOOLS : []);
+    tools.forEach((tool, index) => {
       const toolCallId = `${dspatchRunId}-read-${String(index + 1)}`;
       const call = (): void => {
         if (state.activeRun !== dspatchRunId) {
           return;
         }
         emit({ ...base, type: 'tool.started', at: new Date().toISOString(), toolCallId, name: tool.name, subject: tool.subject });
+        if (tool.name === 'Bash') {
+          const startedAtUtc = new Date().toISOString();
+          const record: AgentCommandRecord = {
+            commandId: toolCallId,
+            requestedBy: 'provider-reported',
+            line: tool.subject,
+            shell: 'sh -c',
+            cwd: state.config.workspacePath,
+            pid: null,
+            startedAtUtc,
+            finishedAtUtc: startedAtUtc,
+            durationMs: 2_700,
+            timeoutMs: null,
+            ending: 'exited',
+            endingMessage: null,
+            exitCode: 0,
+            signal: null,
+            killedByDspatch: false,
+            stdout: '',
+            stderr: '',
+            outputTruncated: false,
+            outputNote: null,
+            testedSnapshotId: null,
+            afterRunSnapshotId: null,
+            snapshotRoots: [],
+          };
+          emit({ ...base, type: 'command.started', at: startedAtUtc, toolCallId, commandId: toolCallId, line: tool.subject, cwd: state.config.workspacePath });
+          emit({ ...base, type: 'command.finished', at: new Date().toISOString(), toolCallId, command: record });
+        }
         emit({ ...base, type: 'tool.finished', at: new Date().toISOString(), toolCallId, name: tool.name, status: tool.ok ? 'ok' : 'error' });
       };
       if (toolMs === 0) {
@@ -654,6 +693,16 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     });
 
     const reply = (): void => {
+      // `[[fail]]`, SIMULATED: the turn ends as a provider's error does, after its tools.
+      if (prompt.includes('[[fail]]')) {
+        const timer = setTimeout(() => {
+          state.timers.delete(timer);
+          state.activeRun = null;
+          emit({ ...base, type: 'run.finished', at: new Date().toISOString(), status: 'error', error: { message: 'SIMULATED: the provider stopped this turn.' } });
+        }, lead);
+        state.timers.add(timer);
+        return;
+      }
       chunks.forEach((chunk, index) => {
         const timer = setTimeout(
           () => {

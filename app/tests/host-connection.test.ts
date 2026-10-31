@@ -207,6 +207,23 @@ describe('a host that does not start', () => {
 });
 
 describe('closing', () => {
+  it('starts again after an asked-for shutdown without reporting a loss or sending anything again', async () => {
+    const h = harness('serve');
+    try {
+      await h.connection.start();
+      await h.connection.answer('echo', 'once');
+      await h.connection.shutdown('hang', [], 200);
+      await h.spawned[0]?.exited;
+      const again = await h.connection.start();
+      assert.equal(again.ok, true);
+      assert.equal(h.spawned.length, 2);
+      assert.equal(h.losses.length, 0, 'moving to another host is not a crash');
+      assert.deepEqual(h.received().filter((line) => line.includes('echo')).length, 1);
+    } finally {
+      await endAll(h);
+    }
+  });
+
   it('ends a host that does not answer its shutdown within the bound', async () => {
     const h = harness('serve');
     try {

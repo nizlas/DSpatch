@@ -69,6 +69,9 @@ development agent on Ubuntu with X11:
   prepared and opened, DSpatch's own repository opened, the empty chat, a model list
   read again after a minute, and Copilot and its model chosen in the review's
   Discussion panel, with questions asked from its own window and docked in the diff.
+  The Remote Session form connecting, leaving and connecting again without a restart,
+  the default model shown as a name, as Auto and as not identified, and the project
+  chat's single activity line through tools, a stop, an error and a reopened conversation.
 
 A simulated provider shows DSpatch's windows, host and records, not what a provider
 does. No provider was contacted in these runs. Chromium did fetch its spellcheck

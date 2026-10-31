@@ -23,7 +23,8 @@
  */
 
 import type { RunEnd } from '../adapter/types';
-import type { TurnUsage, UiAgentEvent, UiCommandLine } from '../shared/bridge';
+import type { TurnUsage, UiAgentEvent } from '../shared/bridge';
+import { chatToolActivity } from '../shared/review-pair';
 
 /** A turn's state as the window shows it. Never inferred from silence. */
 export type TurnStatus =
@@ -69,9 +70,10 @@ export interface TurnState {
   /** Distinct tool names, in the order first seen. Names only: no arguments. */
   readonly toolNames: readonly string[];
   /**
-   * DSP-145, DSP-146: the commands the agent ran in this turn, in order, for the transcript's short action lines. Absent until the first one.
+   * What the agent is doing now, from the provider's events: one line, replaced in place and
+   * gone with the run (the review's activity line). `null` before anything has been reported.
    */
-  readonly commands?: readonly UiCommandLine[];
+  readonly activity: string | null;
   readonly status: TurnStatus;
   /**
    * How a cancelled run ended locally, as the adapter reported it (DSP-116,
@@ -185,6 +187,7 @@ export function routeEvent(
       toolsFinished: 0,
       lastTool: null,
       toolNames: [],
+      activity: null,
       status: 'streaming',
       errorMessage: null,
       approvalSummary: null,
@@ -234,6 +237,7 @@ function applyToTurn(turn: TurnState, event: UiAgentEvent): TurnState {
         ...turn,
         answer: turn.answer + (event.text ?? ''),
         deltaCount: turn.deltaCount + 1,
+        activity: 'Writing the answer…',
       };
     case 'assistant.message':
       // The adapter emits this once at the end with the same text the deltas
@@ -245,6 +249,7 @@ function applyToTurn(turn: TurnState, event: UiAgentEvent): TurnState {
         toolsStarted: turn.toolsStarted + 1,
         lastTool: event.toolName ?? turn.lastTool,
         toolNames: addToolName(turn.toolNames, event.toolName),
+        activity: chatToolActivity(event.toolName ?? '', event.toolSubject ?? null),
       };
     case 'tool.finished':
       return {
@@ -254,20 +259,7 @@ function applyToTurn(turn: TurnState, event: UiAgentEvent): TurnState {
         toolNames: addToolName(turn.toolNames, event.toolName),
       };
     case 'command.started':
-    case 'command.finished': {
-      const command = event.command;
-      if (command === undefined) {
-        return turn;
-      }
-      const earlier = turn.commands ?? [];
-      const known = earlier.some((entry) => entry.commandId === command.commandId);
-      return {
-        ...turn,
-        commands: known
-          ? earlier.map((entry) => (entry.commandId === command.commandId ? command : entry))
-          : [...earlier, command],
-      };
-    }
+      return { ...turn, activity: 'Running a command…' };
     case 'approval.requested':
       return {
         ...turn,
@@ -283,6 +275,7 @@ function applyToTurn(turn: TurnState, event: UiAgentEvent): TurnState {
             : event.status === 'cancelled'
               ? 'cancelled'
               : 'error',
+        activity: null,
         ...(event.end === undefined ? {} : { end: event.end }),
         errorMessage: event.errorMessage ?? null,
         finishedAtUtc: event.at,
@@ -447,23 +440,10 @@ export function describeActivity(state: ChatState): Activity {
     };
   }
   if (turn.toolsStarted > turn.toolsFinished) {
-    const name = turn.lastTool ?? 'unnamed tool';
-    return {
-      kind: 'tool',
-      text: `Running a tool (${name}). ${String(turn.toolsFinished)} of ${String(
-        turn.toolsStarted,
-      )} tool calls have finished.`,
-      unresolvedRuns,
-    };
+    // The activity line in the conversation says what is happening, in one place.
+    return { kind: 'tool', text: '', unresolvedRuns };
   }
-  return {
-    kind: 'streaming',
-    text:
-      turn.deltaCount === 0
-        ? 'Sent. Waiting for the first text from the model.'
-        : `Streaming the answer (${String(turn.deltaCount)} fragments so far).`,
-    unresolvedRuns,
-  };
+  return { kind: 'streaming', text: '', unresolvedRuns };
 }
 
 /**
@@ -481,42 +461,6 @@ export interface ContextSummary {
   readonly fileContentsSentByDspatch: number;
   readonly toolCallsByAgent: number;
   readonly toolNames: readonly string[];
-}
-
-/**
- * DSP-145: one command the agent ran, as the transcript's short line says it: a verb
- * before the command line and how it ended after it. Readable words, never the tool's
- * `mcp__` name; the full record is in Session details.
- */
-export function describeCommandLine(command: UiCommandLine): {
-  readonly verb: string;
-  readonly after: string;
-} {
-  const took =
-    command.durationMs === null ? '' : ` (${(command.durationMs / 1000).toFixed(1)} s)`;
-  switch (command.ending) {
-    case null:
-      return { verb: 'Running', after: '…' };
-    case 'exited':
-      return {
-        verb: 'Ran',
-        after: `: exit ${command.exitCode === null ? 'unknown' : String(command.exitCode)}${took}`,
-      };
-    case 'timed-out':
-      return { verb: 'Stopped', after: ` at its time bound${took}` };
-    case 'stopped':
-      return command.stopConfirmed === false
-        ? { verb: 'Cancelled', after: ` (end not confirmed)${took}` }
-        : { verb: 'Stopped', after: took };
-    case 'could-not-start':
-      return { verb: 'Could not start', after: '' };
-    case 'refused':
-      return { verb: 'Did not run', after: '' };
-    case 'not-reported':
-      return { verb: 'Requested', after: `: how it ended was not reported${took}` };
-    default:
-      return { verb: 'Ran', after: '' };
-  }
 }
 
 export function summariseContext(state: ChatState): ContextSummary {

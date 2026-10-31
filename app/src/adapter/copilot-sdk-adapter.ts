@@ -622,6 +622,9 @@ export class CopilotSdkAdapter implements AgentAdapter {
     }
   }
 
+  /** The model the runtime said it selected when none was named, once a session has told. */
+  private defaultSelected: string | null = null;
+
   async listModels(): Promise<readonly ModelInfo[]> {
     const client = await this.connect();
     const status = this.options.testProvider === undefined ? await client.getAuthStatus() : { isAuthenticated: true };
@@ -630,7 +633,14 @@ export class CopilotSdkAdapter implements AgentAdapter {
     }
     const entries = await client.listModels();
     return [
-      { id: COPILOT_RUNTIME_DEFAULT_MODEL, displayName: "Copilot's default", provider: 'copilot' as const },
+      // The catalogue marks no default, so this says what it means only once a session has.
+      {
+        id: COPILOT_RUNTIME_DEFAULT_MODEL,
+        displayName: 'Default',
+        provider: 'copilot' as const,
+        providerDefault: true as const,
+        ...(this.defaultSelected === null ? {} : { resolvedId: this.defaultSelected }),
+      },
       ...entries
         .filter((entry) => entry.policy?.state !== 'disabled')
         .map((entry) => ({ id: entry.id, displayName: entry.name, provider: 'copilot' as const })),
@@ -790,6 +800,14 @@ export class CopilotSdkAdapter implements AgentAdapter {
     const data = record(event.data);
     if (event.type === 'session.model_change' && typeof data['newModel'] === 'string') {
       state.modelReported = data['newModel'];
+    }
+    // What the runtime selected for a session that named no model: its own word for the default.
+    if (
+      (event.type === 'session.start' || event.type === 'session.resume') &&
+      typeof data['selectedModel'] === 'string' &&
+      (state.config.modelRequested === COPILOT_RUNTIME_DEFAULT_MODEL || state.config.modelRequested === '')
+    ) {
+      this.defaultSelected = data['selectedModel'];
     }
     const run = state.run;
     if (run === null) {

@@ -260,6 +260,8 @@ export interface ModelInfo {
   readonly description?: string;
   /** The provider's wire id an alias such as "sonnet" resolves to, when it says. */
   readonly resolvedId?: string;
+  /** This row stands for "no model named": what it means is in `resolvedId`, when the provider says. */
+  readonly providerDefault?: true;
 }
 
 /**

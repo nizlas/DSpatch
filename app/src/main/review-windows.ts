@@ -84,9 +84,10 @@ export interface ReviewWindowsOptions {
   readonly development: boolean;
   /**
    * A remote session's chooser: it browses the host, because the paths are the host's.
-   * Absent on a local start, where the native dialog is right.
+   * Asked each time, since the host can change: nothing on this computer's own host, where
+   * the native dialog is right.
    */
-  readonly pickOnHost?: (options: Electron.OpenDialogOptions) => Promise<{ readonly canceled: boolean; readonly filePaths: readonly string[] }>;
+  readonly hostPicker: () => undefined | ((options: Electron.OpenDialogOptions) => Promise<{ readonly canceled: boolean; readonly filePaths: readonly string[] }>);
   /**
    * The file chooser's answer during a scripted run, or `null` for the real dialog.
    * Called only while a scripted run is on; see `DSPATCH_PICK_FILE` in `main.ts`.
@@ -370,7 +371,7 @@ export class ReviewWindows {
 
   async choose(entry: ReviewWindowEntry): Promise<ReviewOpenOutcome> {
     const startIn =
-      entry.identity?.repository ?? (entry.startFolder !== null && (this.options.pickOnHost !== undefined || fs.existsSync(entry.startFolder)) ? entry.startFolder : undefined);
+      entry.identity?.repository ?? (entry.startFolder !== null && (this.options.hostPicker() !== undefined || fs.existsSync(entry.startFolder)) ? entry.startFolder : undefined);
     let chosen: string | undefined;
     if (this.options.scriptedPick !== null) {
       chosen = this.options.scriptedPick() ?? undefined;
@@ -383,7 +384,7 @@ export class ReviewWindows {
         ...(startIn === undefined ? {} : { defaultPath: startIn }),
       };
       const parent = entry.window.isDestroyed() ? null : entry.window;
-      const onHost = this.options.pickOnHost;
+      const onHost = this.options.hostPicker();
       const result = onHost !== undefined ? await onHost(dialogOptions) : parent === null ? await dialog.showOpenDialog(dialogOptions) : await dialog.showOpenDialog(parent, dialogOptions);
       chosen = result.canceled ? undefined : result.filePaths[0];
     }
@@ -693,6 +694,39 @@ export class ReviewWindows {
         }
       }
     }
+  }
+
+  /**
+   * Close every review window, each saving its view first, and wait for that: the host they
+   * read from is about to change. A panel goes too, without the hide its own close means.
+   */
+  async closeAll(boundMs: number): Promise<void> {
+    const windows = new Set(this.list().map((entry) => entry.window));
+    for (const panel of this.panels.values()) {
+      panel.closing = true;
+      windows.add(panel.frame);
+    }
+    await Promise.all(
+      [...windows]
+        .filter((window) => !window.isDestroyed())
+        .map(
+          (window) =>
+            new Promise<void>((resolve) => {
+              const bound = setTimeout(() => {
+                this.options.log('a review window did not close in time as the host changed; ending it');
+                if (!window.isDestroyed()) {
+                  window.destroy();
+                }
+                resolve();
+              }, boundMs);
+              window.once('closed', () => {
+                clearTimeout(bound);
+                resolve();
+              });
+              window.close();
+            }),
+        ),
+    );
   }
 
   /** The recent-review index as the host has it, for the scenario's record. */

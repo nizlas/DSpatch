@@ -538,6 +538,28 @@ export function toolActivity(name: string, subject: string | null): string {
   return name === 'Read' && file !== '' ? `Reading ${file}` : 'Searching the code';
 }
 
+/**
+ * The same line for the project chat, whose agent also edits and runs things. The tool's
+ * name is all most providers report, so a tool it cannot place reads as work, not as a search.
+ */
+export function chatToolActivity(name: string, subject: string | null): string {
+  const tool = name.toLowerCase();
+  if (/read|view|open/.test(tool)) {
+    const reading = toolActivity('Read', subject);
+    return `${reading === 'Searching the code' ? 'Reading a file' : reading}…`;
+  }
+  if (/grep|glob|search|find|list/.test(tool)) {
+    return 'Searching the code…';
+  }
+  if (/edit|write|patch|create|replace/.test(tool)) {
+    return 'Editing the code…';
+  }
+  if (/bash|shell|terminal|powershell|command|exec/.test(tool)) {
+    return 'Running a command…';
+  }
+  return 'Working…';
+}
+
 /** The selected text, segment by segment, as one string. */
 export function selectionText(selection: Pick<CodeSelection, 'segments'>): string {
   return selection.segments.map((segment) => segment.text).join('\n');

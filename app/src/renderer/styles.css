@@ -945,10 +945,8 @@ body {
   padding-left: 0.625rem;
 }
 
-/* DSP-145: what the agent ran, one quiet line each under its reply. */
-.turn__commands {
-  list-style: none;
-  margin: 0.25rem 0;
+/* What the agent is doing: the review's activity line, lined up with the reply. */
+.turn > .rv-activity-line {
   padding-left: 0.625rem;
   color: var(--muted);
   font-size: 0.8125rem;
