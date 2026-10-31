@@ -78,8 +78,8 @@ export type ChosenLoopOutcome =
  * The loops a person can choose between: the folders DSpatch is looking at, and the
  * files they pointed at by hand.
  *
- * **One list, not two.** A definition that belongs to no open folder is the case the
- * standalone development loop will arrive as, and it joins the same list through the
+ * **One list, not two.** A definition that belongs to no open folder is one a person
+ * pointed at, and it joins the same list through the
  * same row shape, labelled by origin as `chosen by hand` — which is the label
  * `describeDefinitionRow` already writes for it.
  *

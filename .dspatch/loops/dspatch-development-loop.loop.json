@@ -1,0 +1,11 @@
+{
+  "format": "dspatch-loop-definition",
+  "formatVersion": 1,
+  "id": "dspatch-development-loop-runnable",
+  "name": "DSpatch development loop (runnable subset)",
+  "description": "The runnable subset of DSpatch's development loop: implement, verify, review and rework in the open project. It is not the full development loop.",
+  "resourceRoot": "../..",
+  "resourceRootNote": "The DSpatch working copy this file is filed in, two levels up from .dspatch/loops. The graph and every role live there and are referenced, not copied, so without this line the declaration would reach nothing.",
+  "graph": "docs/loop/graphs/dspatch-development-loop-runnable.graph.json",
+  "notes": "THIS IS THE RUNNABLE SUBSET, NOT THE FULL DEVELOPMENT LOOP. The full loop is driven by a person from Cursor or Claude Code through subagents, and docs/loop/graphs/dspatch-development-loop.graph.json is the drawing of it. The graph this file points at says, in its own notes, which properties it keeps and which nodes it drops: the human nodes, the router and planning, because the runner cannot honour those kinds.\n\nIT SHIPS WITH DSPATCH AND IS OFFERED FOR ANY PROJECT. It is filed here so that every clone has it, and DSpatch looks in its own repository as well as in the open folders. Being listed selects nothing: the chat loop stays the default and a workspace's remembered choice stands, so this loop runs only when a person chooses it. Choosing it starts nothing.\n\nTHE ROLES ARE NOT COPIED. resourceRoot is the DSpatch working copy, and every role path in the graph is resolved there.\n\nTHE WORKING FOLDERS ARE THE PERSON'S. A run works in the folders the person opened, not in the folder this file sits in. DSpatch's own repository can be opened like any other project (Niclas, 31 October 2026), so a run there can edit the DSpatch that is running; the agent is not confined to the folders it is given."
+}
