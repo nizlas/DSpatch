@@ -102,6 +102,7 @@ import {
   COPILOT_REVIEW_DENY_REASON,
   COPILOT_REVIEW_POLICY,
   copilotRuntimeInstalled,
+  COPILOT_RUNTIME_DEFAULT_MODEL,
   describeCopilotPolicy,
 } from '../adapter/copilot-sdk-adapter';
 import { ChatService, type ChatAdapter } from '../main/chat-service';
@@ -286,13 +287,19 @@ function presentationAdapterOptions(): {
 } {
   const raw = process.env['DSPATCH_PRESENTATION_DELTA_MS'] ?? '';
   const parsed = Number.parseInt(raw, 10);
-  // DSP-152: `claude` lists models shaped like a Claude account's, arriving after a while.
-  const claudeShaped = process.env['DSPATCH_PRESENTATION_MODELS'] === 'claude';
+  // DSP-152: `claude` lists models shaped like a Claude account's, arriving after a while;
+  // `copilot` the same list under the row the Copilot adapter puts first.
+  const shaped = process.env['DSPATCH_PRESENTATION_MODELS'];
   const listMs = Number.parseInt(process.env['DSPATCH_PRESENTATION_LIST_MS'] ?? '', 10);
   return {
     ...(Number.isFinite(parsed) && parsed > 0 ? { deltaMs: parsed } : {}),
     resume: presentationResume,
-    ...(claudeShaped ? { models: CLAUDE_SHAPED_MODELS, listDelayMs: Number.isFinite(listMs) && listMs > 0 ? listMs : 1500 } : {}),
+    ...(shaped === 'claude' || shaped === 'copilot'
+      ? {
+          models: shaped === 'claude' ? CLAUDE_SHAPED_MODELS : [{ id: COPILOT_RUNTIME_DEFAULT_MODEL, displayName: "Copilot's default", provider: 'copilot' as const }, ...CLAUDE_SHAPED_MODELS.filter((model) => model.id !== 'default')],
+          listDelayMs: Number.isFinite(listMs) && listMs > 0 ? listMs : 1500,
+        }
+      : {}),
   };
 }
 

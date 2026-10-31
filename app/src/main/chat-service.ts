@@ -1774,6 +1774,7 @@ export class ChatService {
     return providerAvailability(provider, {
       claudeAuthorized: this.claudeReference() !== null,
       claudeInstalled: this.claudeInstalled(),
+      copilotInstalled: this.options.copilotInstalled === true,
     });
   }
 
@@ -1825,15 +1826,15 @@ export class ChatService {
   }
 
   /**
-   * Refuse Claude before anything is closed or built, when this launch has not
-   * enabled it or Claude support is not installed (DSP-133: authorization AND
-   * installed).
+   * Refuse an agent before anything is closed or built: Claude when this launch has not
+   * enabled it or Claude support is not installed (DSP-133: authorization AND installed),
+   * Copilot when its runtime is not installed.
    */
   private requireProviderAvailable(provider: StoredSessionProvider): void {
     const unavailable = this.availabilityOf(provider).reason;
     if (unavailable !== null) {
       throw new Error(
-        `${unavailable} A Claude session cannot be opened. Nothing was closed and nothing was sent.`,
+        `${unavailable} A ${providerDisplayName(provider)} session cannot be opened. Nothing was closed and nothing was sent.`,
       );
     }
   }

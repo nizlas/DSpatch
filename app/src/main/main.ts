@@ -4085,7 +4085,7 @@ function registerIpc(): void {
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.
-              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'inherit' || named === 'inherit-switch' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' || named === 'selection' || named === 'context' || named === 'context-walk' || named === 'panel' || named === 'remote' || named === 'remote-again' || named === 'remote-restart' ? named : 'first';
+              return named === 'again' || named === 'retry' || named === 'switch' || named === 'editor' || named === 'unavailable' || named === 'start-fails' || named === 'history' || named === 'clean' || named === 'blocked' || named === 'inherit' || named === 'inherit-switch' || named === 'inherit-copilot' || named === 'pick' || named === 'direction' || named === 'columns' || named === 'insight' || named === 'insight-again' || named === 'selection' || named === 'context' || named === 'context-walk' || named === 'panel' || named === 'remote' || named === 'remote-again' || named === 'remote-restart' ? named : 'first';
             })(),
             flowRoot: process.env['DSPATCH_FLOW_ROOT'] ?? '',
           }
@@ -4431,8 +4431,7 @@ function registerLoopGraphIpc(): void {
     // window of its own. Walk definitions are opened from there, over the same pair.
     // DSP-132: the main window's agent is the default for a new review discussion.
     // DSP-152: with the model that agent uses there, the start of the review's agent work.
-    const provider = context.defaultProvider === 'cursor' || context.defaultProvider === 'claude' ? context.defaultProvider : null;
-    return requireReviewWindows().openDiff(provider, provider === null ? '' : context.defaultModel);
+    return requireReviewWindows().openDiff(context.defaultProvider, context.defaultModel);
   });
   ipcMain.handle(OPEN_EXAMPLE_REVIEW, (): Promise<LoopEditorWindowOutcome> => openExampleReview());
 

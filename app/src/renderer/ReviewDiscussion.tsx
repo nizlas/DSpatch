@@ -702,7 +702,7 @@ export function ReviewDiscussion({
                 disabled={agentLocked}
                 onChange={(event) => {
                   const value = event.target.value;
-                  if (value === 'cursor' || value === 'claude') {
+                  if (value === 'cursor' || value === 'claude' || value === 'copilot') {
                     choose(value);
                   }
                 }}

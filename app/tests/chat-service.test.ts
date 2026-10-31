@@ -1278,6 +1278,26 @@ function storeFor(name: string): ConversationStore {
   return new ConversationStore(path.join(makeDir(`${name}-userdata`), 'conversations'));
 }
 
+test('SIMULATED: Copilot can be chosen when its runtime is installed, and is refused by name when not', async () => {
+  const over = (copilotInstalled: boolean): ChatService =>
+    new ChatService({
+      agentChoiceStore: { read: () => null, write: () => undefined },
+      repoRoot: makeDir(`copilot-available-${String(copilotInstalled)}`),
+      send: () => undefined,
+      log: () => undefined,
+      createAdapter: () => {
+        throw new Error('nothing is built by choosing');
+      },
+      copilotInstalled,
+    });
+  const installed = over(true);
+  assert.equal(installed.chooseAgent('copilot'), 'copilot');
+  await installed.dispose();
+  const missing = over(false);
+  assert.throws(() => missing.chooseAgent('copilot'), /Copilot's runtime is not installed/);
+  await missing.dispose();
+});
+
 test('SIMULATED: a conversation survives a restart with its messages in order', async () => {
   const workspace = makeDir('persist-order');
   fs.writeFileSync(path.join(workspace, 'readme.txt'), 'first\n', 'utf8');

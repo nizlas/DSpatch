@@ -12686,11 +12686,15 @@ async function runReviewAgentChoiceScenario(plan: ScriptedRunPlan): Promise<Scri
  *   empty chat says nothing, and DSpatch's own repository opens afterwards.
  * - `inherit-switch`: as `inherit`, with the agent changed while the list is read: the late
  *   list chooses nothing for the agent the person changed to.
+ * - `inherit-copilot`: as `inherit` for a chat on Copilot's default, with Copilot's own
+ *   `copilot-default` row in the list (`DSPATCH_PRESENTATION_MODELS=copilot`).
  */
 async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
   const steps: unknown[] = [];
   const failures: string[] = [];
   const phase = plan.flowPhase === undefined || plan.flowPhase === 'first' ? 'history' : plan.flowPhase;
+  const inherited = phase === 'inherit-copilot' ? 'copilot' : 'claude';
+  const inheritedModel = phase === 'inherit-copilot' ? 'copilot-default' : 'opus';
   const observations: Record<string, unknown> = {
     plan,
     phase,
@@ -12770,9 +12774,10 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     const early = await untilPair(diffId, 'the picker', (reading) => picker(reading) !== undefined && !(picker(reading)?.text ?? '').startsWith('Reading the agents'), 20_000);
     record('picker before the list', { picker: picker(early) });
     if (phase !== 'blocked') {
-      // The account's list is slow here (SIMULATED, DSPATCH_PRESENTATION_LIST_MS): the
-      // inherited choice is shown while it is read, and is still the choice when it arrives.
-      expect(picker(early)?.modelReading !== null && picker(early)?.provider === 'claude', `the picker did not show the inherited choice while the list was read: ${JSON.stringify(picker(early))}`);
+      // The account's list is slow here (SIMULATED, DSPATCH_PRESENTATION_LIST_MS), and the
+      // chat may have read it within the minute it is reused: read or not, the inherited
+      // choice is shown from the start and is still the choice when the list arrives.
+      expect(picker(early)?.provider === inherited, `the picker did not show the inherited choice: ${JSON.stringify(picker(early))}`);
     }
     if (phase === 'inherit-switch') {
       // The person changes the agent while Claude's list is read. Nothing chooses for them.
@@ -12789,7 +12794,7 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     const listed = await untilPair(diffId, "the agent's models", (reading) => picker(reading)?.modelReading === null && picker(reading)?.options !== null, 30_000);
     const choice = picker(listed);
     record('picker with the list', { picker: choice, visible: shown(listed).slice(0, 600) });
-    expect(choice?.provider === 'claude', `the picker shows ${String(choice?.provider)}, not the inherited Claude`);
+    expect(choice?.provider === inherited, `the picker shows ${String(choice?.provider)}, not the inherited ${inherited}`);
     expect(!(choice?.options ?? []).includes('default'), "the provider's `default` alias is offered as a model of its own");
     // One way to start, and it is the picker's: the header control is not a second "Prepare code walks".
     const header = await tryPress(diffId, '[data-ev="pair-prepare-walks"]');
@@ -12824,8 +12829,8 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
       return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
     }
 
-    expect(choice?.model === 'opus' && choice.startDisabled === false, `the inherited Claude/opus cannot be started: ${JSON.stringify(choice)}`);
-    let model = 'opus';
+    expect(choice?.model === inheritedModel && choice.startDisabled === false, `the inherited ${inherited}/${inheritedModel} cannot be started: ${JSON.stringify(choice)}`);
+    let model = inheritedModel;
     if (phase === 'clean') {
       // An explicit change with the keyboard, after the list arrived.
       await pressKey(diffId, '[data-ev="pair-walks-agent-model"]', 'Down');
@@ -12841,9 +12846,9 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     const job = lastJob(done, 'walks');
     const adapter = await reviewAdapterRecord();
     record('walks job', { job, adapter, visible: shown(done).slice(0, 400) });
-    expect(job?.state === 'done' && job.provider === 'claude' && job.model === model, `the walks job did not finish with Claude/${model}: ${JSON.stringify(job)}`);
-    expect(adapter.starts.at(-1)?.provider === 'claude' && adapter.starts.at(-1)?.modelRequested === model, `the adapter's session was not Claude/${model}: ${JSON.stringify(adapter.starts)}`);
-    expect(adapter.built.every((provider) => provider === 'claude'), `an adapter was built for another agent: ${JSON.stringify(adapter.built)}`);
+    expect(job?.state === 'done' && job.provider === inherited && job.model === model, `the walks job did not finish with ${inherited}/${model}: ${JSON.stringify(job)}`);
+    expect(adapter.starts.at(-1)?.provider === inherited && adapter.starts.at(-1)?.modelRequested === model, `the adapter's session was not ${inherited}/${model}: ${JSON.stringify(adapter.starts)}`);
+    expect(adapter.built.every((provider) => provider === inherited), `an adapter was built for another agent: ${JSON.stringify(adapter.built)}`);
     expect(job?.definitionPath !== null && job?.definitionPath !== undefined, 'the walks were not saved');
     await capture(diffId, 'prepared');
 
@@ -12862,6 +12867,12 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
       expect(opened.workspacePath === own, `DSpatch's own repository did not open: ${JSON.stringify(opened)}`);
       await waitFor('the opened repository in the window', () => element('prompt') !== null, 30_000);
       expect(!removedTexts(), 'the empty chat over the own repository shows a removed text');
+      // A login happens outside DSpatch: past the minute a list is reused, the next asking
+      // reads the provider again (the host's log names both readings).
+      await sleep(61_000);
+      const reread = await window.dspatch.listModels('claude');
+      record('model list read again', { models: reread.models.map((row) => row.id), error: reread.error });
+      expect(reread.error === null && reread.models.length > 0, `the list was not read again: ${JSON.stringify(reread)}`);
     }
     return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
   } catch (error) {

@@ -2,7 +2,7 @@
  * Seed a kit for the `pair-review` scenario (DSP-150): a user-data folder whose only
  * project is a workspace with two Git repositories and a folder without Git.
  *
- *     node --import ./scripts/ts-resolve.mjs scripts/seed-pair-kit.mjs <kit-folder> [--agent claude] [--model <id>] [--history <record.json>] [--fixture analysis|marks]
+ *     node --import ./scripts/ts-resolve.mjs scripts/seed-pair-kit.mjs <kit-folder> [--agent claude|copilot] [--model <id>] [--history <record.json>] [--fixture analysis|marks]
  *
  * `--fixture analysis` (DSP-152) makes the workspace the analysis fixture instead: one
  * repository whose change depends on an unchanged definition in another file, with a
@@ -61,8 +61,8 @@ if (FIXTURE !== 'pair' && FIXTURE !== 'analysis' && FIXTURE !== 'marks' && FIXTU
   process.exit(2);
 }
 const CLONE = option('--clone');
-if (AGENT !== 'cursor' && AGENT !== 'claude') {
-  console.error('--agent is cursor or claude');
+if (AGENT !== 'cursor' && AGENT !== 'claude' && AGENT !== 'copilot') {
+  console.error('--agent is cursor, claude or copilot');
   process.exit(2);
 }
 const USERDATA = path.join(KIT, 'userData');
