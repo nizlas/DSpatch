@@ -4262,6 +4262,7 @@ function registerScriptedMethods(): void {
         // DSP-152: which agent the review adapters were built for, and each session's model.
         reviewBuilt: adapterFactory.reviewPresentationBehaviour?.record().built ?? null,
         reviewStarts: adapterFactory.reviewPresentationBehaviour?.record().starts ?? null,
+        reviewSendModels: adapterFactory.reviewPresentationBehaviour?.record().sendModels ?? null,
       },
     };
   });

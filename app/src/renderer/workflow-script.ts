@@ -12387,10 +12387,11 @@ function pickerOf(reading: PairWindowReading | null, ev: string): PickerReading 
 async function reviewAdapterRecord(): Promise<{
   readonly built: readonly string[];
   readonly starts: readonly { readonly provider: string; readonly modelRequested: string }[];
+  readonly sendModels: readonly string[];
 }> {
   const answer = await window.dspatch.reviewWindowCheck({ action: 'read' });
-  const sent = (answer.detail as { adapterSent?: { reviewBuilt?: string[] | null; reviewStarts?: { provider: string; modelRequested: string }[] | null } }).adapterSent;
-  return { built: sent?.reviewBuilt ?? [], starts: sent?.reviewStarts ?? [] };
+  const sent = (answer.detail as { adapterSent?: { reviewBuilt?: string[] | null; reviewStarts?: { provider: string; modelRequested: string }[] | null; reviewSendModels?: string[] | null } }).adapterSent;
+  return { built: sent?.reviewBuilt ?? [], starts: sent?.reviewStarts ?? [], sendModels: sent?.reviewSendModels ?? [] };
 }
 
 /**
@@ -13153,12 +13154,15 @@ async function runAnalysisAccessScenario(plan: ScriptedRunPlan): Promise<Scripte
  * in both windows with marks, a selection explained and a line marked.
  * `again` (restart): both reviews listed as ongoing and resumed without any agent work, the
  * walks back at their place, and one review ended.
+ * `panel-copilot`: Copilot and a model chosen in the Discussion panel, a question from its
+ * own window and one, with another model, docked in the diff (use
+ * `DSPATCH_PRESENTATION_MODELS=copilot`).
  */
 async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
   const steps: unknown[] = [];
   const failures: string[] = [];
   const phase =
-    plan.flowPhase === 'again' || plan.flowPhase === 'direction' || plan.flowPhase === 'columns' || plan.flowPhase === 'insight' || plan.flowPhase === 'insight-again' || plan.flowPhase === 'selection' || plan.flowPhase === 'context' || plan.flowPhase === 'context-walk' || plan.flowPhase === 'panel' || plan.flowPhase === 'remote' || plan.flowPhase === 'remote-again' || plan.flowPhase === 'remote-restart'
+    plan.flowPhase === 'again' || plan.flowPhase === 'direction' || plan.flowPhase === 'columns' || plan.flowPhase === 'insight' || plan.flowPhase === 'insight-again' || plan.flowPhase === 'selection' || plan.flowPhase === 'context' || plan.flowPhase === 'context-walk' || plan.flowPhase === 'panel' || plan.flowPhase === 'panel-copilot' || plan.flowPhase === 'remote' || plan.flowPhase === 'remote-again' || plan.flowPhase === 'remote-restart'
       ? plan.flowPhase
       : 'first';
   const observations: Record<string, unknown> = {
@@ -13978,6 +13982,81 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       await trial('/restart-host');
       await sleep(60_000);
       throw new Error('the windows were not reloaded after the host restarted');
+    }
+
+    if (phase === 'panel-copilot') {
+      // --- Copilot chosen and used in the Discussion panel, in its own window and docked (SIMULATED) ---
+      type Msg = { readonly role: string; readonly status: string; readonly text: string };
+      type Discussion = { readonly messages?: readonly Msg[]; readonly agentChosen?: string; readonly modelChosen?: string };
+      type Row = PairWindowRow & { readonly panel?: { readonly place: string; readonly frameVisible: boolean; readonly viewVisible: boolean; readonly viewWidth: number } | null };
+      const FILE = 'src/domain/sessionRouting.ts';
+      const discussionOf = (reading: PairWindowReading | null): Discussion => (reading as unknown as { discussion?: Discussion | null } | null)?.discussion ?? {};
+      const answersOf = (reading: PairWindowReading | null): readonly Msg[] => (discussionOf(reading).messages ?? []).filter((message) => message.role === 'answer');
+      const cellAt = (line: number): string => `.rv-pair-diff td[data-code-side="target"][data-code-line="${String(line)}"]`;
+      const ask = async (panelId: number, question: string, count: number): Promise<PairWindowReading> => {
+        await check({ action: 'type', id: panelId, selector: '[data-ev="discussion-composer"]', text: question }, 'type the question');
+        await pressKey(panelId, '[data-ev="discussion-composer"]', 'Enter');
+        return untilPair(panelId, `answer ${String(count)}`, (reading) => answersOf(reading)[count - 1]?.status === 'done', 60_000);
+      };
+
+      await startReview(diffId, 'routing', null, [2, 1]);
+      await openFile(diffId, FILE);
+      await check({ action: 'drag', id: diffId, from: { selector: cellAt(191), offset: 8 }, to: { selector: cellAt(191), offset: 13 } }, 'select part of line 191');
+      await untilPair(diffId, 'Ask beside the selection', (reading) => (diffOf(reading) as unknown as { context?: { askOffered?: boolean } }).context?.askOffered === true);
+      await press(diffId, '[data-ev="ask-this"]');
+      const panelId = (await untilWindow('the review panel', (rows) => (rows as readonly Row[]).find((row) => row.view === ('panel' as string) && row.panel?.place === 'window' && row.panel.frameVisible))).id;
+
+      // 1. The opener was Claude; Copilot is chosen with the keyboard, then a model.
+      const opened = await untilPair(panelId, 'the inherited agent', (reading) => discussionOf(reading).agentChosen === 'claude', 20_000);
+      record('panel opened', { agent: discussionOf(opened).agentChosen, model: discussionOf(opened).modelChosen });
+      for (let tries = 0; tries < 3 && discussionOf(await readPairWindow(panelId)).agentChosen !== 'copilot'; tries += 1) {
+        await pressKey(panelId, '[data-ev="discussion-agent-select"]', 'Down');
+      }
+      await untilPair(panelId, "Copilot's models", (reading) => discussionOf(reading).agentChosen === 'copilot' && discussionOf(reading).modelChosen === 'copilot-default', 20_000);
+      await pressKey(panelId, '[data-ev="model-select"]', 'Down');
+      await pressKey(panelId, '[data-ev="model-select"]', 'Down');
+      const chosen = await untilPair(panelId, 'the chosen model', (reading) => discussionOf(reading).modelChosen === 'sonnet', 10_000);
+      record('Copilot and a model chosen', { agent: discussionOf(chosen).agentChosen, model: discussionOf(chosen).modelChosen });
+      await capture(panelId, 'copilot-own-window');
+
+      // 2. In its own window: the question reaches Copilot's session with that model.
+      const prompts0 = (await reviewPromptsSent()).length;
+      const first = await ask(panelId, 'Why is this capped?', 1);
+      const sent = await reviewPromptsSent();
+      const prompt = sent.at(-1) ?? '';
+      const firstAdapter = await reviewAdapterRecord();
+      record('own window', { prompt: prompt.slice(0, 1500), adapter: firstAdapter, answer: answersOf(first)[0]?.text });
+      expect(sent.length === prompts0 + 1, 'the question was not sent once');
+      expect(firstAdapter.starts.at(-1)?.provider === 'copilot' && firstAdapter.starts.at(-1)?.modelRequested === 'sonnet', `Copilot's session did not get sonnet: ${JSON.stringify(firstAdapter.starts)}`);
+      expect(firstAdapter.built.at(-1) === 'copilot' && !firstAdapter.built.includes('cursor'), `the wrong adapter was built: ${JSON.stringify(firstAdapter.built)}`);
+      expect(prompt.includes('Why is this capped?') && prompt.includes(FILE) && prompt.includes('share'), 'the prompt lacks the question, its file or the selection');
+      expect(firstAdapter.sendModels.at(-1) === 'sonnet', `the question was not sent with sonnet: ${JSON.stringify(firstAdapter.sendModels)}`);
+
+      // 3. Docked in the diff: another model, the same discussion.
+      await press(panelId, '[data-ev="panel-dock-diff"]');
+      await untilWindow('the panel docked', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'diff' && row.panel.viewVisible === true && row.panel.viewWidth > 0), 10_000);
+      await pressKey(panelId, '[data-ev="model-select"]', 'Down');
+      const docked = await untilPair(panelId, 'the model changed while docked', (reading) => discussionOf(reading).modelChosen === 'haiku', 10_000);
+      await sleep(800);
+      await capture(panelId, 'copilot-docked-panel');
+      await check({ action: 'screen', id: diffId, label: 'copilot-docked-screen' }, 'see the docked panel');
+      const second = await ask(panelId, 'And when docked?', 2);
+      const secondPrompt = (await reviewPromptsSent()).at(-1) ?? '';
+      const secondAdapter = await reviewAdapterRecord();
+      record('docked', { agent: discussionOf(docked).agentChosen, adapter: secondAdapter, answer: answersOf(second)[1]?.text, messages: (discussionOf(second).messages ?? []).length });
+      expect(discussionOf(docked).agentChosen === 'copilot', 'docking changed the agent');
+      expect((await reviewPromptsSent()).length === prompts0 + 2, 'the docked question was not sent once');
+      expect(secondPrompt.includes('And when docked?'), 'the docked prompt lacks the question');
+      expect(JSON.stringify(secondAdapter.sendModels) === JSON.stringify(['sonnet', 'haiku']), `the docked question was not sent with haiku: ${JSON.stringify(secondAdapter.sendModels)}`);
+      expect((answersOf(second)[1]?.text ?? '').includes('And when docked?'), `the docked answer is not to the docked question: ${JSON.stringify(answersOf(second)[1])}`);
+      expect((discussionOf(second).messages ?? []).length === 4, 'the docked answer is not in the same discussion');
+      expect(secondAdapter.built.every((provider) => provider !== 'cursor'), 'a Cursor adapter was built');
+      await press(panelId, '[data-ev="panel-own-window"]');
+      await untilWindow('the panel in its own window', (rows) => (rows as readonly Row[]).find((row) => row.panel?.place === 'window' && row.panel.frameVisible), 10_000);
+      const kept = await readPairWindow(panelId);
+      expect((discussionOf(kept).messages ?? []).length === 4, 'the discussion was lost moving back');
+      await capture(panelId, 'copilot-back-own-window');
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
     }
 
     if (phase === 'panel') {

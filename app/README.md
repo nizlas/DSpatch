@@ -20,8 +20,8 @@ the packaged artifact, and what a first connected run needs.
 
 ## Prerequisites
 
-- Windows. Linux is prepared but has not been run; see
-  [Linux (prepared, not yet run)](#linux-prepared-not-yet-run). The rest of this
+- Windows. Linux runs from a clone in development mode, with the limits stated in
+  [Linux (Ubuntu status)](#linux-ubuntu-status). The rest of this
   document is written and tested for Windows.
 - Node 24 with npm (tested with Node 24.21.0 and npm 11.19.0). `engines` says
   `^22.18.0 || >=23.6.0`: the floor Node's own documentation gives for what the
@@ -47,14 +47,41 @@ the packaged artifact, and what a first connected run needs.
 No key or secret environment variable is ever set by DSpatch, and none belongs
 in this repository.
 
-## Linux (prepared, not yet run)
+## Linux (Ubuntu status)
 
 The exact commands for Ubuntu, for a host on another machine and for Copilot are in [docs/REMOTE_TRIAL.md](../docs/REMOTE_TRIAL.md).
 
-DSpatch has been prepared to start from a clone on Linux in development mode
-(DSP-131). **None of this has been run on Linux yet**; it is what the code and the
-tool documentation lead us to expect, not an observation. Packaging, installers
-and the `.cmd` hand-over kits are out of scope.
+DSpatch starts from a clone on Linux in development mode (DSP-131). Packaging,
+installers and the `.cmd` hand-over kits are out of scope. What has been shown on
+Ubuntu 24.04 comes from three different kinds of evidence, kept apart here.
+
+**Agent-run tests and UI probes, simulated provider (31 October 2026).** Run by the
+development agent on Ubuntu with X11:
+
+- Build, typecheck and the `review`, `host` and `provider` test groups pass.
+- `fast` and `chat` do not: **ten tests fail on Linux**, the same ten without the
+  later fixes (commit `60c2aa1`). Eight are reported by `fast`, six by `chat`, with
+  four in both. Most rest on Windows paths and `PATHEXT`, CRLF in generated role files
+  or the wording of a save failure; two `WS-1 follow-up (A2)` cases have not been
+  examined individually, and none of the ten has been fixed.
+- Real Electron windows with real input, an isolated `userData` and the presentation
+  adapter in place of every provider: review inheriting Claude and Copilot, walks
+  prepared and opened, DSpatch's own repository opened, the empty chat, a model list
+  read again after a minute, and Copilot and its model chosen in the review's
+  Discussion panel, with questions asked from its own window and docked in the diff.
+
+A simulated provider shows DSpatch's windows, host and records, not what a provider
+does. No provider was contacted in these runs. Chromium did fetch its spellcheck
+dictionary from `redirector.gvt1.com`, which a fresh profile does at start.
+
+**User-reported, real Claude through a Claude Max subscription.** Niclas reported these
+from his own manual trial on Ubuntu; the agent did not run or observe them. The project
+chat read and described a separate project (`llm_learning`), code walks were generated,
+and the latest build at the time worked in that trial.
+
+**Not verified on Linux.** Real Copilot, and remote work between two machines over real
+SSH. The instructions below that were not part of these runs remain what the code and
+the tool documentation lead us to expect.
 
 **Requirements**
 
@@ -100,7 +127,7 @@ and DSpatch's Claude adapter refuses to start with those present rather than
 reuse them. Start `npm run dev` from a new login shell.
 
 **Where things go.** Electron's `userData` is expected at `~/.config/DSpatch`
-(from `productName`; unobserved on Linux), holding `conversations/`,
+(from `productName`), holding `conversations/`,
 `dspatch-projects.json`, `reviews/` and `loop-runs/`. The `%TEMP%` locations named
 elsewhere in this document are the system temporary directory (`os.tmpdir()`,
 normally `/tmp`).
@@ -1690,7 +1717,8 @@ has not yet assessed.
   under `%TEMP%\dspatch-chat` and offers to remove it; nothing is deleted until that
   button is used, and nothing outside that location can be.
 - Installer, signing and automatic updates.
-- Linux testing.
+- A fully passing test suite on Linux: ten tests still fail, see
+  [Linux (Ubuntu status)](#linux-ubuntu-status).
 
 Do not present these features as available before they are implemented.
 

@@ -558,6 +558,8 @@ export function ReviewDiscussion({
           statusLine: (scope().querySelector('[data-ev="discussion-status"]')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
           error: now.error ?? '',
           errorLine: (scope().querySelector('[data-ev="discussion-error"] > span')?.textContent ?? '').trim(),
+          agentChosen: scope().querySelector<HTMLSelectElement>('[data-ev="discussion-agent-select"]')?.value ?? '',
+          modelChosen: scope().querySelector<HTMLSelectElement>('[data-ev="model-select"]')?.value ?? '',
           contextOpen: scope().querySelectorAll('.rv-discussion-context[open]').length,
           note: now.note ?? '',
         };

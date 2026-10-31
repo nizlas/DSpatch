@@ -228,6 +228,9 @@ export class PresentationResumeBehaviour {
   /** DSP-152: the agent and model each session was opened for, as the adapter got them. */
   private readonly starts: { readonly provider: string; readonly modelRequested: string }[] = [];
 
+  /** The model each `send()` reached the adapter with, in order. */
+  private readonly sendModels: string[] = [];
+
   /** DSP-152: which agent the factory was asked to build each time, in order. */
   private readonly built: string[] = [];
 
@@ -290,6 +293,10 @@ export class PresentationResumeBehaviour {
     this.attempts.push({ sessionId, outcome: 'resumed', atUtc: new Date().toISOString() });
   }
 
+  recordSendModel(modelRequested: string): void {
+    this.sendModels.push(modelRequested);
+  }
+
   recordStartSession(config?: Pick<SessionConfig, 'provider' | 'modelRequested'>): void {
     this.startSessionCount += 1;
     if (config !== undefined) {
@@ -316,6 +323,7 @@ export class PresentationResumeBehaviour {
     readonly startSessionCalls: number;
     readonly sent: readonly string[];
     readonly starts: readonly { readonly provider: string; readonly modelRequested: string }[];
+    readonly sendModels: readonly string[];
     readonly built: readonly string[];
   } {
     return {
@@ -325,6 +333,7 @@ export class PresentationResumeBehaviour {
       startSessionCalls: this.startSessionCount,
       sent: [...this.sentTexts],
       starts: [...this.starts],
+      sendModels: [...this.sendModels],
       built: [...this.built],
     };
   }
@@ -548,6 +557,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // The whole text as it arrived, recap and all: what the record reads to say
     // whether a recap was in front of the message.
     this.behaviour.recordSent(prompt);
+    this.behaviour.recordSendModel(state.config.modelRequested);
     let holdMs: number;
     try {
       holdMs = this.behaviour.decideSend(prompt);
