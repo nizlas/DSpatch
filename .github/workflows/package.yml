@@ -1,0 +1,50 @@
+# Build the installers and host packages for one commit (DSP-153). Started by hand; it publishes
+# nothing. The artifacts are what a release would carry: both host packages, their manifest, the
+# .deb and the Windows installer, all from the same commit, because the client carries the
+# manifest and accepts only packages that match it.
+name: package
+on:
+  workflow_dispatch:
+
+jobs:
+  hosts-and-deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+        working-directory: app
+      - run: npm run package:host -- --platform linux
+        working-directory: app
+      - run: node scripts/build-host-package.mjs --platform win32
+        working-directory: app
+      - run: npm run package:client -- --linux deb --x64
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            app/release/*.deb
+            app/release/host/
+  windows-installer:
+    needs: hosts-and-deb
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+        working-directory: app
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: app/release
+      - run: npm run package:client -- --win nsis --x64 -c.win.signAndEditExecutable=true
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: app/release/*.exe

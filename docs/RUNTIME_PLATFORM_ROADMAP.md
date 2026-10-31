@@ -163,6 +163,8 @@ Still on the client side or not yet done, as next steps: a separate host process
 - *History.* On the host only. The client keeps the address and token.
 - *Unattended Maestro* stays out: work started goes on to its end, and nothing new starts without a client.
 
+**Installed, and connecting with `user@machine` (1 November 2026, DSP-153; Niclas's instruction).** Packaging, the host's versions and SSH handling are described in [INSTALL.md](INSTALL.md). The transport, authentication and failure rules above are unchanged: SSH only replaces the person who started the host and held the tunnel.
+
 <!-- pagebreak -->
 
 ## 2. Common architecture and persistence

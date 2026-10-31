@@ -1,5 +1,7 @@
 # Linux, Copilot and remote host trial
 
+*An installed DSpatch connects with `user@machine` and needs none of this: see [INSTALL.md](INSTALL.md). This guide stays for running from a clone and for the Advanced address and token.*
+
 The start guide for the first real trial: the DSpatch client on a laptop, a DSpatch host on another machine that holds the repository and runs Copilot (DSP-111, DSP-148, DSP-131). **None of this has yet run on Linux, against a real Copilot account, over real SSH or across two machines.** Section 7 says exactly what has.
 
 Both machines must run the same commit (section 1). In the commands below, **HOST** is the machine with the repository, **CLIENT** is the laptop.
