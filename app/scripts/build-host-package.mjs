@@ -50,6 +50,7 @@ async function download(url) {
 }
 
 /** The official file, checked against the release's own SHASUMS256.txt, cached between builds. */
+/** @param {string} relative */
 async function nodeFile(relative) {
   const cache = path.join(os.homedir(), '.cache', 'dspatch-build', `node-v${HOST_NODE_VERSION}`);
   fs.mkdirSync(cache, { recursive: true });

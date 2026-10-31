@@ -10139,6 +10139,7 @@ async function runWorkspaceFlowScenario(plan: ScriptedRunPlan): Promise<Scripted
     // The Remote Session form: only the tunnel's local end, and a refusal in a sentence (DSP-111).
     await click('remote-session');
     await waitFor('the Remote Session form', () => element('remote-form') !== null, 5_000);
+    (element('remote-advanced') as HTMLDetailsElement).open = true;
     await typeIntoField('remote-address', '10.0.0.5:22');
     await typeIntoField('remote-token', 'not-a-token');
     await click('remote-connect');

@@ -386,6 +386,8 @@ sleep 3`,
   await attach();
   await until('local again', `${q('remote-session')}!==null`);
 
+  // Up to here no host stopped under a connected client. The next step stops one on purpose.
+  check('never reported as a crash', !clientLog().includes('stopped unexpectedly'));
   // --- A key instead of a password, and a host restarted under a connection ----------------------
   inC(CLIENT, 'tester', "ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519");
   const publicKey = inC(CLIENT, 'tester', 'cat ~/.ssh/id_ed25519.pub');
@@ -416,7 +418,6 @@ sleep 3`,
   const changed = await connect('trial');
   check('a changed host key is refused, with no question', !changed.connected && /changed/.test(changed.seen.at(-1) ?? '') && !changed.asked.some((text) => /yes\/no/.test(text)), changed.seen.at(-1));
   await shot('09-changed-key');
-  check('never reported as a crash', !clientLog().includes('stopped unexpectedly'));
 }
 
 let failure = null;
