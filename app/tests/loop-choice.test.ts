@@ -41,6 +41,8 @@ import { after, describe, it } from 'node:test';
 import { judgeChosenLoop } from '../src/main/loop-choice-check';
 import { openChosenLoop, listChoosableLoops } from '../src/main/loop-definition-choice';
 import { openLoopDefinitionFile } from '../src/main/loop-definition-files';
+import { referencedRoles, resolvedRolesWith } from '../src/main/loop-graph-open';
+import { parseLoopDefinition } from '../src/shared/loop-definition';
 import type { LoopDefinitionListing } from '../src/shared/bridge';
 import {
   describeChoiceMade,
@@ -618,6 +620,26 @@ describe('the next mandate\u2019s loop comes out of the one list', () => {
     const forTheChat = nextMandateLoopFrom(listing, chatLoopDefinition);
     assert.deepEqual(forTheEditor, forTheChat);
     assert.equal(forTheEditor?.key, chatLoopDefinition);
+  });
+
+  it('loads the bundled development loop, whose only finding is the expected notice of where its resources are', () => {
+    const bundled = path.join(repoRoot, '.dspatch', 'loops', 'dspatch-development-loop.loop.json');
+    const parsed = parseLoopDefinition(fs.readFileSync(bundled, 'utf8'));
+    assert.equal(parsed.ok, true);
+    // Expected, and what puts "Reads its resources from …" on the row. Anything else fails here.
+    assert.deepEqual(
+      parsed.findings.map((finding) => [finding.severity, finding.code]),
+      [['notice', 'resource-root-elsewhere']],
+    );
+    const opened = openChosenLoop(openLoopDefinitionFile(bundled));
+    assert.ok(opened.ok, opened.ok ? '' : opened.note);
+    const judged = judgeChosenLoop(opened, 'it was not chosen');
+    assert.equal(judged.runnable, true, judged.note);
+    const roles = referencedRoles(opened.chosen.graphText);
+    assert.ok(roles.length > 0);
+    for (const entry of resolvedRolesWith(roles, opened.chosen.resolveRole)) {
+      assert.notEqual(entry.role, null, `${entry.key} does not resolve`);
+    }
   });
 
   it('offers the bundled development loop without choosing it', () => {
