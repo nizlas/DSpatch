@@ -1,7 +1,7 @@
 import childProcess from 'node:child_process';
 import type { HostLinkState } from '../shared/host-link';
 import { remoteBuild } from '../shared/remote-build';
-import { RemoteLink, type RemoteEndpoint } from './remote-link';
+import { RemoteLink, probeHost, type RemoteEndpoint } from './remote-link';
 import { endRemoteSession, parseRemoteAddress, readRemoteSession, saveRemoteSession } from './remote-session';
 import type { HostLinkEvent } from './host-connection';
 import { createHash } from 'node:crypto';
@@ -443,6 +443,9 @@ function senderBase(): number {
   return senderOffset;
 }
 
+/** How long Connect waits for a host to answer before saying that none did. */
+const HOST_PROBE_MS = 6_000;
+
 /** How long a review window may take to save its view when the host changes under it. */
 const HOST_MOVE_WINDOW_MS = 3_000;
 
@@ -536,13 +539,19 @@ function registerHostLinkIpc(): void {
   ipcMain.on('dspatch:remote-leave', () => {
     void leaveRemoteSession();
   });
-  ipcMain.handle('dspatch:remote-connect', (_event, address: unknown, token: unknown): Promise<string> | string => {
+  ipcMain.handle('dspatch:remote-connect', async (_event, address: unknown, token: unknown): Promise<string> => {
     if (typeof address !== 'string' || typeof token !== 'string' || token.trim() === '') {
       return 'Give the address and the token.';
     }
     const parsed = parseRemoteAddress(address);
     if ('error' in parsed) {
       return parsed.error;
+    }
+    // Before anything here is closed: a tunnel that is down leaves this computer's host as it is.
+    const refused = await probeHost({ endpoint: { ...parsed, token: token.trim() }, build: remoteBuild(app.getAppPath()), log }, HOST_PROBE_MS);
+    if (refused !== null) {
+      log(`Connect stopped: ${refused}`);
+      return refused;
     }
     return moveToHost(
       { ...parsed, token: token.trim() },
@@ -4169,6 +4178,7 @@ function registerIpc(): void {
         : {}),
       ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice' || chatRunScenario === 'walk-start' || chatRunScenario === 'analysis-access' || chatRunScenario === 'review-flow'
         ? {
+            copilotDefault: process.env['DSPATCH_PRESENTATION_MODELS'] === 'copilot-named' ? 'haiku' : 'copilot-default',
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.

@@ -197,7 +197,7 @@ Candidate commit: see the handover report. Versions: Node 24.21, npm 11.19, Elec
 | Managed hooks at work | **Not tried**, and the scripts have not been seen |
 | Chat and loop runs with Copilot through the real windows | **Not tried**. Same adapter; unit-level only |
 | The host chooser | **Clicked once**: it opened on the host and chose a folder. Going into folders is not tried |
-| The Remote Session form | **Connect, Leave and Connect again in a real Linux window** against a host in its own process on the same machine, simulated provider, without a restart. Real SSH with this build, Windows, and the dialog for a host that does not answer are **not tried** |
+| The Remote Session form | **Connect, Leave and Connect again in a real Linux window** against a host in its own process on the same machine, simulated provider, without a restart. Connect to a port with no host, and with a wrong token, answers in the form, stays on this computer and can be tried again. Real SSH with this build and Windows are **not tried**. The dialog when a saved session's host does not answer at start or after a restart is **not tried** |
 
 ## 8. What stands between this and work code
 

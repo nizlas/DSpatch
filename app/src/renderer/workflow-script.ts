@@ -12695,7 +12695,7 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
   const failures: string[] = [];
   const phase = plan.flowPhase === undefined || plan.flowPhase === 'first' ? 'history' : plan.flowPhase;
   const inherited = phase === 'inherit-copilot' ? 'copilot' : 'claude';
-  const inheritedModel = phase === 'inherit-copilot' ? 'copilot-default' : 'opus';
+  const inheritedModel = phase === 'inherit-copilot' ? (plan.copilotDefault ?? 'copilot-default') : 'opus';
   const observations: Record<string, unknown> = {
     plan,
     phase,
@@ -12847,6 +12847,9 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     const job = lastJob(done, 'walks');
     const adapter = await reviewAdapterRecord();
     record('walks job', { job, adapter, visible: shown(done).slice(0, 400) });
+    if (phase === 'inherit-copilot') {
+      expect(adapter.starts.at(-1)?.provider === 'copilot' && adapter.starts.at(-1)?.modelRequested === model, `the adapter did not get ${model}: ${JSON.stringify(adapter.starts)}`);
+    }
     expect(job?.state === 'done' && job.provider === inherited && job.model === model, `the walks job did not finish with ${inherited}/${model}: ${JSON.stringify(job)}`);
     expect(adapter.starts.at(-1)?.provider === inherited && adapter.starts.at(-1)?.modelRequested === model, `the adapter's session was not ${inherited}/${model}: ${JSON.stringify(adapter.starts)}`);
     expect(adapter.built.every((provider) => provider === inherited), `an adapter was built for another agent: ${JSON.stringify(adapter.built)}`);
@@ -14012,8 +14015,19 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       for (let tries = 0; tries < 3 && discussionOf(await readPairWindow(panelId)).agentChosen !== 'copilot'; tries += 1) {
         await pressKey(panelId, '[data-ev="discussion-agent-select"]', 'Down');
       }
-      const models = await untilPair(panelId, "Copilot's models", (reading) => discussionOf(reading).agentChosen === 'copilot' && discussionOf(reading).modelChosen === 'copilot-default', 20_000);
+      const models = await untilPair(panelId, "Copilot's models", (reading) => discussionOf(reading).agentChosen === 'copilot' && discussionOf(reading).modelChosen === (plan.copilotDefault ?? 'copilot-default'), 20_000);
       record("Copilot's default as the control says it", { model: discussionOf(models).modelChosen, shown: discussionOf(models).modelShown });
+      if (plan.copilotDefault === 'haiku') {
+        // A named default: the control names it, and the question still asks for no model.
+        expect(discussionOf(models).modelShown === 'Haiku 5.5 · default', `the default is not named: ${String(discussionOf(models).modelShown)}`);
+        const answered = await ask(panelId, 'Why is this capped?', 1);
+        const onDefault = await reviewAdapterRecord();
+        record('asked on the named default', { adapter: onDefault, answer: answersOf(answered)[0]?.text });
+        expect(onDefault.starts.at(-1)?.provider === 'copilot' && onDefault.starts.at(-1)?.modelRequested === 'copilot-default', `Copilot's session did not stay on its default: ${JSON.stringify(onDefault.starts)}`);
+        expect(onDefault.sendModels.at(-1) === 'copilot-default', `the question did not go on the default: ${JSON.stringify(onDefault.sendModels)}`);
+        expect((answersOf(answered)[0]?.text ?? '') !== '', 'no answer came');
+        return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
+      }
       await pressKey(panelId, '[data-ev="model-select"]', 'Down');
       await pressKey(panelId, '[data-ev="model-select"]', 'Down');
       const chosen = await untilPair(panelId, 'the chosen model', (reading) => discussionOf(reading).modelChosen === 'sonnet', 10_000);

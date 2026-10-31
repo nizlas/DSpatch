@@ -6,7 +6,7 @@ import { after, describe, it } from 'node:test';
 import { serveHost, type HostMethods } from '../src/host/host-server.ts';
 import { RemoteServer } from '../src/host/remote-server.ts';
 import { HostConnection, type HostLinkEvent } from '../src/main/host-connection.ts';
-import { RemoteLink } from '../src/main/remote-link.ts';
+import { RemoteLink, probeHost } from '../src/main/remote-link.ts';
 import { parseRemoteAddress } from '../src/main/remote-session.ts';
 import { decodeFrame, encodeFrame, type RemoteBuild } from '../src/shared/remote-protocol.ts';
 import { isHostCallFailure } from '../src/shared/host-protocol.ts';
@@ -308,4 +308,16 @@ describe('the remote transport', () => {
     const answer = await r.connection.shutdown('host.shutdown', [{}, {}], 500);
     assert.deepEqual(answer, { completed: true, detail: 'left the host running', conversationFiles: null });
   });
+});
+
+it('Connect asks first: a port with nothing behind it answers a sentence, and leaves nothing running', async () => {
+  const silent = net.createServer();
+  await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
+  const { port } = silent.address() as AddressInfo;
+  await new Promise((resolve) => silent.close(resolve));
+  const answer = await probeHost(
+    { endpoint: { host: '127.0.0.1', port, token: 'token' }, build: BUILD, log: () => undefined },
+    300,
+  );
+  assert.match(answer ?? '', /No DSpatch host answered at 127\.0\.0\.1:\d+\..*Nothing was sent, and you are still on this computer\./);
 });

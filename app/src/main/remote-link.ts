@@ -45,6 +45,33 @@ const ACK_MS = 1_000;
 
 const HANDSHAKE_MS = 8_000;
 
+/**
+ * Whether a host answers at this address and accepts this client, before anything here is
+ * given up for it. `null` when it does, otherwise the sentence for the person. Sends no work.
+ */
+export function probeHost(options: RemoteLinkOptions, boundMs: number): Promise<string | null> {
+  const address = `${options.endpoint.host}:${String(options.endpoint.port)}`;
+  return new Promise((resolve) => {
+    const link = new RemoteLink(options);
+    const end = (answer: string | null): void => {
+      clearTimeout(bound);
+      link.kill();
+      resolve(answer);
+    };
+    const bound = setTimeout(() => {
+      end(`No DSpatch host answered at ${address}. Check that the host is running and that the SSH tunnel is up, then try again. Nothing was sent, and you are still on this computer.`);
+    }, boundMs);
+    link.onExit(() => {
+      end(`${link.stderrTail()} You are still on this computer.`);
+    });
+    link.onMessage((message) => {
+      if ((message as { readonly t?: string }).t === 'ready') {
+        end(null);
+      }
+    });
+  });
+}
+
 export class RemoteLink implements HostProcess {
   private readonly options: RemoteLinkOptions;
 
