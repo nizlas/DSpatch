@@ -205,7 +205,7 @@ async function main() {
   }
   docker('network', 'rm', NET);
   docker('network', 'create', NET);
-  docker('run', '-d', '--name', HOST, '--hostname', 'trialhost', '--network', NET, 'dspatch-trial', 'sleep', 'infinity');
+  docker('run', '-d', '--init', '--name', HOST, '--hostname', 'trialhost', '--network', NET, 'dspatch-trial', 'sleep', 'infinity');
   // Docker's default profile forbids what Chromium's sandbox needs to do; the sandbox stays on.
   docker('run', '-d', '--name', CLIENT, '--network', 'host', '--shm-size=512m', '--cap-add', 'SYS_ADMIN', '--security-opt', 'seccomp=unconfined', '--security-opt', 'apparmor=unconfined', 'dspatch-trial', 'sleep', 'infinity');
   inC(

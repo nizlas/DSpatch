@@ -122,6 +122,9 @@ export class SshConnection {
 
   private repairing = false;
 
+  /** The master that holds the forward, so a new master is known to need one. */
+  private forwardedOn: ChildProcess | null = null;
+
   constructor(options: SshConnectionOptions) {
     this.options = options;
     this.runtime = fs.mkdtempSync(path.join(os.tmpdir(), 'dsp-ssh-'));
@@ -332,6 +335,7 @@ export class SshConnection {
         });
         child.on('close', (code) => {
           if (code === 0) {
+            this.forwardedOn = this.master;
             resolve();
           } else {
             reject(new Error(`The tunnel could not be opened: ${stderr.trim()}`));
@@ -519,17 +523,7 @@ export class SshConnection {
             await this.openMaster();
           }
           const { running } = await this.ensureHost(false);
-          const moved = running.port !== this.remotePort;
-          if (moved || (POSIX_CLIENT ? true : this.tunnel === null)) {
-            this.tunnel?.kill();
-            this.remotePort = running.port;
-            await this.forward().catch((error: unknown) => {
-              // Asked for twice on a master that kept it: already there is what we wanted.
-              if (moved || !String(error).includes('forwarding')) {
-                throw error;
-              }
-            });
-          }
+          await this.lead(running.port);
           this.options.log('the SSH connection is back');
           return;
         } catch (error) {
@@ -545,6 +539,35 @@ export class SshConnection {
     } finally {
       this.repairing = false;
     }
+  }
+
+  /** Keep the local port and lead it to where the host listens now. */
+  private async lead(port: number): Promise<void> {
+    if (POSIX_CLIENT) {
+      const master = this.forwardedOn === this.master && this.master !== null;
+      if (master && port === this.remotePort) {
+        return;
+      }
+      if (master) {
+        await this.cancelForward();
+      }
+    } else {
+      if (this.tunnel !== null && port === this.remotePort) {
+        return;
+      }
+      this.tunnel?.kill();
+    }
+    this.remotePort = port;
+    await this.forward();
+  }
+
+  private cancelForward(): Promise<void> {
+    const spec = `127.0.0.1:${String(this.localPort)}:127.0.0.1:${String(this.remotePort)}`;
+    return new Promise((resolve) => {
+      this.spawnSsh(this.args(['-O', 'cancel', '-L', spec, '--', this.options.target])).on('close', () => {
+        resolve();
+      });
+    });
   }
 
   /** End this client's connection and tunnel. The host and its work go on. */
