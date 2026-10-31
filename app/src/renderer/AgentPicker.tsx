@@ -3,23 +3,26 @@
  * and a delegated review. Used by the diff window and the walk window alike.
  *
  * It starts from the choice the host answers for this review: the one made in it before,
- * else the one of the chat or loop editor that opened it. With neither, or with one that
- * cannot be used in this launch, nothing is preselected and the person chooses. DSpatch
- * never picks an agent or a model here on its own, and never falls back to another.
+ * else the one of the chat or loop editor that opened it. An opener on the provider's
+ * default starts from the model the list marks as the default, which is what the chat
+ * shows and runs. With no choice, or one that cannot be used in this launch, nothing is
+ * preselected and the person chooses. A model that is not offered stays named and asks
+ * for a choice: DSpatch never falls back to another agent or model on its own.
  *
  * The models are the chosen agent's own listing, read through the discussion's existing
  * bridge only for that agent, so choosing Claude never asks Cursor anything, and drawn
  * as the chat draws them (`modelRows`: the provider's `default` alias is not a model of
  * its own). A listing that arrives after the agent was changed is ignored. Nothing is
  * started here: the caller starts the work with exactly what is shown. While the start
- * cannot be pressed, the picker says why.
+ * cannot be pressed, the picker says why. A listing that arrives late never replaces a
+ * model the person chose.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 
 import type { ModelListing } from '../shared/bridge';
-import { modelRows } from '../shared/model-rows';
+import { listedDefault, modelRows } from '../shared/model-rows';
 import { isPairError, type ReviewAgents } from '../shared/review-pair';
 
 export interface AgentChoice {
@@ -56,6 +59,14 @@ export function AgentPicker({
   const [startNote, setStartNote] = useState('');
   // Which listing is wanted now: an answer for an agent no longer chosen is dropped.
   const wanted = useRef<'cursor' | 'claude' | 'copilot' | null>(null);
+  // The inherited agent runs on the provider's default, and the list has yet to name it.
+  // Cleared by any choice of the person's, so a late list never replaces one.
+  const followsDefault = useRef(false);
+
+  const chooseModel = (next: string): void => {
+    followsDefault.current = false;
+    setModel(next);
+  };
 
   const listModels = (next: 'cursor' | 'claude' | 'copilot'): void => {
     wanted.current = next;
@@ -67,6 +78,10 @@ export function AgentPicker({
           return;
         }
         setListing(answer);
+        if (followsDefault.current) {
+          followsDefault.current = false;
+          setModel(listedDefault(answer));
+        }
         if (answer.error !== null) {
           setListNote(`${providerName(next)}'s models could not be listed: ${answer.error}`);
         }
@@ -99,6 +114,7 @@ export function AgentPicker({
         }
         setProvider(current.provider);
         setModel(current.model);
+        followsDefault.current = current.model === '';
         listModels(current.provider);
       },
       () => {
@@ -144,7 +160,9 @@ export function AgentPicker({
       : provider === null
         ? ''
         : model.trim() === ''
-          ? 'Choose a model.'
+          ? listing === null
+            ? ''
+            : 'Choose a model.'
           : !offeredOrUnlisted
             ? `${model} is not in ${providerName(provider)}'s list for this account. Choose a model.`
             : '';
@@ -163,7 +181,9 @@ export function AgentPicker({
             // A model belongs to its agent: another agent starts with no model chosen,
             // unless it is the one this review or its opener already chose with one.
             const current = agents.current;
-            setModel(next !== null && current !== null && current.provider === next ? current.model : '');
+            const inherited = next !== null && current !== null && current.provider === next;
+            setModel(inherited ? current.model : '');
+            followsDefault.current = inherited && current.model === '';
             if (next !== null) {
               listModels(next);
             } else {
@@ -189,7 +209,7 @@ export function AgentPicker({
               {model === '' ? `Reading ${providerName(provider)}'s models…` : `${model} (reading ${providerName(provider)}'s models…)`}
             </span>
           ) : rows.length > 0 ? (
-            <select data-ev={`${testId}-model`} value={known ? model : ''} onChange={(event) => setModel(event.target.value)}>
+            <select data-ev={`${testId}-model`} value={known ? model : ''} onChange={(event) => chooseModel(event.target.value)}>
               {!known && (
                 <option value="" disabled>
                   {model === '' ? 'Choose a model' : `${model} (not offered)`}
@@ -202,7 +222,7 @@ export function AgentPicker({
               ))}
             </select>
           ) : (
-            <input data-ev={`${testId}-model`} value={model} placeholder="Model id" onChange={(event) => setModel(event.target.value)} />
+            <input data-ev={`${testId}-model`} value={model} placeholder="Model id" onChange={(event) => chooseModel(event.target.value)} />
           )}
         </label>
       )}

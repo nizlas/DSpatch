@@ -992,7 +992,7 @@ test('rejects a second agent started without the first step\u2019s words', () =>
 });
 
 /* ------------------------------------------------------------------------- */
-/* DSP-72: several working roots, a definition from elsewhere, the refusal     */
+/* DSP-72: several working roots and a definition from elsewhere              */
 /* ------------------------------------------------------------------------- */
 
 const ROOTS_AS_THEY_SHOULD_BE: WorkingRootsObservation = {
@@ -1001,13 +1001,9 @@ const ROOTS_AS_THEY_SHOULD_BE: WorkingRootsObservation = {
   definitionChosen: 'C:/elsewhere/.dspatch/loops/mine.loop.json',
   graphMarkerOnScreen: 'MARKER-outside-loop',
   graphMarkerExpected: 'MARKER-outside-loop',
-  refusalForOwnRepository:
-    'The working folder "DSpatch" cannot be worked in by a run, so nothing was started. ' +
-    'C:/dev/DSpatch',
-  ownRepository: 'C:/dev/DSpatch',
 };
 
-test('accepts two roots, a definition from elsewhere and the refusal naming DSpatch', () => {
+test('accepts two roots and a definition from elsewhere', () => {
   assert.equal(checkWorkingRootsReadHonestly(ROOTS_AS_THEY_SHOULD_BE).failure, null);
 });
 
@@ -1033,22 +1029,6 @@ test('rejects a graph on screen that is not the chosen definition\u2019s own', (
     graphMarkerOnScreen: 'MARKER-something-else',
   });
   assert.match(String(verdict.failure), /is not the one that reached the screen/);
-});
-
-test('rejects a run that was not refused with DSpatch among its roots', () => {
-  const verdict = checkWorkingRootsReadHonestly({
-    ...ROOTS_AS_THEY_SHOULD_BE,
-    refusalForOwnRepository: '',
-  });
-  assert.match(String(verdict.failure), /not confined to the folders it is given/);
-});
-
-test('rejects a refusal that names no folder', () => {
-  const verdict = checkWorkingRootsReadHonestly({
-    ...ROOTS_AS_THEY_SHOULD_BE,
-    refusalForOwnRepository: 'This workspace contains DSpatch, so nothing was started.',
-  });
-  assert.match(String(verdict.failure), /does not name C:\/dev\/DSpatch/);
 });
 
 // --- Never silent while answering (DSP-87) ----------------------------------

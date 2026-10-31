@@ -129,7 +129,7 @@ import {
   resolvedRolesWith,
 } from '../main/loop-graph-open';
 import { createFileRoleResolver } from '../main/loop-graph-roles';
-import { refuseLiveWorkingRoots, type LiveInspection, type SteerableStep } from '../main/loop-live';
+import { type LiveInspection, type SteerableStep } from '../main/loop-live';
 import { uncertainLoopWork, WORKING_COPY_LOCK } from '../main/working-copy-lock';
 import type { DisposalRecord } from '../adapter/claude-agent-sdk-adapter';
 import { defaultLiveModel, runLiveGraph } from '../main/loop-live-run';
@@ -545,7 +545,6 @@ let chatService: ChatService;
 function createChatService(): ChatService {
   return new ChatService({
   repoRoot: probeRepoRoot(),
-  ownRepoRoot,
   send: (event) => {
     sendToMainWindow(AGENT_EVENT, event);
   },
@@ -2711,10 +2710,6 @@ function registerLoopMethods(): void {
         workspacePath,
         pathsAreCaseInsensitive,
       );
-      const refusal = refuseLiveWorkingRoots(workingRoots, path.join(ownRoot, 'app'));
-      if (refusal !== null) {
-        return { kind: 'refused', reason: refusal.message };
-      }
 
       // The chat loop starts from the mandate alone. The Command field belongs to
       // the Build-and-test panel; this handler does not read it, write it, or wait

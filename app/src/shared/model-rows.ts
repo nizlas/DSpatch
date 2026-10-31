@@ -43,3 +43,7 @@ export function modelRows(
   };
 }
 
+/** The model a listing marks as the provider's default, or `''` when it names none. */
+export function listedDefault(listing: ModelListing): string {
+  return listing.error !== null || listing.models.length === 0 ? '' : modelRows(listing, '').value;
+}

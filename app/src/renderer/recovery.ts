@@ -42,12 +42,11 @@ import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
 
 /** What kind of failure this is, which decides what is offered. */
 export type FailureKind =
-  | 'refused-folder'
   /**
    * The generator declining to wipe a directory it did not create (DSP-61).
    *
    * Its own kind rather than `other`, and that is a correction rather than tidying.
-   * The rule below matched only `Refusing to open`, so this refusal fell through to
+   * A rule that matched only `Refusing to open` let this refusal fall through to
    * `other` and the window offered **Try again** — which asks the generator to do the
    * identical thing and be refused identically, the same shape of defect report 008
    * found for a held run. The refusal is unchanged; what is offered beside it is not.
@@ -121,20 +120,6 @@ function classify(message: string): {
   action: RecoveryAction;
   actionNote: string;
 } {
-  if (message.startsWith('Refusing to open')) {
-    return {
-      kind: 'refused-folder',
-      action: 'choose-another-folder',
-      actionNote:
-        // Deliberately not "or a copy of this one somewhere else", which was
-        // written when every refusal meant the chosen folder *was* DSpatch. A
-        // folder that merely contains DSpatch is refused too, and copying that
-        // one elsewhere would copy DSpatch with it. The refusal itself says which
-        // case this is and what to choose instead.
-        'Nothing was opened and nothing was changed. Choose a different folder; ' +
-        'the message above says what was found and what to choose instead.',
-    };
-  }
   if (message.startsWith('Refusing to delete')) {
     return {
       kind: 'refused-generated-folder',

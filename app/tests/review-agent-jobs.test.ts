@@ -358,6 +358,17 @@ describe('the agent and model (after the first live trial)', () => {
     });
   }
 
+  it('an opener on the provider\'s default keeps its agent, with no model named', async () => {
+    const { pairs: own, key, dir } = await freshPair();
+    const jobsHere = service(own, dir, []);
+    for (const model of ['', 'default']) {
+      const opened = jobsHere.agents(key, { provider: 'claude', model });
+      assert.ok(!isPairError(opened));
+      assert.deepEqual(opened.current, { provider: 'claude', model: '', from: 'opener', choosable: true, reason: null });
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it("starts from the opener's agent and model, and from the review's own choice once one is made", async () => {
     const { pairs: own, key, dir } = await freshPair();
     const built: string[] = [];

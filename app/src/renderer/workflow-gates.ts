@@ -1436,24 +1436,13 @@ export interface WorkingRootsObservation {
   readonly graphMarkerOnScreen: string;
   /** What that marker has to be for the definition to be the one from the third place. */
   readonly graphMarkerExpected: string;
-  /** The refusal the run gave when DSpatch's own folder was one of the roots. */
-  readonly refusalForOwnRepository: string;
-  /** DSpatch's own folder, which that refusal has to name. */
-  readonly ownRepository: string;
 }
 
 /**
- * DSP-72, in the window: several roots, a definition from outside them, and the refusal
- * for DSpatch's own folder among them.
+ * DSP-72, in the window: several roots and a definition from outside them.
  *
  * The wording half this gate used to judge - the sidebar's note about what the folders
  * are - was removed with the note (DSP-125); what it said is in app/README.md.
- *
- * **The refusal is the negative control for "the roots reached the run".** DSpatch's own
- * folder is added as a *second* root, never the working copy — so if the window's
- * folders did not reach the run's root list, the run would be composed from the working
- * copy alone, that working copy is an ordinary sample project, and the refusal would not
- * happen at all. A refusal naming DSpatch is only possible if the added folder travelled.
  */
 export function checkWorkingRootsReadHonestly(
   observation: WorkingRootsObservation,
@@ -1488,20 +1477,6 @@ export function checkWorkingRootsReadHonestly(
         `the graph on screen carries "${observation.graphMarkerOnScreen}" rather than ` +
         `"${observation.graphMarkerExpected}", so the definition from outside the working ` +
         'folders is not the one that reached the screen.',
-    };
-  }
-  if (observation.refusalForOwnRepository === '') {
-    return {
-      failure:
-        'a run with DSpatch\u2019s own folder as a second root was not refused. The guard ' +
-        'exists because an agent is not confined to the folders it is given.',
-    };
-  }
-  if (!observation.refusalForOwnRepository.includes(observation.ownRepository)) {
-    return {
-      failure:
-        `the refusal does not name ${observation.ownRepository}. With several folders open, ` +
-        'a refusal that names no folder leaves a person to find the offending one themselves.',
     };
   }
   return { failure: null };

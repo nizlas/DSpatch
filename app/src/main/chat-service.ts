@@ -113,13 +113,6 @@ import {
   type SampleProjectListing,
 } from './sample-projects';
 import { readGitWorkingCopyState } from './git-state';
-import {
-  describeContainingRefusal,
-  describeRefusal,
-  describeUndecidableContainment,
-  findOwnRepository,
-  ownRepositoryInside,
-} from './own-repository';
 import { samePath } from './project-store';
 import {
   stopPosixProcessGroup,
@@ -1008,37 +1001,16 @@ export interface AgentChoiceStore {
   write(provider: StoredSessionProvider): void;
 }
 
+/** How long a provider's model list is reused before it is read again. */
+export const MODEL_LIST_REUSE_MS = 60_000;
+
 export interface ChatServiceOptions {
   /** Whether Copilot's runtime is installed here (DSP-148). */
   readonly copilotInstalled?: boolean;
   /**
    * The boundary the generated sample project and the DSP-1 probe stay outside of.
-   *
-   * **Not read by any refusal.** `DSPATCH_PROBE_REPO_ROOT` can name this value, so
-   * a refusal that read it would let an environment variable decide which folders
-   * DSpatch declines to open — which is what Verifier 004 measured happening, on a
-   * folder that was not DSpatch and could not be told so. Which folders are refused
-   * is decided by content, in `validateProjectFolder`, from this repository's own
-   * markers and from `ownRepoRoot` below.
    */
   readonly repoRoot: string;
-  /**
-   * DSpatch's own working copy, as the process that owns the application path
-   * resolved it by content, or `null` when that resolution found nothing.
-   *
-   * Deliberately **not** `repoRoot`, for the reason above: that value can be named
-   * by `DSPATCH_PROBE_REPO_ROOT` and falls back to the parent of the application
-   * path, and DSP-16 established that no environment variable may widen or weaken
-   * containment; pointing the variable somewhere would otherwise start refusing
-   * every folder above it. This one comes from `ownRepositoryRoot()`, which finds
-   * the repository or admits it cannot.
-   *
-   * The refusal reads it for one question the content walk cannot answer: whether
-   * the chosen folder *contains* DSpatch. Omitted or `null` means unknown, and
-   * unknown refuses nothing — a stated limit for a packaged copy moved out of the
-   * tree it was built in.
-   */
-  readonly ownRepoRoot?: string | null;
   /** Sends one event to the live renderer. */
   readonly send: (event: UiAgentEvent) => void;
   readonly log: (message: string) => void;
@@ -1643,11 +1615,17 @@ export class ChatService {
   /** The models each provider listed in this launch, by its SDK's own discovery. */
   private readonly modelLists = new Map<StoredSessionProvider, readonly ModelInfo[]>();
 
+  /** When each list in {@link modelLists} was read. */
+  private readonly modelListRead = new Map<StoredSessionProvider, number>();
+
   /**
    * DSP-149: the models this provider offers the account, from its adapter's own
    * discovery (Claude: the SDK's `supportedModels()`, no model turn; Cursor:
    * `Cursor.models.list()`). The open session's adapter when it is that provider's;
-   * otherwise one built for the reading and disposed again. Read once per launch.
+   * otherwise one built for the reading and disposed again. What a provider offers
+   * depends on the account, and a login happens outside DSpatch, so a list is only reused
+   * for {@link MODEL_LIST_REUSE_MS}: one kept for the whole launch hid a login until the
+   * next start. A later reading that fails says so; the last list is not shown as current.
    */
   async listModels(provider: StoredSessionProvider): Promise<ModelListing> {
     // One lookup at a time per agent: two controls asking at once share it rather than
@@ -1688,7 +1666,7 @@ export class ChatService {
         ...(model.resolvedId === undefined ? {} : { resolvedId: model.resolvedId }),
       })),
     });
-    if (cached !== undefined) {
+    if (cached !== undefined && Date.now() - (this.modelListRead.get(provider) ?? 0) < MODEL_LIST_REUSE_MS) {
       return toListing(cached);
     }
     const startedAt = Date.now();
@@ -1703,8 +1681,9 @@ export class ChatService {
       const adapter = own ?? this.createAdapterFor(provider);
       try {
         const listed = await adapter.listModels();
-        this.options.log(`model list for ${provider}: ${String(listed.length)} models in ${String(Date.now() - startedAt)} ms`);
+        this.options.log(`model list for ${provider}: ${String(listed.length)} models in ${String(Date.now() - startedAt)} ms: ${listed.map((model) => model.id).join(', ')}`);
         this.modelLists.set(provider, listed);
+        this.modelListRead.set(provider, Date.now());
         const listing = toListing(listed);
         // Said plainly when the list is a stand-in: presentation mode answers for both agents.
         return adapter.id === 'presentation-local'
@@ -3179,51 +3158,6 @@ export class ChatService {
       throw new Error(`${resolved} cannot be read with this account's permissions.`);
     }
 
-    if (process.env['DSPATCH_ALLOW_OWN_REPO'] === '1') {
-      return resolved;
-    }
-    // Two tests, both by content, and **nothing here reads a value that can be
-    // configured**. `this.options.repoRoot` is deliberately absent: it is the
-    // sample generator's and the DSP-1 probe's boundary, `DSPATCH_PROBE_REPO_ROOT`
-    // can name it, and until 15 September 2026 a third refusal tested the chosen
-    // folder against it. Verifier 004 measured what that cost — with the variable
-    // pointed at an ordinary directory, an unrelated project inside it was refused
-    // in a message saying it was inside DSpatch's own working copy, which it was
-    // not, and which no user could act on. An environment variable must not decide
-    // which folders this refuses, in either direction, and the walk below is what
-    // decides it. Removing that test loses nothing the walk covers: a directory the
-    // variable names is refused anyway when it really is DSpatch, by content, with
-    // a message that can name the manifest it read.
-    //
-    // The first walks **up** from the chosen folder and asks each ancestor whether
-    // it is DSpatch's own working copy. That is what makes `<repo>\app` refuse, and
-    // it answers `undecidable` rather than "not DSpatch" when the manifest that
-    // would say cannot be read — see `own-repository.ts` for both holes this closes
-    // and the trade in the undecidable case.
-    //
-    // The second looks the other way, which is the direction the walk is blind to:
-    // whether the chosen folder *contains* DSpatch. Choosing the parent directory
-    // of a DSpatch clone reaches its source just as surely as choosing the clone,
-    // and the walk from that parent goes upwards and never sees it. Its own root
-    // comes from `ownRepositoryRoot()`, by content, for the same reason.
-    const found = findOwnRepository(resolved);
-    if (found.kind !== 'unrelated') {
-      throw new Error(describeRefusal(resolved, found));
-    }
-    // The containing question is answered by identity rather than by spelling, so
-    // it has a third outcome: a directory the filesystem will not identify leaves it
-    // open, and an open question refuses here as it does for a manifest that cannot
-    // be read. Verifier 007 opened the directory above DSpatch three ways — a UNC
-    // path, an 8.3 short name and a junction — and the first two are what this
-    // closes; the junction case is a stated limit, in `own-repository.ts`'s header
-    // and in the README, because finding it needs a search downwards.
-    const contains = ownRepositoryInside(resolved, this.options.ownRepoRoot ?? null);
-    if (contains.kind === 'contains') {
-      throw new Error(describeContainingRefusal(resolved, contains));
-    }
-    if (contains.kind === 'undecidable') {
-      throw new Error(describeUndecidableContainment(resolved, contains));
-    }
     return resolved;
   }
 

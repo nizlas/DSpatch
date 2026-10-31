@@ -2253,7 +2253,7 @@ export interface ScriptedRunPlan {
    */
   readonly resumeHold?: boolean;
   /** DSP-149 `workspace-flow`: which process this is, and the folder its projects are in. */
-  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked' | 'pick' | 'direction' | 'columns' | 'insight' | 'insight-again' | 'selection' | 'context' | 'context-walk' | 'panel' | 'remote' | 'remote-again' | 'remote-restart';
+  readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked' | 'inherit' | 'inherit-switch' | 'pick' | 'direction' | 'columns' | 'insight' | 'insight-again' | 'selection' | 'context' | 'context-walk' | 'panel' | 'remote' | 'remote-again' | 'remote-restart';
   readonly flowRoot?: string;
 }
 

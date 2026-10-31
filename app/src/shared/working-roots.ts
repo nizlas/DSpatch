@@ -3,7 +3,7 @@
  * about them.
  *
  * DSP-72. Until this module a run had one working copy: `SessionConfig.workspacePath`,
- * one `snapshotTree`, one `refuseLiveWorkspace`, one folder in the prompt. A person
+ * one `snapshotTree`, one folder in the prompt. A person
  * who wants to compare two repositories, or read code in one and port it to another,
  * cannot express that with one folder, and DSP-71 deliberately stopped short of
  * inventing what more than one would mean. This is that meaning, as a value.

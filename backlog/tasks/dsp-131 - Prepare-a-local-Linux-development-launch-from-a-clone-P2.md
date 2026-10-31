@@ -4,7 +4,7 @@ title: Prepare a local Linux development launch from a clone (P2)
 status: Review
 assignee: []
 created_date: '2026-10-26 11:08'
-updated_date: '2026-10-26 13:04'
+updated_date: '2026-10-31 15:33'
 labels: []
 dependencies:
   - DSP-129
@@ -35,4 +35,14 @@ Result (run 20261026-200000-linux-claude, candidate 003): PREPARED FOR LINUX, NO
 
 P-2 (low priority, after the first home trial): Linux equivalents of the Windows-only start-review.cmd and start-resume-choice.cmd hand-over kits.
 31 Oct 2026, night session: a code audit found no new launch blocker. Fixed on Windows only: orderly close on signals and a closed channel, dev scripts forwarding stops, path comparison by platform, the snapshot asking its folder about case, the per-user Claude model folder, a program named through the shell left undecided, Linux packaging settings. Remaining are listed in docs/LINUX_HOME_TRIAL.md. Still PREPARED, NOT RUN ON LINUX. Exact Ubuntu commands: docs/REMOTE_TRIAL.md.
+
+31 Oct 2026, fix pass after the first Ubuntu trial with real Claude: inherit agent and model in Prepare code walks, open DSpatch's own repository like any project, a quiet empty chat, and the model list after login. In progress.
+
+Fix pass after the first Ubuntu trial with real Claude (31 Oct 2026, implemented on the Windows checkout; this session had no Linux machine). Niclas's decisions: DSpatch's own repository opens like any project; the empty chat shows no invitation or idle status.
+- Prepare code walks: the chat on Claude's default stores no model, so the opener's choice had an empty model and agentChoiceFrom discarded the agent too. openerChoiceFrom keeps the agent; the picker takes the row the list marks as the default once the list arrives. A person's later choice is never replaced and an unoffered model stays named.
+- Own repository: the refusals in validateProjectFolder and refuseLiveWorkingRoots and DSPATCH_ALLOW_OWN_REPO are removed, for chat and loops. Recognition stays for the application's own loop definitions and example review.
+- Empty chat: the note and the idle line are gone; working status stays.
+- Model list: the list was kept for the whole launch, so a login needed a restart. It is now reused for 60 seconds and the log names the ids. DSpatch removes only the `default` alias. Whether Claude offers more variants after login on Ubuntu is not established.
+Verified on Windows only, simulated provider, isolated userData: typecheck, build, fast, chat 365 pass 1 skipped, review 186, loop-live, loop-chat, loop-choice 164, walk-start phases inherit, inherit-switch, clean, blocked in real windows. Not tried: Linux windows, real Claude, a loop over DSpatch's own repository.
+Left as found: main.ts passes only cursor and claude as the opener, so a Copilot chat gives no inherited agent (out of this pass's scope).
 <!-- SECTION:NOTES:END -->

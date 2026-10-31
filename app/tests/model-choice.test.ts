@@ -14,9 +14,9 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 
 import type { ModelInfo } from '../src/adapter/types.ts';
-import { ChatService, type ChatAdapter } from '../src/main/chat-service.ts';
+import { ChatService, MODEL_LIST_REUSE_MS, type ChatAdapter } from '../src/main/chat-service.ts';
 import type { StoredSessionProvider } from '../src/shared/bridge.ts';
-import { modelRows } from '../src/shared/model-rows.ts';
+import { listedDefault, modelRows } from '../src/shared/model-rows.ts';
 
 const roots: string[] = [];
 after(() => {
@@ -142,4 +142,34 @@ test('the dropdown names the default model and never shows "Provider\'s default"
   for (const result of [none, unknown, noDefault]) {
     assert.ok(result.rows.every((row) => !row.label.includes("Provider's default")));
   }
+});
+
+test('a list is read again after a while, so a login needs no restart', async () => {
+  let offered: readonly ModelInfo[] = MODELS.slice(0, 1);
+  let reads = 0;
+  const { service: chat } = service(() => {
+    reads += 1;
+    return Promise.resolve(offered);
+  });
+  const clock = Date.now;
+  try {
+    assert.equal((await chat.listModels('cursor')).models.length, 1);
+    await chat.listModels('cursor');
+    assert.equal(reads, 1, 'reused at once');
+    offered = MODELS;
+    const later = Date.now() + MODEL_LIST_REUSE_MS + 1;
+    Date.now = () => later;
+    assert.equal((await chat.listModels('cursor')).models.length, MODELS.length);
+    assert.equal(reads, 2);
+  } finally {
+    Date.now = clock;
+  }
+});
+
+test('the default the picker inherits is the row the list marks, never a guess', () => {
+  const base = { provider: 'claude' as const, chosen: '', error: null, source: 'test' };
+  const marked = { id: 'opus', displayName: 'Opus 5.5', resolvedId: 'claude-opus-5-5' };
+  assert.equal(listedDefault({ ...base, models: [{ id: 'default', displayName: 'Default', resolvedId: 'claude-opus-5-5' }, marked] }), 'opus');
+  assert.equal(listedDefault({ ...base, models: [marked] }), '', 'no default named, so the person chooses');
+  assert.equal(listedDefault({ ...base, models: [], error: 'not read' }), '');
 });

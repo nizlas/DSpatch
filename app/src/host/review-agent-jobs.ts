@@ -66,7 +66,7 @@ import {
   type ProposedWalks,
 } from '../shared/review-agent';
 import {
-  agentChoiceFrom,
+  openerChoiceFrom,
   changedLinesOf,
   isPairError,
   lineKey,
@@ -307,7 +307,7 @@ export class ReviewAgentJobs {
     }
     const options = (['claude', 'copilot', 'cursor'] as const).map((provider) => ({ provider, ...this.options.availability(provider) }));
     const fromReview = record.agent;
-    const fromOpener = agentChoiceFrom(opener);
+    const fromOpener = openerChoiceFrom(opener);
     const chosen: { readonly choice: ReviewAgentChoice; readonly from: 'review' | 'opener' } | null =
       fromReview !== null ? { choice: fromReview, from: 'review' } : fromOpener !== null ? { choice: fromOpener, from: 'opener' } : null;
     if (chosen === null) {

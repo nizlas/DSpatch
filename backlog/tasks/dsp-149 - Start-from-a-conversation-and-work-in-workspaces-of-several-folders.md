@@ -4,7 +4,7 @@ title: Start from a conversation and work in workspaces of several folders
 status: Review
 assignee: []
 created_date: '2026-10-27 20:04'
-updated_date: '2026-10-27 22:29'
+updated_date: '2026-10-31 15:33'
 labels: []
 dependencies:
   - DSP-111
@@ -145,4 +145,6 @@ Verified through the real app with the real Claude SDK (isolated user data, exis
 - switch: no agent saved, Claude chosen actively, its list and default shown.
 
 Also passing: the chat and review test groups, and the presentation, review-window and review-discussion scenarios. Not done: switching to Cursor (the account is closed and must not be contacted).
+
+31 Oct 2026: a model list is reused for 60 seconds rather than the whole launch, so a login outside DSpatch needs no restart (DSP-131's fix pass).
 <!-- SECTION:NOTES:END -->

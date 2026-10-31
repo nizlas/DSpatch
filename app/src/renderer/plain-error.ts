@@ -63,8 +63,6 @@ export interface PlainError {
  * and a retry is a new attempt — because DSpatch does not know what went wrong.
  */
 export const SHORT_NEXT_STEP: Record<FailureKind, string> = {
-  'refused-folder':
-    'Nothing was opened or changed. Choose a different folder.',
   'refused-generated-folder':
     'Nothing in that folder was touched. Open the project you want, or use an empty folder.',
   'needs-acknowledgement':

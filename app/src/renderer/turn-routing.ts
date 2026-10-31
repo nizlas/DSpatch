@@ -411,7 +411,8 @@ export interface Activity {
  * What the agent is doing right now, in one line.
  *
  * "Waiting" has to read as waiting, and an unresolved earlier run has to stay
- * visible even while the window is otherwise idle.
+ * visible even while the window is otherwise idle. Idle says nothing (Niclas, 31 October
+ * 2026): the composer is its own invitation.
  */
 export function describeActivity(state: ChatState): Activity {
   const unresolvedRuns = unfinishedSupersededTurns(state).length;
@@ -424,7 +425,7 @@ export function describeActivity(state: ChatState): Activity {
   }
   const turn = currentTurn(state);
   if (turn === null) {
-    return { kind: 'idle', text: 'Waiting for your message.', unresolvedRuns };
+    return { kind: 'idle', text: '', unresolvedRuns };
   }
   if (turn.status === 'awaiting-approval') {
     return {
@@ -434,7 +435,7 @@ export function describeActivity(state: ChatState): Activity {
     };
   }
   if (turn.status !== 'streaming') {
-    return { kind: 'idle', text: 'Waiting for your message.', unresolvedRuns };
+    return { kind: 'idle', text: '', unresolvedRuns };
   }
   if (turn.cancelRequested) {
     return {

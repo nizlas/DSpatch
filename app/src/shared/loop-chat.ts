@@ -41,11 +41,7 @@ export const CHAT_LOOP_GRAPH_ID = 'dspatch-chat-loop';
  * do.
  *
  * So the question this function asks is now only *is this a graph Use loop can walk*,
- * and the answer is yes for every graph a person chose by name. **Which folders may be
- * worked in is a different question and is still asked**, of every loop, by
- * `refuseLiveWorkingRoots` before the walk starts: a run whose roots are, contain or
- * sit inside DSpatch is refused with the offending folder named. That refusal is
- * untouched by this card and is the one carrying the weight.
+ * and the answer is yes for every graph a person chose by name.
  */
 export function describeChosenLoopBinding(
   graph: { readonly id: string; readonly name: string },

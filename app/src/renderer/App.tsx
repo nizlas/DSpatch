@@ -3051,26 +3051,6 @@ function Workbench({
                   {session.restoredHistory.error}
                 </p>
               )}
-              {transcript.length === 0 && session.restoredHistory.messages.length === 0 && (
-                <p className="app__note">
-                  Nothing sent yet. Ask a question to read the code, or request a
-                  change — a change request authorises the agent to edit files in{' '}
-                  <code>{session.workspacePath}</code>
-                  {/*
-                    DSP-72: with more than one folder open this sentence named one of them
-                    and stopped, which read as though the others were out of scope.
-
-                    Its first fix over-corrected into "the working directory of N folders
-                    this run is given", which is false here: this sentence is about an
-                    ordinary message, and an ordinary message gives the agent the working
-                    directory alone. The folders become a run's working folders when a loop
-                    run is going, which is what this now says.
-                  */}
-                  {workspaceView.folders.length > 1
-                    ? `. That is the working directory; the other ${String(workspaceView.folders.length - 1)} ${workspaceView.folders.length === 2 ? 'folder you have open reaches' : 'folders you have open reach'} the agent during a loop run, not on a message like this one. The folder list says what that does and does not mean.`
-                    : '.'}
-                </p>
-              )}
               {/*
                 One column, in the order things happened. Loop turns are separate
                 state — a loop run is not a provider run this window is subscribed

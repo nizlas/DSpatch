@@ -89,7 +89,8 @@ export interface ReviewAgentChoice {
 /**
  * The agent and model a review's agent work starts from (DSP-152 fix after the first
  * live trial): the choice made in this review, else the one of the chat or loop editor
- * that opened it, else none. Never a provider or model DSpatch picks on its own.
+ * that opened it, else none. Never a provider or model DSpatch picks on its own. An
+ * opener on the provider's default has an empty `model`.
  */
 export interface ReviewAgentCurrent extends ReviewAgentChoice {
   /** `review`: chosen in this review; `opener`: taken from the window that opened it. */
@@ -915,6 +916,19 @@ export function jobFrom(raw: unknown): AgentJob | null {
       };
     })(),
   };
+}
+
+/**
+ * The agent of the window that opened a review. Unlike a stored choice its model may be
+ * empty, or the provider's `default` alias: that is an agent running on the provider's
+ * default, which the picker shows as the model the list marks as the default.
+ */
+export function openerChoiceFrom(raw: unknown): ReviewAgentChoice | null {
+  if (!isRecordObject(raw) || (raw['provider'] !== 'cursor' && raw['provider'] !== 'claude' && raw['provider'] !== 'copilot')) {
+    return null;
+  }
+  const model = typeof raw['model'] === 'string' ? raw['model'].trim() : '';
+  return model.length > 200 ? null : { provider: raw['provider'], model: model === 'default' ? '' : model };
 }
 
 /** A stored agent choice, or `null` for none or one that does not name both. */

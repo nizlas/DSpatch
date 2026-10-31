@@ -36,8 +36,6 @@ import {
   describeStoppedCommand,
   emptyInspection,
   formatLiveInspection,
-  refuseLiveWorkingRoots,
-  refuseLiveWorkspace,
   runConfiguredProjectTest,
   runNodeProjectTest,
   stepSessionId,
@@ -2327,72 +2325,6 @@ describe('a run with several working roots', () => {
       'a file outside every root must not appear in a per-root measurement',
     );
     assert.equal(formatLiveInspection(inspection).includes(inspection.rootsNote), true);
-  });
-});
-
-describe('refuseLiveWorkingRoots', () => {
-  it('refuses the run and names which root is DSpatch, when it is not the first', () => {
-    const working = path.join(scratch('refuse-second'), 'duration-repo');
-    generateExperimentRepo(working, repoRoot);
-    const roots = workingRootsFrom([working, repoRoot], working, process.platform === 'win32');
-    const refusal = refuseLiveWorkingRoots(roots, path.join(repoRoot, 'app'));
-    assert.ok(refusal, 'a root that is DSpatch itself must be refused');
-    assert.equal(refusal.refused.length, 1);
-    // The name, so a person with five folders open knows which one to look at, and the
-    // path, because two folders can share a last segment.
-    assert.equal(refusal.refused[0]?.root.path, repoRoot);
-    assert.ok(refusal.message.includes(repoRoot));
-    assert.ok(refusal.message.includes(refusal.refused[0]?.root.name ?? '\u0000'));
-    // The run is refused, not the root: nothing in the message offers to continue
-    // without it, and it says so.
-    assert.match(refusal.message, /nothing was started/);
-    assert.match(refusal.message, /DSpatch does not drop them for you/);
-    // And the folder that is fine is named as fine rather than left ambiguous.
-    assert.match(refusal.message, /The other 1 folder is fine/);
-  });
-
-  it('still refuses DSpatch as a root after the drawing itself became choosable', () => {
-    // DSP-78: describeChosenLoopBinding is ready for our development loop. The
-    // danger that used to be refused by id is now refused here, by folder, and
-    // it must still bite — otherwise removing the id check would let a writing
-    // run open DSpatch's own working copy.
-    const graph = loadLoopGraph(
-      fs.readFileSync(path.join(repoRoot, 'docs', 'loop', 'graphs', 'dspatch-development-loop-runnable.graph.json'), 'utf8'),
-      { resolveRole: createFileRoleResolver(repoRoot), connectedTargets: ['cursor'] },
-    );
-    assert.equal(graph.ok, true);
-    if (graph.ok) {
-      const binding = describeChosenLoopBinding(graph.graph);
-      assert.equal(binding.ready, true);
-    }
-    const roots = workingRootsFrom([repoRoot], repoRoot, process.platform === 'win32');
-    const refusal = refuseLiveWorkingRoots(roots, path.join(repoRoot, 'app'));
-    assert.ok(refusal, 'DSpatch as a working root must still be refused');
-    assert.equal(refusal.refused[0]?.root.path, repoRoot);
-  });
-
-  it('allows a run whose every root is an ordinary folder', () => {
-    const parent = scratch('refuse-none');
-    const working = path.join(parent, 'duration-repo');
-    generateExperimentRepo(working, repoRoot);
-    const second = path.join(parent, 'other-repo');
-    fs.mkdirSync(second, { recursive: true });
-    const roots = workingRootsFrom([working, second], working, process.platform === 'win32');
-    assert.equal(refuseLiveWorkingRoots(roots, path.join(repoRoot, 'app')), null);
-  });
-});
-
-describe('refuseLiveWorkspace', () => {
-  it('refuses DSpatch itself as a live workspace', () => {
-    const message = refuseLiveWorkspace(repoRoot, path.join(repoRoot, 'app'));
-    assert.ok(message, 'DSpatch must be refused');
-    assert.match(message, /Refusing to open/);
-  });
-
-  it('allows an isolated experiment repository', () => {
-    const workspace = path.join(scratch('allow'), 'duration-repo');
-    generateExperimentRepo(workspace, repoRoot);
-    assert.equal(refuseLiveWorkspace(workspace, path.join(repoRoot, 'app')), null);
   });
 });
 

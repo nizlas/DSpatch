@@ -134,7 +134,6 @@ test('the next step matches the action the window actually offers', () => {
   // A short sentence telling someone to do something the button does not do would be
   // worse than the long one it replaced, so the two are checked against each other.
   const cases: readonly { readonly message: string; readonly says: RegExp }[] = [
-    { message: 'Refusing to open C:\\work\\DSpatch', says: /Choose a different folder/ },
     { message: 'No session is open, so there is nothing to send.', says: /Open a project first/ },
     { message: 'Cursor adapter operation "send" failed: TypeError: fetch failed', says: /check the connection again/ },
   ];

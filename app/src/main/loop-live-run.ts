@@ -20,7 +20,6 @@ import {
   emptyInspection,
   formatLiveInspection,
   readLiveUsage,
-  refuseLiveWorkingRoots,
   DEFAULT_GATE_COMMAND_TIMEOUT_MS,
   runConfiguredProjectTest,
   writeInspectionJson,
@@ -214,15 +213,6 @@ export function runLiveGraph(graph: LoopGraph, options: Omit<LiveCliOptions, 'gr
     workspacePath,
     process.platform === 'win32',
   );
-
-  const appPath = path.join(options.repoRoot, 'app');
-  // Every root, not just the working copy. A run with DSpatch's own folder as its
-  // second root is the same mistake the guard has always refused, reached by the route
-  // this card opens.
-  const refusal = refuseLiveWorkingRoots(roots, appPath);
-  if (refusal !== null) {
-    return Promise.reject(new Error(refusal.message));
-  }
 
   // DSP-147: the folders the run will actually give its agents, offered to the caller's
   // working-copy lock. A folder of its own is not proof of isolation: a workspace that

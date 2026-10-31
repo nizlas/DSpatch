@@ -4832,48 +4832,12 @@ async function runSeveralWorkingRootsScenario(
     // The sidebar's note about what these folders are was removed (DSP-125); what it
     // said is in app/README.md, so there is no note on screen to read here any more.
 
-    // --- Send, with DSpatch's own folder among the roots ------------------------
-    // Refused before any adapter exists, so this costs nothing. It is also the only
-    // step here that can show the window's folders becoming the run's roots: the
-    // working copy is an ordinary sample project, so a refusal naming DSpatch can only
-    // come from the folder that was added.
-    const ownRepository = plan.ownRepositoryPath ?? '';
-    let refusal = '';
-    if (ownRepository === '') {
-      failures.push('DSpatch\u2019s own folder was not supplied, so the guard was not tried.');
-    } else {
-      await window.dspatch.addFolderToWorkspace(ownRepository);
-      const outcome = await window.dspatch.startChatLoopRun({
-        runId: `roots-refusal-${newNonce()}`,
-        mandate: 'This run must be refused before anything is started.',
-        definitionKey: outsideKey,
-      });
-      refusal =
-        outcome.kind === 'refused'
-          ? outcome.reason
-          : outcome.kind === 'failed'
-            ? `(failed rather than refused) ${outcome.note}`
-            : '(the run was accepted, which is the defect)';
-      observations['refusalWithOwnRepository'] = { outcomeKind: outcome.kind, reason: refusal };
-      record('own-repository-refused', { outcomeKind: outcome.kind });
-      if (outcome.kind !== 'refused') {
-        failures.push(
-          'a run with DSpatch\u2019s own working copy among its roots was not refused. ' +
-            `The outcome was "${outcome.kind}".`,
-        );
-      }
-      // Put the workspace back, so the window is left as the trial found it.
-      await window.dspatch.removeFolderFromWorkspace(ownRepository);
-    }
-
     const verdict = checkWorkingRootsReadHonestly({
       rootsGiven,
       workingRoot: workingFolder,
       definitionChosen: outsideKey,
       graphMarkerOnScreen: String(onScreen['graphTextMarker'] ?? ''),
       graphMarkerExpected: plan.rootsGraphMarker ?? '',
-      refusalForOwnRepository: refusalAsRead(refusal),
-      ownRepository,
     });
     observations['workingRoots'] = { verdict };
     if (verdict.failure !== null) {
@@ -4895,17 +4859,6 @@ async function runSeveralWorkingRootsScenario(
     };
     return finish(CHAT_EXIT.workingRootsReadWrong, steps, failures, observations);
   }
-}
-
-/**
- * The refusal as the gate reads it.
- *
- * Anything that was not a refusal becomes the empty string, which the gate reports as
- * "not refused". The parenthesised forms above are for the observations, where knowing
- * *how* it failed to refuse is worth keeping.
- */
-function refusalAsRead(refusal: string): string {
-  return refusal.startsWith('(') ? '' : refusal;
 }
 
 function verdictExitCode(tree: GateVerdict, inert: GateVerdict): number {
@@ -12728,6 +12681,11 @@ async function runReviewAgentChoiceScenario(plan: ScriptedRunPlan): Promise<Scri
  * - `blocked`: with a model the account's list does not offer; the picker must say so and
  *   not start; once a model is chosen with the keyboard, the host fails the request
  *   (SIMULATED), and the window must say so.
+ * - `inherit`: no model was chosen, so the chat runs on Claude's default. The picker starts
+ *   from Claude and, once the slow list arrives, the model it marks as the default. The
+ *   empty chat says nothing, and DSpatch's own repository opens afterwards.
+ * - `inherit-switch`: as `inherit`, with the agent changed while the list is read: the late
+ *   list chooses nothing for the agent the person changed to.
  */
 async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunReport> {
   const steps: unknown[] = [];
@@ -12782,6 +12740,12 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     // --- The main window, as a person uses it ---------------------------------------------------
     await press(MAIN, '[data-ev="open-project-0"]');
     await waitFor('a session in the window', () => textOf('session-id') !== '' && element('prompt') !== null, 60_000);
+    const removedTexts = (): boolean => /Nothing sent yet|Waiting for your message/.test(document.body.innerText);
+    if (phase === 'inherit') {
+      record('the empty chat', { status: textOf('active-status'), prompt: element('prompt') !== null });
+      expect(!removedTexts(), 'the empty chat still shows a removed text');
+      await capture(MAIN, 'empty-chat');
+    }
     await press(MAIN, '[data-ev="open-review"]');
     const diffId = (await untilWindow('a diff window', (rows) => rows.find((row) => row.view === 'diff'))).id;
     await pastOngoing(diffId);
@@ -12809,6 +12773,18 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
       // The account's list is slow here (SIMULATED, DSPATCH_PRESENTATION_LIST_MS): the
       // inherited choice is shown while it is read, and is still the choice when it arrives.
       expect(picker(early)?.modelReading !== null && picker(early)?.provider === 'claude', `the picker did not show the inherited choice while the list was read: ${JSON.stringify(picker(early))}`);
+    }
+    if (phase === 'inherit-switch') {
+      // The person changes the agent while Claude's list is read. Nothing chooses for them.
+      await pressKey(diffId, '[data-ev="pair-walks-agent-provider"]', 'Down');
+      const changed = await untilPair(diffId, "the other agent's models", (reading) => picker(reading)?.modelReading === null, 30_000);
+      await sleep(2_000);
+      const after = picker(await readPairWindow(diffId));
+      record('agent changed while the list was read', { picker: after });
+      expect(picker(changed)?.provider !== 'claude' && after?.provider === picker(changed)?.provider, `the late list changed the agent: ${JSON.stringify(after)}`);
+      expect(after?.model === '' || after?.model === null, `a model was chosen for the person: ${JSON.stringify(after)}`);
+      expect(after?.startDisabled === true, 'the start can be pressed with no model chosen');
+      return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
     }
     const listed = await untilPair(diffId, "the agent's models", (reading) => picker(reading)?.modelReading === null && picker(reading)?.options !== null, 30_000);
     const choice = picker(listed);
@@ -12877,6 +12853,16 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     record('walk opened', { walk: walkOpen.walk, visible: shown(walkOpen).slice(0, 300) });
     expect(walkOpen.walk?.kind === 'opened', 'the prepared walk did not open');
     await capture(walk.id, 'walk');
+    if (phase === 'inherit') {
+      // DSpatch's own repository opens like any other project (simulated provider, nothing sent).
+      const own = plan.ownRepositoryPath ?? '';
+      expect(own !== '', 'DSpatch\u2019s own repository was not found from where this runs');
+      const opened = await window.dspatch.startChatSession({ kind: 'folder', path: own });
+      record('own repository', { opened: opened.workspacePath });
+      expect(opened.workspacePath === own, `DSpatch's own repository did not open: ${JSON.stringify(opened)}`);
+      await waitFor('the opened repository in the window', () => element('prompt') !== null, 30_000);
+      expect(!removedTexts(), 'the empty chat over the own repository shows a removed text');
+    }
     return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));

@@ -123,17 +123,10 @@ export function describeGateRunner(graphId: string): string {
  *
  * `FORBIDDEN_LIVE_GRAPH_ID` was `dspatch-development-loop`, and it refused that drawing
  * **by its id, whatever folder was open**. That is broader than the danger it was
- * standing in for: what must never happen is a writing run over DSpatch's own working
- * copy, and which folders a run works in is a question about the run, not about the
- * picture. Refusing the drawing meant our own development loop could not be chosen even
- * to run against somebody else's project, which is precisely what the standalone
+ * standing in for: which folders a run works in is a question about the run, not about
+ * the picture. Refusing the drawing meant our own development loop could not be chosen
+ * even to run against somebody else's project, which is precisely what the standalone
  * definition is for.
- *
- * What refuses DSpatch now is `refuseLiveWorkingRoots`, asked of every loop about every
- * root the run was given, and it names the folder. It is strictly narrower and strictly
- * stronger: narrower because it lets a legitimate drawing run somewhere legitimate,
- * stronger because a graph with a different id has never been able to get past it
- * either.
  */
 
 /**
@@ -158,8 +151,7 @@ export const ORDINARY_CANVAS_WALK: readonly DryRunDecision[] = [
  * refusal that still exists somewhere, and the next person looking for what refuses our
  * development loop would look here and find a plausible answer that is not the one.
  * Both remaining states are refusals *of a binding* — this drawing has no live prompt —
- * and neither is a refusal about a folder, which is the other question and is asked
- * separately by `refuseLiveWorkingRoots`.
+ * and neither is a refusal about a folder.
  */
 export type LiveBindingState = 'ready' | 'unbound';
 

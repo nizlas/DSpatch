@@ -315,94 +315,10 @@ status and takes a content-addressed baseline snapshot of the files, which is
 what every later diff is measured against, so a change you make outside the
 window is as visible as one the agent makes.
 
-DSpatch **refuses to open its own working copy**, and the refusal is by content
-rather than by path. From the folder you chose it walks **up** through the parent
-directories and asks each one whether it is DSpatch's own repository —
-`app/package.json` naming the project `dspatch`, with a `docs/VISION.md` beside
-it. So the repository root is refused, and so is any folder inside it, `DSpatch\app`
-included, from anywhere on disk and with nothing opened and nothing changed. No
-environment variable is involved and none needs to be set: the check works the
-same from source and from the packaged artifact. That is now true of the code as
-well as of this paragraph. A fourth refusal survived beside these three until
-15 September 2026, comparing the folder you chose against a path DSpatch had been
-*told* was its own — a path `DSPATCH_PROBE_REPO_ROOT` can set. Pointed at an
-ordinary directory, it refused an unrelated project inside it while claiming the
-project was inside DSpatch's working copy, which nobody could act on because it
-was not true. It is gone: setting that variable cannot add a folder to what is
-refused or remove one from it. The reason is DSP-1's
-measurement that the agent is not confined to the folder it is given: a writing
-run in DSpatch's own tree could edit DSpatch while it runs. Containment is not
-built yet. Use a copy elsewhere.
-
-**A folder that *contains* DSpatch is refused as well.** The walk above looks
-upwards, so it cannot see a clone sitting below the folder you chose — choosing
-your whole `development` directory would hand the agent `development\DSpatch`
-along with everything else under it, which is opening DSpatch the long way round.
-So DSpatch also refuses a folder that its own working copy is inside, at any
-depth. That refusal names where DSpatch sits within the folder you chose and
-points you at opening the specific project instead, because someone who keeps
-every project under one parent directory will meet it while doing nothing wrong.
-It answers this from where the application is running rather than from the
-contents of the folder you chose, and it finds that by the same content walk, so
-no environment variable is involved here either.
-
-Which folders are the same folder is a question for the filesystem rather than for
-the text of the paths. One directory can be written several ways —
-`C:\Users\you\dev`, the same directory over a share as
-`\\localhost\C$\Users\you\dev`, or by its 8.3 short name `C:\Users\you\DEV~1` —
-and until 15 September 2026 every one of those spellings opened the directory above
-DSpatch, because the two paths were compared as text and text that shares no prefix
-looked like two different places. That was not a corner: DSpatch's own folder dialog
-hands back a share path exactly as you typed it, and a network share is an ordinary
-place to keep a project. The two are now compared by the identity the filesystem
-reports for them, so a spelling nobody has thought of costs nothing. Links are the
-exception, and the paragraph below says so.
-
-**When DSpatch cannot tell, it refuses.** If the `app/package.json` that would
-identify a folder cannot be read or is not valid JSON, the folder is refused
-rather than opened, and the refusal names the file, quotes why it could not be
-read and says what to do about it. A check that lets a folder through because the
-marker it reads is unreadable is worse than no check, since it is trusted — and
-this is not hypothetical: an agent overwrote that file earlier in this project's
-own development. So that this cannot refuse your own project because its manifest
-is half-typed, refusing on an unreadable manifest also needs one of DSpatch's
-other distinctive files to be present — `AGENTS.md`, `BACKLOG.md`,
-`docs/DEVELOPMENT_LOOP.md` or `backlog/tasks/`. This, the folder inside DSpatch and
-the folder containing it were all three holes in the refusal until 15 September
-2026, and the tests fail if any of them returns.
-
-**The reach, stated exactly, because a guard is only worth what it covers.** It
-identifies a tree by `app/package.json` plus `docs/VISION.md`, so a copy with
-either of those removed is not recognised at all. The refusal for a folder that
-*contains* DSpatch needs the running application to be able to resolve its own
-location, which it can from source and from the packaged artifact inside the tree
-it was built in; a copy of that artifact moved out of its tree cannot, and then
-that particular refusal cannot fire, although refusing DSpatch itself and every
-folder inside it still does. **Links are not followed**: a folder that reaches
-DSpatch through a junction or a symlink *inside* it — an ordinary project with a
-`vendor\dspatch` that points at this repository — is not recognised as containing
-DSpatch, and opening it is allowed even though the agent can reach DSpatch's source
-through the link. Choosing the link itself, or any folder under it, is refused,
-because the walk upwards reads DSpatch's markers through it. Recognising the folder
-*above* such a link would mean searching downwards through everything under the
-folder you chose, and every question here is answered by looking up; that is work
-with a cost nobody has measured yet, so this is a limit and not a claim. One more:
-if the filesystem will not say whether two directories are the same directory,
-DSpatch refuses and names the directory it could not identify, rather than treating
-silence as a clean answer. Whether the running application could resolve its own
-location — the state the containing refusal depends on — is printed at startup, so
-it is checkable rather than assumed:
-
-```text
-[dspatch] ownRepo=C:\Users\you\development\DSpatch generatorBoundary=C:\Users\you\development\DSpatch
-```
-
-`ownRepo=none` is the case above where a moved artifact cannot resolve its own
-location. And the guard decides which project may be opened, not what
-the agent does once inside one: DSP-1 measured that the agent reads and writes
-outside the folder it is given, so this is a guard against pointing the tool at
-itself, not a boundary. `DSPATCH_ALLOW_OWN_REPO=1` lifts it for someone who means
-to.
+DSpatch opens its own repository like any other project, under the same rules for
+reading, changes and your mandate (Niclas's decision, 31 October 2026). DSP-1's
+measurement still holds: the agent is not confined to the folder it is given, so a
+writing run in DSpatch's own tree can edit the DSpatch that is running.
 
 **A turn** streams into the window as it arrives, with the model and the token
 count beneath it when the provider reports one. Monetary cost always reads
@@ -607,15 +523,6 @@ Everything below happens in one window, over one working copy, in one session.
    identifier derived from the bytes. Your own uncommitted work is therefore
    established before the agent exists and can never be attributed to it later.
    Projects you have opened are remembered and offered on the next launch.
-
-   **DSpatch refuses to open its own working copy, any folder inside it, and any
-   folder that contains it.** The repository containing the folder you chose is
-   resolved by walking up from it, and a manifest that cannot be read makes the
-   check refuse rather than allow. DSP-1 measured that the agent is not confined
-   to the folder it is given, so a writing run here could edit DSpatch while it
-   is running. See
-   *Opening a project* above for exactly how far this reaches and what it does
-   not cover. `DSPATCH_ALLOW_OWN_REPO=1` overrides it for someone who means to.
 
    *Use a generated sample project* is still there: it creates a small
    disposable repository **outside** this repository, in a folder of its own under
@@ -1119,7 +1026,6 @@ with the Claude SDK substituted; **no Claude turn has run through the window**.
 | Variable | Purpose |
 | --- | --- |
 | `DSPATCH_PROJECT_PATH` | A project to offer in the list at startup, for an automated run or a shortcut. Distinct from `DSPATCH_CHAT_WORKSPACE`, which still means the generated sample. |
-| `DSPATCH_ALLOW_OWN_REPO` | Set to `1` to lift the refusal to open DSpatch's own working copy. Read the warning in step 2 first. |
 | `DSPATCH_CHAT_WORKSPACE` | Where the generated sample working copy goes. Must be outside this repository. |
 | `DSPATCH_NODE_PATH` | The `node` executable DSpatch offers when it suggests a command, and the one it reports in the session details. Otherwise the first `node.exe` on `PATH` is used. The command you actually run is whatever is in the field. |
 | `DSPATCH_CHAT_MODEL` | Model requested from Cursor. Default `claude-haiku-4-5`. |
@@ -1748,10 +1654,7 @@ has not yet assessed.
   confined to the folder it is given: it read and wrote a file outside the
   working copy and ran a shell command that did the same, with no approval
   request. Choosing a folder scopes what DSpatch *watches*, not what the agent
-  *can reach*. This is why DSpatch refuses to open its own working copy — and
-  that refusal decides which project may be **chosen**, which is all it claims
-  to do. It does not restrict where an agent writes once a project is open, and
-  DSP-16 deliberately left that larger question alone.
+  *can reach*.
 - **Git-ignored files.** They are outside the baseline, so a change to one is
   invisible to the diff. The panel says so; nothing detects it.
 - **Semantic diffs, a custom editor, a terminal emulator, and commit, push or
@@ -1799,7 +1702,7 @@ src/main/                The Electron main process (the client) and the services
   host-connection.ts     The client's end of the process channel: starts the host, answers every call once, says when it is lost.
   launch-mode.ts         How this launch was asked to run (scripted run, presentation mode), read alike by both processes.
   chat-service.ts        Owns the adapter, the working copy, the diff and the command runner.
-  own-repository.ts      Recognises DSpatch's own working copy from any folder inside or above it, and refuses when it cannot tell.
+  own-repository.ts      Recognises DSpatch's own working copy from any folder inside it, for what the application reads of itself. It refuses nothing.
   git-state.ts           Revision, branch and the already-modified files, read before the agent exists.
   workspace-baseline.ts  The content baseline, its snapshot identity and the retained bytes.
   text-diff.ts           Unified diffs, and the reason when there cannot be one.

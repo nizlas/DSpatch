@@ -271,8 +271,8 @@ export function noSessionRouteNote(
 }
 
 /**
- * The status beside the composer. "Waiting for your message" is false while no
- * agent session is open - a message is held back - so that state gets its own line,
+ * The status beside the composer. An idle window says nothing, which would hide that no
+ * agent session is open and a message is held back, so that state gets its own line,
  * unless something (a loop run, which has sessions of its own) is actually running,
  * or *Use loop* is on: Enter then starts a loop run, which opens sessions of its own,
  * so "history only" would not be true of the next press (DSP-121 review S3).

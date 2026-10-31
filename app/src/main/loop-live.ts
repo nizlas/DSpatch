@@ -38,14 +38,6 @@ import type {
   UsageReading,
 } from '../adapter/types';
 import {
-  describeContainingRefusal,
-  describeRefusal,
-  describeUndecidableContainment,
-  findOwnRepository,
-  ownRepositoryInside,
-  ownRepositoryRoot,
-} from './own-repository';
-import {
   diffSnapshots,
   snapshotTree,
   type ChangedFile,
@@ -85,7 +77,6 @@ import {
 } from '../shared/loop-results';
 import {
   describeUnobservedOutside,
-  primaryRootOf,
   providerRootPathsFor,
   workingRootsFrom,
   type WorkingRoot,
@@ -894,98 +885,6 @@ export function emptyInspection(
 export function stepSessionId(runId: string, nodeId: string): DspatchSessionId {
   const safe = (text: string): string => text.replace(/[^A-Za-z0-9._-]+/g, '-');
   return `dsp-session-${safe(runId)}--${safe(nodeId)}`;
-}
-
-/**
- * Refuse a live workspace that is, contains, or sits inside DSpatch.
- *
- * The own-repository guard exists because DSP-1 measured that an agent is not
- * confined to the folder it is given. A live writing run against DSpatch itself
- * is the ordinary mistake this increment must not make.
- */
-export function refuseLiveWorkspace(workspacePath: string, appPath: string): string | null {
-  const resolved = path.resolve(workspacePath);
-  const found = findOwnRepository(resolved);
-  if (found.kind !== 'unrelated') {
-    return describeRefusal(resolved, found);
-  }
-  const ownRoot = ownRepositoryRoot(appPath);
-  const contains = ownRepositoryInside(resolved, ownRoot);
-  if (contains.kind === 'contains') {
-    return describeContainingRefusal(resolved, contains);
-  }
-  if (contains.kind === 'undecidable') {
-    return describeUndecidableContainment(resolved, contains);
-  }
-  return null;
-}
-
-/** A root a run may not work in, and the guard's own reason for refusing it. */
-export interface RefusedRoot {
-  readonly root: WorkingRoot;
-  readonly reason: string;
-}
-
-/**
- * Refuse a run whose roots include DSpatch's own working copy, naming the root.
- *
- * **The run is refused, not the root.** DSP-71 left this decision open, and the answer
- * follows from why the guard exists at all: it is here because DSP-1 measured that the
- * agent is *not* confined to the folders it is given. Quietly dropping the offending
- * root and starting anyway would leave the agent free to reach that folder regardless,
- * so a refusal that only removed it from the list would refuse nothing while reading as
- * though it had protected something. It would also silently change the assignment â€” a
- * person who asked to port code from A into B and got a run over B alone has been given
- * a different job with no opportunity to disagree.
- *
- * **And the refusal names the root.** With five folders open, "this workspace contains
- * DSpatch" sends a person to look through five folders for the one that does. Every
- * offending root is named â€” the guard is checked against all of them rather than
- * stopping at the first â€” because finding one and fixing it, only to meet the same
- * message about the next, is the same walk twice.
- */
-export function refuseLiveWorkingRoots(
-  roots: readonly WorkingRoot[],
-  appPath: string,
-): { readonly refused: readonly RefusedRoot[]; readonly message: string } | null {
-  const refused: RefusedRoot[] = [];
-  for (const root of roots) {
-    const reason = refuseLiveWorkspace(root.path, appPath);
-    if (reason !== null) {
-      refused.push({ root, reason });
-    }
-  }
-  if (refused.length === 0) {
-    return null;
-  }
-  const primary = primaryRootOf(roots);
-  const opening =
-    refused.length === 1
-      ? `The working folder "${refused[0]?.root.name ?? ''}" cannot be worked in by a run, ` +
-        `so nothing was started.`
-      : `${String(refused.length)} of this run's ${String(roots.length)} working folders ` +
-        `cannot be worked in, so nothing was started.`;
-  const named = refused
-    .map(
-      (entry) =>
-        `\u2022 ${entry.root.name}${entry.root.primary ? ' (the working directory)' : ''} \u2014 ` +
-        `${entry.root.path}\n  ${entry.reason}`,
-    )
-    .join('\n\n');
-  const remedy =
-    roots.length === refused.length
-      ? 'Open different folders, or run DSpatch from a copy of itself, and try again.'
-      : `The other ${String(roots.length - refused.length)} ` +
-        `${roots.length - refused.length === 1 ? 'folder is' : 'folders are'} fine. ` +
-        'Remove the ones named above from the workspace and send again. DSpatch does not ' +
-        'drop them for you: a run over fewer folders than you asked for is a different ' +
-        'assignment, and it is yours to make.';
-  return {
-    refused,
-    message: `${opening}\n\n${named}\n\n${remedy}${
-      primary === null ? '' : `\n\nThe working directory would have been ${primary.path}.`
-    }`,
-  };
 }
 
 export function runNodeProjectTest(workspacePath: string): Promise<LiveCommandRecord> {
