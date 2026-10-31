@@ -1,3 +1,4 @@
+import { isProviderDefaultId } from '../shared/model-rows';
 import { COPILOT_NOT_INSTALLED_TEXT } from './provider-availability';
 import { COPILOT_RUNTIME_DEFAULT_MODEL, describeCopilotPolicy, type CopilotToolPolicy } from '../adapter/copilot-sdk-adapter';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
@@ -1871,7 +1872,8 @@ export class ChatService {
    * open session from its next turn when that session is this agent's.
    */
   setModelFor(provider: StoredSessionProvider, modelId: string): string {
-    const chosen = modelId.trim() === '' ? null : modelId.trim();
+    // Choosing the provider's default row is no choice of a model: it follows the provider.
+    const chosen = isProviderDefaultId(modelId.trim()) ? null : modelId.trim();
     if (provider === 'cursor') {
       this.modelChosen = chosen;
     }

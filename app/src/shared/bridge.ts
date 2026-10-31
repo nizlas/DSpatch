@@ -2257,8 +2257,6 @@ export interface ScriptedRunPlan {
    */
   readonly resumeHold?: boolean;
   /** DSP-149 `workspace-flow`: which process this is, and the folder its projects are in. */
-  /** What Copilot's default row selects in this run's simulated list. */
-  readonly copilotDefault?: string;
   readonly flowPhase?: 'first' | 'again' | 'retry' | 'switch' | 'editor' | 'unavailable' | 'start-fails' | 'history' | 'clean' | 'blocked' | 'inherit' | 'inherit-switch' | 'inherit-copilot' | 'pick' | 'direction' | 'columns' | 'insight' | 'insight-again' | 'selection' | 'context' | 'context-walk' | 'panel' | 'panel-copilot' | 'remote' | 'remote-again' | 'remote-restart';
   readonly flowRoot?: string;
 }

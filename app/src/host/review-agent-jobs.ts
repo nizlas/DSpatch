@@ -737,7 +737,8 @@ export class ReviewAgentJobs {
       throw new Error('The adapter built for analysis does not hold the read-only analysis policy, so it was not used. Nothing was sent.');
     }
     live.adapter = adapter;
-    const handle = await adapter.startSession({ provider, modelRequested: model, workspacePath });
+    // The default row names no model for Claude; Copilot's adapter has its own value for it.
+    const handle = await adapter.startSession({ provider, modelRequested: model === 'default' ? '' : model, workspacePath });
     live.sessionId = handle.dspatchSessionId;
     live.unsubscribe = adapter.subscribe(handle.dspatchSessionId, (event) => {
       this.onEvent(live, event);

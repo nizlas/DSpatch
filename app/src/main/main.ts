@@ -4178,7 +4178,6 @@ function registerIpc(): void {
         : {}),
       ...(chatRunScenario === 'workspace-flow' || chatRunScenario === 'model-flow' || chatRunScenario === 'editor-uncertain' || chatRunScenario === 'steering-placement' || chatRunScenario === 'pair-review' || chatRunScenario === 'code-walks' || chatRunScenario === 'review-agent-choice' || chatRunScenario === 'walk-start' || chatRunScenario === 'analysis-access' || chatRunScenario === 'review-flow'
         ? {
-            copilotDefault: process.env['DSPATCH_PRESENTATION_MODELS'] === 'copilot-named' ? 'haiku' : 'copilot-default',
             flowPhase: ((): NonNullable<ScriptedRunPlan['flowPhase']> => {
               const named = process.env['DSPATCH_FLOW_PHASE'];
               // DSP-152: `review-agent-choice` names its phases after what each one opens or meets.

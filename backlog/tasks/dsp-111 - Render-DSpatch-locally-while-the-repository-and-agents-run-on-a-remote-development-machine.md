@@ -179,9 +179,16 @@ Verified on Linux, real window, real clicks over the DevTools protocol, isolated
 Follow-up on c9d8fbe, same setting:
 
 - **Connect now asks first** (`probeHost`, `remote-link.ts`): a port with nothing behind it answers in the form after 6 s, a wrong token at once. The local host, the window and the saved settings stay as they were, and the same form connected on the next try. Before this it closed the local host first and then showed a native dialog.
-- **Model handed to the adapter:** on a named default, the project chat and Discussion ask for no model (`copilot-default`), while the walks picker starts with the named model (`haiku`), as it does for Claude. The two agree at that moment; if the provider's default later changes, an open picker has named the earlier one. Reported, not changed.
-- **Unsaved drawing:** a real edit in the editor view of the chat window, the native question answered from `DSPATCH_UNSAVED_DRAWING` because the window cannot press it. `cancel` kept the drawing, the local host and no saved session; `discard` moved. The native dialog itself and `save` during a move were not run: the drawing was a tracked file of this repository, and `save` would have written it.
+- **Model handed to the adapter:** settled by Niclas's decision of 1 November 2026, see below.
+- **Unsaved drawing:** a real edit in the editor view of the chat window, the native question answered from `DSPATCH_UNSAVED_DRAWING` because the window cannot press it. `cancel` kept the drawing, the local host and no saved session; `discard` moved.
 - **Agent error:** the turn shows the provider's sentence under the status, and the composer stays usable.
 
 Not tried: real SSH with this build, real Copilot, Windows, the native dialogs (unsaved drawing; a saved session's host not answering at start or after a restart).
+
+Niclas's decision, recorded with the follow-up to bd409c8: following the provider's default is a choice of its own, everywhere.
+
+- **Default model:** the default row's value is the provider's default whatever it names now (`Haiku 5.5 · default`), and the same model's plain row is locked to it. Choosing the default row clears the stored choice. Claude's walks and reviews on it ask for no model; the job records `default`. Verified in real windows, SIMULATED provider. Chat: `copilot-default` before and after a later list named `haiku` (words changed, value not), `haiku` when the plain row was chosen and after reopening, `copilot-default` when the default row was chosen again. Discussion: `copilot-default` then `haiku`. Picker: `copilot-default` for none, Auto and named; Claude asked for no model on its default, `opus` kept when inherited, `sonnet` when chosen.
+- **Save across a host change:** a temporary loop in an isolated folder, a real edit and the real save path; the native question answered from `DSPATCH_UNSAVED_DRAWING`. Cancel and a failed save (a read-only folder) kept the editor, its unsaved changes, the session state and the file. A save wrote the moved node (x 360 to 383) before `connecting to the host`, in that log order. The save also rewrites key order in the file, as any save of a graph does.
+
+Not run on this code: the `model-list`, `model-start` and `model-flow` window scenarios. Native dialogs were still not pressed.
 <!-- SECTION:NOTES:END -->

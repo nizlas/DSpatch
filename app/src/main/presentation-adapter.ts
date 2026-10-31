@@ -379,7 +379,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
   private readonly behaviour: PresentationResumeBehaviour;
 
   /** The listing, and how long it takes to arrive, as a real lookup is not immediate. */
-  private readonly models: readonly ModelInfo[];
+  private readonly models: readonly ModelInfo[] | (() => readonly ModelInfo[]);
 
   private readonly listDelayMs: number;
 
@@ -387,7 +387,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     options: {
       readonly deltaMs?: number;
       readonly resume?: PresentationResumeBehaviour;
-      readonly models?: readonly ModelInfo[];
+      readonly models?: readonly ModelInfo[] | (() => readonly ModelInfo[]);
       readonly listDelayMs?: number;
     } = {},
   ) {
@@ -402,11 +402,12 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
   }
 
   listModels(): Promise<readonly ModelInfo[]> {
+    const models = typeof this.models === 'function' ? this.models() : this.models;
     if (this.listDelayMs === 0) {
-      return Promise.resolve(this.models);
+      return Promise.resolve(models);
     }
     return new Promise((resolve) => {
-      setTimeout(() => resolve(this.models), this.listDelayMs);
+      setTimeout(() => resolve(models), this.listDelayMs);
     });
   }
 

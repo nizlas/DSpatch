@@ -282,14 +282,15 @@ function sendToContents(contentsId: number, channel: string, payload: unknown): 
 function presentationAdapterOptions(): {
   readonly deltaMs?: number;
   readonly resume: PresentationResumeBehaviour;
-  readonly models?: readonly ModelInfo[];
+  readonly models?: readonly ModelInfo[] | (() => readonly ModelInfo[]);
   readonly listDelayMs?: number;
 } {
   const raw = process.env['DSPATCH_PRESENTATION_DELTA_MS'] ?? '';
   const parsed = Number.parseInt(raw, 10);
   // DSP-152: `claude` lists models shaped like a Claude account's, arriving after a while;
   // `copilot` the same list under the row the Copilot adapter puts first, which names no
-  // model; `copilot-named` and `copilot-auto` have that row say a model, and say routing.
+  // model; `copilot-named` and `copilot-auto` have that row say a model, and say routing;
+  // `copilot-later` names none until the host has run for 45 s, then another list says one.
   const shaped = process.env['DSPATCH_PRESENTATION_MODELS'];
   const listMs = Number.parseInt(process.env['DSPATCH_PRESENTATION_LIST_MS'] ?? '', 10);
   return {
@@ -300,13 +301,13 @@ function presentationAdapterOptions(): {
           models:
             shaped === 'claude'
               ? CLAUDE_SHAPED_MODELS
-              : [
+              : () => [
                   {
                     id: COPILOT_RUNTIME_DEFAULT_MODEL,
                     displayName: 'Default',
                     provider: 'copilot' as const,
                     providerDefault: true as const,
-                    ...(shaped === 'copilot-named' ? { resolvedId: 'haiku' } : shaped === 'copilot-auto' ? { resolvedId: 'auto' } : {}),
+                    ...(shaped === 'copilot-named' || (shaped === 'copilot-later' && process.uptime() > 45) ? { resolvedId: 'haiku' } : shaped === 'copilot-auto' ? { resolvedId: 'auto' } : {}),
                   },
                   ...CLAUDE_SHAPED_MODELS.filter((model) => model.id !== 'default'),
                 ],

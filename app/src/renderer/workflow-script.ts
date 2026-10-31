@@ -12695,7 +12695,7 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
   const failures: string[] = [];
   const phase = plan.flowPhase === undefined || plan.flowPhase === 'first' ? 'history' : plan.flowPhase;
   const inherited = phase === 'inherit-copilot' ? 'copilot' : 'claude';
-  const inheritedModel = phase === 'inherit-copilot' ? (plan.copilotDefault ?? 'copilot-default') : 'opus';
+  const inheritedModel = phase === 'inherit-copilot' ? 'copilot-default' : phase === 'inherit' || phase === 'inherit-switch' ? 'default' : 'opus';
   const observations: Record<string, unknown> = {
     plan,
     phase,
@@ -12796,7 +12796,6 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     const choice = picker(listed);
     record('picker with the list', { picker: choice, visible: shown(listed).slice(0, 600) });
     expect(choice?.provider === inherited, `the picker shows ${String(choice?.provider)}, not the inherited ${inherited}`);
-    expect(!(choice?.options ?? []).includes('default'), "the provider's `default` alias is offered as a model of its own");
     // One way to start, and it is the picker's: the header control is not a second "Prepare code walks".
     const header = await tryPress(diffId, '[data-ev="pair-prepare-walks"]');
     record('the header control while choosing', { header });
@@ -12851,7 +12850,7 @@ async function runWalkStartScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
       expect(adapter.starts.at(-1)?.provider === 'copilot' && adapter.starts.at(-1)?.modelRequested === model, `the adapter did not get ${model}: ${JSON.stringify(adapter.starts)}`);
     }
     expect(job?.state === 'done' && job.provider === inherited && job.model === model, `the walks job did not finish with ${inherited}/${model}: ${JSON.stringify(job)}`);
-    expect(adapter.starts.at(-1)?.provider === inherited && adapter.starts.at(-1)?.modelRequested === model, `the adapter's session was not ${inherited}/${model}: ${JSON.stringify(adapter.starts)}`);
+    expect(adapter.starts.at(-1)?.provider === inherited && adapter.starts.at(-1)?.modelRequested === (model === 'default' ? '' : model), `the adapter's session was not ${inherited}/${model}: ${JSON.stringify(adapter.starts)}`);
     expect(adapter.built.every((provider) => provider === inherited), `an adapter was built for another agent: ${JSON.stringify(adapter.built)}`);
     expect(job?.definitionPath !== null && job?.definitionPath !== undefined, 'the walks were not saved');
     await capture(diffId, 'prepared');
@@ -14015,17 +14014,25 @@ async function runReviewFlowScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
       for (let tries = 0; tries < 3 && discussionOf(await readPairWindow(panelId)).agentChosen !== 'copilot'; tries += 1) {
         await pressKey(panelId, '[data-ev="discussion-agent-select"]', 'Down');
       }
-      const models = await untilPair(panelId, "Copilot's models", (reading) => discussionOf(reading).agentChosen === 'copilot' && discussionOf(reading).modelChosen === (plan.copilotDefault ?? 'copilot-default'), 20_000);
+      const models = await untilPair(panelId, "Copilot's models", (reading) => discussionOf(reading).agentChosen === 'copilot' && discussionOf(reading).modelChosen === 'copilot-default', 20_000);
       record("Copilot's default as the control says it", { model: discussionOf(models).modelChosen, shown: discussionOf(models).modelShown });
-      if (plan.copilotDefault === 'haiku') {
+      if (discussionOf(models).modelShown !== 'Default model (not identified by the provider)' && discussionOf(models).modelShown !== 'Auto · default') {
         // A named default: the control names it, and the question still asks for no model.
         expect(discussionOf(models).modelShown === 'Haiku 5.5 · default', `the default is not named: ${String(discussionOf(models).modelShown)}`);
+        // Keyboard to the plain Haiku row is the lock, below; first the default stays a default.
         const answered = await ask(panelId, 'Why is this capped?', 1);
         const onDefault = await reviewAdapterRecord();
         record('asked on the named default', { adapter: onDefault, answer: answersOf(answered)[0]?.text });
         expect(onDefault.starts.at(-1)?.provider === 'copilot' && onDefault.starts.at(-1)?.modelRequested === 'copilot-default', `Copilot's session did not stay on its default: ${JSON.stringify(onDefault.starts)}`);
         expect(onDefault.sendModels.at(-1) === 'copilot-default', `the question did not go on the default: ${JSON.stringify(onDefault.sendModels)}`);
         expect((answersOf(answered)[0]?.text ?? '') !== '', 'no answer came');
+        await pressKey(panelId, '[data-ev="model-select"]', 'End');
+        const locked = await untilPair(panelId, 'the plain Haiku row', (reading) => discussionOf(reading).modelChosen === 'haiku', 10_000);
+        record('the same model, chosen', { model: discussionOf(locked).modelChosen, shown: discussionOf(locked).modelShown });
+        await ask(panelId, 'And when locked?', 2);
+        const onLocked = await reviewAdapterRecord();
+        record('asked on the chosen model', { adapter: onLocked });
+        expect(onLocked.sendModels.at(-1) === 'haiku', `the chosen model was not sent: ${JSON.stringify(onLocked.sendModels)}`);
         return finish(failures.length === 0 ? CHAT_EXIT.ok : CHAT_EXIT.scriptFailed, steps, failures, observations);
       }
       await pressKey(panelId, '[data-ev="model-select"]', 'Down');

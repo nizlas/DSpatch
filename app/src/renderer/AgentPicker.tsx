@@ -22,7 +22,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 
 import type { ModelListing } from '../shared/bridge';
-import { isDefaultRow, listedDefault, modelRows } from '../shared/model-rows';
+import { isProviderDefaultId, listedDefault, modelRows } from '../shared/model-rows';
 import { isPairError, type ReviewAgents } from '../shared/review-pair';
 
 export interface AgentChoice {
@@ -59,7 +59,7 @@ export function AgentPicker({
   const [startNote, setStartNote] = useState('');
   // Which listing is wanted now: an answer for an agent no longer chosen is dropped.
   const wanted = useRef<'cursor' | 'claude' | 'copilot' | null>(null);
-  // The inherited agent runs on the provider's default, and the list has yet to name it.
+  // The inherited agent follows the provider's default: that row is the choice once listed.
   // Cleared by any choice of the person's, so a late list never replaces one.
   const followsDefault = useRef(false);
 
@@ -81,9 +81,6 @@ export function AgentPicker({
         if (followsDefault.current) {
           followsDefault.current = false;
           setModel(listedDefault(answer));
-        } else {
-          // An inherited "no model named" is the default row, which now says what it means.
-          setModel((current) => (answer.models.some((entry) => isDefaultRow(entry) && entry.id === current) ? listedDefault(answer) : current));
         }
         if (answer.error !== null) {
           setListNote(`${providerName(next)}'s models could not be listed: ${answer.error}`);
@@ -117,7 +114,7 @@ export function AgentPicker({
         }
         setProvider(current.provider);
         setModel(current.model);
-        followsDefault.current = current.model === '';
+        followsDefault.current = isProviderDefaultId(current.model);
         listModels(current.provider);
       },
       () => {
