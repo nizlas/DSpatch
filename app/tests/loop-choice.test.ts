@@ -619,4 +619,19 @@ describe('the next mandate\u2019s loop comes out of the one list', () => {
     assert.deepEqual(forTheEditor, forTheChat);
     assert.equal(forTheEditor?.key, chatLoopDefinition);
   });
+
+  it('offers the bundled development loop without choosing it', () => {
+    // It ships in this repository, so it is listed for any project. Being listed selects
+    // nothing: the chat loop stays the default and a remembered choice stands.
+    const bundled = path.join(repoRoot, '.dspatch', 'loops', 'dspatch-development-loop.loop.json');
+    const listing = listChoosableLoops([repoRoot]);
+    const row = listing.choices.find((choice) => choice.key === bundled);
+    assert.equal(row?.definitionId, 'dspatch-development-loop-runnable');
+    assert.equal(row?.usable, true, row?.error ?? 'no reason');
+    assert.equal(row?.preselected, false);
+    assert.equal(nextMandateLoopFrom(listing)?.key, chatLoopDefinition);
+
+    const remembered = listChoosableLoops([repoRoot], [], undefined, bundled);
+    assert.equal(nextMandateLoopFrom(remembered)?.key, bundled);
+  });
 });

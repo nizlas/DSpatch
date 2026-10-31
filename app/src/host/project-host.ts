@@ -2065,9 +2065,8 @@ function registerLoopMethods(): void {
   /**
    * Declarations the person pointed at, for as long as this window is open.
    *
-   * DSP-68 #5, and the way DSP-78's standalone development loop will be reached at
-   * all: that definition lives outside the repository on purpose, so without this
-   * there is no path to it.
+   * DSP-68 #5, and the way a definition outside every open folder is reached at
+   * all: without this there is no path to one.
    *
    * **Seeded from the workspace, then window-lived.** DSP-71 owns where a chosen
    * definition is remembered, and it remembers one: if the workspace's key names a
