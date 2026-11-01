@@ -124,11 +124,11 @@ const choose = (select, value) =>
   ev(`(()=>{const s=${q(select)};Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'${value}');s.dispatchEvent(new Event('change',{bubbles:true}))})()`);
 const standInLog = (name = CLIENT) => inC(name, 'root', 'cat /tmp/standin/log');
 /** What a person reads: the agent list's options are always there and are not a message. */
-const readable = () => ev(`(()=>{const c=document.body.cloneNode(true);c.querySelectorAll('select').forEach((n)=>n.remove());return c.innerText})()`);
+const readable = () => ev(`(()=>{const s=document.createElement('style');s.textContent='select,.details-view{display:none!important}';document.head.append(s);const t=document.body.innerText;s.remove();return t})()`);
 const clean = (text) => ['npm ', 'Cursor', 'no text in this turn', 'put back', 'zod', 'claude:install', 'node_modules', 'Technical detail', 're-read'].filter((word) => text.includes(word));
 
 const startClient = async () => {
-  docker('exec', '-d', '-u', 'tester', '-e', 'DISPLAY=:99', ...WINDOW_ENV, CLIENT, 'bash', '-c', `exec dspatch --remote-debugging-port=${String(DEBUG)} >>/tmp/client.log 2>&1`);
+  docker('exec', '-d', '-u', 'tester', '-e', 'DISPLAY=:99', ...WINDOW_ENV, CLIENT, 'dbus-run-session', '--', 'bash', '-c', `echo -n trial | gnome-keyring-daemon --unlock --components=secrets >/dev/null; exec dspatch --remote-debugging-port=${String(DEBUG)} >>/tmp/client.log 2>&1`);
   await attach();
   // The start page, or the last conversation, which a restart reopens.
   await until('the window', `${q('remote-session')}!==null || ${q('agent-select')}!==null`);
@@ -309,16 +309,17 @@ async function copilotPart() {
   await ev(`window.__steps=[];window.dspatchSetup.onProviderStep((u)=>window.__steps.push(u.step))`);
   await choose((await ev(`${q('open-agent-select')}!==null`)) ? 'open-agent-select' : 'agent-select', 'copilot');
   await click('provider-continue');
-  await until('the code', `${q('provider-code')}!==null || ${q('provider-problem')}!==null`, 60_000).catch(async (error) => {
-    fs.writeFileSync(path.join(evidence, 'copilot-steps.json'), String(await ev('JSON.stringify(window.__steps)')));
-    throw error;
-  });
-  await shot('12-copilot-code');
-  const code = await ev(`${q('provider-code')}?.innerText ?? ''`);
-  check('Copilot shows its one-time code in the dialog', /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code), code || await ev(`${q('provider-problem')}?.innerText`));
-  const done = await until('Copilot sign-in detected', `${q('provider-setup')}===null || ${q('provider-problem')}!==null`, 60_000);
+  // With a display the program takes the browser route, and listens for the page's answer.
+  await until('the sign-in page', `${q('provider-open')}!==null || ${q('provider-problem')}!==null`, 60_000);
+  await shot('12-copilot-sign-in');
+  const url = String(await ev('window.__steps.filter((s)=>s.kind==="open-url").at(-1)?.url ?? ""'));
+  const back = decodeURIComponent(/redirect_uri=([^&]+)/.exec(url)?.[1] ?? '');
+  const state = /[?&]state=([^&]+)/.exec(url)?.[1] ?? '';
+  check('Copilot opens the vendor sign-in page', url.startsWith('https://github.com/login/') && back !== '', url.slice(0, 60));
+  docker('exec', '-e', 'ELECTRON_RUN_AS_NODE=1', '-u', 'tester', CLIENT, '/opt/DSpatch/dspatch', '-e', `fetch(${JSON.stringify(`${back}?code=synthetic&state=${state}`)}).then((r)=>console.log(r.status),console.error)`);
+  await until('Copilot sign-in detected', `${q('provider-setup')}===null || ${q('provider-problem')}!==null`, 60_000);
   const problem = await ev(`${q('provider-problem')}?.innerText ?? ''`);
-  check('a finished Copilot sign-in is detected', Boolean(done) && problem === '', problem);
+  check('a finished Copilot sign-in is detected and Copilot is chosen', problem === '', problem);
   await shot('13-copilot-after');
   if (problem !== '') {
     await click('provider-cancel');
@@ -370,7 +371,16 @@ su hostuser -c 'mkdir -p ~/proj && cd ~/proj && git init -q .'`);
   await until('the page', `${q('open-agent-select')}!==null`, 30_000);
   await typeInto('textarea', 'remote draft');
   await choose('open-agent-select', 'copilot');
-  await sleep(500);
+  await click('provider-continue');
+  await until('the one-time code', `${q('provider-code')}!==null || ${q('provider-problem')}!==null`, 120_000);
+  await shot('14a-remote-copilot-code');
+  const code = await ev(`${q('provider-code')}?.innerText ?? ''`);
+  check('on a machine with no display Copilot gives a one-time code, shown in the dialog', /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code), code || await ev(`${q('provider-problem')}?.innerText`));
+  await until('the host sign-in ended', `${q('provider-setup')}===null || ${q('provider-problem')}!==null`, 60_000);
+  const kept = await ev(`${q('provider-problem')}?.innerText ?? ''`);
+  check('a host with no keychain says that, in one sentence', /no keychain/.test(kept), kept);
+  await shot('14b-remote-copilot-no-keychain');
+  await click('provider-cancel');
   await choose('open-agent-select', 'claude');
   await until('the remote dialog', `${q('provider-continue')}!==null`, 60_000);
   await shot('14-remote-dialog');

@@ -477,7 +477,10 @@ export class ProviderSetup {
     child.on('close', (code) => {
       if (this.login === current) {
         this.login = null;
-        step(code === 0 ? { kind: 'done' } : { kind: 'failed', message: 'The sign-in did not finish. Nothing was changed.' });
+        if (code !== 0) {
+          this.options.log(`The ${tool} sign-in ended with ${String(code)}.`);
+        }
+        step(code === 0 ? { kind: 'done' } : { kind: 'failed', message: /token was not saved|keychain/i.test(said) ? 'You signed in, but this machine has no keychain to keep the login. Install one there, then try again.' : 'The sign-in did not finish. Nothing was changed.' });
       }
     });
   }

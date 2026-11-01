@@ -286,6 +286,14 @@ describe('signing in', () => {
     assert.equal(fake.child.stdin.read()?.toString(), 'abc\n');
   });
 
+  it('says so when the program could not keep the login, which only a keychain resolves', async () => {
+    const { fake, steps } = started('copilot');
+    fake.child.stdout.write('Login succeeded, but the token was not saved. Install a system keychain or rerun login and accept plaintext storage.\n');
+    await new Promise((resolve) => setImmediate(resolve));
+    fake.child.emit('close', 1);
+    assert.match(JSON.stringify(steps.at(-1)), /no keychain to keep the login/);
+  });
+
   it("gives Copilot's device code with its link, also when the code comes later", async () => {
     const { fake, steps } = started('copilot');
     fake.child.stdout.write('To authenticate, visit https://github.com/login/device ');
