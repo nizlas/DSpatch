@@ -58,8 +58,8 @@ export interface HostLoss {
 
 export interface HostConnectionOptions {
   readonly spawn: () => HostProcess;
-  /** How long the host may take to say it is ready. */
-  readonly startTimeoutMs: number;
+  /** How long the host may take to say it is ready, asked at each start. */
+  readonly startTimeoutMs: number | (() => number);
   readonly onEvent: (to: HostEventTarget, channel: string, payload: unknown) => void;
   readonly onLost: (loss: HostLoss) => void;
   readonly log: (message: string) => void;
@@ -152,6 +152,7 @@ export class HostConnection {
     this.stateNow = 'starting';
     this.lastFailure = null;
     const startedAt = Date.now();
+    const boundMs = typeof this.options.startTimeoutMs === 'number' ? this.options.startTimeoutMs : this.options.startTimeoutMs();
     this.starting = new Promise<HostStartOutcome>((resolve) => {
       let settled = false;
       let timer: NodeJS.Timeout | undefined;
@@ -181,17 +182,17 @@ export class HostConnection {
       timer = setTimeout(() => {
         this.stateNow = 'failed';
         this.lastFailure = unavailable(
-          `${HOST} did not start within ${String(Math.round(this.options.startTimeoutMs / 1000))} seconds, so no project can be opened.`,
+          `${HOST} did not start within ${String(Math.round(boundMs / 1000))} seconds, so no project can be opened.`,
           child.stderrTail(),
         );
-        this.options.log(`project host did not report ready within ${String(this.options.startTimeoutMs)} ms; ending it`);
+        this.options.log(`project host did not report ready within ${String(boundMs)} ms; ending it`);
         try {
           child.kill();
         } catch {
           // Already gone.
         }
         settle({ ok: false, failure: this.lastFailure });
-      }, this.options.startTimeoutMs);
+      }, boundMs);
 
       child.onMessage((message) => {
         if (child !== this.process) {

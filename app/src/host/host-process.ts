@@ -1,6 +1,8 @@
+import path from 'node:path';
+
 import { HOST_CONFIG_ENV, parseHostStartConfig, type HostMessage, type HostShutdownAnswer } from '../shared/host-protocol';
 import { DISPOSE_TIMEOUT_MS } from '../main/dispose-timeout';
-import { adoptOlderData, claimDataFolder, claimRefusal, olderHostDataDir } from './host-data';
+import { adoptWithoutFailing, claimDataFolder, claimRefusal, olderHostDataDir, sharedDataDir } from '../main/host-data';
 import { emitTo, serveHost, type HostMethods, type HostPort } from './host-server';
 import { shutdownProjectHost, startProjectHost } from './project-host';
 
@@ -93,7 +95,10 @@ function main(): void {
     process.stderr.write(`${claimRefusal(claim.held)}\n`);
     process.exit(3);
   }
-  adoptOlderData(config.userDataDir, olderHostDataDir(), log);
+  // Only this user's own folder: a trial's folder of its own must not use up the real older data.
+  if (path.resolve(config.userDataDir) === path.resolve(sharedDataDir())) {
+    adoptWithoutFailing(config.userDataDir, olderHostDataDir(), log);
+  }
 
   const methods: Record<string, (...args: never[]) => unknown> = {
     ...startProjectHost({

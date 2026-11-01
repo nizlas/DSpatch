@@ -1,4 +1,4 @@
-import { adoptionNotice } from './host-data';
+import { adoptionNotice } from '../main/host-data';
 import { hostname } from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -918,6 +918,29 @@ function removeWorkspaceFolder(folderPath: string): WorkspaceView {
  * otherwise the workspace's own last chat continues, or a new one starts. Either way
  * nothing is sent and no work starts.
  */
+/** Work under way in this host's open session, as a sentence. */
+function workInSession(): string | null {
+  return chatService.workRunning() ?? (runAudience.current() !== null ? 'A loop run is in progress.' : null);
+}
+
+/**
+ * Opening a project while work runs (DSP-161). Opening starts a session, which would end the one
+ * the work runs in, so a client that attaches is given the open session and sends nothing;
+ * anything else waits for the work.
+ */
+function openWhileWorking(primary: string, newChat: boolean): WorkspaceOpenOutcome | null {
+  const busy = workInSession();
+  const session = chatService.openSession();
+  if (busy === null || session === null) {
+    return null;
+  }
+  if (newChat || !samePathSpelling(session.workspacePath, primary)) {
+    return { kind: 'refused', problem: `${busy} It is in ${session.workspacePath}. Open that project to follow it, or wait until it is done. Nothing was closed or changed.` };
+  }
+  const running = chatService.runningTurn();
+  return { kind: 'opened', session: running === undefined ? session : { ...session, running }, workspace: currentWorkspaceView() };
+}
+
 async function openWorkspaceFor(request: WorkspaceOpenRequest): Promise<WorkspaceOpenOutcome> {
   const store = requireProjectStore();
   let record: WorkspaceRecord | null;
@@ -936,6 +959,10 @@ async function openWorkspaceFor(request: WorkspaceOpenRequest): Promise<Workspac
   const primary = folders[0];
   if (primary === undefined) {
     return { kind: 'refused', problem: 'This workspace has no folders. Nothing was opened.' };
+  }
+  const held = openWhileWorking(primary, request.newChat === true);
+  if (held !== null) {
+    return held;
   }
   try {
     chatService.checkFolder(primary);

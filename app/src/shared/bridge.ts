@@ -780,6 +780,11 @@ export interface SessionContinuity {
 /** One session over one working copy. */
 export interface ChatSessionInfo {
   /**
+   * A turn already running in this session: a window that attaches shows it and sends nothing.
+   * Present only when opening found work under way (DSP-161).
+   */
+  readonly running?: { readonly dspatchRunId: string; readonly prompt: string; readonly answer: string };
+  /**
    * The saved conversation this session writes into.
    *
    * A session is one connection to a provider; a conversation is the work that

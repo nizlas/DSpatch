@@ -6,7 +6,7 @@ import { findHostPackage, readHostManifest, type HostPackage } from './host-pack
 import { SshConnection, validTarget, type SshPrompt } from './ssh-connection';
 import { endRemoteSession, parseRemoteAddress, readRemoteSession, saveRemoteSession } from './remote-session';
 import type { HostLinkEvent } from './host-connection';
-import { heldClaim, takeHandoverRequest, writeHandoverAnswer } from '../host/host-data';
+import { adoptionWaiting, heldClaim, olderHostDataDir, takeHandoverRequest, writeHandoverAnswer } from './host-data';
 import type { HostRunning } from '../shared/host-bootstrap';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -425,6 +425,9 @@ const pathsAreCaseInsensitive = process.platform === 'win32';
  */
 const HOST_START_TIMEOUT_MS = 30_000;
 
+/** The same, when this start also brings in older data. */
+const HOST_ADOPTION_TIMEOUT_MS = 180_000;
+
 /** A scripted run, smoke test or probe whose project host could not be started. */
 const HOST_EXIT_START_FAILED = 26;
 /** A scripted run, smoke test or probe whose project host stopped while it ran. */
@@ -464,9 +467,12 @@ function forgetHost(next: RemoteEndpoint | null): void {
   sshSession = null;
   remoteLink?.kill();
   remoteLink = null;
-  remoteEndpoint = next;
+  // A host standing over this computer's data has to be used, or the next start is refused.
+  const own = ownRunningHost();
+  remoteEndpoint = next ?? own?.endpoint ?? null;
   savedTunnel = false;
-  sharedHere = next !== null && next.token === ownRunningHost()?.endpoint.token;
+  sharedHere = own !== null && remoteEndpoint?.token === own.endpoint.token;
+  handedOver = false;
   senderOffset = null;
 }
 
@@ -658,6 +664,12 @@ async function answerHandover(): Promise<void> {
     if (editorWindow !== null && !editorWindow.isDestroyed()) {
       editorWindow.close();
     }
+    // The chat window stayed open meanwhile: a turn begun in those seconds is not to be ended.
+    const begun = await host.call<string | null>('host.busy', NO_SENDER);
+    if (begun !== null) {
+      writeHandoverAnswer(folder, { nonce, answer: 'busy', detail: begun });
+      return;
+    }
     await host.shutdown('host.shutdown', [NO_SENDER, { observeConversationFiles: false }], (host.closeBoundMs() ?? 0) + HOST_CLOSE_MARGIN_MS);
     handedOver = true;
     publishLink({ phase: 'stopped', note: 'Your work is safe. Choose Use here to continue on this computer; the other computer is then told.' });
@@ -736,6 +748,10 @@ const PROVIDER_CALLS = ['provider.status', 'provider.install', 'provider.install
 async function leaveRemoteSession(): Promise<string> {
   const own = sharedHere ? ownRunningHost() : null;
   if (own !== null) {
+    if (unsavedDrawing !== null) {
+      publishLink({ phase: 'connected', note: 'The loop editor holds unsaved changes. Save them first.' });
+      return 'The loop editor holds unsaved changes.';
+    }
     const busy = await host.call<string | null>('host.busy', NO_SENDER);
     if (busy !== null) {
       publishLink({ phase: 'connected', note: `${busy} The host goes on until it is done.` });
@@ -934,7 +950,8 @@ const host = new HostConnection({
     remoteLink = new RemoteLink({ endpoint: remote, build: remoteBuild(app.getAppPath()), log });
     return remoteLink;
   },
-  startTimeoutMs: HOST_START_TIMEOUT_MS,
+  // Adopting a host's older data happens before the host is ready, and it may be a lot of files.
+  startTimeoutMs: () => (remoteSession() === null && adoptionWaiting(app.getPath('userData'), olderHostDataDir()) ? HOST_ADOPTION_TIMEOUT_MS : HOST_START_TIMEOUT_MS),
   onEvent: (to, channel, payload) => {
     deliverHostEvent(to, channel, payload);
   },

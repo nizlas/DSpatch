@@ -147,22 +147,27 @@ export function start(os: RemoteOs, hostId: string): RemoteStep {
     return windows(`
 New-Item -ItemType Directory -Force $data | Out-Null
 $exe = "$root\\versions\\${hostId}\\dspatch-host\\dspatch-host.cmd"
+if (Test-Path "$data\\host-running.json") { $r = Get-Content "$data\\host-running.json" -Raw | ConvertFrom-Json; if (-not (Get-Process -Id $r.pid -ErrorAction SilentlyContinue)) { Remove-Item "$data\\host-running.json" } }
+$before = (Get-Date).ToUniversalTime()
 $line = "cmd /c \`"\`"$exe\`" --port 0 --data \`"$data\`" --older-data \`"$older\`" >> \`"$data\\host.log\`" 2>&1\`""
 Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $line } | Out-Null
-for ($i = 0; $i -lt 60; $i++) { if (Test-Path "$data\\host-running.json") { Write-Output 'started=yes'; exit 0 }; Start-Sleep -Milliseconds 500 }
+for ($i = 0; $i -lt 360; $i++) { if ((Test-Path "$data\\host-running.json") -and (Get-Item "$data\\host-running.json").LastWriteTimeUtc -ge $before) { Write-Output 'started=yes'; exit 0 }; Start-Sleep -Milliseconds 500 }
 Write-Output 'failed=start'
 `);
   }
   return posix(`
 mkdir -p "$data"
-rm -f "$data/host-running.json"
+if [ -f "$data/host-running.json" ]; then
+  pid=$(sed -n 's/.*"pid": *\\([0-9]*\\).*/\\1/p' "$data/host-running.json")
+  if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then rm -f "$data/host-running.json"; fi
+fi
 launcher="$root/versions/${hostId}/dspatch-host/dspatch-host"
 runner=nohup
 command -v setsid >/dev/null 2>&1 && runner="nohup setsid"
 $runner "$launcher" --port 0 --data "$data" --older-data "$older" >>"$data/host.log" 2>&1 </dev/null &
 child=$!
 i=0
-while [ $i -lt 60 ]; do
+while [ $i -lt 360 ]; do
   [ -f "$data/host-running.json" ] && { echo started=yes; exit 0; }
   kill -0 "$child" 2>/dev/null || [ $i -lt 2 ] || break
   sleep 0.5
@@ -173,7 +178,7 @@ tail -n 5 "$data/host.log" | sed 's/^/log=/'
 `);
 }
 
-/** Ask a running host to close, which it does in order, and wait for it. */
+/** Ask a running host to close and wait for it: in order on POSIX; Windows ends the process. */
 export function stop(os: RemoteOs, pid: number): RemoteStep {
   if (os === 'windows') {
     return windows(`

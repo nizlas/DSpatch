@@ -8,13 +8,15 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
   ADOPTION_REPORT,
   adoptOlderData,
+  adoptWithoutFailing,
+  adoptionWaiting,
   adoptionNotice,
   claimDataFolder,
   heldClaim,
   olderHostDataDir,
   sharedDataDir,
   takeHandoverRequest,
-} from '../src/host/host-data';
+} from '../src/main/host-data';
 
 /* One work context per user of a machine (DSP-161): the folder, the claim and the adoption. */
 
@@ -70,15 +72,36 @@ describe('the claim', () => {
 
   it('removes a claim whose process is gone', () => {
     const gone = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout;
-    write(target, 'host-claim.json', JSON.stringify({ pid: Number(gone), kind: 'desktop', startedAtUtc: '', bootedAtMs: 0 }));
+    write(target, 'host-claim.json', JSON.stringify({ pid: Number(gone), kind: 'desktop', startedAtUtc: '', identity: "dead" }));
     const claim = claimDataFolder(target, 'standalone');
     assert.ok('release' in claim);
     claim.release();
   });
 
   it('does not take a live process id from an earlier boot for a host', () => {
-    write(target, 'host-claim.json', JSON.stringify({ pid: process.pid, kind: 'standalone', startedAtUtc: '', bootedAtMs: 1 }));
+    write(target, 'host-claim.json', JSON.stringify({ pid: process.pid, kind: 'standalone', startedAtUtc: '', identity: "another-boot" }));
     assert.equal(heldClaim(target), null);
+  });
+});
+
+describe('the claim, from the side of a live host', () => {
+  it('holds whatever the clock does, and a half-written file is never read as free', () => {
+    const claim = claimDataFolder(target, 'desktop');
+    assert.ok('release' in claim);
+    const held = JSON.parse(read(target, 'host-claim.json')) as { identity: string };
+    assert.notEqual(held.identity, '');
+    assert.equal(heldClaim(target)?.pid, process.pid);
+    assert.equal(fs.readdirSync(target).filter((name) => name !== 'host-claim.json').length, 0);
+    claim.release();
+  });
+
+  it('gives a fresh claim back if it was taken aside by a slower starter', () => {
+    write(target, 'host-claim.json', '{}');
+    const claim = claimDataFolder(target, 'desktop');
+    assert.ok('release' in claim);
+    const again = claimDataFolder(target, 'standalone');
+    assert.ok('held' in again);
+    claim.release();
   });
 });
 
@@ -144,6 +167,34 @@ describe('adopting an older host folder', () => {
     assert.equal(adoptOlderData(target, older, quiet), null);
     assert.equal(read(older, 'conversations/a.json'), '{}');
     assert.ok(fs.existsSync(path.join(target, ADOPTION_REPORT)));
+  });
+
+  it('leaves fetched programs out, and copes with what is not a file', () => {
+    write(older, 'provider-support/claude/program', 'x'.repeat(100));
+    write(older, 'conversations/a.json', '{}');
+    fs.symlinkSync('/no/such/thing', path.join(older, 'conversations', 'dangling'));
+    const report = adoptOlderData(target, older, quiet);
+    assert.equal(report?.copied, 1);
+    assert.equal(fs.existsSync(path.join(target, 'provider-support')), false);
+  });
+
+  it('never stops a start: a failure leaves things alone, says so once it can, and tries again', () => {
+    write(older, 'conversations/c.json', 'not json');
+    write(target, 'conversations/c.json', '{}');
+    adoptWithoutFailing(target, older, quiet);
+    assert.match(adoptionNotice(target) ?? '', /could not be brought/);
+    assert.equal(read(older, 'conversations/c.json'), 'not json');
+    assert.equal(adoptionWaiting(target, older), true);
+    fs.writeFileSync(path.join(older, 'conversations/c.json'), '{"conversationId":"c"}');
+    adoptWithoutFailing(target, older, quiet);
+    assert.equal(adoptionWaiting(target, older), false);
+  });
+
+  it('counts as done only for the folder it went into', () => {
+    write(older, 'conversations/a.json', '{}');
+    adoptOlderData(path.join(root, 'trial'), older, quiet);
+    assert.equal(adoptionWaiting(target, older), true);
+    assert.ok(adoptOlderData(target, older, quiet) !== null);
   });
 
   it('does nothing for a folder with no DSpatch data, or for the same folder', () => {

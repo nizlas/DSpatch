@@ -180,6 +180,11 @@ class Win {
     return { connected: false, seen, asked, timedOut: true };
   }
 
+  async chooseAgent(agent) {
+    await this.ev(`(()=>{const s=${q('open-agent-select')};Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'${agent}');s.dispatchEvent(new Event('change',{bubbles:true}))})()`);
+    await sleep(800);
+  }
+
   async openProject() {
     await this.click('open-project-0');
     await this.until('the chat', `${q('prompt')}!==null`);
@@ -205,7 +210,7 @@ const stopDesktop = (name) => {
 async function aliases(laptop) {
   const resolved = inC(LAPTOP, 'tester', 'ssh -G workalias | grep -E "^(user|hostname|port) "').replace(/\n/g, ' ');
   check('ssh itself resolves the alias to User, HostName and Port', resolved.includes('user hostuser') && resolved.includes('hostname 127.0.0.1') && resolved.includes(`port ${String(SSH_PORT)}`), resolved);
-  const terminal = inC(LAPTOP, 'tester', 'ssh -o BatchMode=yes -o ClearAllForwardings=yes workalias hostname');
+  const terminal = inC(LAPTOP, 'tester', 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ClearAllForwardings=yes workalias hostname');
   check('a terminal reaches the machine through the alias', terminal.endsWith(inC(WORK, 'root', 'hostname')), terminal);
   const wrong = await laptop.connect('wrongalias');
   const words = wrong.seen.at(-1) ?? '';
@@ -229,6 +234,7 @@ async function localFirst(work, laptop) {
   await work.attach();
   await work.until('the start page', `${q('remote-session')}!==null`);
   check('a local install runs with no remote setup: its own host, in its own folder', /"kind":"desktop"/.test(claim()) && hostPids() === '', claim());
+  await work.chooseAgent('copilot');
   await work.ev(`window.dspatch.startChatSession({ kind: 'folder', path: '/home/hostuser/proj' })`);
   await work.ev('location.reload()');
   await sleep(1500);
@@ -281,11 +287,10 @@ async function backHere(work, laptop) {
   check('still one host, and running work carried on in it', hostPids().split(' ').length === 1, hostPids());
   await work.openProject();
   await work.until('the running turn, seen here', `document.body.innerText.includes('REMOTE-RUNNING-MARK')`);
+  await work.until('the running turn followed here', `${q('turn-activity')}!==null`);
+  await work.shot('14-work-follows-running-turn');
   const state = JSON.parse(await work.ev(`window.dspatch.getRunState().then(JSON.stringify)`));
-  check('the job is known as running, not started again', Number(inC(WORK, 'hostuser', `cat ${data}/conversations/*.json | grep -c 'REMOTE-RUNNING-MARK'`)) >= 1, JSON.stringify(state.unresolved?.map((one) => one.state ?? one)).slice(0, 200));
-  await work.send('A second message while it runs.').catch(() => undefined);
-  await sleep(1000);
-  await work.shot('14-work-sends-during-turn');
+  check('the job is known as running, not unknown and not started again', !state.unresolved.some((one) => one.state === 'outcome-unknown'), JSON.stringify(state.unresolved.map((one) => one.state)));
   await work.until('the job finished', `window.dspatch.getRunState().then((s) => s.unresolved.length === 0)`, 180_000);
   const conversation = JSON.parse(inC(WORK, 'hostuser', `cat ${data}/conversations/*.json`));
   const sent = conversation.messages.filter((one) => one.role === 'user' && JSON.stringify(one).includes('REMOTE-RUNNING-MARK'));

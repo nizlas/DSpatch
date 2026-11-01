@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DISPOSE_TIMEOUT_MS } from '../main/dispose-timeout';
 import { remoteBuild } from '../shared/remote-build';
 import { REMOTE_DEFAULT_PORT } from '../shared/remote-protocol';
-import { adoptOlderData, claimDataFolder, claimRefusal, olderHostDataDir, sharedDataDir } from './host-data';
+import { adoptWithoutFailing, claimDataFolder, claimRefusal, olderHostDataDir, sharedDataDir } from '../main/host-data';
 import { emitTo, serveHost, type HostMethods } from './host-server';
 import { shutdownProjectHost, startProjectHost } from './project-host';
 import { RemoteServer } from './remote-server';
@@ -66,7 +66,7 @@ async function main(): Promise<void> {
   }
   const older = argument('--older-data') ?? (chosen === undefined ? olderHostDataDir() : undefined);
   if (older !== undefined) {
-    adoptOlderData(dataDir, older, log);
+    adoptWithoutFailing(dataDir, older, log);
   }
   const appPath = path.resolve(__dirname, '..', '..');
   const build = remoteBuild(appPath);

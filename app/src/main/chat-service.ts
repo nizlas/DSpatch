@@ -5117,6 +5117,12 @@ export class ChatService {
     return { ...report, needsAcknowledgement: { ...report.needsAcknowledgement, agentWorkForRun: forRun } };
   }
 
+  /** The turn running now, for a window that did not start it (DSP-161). */
+  runningTurn(): ChatSessionInfo['running'] {
+    const turn = this.currentTurn;
+    return turn === null || turn.terminalStatus !== null ? undefined : { dspatchRunId: turn.dspatchRunId, prompt: turn.prompt, answer: turn.deltaText };
+  }
+
   /** What is running in this service now, as a sentence, or `null` (DSP-161). */
   workRunning(): string | null {
     if (this.currentTurn !== null && this.currentTurn.terminalStatus === null) {

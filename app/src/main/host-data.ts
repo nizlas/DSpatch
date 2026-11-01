@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,8 +24,11 @@ export interface HostClaim {
   readonly pid: number;
   readonly kind: HostKind;
   readonly startedAtUtc: string;
-  /** When the machine booted, to the minute, so a reused process id after a restart is no claim. */
-  readonly bootedAtMs: number;
+  /**
+   * What makes a process this one and no other, where the system says: on Linux the boot and the
+   * process's start, so a reused id is no claim. Never the clock, which can step under a live host.
+   */
+  readonly identity: string;
 }
 
 const CLAIM_FILE = 'host-claim.json';
@@ -53,8 +57,28 @@ export function olderHostDataDir(
   return path.posix.join(env['XDG_DATA_HOME'] ?? path.posix.join(home, '.local', 'share'), 'dspatch-host');
 }
 
-function bootedAtMs(): number {
-  return Math.round((Date.now() - os.uptime() * 1000) / 60_000) * 60_000;
+function processIdentity(pid: number): string {
+  try {
+    const boot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, 'utf8');
+    // After the command, which can hold anything: the 20th field from there is its start.
+    const start = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
+    return `${boot}:${start ?? ''}`;
+  } catch {
+    return '';
+  }
+}
+
+/** Windows has no such reading at hand: a process of another program at that id is no claim. */
+function runsAHost(pid: number): boolean {
+  if (process.platform !== 'win32') {
+    return true;
+  }
+  try {
+    return /node|dspatch/i.test(execFileSync('tasklist', ['/FI', `PID eq ${String(pid)}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true }));
+  } catch {
+    return true;
+  }
 }
 
 function processAlive(pid: number): boolean {
@@ -67,7 +91,10 @@ function processAlive(pid: number): boolean {
 }
 
 function claimHolds(claim: HostClaim): boolean {
-  return Math.abs(claim.bootedAtMs - bootedAtMs()) <= 2 * 60_000 && processAlive(claim.pid);
+  if (!processAlive(claim.pid)) {
+    return false;
+  }
+  return claim.identity === '' ? runsAHost(claim.pid) : claim.identity === processIdentity(claim.pid);
 }
 
 /** The claim on a folder, when a live host holds it. */
@@ -87,10 +114,14 @@ export function heldClaim(dataDir: string): HostClaim | null {
 export function claimDataFolder(dataDir: string, kind: HostKind): { readonly held: HostClaim } | { readonly release: () => void } {
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const file = path.join(dataDir, CLAIM_FILE);
-  const mine: HostClaim = { pid: process.pid, kind, startedAtUtc: new Date().toISOString(), bootedAtMs: bootedAtMs() };
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  const mine: HostClaim = { pid: process.pid, kind, startedAtUtc: new Date().toISOString(), identity: processIdentity(process.pid) };
+  const spare = `${file}.${String(process.pid)}.${randomBytes(4).toString('hex')}`;
+  fs.writeFileSync(spare, `${JSON.stringify(mine, null, 2)}\n`, { mode: 0o600 });
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      fs.writeFileSync(file, `${JSON.stringify(mine, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+      // A link appears whole or not at all, so nobody ever reads a half-written claim.
+      fs.linkSync(spare, file);
+      fs.rmSync(spare, { force: true });
       const release = (): void => {
         const held = heldClaim(dataDir);
         if (held?.pid === process.pid) {
@@ -101,15 +132,30 @@ export function claimDataFolder(dataDir: string, kind: HostKind): { readonly hel
       return { release };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        fs.rmSync(spare, { force: true });
         throw error;
       }
     }
     const held = heldClaim(dataDir);
     if (held !== null) {
+      fs.rmSync(spare, { force: true });
       return { held };
     }
-    fs.rmSync(file, { force: true });
+    // Taken aside rather than deleted: if another starter got there first, what was taken is its
+    // fresh claim, which goes back.
+    const aside = `${file}.gone.${randomBytes(4).toString('hex')}`;
+    try {
+      fs.renameSync(file, aside);
+      const taken = JSON.parse(fs.readFileSync(aside, 'utf8') || '{}') as HostClaim;
+      if (typeof taken.pid === 'number' && claimHolds(taken)) {
+        fs.linkSync(aside, file);
+      }
+    } catch {
+      // Someone else moved it; the next round finds out.
+    }
+    fs.rmSync(aside, { force: true });
   }
+  fs.rmSync(spare, { force: true });
   throw new Error(`The data folder ${dataDir} could not be claimed.`);
 }
 
@@ -171,7 +217,6 @@ const OWN_ENTRIES = [
   'conversation-without-workspace',
   'loop-runs',
   'reviews',
-  'provider-support',
   'dspatch-agent-choice.json',
   'dspatch-model-choice.json',
   'dspatch-projects.json',
@@ -179,6 +224,11 @@ const OWN_ENTRIES = [
   'claude-consent.json',
   'copilot-hooks-required',
 ] as const;
+
+/*
+ * `provider-support` is not among them: it is fetched programs, which a person's data is not, and
+ * it can be large. A machine fetches it again when it is needed.
+ */
 
 /** Files of this name are per-machine state, read by a generated name. */
 const LOOP_CHOICE = /^dspatch-.*\.json$/;
@@ -199,14 +249,15 @@ export interface AdoptionReport {
 
 function filesUnder(root: string, relative = ''): string[] {
   const here = path.join(root, relative);
-  if (!fs.statSync(here).isDirectory()) {
-    return [relative];
+  const found = fs.lstatSync(here);
+  if (!found.isDirectory()) {
+    return found.isFile() ? [relative] : [];
   }
   return fs.readdirSync(here).flatMap((name) => filesUnder(root, path.join(relative, name)));
 }
 
 function sameBytes(one: string, other: string): boolean {
-  return fs.readFileSync(one).equals(fs.readFileSync(other));
+  return fs.statSync(one).size === fs.statSync(other).size && fs.readFileSync(one).equals(fs.readFileSync(other));
 }
 
 function copyWhole(from: string, to: string): void {
@@ -244,13 +295,11 @@ function mergeProjects(olderFile: string, targetFile: string): void {
 
 /** A conversation under an id of its own, saying where it came from in its file only. */
 function keepConversationBeside(from: string, targetDir: string): string {
-  const conversation = JSON.parse(fs.readFileSync(from, 'utf8')) as Record<string, unknown>;
-  const original = String(conversation['conversationId']);
-  const id = `${original.slice(0, 100)}-from-older-host`;
+  const id = `${path.basename(from, '.json').slice(0, 100)}-from-older-host`;
   const to = path.join(targetDir, `${id}.json`);
-  if (!fs.existsSync(to)) {
-    fs.writeFileSync(to, `${JSON.stringify({ ...conversation, conversationId: id }, null, 2)}\n`, { mode: 0o600 });
-  }
+  const conversation = JSON.parse(fs.readFileSync(from, 'utf8')) as Record<string, unknown>;
+  fs.writeFileSync(`${to}.adopting`, `${JSON.stringify({ ...conversation, conversationId: id }, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(`${to}.adopting`, to);
   return to;
 }
 
@@ -260,7 +309,7 @@ function keepConversationBeside(from: string, targetDir: string): string {
  * interruption repeats nothing that was finished: only a whole adoption leaves the marker.
  */
 export function adoptOlderData(target: string, older: string, log: (message: string) => void): AdoptionReport | null {
-  if (path.resolve(target) === path.resolve(older) || fs.existsSync(path.join(older, MARKER)) || ownEntries(older).length === 0) {
+  if (path.resolve(target) === path.resolve(older) || adoptedInto(older) === path.resolve(target) || ownEntries(older).length === 0) {
     return null;
   }
   const running = path.join(older, 'host-running.json');
@@ -274,13 +323,18 @@ export function adoptOlderData(target: string, older: string, log: (message: str
       // A record that cannot be read names no running host.
     }
   }
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const backup = path.join(target, 'backups', `${stamp}-before-adopting-older-host-data`);
-  for (const entry of ownEntries(older)) {
-    fs.cpSync(path.join(older, entry), path.join(backup, 'older-host', entry), { recursive: true });
-  }
-  for (const entry of ownEntries(target)) {
-    fs.cpSync(path.join(target, entry), path.join(backup, 'shared-folder', entry), { recursive: true });
+  // One backup per adoption: taken whole once, and an interrupted attempt keeps what it took.
+  const backup = path.join(target, 'backups', 'before-adopting-older-host-data');
+  const done = path.join(backup, 'complete');
+  if (!fs.existsSync(done)) {
+    fs.rmSync(backup, { recursive: true, force: true });
+    for (const entry of ownEntries(older)) {
+      fs.cpSync(path.join(older, entry), path.join(backup, 'older-host', entry), { recursive: true });
+    }
+    for (const entry of ownEntries(target)) {
+      fs.cpSync(path.join(target, entry), path.join(backup, 'shared-folder', entry), { recursive: true });
+    }
+    fs.writeFileSync(done, '');
   }
   let copied = 0;
   let alreadyThere = 0;
@@ -299,8 +353,8 @@ export function adoptOlderData(target: string, older: string, log: (message: str
         mergeProjects(from, to);
       } else if (entry === 'conversations' && record.endsWith('.json')) {
         conflicts.push({ record, keptAt: keepConversationBeside(from, path.join(target, 'conversations')) });
-      } else if (entry !== 'provider-support') {
-        const keptAt = path.join(target, 'adopted-conflicts', stamp, record);
+      } else {
+        const keptAt = path.join(target, 'adopted-conflicts', record);
         copyWhole(from, keptAt);
         conflicts.push({ record, keptAt });
       }
@@ -313,8 +367,51 @@ export function adoptOlderData(target: string, older: string, log: (message: str
   return report;
 }
 
+function adoptedInto(older: string): string | null {
+  try {
+    const into = (JSON.parse(fs.readFileSync(path.join(older, MARKER), 'utf8')) as { into?: unknown }).into;
+    return typeof into === 'string' ? path.resolve(into) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a start has anything to adopt, which may then take longer than a start usually does. */
+export function adoptionWaiting(target: string, older: string): boolean {
+  return path.resolve(target) !== path.resolve(older) && adoptedInto(older) !== path.resolve(target) && ownEntries(older).length > 0;
+}
+
+const FAILED_FILE = 'adoption-failed.json';
+
+/**
+ * Adopt, and never stop a start for it: this person's work here matters more than older work
+ * elsewhere, which stays untouched. The next start tries again, and the person is told.
+ */
+export function adoptWithoutFailing(target: string, older: string, log: (message: string) => void): void {
+  try {
+    adoptOlderData(target, older, log);
+    fs.rmSync(path.join(target, FAILED_FILE), { force: true });
+  } catch (error) {
+    log(`older host data in ${older} could not be adopted: ${String(error)}`);
+    try {
+      fs.writeFileSync(path.join(target, FAILED_FILE), `${JSON.stringify({ from: older, why: String(error) })}\n`, { mode: 0o600 });
+    } catch {
+      // The log has it.
+    }
+  }
+}
+
 /** The sentence a person still has to be told about an adoption, once. */
 export function adoptionNotice(dataDir: string): string | null {
+  const failed = path.join(dataDir, FAILED_FILE);
+  if (fs.existsSync(failed)) {
+    try {
+      const said = JSON.parse(fs.readFileSync(failed, 'utf8')) as { from: string; why: string };
+      return `Older host data in ${said.from} could not be brought into this DSpatch, so it is not shown here. It has not been changed, and DSpatch tries again at the next start. What stopped it: ${said.why}`;
+    } catch {
+      return null;
+    }
+  }
   const file = path.join(dataDir, ADOPTION_REPORT);
   try {
     const report = JSON.parse(fs.readFileSync(file, 'utf8')) as AdoptionReport;

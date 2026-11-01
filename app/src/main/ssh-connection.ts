@@ -22,7 +22,7 @@ import {
   type RemoteStep,
 } from '../shared/host-bootstrap';
 import type { RemoteBuild } from '../shared/remote-protocol';
-import { handoverNonce, type HandoverAnswer } from '../host/host-data';
+import { handoverNonce, type HandoverAnswer } from './host-data';
 import type { HostPackage } from './host-packages';
 import type { RemoteEndpoint } from './remote-link';
 
@@ -575,7 +575,7 @@ export class SshConnection {
           return;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          if (/refused the sign-in|host key|another version/i.test(message)) {
+          if (/refused the sign-in|host key|another version|in use on/i.test(message)) {
             this.options.onBroken?.(message);
             return;
           }

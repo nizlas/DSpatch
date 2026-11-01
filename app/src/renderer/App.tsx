@@ -45,6 +45,7 @@ import type {
   AgentCommandsReport,
   WorkspaceChange,
   WorkspaceReport,
+  UiAgentEvent,
 } from '../shared/bridge';
 import { ActivityLine } from './DiscussionAnswer';
 import {
@@ -1909,7 +1910,17 @@ function Workbench({
   const applyOpened = useCallback(
     (opened: ChatSessionInfo): void => {
       setSession(opened);
-      setChat(emptyChatState(opened.dspatchSessionId));
+      // A turn under way in the host, begun by another client: the window follows it from here.
+      const running = opened.running;
+      setChat(
+        running === undefined
+          ? emptyChatState(opened.dspatchSessionId)
+          : routeEvent(
+              routeEvent(emptyChatState(opened.dspatchSessionId), { type: 'run.started', dspatchSessionId: opened.dspatchSessionId, dspatchRunId: running.dspatchRunId, at: new Date().toISOString() } as UiAgentEvent, running.prompt),
+              { type: 'assistant.delta', dspatchSessionId: opened.dspatchSessionId, dspatchRunId: running.dspatchRunId, text: running.answer, at: new Date().toISOString() } as UiAgentEvent,
+              '',
+            ),
+      );
       // The fields are seeded from the project, then owned by the user. A later
       // session over a different project reseeds them; nothing else does.
       setTestCommand(opened.suggestedTestCommand);
