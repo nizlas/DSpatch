@@ -181,7 +181,7 @@ const chooseAgent = (agent) =>
   ev(`(()=>{const s=${q('open-agent-select')};Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'${agent}');s.dispatchEvent(new Event('change',{bubbles:true}))})()`).then(() => sleep(800));
 const loopSummary = (listing) => JSON.stringify(listing.choices.map((row) => [row.definitionId, row.usable, row.preselected, row.error ?? null]));
 const loopsAreRight = (listing) =>
-  listing.choices.some((row) => row.definitionId === 'dspatch-development-loop-runnable' && row.usable && !row.preselected) &&
+  listing.choices.some((row) => row.definitionId === 'dspatch-development-loop-runnable' && row.usable && row.preselected) &&
   listing.choices.some((row) => row.key.endsWith('dspatch-chat-loop.loop.json') && row.usable);
 
 const hostIp = () => docker('inspect', '-f', '{{(index .NetworkSettings.Networks "' + NET + '").IPAddress}}', HOST).stdout.trim();
@@ -243,7 +243,7 @@ su hostuser -c 'mkdir -p ~/proj && cd ~/proj && git init -q . && echo hello > RE
   await chooseAgent('copilot');
   note('provider state on a fresh install', JSON.stringify(await ev(`window.dspatchSetup.providerCall('provider.status', 'copilot')`)));
   const localLoops = JSON.parse(await ev('window.dspatch.listLoopDefinitions().then(JSON.stringify)'));
-  check('the bundled loops are offered from the installed client, the chat loop chosen', loopsAreRight(localLoops), loopSummary(localLoops));
+  check('the bundled loops are offered from the installed client, the larger loop preselected', loopsAreRight(localLoops), loopSummary(localLoops));
   await click('provider-continue');
   await until('the sign-in link', `${q('provider-open')}!==null || ${q('provider-problem')}!==null`, 90_000);
   note('Copilot sign-in on the installed client', await ev(`${q('provider-setup')}.innerText`));
@@ -293,7 +293,7 @@ su hostuser -c 'mkdir -p ~/proj && cd ~/proj && git init -q . && echo hello > RE
   await click('open-project-0');
   await until('the chat', `${q('prompt')}!==null`);
   const remoteLoops = JSON.parse(await ev('window.dspatch.listLoopDefinitions().then(JSON.stringify)'));
-  check('the bundled loops are offered from the installed host, the chat loop chosen', loopsAreRight(remoteLoops), loopSummary(remoteLoops));
+  check('the bundled loops are offered from the installed host, the larger loop preselected', loopsAreRight(remoteLoops), loopSummary(remoteLoops));
   await typeInto('prompt', '[[very-slow]] [[tools]] Keep going while the tunnel drops.');
   await enter();
   await until('activity', `${q('turn-activity')}!==null`);

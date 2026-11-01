@@ -297,7 +297,7 @@ and report any checks you could not perform.
 
 Replies and follow-up instructions stay in the project conversation. The graph view shows the current step and route, so you can inspect the workflow without maintaining a separate conversation for each role.
 
-The bundled **DSpatch development loop (runnable subset)** is a larger implementation/verification/review workflow. Its name matters: it is not the full external process used to develop DSpatch, and it is not selected automatically merely because it is available.
+The bundled **DSpatch development loop (runnable subset)** is a larger implementation/verification/review workflow. Its name matters: it is not the full external process used to develop DSpatch. It is the default until you choose another loop.
 
 ### Decide how much to participate
 
