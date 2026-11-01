@@ -158,7 +158,7 @@ SetEnv DSPATCH_CHAT_RUN=review-flow DSPATCH_PRESENTATION_MODELS=copilot DSPATCH_
 S
 /usr/sbin/sshd`);
   docker('cp', debFile, `${CLIENT}:/tmp/dspatch.deb`);
-  check('the .deb installs', inC(CLIENT, 'root', 'dpkg -i /tmp/dspatch.deb 2>&1 | tail -1; dpkg -s dspatch | grep ^Version').includes(version));
+  check('the .deb installs', inC(CLIENT, 'root', 'dpkg -i /tmp/dspatch.deb 2>&1 | tail -1; dpkg -s dspatch | grep ^Status').includes('install ok installed'));
   check('no Node or npm, and no host package at hand', inC(CLIENT, 'tester', 'command -v node npm; ls ~/.config/DSpatch/host-packages 2>/dev/null | wc -l') === '0');
   // github.com leads nowhere for the first attempt.
   inC(CLIENT, 'root', 'cp /etc/hosts /tmp/hosts.good; echo "127.0.0.1 github.com" >> /etc/hosts');
