@@ -2,7 +2,7 @@
 
 **Develop with agents. Understand the code. Choose how much to delegate.**
 
-DSpatch is an experimental desktop workspace for interactive agent-assisted development, configurable agent loops, and code review. Work in conversation when you want to guide the next action; use a loop to make implementation, checking and correction an explicit, repeatable workflow. The intended benefit is more consistent follow-through with less manual coordination, while you can still steer the work or pause between steps.
+DSpatch is an experimental desktop workspace for interactive agent-assisted development, configurable agent loops, and code review. Work in conversation or delegate a larger effort through a loop that coordinates agent roles and checks. The broader aim is sustained autonomous work across research, concept development, implementation and evaluation, with human direction at meaningful checkpoints. DSpatch currently provides simpler runnable workflows as a starting point; you can steer them in conversation or pause between steps.
 
 Review combines a traditional diff for the overview with **code walks** that connect related code into an explained flow, including the purpose of the change. Select code, ask questions and follow references within the same review: the integrated agent receives the relevant code and revision without you having to assemble the context yourself. The aim is to make complex changes easier to understand while leaving review decisions with you, with selective agent delegation when you judge it appropriate. Review also works independently of development in DSpatch, for changes made in any editor.
 
@@ -15,7 +15,7 @@ See the [tutorial introduction](TUTORIAL.md#why-use-a-loop) for the reasoning be
 | Start with | Use DSpatch to |
 | --- | --- |
 | A question or development task | Read and discuss a project, request changes, and ask the agent to build or test them. |
-| A repeatable workflow | Choose or edit an agent loop, follow its steps, steer the work, and control when the next step starts. |
+| A larger assignment | Choose or edit an agent loop, follow its steps, steer the work, and control when the next step starts. |
 | Two Git revisions | Browse every changed file, expand context, ask about selected code, generate code walks, and review or delegate selected changes. |
 | A remote development machine | Keep the interface on your computer while the repository, agents and tools run on the host over SSH. |
 
