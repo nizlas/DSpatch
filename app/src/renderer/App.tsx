@@ -7367,6 +7367,8 @@ function Turn({
       : turn.status === 'streaming' || turn.status === 'awaiting-approval'
         ? 'unknown'
         : 'unsupported';
+  // A provider can give its error as the turn's text too: it is said once, as the error.
+  const answerShown = turn.errorMessage?.includes(turn.answer.trim()) === true ? '' : turn.answer;
   return (
     <article
       className="turn"
@@ -7428,7 +7430,7 @@ function Turn({
         turn, not the agent's, and running them through a Markdown reader would be
         pretending otherwise.
       */}
-      {turn.answer === '' ? (
+      {answerShown === '' ? (
         <>
           <pre
             hidden={!active}

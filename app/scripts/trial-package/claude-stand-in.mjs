@@ -19,6 +19,11 @@ import https from 'node:https';
 
 const [key, cert, logFile] = process.argv.slice(2);
 
+// A stand-in that dies reads as a network fault in the program. Say why, and stay up.
+process.on('uncaughtException', (error) => {
+  fs.appendFileSync(logFile, `STAND-IN ERROR ${String(error.stack)}\n`);
+});
+
 function events(response, message, blocks) {
   const send = (type, body) => response.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...body })}\n\n`);
   response.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -62,7 +67,7 @@ https
         json({ access_token: 'gho_synthetic', token_type: 'bearer', scope: 'read:user' });
         return;
       }
-      if (request.url === '/user') {
+      if (request.url === '/user' || request.url.startsWith('/copilot_internal/user')) {
         json({ login: 'synthetic-user', id: 1 });
         return;
       }

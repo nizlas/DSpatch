@@ -3033,7 +3033,8 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         this.finishOrAwaitSteers(state, run, {
           status: 'error',
           error: {
-            message: `Claude reported ${subtype ?? 'an error'}${detail === '' ? '' : `: ${detail}`}`,
+            // A `success` carrying `is_error` is a failed turn: the word would only mislead.
+            message: subtype === 'success' && detail !== '' ? detail : `Claude reported ${subtype === 'success' ? 'an error' : (subtype ?? 'an error')}${detail === '' ? '' : `: ${detail}`}`,
             ...(subtype === null ? {} : { providerCode: subtype }),
           },
           message,

@@ -123,6 +123,8 @@ async function typeInto(selector, text) {
 const choose = (select, value) =>
   ev(`(()=>{const s=${q(select)};Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'${value}');s.dispatchEvent(new Event('change',{bubbles:true}))})()`);
 const standInLog = (name = CLIENT) => inC(name, 'root', 'cat /tmp/standin/log');
+/** What a person reads: the agent list's options are always there and are not a message. */
+const readable = () => ev(`(()=>{const c=document.body.cloneNode(true);c.querySelectorAll('select').forEach((n)=>n.remove());return c.innerText})()`);
 const clean = (text) => ['npm ', 'Cursor', 'no text in this turn', 'put back', 'zod', 'claude:install', 'node_modules', 'Technical detail', 're-read'].filter((word) => text.includes(word));
 
 const startClient = async () => {
@@ -132,7 +134,8 @@ const startClient = async () => {
   await until('the window', `${q('remote-session')}!==null || ${q('agent-select')}!==null`);
 };
 const stopClient = async () => {
-  inC(CLIENT, 'root', 'pkill -x dspatch; sleep 1; pkill -9 -x dspatch; true');
+  // The stand-in runs on the same program, so it is spared by its script's name.
+  inC(CLIENT, 'root', `for signal in TERM KILL; do for p in $(pgrep -x dspatch); do grep -q stand-in /proc/$p/cmdline || kill -$signal $p; done; sleep 1; done; true`);
   await sleep(800);
 };
 
@@ -239,8 +242,8 @@ async function main() {
   await sleep(2500);
   await shot('08a-restart-with-the-fault');
   check('the reopened conversation names the repair', (await pageText()).includes('Claude support needs repair'));
-  const faulty = await pageText();
-  check('the reopened conversation holds no internal text', clean(faulty).filter((word) => word !== 'Cursor').length === 0, faulty.slice(0, 500));
+  const faulty = await readable();
+  check('the reopened conversation holds no internal text', clean(faulty).length === 0, faulty.slice(0, 500));
   await typeInto('textarea', 'after the fault');
   await choose('agent-select', 'claude');
   await until('the repair dialog', `${q('provider-continue')}!==null`, 30_000);
@@ -266,7 +269,7 @@ async function main() {
   await until('the failed turn', `[...document.querySelectorAll('[data-ev$="-error"]')].length>0`, 60_000);
   await sleep(3000);
   await shot('10-claude-failed');
-  const failedView = await pageText();
+  const failedView = await readable();
   check('a Claude failure shows once', (await ev(`[...document.querySelectorAll('.app__error')].length`)) === 1, failedView.slice(-300));
   check('no Cursor text, check or provider change', !failedView.includes('Cursor') && (await ev(`${q('agent-select')}.value`)) === 'claude' && (await ev(`${q('reconnect')}===null`)) === true);
   check('Cursor was not contacted', !/cursor/i.test(standInLog()), standInLog().split('\n').filter((line) => /cursor/i.test(line)).join(' | '));
@@ -303,9 +306,13 @@ async function sendFromBox() {
 }
 
 async function copilotPart() {
+  await ev(`window.__steps=[];window.dspatchSetup.onProviderStep((u)=>window.__steps.push(u.step))`);
   await choose((await ev(`${q('open-agent-select')}!==null`)) ? 'open-agent-select' : 'agent-select', 'copilot');
   await click('provider-continue');
-  await until('the code', `${q('provider-code')}!==null || ${q('provider-problem')}!==null`, 240_000);
+  await until('the code', `${q('provider-code')}!==null || ${q('provider-problem')}!==null`, 60_000).catch(async (error) => {
+    fs.writeFileSync(path.join(evidence, 'copilot-steps.json'), String(await ev('JSON.stringify(window.__steps)')));
+    throw error;
+  });
   await shot('12-copilot-code');
   const code = await ev(`${q('provider-code')}?.innerText ?? ''`);
   check('Copilot shows its one-time code in the dialog', /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code), code || await ev(`${q('provider-problem')}?.innerText`));
@@ -400,6 +407,7 @@ try {
   check('the trial reached its end', false, error.message);
   await shot('stopped').catch(() => undefined);
   fs.writeFileSync(path.join(evidence, 'client.log'), inC(CLIENT, 'tester', 'tail -80 /tmp/client.log'));
+  fs.writeFileSync(path.join(evidence, 'claude-transcript.txt'), inC(CLIENT, 'tester', 'ps -eo pid,etime,args | grep -v type= | cut -c1-200; for f in $(ls -t ~/.claude/projects/*/*.jsonl | head -2); do echo "== $f"; tail -6 "$f" | cut -c1-700; done'));
 } finally {
   fs.writeFileSync(path.join(evidence, 'stand-in-client.log'), standInLog());
   fs.writeFileSync(path.join(evidence, 'results.json'), JSON.stringify(results, null, 2));
