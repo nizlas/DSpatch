@@ -211,7 +211,7 @@ async function aliases(laptop) {
   const resolved = inC(LAPTOP, 'tester', 'ssh -G workalias | grep -E "^(user|hostname|port) "').replace(/\n/g, ' ');
   check('ssh itself resolves the alias to User, HostName and Port', resolved.includes('user hostuser') && resolved.includes('hostname 127.0.0.1') && resolved.includes(`port ${String(SSH_PORT)}`), resolved);
   const terminal = inC(LAPTOP, 'tester', 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ClearAllForwardings=yes workalias hostname');
-  check('a terminal reaches the machine through the alias', terminal.endsWith(inC(WORK, 'root', 'hostname')), terminal);
+  check('a terminal reaches the machine through the alias', terminal.split('\n').includes(inC(WORK, 'root', 'hostname')), terminal);
   const wrong = await laptop.connect('wrongalias');
   const words = wrong.seen.at(-1) ?? '';
   check('an alias with the wrong user is refused, and the words show where it went', !wrong.connected && /refused the sign-in/.test(words) && /as nobodyhere on 127\.0\.0\.1, port 2292/.test(words), words);
