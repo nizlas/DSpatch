@@ -38,7 +38,7 @@ sudo apt install "./dspatch_VERSION_amd64.deb"
 
 Start **DSpatch** from your application menu. The package includes the application runtime and configures its sandbox; you do not need the source-build sandbox steps below.
 
-**Windows x64:** download `DSpatch Setup VERSION.exe`, run it, and start **DSpatch** from the Start menu. The installer is per-user. Builds may be unsigned; check the release's publisher and notes before accepting a Windows warning.
+**Windows x64:** download `DSpatch-Setup-VERSION.exe`, run it, and start **DSpatch** from the Start menu. The installer is per-user. Builds may be unsigned; check the release's publisher and notes before accepting a Windows warning.
 
 ### 2. Choose where to work
 
@@ -48,6 +48,8 @@ Start **DSpatch** from your application menu. The package includes the applicati
 For remote work, the client needs system OpenSSH and network access to the host's SSH server. The host needs Git and the project's own build/test tools. DSpatch obtains the matching host package from its release, verifies it, transfers it over SSH, and starts the host and tunnel. You do not need to clone DSpatch on either machine or copy host packages manually when using a complete published release.
 
 Your existing SSH keys and configuration can be used. A new host may require fingerprint confirmation, and password authentication may prompt for a password. **Leave** disconnects the client; it does not shut down the remote host.
+
+If you already use DSpatch on that computer, connecting to the same account continues the same projects, conversations and reviews. One client works at a time: a window left open there hands over unless work is running, and you can return with **Use here**. See [starting locally and continuing from elsewhere](docs/INSTALL.md#for-a-person-using-dspatch).
 
 ### 3. Choose an agent and start
 

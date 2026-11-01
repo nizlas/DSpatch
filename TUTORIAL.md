@@ -342,6 +342,8 @@ Remote work uses the same chat, loops and review interfaces. The difference is w
 
 The client obtains the host package matching its release and sends it over SSH. The repository does not have to exist on your laptop. The host needs the project's own tools and provider access, and provider setup/sign-in applies to that host. Browser authentication is presented on the client.
 
+**Start on one computer, continue from another.** If you already work in DSpatch on a computer, install it on your laptop and connect to the same account there. You find the same projects, conversations, reviews and loop runs, and an existing provider login is reused. One client works at a time. A window left open on that computer hands over when you confirm, unless work is running there, and then shows **Use here** for your return. A job that runs in the host stays one job when you come back: you see it as running, and nothing is sent again.
+
 **Leave** closes the connection while leaving the remote host running. If the connection drops, the client cannot know the job's current state until it reconnects. It does not automatically send the assignment again. After a host restart, an interrupted job may have an unknown outcome; inspect before continuing.
 
 On a Linux host without a usable keyring, Copilot sign-in may not be persistable. Follow the reported error and your organization's credential-storage policy; DSpatch does not silently enable plain-text storage.
