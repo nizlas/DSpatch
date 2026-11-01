@@ -436,13 +436,24 @@ export interface DelegationScope {
 /** Something the agent found, where it found it when it said. */
 export interface AgentFinding {
   readonly severity: 'problem' | 'question' | 'note';
+  /** The problem and what it leads to. In an older result, everything the agent said of it. */
   readonly text: string;
   readonly location: LineRange | null;
+  /** A short heading from the agent (DSP-158). Absent on older results, which derive one. */
+  readonly title?: string;
+  /** Longer reasoning, shown on request (DSP-158). Absent on older results. */
+  readonly details?: string;
 }
 
 /** What a delegated review reported, after DSpatch checked it against the scope. */
 export interface DelegationResult {
   readonly assessment: string;
+  /**
+   * The agent's own one or two sentences on what it approved and what remains (DSP-158).
+   * Absent on older results, which open with the start of the assessment. Never what says
+   * what was approved: that is read from `approved`.
+   */
+  readonly summary?: string;
   /** The changed lines the agent says it reviewed, within the scope. */
   readonly reviewed: readonly LineRange[];
   /** The changed lines approved under the mandate, within the scope and reviewed. */
@@ -531,11 +542,16 @@ export function outsideFileKey(filePath: string): string {
 
 /**
  * What a tool call the provider reported says the agent is doing (30 October 2026): the
- * file it reads, by name, or that it searches. The purpose of a search is not guessed.
+ * file it reads, by name, or that it searches. The purpose of a search is not guessed, and
+ * a tool that neither reads nor searches says nothing here (DSP-158): `null`, so the line
+ * goes on saying what it last knew rather than claim a search that was not reported.
  */
-export function toolActivity(name: string, subject: string | null): string {
-  const file = subject === null ? '' : (subject.split(/[\\/]/).pop() ?? '');
-  return name === 'Read' && file !== '' ? `Reading ${file}` : 'Searching the code';
+export function toolActivity(name: string, subject: string | null): string | null {
+  if (name === 'Read') {
+    const file = subject === null ? '' : (subject.split(/[\\/]/).pop() ?? '');
+    return file === '' ? 'Reading a file' : `Reading ${file}`;
+  }
+  return name === 'Glob' || name === 'Grep' ? 'Searching the code' : null;
 }
 
 /**
@@ -545,8 +561,7 @@ export function toolActivity(name: string, subject: string | null): string {
 export function chatToolActivity(name: string, subject: string | null): string {
   const tool = name.toLowerCase();
   if (/read|view|open/.test(tool)) {
-    const reading = toolActivity('Read', subject);
-    return `${reading === 'Searching the code' ? 'Reading a file' : reading}…`;
+    return `${toolActivity('Read', subject) ?? 'Reading a file'}…`;
   }
   if (/grep|glob|search|find|list/.test(tool)) {
     return 'Searching the code…';
@@ -657,6 +672,12 @@ export interface AgentJob {
    * for instance the file it reads or the part of its answer it writes. Not kept after.
    */
   readonly activity?: string;
+  /**
+   * For a delegated review: the instruction it was sent, without the change and folder
+   * sections that follow it (DSP-158), so what DSpatch told the agent can be read in the
+   * window. Absent on older jobs.
+   */
+  readonly instruction?: string;
 }
 
 /**
@@ -892,6 +913,7 @@ export function jobFrom(raw: unknown): AgentJob | null {
   const result: DelegationResult | null = isRecordObject(resultRaw)
     ? {
         assessment: typeof resultRaw['assessment'] === 'string' ? resultRaw['assessment'] : '',
+        ...(typeof resultRaw['summary'] === 'string' && resultRaw['summary'] !== '' ? { summary: resultRaw['summary'] } : {}),
         reviewed: rangesFrom(resultRaw['reviewed']),
         approved: rangesFrom(resultRaw['approved']),
         findings: (Array.isArray(resultRaw['findings']) ? resultRaw['findings'] : [])
@@ -900,6 +922,8 @@ export function jobFrom(raw: unknown): AgentJob | null {
             severity: finding['severity'] === 'problem' || finding['severity'] === 'question' ? finding['severity'] : 'note',
             text: typeof finding['text'] === 'string' ? finding['text'] : '',
             location: rangeFrom(finding['location']),
+            ...(typeof finding['title'] === 'string' && finding['title'] !== '' ? { title: finding['title'] } : {}),
+            ...(typeof finding['details'] === 'string' && finding['details'] !== '' ? { details: finding['details'] } : {}),
           })),
         uncertainties: stringsFrom(resultRaw['uncertainties']),
         insufficient: resultRaw['insufficient'] === true,
@@ -935,6 +959,7 @@ export function jobFrom(raw: unknown): AgentJob | null {
         ...(material === null ? {} : { material }),
         ...(investigation === null ? {} : { investigation }),
         ...(typeof raw['activity'] === 'string' && state === 'running' ? { activity: raw['activity'] } : {}),
+        ...(typeof raw['instruction'] === 'string' && raw['instruction'] !== '' ? { instruction: raw['instruction'] } : {}),
       };
     })(),
   };

@@ -1148,7 +1148,10 @@ export class ReviewDiscussionService {
     // With code access: what the agent read, counted once its result says it ran.
     if (event.type === 'tool.started') {
       turn.calls.set(event.toolCallId, { name: event.name, subject: event.subject ?? null });
-      this.setActivity(turn, `${toolActivity(event.name, event.subject ?? null)}…`);
+      const activity = toolActivity(event.name, event.subject ?? null);
+      if (activity !== null) {
+        this.setActivity(turn, `${activity}…`);
+      }
       return;
     }
     if (event.type === 'tool.finished') {

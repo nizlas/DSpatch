@@ -28,6 +28,8 @@ let records: string;
 let pairs: ReviewPairs;
 let open: OpenPair;
 let sent: string[];
+/** Every record the host told the windows about, as the host event path carries it. */
+const told: PairRecord[] = [];
 
 function jobs(adapterOptions: { readonly deltaMs?: number } = {}): ReviewAgentJobs {
   return new ReviewAgentJobs({
@@ -66,7 +68,12 @@ async function settled(key: string, jobId: string, timeoutMs = 15_000): Promise<
 before(async () => {
   fixture = makePairFixture();
   records = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-agent-jobs-'));
-  pairs = new ReviewPairs({ recordsDir: path.join(records, 'pairs'), changed: () => undefined });
+  pairs = new ReviewPairs({
+    recordsDir: path.join(records, 'pairs'),
+    changed: (_key, record) => {
+      told.push(record);
+    },
+  });
   await pairs.repositories([fixture.workspace]);
   const opened = await pairs.openPair({ repository: fixture.app, base: fixture.appBase, target: fixture.appTarget });
   if (isPairError(opened)) {
@@ -191,6 +198,50 @@ describe('a delegated review', () => {
     // Manual is the default, and a delegated approval counts for exactly its lines.
     assert.equal(record.requirement, 'manual');
     assert.equal(fileProgressOf(keep, record).agent, 1);
+  });
+
+  it('says what it is doing in one line from what is reported, and nothing of it after the end', async () => {
+    told.length = 0;
+    sent = [];
+    // Each simulated tool takes as long as the record's line is held, so each is seen.
+    process.env['DSPATCH_PRESENTATION_TOOL_MS'] = '1000';
+    const scope = { kind: 'lines', label: 'src/keep.ts added lines', ranges: [{ kind: 'lines', side: 'target', path: 'src/keep.ts', start: 8, end: 9 }] };
+    const started = jobs({ deltaMs: 40 }).start(open.key, { kind: 'review', provider: 'cursor', model: 'sim-model', scope });
+    assert.ok(!isPairError(started));
+    // A window opened after the job started reads the same line from the host.
+    let readLate = '';
+    while (readLate === '') {
+      readLate = (pairs.state(open.key) as PairRecord).jobs.find((entry) => entry.id === started.id)?.activity ?? '';
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const job = await settled(open.key, started.id);
+    delete process.env['DSPATCH_PRESENTATION_TOOL_MS'];
+    assert.equal(job.state, 'done', job.note);
+    assert.ok(job.instruction?.startsWith('DSPATCH-REVIEW-TASK:'), 'what the agent was told is on record');
+    assert.ok(sent[0]?.startsWith(job.instruction ?? 'x'), 'and it is what was sent, ahead of the material');
+    const lines = told.flatMap((record) => record.jobs.filter((entry) => entry.id === started.id).map((entry) => entry.activity ?? ''));
+    const said = [...new Set(lines.filter((line) => line !== ''))];
+    assert.ok(said.every((line) => /^(Waiting for the agent…|Reading \S+|Searching the code|Writing (its answer|its review|finding \d+))$/.test(line)), said.join(' | '));
+    assert.equal(said[0], 'Waiting for the agent…');
+    assert.ok(said.some((line) => line.startsWith('Reading ')), said.join(' | '));
+    const last = told[told.length - 1]?.jobs.find((entry) => entry.id === started.id);
+    assert.equal(last?.state, 'done');
+    assert.ok(last !== undefined && !('activity' in last), 'the event that ends it carries no activity for a window to keep');
+  });
+
+  it('leaves no activity line once a stop is asked for, in the event or after it', async () => {
+    told.length = 0;
+    const scope = { kind: 'lines', label: 'src/keep.ts stop', ranges: [{ kind: 'lines', side: 'target', path: 'src/keep.ts', start: 8, end: 9 }] };
+    const running = jobs({ deltaMs: 40 });
+    const started = running.start(open.key, { kind: 'review', provider: 'cursor', model: 'sim-model', scope });
+    assert.ok(!isPairError(started));
+    while ((pairs.state(open.key) as PairRecord).jobs.find((entry) => entry.id === started.id)?.activity === undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await running.cancel(open.key, started.id);
+    await settled(open.key, started.id);
+    const after = told.flatMap((record) => record.jobs.filter((entry) => entry.id === started.id && entry.state !== 'running'));
+    assert.ok(after.length > 0 && after.every((entry) => !('activity' in entry)), JSON.stringify(after.map((entry) => [entry.state, entry.activity])));
   });
 
   it('approves nothing when the material is not enough', async () => {
@@ -455,6 +506,9 @@ describe('what the agent is doing, and points read on their own', () => {
     assert.equal(writingNow('checks', '{"checks": [{"reasoning": "a"}, {"title": "b", "reasoning": "'), 'Writing point 2 worth checking');
     assert.equal(writingNow('checks', 'Looking at it.'), 'Writing its answer');
     assert.equal(writingNow('explain', '{"answer": "'), 'Writing the explanation');
+    assert.equal(writingNow('review', 'Looking at it.'), 'Writing its answer');
+    assert.equal(writingNow('review', '{"summary": "'), 'Writing its review');
+    assert.equal(writingNow('review', '{"findings": [{"severity": "note"}, {"severity": "problem"'), 'Writing finding 2');
   });
 
   it('keeps a step only when it is one of the walks, and never guesses one', () => {

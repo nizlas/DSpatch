@@ -352,6 +352,16 @@ export function checksPrompt(
 
 /** Ask for a review of a delegated part, under an explicit mandate for exactly that part. */
 export function reviewPrompt(material: AnalysisMaterial, folder: AgentMaterial, scope: DelegationScope, language: 'sv' | 'en'): string {
+  return [reviewInstruction(scope, language), '', folderSection(material, folder), '', changeSection(material)].join('\n');
+}
+
+/**
+ * What DSpatch tells the agent about a delegated review: the mandate and the answer format.
+ * Recorded with the job and readable in the result (DSP-158), so that an instruction added
+ * here is never only in the code. The folder and change sections hold no instruction of the
+ * review's own, and the opening diff is too large to keep with every job.
+ */
+export function reviewInstruction(scope: DelegationScope, language: 'sv' | 'en'): string {
   return [
     `${TASK_HEADER} delegated-review`,
     '',
@@ -375,10 +385,22 @@ export function reviewPrompt(material: AnalysisMaterial, folder: AgentMaterial, 
     '```json',
     JSON.stringify(
       {
+        summary: 'One or two plain sentences: what you approved, and what remains or needs attention.',
         assessment: 'What you reviewed and your judgement, in a few sentences, with what it rests on.',
         reviewed: [{ path: 'src/file.ts', side: 'target', start: 10, end: 14 }],
         approved: [{ path: 'src/file.ts', side: 'target', start: 10, end: 12 }],
-        findings: [{ severity: 'problem', text: 'What is wrong and why', path: 'src/file.ts', side: 'target', start: 13, end: 13 }],
+        findings: [
+          {
+            severity: 'problem',
+            title: 'A short heading',
+            text: 'What is wrong and what it leads to, in one or two sentences',
+            details: 'Longer reasoning, only when it is needed',
+            path: 'src/file.ts',
+            side: 'target',
+            start: 13,
+            end: 13,
+          },
+        ],
         uncertainties: ['What you could not establish from the code you read'],
         insufficient: false,
       },
@@ -387,10 +409,7 @@ export function reviewPrompt(material: AnalysisMaterial, folder: AgentMaterial, 
     ),
     '```',
     'severity is "problem", "question" or "note". A line with a problem is not approved. Do not narrate your investigation; give the judgement and what it rests on.',
-    '',
-    folderSection(material, folder),
-    '',
-    changeSection(material),
+    'The same problem in several places is one finding per place, each with the same title.',
   ].join('\n');
 }
 
@@ -1162,8 +1181,10 @@ export function readReviewAnswer(raw: unknown, scope: DelegationScope, files: re
   const reviewed = inScope(read('reviewed'), 'reviewed');
   const findings: AgentFinding[] = (Array.isArray(raw['findings']) ? raw['findings'] : []).filter(isObject).map((finding): AgentFinding => ({
     severity: finding['severity'] === 'problem' ? 'problem' : finding['severity'] === 'question' ? 'question' : 'note',
-    text: text(finding['text']),
+    text: text(finding['text']) || text(finding['title']),
     location: rangeOf(finding),
+    ...(text(finding['title']) === '' ? {} : { title: text(finding['title']) }),
+    ...(text(finding['details']) === '' ? {} : { details: text(finding['details']) }),
   })).filter((finding) => finding.text !== '');
   const uncertainties = (Array.isArray(raw['uncertainties']) ? raw['uncertainties'] : []).map(text).filter((entry) => entry !== '');
   const assessment = text(raw['assessment']);
@@ -1191,8 +1212,10 @@ export function readReviewAnswer(raw: unknown, scope: DelegationScope, files: re
     }
     approvedLines = approved.filter((line) => reviewedKeys.has(lineKey(line)) && !withProblem.includes(line));
   }
+  const summary = text(raw['summary']);
   return {
     assessment,
+    ...(summary === '' ? {} : { summary }),
     reviewed: rangesOf(reviewed),
     approved: rangesOf(approvedLines),
     findings,

@@ -99,6 +99,9 @@ const WAITING = 'Waiting for the agent…';
 /** How often what the agent is doing is written to the record, at most. */
 const ACTIVITY_MS = 900;
 
+/** How long after its last tool ended the line goes on naming that tool. */
+const TOOL_DONE_MS = 3_000;
+
 /**
  * Which part of its answer the agent is writing, read from the answer so far: the fields
  * of the JSON it was asked for, in the order it writes them. Nothing is guessed beyond that.
@@ -175,6 +178,8 @@ interface Live {
   activity: string;
   activityShown: string;
   activityTimer: ReturnType<typeof setTimeout> | null;
+  /** Set while the last tool has ended and nothing newer is reported. */
+  idleTimer: ReturnType<typeof setTimeout> | null;
   readonly kind: AgentJob['kind'];
   finished: ((status: 'finished' | 'failed' | 'cancelled' | 'unconfirmed', error: string | null) => void) | null;
 }
@@ -554,6 +559,7 @@ export class ReviewAgentJobs {
       activity: '',
       activityShown: '',
       activityTimer: null,
+      idleTimer: null,
       kind,
     };
     this.live.set(job.id, live);
@@ -625,6 +631,7 @@ export class ReviewAgentJobs {
    * or tool calls; those stay in the job's Details. Written at most about once a second.
    */
   private setActivity(live: Live, activity: string): void {
+    this.clearIdle(live);
     live.activity = activity;
     if (live.activityTimer !== null) {
       return;
@@ -651,8 +658,16 @@ export class ReviewAgentJobs {
     }, ACTIVITY_MS);
   }
 
+  private clearIdle(live: Live): void {
+    if (live.idleTimer !== null) {
+      clearTimeout(live.idleTimer);
+      live.idleTimer = null;
+    }
+  }
+
   /** Nothing more is said about what it is doing: the job is ending. */
   private quiet(live: Live): void {
+    this.clearIdle(live);
     if (live.activityTimer !== null) {
       clearTimeout(live.activityTimer);
       live.activityTimer = null;
@@ -804,10 +819,14 @@ export class ReviewAgentJobs {
           live.searches.push(`${call.name} ${call.subject}`);
         }
       }
-      // Its last tool has ended and nothing else is reported yet: "Reading a.ts" would no
-      // longer be true (DSP-158). The next event replaces this in the same line.
+      // Its last tool has ended and nothing else is reported: before long "Reading a.ts"
+      // is no longer true (DSP-158). Not at once, or a run of quick reads would read as waiting.
       if (live.calls.size === 0) {
-        this.setActivity(live, WAITING);
+        this.clearIdle(live);
+        live.idleTimer = setTimeout(() => {
+          live.idleTimer = null;
+          this.setActivity(live, WAITING);
+        }, TOOL_DONE_MS);
       }
     } else if (event.type === 'assistant.delta') {
       live.text += event.text;

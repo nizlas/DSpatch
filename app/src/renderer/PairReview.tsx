@@ -15,6 +15,8 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react';
 
+import { delegatedReviewView, type FindingGroup } from '../shared/delegated-review-view';
+import { ShortThenMore } from './DiscussionAnswer';
 import { highlightLines, type Token } from '../shared/review-model';
 import {
   changedLinesOf,
@@ -787,6 +789,16 @@ function DiffReview({
     setFileKey(key);
   };
 
+  // A place in the change a review result points at, wherever the view is now.
+  const showRange = (range: LineRange): void => {
+    const location = { side: range.side, path: range.path, line: range.start };
+    const file = open.files.find((candidate) => fileLocationMatch(candidate, location));
+    if (file !== undefined) {
+      openFile(file.key);
+      setTarget((before) => ({ location, nonce: (before?.nonce ?? 0) + 1 }));
+    }
+  };
+
   // What another window marked reaches this one through the host.
   useEffect(
     () =>
@@ -1319,6 +1331,7 @@ function DiffReview({
                 startJob({ kind: 'review', ...choice, scope: { kind: 'file', label: 'the whole change', ranges: changedRangesOf(open.files) } })
               }
               onStop={(job) => void stopJob(job)}
+              onShow={showRange}
             />
           ) : awayHere !== null ? (
             <ReferenceView
@@ -1356,6 +1369,8 @@ function DiffReview({
               bridge={bridge}
               pairKey={open.key}
               file={current}
+              allFiles={open.files}
+              onShowElsewhere={showRange}
               record={record}
               layout={layout}
               target={target !== null && fileLocationMatch(current, target.location) ? target : null}
@@ -1483,6 +1498,25 @@ export function attemptLabel(job: AgentJob): string {
 }
 
 /**
+ * Whether what the host last said can be taken as current (DSP-158). With the connection
+ * gone the host's line above the window says how it stands is unknown, and an activity line
+ * frozen at its last words would say otherwise. Once back, the window has the host's state.
+ */
+function useHostReachable(): boolean {
+  const [reachable, setReachable] = useState(true);
+  useEffect(() => {
+    const bridge = window.dspatchHost;
+    if (bridge === undefined) {
+      return;
+    }
+    const read = (state: { readonly remote: boolean; readonly phase: string }): void => setReachable(!state.remote || state.phase === 'connected');
+    void bridge.state().then(read);
+    return bridge.onState(read);
+  }, []);
+  return reachable;
+}
+
+/**
  * Where one piece of agent work stands, in a line, with Stop while it runs. Since Niclas's
  * trial feedback (29 October 2026) the product view says only that: no job ids, internal
  * times, reads or tool calls. Those stay in the review record, and the provider's own
@@ -1490,6 +1524,7 @@ export function attemptLabel(job: AgentJob): string {
  */
 export function JobLine({ job, onStop }: { readonly job: AgentJob; readonly onStop: () => void }): JSX.Element {
   const running = job.state === 'running' || job.state === 'cancelling';
+  const reachable = useHostReachable();
   const what =
     job.kind === 'walks'
       ? 'Preparing code walks'
@@ -1514,7 +1549,7 @@ export function JobLine({ job, onStop }: { readonly job: AgentJob; readonly onSt
             </button>
           )}
           {/* What it is doing now, as it reports it (30 October 2026). */}
-          {job.state === 'running' && job.activity !== undefined && job.activity !== '' && (
+          {job.state === 'running' && reachable && job.activity !== undefined && job.activity !== '' && (
             <span className="rv-agent-activity" data-ev={`agent-job-${job.kind}-activity`}>
               {job.activity}
             </span>
@@ -1547,61 +1582,126 @@ export function rangeWords(range: LineRange): string {
 
 const SEVERITY_WORD: Record<AgentFinding['severity'], string> = { problem: 'Problem', question: 'Question', note: 'Note' };
 
-/** A delegated review's outcome: what was reviewed and approved, and every finding and uncertainty. */
-function AgentReviewResult({
+/** One finding: its heading and short explanation; longer reasoning and its code on request. */
+function FindingItem({ finding, onShow }: { readonly finding: FindingGroup; readonly onShow: (range: LineRange) => void }): JSX.Element {
+  return (
+    <li className={`rv-agent-finding rv-agent-finding-${finding.severity}`} data-ev="agent-finding">
+      <h4>
+        <span className="rv-agent-finding-kind">{SEVERITY_WORD[finding.severity]}</span> {finding.title}
+        {finding.places.length > 1 && <span className="rv-pair-muted"> · {finding.places.length} places</span>}
+      </h4>
+      <ShortThenMore
+        short={finding.explanation}
+        details={finding.details}
+        rests={
+          finding.places.length === 0 ? undefined : (
+            <ul>
+              {finding.places.map((place, index) => (
+                <li key={index}>
+                  <button type="button" className="rv-pair-link" data-ev="agent-finding-place" onClick={() => onShow(place)}>
+                    {rangeWords(place)}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+      />
+    </li>
+  );
+}
+
+function RangeLinks({ ranges, onShow }: { readonly ranges: readonly LineRange[]; readonly onShow: (range: LineRange) => void }): JSX.Element {
+  return (
+    <ul>
+      {ranges.map((range, index) => (
+        <li key={index}>
+          <button type="button" className="rv-pair-link" onClick={() => onShow(range)}>
+            {rangeWords(range)}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * A delegated review's outcome (DSP-158). It opens with what was approved and what remains,
+ * in DSpatch's words from the checked ranges, with the agent's own short words beside them;
+ * then the findings; everything else it rests on is folded, nothing is left out. While the
+ * job runs this is only its one status line: the line, not a second one above it.
+ */
+export function AgentReviewResult({
   job,
+  files,
+  open = true,
   onStop,
   onShow,
 }: {
   readonly job: AgentJob;
+  /** The change's files, to tell a whole part from a partial one; `null` while not known. */
+  readonly files: readonly PairFile[] | null;
+  readonly open?: boolean;
   readonly onStop: () => void;
   readonly onShow: (range: LineRange) => void;
 }): JSX.Element {
+  if (job.state === 'running' || job.state === 'cancelling') {
+    return <JobLine job={job} onStop={onStop} />;
+  }
   const result = job.result;
-  const approved = result?.approved.reduce((total, range) => total + range.end - range.start + 1, 0) ?? 0;
+  const view = result === null ? null : delegatedReviewView(result, job.scope, files);
   return (
-    <details className="rv-agent-review" open data-ev="agent-review" data-state={job.state}>
+    <details className="rv-agent-review" open={open} data-ev="agent-review" data-state={job.state} data-standing={view?.standing ?? ''}>
       <summary>
-        Agent review · {job.scope?.label ?? ''} · {job.state === 'done' ? (result?.insufficient ? 'not enough to judge' : `${String(approved)} line(s) approved`) : job.state}
+        Agent review · {job.scope?.label ?? ''} · {view?.standingWords ?? job.state}
       </summary>
-      {job.state === 'running' || job.state === 'cancelling' ? (
-        <JobLine job={job} onStop={onStop} />
-      ) : result === null ? (
+      {result === null || view === null ? (
         <p>
           <span className="rv-agent-attempt">{attemptLabel(job)}</span> <JobNote job={job} />
         </p>
       ) : (
         <div className="rv-agent-review-body">
-          {result.insufficient && <p className="rv-agent-insufficient">The agent could not judge this part from the code it could read. Nothing was approved.</p>}
-          {result.assessment !== '' && <p>{result.assessment}</p>}
-          {result.findings.length > 0 && (
+          <div className={`rv-agent-verdict rv-agent-verdict-${view.standing}`} data-ev="agent-review-summary">
+            <p className="rv-agent-verdict-line">{view.approvedLine}</p>
+            <p>{view.attentionLine}</p>
+            {view.agentSummary !== '' && <p className="rv-pair-muted">The agent says: {view.agentSummary}</p>}
+          </div>
+          {view.findings.length > 0 && (
             <ul className="rv-agent-findings">
-              {result.findings.map((finding, index) => (
-                <li key={index} className={`rv-agent-finding-${finding.severity}`} data-ev="agent-finding">
-                  <strong>{SEVERITY_WORD[finding.severity]}.</strong> {finding.text}
-                  {finding.location !== null && (
-                    <button type="button" className="rv-pair-link" onClick={() => onShow(finding.location as LineRange)}>
-                      {rangeWords(finding.location)}
-                    </button>
-                  )}
-                </li>
+              {view.findings.map((finding, index) => (
+                <FindingItem key={index} finding={finding} onShow={onShow} />
               ))}
             </ul>
           )}
-          {result.uncertainties.length > 0 && (
-            <div className="rv-agent-uncertain">
+          {view.uncertainties.length > 0 && (
+            <div className="rv-agent-uncertain" data-ev="agent-review-uncertain">
               <span className="rv-pair-muted">Not established:</span>
               <ul>
-                {result.uncertainties.map((entry, index) => (
+                {view.uncertainties.map((entry, index) => (
                   <li key={index}>{entry}</li>
                 ))}
               </ul>
             </div>
           )}
-          <p className="rv-pair-muted">
-            {agentName(job)} · reviewed {result.reviewed.map(rangeWords).join(', ') || 'nothing'}
-            {approved > 0 ? ` · approved ${result.approved.map(rangeWords).join(', ')}` : ''}
-          </p>
+          <details className="rv-agent-adjustments" data-ev="agent-review-basis">
+            <summary>Reasoning and what it covers</summary>
+            {view.reasoning !== '' && <p className="rv-agent-reasoning">{view.reasoning}</p>}
+            <p className="rv-pair-muted">{attemptLabel(job)}</p>
+            {result.approved.length > 0 && (
+              <>
+                <span className="rv-pair-muted">Approved:</span>
+                <RangeLinks ranges={result.approved} onShow={onShow} />
+              </>
+            )}
+            {view.notApproved !== null && view.notApproved.length > 0 && (
+              <>
+                <span className="rv-pair-muted">Not approved:</span>
+                <RangeLinks ranges={view.notApproved} onShow={onShow} />
+              </>
+            )}
+            <span className="rv-pair-muted">Reviewed:</span>
+            {result.reviewed.length > 0 ? <RangeLinks ranges={result.reviewed} onShow={onShow} /> : <p>Nothing.</p>}
+          </details>
           {result.adjustments.length > 0 && (
             <details className="rv-agent-adjustments">
               <summary>What DSpatch did not accept from the answer</summary>
@@ -1610,6 +1710,12 @@ function AgentReviewResult({
                   <li key={index}>{entry}</li>
                 ))}
               </ul>
+            </details>
+          )}
+          {job.instruction !== undefined && (
+            <details className="rv-agent-adjustments" data-ev="agent-review-instruction">
+              <summary>What the agent was told</summary>
+              <pre className="rv-agent-instruction">{job.instruction}</pre>
             </details>
           )}
         </div>
@@ -1651,6 +1757,7 @@ function FilesChanged({
   onOpen,
   onDelegate,
   onStop,
+  onShow,
 }: {
   readonly pairKey: string;
   readonly files: readonly PairFile[];
@@ -1661,6 +1768,7 @@ function FilesChanged({
   readonly onOpen: (file: PairFile) => void;
   readonly onDelegate: (choice: AgentChoice) => Promise<boolean>;
   readonly onStop: (job: AgentJob) => void;
+  readonly onShow: (range: LineRange) => void;
 }): JSX.Element {
   const [delegating, setDelegating] = useState(false);
   const facts = useMemo(() => new Map(files.map((file) => [file.key, fileReviewFactsOf(file, record)])), [files, record]);
@@ -1702,7 +1810,7 @@ function FilesChanged({
           />
         </div>
       )}
-      {whole !== null && (!delegating || isRunning(whole)) && <JobLine job={whole} onStop={() => onStop(whole)} />}
+      {whole !== null && (!delegating || isRunning(whole)) && <AgentReviewResult job={whole} files={files} onStop={() => onStop(whole)} onShow={onShow} />}
       <div className="rv-pair-filelist" role="list">
         <div className="rv-pair-filerow rv-pair-filehead" aria-hidden="true">
           <span>File</span>
@@ -2180,6 +2288,8 @@ function FileDiff({
   bridge,
   pairKey,
   file,
+  allFiles,
+  onShowElsewhere,
   record,
   layout,
   target: targetProp,
@@ -2222,6 +2332,10 @@ function FileDiff({
   readonly bridge: ReviewPairBridge;
   readonly pairKey: string;
   readonly file: PairFile;
+  /** Every file of the change, to tell a whole delegated part from a partial one. */
+  readonly allFiles: readonly PairFile[];
+  /** A place a review result points at, in another file of the change. */
+  readonly onShowElsewhere: (range: LineRange) => void;
   readonly record: PairRecord;
   readonly layout: 'split' | 'unified';
   readonly target: { readonly location: DiffLocation; readonly nonce: number } | null;
@@ -2803,12 +2917,20 @@ function FileDiff({
       )}
       {fileJobs.length > 0 && (
         <div className="rv-agent-reviews">
-          {fileJobs.map((job) => (
+          {fileJobs.map((job, index) => (
             <AgentReviewResult
               key={job.id}
               job={job}
+              files={allFiles}
+              open={index === 0}
               onStop={() => onStop(job)}
-              onShow={(range) => setOwnTarget((before) => ({ location: { side: range.side, path: range.path, line: range.start }, nonce: (before?.nonce ?? 0) + 1 }))}
+              onShow={(range) => {
+                if (fileLocationMatch(file, { side: range.side, path: range.path, line: range.start })) {
+                  setOwnTarget((before) => ({ location: { side: range.side, path: range.path, line: range.start }, nonce: (before?.nonce ?? 0) + 1 }));
+                } else {
+                  onShowElsewhere(range);
+                }
+              }}
             />
           ))}
         </div>

@@ -29,7 +29,7 @@
  *   imported function directly (`name(...).`) whose definition can return `null` is a
  *   problem too, with a note at the definition. A scope whose files are all Markdown, or
  *   whose files are not in the folder, is answered as insufficient. Everything else is
- *   approved.
+ *   approved. With `DSPATCH_REVIEW_SIM=rich-review` it adds a repeated question and a note.
  * - A step question reads the step's places, follows the first imported function they call
  *   to its definition, and answers with both as references.
  * - An explanation of selected code reads each selected part at its side and answers only
@@ -402,7 +402,7 @@ function delegatedReview(prompt: string, reader: Reader): string {
       insufficient: true,
     });
   }
-  const findings: { severity: string; text: string; path: string; side: string; start: number; end: number }[] = [];
+  const findings: { severity: string; title?: string; text: string; details?: string; path: string; side: string; start: number; end: number }[] = [];
   const approved: SimRange[] = [];
   for (const range of reviewed) {
     const lines = reader.read(range.side, range.path) ?? [];
@@ -416,13 +416,15 @@ function delegatedReview(prompt: string, reader: Reader): string {
           unchecked && definition !== null
             ? {
                 severity: 'problem',
-                text: `SIMULATED: \`${definition.name}\` can return null (${definition.path} line ${String(definition.start)}), and this line uses its result without a check.`,
+                title: `SIMULATED: the result of ${definition.name} is used unchecked`,
+                text: `SIMULATED: \`${definition.name}\` can return null, and this line uses its result without a check, so it can fail at run time.`,
+                details: `SIMULATED: the definition is in ${definition.path}, line ${String(definition.start)}.`,
                 path: range.path,
                 side: range.side,
                 start: line,
                 end: line,
               }
-            : { severity: 'problem', text: 'SIMULATED: `added2` is exported but nothing uses it.', path: range.path, side: range.side, start: line, end: line },
+            : { severity: 'problem', title: 'SIMULATED: added2 is unused', text: 'SIMULATED: `added2` is exported but nothing uses it, so it is code nobody exercises.', path: range.path, side: range.side, start: line, end: line },
         );
         if (unchecked && definition !== null) {
           findings.push({
@@ -444,7 +446,17 @@ function delegatedReview(prompt: string, reader: Reader): string {
       approved.push({ ...range, start: from, end: range.end });
     }
   }
+  // DSPATCH_REVIEW_SIM=rich-review: several findings and a repeat, to look at how they read.
+  const first = reviewed[0];
+  if (process.env['DSPATCH_REVIEW_SIM'] === 'rich-review' && first !== undefined) {
+    const at = { path: first.path, side: first.side };
+    const question = { severity: 'question', title: 'SIMULATED: is this value meant to be public?', text: 'SIMULATED: the export widens what callers can reach, and later changes to it then break them.' };
+    findings.push({ ...question, ...at, start: first.start, end: first.start });
+    findings.push({ ...question, ...at, start: first.end, end: first.end });
+    findings.push({ severity: 'note', title: 'SIMULATED: the naming differs from its neighbours', text: 'SIMULATED: nothing breaks, but the next reader has to look twice.', ...at, start: first.start, end: first.start });
+  }
   return fence({
+    summary: findings.length > 0 ? 'SIMULATED: the lines without a problem are approved; the lines with one are not.' : 'SIMULATED: every delegated line is approved.',
     assessment: `SIMULATED: reviewed ${String(reviewed.length)} changed range(s) in the delegated part, reading them and what they call in the revision folder.`,
     reviewed,
     approved,

@@ -6,7 +6,7 @@ import { DiscussionActivity, DiscussionAnswer, PendingLine, ShortThenMore } from
 import { Markdown } from './Markdown';
 import { ReviewDiscussion } from './ReviewDiscussion';
 import { AgentPicker } from './AgentPicker';
-import { attemptLabel, isRunning, JobLine, JobNote, requestFailure } from './PairReview';
+import { AgentReviewResult, attemptLabel, isRunning, JobLine, JobNote, requestFailure } from './PairReview';
 import { Inline, LineGutter, TokensView, asLocation, capitalise, fileName, lineDigits, rangeText, useFiles, useRows, type Files } from './review-code';
 import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
@@ -48,7 +48,7 @@ import {
 } from '../shared/review-model';
 import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuote } from '../shared/review-discussion';
 import { quoteRanges, readQuote } from './walk-selection';
-import { isPairError, type AgentJob, type LineRange, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
+import { isPairError, type AgentJob, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
 
 declare global {
@@ -583,7 +583,7 @@ function OpenReview({
    * pair connection (a window that has none) the walk keeps its own decisions as before.
    */
   const pairBridge = window.dspatchReviewPair;
-  const [pair, setPair] = useState<{ readonly key: string; readonly record: PairRecord } | null>(null);
+  const [pair, setPair] = useState<{ readonly key: string; readonly record: PairRecord; readonly files: readonly PairFile[] } | null>(null);
   useEffect(() => {
     if (pairBridge === undefined) {
       return;
@@ -591,11 +591,11 @@ function OpenReview({
     let live = true;
     void pairBridge.forWalk().then((answer) => {
       if (live && !isPairError(answer)) {
-        setPair({ key: answer.key, record: answer.record });
+        setPair({ key: answer.key, record: answer.record, files: answer.files });
       }
     });
     const stop = pairBridge.onChanged((event) => {
-      setPair((current) => (current !== null && current.key === event.key ? { key: current.key, record: event.record } : current));
+      setPair((current) => (current !== null && current.key === event.key ? { ...current, record: event.record } : current));
     });
     return () => {
       live = false;
@@ -987,7 +987,7 @@ function OpenReview({
         if (hunk !== undefined) {
           void pairBridge.mark(pair.key, { op: pairOpFor(decision.outcome), scopes: hunkRanges(hunk), reason: decision.reason }).then((answer) => {
             if (!isPairError(answer)) {
-              setPair({ key: pair.key, record: answer });
+              setPair({ ...pair, record: answer });
             }
           });
           return;
@@ -1541,7 +1541,16 @@ function OpenReview({
               {pair !== null && pairBridge !== undefined && current !== null && away === null && walkScope !== null && (
                 <div className="rv-walk-delegate">
                   {walkJob !== null && (!delegatingWalk || isRunning(walkJob)) && (
-                    <JobLine job={walkJob} onStop={() => void pairBridge.cancelJob(pair.key, walkJob.id)} />
+                    <AgentReviewResult
+                      job={walkJob}
+                      files={pair.files}
+                      onStop={() => void pairBridge.cancelJob(pair.key, walkJob.id)}
+                      onShow={(range) => {
+                        void pairBridge
+                          .showInDiff({ side: range.side, path: range.path, line: range.start })
+                          .then((answer) => setDiffNote(answer.ok ? '' : answer.note));
+                      }}
+                    />
                   )}
                   {delegatingWalk ? (
                     <AgentPicker
