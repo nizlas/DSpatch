@@ -2407,6 +2407,7 @@ export function LoopEditor(): React.JSX.Element {
                   title={choice.display.error ?? choice.display.dependency ?? undefined}
                 >
                   {choice.display.name} · {choice.display.origin}
+                  {choice.display.variant === null ? '' : ` · ${choice.display.variant}`}
                   {choice.usable ? '' : ' — will not load'}
                 </option>
               ))}

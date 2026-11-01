@@ -47,7 +47,14 @@ import {
   type DefinitionIo,
   type LoopDefinitionRow,
 } from './loop-definition-files';
+import { markShippedRows, settleCounterparts } from './loop-definition-counterparts';
 import { graphVersionIdFor } from './run-record-store';
+
+/**
+ * The loop a list offers when nobody has chosen one (DSP-160). An identity rather than a
+ * path or a name, so the choice follows the declaration wherever this DSpatch keeps it.
+ */
+export const DEFAULT_LOOP_DEFINITION_ID = 'dspatch-development-loop-runnable';
 
 /** The definition a run is walking, resolved once and then never looked up again. */
 export interface ChosenLoop {
@@ -87,6 +94,8 @@ export type ChosenLoopOutcome =
  * own working copy, and a file someone picked by hand may also sit in a folder that is
  * open: in both cases a second row would look like a second loop. Where it is is the
  * more useful of the two origins, so the discovered row is the one kept.
+ *
+ * Copies at different paths are {@link settleCounterparts}' question (DSP-160).
  */
 export function listChoosableLoops(
   folderPaths: readonly string[],
@@ -111,6 +120,8 @@ export function listChoosableLoops(
    * unselectable.
    */
   preferredKey: string | null = null,
+  /** The folder this DSpatch ships its loops in, when it has one. */
+  shippedFolder: string | null = null,
 ): LoopDefinitionListing {
   const folders = [...new Set(folderPaths.filter((folder) => folder !== ''))];
   const discovery = discoverLoopDefinitions(folders, io);
@@ -124,20 +135,27 @@ export function listChoosableLoops(
     return true;
   };
 
-  const rows = [
-    ...discovery.rows.filter((row) => keep(row.filePath)),
-    ...pickedPaths
-      .filter((filePath) => filePath !== '')
-      .map((filePath) => openLoopDefinitionFile(filePath, io))
-      .filter((row) => keep(row.filePath)),
-  ];
+  const settled = settleCounterparts(
+    markShippedRows(
+      [
+        ...discovery.rows.filter((row) => keep(row.filePath)),
+        ...pickedPaths
+          .filter((filePath) => filePath !== '')
+          .map((filePath) => openLoopDefinitionFile(filePath, io))
+          .filter((row) => keep(row.filePath)),
+      ],
+      shippedFolder,
+    ),
+    preferredKey,
+    io,
+  );
 
   // The binding is asked here rather than at Send, so a drawing that cannot run is
   // listed unselectable with its reason like any other row that cannot run. It costs
   // one graph read per loaded row — not per folder and never recursive, so discovery's
   // own cost property is untouched — and it is why this lives in the choice layer and
   // not in `discoverLoopDefinitions`.
-  const judged = rows.map((row) => ({ row, refusal: bindingRefusalFor(row, io) }));
+  const judged = settled.rows.map((row) => ({ row, refusal: bindingRefusalFor(row, io) }));
   // A refused row is not offered as the default either. Preselecting something the
   // list itself has just marked unselectable would be the same untruth one step on.
   const preselected = defaultChoiceFrom(
@@ -146,7 +164,12 @@ export function listChoosableLoops(
   );
   return {
     choices: judged.map((entry) =>
-      describeChoice(entry.row, entry.refusal, entry.row.filePath === preselected),
+      describeChoice(
+        entry.row,
+        entry.refusal,
+        entry.row.filePath === preselected,
+        settled.variants.get(entry.row.filePath) ?? null,
+      ),
     ),
     // A directory that exists and could not be listed is worth saying out loud: a
     // folder whose loops are unreadable otherwise looks like a folder with none.
@@ -159,11 +182,11 @@ export function listChoosableLoops(
 /**
  * Which row a list offers when the person has not chosen yet.
  *
- * DSpatch's own chat loop when it is there, so ticking `Use loop` in a fresh window
- * still offers the loop it offered before this card, and otherwise the only loop
- * there is. **This is a default selection, not a load path** — the difference that
- * matters is that the selection then travels explicitly and can be changed, whereas
- * the constant it replaces could not be.
+ * A saved choice first. Then the development loop (DSP-160), the shipped row when a
+ * project holds its own copy, and the simple chat loop where that loop is not to be had.
+ * **This is a default selection, not a load path** — the difference that matters is that
+ * the selection then travels explicitly and can be changed, whereas the constant it
+ * replaces could not be.
  */
 export function defaultChoiceFrom(
   rows: readonly LoopDefinitionRow[],
@@ -172,8 +195,15 @@ export function defaultChoiceFrom(
 ): string | null {
   const usable = rows.filter((row) => row.definition !== null);
   const remembered = usable.find((row) => row.filePath === preferredKey);
-  const chatLoop = usable.find((row) => row.definition?.id === CHAT_LOOP_GRAPH_ID);
-  return remembered?.filePath ?? chatLoop?.filePath ?? usable[0]?.filePath ?? null;
+  const withId = (id: string): readonly LoopDefinitionRow[] =>
+    usable.filter((row) => row.definition?.id === id);
+  const larger = withId(DEFAULT_LOOP_DEFINITION_ID);
+  const fallback =
+    larger.find((row) => row.origin.kind === 'shipped') ??
+    larger[0] ??
+    withId(CHAT_LOOP_GRAPH_ID)[0] ??
+    usable[0];
+  return remembered?.filePath ?? fallback?.filePath ?? null;
 }
 
 /**
@@ -288,6 +318,7 @@ function describeChoice(
   row: LoopDefinitionRow,
   refusal: string | null,
   preselected: boolean,
+  variant: string | null,
 ): LoopDefinitionChoice {
   return {
     key: row.filePath,
@@ -299,6 +330,10 @@ function describeChoice(
     // would make one row say two things depending on which surface read it. A binding
     // refusal goes in the same `error` field for the same reason — a row that cannot
     // run says so in one place, whether the declaration or the drawing is the reason.
-    display: { ...describeDefinitionRow(row), ...(refusal === null ? {} : { error: refusal }) },
+    display: {
+      ...describeDefinitionRow(row),
+      variant,
+      ...(refusal === null ? {} : { error: refusal }),
+    },
   };
 }

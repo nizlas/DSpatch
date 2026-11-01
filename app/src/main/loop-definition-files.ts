@@ -59,6 +59,8 @@ export const nodeDefinitionIo: DefinitionIo = {
 /** Where a definition came from, which is what tells two identical names apart. */
 export type DefinitionOrigin =
   | { readonly kind: 'folder'; readonly folderPath: string }
+  /** The folder this DSpatch ships its own loops in (DSP-160). */
+  | { readonly kind: 'shipped'; readonly folderPath: string }
   | { readonly kind: 'picked' };
 
 /**
@@ -295,9 +297,11 @@ export function resultRootFor(options: {
 
 export function describeDefinitionRow(row: LoopDefinitionRow): DefinitionRowDisplay {
   const origin =
-    row.origin.kind === 'folder'
-      ? `${path.basename(row.origin.folderPath)} \u00b7 ${row.fileName}`
-      : `${row.filePath} \u00b7 chosen by hand`;
+    row.origin.kind === 'shipped'
+      ? 'comes with DSpatch'
+      : row.origin.kind === 'folder'
+        ? `${path.basename(row.origin.folderPath)} \u00b7 ${row.fileName}`
+        : `${row.filePath} \u00b7 chosen by hand`;
 
   if (row.definition === null) {
     return {
@@ -309,6 +313,7 @@ export function describeDefinitionRow(row: LoopDefinitionRow): DefinitionRowDisp
         .map((finding) => finding.message)
         .join('\n'),
       dependency: null,
+      variant: null,
     };
   }
 
@@ -323,6 +328,7 @@ export function describeDefinitionRow(row: LoopDefinitionRow): DefinitionRowDisp
           ? ''
           : ` \u2014 ${row.definition.resourceRootNote}`)
       : null,
+    variant: null,
   };
 }
 

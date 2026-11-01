@@ -283,6 +283,8 @@ A loop makes the responsibilities and handovers in an assignment explicit. Depen
 
 Selecting a loop or enabling Use loop does not start it. Sending the assignment does.
 
+Until you choose one, DSpatch offers **DSpatch development loop (runnable subset)**. **Simple chat loop** stays in the list for smaller assignments, and a loop you chose earlier stays chosen.
+
 The bundled **Simple chat loop** starts with **Do the work**, then hands its result to **Check the work** in a separate agent step. The check can accept it, request rework or report that the result could not be established. Rework follows the graph's limits; it is not an unlimited retry.
 
 For example:

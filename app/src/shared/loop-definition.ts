@@ -341,6 +341,8 @@ export interface DefinitionRowDisplay {
   readonly error: string | null;
   /** Present when the definition reads from outside its own folder. */
   readonly dependency: string | null;
+  /** How this row relates to its shipped or personal counterpart (DSP-160). */
+  readonly variant: string | null;
 }
 
 /** A file name that discovery would consider. Not a claim that it parses. */

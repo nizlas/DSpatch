@@ -531,7 +531,7 @@ describe('the next mandate\u2019s loop comes out of the one list', () => {
         definitionId: row.name,
         usable: true,
         preselected: row.preselected,
-        display: { name: row.name, description: null, origin: 'somewhere', error: null, dependency: null },
+        display: { name: row.name, description: null, origin: 'somewhere', error: null, dependency: null, variant: null },
       })),
       problems: [],
     };
@@ -606,8 +606,8 @@ describe('the next mandate\u2019s loop comes out of the one list', () => {
     const fallback = withoutTheRow.choices.find((choice) => choice.preselected)?.key;
     assert.notEqual(fallback, remembered);
     assert.ok(
-      fallback !== undefined && fallback.endsWith('dspatch-chat-loop.loop.json'),
-      'and what it falls to is DSpatch\u2019s own chat loop, which is the substitution #7 forbids',
+      fallback !== undefined && fallback.endsWith('dspatch-development-loop.loop.json'),
+      'and what it falls to is the default, which is the substitution #7 forbids',
     );
   });
 
@@ -642,18 +642,164 @@ describe('the next mandate\u2019s loop comes out of the one list', () => {
     }
   });
 
-  it('offers the bundled development loop without choosing it', () => {
-    // It ships in this repository, so it is listed for any project. Being listed selects
-    // nothing: the chat loop stays the default and a remembered choice stands.
+  it('offers the development loop by default, keeps the chat loop as an option', () => {
+    // A new installation: nothing saved, so nobody has chosen.
     const bundled = path.join(repoRoot, '.dspatch', 'loops', 'dspatch-development-loop.loop.json');
     const listing = listChoosableLoops([repoRoot]);
     const row = listing.choices.find((choice) => choice.key === bundled);
     assert.equal(row?.definitionId, 'dspatch-development-loop-runnable');
-    assert.equal(row?.usable, true, row?.error ?? 'no reason');
-    assert.equal(row?.preselected, false);
-    assert.equal(nextMandateLoopFrom(listing)?.key, chatLoopDefinition);
+    assert.equal(row?.usable, true, row?.display.error ?? 'no reason');
+    assert.equal(nextMandateLoopFrom(listing)?.key, bundled);
 
-    const remembered = listChoosableLoops([repoRoot], [], undefined, bundled);
-    assert.equal(nextMandateLoopFrom(remembered)?.key, bundled);
+    const chat = listing.choices.find((choice) => choice.key === chatLoopDefinition);
+    assert.equal(chat?.usable, true, 'Simple chat loop stays an option');
+    assert.equal(chat?.preselected, false);
+  });
+
+  it('leaves a saved choice of the chat loop alone on upgrade, since the record cannot show it was automatic', () => {
+    const listing = listChoosableLoops([repoRoot], [], undefined, chatLoopDefinition);
+    assert.equal(nextMandateLoopFrom(listing)?.key, chatLoopDefinition);
+  });
+
+  it('falls back to the chat loop where the development loop is not to be had', () => {
+    const only = path.join(temporaryDir('no-larger-loop'), '.dspatch', 'loops');
+    const chatOnly = path.dirname(path.dirname(only));
+    write(
+      path.join(only, 'a.loop.json'),
+      JSON.stringify({ ...declaration('some-other-loop'), name: 'Another' }),
+    );
+    write(path.join(only, 'chat.loop.json'), JSON.stringify(declaration('dspatch-chat-loop')));
+    assert.ok(nextMandateLoopFrom(listChoosableLoops([chatOnly]))?.key.endsWith('chat.loop.json'));
+  });
+});
+
+function declaration(id: string): Record<string, unknown> {
+  return {
+    format: 'dspatch-loop-definition',
+    formatVersion: 1,
+    id,
+    name: 'The same loop',
+    graph: 'g.graph.json',
+  };
+}
+
+const LARGER_ID = 'dspatch-development-loop-runnable';
+
+/** One declaration and its graph in a folder, as a person's own file or a shipped one. */
+function aLoopCopy(
+  dir: string,
+  graphText: string,
+  id: string = LARGER_ID,
+  name: string = 'The same loop',
+): string {
+  const file = path.join(dir, '.dspatch', 'loops', 'loop.loop.json');
+  write(file, JSON.stringify({ ...declaration(id), name, resourceRoot: '../..', resourceRootNote: 'Test.' }));
+  write(path.join(dir, 'g.graph.json'), graphText);
+  return file;
+}
+
+describe('the same loop shipped and in your own file (DSP-160)', () => {
+  const graph = JSON.stringify({ id: 'g', name: 'G', nodes: [] }, null, 2);
+
+  it('lists one row when your file and the shipped loop are the same, and it is the shipped one', () => {
+    const shippedRoot = temporaryDir('shipped');
+    const shipped = aLoopCopy(shippedRoot, graph);
+    // Line endings are what a Windows checkout differs in, and that is no difference.
+    const mine = aLoopCopy(temporaryDir('mine'), graph.replaceAll('\n', '\r\n'));
+
+    const listing = listChoosableLoops([shippedRoot], [mine], undefined, null, shippedRoot);
+    assert.deepEqual(listing.choices.map((choice) => choice.key), [shipped]);
+    assert.equal(listing.choices[0]?.display.origin, 'comes with DSpatch');
+    assert.ok(listing.choices[0]?.display.variant?.includes(mine), 'the copy left out is named');
+    assert.ok(fs.existsSync(mine), 'the list changes, the file does not');
+  });
+
+  it('keeps a saved choice of your own identical file, on the row it names', () => {
+    const shippedRoot = temporaryDir('shipped');
+    aLoopCopy(shippedRoot, graph);
+    const mine = aLoopCopy(temporaryDir('mine'), graph);
+
+    const listing = listChoosableLoops([shippedRoot], [mine], undefined, mine, shippedRoot);
+    assert.deepEqual(listing.choices.map((choice) => choice.key), [mine]);
+    assert.equal(nextMandateLoopFrom(listing)?.key, mine);
+    assert.match(listing.choices[0]?.display.variant ?? '', /same as the version that comes with DSpatch/);
+  });
+
+  it('keeps both rows when the two differ, says so on each, and leaves the saved choice', () => {
+    const shippedRoot = temporaryDir('shipped');
+    const shipped = aLoopCopy(shippedRoot, graph);
+    const mine = aLoopCopy(temporaryDir('mine'), `${graph}\n// edited`);
+
+    const listing = listChoosableLoops([shippedRoot], [mine], undefined, mine, shippedRoot);
+    const row = (key: string) => listing.choices.find((choice) => choice.key === key);
+    assert.equal(listing.choices.length, 2);
+    assert.equal(nextMandateLoopFrom(listing)?.key, mine);
+    assert.match(row(mine)?.display.origin ?? '', /chosen by hand/);
+    assert.match(row(mine)?.display.variant ?? '', /differs from the version that comes with DSpatch/);
+    assert.equal(row(shipped)?.display.origin, 'comes with DSpatch');
+    assert.match(row(shipped)?.display.variant ?? '', /differs from your file/);
+  });
+
+  it('counts a difference in a role as a difference, where the graphs are identical', () => {
+    const withRole = JSON.stringify({
+      id: 'g',
+      nodes: [{ id: 'a', role: { id: 'r', source: { kind: 'cursor-agent-file', path: 'r.md' } } }],
+    });
+    const shippedRoot = temporaryDir('shipped');
+    aLoopCopy(shippedRoot, withRole);
+    write(path.join(shippedRoot, 'r.md'), 'Do this.');
+    const mineRoot = temporaryDir('mine');
+    const mine = aLoopCopy(mineRoot, withRole);
+    write(path.join(mineRoot, 'r.md'), 'Do something else.');
+
+    const listing = listChoosableLoops([shippedRoot], [mine], undefined, null, shippedRoot);
+    assert.equal(listing.choices.length, 2);
+  });
+
+  it('prefers the shipped row by default when an open project holds a differing copy', () => {
+    const shippedRoot = temporaryDir('shipped');
+    const shipped = aLoopCopy(shippedRoot, graph);
+    const project = temporaryDir('project');
+    const copy = aLoopCopy(project, `${graph}\n// ours`);
+
+    const listing = listChoosableLoops([project, shippedRoot], [], undefined, null, shippedRoot);
+    assert.equal(nextMandateLoopFrom(listing)?.key, shipped);
+    assert.ok(listing.choices.some((choice) => choice.key === copy));
+  });
+
+  it('does not take a shared name for the same loop: the id decides', () => {
+    const shippedRoot = temporaryDir('shipped');
+    aLoopCopy(shippedRoot, graph);
+    const mine = aLoopCopy(temporaryDir('mine'), graph, 'a-loop-of-my-own');
+
+    const listing = listChoosableLoops([shippedRoot], [mine], undefined, null, shippedRoot);
+    assert.equal(listing.choices.length, 2);
+    assert.ok(listing.choices.every((choice) => choice.display.variant === null));
+  });
+
+  it('does not collapse a copy it cannot compare', () => {
+    const shippedRoot = temporaryDir('shipped');
+    aLoopCopy(shippedRoot, graph);
+    const mineRoot = temporaryDir('mine');
+    const mine = aLoopCopy(mineRoot, graph);
+    fs.rmSync(path.join(mineRoot, 'g.graph.json'));
+
+    const listing = listChoosableLoops([shippedRoot], [mine], undefined, null, shippedRoot);
+    assert.equal(listing.choices.length, 2);
+  });
+
+  it('resolves the development loop as an installation lays it out, roles included', () => {
+    // What scripts/prepare-bundled.mjs copies, so a new installation's default can run.
+    const bundled = temporaryDir('bundled');
+    fs.cpSync(path.join(repoRoot, 'docs', 'loop'), path.join(bundled, 'docs', 'loop'), { recursive: true });
+    fs.cpSync(path.join(repoRoot, '.dspatch', 'loops'), path.join(bundled, '.dspatch', 'loops'), {
+      recursive: true,
+    });
+    const listing = listChoosableLoops([bundled], [], undefined, null, bundled);
+    const chosen = nextMandateLoopFrom(listing);
+    assert.equal(listing.choices.find((choice) => choice.preselected)?.definitionId, LARGER_ID);
+    const key = chosen?.key ?? '';
+    const judged = judgeChosenLoop(openChosenLoop(openLoopDefinitionFile(key)), 'it was not chosen');
+    assert.equal(judged.runnable, true, judged.runnable ? '' : judged.note);
   });
 });

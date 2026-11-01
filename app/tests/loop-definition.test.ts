@@ -982,6 +982,22 @@ describe('the definition that runs', () => {
     assert.doesNotMatch(both.choices[0]?.display.origin ?? '', /chosen by hand/);
   });
 
+  it('says a loop comes with DSpatch instead of naming the folder it was unpacked into (DSP-160)', () => {
+    const own = temporaryDir('shipped-origin');
+    write(
+      path.join(own, '.dspatch', 'loops', 'ours.loop.json'),
+      declaration({ id: 'ours', name: 'Ours', graph: 'g.graph.json' }),
+    );
+    assert.equal(
+      listChoosableLoops([own], [], undefined, null, own).choices[0]?.display.origin,
+      'comes with DSpatch',
+    );
+    assert.equal(
+      listChoosableLoops([own]).choices[0]?.display.origin,
+      `${path.basename(own)} \u00b7 ours.loop.json`,
+    );
+  });
+
   /**
    * DSP-78. A declaration sitting next to DSpatch, not inside it, that borrows
    * DSpatch's graph and roles through `resourceRoot`. The real file lives outside

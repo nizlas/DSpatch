@@ -1362,10 +1362,10 @@ async function runChosenLoopScenario(plan: ScriptedRunPlan): Promise<ScriptedRun
     const byDefault = await loopOnScreen();
     observations['loopShownByDefault'] = byDefault;
     record('default-on-screen', byDefault);
-    if (byDefault['graphId'] !== 'dspatch-chat-loop') {
+    if (byDefault['graphId'] !== 'dspatch-development-loop-runnable') {
       failures.push(
         `ticking Use loop put "${String(byDefault['graphId'])}" on screen rather than ` +
-          'the simple chat loop, which is what a fresh window offered before DSP-70.',
+          'the development loop, which is what a fresh window offers since DSP-160.',
       );
     }
 
