@@ -1,16 +1,26 @@
 # Using DSpatch
 
-DSpatch brings three activities into one workspace: **talking with a development agent, running a repeatable agent workflow, and understanding the resulting code**. You choose how much work to delegate and how closely to follow it. The aim is to make larger changes manageable while keeping their purpose, behaviour and review decisions understandable.
+DSpatch brings three activities into one workspace: **talking with a development agent, delegating a larger effort through an agent workflow, and understanding the resulting code**. You choose how much work to delegate and how closely to follow it. The aim is to make larger changes manageable while keeping their purpose, behaviour and review decisions understandable.
 
 ## Why use a loop?
 
-In interactive development, you and an agent decide what to do next through conversation. The agent may already investigate, edit files and run tests autonomously within one request. You guide the assignment, assess its response and ask for the next action when needed.
+A loop lets you delegate a substantial effort while keeping control of its direction. An assignment can involve discovering what to build, researching alternatives, developing a concept, implementing it and evaluating the result. The work may unfold over many agent steps, with findings changing the plan along the way.
 
-A loop makes the process around that work explicit. It defines roles, handovers, checks and routes between steps. For example, one agent step implements a change, another checks the result against the assignment, and a failed check sends specific feedback back for correction. The workflow decides whether to continue, request rework or stop according to its defined outcomes and limits.
+In interactive development, you and an agent organize the work through conversation. The agent can already investigate, edit files and run tests autonomously within one request. A loop adds an explicit structure around that autonomy: responsibilities, handovers, evidence to produce, checks and routes for revision or further investigation. Specialist steps can contribute different perspectives while working toward the same objective.
 
-The fundamental difference is **who carries the process forward**. In interactive mode, the conversation and the agent's judgement organize the work. In a loop, a defined workflow also controls which responsibilities must be fulfilled and what happens after each outcome. You do not have to remember to ask for every checking or correction step.
+The fundamental difference is **how responsibility for carrying the work forward is organized**. A loop can coordinate research, design, implementation and assessment without requiring you to prompt each handover. Its structure can be reusable even when the assignment and the solution are entirely new. The graph defines responsibilities and decision routes; agents still have to discover the answers.
 
-That structure is intended to make repeated work more consistent, reduce missed checks and give an assessment a separate role from implementation. It does not guarantee better code: the quality of the roles, checks and evidence still matters, and different agents can repeat the same mistake. Interactive work suits exploration and changing requirements; a loop becomes useful when you have a process worth repeating. You can steer a running loop in the same conversation and choose whether its next steps start automatically or wait for you.
+For example, a research-and-development workflow could receive this assignment:
+
+> Develop a stronger AI model for this task, informed by recent research. Compare promising approaches, propose a design, implement and evaluate it, and present the evidence behind your decisions.
+
+Research steps could find and assess relevant papers, design steps could propose competing concepts, and implementation and evaluation steps could test them. Results might lead back to more research or a revised design. The output should explain what was chosen, why, what the evidence supports and what remains uncertain—not just deliver code.
+
+Human checkpoints in such a workflow let you steer at the level of goals and trade-offs. You might redirect the work toward lower latency, reject a data requirement or prioritize a different research direction, while leaving detailed investigation and implementation to the agents. This is the intended division of responsibility: sustained autonomous work with meaningful opportunities for human direction.
+
+The expected benefit is the ability to carry a larger, open-ended assignment further with less manual coordination, clearer responsibilities and explicit assessment. Better results still depend on the quality of the roles, checks and evidence; several agents can share the same blind spot.
+
+**Current scope:** DSpatch's external development workflow explores this broader approach; the application currently includes a simplified runnable subset and a smaller work/check loop. The research example above illustrates the wider concept, not a bundled, fully implemented research workflow. In the current application, you can steer a running loop through the project conversation and choose whether work steps start automatically or wait for you. These controls are described [below](#decide-how-much-to-participate).
 
 ## Review built around understanding
 
@@ -32,7 +42,7 @@ This tutorial describes the current user workflow. For installation, start with 
 | --- | --- |
 | Understand or review an existing change | [Review a change](#review-a-change). No loop or prior DSpatch conversation is required. |
 | Ask questions or develop interactively | [Work with an agent](#work-with-an-agent). |
-| Have work implemented and checked through a workflow | [Use an agent loop](#use-an-agent-loop). |
+| Coordinate an assignment across agent roles | [Use an agent loop](#use-an-agent-loop). |
 | Use a repository and tools on another machine | [Work remotely](#work-remotely). |
 
 There are two conversations to keep in mind:
@@ -263,7 +273,7 @@ Saved conversations remain available through the chat list and **Session → Con
 
 ## Use an agent loop
 
-A loop makes a workflow explicit: which agent does the work, which step checks it, and where the result goes if correction is needed. The agents still investigate and choose tools; the graph controls their handovers and stopping conditions.
+A loop makes the responsibilities and handovers in an assignment explicit. Depending on the workflow, steps can investigate, propose, implement or assess; the graph controls how their results lead to further work and when to stop. The bundled examples below provide a smaller starting point for using these mechanics.
 
 ### Choose a loop and give it an assignment
 
