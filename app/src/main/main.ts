@@ -6,6 +6,8 @@ import { findHostPackage, readHostManifest, type HostPackage } from './host-pack
 import { SshConnection, validTarget, type SshPrompt } from './ssh-connection';
 import { endRemoteSession, parseRemoteAddress, readRemoteSession, saveRemoteSession } from './remote-session';
 import type { HostLinkEvent } from './host-connection';
+import { heldClaim, takeHandoverRequest, writeHandoverAnswer } from '../host/host-data';
+import type { HostRunning } from '../shared/host-bootstrap';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -90,7 +92,7 @@ import type {
   HostCallContext,
   ProjectHostMethodName,
 } from '../shared/project-host-contract';
-import { HostConnection, type HostLoss, type HostProcess } from './host-connection';
+import { HostConnection, type HostLoss, type HostProcess, type HostStartOutcome } from './host-connection';
 import { chatRunHold, chatRunMode, chatRunScenario } from './launch-mode';
 import { ownRepositoryRoot } from './own-repository';
 import { PROBE_EXIT } from './probe-exit';
@@ -463,6 +465,8 @@ function forgetHost(next: RemoteEndpoint | null): void {
   remoteLink?.kill();
   remoteLink = null;
   remoteEndpoint = next;
+  savedTunnel = false;
+  sharedHere = next !== null && next.token === ownRunningHost()?.endpoint.token;
   senderOffset = null;
 }
 
@@ -579,6 +583,90 @@ function hostPackageFor(platform: string, arch: string, status: (text: string) =
   });
 }
 
+/**
+ * A host that stays running over this computer's own data (DSP-161): started over SSH and still
+ * here. Using it is the same as using the data, so this client attaches to it rather than start a
+ * second host, which the claim would refuse. Running work there goes on, and nothing is resent.
+ */
+function ownRunningHost(): { readonly endpoint: RemoteEndpoint; readonly pid: number } | null {
+  const folder = app.getPath('userData');
+  if (heldClaim(folder)?.kind !== 'standalone') {
+    return null;
+  }
+  try {
+    const running = JSON.parse(fs.readFileSync(path.join(folder, 'host-running.json'), 'utf8')) as HostRunning;
+    return { endpoint: { host: '127.0.0.1', port: running.port, token: fs.readFileSync(path.join(folder, 'remote-token'), 'utf8').trim() }, pid: running.pid };
+  } catch {
+    return null;
+  }
+}
+
+/** A window should open the connection form: the saved tunnel gave way to Connect over SSH. */
+let remoteFormWanted = false;
+
+/** Handed over: another computer has this computer's work until someone takes it back. */
+let handedOver = false;
+
+/** End this computer's standing host, and wait for its claim to go. Answers a sentence if it did not. */
+async function endOwnHost(pid: number): Promise<string> {
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    return '';
+  }
+  for (let waited = 0; waited < 12_000; waited += 200) {
+    if (heldClaim(app.getPath('userData')) === null) {
+      return '';
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return 'The host on this computer did not stop.';
+}
+
+/** A person asked for this window to use this computer's work again, after a handover. */
+function useHere(): Promise<string> {
+  handedOver = false;
+  return moveToHost(ownRunningHost()?.endpoint ?? null, () => undefined, 'using this computer here again');
+}
+
+const HANDOVER_CHECK_MS = 1_500;
+
+/**
+ * A client connecting over SSH asked for this computer's work (`docs/INSTALL.md`). Running work is
+ * left alone and said; otherwise this client's host closes and the windows say where the work went.
+ * A window with a draft keeps it, and no question is put, because nobody may be at this computer.
+ */
+async function answerHandover(): Promise<void> {
+  const folder = app.getPath('userData');
+  if (hostMoving || handedOver || remoteSession() !== null || host.state() !== 'ready') {
+    return;
+  }
+  const nonce = takeHandoverRequest(folder);
+  if (nonce === null) {
+    return;
+  }
+  const busy = unsavedDrawing !== null ? 'The loop editor holds unsaved changes.' : await host.call<string | null>('host.busy', NO_SENDER);
+  if (busy !== null) {
+    log(`a handover was asked for and refused: ${busy}`);
+    writeHandoverAnswer(folder, { nonce, answer: 'busy', detail: busy });
+    return;
+  }
+  hostMoving = true;
+  try {
+    log('handing over to a client connecting over SSH');
+    await reviewWindows?.closeAll(HOST_MOVE_WINDOW_MS);
+    if (editorWindow !== null && !editorWindow.isDestroyed()) {
+      editorWindow.close();
+    }
+    await host.shutdown('host.shutdown', [NO_SENDER, { observeConversationFiles: false }], (host.closeBoundMs() ?? 0) + HOST_CLOSE_MARGIN_MS);
+    handedOver = true;
+    publishLink({ phase: 'stopped', note: 'Your work is safe. Choose Use here to continue on this computer; the other computer is then told.' });
+    writeHandoverAnswer(folder, { nonce, answer: 'released', detail: '' });
+  } finally {
+    hostMoving = false;
+  }
+}
+
 /** Connect to `user@machine`: everything from sign-in to a window on the host. */
 async function connectOverSsh(target: string): Promise<string> {
   const value = target.trim();
@@ -645,7 +733,20 @@ async function connectOverSsh(target: string): Promise<string> {
 const PROVIDER_CALLS = ['provider.status', 'provider.install', 'provider.installCancel', 'provider.acceptClaude', 'provider.loginStart', 'provider.loginAnswer', 'provider.loginCancel'] as const;
 
 /** Back to this computer's own host. */
-function leaveRemoteSession(): Promise<string> {
+async function leaveRemoteSession(): Promise<string> {
+  const own = sharedHere ? ownRunningHost() : null;
+  if (own !== null) {
+    const busy = await host.call<string | null>('host.busy', NO_SENDER);
+    if (busy !== null) {
+      publishLink({ phase: 'connected', note: `${busy} The host goes on until it is done.` });
+      return busy;
+    }
+    const failed = await endOwnHost(own.pid);
+    if (failed !== '') {
+      publishLink({ phase: 'connected', note: failed });
+      return failed;
+    }
+  }
   return moveToHost(
     null,
     () => {
@@ -663,6 +764,14 @@ function registerHostLinkIpc(): void {
   });
   ipcMain.on('dspatch:remote-leave', () => {
     void leaveRemoteSession();
+  });
+  ipcMain.on('dspatch:use-here', () => {
+    void useHere();
+  });
+  ipcMain.handle('dspatch:take-remote-form', () => {
+    const wanted = remoteFormWanted;
+    remoteFormWanted = false;
+    return wanted;
   });
   ipcMain.handle('dspatch:remote-connect', async (_event, address: unknown, token: unknown): Promise<string> => {
     if (typeof address !== 'string' || typeof token !== 'string' || token.trim() === '') {
@@ -838,9 +947,20 @@ let remoteEndpoint: RemoteEndpoint | null | undefined;
 
 let remoteLink: RemoteLink | null = null;
 
+/** The host in use is this computer's own, reached without SSH. */
+let sharedHere = false;
+
+/** The host in use comes from a saved manual tunnel: an upgrade may have left it behind. */
+let savedTunnel = false;
+
 function remoteSession(): RemoteEndpoint | null {
   if (remoteEndpoint === undefined) {
     remoteEndpoint = readRemoteSession(app.getPath('userData'), process.env);
+    savedTunnel = remoteEndpoint !== null;
+    if (remoteEndpoint === null) {
+      remoteEndpoint = ownRunningHost()?.endpoint ?? null;
+      sharedHere = remoteEndpoint !== null;
+    }
   }
   return remoteEndpoint;
 }
@@ -851,7 +971,14 @@ let hostLink: HostLinkState = { remote: false, phase: 'connected', machine: '', 
 function publishLink(change: Pick<HostLinkState, 'phase' | 'note'>): void {
   const remote = remoteSession();
   const address = remote === null ? '' : `${remote.host}:${String(remote.port)}`;
-  hostLink = { remote: remote !== null, address, machine: remoteLink?.machineName() || address, ...change };
+  hostLink = {
+    remote: remote !== null || handedOver,
+    address,
+    machine: remoteLink?.machineName() || address,
+    ...change,
+    ...(sharedHere ? { here: true } : {}),
+    ...(handedOver ? { away: true } : {}),
+  };
   log(`host link: ${hostLink.phase}${hostLink.note === '' ? '' : ` (${hostLink.note})`}`);
   for (const contents of webContents.getAllWebContents()) {
     if (!contents.isDestroyed()) {
@@ -1022,8 +1149,19 @@ function unattended(): boolean {
  */
 async function startHostOrQuit(): Promise<boolean> {
   for (;;) {
-    const started = await host.start();
+    // A tunnel saved by an older version: found out in seconds rather than at the start bound.
+    const wanted = remoteSession();
+    const tunnelGone = wanted !== null && savedTunnel ? await probeHost({ endpoint: wanted, build: remoteBuild(app.getAppPath()), log }, HOST_PROBE_MS) : null;
+    const started = tunnelGone === null ? await host.start() : ({ ok: false, failure: { kind: 'host-error', code: 'host-unavailable', message: tunnelGone } } satisfies HostStartOutcome);
     if (started.ok) {
+      void host
+        .call<string | null>('host.dataNotice', NO_SENDER)
+        .then((notice) => {
+          if (notice !== null && !unattended()) {
+            void askPerson({ type: 'info', buttons: ['OK'], title: 'DSpatch', message: 'Older data was brought in', detail: notice });
+          }
+        })
+        .catch(() => undefined);
       if (remoteSession() !== null) {
         const hostBuild = remoteLink?.build();
         const mine = remoteBuild(app.getAppPath());
@@ -1037,6 +1175,52 @@ async function startHostOrQuit(): Promise<boolean> {
       return false;
     }
     const remote = remoteSession();
+    const own = sharedHere ? ownRunningHost() : null;
+    if (own !== null) {
+      const response = await askPerson({
+        type: 'warning',
+        buttons: ['Stop it and continue', 'Quit DSpatch'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Another DSpatch host is running here',
+        message: 'A host of another version is running on this computer, over this same work.',
+        detail: `This DSpatch cannot use it. Stopping it ends any work running there, and that work's outcome is then unknown. Nothing else is lost.\n\n${started.failure.detail ?? started.failure.message}`,
+      });
+      if (response !== 0) {
+        app.exit(HOST_EXIT_START_FAILED);
+        return false;
+      }
+      await endOwnHost(own.pid);
+      sharedHere = false;
+      forgetHost(null);
+      continue;
+    }
+    if (remote !== null && savedTunnel) {
+      const response = await askPerson({
+        type: 'info',
+        buttons: ['Connect over SSH', 'Work on this computer', 'Try again', 'Quit DSpatch'],
+        defaultId: 0,
+        cancelId: 3,
+        title: 'The saved remote connection does not answer',
+        message: `This DSpatch was set up to reach a host through a tunnel at ${remote.host}:${String(remote.port)}, and nothing answers there.`,
+        detail:
+          'You no longer need a tunnel or a host you start yourself: DSpatch does both when it connects over SSH. ' +
+          'Nothing has been lost. What was done on the other machine stays there, and connecting to it brings it back. ' +
+          'Try again only if you still run that tunnel yourself.',
+      });
+      if (response === 2) {
+        continue;
+      }
+      if (response === 3) {
+        app.exit(HOST_EXIT_START_FAILED);
+        return false;
+      }
+      savedTunnel = false;
+      remoteFormWanted = response === 0;
+      endRemoteSession(app.getPath('userData'));
+      forgetHost(null);
+      continue;
+    }
     if (remote !== null) {
       const response = await askPerson({
         type: 'error',
@@ -4796,6 +4980,18 @@ function registerLoopGraphIpc(): void {
  * would leave those resources behind.
  */
 function registerLifecycle(): void {
+  setInterval(() => {
+    void answerHandover().catch((error: unknown) => {
+      log(`a handover could not be answered: ${String(error)}`);
+    });
+  }, HANDOVER_CHECK_MS).unref();
+  app.on('second-instance', () => {
+    const window = liveMainWindow();
+    if (window?.isMinimized() === true) {
+      window.restore();
+    }
+    window?.focus();
+  });
   app.on('before-quit', (event) => {
     if (serviceDisposed) {
       return;
@@ -4828,6 +5024,13 @@ function main(): void {
         'and would fight over it. Set at most one.',
     );
     app.exit(PROBE_EXIT.misconfigured);
+    return;
+  }
+
+  // One window onto this user's work: a second launch shows the first. A scripted run or a review
+  // started by itself has its own folder or its own rule, and the data claim still guards those.
+  if (!smokeMode && !probeMode && !chatRunMode && reviewDefinitionAtStart === null && !app.requestSingleInstanceLock()) {
+    app.quit();
     return;
   }
 

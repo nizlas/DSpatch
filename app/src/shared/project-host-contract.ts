@@ -243,6 +243,12 @@ export type ProjectHostMethods = ReviewMethods & {
   // --- Choosing a place on the host (DSP-111) -------------------------------------------
   readonly 'files.browse': (folder: string | null) => HostBrowsePage;
 
+  // --- One host over a machine's work (DSP-161) -----------------------------------------
+  /** What is running here, as a sentence, or `null` when nothing is. */
+  readonly 'host.busy': () => string | null;
+  /** Something about this host's data a person has not been told yet, once. */
+  readonly 'host.dataNotice': () => string | null;
+
   // --- Closing -------------------------------------------------------------------------
   readonly 'host.shutdown': (request: { readonly observeConversationFiles: boolean }) => HostShutdownAnswer;
 };
@@ -382,5 +388,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'scripted.resumeChoice': true,
   'scripted.reviewReading': true,
   'files.browse': true,
+  'host.busy': true,
+  'host.dataNotice': true,
   'host.shutdown': true,
 } satisfies Record<ProjectHostMethodName, true>) as ProjectHostMethodName[];

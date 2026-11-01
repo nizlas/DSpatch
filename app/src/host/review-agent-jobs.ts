@@ -51,6 +51,7 @@ import {
   readStepAnswer,
   readWalksAnswer,
   repairPrompt,
+  reviewInstruction,
   reviewPrompt,
   selectionPrompt,
   stepQuestionPrompt,
@@ -92,6 +93,9 @@ import type { RevisionSnapshots, SnapshotManifest } from './revision-snapshots';
 
 export type AgentProvider = 'cursor' | 'claude' | 'copilot';
 
+/** What DSpatch itself says while nothing else is reported: it asked, and nothing is running. */
+const WAITING = 'Waiting for the agent…';
+
 /** How often what the agent is doing is written to the record, at most. */
 const ACTIVITY_MS = 900;
 
@@ -112,7 +116,14 @@ export function writingNow(kind: AgentJob['kind'], text: string): string {
     const points = text.match(/"reasoning"\s*:/g)?.length ?? 0;
     return points > 0 ? `Writing point ${String(points)} worth checking` : 'Writing its answer';
   }
-  return kind === 'review' ? 'Writing its review' : 'Writing the explanation';
+  if (kind === 'review') {
+    const findings = text.match(/"severity"\s*:/g)?.length ?? 0;
+    if (findings > 0) {
+      return `Writing finding ${String(findings)}`;
+    }
+    return /"(?:summary|assessment)"\s*:/.test(text) ? 'Writing its review' : 'Writing its answer';
+  }
+  return 'Writing the explanation';
 }
 
 /** What a window asks for. Checked here before anything is written or sent. */
@@ -211,6 +222,12 @@ function providerName(provider: AgentProvider): string {
   return provider === 'claude' ? 'Claude' : provider === 'copilot' ? 'Copilot' : 'Cursor';
 }
 
+/** A job with nothing said about what it is doing now. */
+function withoutActivity(job: AgentJob): AgentJob {
+  const { activity: _activity, ...rest } = job;
+  return rest;
+}
+
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -281,7 +298,7 @@ export class ReviewAgentJobs {
       jobs: record.jobs.map((job) =>
         (job.state === 'running' || job.state === 'cancelling') && !this.live.has(job.id)
           ? {
-              ...job,
+              ...withoutActivity(job),
               state: 'unknown',
               endedAt: new Date().toISOString(),
               note: 'DSpatch stopped before this finished, so how far it got is unknown. Nothing was approved, and nothing was started again.',
@@ -546,6 +563,11 @@ export class ReviewAgentJobs {
     return job;
   }
 
+  /** Whether agent work runs here now (DSP-161). */
+  working(): boolean {
+    return this.live.size > 0;
+  }
+
   /** Stop a running job. It counts as cancelled only when the provider reports the end. */
   async cancel(key: unknown, jobId: unknown): Promise<PairAnswer<{ readonly note: string }>> {
     const live = typeof jobId === 'string' ? this.live.get(jobId) : undefined;
@@ -589,12 +611,8 @@ export class ReviewAgentJobs {
           return job;
         }
         const next = { ...job, ...change };
-        // What it is doing is said only while it does it.
-        if (next.state === 'running' || next.state === 'cancelling') {
-          return next;
-        }
-        const { activity: _activity, ...ended } = next;
-        return ended;
+        // What it is doing is said only while it does it: not while it is being stopped.
+        return next.state === 'running' ? next : withoutActivity(next);
       }),
     }));
     return isPairError(written) ? null : written;
@@ -633,6 +651,14 @@ export class ReviewAgentJobs {
     }, ACTIVITY_MS);
   }
 
+  /** Nothing more is said about what it is doing: the job is ending. */
+  private quiet(live: Live): void {
+    if (live.activityTimer !== null) {
+      clearTimeout(live.activityTimer);
+      live.activityTimer = null;
+    }
+  }
+
   /** The job's final state, once: a later attempt to end it again changes nothing. */
   private finish(live: Live, state: AgentJob['state'], note: string, extra: Partial<AgentJob> = {}): void {
     const current = this.options.pairs.state(live.key);
@@ -640,10 +666,7 @@ export class ReviewAgentJobs {
     if (job === undefined || (job.state !== 'running' && job.state !== 'cancelling')) {
       return;
     }
-    if (live.activityTimer !== null) {
-      clearTimeout(live.activityTimer);
-      live.activityTimer = null;
-    }
+    this.quiet(live);
     this.setJob(live, { ...extra, ...this.investigationOf(live), state, note, endedAt: new Date().toISOString() });
     this.options.log(`review agent ${live.jobId}: ${state} - ${note}`);
   }
@@ -760,7 +783,10 @@ export class ReviewAgentJobs {
       // Counted as read or searched only once its result says it ran.
       const subject = event.subject === undefined ? null : this.relative(live, event.subject);
       live.calls.set(event.toolCallId, { name: event.name, subject });
-      this.setActivity(live, toolActivity(event.name, subject));
+      const activity = toolActivity(event.name, subject);
+      if (activity !== null) {
+        this.setActivity(live, activity);
+      }
     } else if (event.type === 'tool.finished') {
       const call = live.calls.get(event.toolCallId) ?? { name: event.name, subject: null };
       live.calls.delete(event.toolCallId);
@@ -778,11 +804,19 @@ export class ReviewAgentJobs {
           live.searches.push(`${call.name} ${call.subject}`);
         }
       }
+      // Its last tool has ended and nothing else is reported yet: "Reading a.ts" would no
+      // longer be true (DSP-158). The next event replaces this in the same line.
+      if (live.calls.size === 0) {
+        this.setActivity(live, WAITING);
+      }
     } else if (event.type === 'assistant.delta') {
       live.text += event.text;
       this.setActivity(live, writingNow(live.kind, live.text));
     } else if (event.type === 'assistant.message') {
       live.text = event.text;
+      if (event.text !== '') {
+        this.setActivity(live, writingNow(live.kind, live.text));
+      }
     } else if (event.type === 'run.finished') {
       const status =
         event.status === 'finished' ? 'finished' : event.status === 'cancelled' ? (event.end === 'unconfirmed' ? 'unconfirmed' : 'cancelled') : 'failed';
@@ -799,7 +833,7 @@ export class ReviewAgentJobs {
     }
     live.text = '';
     live.runId = null;
-    this.setActivity(live, 'Waiting for the agent…');
+    this.setActivity(live, WAITING);
     const ended = new Promise<{ status: 'finished' | 'failed' | 'cancelled' | 'unconfirmed'; error: string | null }>((resolve) => {
       live.finished = (status, error) => {
         live.finished = null;
@@ -899,6 +933,8 @@ export class ReviewAgentJobs {
         const context = { walkTitle: step.walkTitle[language], stepTitle: step.stepTitle[language], summary: step.summary[language], body: step.body[language] };
         await this.explain(live, stepQuestionPrompt(material, folder, job.question, context, language));
       } else if (job.scope !== null) {
+        // On record before it is sent, as the material is: what the agent was told.
+        this.setJob(live, { instruction: reviewInstruction(job.scope, language) });
         await this.review(live, job, job.scope, reviewPrompt(material, folder, job.scope, language), folder);
       }
     } catch (error) {
@@ -1136,10 +1172,11 @@ export class ReviewAgentJobs {
     }
     const endedAt = new Date().toISOString();
     const investigation = this.investigationOf(live);
+    this.quiet(live);
     this.options.pairs.update(live.key, (record) => ({
       ...record,
       agentReviews: [...record.agentReviews, ...reviews],
-      jobs: record.jobs.map((entry) => (entry.id === live.jobId ? { ...entry, ...investigation, state: 'done', note, result, endedAt } : entry)),
+      jobs: record.jobs.map((entry) => (entry.id === live.jobId ? { ...withoutActivity(entry), ...investigation, state: 'done', note, result, endedAt } : entry)),
     }));
     this.options.log(`review agent ${live.jobId}: done - ${note}`);
   }

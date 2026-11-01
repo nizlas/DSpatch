@@ -1,3 +1,4 @@
+import { adoptionNotice } from './host-data';
 import { hostname } from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -120,13 +121,12 @@ import { chatRunHold, chatRunMode, chatRunScenario, presentationMode } from '../
 import { judgeChosenLoop } from '../main/loop-choice-check';
 import { LoopRunController } from '../main/loop-control-runtime';
 import {
-  defaultChoiceFrom,
   listChoosableLoops,
   openChosenLoop,
   rowForKey,
   type ChosenLoopOutcome,
 } from '../main/loop-definition-choice';
-import { discoverLoopDefinitions, openLoopDefinitionFile } from '../main/loop-definition-files';
+import { discoverLoopDefinitions } from '../main/loop-definition-files';
 import {
   isLoopDefinitionText,
   openedFromDefinition,
@@ -818,9 +818,9 @@ function updateOpenWorkspace(patch: Parameters<ProjectStore['updateWorkspace']>[
 /**
  * Record which loop this workspace chose, when the window says it has changed.
  *
- * Called from the three places a choice is made — the chooser beside the composer, the
- * file picker, and the editor's `Use this loop` — and from nowhere else, so a preview
- * that resolves the default does not silently write a choice nobody made.
+ * Called from the one place a choice is made, `loop.chooseDefinition`, which the
+ * editor's dropdown and **Open loop…** both reach, and from nowhere else: a preview that
+ * resolves the default must not write a choice nobody made (DSP-160).
  */
 function noteChosenLoopDefinition(key: string | null): void {
   if (key === null || key === '' || key === workspaceLoopDefinitionKey) {
@@ -2212,6 +2212,18 @@ function registerLoopMethods(): void {
     return [...paths];
   }
 
+  function listOfferedLoops(): LoopDefinitionListing {
+    return listChoosableLoops(
+      loopFolders(),
+      pickedPaths(),
+      undefined,
+      // The workspace's own choice outranks the built-in default, which is how a
+      // saved workspace comes back with the loop it was saved with.
+      workspaceLoopDefinitionKey,
+      ownRoot,
+    );
+  }
+
   /**
    * The definition this window means, resolved to a graph, a version and a resolver.
    *
@@ -2221,38 +2233,15 @@ function registerLoopMethods(): void {
    * walks are decided by one function rather than by two that agree most of the time.
    */
   function chooseLoop(definitionKey: string | null | undefined): ChosenLoopOutcome {
-    const discovery = discoverLoopDefinitions(loopFolders());
     /*
-     * The rows a default is resolved against: the discovered ones **and the pointed-at
-     * ones**, which is what the chooser offers.
-     *
-     * Found by DSP-85's window trial, and it is the last place the defect this card is
-     * about was hiding. `defaultChoiceFrom` was given `discovery.rows` alone, so a
-     * remembered key naming a file in no open folder — which is exactly what the
-     * standalone development loop is — matched nothing and fell through to DSpatch's own
-     * chat loop. The workspace remembered the right loop, the chooser displayed the right
-     * loop, and `chooseLoop(null)` quietly answered with a different one: a fresh editor
-     * window came up drawing a graph its own dropdown was not naming. That is the hidden
-     * loop replacing what the person chose that DSP-85 #7 forbids.
-     *
-     * `pickedPaths()` already includes `workspaceLoopDefinitionKey`, and the dedup keeps
-     * discovery's row when a file is both — the same rule and the same reason as in
-     * `listChoosableLoops`, so the row a window highlights really is the row a send walks
-     * rather than the two agreeing most of the time.
+     * A default is read off the listing, so the row a window highlights really is the row
+     * a send walks. DSP-85's window trial found this resolved separately over the
+     * discovered rows alone: a remembered key naming a file in no open folder fell
+     * through to another loop while the chooser displayed the right one, the hidden
+     * substitution DSP-85 #7 forbids.
      */
-    const rows = [
-      ...discovery.rows,
-      ...pickedPaths()
-        .filter(
-          (filePath) =>
-            filePath !== '' && !discovery.rows.some((row) => row.filePath === filePath),
-        )
-        .map((filePath) => openLoopDefinitionFile(filePath)),
-    ];
-    // A key that is in no folder's list is a picked one, and `rowForKey` reads it
-    // through `openLoopDefinitionFile` — the same row shape, so a definition from
-    // outside every folder runs by exactly the path a discovered one runs by.
-    const key = definitionKey ?? defaultChoiceFrom(rows, workspaceLoopDefinitionKey);
+    const key =
+      definitionKey ?? listOfferedLoops().choices.find((choice) => choice.preselected)?.key ?? null;
     if (key === null || key === '') {
       return {
         ok: false,
@@ -2262,7 +2251,10 @@ function registerLoopMethods(): void {
           '`.dspatch/loops/` directory.',
       };
     }
-    return openChosenLoop(rowForKey(rows, key));
+    // A key that is in no folder's list is a picked one, and `rowForKey` reads it
+    // through `openLoopDefinitionFile` — the same row shape, so a definition from
+    // outside every folder runs by exactly the path a discovered one runs by.
+    return openChosenLoop(rowForKey(discoverLoopDefinitions(loopFolders()).rows, key));
   }
 
   /**
@@ -2271,15 +2263,7 @@ function registerLoopMethods(): void {
    */
   handle(
     'loop.listDefinitions',
-    (): LoopDefinitionListing =>
-      listChoosableLoops(
-        loopFolders(),
-        pickedPaths(),
-        undefined,
-        // The workspace's own choice outranks the built-in default, which is how a
-        // saved workspace comes back with the loop it was saved with.
-        workspaceLoopDefinitionKey,
-      ),
+    (): LoopDefinitionListing => listOfferedLoops(),
   );
 
   /**
@@ -2387,12 +2371,7 @@ function registerLoopMethods(): void {
         key,
         name: judged.chosen.definitionName,
         graphPath: judged.chosen.graphPath,
-        listing: listChoosableLoops(
-          loopFolders(),
-          pickedPaths(),
-          undefined,
-          workspaceLoopDefinitionKey,
-        ),
+        listing: listOfferedLoops(),
         unsavedDrawing,
       };
     },
@@ -3489,10 +3468,10 @@ function registerLoopMethods(): void {
        * The window asks for this again whenever it comes back to the front, which is
        * what keeps the drawing on screen the drawing on disk.
        */
-      // A key the window names is a choice the person made, so the workspace keeps
-      // it. `null` is the window asking for the default and is deliberately not
-      // recorded: resolving a default is not choosing one.
-      noteChosenLoopDefinition(definitionKey);
+      // Not recorded (DSP-160). The chat has had no chooser since DSP-85, so the key
+      // here is the listing's own answer, usually its default, and resolving a default
+      // is not choosing one. Recording it here is what made an automatic default look
+      // like a choice in every workspace where `Use loop` was ticked.
       const offer = standByAnnouncementFor(definitionKey);
       /*
        * A preview that can no longer be read takes the old picture down with it.
@@ -4258,6 +4237,13 @@ function registerCoreMethods(): void {
   handle('chat.abandonSend', () => chatService.abandonSend());
   handle('chat.cancelObservations', () => chatService.getCancelObservations());
   handle('chat.runState', () => chatService.getRunState());
+  handle(
+    'host.busy',
+    (): string | null =>
+      chatService.workRunning() ??
+      (runAudience.current() !== null ? 'A loop run is in progress.' : reviewAgentJobs?.working() === true ? 'A review job is running.' : null),
+  );
+  handle('host.dataNotice', (): string | null => adoptionNotice(userDataDir()));
   handle('chat.runTest', (_event, request: TestRunRequest) => chatService.runWorkspaceTest(request));
   handle('chat.stopTest', () => chatService.stopRunningCommand());
   handle('chat.testFreshness', () => chatService.getTestFreshness());

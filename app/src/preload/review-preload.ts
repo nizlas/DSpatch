@@ -178,6 +178,9 @@ contextBridge.exposeInMainWorld('dspatchHost', {
   leave: () => {
     ipcRenderer.send('dspatch:remote-leave');
   },
+  useHere: () => {
+    ipcRenderer.send('dspatch:use-here');
+  },
   browse: (folder: string | null) => ipcRenderer.invoke('dspatch:host-browse', folder) as Promise<HostBrowsePage>,
   browseDone: (chosen: string | null) => {
     ipcRenderer.send('dspatch:host-browse-done', chosen);

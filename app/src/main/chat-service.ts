@@ -5117,6 +5117,14 @@ export class ChatService {
     return { ...report, needsAcknowledgement: { ...report.needsAcknowledgement, agentWorkForRun: forRun } };
   }
 
+  /** What is running in this service now, as a sentence, or `null` (DSP-161). */
+  workRunning(): string | null {
+    if (this.currentTurn !== null && this.currentTurn.terminalStatus === null) {
+      return 'An agent turn is running.';
+    }
+    return this.activeCommand === null ? null : 'A command is running.';
+  }
+
   /** DSP-147: the folder the Run command was last asked to use, for {@link getRunState}. */
   private lastRunFolder: string | null = null;
 

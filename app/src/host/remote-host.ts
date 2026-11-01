@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { DISPOSE_TIMEOUT_MS } from '../main/dispose-timeout';
 import { remoteBuild } from '../shared/remote-build';
 import { REMOTE_DEFAULT_PORT } from '../shared/remote-protocol';
+import { adoptOlderData, claimDataFolder, claimRefusal, olderHostDataDir, sharedDataDir } from './host-data';
 import { emitTo, serveHost, type HostMethods } from './host-server';
 import { shutdownProjectHost, startProjectHost } from './project-host';
 import { RemoteServer } from './remote-server';
@@ -14,7 +14,7 @@ import { RemoteServer } from './remote-server';
  * DSpatch's project host as a program of its own (DSP-111), started by a person on the machine
  * that has the repositories and the agents:
  *
- *     node dist/host/remote-host.js [--port <n>] [--data <folder>] [--print-token]
+ *     node dist/host/remote-host.js [--port <n>] [--data <folder>] [--older-data <folder>] [--print-token]
  *
  * It needs Node and the app's `npm ci`, and no window system. It listens on 127.0.0.1 only: a
  * client on another machine reaches it through an SSH tunnel (`docs/REMOTE_TRIAL.md`). It does
@@ -24,13 +24,6 @@ import { RemoteServer } from './remote-server';
 
 function log(message: string): void {
   process.stdout.write(`[dspatch] [host] ${message}\n`);
-}
-
-function defaultDataDir(): string {
-  if (process.platform === 'win32') {
-    return path.join(process.env['LOCALAPPDATA'] ?? path.join(os.homedir(), 'AppData', 'Local'), 'dspatch-host');
-  }
-  return path.join(process.env['XDG_DATA_HOME'] ?? path.join(os.homedir(), '.local', 'share'), 'dspatch-host');
 }
 
 function argument(name: string): string | undefined {
@@ -55,27 +48,25 @@ function tokenIn(dataDir: string): { readonly token: string; readonly file: stri
   return { token, file };
 }
 
-/** Two hosts over one data folder would each overwrite what the other saved. */
-function refuseSecondHost(runningFile: string): void {
-  let pid = 0;
-  try {
-    pid = (JSON.parse(fs.readFileSync(runningFile, 'utf8')) as { pid?: number }).pid ?? 0;
-    process.kill(pid, 0);
-  } catch {
-    return;
-  }
-  process.stderr.write(`A DSpatch host (pid ${String(pid)}) already runs over this data folder.\n`);
-  process.exit(3);
-}
-
 async function main(): Promise<void> {
-  const dataDir = path.resolve(argument('--data') ?? process.env['DSPATCH_HOST_DATA'] ?? defaultDataDir());
+  // The application's own folder, so this machine's work is the same however it is reached.
+  const chosen = argument('--data') ?? process.env['DSPATCH_HOST_DATA'];
+  const dataDir = path.resolve(chosen ?? sharedDataDir());
   const { token, file } = tokenIn(dataDir);
   const runningFile = path.join(dataDir, 'host-running.json');
-  refuseSecondHost(runningFile);
   if (process.argv.includes('--print-token')) {
     process.stdout.write(`${token}\n`);
     return;
+  }
+  // Two hosts over one data folder would each overwrite what the other saved.
+  const claim = claimDataFolder(dataDir, 'standalone');
+  if ('held' in claim) {
+    process.stderr.write(`${claimRefusal(claim.held)}\n`);
+    process.exit(3);
+  }
+  const older = argument('--older-data') ?? (chosen === undefined ? olderHostDataDir() : undefined);
+  if (older !== undefined) {
+    adoptOlderData(dataDir, older, log);
   }
   const appPath = path.resolve(__dirname, '..', '..');
   const build = remoteBuild(appPath);

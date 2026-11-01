@@ -304,6 +304,13 @@ export function WorkspaceEntrances({
 }): JSX.Element {
   const noteId = useId();
   const [connecting, setConnecting] = useState(false);
+  useEffect(() => {
+    void window.dspatchSetup?.takeRemoteFormRequest().then((wanted) => {
+      if (wanted) {
+        setConnecting(true);
+      }
+    });
+  }, []);
   if (connecting) {
     return <RemoteSessionForm onClose={() => setConnecting(false)} />;
   }

@@ -23,6 +23,30 @@ export function HostLinkLine(): JSX.Element | null {
   if (state === null || !state.remote || (inPanel && state.phase === 'connected')) {
     return null;
   }
+  if (state.away === true) {
+    return (
+      <div className="host-link host-link--stopped" data-ev="host-link" data-phase="away">
+        <span className="host-link__dot" aria-hidden="true" />
+        <span>In use from another computer</span>
+        <span className="host-link__note">{state.note}</span>
+        <button type="button" data-ev="host-link-use-here" onClick={() => window.dspatchHost?.useHere()}>
+          Use here
+        </button>
+      </div>
+    );
+  }
+  if (state.here === true) {
+    return (
+      <div className={`host-link host-link--${state.phase}`} data-ev="host-link" data-phase={state.phase}>
+        <span className="host-link__dot" aria-hidden="true" />
+        <span>{state.phase === 'connected' ? 'On this computer, through the host that stays running' : 'This computer’s host stopped answering'}</span>
+        {state.note !== '' && <span className="host-link__note">{state.note}</span>}
+        <button type="button" data-ev="host-link-leave" title="End the host once nothing runs in it, and work in this window alone" onClick={() => window.dspatchHost?.leave()}>
+          End host
+        </button>
+      </div>
+    );
+  }
   const words = state.phase === 'connected' ? `On ${state.machine}` : state.phase === 'connecting' ? `Connecting to ${state.machine}…` : state.phase === 'reconnecting' ? `Disconnected from ${state.machine}, reconnecting…` : `Disconnected from ${state.machine}`;
   return (
     <div className={`host-link host-link--${state.phase}`} data-ev="host-link" data-phase={state.phase}>

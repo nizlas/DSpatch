@@ -189,7 +189,7 @@ const clientPids = () => inC(CLIENT, 'tester', 'pgrep -o -x dspatch');
 const clientLog = () => inC(CLIENT, 'tester', 'cat /tmp/client.log');
 const versionsOnHost = () => inC(HOST, 'hostuser', 'ls -a ~/.local/share/dspatch/host/versions 2>/dev/null | grep -v "^\\.\\.\\?$" | tr "\\n" " "');
 const hostPid = () => inC(HOST, 'hostuser', "pgrep -f '[d]ist/host/remote-host.js' | tr '\\n' ' '").trim();
-const conversationText = () => inC(HOST, 'hostuser', 'cat ~/.local/share/dspatch-host/conversations/*.json 2>/dev/null');
+const conversationText = () => inC(HOST, 'hostuser', 'cat ~/.config/DSpatch/conversations/*.json 2>/dev/null');
 const startClient = async () => {
   docker('exec', '-d', '-u', 'tester', '-e', 'DISPLAY=:99', CLIENT, 'bash', '-c', `exec dspatch --remote-debugging-port=${String(DEBUG)} >>/tmp/client.log 2>&1`);
   await attach();
@@ -280,7 +280,7 @@ su hostuser -c 'mkdir -p ~/proj && cd ~/proj && git init -q . && echo hello > RE
   check('the host is in its version folder', versionsOnHost().trim() === manifest.hostId, versionsOnHost());
   check('no Node on the host machine', inC(HOST, 'hostuser', 'command -v node npm || echo none') === 'none');
   const argv = inC(CLIENT, 'tester', 'ps -eo args') + inC(HOST, 'root', 'ps -eo args');
-  const token = inC(HOST, 'hostuser', 'cat ~/.local/share/dspatch-host/remote-token');
+  const token = inC(HOST, 'hostuser', 'cat ~/.config/DSpatch/remote-token');
   check('neither password nor token is on a command line', !argv.includes(token) && !argv.includes(PASSWORD));
   check('neither is in the client log or its settings', !inC(CLIENT, 'tester', `grep -rlsF -e '${token}' -e '${PASSWORD}' /tmp/client.log ~/.config/DSpatch/*.json`).includes('/'));
 
@@ -303,7 +303,7 @@ su hostuser -c 'mkdir -p ~/proj && cd ~/proj && git init -q . && echo hello > RE
   await until('the link back', `/^On /.test(${q('host-link')}?.textContent ?? '')`, 60_000);
   await until('the answer', `${q('working-indicator')}===null`, 120_000);
   await sleep(1000);
-  const asked = inC(HOST, 'hostuser', 'cat ~/.local/share/dspatch-host/conversations/*.json')
+  const asked = inC(HOST, 'hostuser', 'cat ~/.config/DSpatch/conversations/*.json')
     .split(/(?=\{\s*"format)/)
     .flatMap((text) => {
       try {
@@ -364,7 +364,7 @@ cp -a $v/${manifest.hostId} $v/0.0.9-oldoldoldold
 sed -i 's/"version": "[^"]*"/"version": "0.0.9"/' $v/0.0.9-oldoldoldold/dspatch-host/app/package.json
 sed -i 's/"revision": "[^"]*"/"revision": "oldoldoldold"/' $v/0.0.9-oldoldoldold/dspatch-host/app/dist/build-identity.json
 rm -rf $v/${manifest.hostId}
-env DSPATCH_CHAT_RUN=review-flow nohup setsid $v/0.0.9-oldoldoldold/dspatch-host/dspatch-host --port 0 --data ~/.local/share/dspatch-host >/dev/null 2>&1 </dev/null &
+env DSPATCH_CHAT_RUN=review-flow nohup setsid $v/0.0.9-oldoldoldold/dspatch-host/dspatch-host --port 0 --data ~/.config/DSpatch >/dev/null 2>&1 </dev/null &
 sleep 3`,
   );
   const kept = await connect('trial', { replace: 'no' });
@@ -400,7 +400,7 @@ sleep 3`,
   await until('local again', `${q('remote-session')}!==null`);
 
   // --- A host started by hand, and no SSH server --------------------------------------------------
-  inC(HOST, 'hostuser', 'rm ~/.local/share/dspatch-host/host-running.json');
+  inC(HOST, 'hostuser', 'rm ~/.config/DSpatch/host-running.json');
   const byHand = await connect('trial');
   check('a host started by hand is not run over', !byHand.connected && /started by hand/.test(byHand.seen.at(-1) ?? ''), byHand.seen.at(-1));
   inC(CLIENT, 'tester', `printf 'Host closed\n  HostName ${hostIp()}\n  Port 2222\n  User hostuser\n' >> ~/.ssh/config`);
@@ -424,7 +424,7 @@ try {
   await shot('failure').catch(() => undefined);
 }
 fs.writeFileSync(path.join(evidence, 'client.log'), clientLog());
-fs.writeFileSync(path.join(evidence, 'host.log'), inC(HOST, 'hostuser', 'cat ~/.local/share/dspatch-host/host.log 2>/dev/null'));
+fs.writeFileSync(path.join(evidence, 'host.log'), inC(HOST, 'hostuser', 'cat ~/.config/DSpatch/host.log 2>/dev/null'));
 fs.writeFileSync(path.join(evidence, 'results.json'), `${JSON.stringify(results, null, 2)}\n`);
 if (!process.env['DSPATCH_TRIAL_KEEP']) {
   for (const name of [CLIENT, HOST]) {

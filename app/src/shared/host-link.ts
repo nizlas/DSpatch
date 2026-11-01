@@ -16,6 +16,10 @@ export interface HostLinkState {
   readonly address: string;
   /** What was found out. Empty when there is nothing to add. */
   readonly note: string;
+  /** This machine's own host, which stays running: reached without SSH (DSP-161). */
+  readonly here?: boolean;
+  /** Handed over: another computer is using this machine's work now. */
+  readonly away?: boolean;
 }
 
 export interface HostBrowseEntry {
@@ -41,6 +45,8 @@ export interface HostLinkBridge {
   connect(address: string, token: string): Promise<string>;
   /** Leave the remote session and work on this computer. */
   leave(): void;
+  /** After a handover: use this computer's work here again. */
+  useHere(): void;
   browse(folder: string | null): Promise<HostBrowsePage>;
   browseDone(chosen: string | null): void;
 }
@@ -57,6 +63,8 @@ export interface SetupBridge {
   sshConnect(target: string): Promise<string>;
   sshRecent(): Promise<readonly string[]>;
   sshAnswer(id: number, answer: string | null): void;
+  /** Whether a window should open the connection form, once: a saved tunnel that no longer answers. */
+  takeRemoteFormRequest(): Promise<boolean>;
   onSshStatus(listener: (text: string) => void): () => void;
   onSshQuestion(listener: (question: SshQuestion) => void): () => void;
   providerCall<T>(method: string, argument?: unknown): Promise<T>;

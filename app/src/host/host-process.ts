@@ -1,5 +1,6 @@
 import { HOST_CONFIG_ENV, parseHostStartConfig, type HostMessage, type HostShutdownAnswer } from '../shared/host-protocol';
 import { DISPOSE_TIMEOUT_MS } from '../main/dispose-timeout';
+import { adoptOlderData, claimDataFolder, claimRefusal, olderHostDataDir } from './host-data';
 import { emitTo, serveHost, type HostMethods, type HostPort } from './host-server';
 import { shutdownProjectHost, startProjectHost } from './project-host';
 
@@ -85,6 +86,14 @@ function main(): void {
     process.stderr.write(`${config.error}\n`);
     process.exit(2);
   }
+
+  // Before anything reads the folder: one host writes to a machine's work at a time (DSP-161).
+  const claim = claimDataFolder(config.userDataDir, 'desktop');
+  if ('held' in claim) {
+    process.stderr.write(`${claimRefusal(claim.held)}\n`);
+    process.exit(3);
+  }
+  adoptOlderData(config.userDataDir, olderHostDataDir(), log);
 
   const methods: Record<string, (...args: never[]) => unknown> = {
     ...startProjectHost({

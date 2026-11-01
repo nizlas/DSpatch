@@ -9,6 +9,7 @@ import {
   IDENTIFY,
   IDENTIFY_WINDOWS,
   credentials,
+  handover,
   install,
   packagePlatform,
   probe,
@@ -21,6 +22,7 @@ import {
   type RemoteStep,
 } from '../shared/host-bootstrap';
 import type { RemoteBuild } from '../shared/remote-protocol';
+import { handoverNonce, type HandoverAnswer } from '../host/host-data';
 import type { HostPackage } from './host-packages';
 import type { RemoteEndpoint } from './remote-link';
 
@@ -204,7 +206,7 @@ export class SshConnection {
     return answer;
   }
 
-  private args(extra: readonly string[]): string[] {
+  private args(extra: readonly string[], forwarding = false): string[] {
     return [
       ...(this.options.configFile === undefined ? [] : ['-F', this.options.configFile]),
       '-T',
@@ -216,7 +218,15 @@ export class SshConnection {
       'ServerAliveInterval=15',
       '-o',
       'ServerAliveCountMax=3',
-      ...(POSIX_CLIENT ? ['-o', `ControlPath=${this.controlPath}`] : []),
+      // What a host block written for a terminal or a hand-made tunnel adds: not for these
+      // connections. A `LocalForward` on a port in use would otherwise stop the sign-in itself,
+      // `ControlPersist` would send the master to the background, `RemoteCommand` refuses a command.
+      ...(forwarding ? [] : ['-o', 'ClearAllForwardings=yes']),
+      '-o',
+      'RemoteCommand=none',
+      '-o',
+      'RequestTTY=no',
+      ...(POSIX_CLIENT ? ['-o', `ControlPath=${this.controlPath}`, '-o', 'ControlPersist=no'] : []),
       ...extra,
     ];
   }
@@ -328,7 +338,7 @@ export class SshConnection {
     const spec = `127.0.0.1:${String(this.localPort)}:127.0.0.1:${String(this.remotePort)}`;
     if (POSIX_CLIENT) {
       return new Promise((resolve, reject) => {
-        const child = this.spawnSsh(this.args(['-O', 'forward', '-L', spec, '--', this.options.target]));
+        const child = this.spawnSsh(this.args(['-O', 'forward', '-L', spec, '--', this.options.target], true));
         let stderr = '';
         child.stderr?.on('data', (chunk: Buffer) => {
           stderr += chunk.toString('utf8');
@@ -344,7 +354,7 @@ export class SshConnection {
       });
     }
     return new Promise((resolve, reject) => {
-      const child = this.spawnSsh(this.args(['-N', '-o', 'ExitOnForwardFailure=yes', '-L', spec, '--', this.options.target]));
+      const child = this.spawnSsh(this.args(['-N', '-o', 'ExitOnForwardFailure=yes', '-L', spec, '--', this.options.target], true));
       this.tunnel = child;
       child.stdin?.end();
       let stderr = '';
@@ -472,6 +482,9 @@ export class SshConnection {
         }
       }
     }
+    if (running === null && facts.get('desktop') !== undefined) {
+      await this.askToHandOver(machine.os, interactive);
+    }
     if (running === null) {
       if (!(facts.get('version') ?? []).includes(hostId)) {
         await this.putInPlace(machine.platform, machine.arch);
@@ -491,12 +504,46 @@ export class SshConnection {
     return { running: now, token };
   }
 
+  /** DSpatch is open on the machine, so its host owns the data until it lets go (DSP-161). */
+  private async askToHandOver(os: RemoteOs, interactive: boolean): Promise<void> {
+    const { target } = this.options;
+    if (!interactive) {
+      throw new Error(`DSpatch is in use on ${target} again, so this connection has stopped.`);
+    }
+    const answer = await this.options.ask({
+      kind: 'confirm',
+      text: `DSpatch is open on ${target}. Continue here with the same projects and conversations? It then stops working in that window until someone chooses to use it there again. Running work is not interrupted: if any is running, you will be told and nothing changes.`,
+    });
+    if (answer !== 'yes') {
+      throw new Error(`DSpatch stayed open on ${target}, and nothing was changed there.`);
+    }
+    this.options.status('Asking DSpatch there to hand over…');
+    const nonce = handoverNonce();
+    const heard = await this.must(handover(os, nonce));
+    let said: HandoverAnswer | null = null;
+    try {
+      said = JSON.parse(heard.get('answer')?.[0] ?? '') as HandoverAnswer;
+    } catch {
+      // No answer in time.
+    }
+    if (said === null || said.nonce !== nonce) {
+      throw new Error(`DSpatch on ${target} did not answer, so nothing was changed there. If it has stopped responding, close it there and connect again.`);
+    }
+    if (said.answer === 'busy') {
+      throw new Error(`DSpatch on ${target} is busy, and nothing was interrupted: ${said.detail} Connect again when it is done.`);
+    }
+  }
+
   /** Sign in, make sure a host runs and open the tunnel. Throws a sentence. */
   async connect(): Promise<RemoteEndpoint> {
     this.options.status('Connecting…');
     await this.listenForQuestions();
     if (POSIX_CLIENT) {
-      await this.openMaster();
+      try {
+        await this.openMaster();
+      } catch (error) {
+        throw new Error(`${error instanceof Error ? error.message : String(error)}${await this.whereItWent()}`);
+      }
     }
     const { running, token } = await this.ensureHost(true);
     this.options.status('Opening the tunnel…');
@@ -541,6 +588,26 @@ export class SshConnection {
     }
   }
 
+  /** What the system's ssh made of the name, so an alias that went astray can be seen. */
+  private whereItWent(): Promise<string> {
+    return new Promise((resolve) => {
+      const child = this.spawnSsh([...(this.options.configFile === undefined ? [] : ['-F', this.options.configFile]), '-G', '--', this.options.target]);
+      let text = '';
+      child.stdout?.on('data', (chunk: Buffer) => {
+        text += chunk.toString('utf8');
+      });
+      child.on('error', () => {
+        resolve('');
+      });
+      child.on('close', () => {
+        const value = (key: string): string | undefined => new RegExp(`^${key} (.+)$`, 'm').exec(text)?.[1];
+        const user = value('user');
+        const name = value('hostname');
+        resolve(user === undefined || name === undefined ? '' : ` This was as ${user} on ${name}, port ${value('port') ?? '22'}.`);
+      });
+    });
+  }
+
   /** Keep the local port and lead it to where the host listens now. */
   private async lead(port: number): Promise<void> {
     if (POSIX_CLIENT) {
@@ -564,7 +631,7 @@ export class SshConnection {
   private cancelForward(): Promise<void> {
     const spec = `127.0.0.1:${String(this.localPort)}:127.0.0.1:${String(this.remotePort)}`;
     return new Promise((resolve) => {
-      this.spawnSsh(this.args(['-O', 'cancel', '-L', spec, '--', this.options.target])).on('close', () => {
+      this.spawnSsh(this.args(['-O', 'cancel', '-L', spec, '--', this.options.target], true)).on('close', () => {
         resolve();
       });
     });

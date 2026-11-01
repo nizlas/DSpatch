@@ -451,6 +451,7 @@ function listen<T>(channel: string): (listener: (value: T) => void) => () => voi
 contextBridge.exposeInMainWorld('dspatchSetup', {
   sshConnect: (target: string) => ipcRenderer.invoke('dspatch:ssh-connect', target) as Promise<string>,
   sshRecent: () => ipcRenderer.invoke('dspatch:ssh-recent') as Promise<readonly string[]>,
+  takeRemoteFormRequest: () => ipcRenderer.invoke('dspatch:take-remote-form') as Promise<boolean>,
   sshAnswer: (id: number, answer: string | null) => {
     ipcRenderer.send('dspatch:ssh-answer', id, answer);
   },
@@ -478,6 +479,9 @@ contextBridge.exposeInMainWorld('dspatchHost', {
   connect: (address: string, token: string) => ipcRenderer.invoke('dspatch:remote-connect', address, token) as Promise<string>,
   leave: () => {
     ipcRenderer.send('dspatch:remote-leave');
+  },
+  useHere: () => {
+    ipcRenderer.send('dspatch:use-here');
   },
   browse: (folder: string | null) => ipcRenderer.invoke('dspatch:host-browse', folder) as Promise<HostBrowsePage>,
   browseDone: (chosen: string | null) => {

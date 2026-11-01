@@ -76,7 +76,7 @@ try {
   check('a failed post hook stops the turn and says so', s('post error').status === 'error', JSON.stringify(s('post error')));
 
   // --- copilot-hooks-required: the packaged host, started over SSH, in its default data folder -----
-  const data = '~/.local/share/dspatch-host';
+  const data = '~/.config/DSpatch';
   const overSsh = (command) => docker('exec', '-u', 'tester', CLIENT, 'ssh', `hostuser@${HOST}`, command);
   const startHost = () => {
     overSsh(`nohup ${home}/node/bin/node ${home}/app/dist/host/remote-host.js > /tmp/host.log 2>&1 < /dev/null &`);
@@ -89,7 +89,7 @@ try {
   const hookFiles = (content) => inside(HOST, 'hostuser', `rm -rf ~/.copilot/hooks && mkdir -p ~/.copilot/hooks${content === null ? '' : ` && printf '%s' '${content}' > ~/.copilot/hooks/synthetic.json`}`);
   const VALID = JSON.stringify({ version: 1, hooks: { preToolUse: [{ type: 'command', bash: 'true', timeoutSec: 2 }] } });
   docker('cp', path.join(appDir, 'scripts', 'trial-package', 'hooks-required-driver.mjs'), `${HOST}:/tmp/hooks-required-driver.mjs`);
-  inside(HOST, 'root', `chmod 644 /tmp/hooks-required-driver.mjs; mkdir -p /home/hostuser/.local/share/dspatch-host && chown -R hostuser /home/hostuser/.local/share/dspatch-host`);
+  inside(HOST, 'root', `chmod 644 /tmp/hooks-required-driver.mjs; mkdir -p /home/hostuser/.config/DSpatch && chown -R hostuser /home/hostuser/.config`);
   inside(HOST, 'hostuser', `chmod 700 ${data} && printf '%s' '{"formatVersion":1,"agent":"copilot","chosenAtUtc":"2026-11-01T00:00:00.000Z"}' > ${data}/dspatch-agent-choice.json`);
   const REFUSED = /requires managed Copilot hooks/;
   const SIGN_IN = /not signed in/;

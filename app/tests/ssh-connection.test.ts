@@ -5,16 +5,16 @@
  */
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 
 import { releaseUrl, findHostPackage, readHostManifest, type HostManifest } from '../src/main/host-packages.ts';
 import { sshProblem, validTarget } from '../src/main/ssh-connection.ts';
-import { credentials, install, packagePlatform, probe, readLines, receive, start } from '../src/shared/host-bootstrap.ts';
+import { credentials, handover, install, packagePlatform, probe, readLines, receive, start } from '../src/shared/host-bootstrap.ts';
 
 describe('a machine to connect to', () => {
   it('cannot be read as an option of ssh', () => {
@@ -110,6 +110,53 @@ describe('the steps on the machine, run by a real sh', () => {
     run(home, receive('posix', made.file), made.bytes);
     run(home, install('posix', made.file, made.sha256, '1.0-abc'));
     assert.deepEqual(fs.readdirSync(versions).sort(), ['0.9-old', '1.0-abc']);
+  });
+});
+
+describe('one work context on the machine (DSP-161)', () => {
+  const run = (home: string, step: { readonly stdin?: string }): ReadonlyMap<string, readonly string[]> =>
+    readLines(execFileSync('sh', ['-s'], { input: step.stdin, env: { PATH: process.env['PATH'], HOME: home }, encoding: 'utf8' }));
+  const live = spawn('sleep', ['30'], { stdio: 'ignore' });
+  after(() => live.kill());
+
+  it('looks for a host in the application folder, then where an older one kept its data', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
+    const older = path.join(home, '.local', 'share', 'dspatch-host');
+    fs.mkdirSync(older, { recursive: true });
+    fs.writeFileSync(path.join(older, 'host-running.json'), JSON.stringify({ pid: live.pid, port: 7, commit: 'old' }, null, 2));
+    fs.writeFileSync(path.join(older, 'remote-token'), 'older-token\n');
+    assert.match(run(home, probe('posix')).get('running')?.[0] ?? '', /"port": 7/);
+    assert.equal(run(home, credentials('posix')).get('token')?.[0], 'older-token');
+    const shared = path.join(home, '.config', 'DSpatch');
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, 'host-running.json'), JSON.stringify({ pid: live.pid, port: 8, commit: 'new' }, null, 2));
+    fs.writeFileSync(path.join(shared, 'remote-token'), 'shared-token\n');
+    assert.match(run(home, probe('posix')).get('running')?.[0] ?? '', /"port": 8/);
+    assert.equal(run(home, credentials('posix')).get('token')?.[0], 'shared-token');
+  });
+
+  it('sees an application open there only while its claim is alive, and it is DSpatch', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
+    const shared = path.join(home, '.config', 'DSpatch');
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, 'host-claim.json'), JSON.stringify({ pid: live.pid, kind: 'desktop' }, null, 2));
+    // A live process that is not DSpatch: a reused id after a restart.
+    assert.equal(run(home, probe('posix')).get('desktop'), undefined);
+  });
+
+  it('asks for a handover and reads the answer the application writes', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
+    const shared = path.join(home, '.config', 'DSpatch');
+    fs.mkdirSync(shared, { recursive: true });
+    const answering = spawn('sh', ['-c', `until [ -f "${shared}/handover-request.json" ]; do sleep 0.1; done; echo '{"nonce":"n","answer":"busy","detail":"A turn."}' > "${shared}/handover-answer.json"`]);
+    const heard = readLines(execFileSync('sh', ['-s'], { input: handover('posix', 'n').stdin, env: { PATH: process.env['PATH'], HOME: home }, encoding: 'utf8' }));
+    answering.kill();
+    assert.equal(JSON.parse(heard.get('answer')?.[0] ?? '').answer, 'busy');
+    assert.equal(fs.existsSync(path.join(shared, 'handover-answer.json')), false);
+  });
+
+  it('hands the older folder to the host it starts', () => {
+    assert.match(start('posix', '1-a').stdin ?? '', /--older-data "\$older"/);
   });
 });
 

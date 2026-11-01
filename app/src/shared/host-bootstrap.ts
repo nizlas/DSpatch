@@ -5,8 +5,10 @@
  *
  * Installed files live under `<data home>/dspatch/host/versions/<host id>/`, one folder per build,
  * and are never written in place: a version is unpacked beside the others and renamed when it is
- * whole. Conversations, reviews and the token stay in `<data home>/dspatch-host/`, where a host
- * started by hand has always kept them, so an update or a removal of versions leaves them alone.
+ * whole. Conversations, reviews and the token are in the application's own folder, the one DSpatch
+ * uses when it is opened on that machine, so the machine's work is the same however it is reached
+ * (DSP-161), and an update or a removal of versions leaves them alone. `older` is where a host kept
+ * its data until then: only ever looked at for a host still running there, and adopted by the host.
  */
 
 export type RemoteOs = 'posix' | 'windows';
@@ -37,12 +39,14 @@ function windows(script: string): RemoteStep {
 const POSIX_PATHS = `
 base="\${XDG_DATA_HOME:-$HOME/.local/share}"
 root="$base/dspatch/host"
-data="$base/dspatch-host"
+data="\${XDG_CONFIG_HOME:-$HOME/.config}/DSpatch"
+older="$base/dspatch-host"
 `;
 
 const WINDOWS_PATHS = `
 $root = Join-Path $env:LOCALAPPDATA 'DSpatch\\host'
-$data = Join-Path $env:LOCALAPPDATA 'dspatch-host'
+$data = Join-Path $env:APPDATA 'DSpatch'
+$older = Join-Path $env:LOCALAPPDATA 'dspatch-host'
 `;
 
 /** What machine this is. The one step that has to work before the shell is known. */
@@ -53,8 +57,12 @@ export function probe(os: RemoteOs): RemoteStep {
   if (os === 'windows') {
     return windows(`
 if (Test-Path "$root\\versions") { Get-ChildItem "$root\\versions" -Directory | ForEach-Object { if (Test-Path "$($_.FullName)\\dspatch-host\\manifest.json") { Write-Output "version=$($_.Name)" } } }
-$record = "$data\\host-running.json"
-if (Test-Path $record) { $r = Get-Content $record -Raw | ConvertFrom-Json; if (Get-Process -Id $r.pid -ErrorAction SilentlyContinue) { Write-Output ("running=" + ((Get-Content $record -Raw) -replace '\\s+',' ')) } }
+foreach ($folder in @($data, $older)) {
+  $record = "$folder\\host-running.json"
+  if (Test-Path $record) { $r = Get-Content $record -Raw | ConvertFrom-Json; if (Get-Process -Id $r.pid -ErrorAction SilentlyContinue) { Write-Output ("running=" + ((Get-Content $record -Raw) -replace '\\s+',' ')); break } }
+}
+$claim = "$data\\host-claim.json"
+if (Test-Path $claim) { $c = Get-Content $claim -Raw | ConvertFrom-Json; if ($c.kind -eq 'desktop' -and (Get-Process -Id $c.pid -ErrorAction SilentlyContinue)) { Write-Output 'desktop=open' } }
 $other = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*remote-host.js*' } | ForEach-Object { $_.ProcessId }) -join ' '
 Write-Output "hostpids=$other"
 `);
@@ -65,10 +73,17 @@ if [ -d "$root/versions" ]; then
     [ -f "$found/dspatch-host/manifest.json" ] && echo "version=$(basename "$found")"
   done
 fi
-record="$data/host-running.json"
-if [ -f "$record" ]; then
-  pid=$(sed -n 's/.*"pid": *\\([0-9]*\\).*/\\1/p' "$record")
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "running=$(tr -d '\\n' < "$record")"; fi
+for folder in "$data" "$older"; do
+  record="$folder/host-running.json"
+  if [ -f "$record" ]; then
+    pid=$(sed -n 's/.*"pid": *\\([0-9]*\\).*/\\1/p' "$record")
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "running=$(tr -d '\\n' < "$record")"; break; fi
+  fi
+done
+claim="$data/host-claim.json"
+if [ -f "$claim" ] && grep -q '"desktop"' "$claim"; then
+  pid=$(sed -n 's/.*"pid": *\\([0-9]*\\).*/\\1/p' "$claim")
+  if [ -n "$pid" ] && tr '\\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -qi dspatch; then echo desktop=open; fi
 fi
 echo "hostpids=$(pgrep -u "$(id -u)" -f 'dist/host/remote-host.js' 2>/dev/null | tr '\\n' ' ')"
 for tool in tar sha256sum; do command -v "$tool" >/dev/null 2>&1 || echo "missing=$tool"; done
@@ -132,7 +147,7 @@ export function start(os: RemoteOs, hostId: string): RemoteStep {
     return windows(`
 New-Item -ItemType Directory -Force $data | Out-Null
 $exe = "$root\\versions\\${hostId}\\dspatch-host\\dspatch-host.cmd"
-$line = "cmd /c \`"\`"$exe\`" --port 0 --data \`"$data\`" >> \`"$data\\host.log\`" 2>&1\`""
+$line = "cmd /c \`"\`"$exe\`" --port 0 --data \`"$data\`" --older-data \`"$older\`" >> \`"$data\\host.log\`" 2>&1\`""
 Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $line } | Out-Null
 for ($i = 0; $i -lt 60; $i++) { if (Test-Path "$data\\host-running.json") { Write-Output 'started=yes'; exit 0 }; Start-Sleep -Milliseconds 500 }
 Write-Output 'failed=start'
@@ -144,10 +159,12 @@ rm -f "$data/host-running.json"
 launcher="$root/versions/${hostId}/dspatch-host/dspatch-host"
 runner=nohup
 command -v setsid >/dev/null 2>&1 && runner="nohup setsid"
-$runner "$launcher" --port 0 --data "$data" >>"$data/host.log" 2>&1 </dev/null &
+$runner "$launcher" --port 0 --data "$data" --older-data "$older" >>"$data/host.log" 2>&1 </dev/null &
+child=$!
 i=0
 while [ $i -lt 60 ]; do
   [ -f "$data/host-running.json" ] && { echo started=yes; exit 0; }
+  kill -0 "$child" 2>/dev/null || [ $i -lt 2 ] || break
   sleep 0.5
   i=$((i + 1))
 done
@@ -177,17 +194,50 @@ echo failed=stop
 `);
 }
 
+/**
+ * Ask the application open on the machine to hand over, and wait for its answer. It answers
+ * `released` once its host has closed, or `busy` with what is running, which it leaves alone.
+ */
+export function handover(os: RemoteOs, nonce: string): RemoteStep {
+  if (os === 'windows') {
+    return windows(`
+$answer = "$data\\handover-answer.json"
+Remove-Item $answer -ErrorAction SilentlyContinue
+Set-Content "$data\\handover-request.json" '{"nonce":"${nonce}"}'
+for ($i = 0; $i -lt 50; $i++) { if (Test-Path $answer) { Write-Output ("answer=" + ((Get-Content $answer -Raw) -replace '\\s+',' ')); Remove-Item $answer; exit 0 }; Start-Sleep -Milliseconds 500 }
+Remove-Item "$data\\handover-request.json" -ErrorAction SilentlyContinue
+Write-Output 'answer='
+`);
+  }
+  return posix(`
+answer="$data/handover-answer.json"
+rm -f "$answer"
+printf '{"nonce":"${nonce}"}\\n' > "$data/handover-request.json"
+i=0
+while [ $i -lt 50 ]; do
+  if [ -f "$answer" ]; then echo "answer=$(tr -d '\\n' < "$answer")"; rm -f "$answer"; exit 0; fi
+  sleep 0.5
+  i=$((i + 1))
+done
+rm -f "$data/handover-request.json"
+echo answer=
+`);
+}
+
 /** Where the host listens and its token, for this connection's memory only. */
 export function credentials(os: RemoteOs): RemoteStep {
   if (os === 'windows') {
     return windows(`
-Write-Output ("running=" + ((Get-Content "$data\\host-running.json" -Raw) -replace '\\s+',' '))
-Write-Output ("token=" + (Get-Content "$data\\remote-token" -Raw).Trim())
+$folder = if (Test-Path "$data\\host-running.json") { $data } else { $older }
+Write-Output ("running=" + ((Get-Content "$folder\\host-running.json" -Raw) -replace '\\s+',' '))
+Write-Output ("token=" + (Get-Content "$folder\\remote-token" -Raw).Trim())
 `);
   }
   return posix(`
-echo "running=$(tr -d '\\n' < "$data/host-running.json")"
-echo "token=$(cat "$data/remote-token")"
+folder="$data"
+[ -f "$folder/host-running.json" ] || folder="$older"
+echo "running=$(tr -d '\\n' < "$folder/host-running.json")"
+echo "token=$(cat "$folder/remote-token")"
 `);
 }
 
