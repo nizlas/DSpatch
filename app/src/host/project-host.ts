@@ -102,6 +102,7 @@ import { ProviderSetup, type SupportTool } from '../main/provider-setup';
 import { browseHostFolder } from './host-browse';
 import {
   COPILOT_ANALYSIS_POLICY,
+  copilotHooksRequired,
   COPILOT_EXCLUSION_NOTE,
   COPILOT_REVIEW_DENY_REASON,
   COPILOT_REVIEW_POLICY,
@@ -451,7 +452,7 @@ const adapterFactory = providerAdapters({
   },
   copilotInstalled: COPILOT_INSTALLED,
   get copilotRequireManagedHooks() {
-    return process.env['DSPATCH_COPILOT_REQUIRE_HOOKS'] === '1' || fs.existsSync(path.join(userDataDir(), 'copilot-hooks-required'));
+    return copilotHooksRequired(userDataDir());
   },
   log,
 });

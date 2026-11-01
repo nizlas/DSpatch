@@ -74,6 +74,60 @@ try {
   check('a failed pre hook stops the turn', s('pre error').status === 'error' && s('pre error').allowedAtModel === false, JSON.stringify(s('pre error')));
   check('a pre hook timeout stops a command before it runs', s('pre timeout').status === 'error' && s('pre timeout').ranMade === false, JSON.stringify(s('pre timeout')));
   check('a failed post hook stops the turn and says so', s('post error').status === 'error', JSON.stringify(s('post error')));
+
+  // --- copilot-hooks-required: the packaged host, started over SSH, in its default data folder -----
+  const data = '~/.local/share/dspatch-host';
+  const overSsh = (command) => docker('exec', '-u', 'tester', CLIENT, 'ssh', `hostuser@${HOST}`, command);
+  const startHost = () => {
+    overSsh(`nohup ${home}/node/bin/node ${home}/app/dist/host/remote-host.js > /tmp/host.log 2>&1 < /dev/null &`);
+    inside(HOST, 'hostuser', `for i in $(seq 100); do test -f ${data}/host-running.json && exit 0; sleep 0.1; done; cat /tmp/host.log; exit 1`);
+  };
+  const stopHost = () => {
+    inside(HOST, 'hostuser', `kill $(sed -n 's/.*"pid": \\([0-9]*\\).*/\\1/p' ${data}/host-running.json); for i in $(seq 100); do test -f ${data}/host-running.json || exit 0; sleep 0.1; done; exit 1`);
+  };
+  const opens = () => overSsh(`${home}/node/bin/node /tmp/hooks-required-driver.mjs ${home}/app $(cd ${data} && pwd)`).stdout;
+  const hookFiles = (content) => inside(HOST, 'hostuser', `rm -rf ~/.copilot/hooks && mkdir -p ~/.copilot/hooks${content === null ? '' : ` && printf '%s' '${content}' > ~/.copilot/hooks/synthetic.json`}`);
+  const VALID = JSON.stringify({ version: 1, hooks: { preToolUse: [{ type: 'command', bash: 'true', timeoutSec: 2 }] } });
+  docker('cp', path.join(appDir, 'scripts', 'trial-package', 'hooks-required-driver.mjs'), `${HOST}:/tmp/hooks-required-driver.mjs`);
+  inside(HOST, 'root', `chmod 644 /tmp/hooks-required-driver.mjs; mkdir -p /home/hostuser/.local/share/dspatch-host && chown -R hostuser /home/hostuser/.local/share/dspatch-host`);
+  inside(HOST, 'hostuser', `chmod 700 ${data} && printf '%s' '{"formatVersion":1,"agent":"copilot","chosenAtUtc":"2026-11-01T00:00:00.000Z"}' > ${data}/dspatch-agent-choice.json`);
+  const REFUSED = /requires managed Copilot hooks/;
+  const SIGN_IN = /not signed in/;
+  inside(HOST, 'hostuser', `touch ${data}/copilot-hooks-required`);
+  startHost();
+  const hostPid = () => inside(HOST, 'hostuser', `sed -n 's/.*"pid": \\([0-9]*\\).*/\\1/p' ${data}/host-running.json`).trim();
+  check('the host started over SSH has no DSpatch or Copilot variable', inside(HOST, 'hostuser', `tr '\\0' '\\n' < /proc/${hostPid()}/environ | grep -c -E '^(DSPATCH_|COPILOT_)' || true`).trim() === '0');
+  hookFiles(VALID);
+  let answer = opens();
+  check('the file and a valid pre hook: the session passes, to the sign-in', SIGN_IN.test(answer), answer);
+  hookFiles(null);
+  answer = opens();
+  check('the file and no hook: refused before anything is sent', REFUSED.test(answer), answer);
+  hookFiles('{ this is not a hook file');
+  answer = opens();
+  check('the file and a broken hook file: refused', REFUSED.test(answer), answer);
+  hookFiles(VALID);
+  inside(HOST, 'hostuser', 'chmod 000 ~/.copilot/hooks/synthetic.json');
+  answer = opens();
+  check('the file and an unreadable hook file: refused', REFUSED.test(answer), answer);
+  hookFiles(null);
+  inside(HOST, 'hostuser', `rm ${data}/copilot-hooks-required && ln -s ${data}/nowhere ${data}/copilot-hooks-required`);
+  answer = opens();
+  check('a link that leads nowhere still requires hooks', REFUSED.test(answer), answer);
+  const pid = hostPid();
+  inside(HOST, 'hostuser', `rm ${data}/copilot-hooks-required`);
+  answer = opens();
+  check('removed on the running host: the ordinary behaviour at the next session', SIGN_IN.test(answer), answer);
+  inside(HOST, 'hostuser', `touch ${data}/copilot-hooks-required`);
+  answer = opens();
+  check('added on the running host: refused at the next session', REFUSED.test(answer), answer);
+  check('all of that without a host restart', hostPid() === pid, pid);
+  stopHost();
+  inside(HOST, 'hostuser', `rm ${data}/copilot-hooks-required`);
+  startHost();
+  answer = opens();
+  check('without the file and without hooks, on a new host: the ordinary behaviour', SIGN_IN.test(answer), answer);
+  stopHost();
 } finally {
   clean();
 }

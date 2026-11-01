@@ -11,7 +11,8 @@ import type { AddressInfo } from 'node:net';
  */
 
 export type ScriptedTurn =
-  | { readonly text: string; readonly chunks?: number }
+  /** `delayMs`: a model taking its time before it answers. */
+  | { readonly text: string; readonly chunks?: number; readonly delayMs?: number }
   | { readonly tool: string; readonly args: Readonly<Record<string, unknown>> }
   /** Never answers until the request is dropped: a model still thinking. */
   | { readonly hang: true };
@@ -41,7 +42,7 @@ export async function startStandInModel(): Promise<StandInModel> {
     request.on('data', (chunk: Buffer) => {
       body += chunk.toString('utf8');
     });
-    request.on('end', () => {
+    request.on('end', async () => {
       if (!request.url?.includes('/chat/completions')) {
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ data: [] }));
@@ -63,6 +64,9 @@ export async function startStandInModel(): Promise<StandInModel> {
         response.write(chunk({ role: 'assistant', tool_calls: [{ index: 0, id: `call_${String(callId)}`, type: 'function', function: { name: turn.tool, arguments: JSON.stringify(turn.args) } }] }, null));
         response.write(chunk({}, 'tool_calls'));
       } else {
+        if (turn.delayMs !== undefined) {
+          await new Promise((resolve) => setTimeout(resolve, turn.delayMs));
+        }
         const size = Math.max(1, Math.ceil(turn.text.length / (turn.chunks ?? 3)));
         response.write(chunk({ role: 'assistant', content: '' }, null));
         for (let at = 0; at < turn.text.length; at += size) {

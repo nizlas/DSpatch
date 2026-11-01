@@ -104,6 +104,13 @@ function isAlive(pid: number): boolean {
   }
 }
 
+async function hookEnded(pid: number): Promise<void> {
+  for (const until = Date.now() + 3_000; isAlive(pid) && Date.now() < until; ) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(isAlive(pid), false, `hook process ${String(pid)} is still running`);
+}
+
 function view(file: string): ScriptedTurn {
   return { tool: 'view', args: { path: path.join(folder, file) } };
 }
@@ -322,12 +329,89 @@ describe('Copilot tool hooks through the real runtime', { timeout: 240_000 }, ()
     assert.equal(result.status, 'cancelled');
     assert.ok(result.endedAtMs - started < 16_000, `took ${String(result.endedAtMs - started)} ms, end ${String(result.end)}`);
     assert.equal(result.end, 'forced');
-    const pid = fixture.invocations()[0]?.pid ?? 0;
-    // The runtime is gone, and its hook is left to end by itself; it can answer no one.
-    if (isAlive(pid)) {
-      process.kill(pid);
-    }
     assert.equal(fs.existsSync(made), false);
+    await hookEnded(fixture.invocations()[0]?.pid ?? 0);
+  });
+
+  it('with two sessions, a stop during a slow hook ends that one alone and takes the hook process with it', async () => {
+    const fixture = hooks({ timeoutSec: 60 });
+    fixture.behave({ pre: { sleepMs: 30_000, sleepMatching: 'stopped-file' } });
+    const made = path.join(folder, 'stopped-file.txt');
+    const adapter = adapterFor(COPILOT_CHAT_POLICY, fixture.home);
+    const config = { provider: 'copilot' as const, modelRequested: 'stand-in', workspacePath: folder };
+    const stopped = await adapter.startSession(config);
+    const working = await adapter.startSession(config);
+    const seen = new Map<string, AgentEvent[]>([[stopped.dspatchSessionId, []], [working.dspatchSessionId, []]]);
+    const listen = (id: string): void => {
+      adapter.subscribe(id, (event) => seen.get(id)?.push(event));
+    };
+    listen(stopped.dspatchSessionId);
+    listen(working.dspatchSessionId);
+    const ended = async (id: string, count = 1): Promise<Extract<AgentEvent, { type: 'run.finished' }>> => {
+      for (const until = Date.now() + 40_000; Date.now() < until; ) {
+        const ends = (seen.get(id) ?? []).filter((event) => event.type === 'run.finished');
+        if (ends.length >= count) {
+          return ends[count - 1] as Extract<AgentEvent, { type: 'run.finished' }>;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error('the run did not end');
+    };
+
+    model.script({ tool: 'create', args: { path: made, file_text: 'x' } });
+    const run = await adapter.send(stopped.dspatchSessionId, 'Slow');
+    for (const until = Date.now() + 20_000; fixture.invocations().length === 0 && Date.now() < until; ) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const hook = fixture.invocations()[0]?.pid ?? 0;
+    assert.ok(isAlive(hook), 'the hook is running');
+
+    // B reads, then its model takes longer than the stop's bound: its work spans A's whole end.
+    model.script(view('allowed.txt'), { text: 'B answered', delayMs: 10_000 });
+    const asked = model.requests.length;
+    await adapter.send(working.dspatchSessionId, 'Normal');
+    void adapter.cancel(stopped.dspatchSessionId);
+    const end = await ended(stopped.dspatchSessionId);
+    assert.equal(end.status, 'cancelled');
+    assert.equal(end.end, 'forced');
+    assert.equal(end.dspatchRunId, run.dspatchRunId);
+    await hookEnded(hook);
+    assert.deepEqual(fixture.slept(), [], 'the hook was ended, not left to finish');
+    assert.equal(fs.existsSync(made), false);
+    assert.equal(adapter.hasActiveRun(working.dspatchSessionId), true, 'B is still working');
+
+    const answered = await ended(working.dspatchSessionId);
+    assert.equal(answered.status, 'finished', JSON.stringify(answered));
+    const messages = (seen.get(working.dspatchSessionId) ?? []).filter((event) => event.type === 'assistant.message');
+    assert.deepEqual(messages.map((event) => (event.type === 'assistant.message' ? event.text : '')), ['B answered']);
+    assert.ok(JSON.stringify(model.requests.slice(asked)).includes('allowed content'));
+
+    // A new turn in B, a new session, and A again from the runtime's own record.
+    model.script({ text: 'B again' }, { text: 'C answered' }, { text: 'A resumed' });
+    await adapter.send(working.dspatchSessionId, 'More');
+    assert.equal((await ended(working.dspatchSessionId, 2)).status, 'finished');
+    const next = await adapter.startSession(config);
+    seen.set(next.dspatchSessionId, []);
+    listen(next.dspatchSessionId);
+    const nextRun = await adapter.send(next.dspatchSessionId, 'New');
+    const nextEnd = await ended(next.dspatchSessionId);
+    assert.equal(nextEnd.status, 'finished');
+    assert.equal(nextEnd.dspatchRunId, nextRun.dspatchRunId);
+    const resumed = await adapter.resume(stopped.dspatchSessionId, config);
+    const afterwards: AgentEvent[] = [];
+    adapter.subscribe(resumed.dspatchSessionId, (event) => afterwards.push(event));
+    await adapter.send(resumed.dspatchSessionId, 'After');
+    for (const until = Date.now() + 20_000; !afterwards.some((event) => event.type === 'run.finished') && Date.now() < until; ) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(afterwards.at(-1)?.type === 'run.finished' ? afterwards.at(-1)?.type : '', 'run.finished');
+
+    // Nothing of the stopped run came later, on any session.
+    const all = [...seen.values()].flat();
+    assert.equal(all.filter((event) => event.type === 'run.finished' && event.dspatchRunId === run.dspatchRunId).length, 1);
+    assert.equal((seen.get(stopped.dspatchSessionId) ?? []).at(-1)?.type, 'run.finished');
+    await adapter.dispose();
+    await hookEnded(hook);
   });
 
   it('known gap: text DSpatch itself sends passes no tool hook', async () => {

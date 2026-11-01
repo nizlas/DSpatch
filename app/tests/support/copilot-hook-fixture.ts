@@ -22,6 +22,8 @@ export interface HookBehaviour {
   readonly stdout?: string;
   readonly exit?: number;
   readonly sleepMs?: number;
+  /** Sleep only for a call whose path or command matches this regular expression. */
+  readonly sleepMatching?: string;
 }
 
 export interface HookBehaviours {
@@ -48,6 +50,8 @@ export interface HookFixture {
   readonly home: string;
   /** Hook runs so far, in order. */
   invocations(): HookInvocation[];
+  /** The hook processes that lived through their sleep. */
+  slept(): number[];
   behave(behaviours: HookBehaviours): void;
   clear(): void;
   remove(): void;
@@ -63,8 +67,9 @@ const input = JSON.parse(text);
 const behaviour = JSON.parse(fs.readFileSync(folder + '/behaviour.json', 'utf8'))[kind] ?? {};
 const environment = Object.fromEntries(['COPILOT_HOME', 'COPILOT_HOOK_DIR', 'COPILOT_PROJECT_DIR', 'COPILOT_CLI'].map((name) => [name, process.env[name]]));
 fs.appendFileSync(folder + '/invocations.jsonl', JSON.stringify({ kind, atMs: Date.now(), pid: process.pid, cwd: process.cwd(), input, environment }) + '\\n');
-if (behaviour.sleepMs) {
+if (behaviour.sleepMs && (!behaviour.sleepMatching || new RegExp(behaviour.sleepMatching).test(JSON.stringify(input.toolArgs).replaceAll('\\\\\\\\', '/')))) {
   await new Promise((resolve) => setTimeout(resolve, behaviour.sleepMs));
+  fs.appendFileSync(folder + '/slept.log', process.pid + '\\n');
 }
 if (behaviour.denyMatching && new RegExp(behaviour.denyMatching).test(JSON.stringify(input.toolArgs).replaceAll('\\\\\\\\', '/'))) {
   process.stdout.write(JSON.stringify({ permissionDecision: 'deny', permissionDecisionReason: 'The synthetic rule excludes this path.' }));
@@ -124,6 +129,7 @@ export function makeHookFixture(options: { readonly timeoutSec?: number; readonl
         }),
   );
   const log = path.join(scripts, 'invocations.jsonl');
+  const slept = path.join(scripts, 'slept.log');
   const behave = (behaviours: HookBehaviours): void => {
     fs.writeFileSync(path.join(scripts, 'behaviour.json'), JSON.stringify(behaviours));
   };
@@ -139,8 +145,17 @@ export function makeHookFixture(options: { readonly timeoutSec?: number; readonl
             .filter((line) => line !== '')
             .map((line) => JSON.parse(line) as HookInvocation)
         : [],
+    slept: () =>
+      fs.existsSync(slept)
+        ? fs
+            .readFileSync(slept, 'utf8')
+            .split('\n')
+            .filter((line) => line !== '')
+            .map(Number)
+        : [],
     clear: () => {
       fs.rmSync(log, { force: true });
+      fs.rmSync(slept, { force: true });
     },
     remove: () => {
       fs.rmSync(home, { recursive: true, force: true });

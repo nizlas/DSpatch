@@ -135,6 +135,8 @@ const AREAS = {
       'copilot-sdk-adapter.test.ts',
       { file: 'copilot-runtime.test.ts', heavy: true },
       { file: 'copilot-hooks.test.ts', heavy: true },
+      { file: 'copilot-review-questions.test.ts', heavy: true },
+      { file: 'copilot-hooks-required.test.ts', heavy: true },
       { file: 'copilot-review-jobs.test.ts', heavy: true },
       'claude-agent-sdk-adapter.test.ts',
       'claude-support.test.ts',

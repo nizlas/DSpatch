@@ -1,3 +1,4 @@
+import { endProcessTree, type ProcessTreeDeps } from '../src/adapter/copilot-process-tree.ts';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
@@ -91,6 +92,49 @@ function fakeClient(auth: { isAuthenticated: boolean; login?: string } = { isAut
   };
   return { client, sessions, configs, hooks };
 }
+
+describe('ending a runtime with what it started', () => {
+  const deps = (platform: NodeJS.Platform, order: string[]): ProcessTreeDeps => ({
+    platform,
+    childrenOf: (pid) => (pid === 1 ? [2, 3] : pid === 3 ? [4] : []),
+    kill: (pid) => order.push(`kill ${String(pid)}`),
+    taskkill: (pid) => {
+      order.push(`taskkill ${String(pid)}`);
+      return Promise.resolve();
+    },
+  });
+  const endRoot = (order: string[]) => (): Promise<void> => {
+    order.push('root');
+    return Promise.resolve();
+  };
+
+  it('on Linux the runtime goes first, then the tree it was seen to hold', async () => {
+    const order: string[] = [];
+    assert.equal(await endProcessTree(1, endRoot(order), deps('linux', order)), 3);
+    assert.deepEqual(order, ['root', 'kill 2', 'kill 3', 'kill 4']);
+  });
+
+  it('on Windows `taskkill` walks the tree while the runtime is alive (simulated)', async () => {
+    const order: string[] = [];
+    assert.equal(await endProcessTree(1, endRoot(order), deps('win32', order)), null);
+    assert.deepEqual(order, ['taskkill 1', 'root']);
+  });
+
+  it('a process that has ended by itself does not stop the rest', async () => {
+    const order: string[] = [];
+    const base = deps('linux', order);
+    await endProcessTree(1, endRoot(order), {
+      ...base,
+      kill: (pid) => {
+        if (pid === 2) {
+          throw new Error('ESRCH');
+        }
+        order.push(`kill ${String(pid)}`);
+      },
+    });
+    assert.deepEqual(order, ['root', 'kill 3', 'kill 4']);
+  });
+});
 
 describe('Copilot policies', () => {
   it('the review purpose can never receive the chat policy', () => {

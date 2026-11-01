@@ -218,7 +218,7 @@ export function providerAdapters(options: ProviderAdaptersOptions): ProviderAdap
           ? options.construct.copilot(policy)
           : new CopilotSdkAdapter({
               policy,
-              ...(options.copilotRequireManagedHooks === true ? { requireManagedHooks: true } : {}),
+              requireManagedHooks: () => options.copilotRequireManagedHooks === true,
               ...(options.log === undefined ? {} : { log: options.log }),
             });
       }

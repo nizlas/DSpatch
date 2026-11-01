@@ -5,6 +5,7 @@ import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { AgentAdapter } from './agent-adapter';
+import { endProcessTree } from './copilot-process-tree';
 import type {
   AdapterError,
   AgentCommandRecord,
@@ -138,6 +139,8 @@ export interface CopilotClientLike {
   resumeSession(sessionId: string, config: CopilotSessionOptions): Promise<CopilotSessionLike>;
   /** The hook files the runtime found, for the session's record. Absent on a substitute. */
   discoverHooks?(): Promise<readonly CopilotHookReading[]>;
+  /** The runtime's process, whose tree is ended with it. Absent on a substitute. */
+  processId?(): number | null;
 }
 
 export type CopilotClientFactory = (env: Readonly<Record<string, string | undefined>>, workingDirectory: string) => Promise<CopilotClientLike>;
@@ -377,6 +380,25 @@ export function copilotEnvironment(env: Readonly<Record<string, string | undefin
   return { env: clean, removed };
 }
 
+/** The file in a host's data folder that requires hooks, for a host started without a person's variables. */
+export const COPILOT_HOOKS_REQUIRED_FILE = 'copilot-hooks-required';
+
+/**
+ * Whether this host requires hooks. Anything of that name counts, whatever it holds, and so
+ * does a folder that cannot be looked in: only a certain absence lets work go on without them.
+ */
+export function copilotHooksRequired(dataDir: string, env: Readonly<Record<string, string | undefined>> = process.env): boolean {
+  if (env['DSPATCH_COPILOT_REQUIRE_HOOKS'] === '1') {
+    return true;
+  }
+  try {
+    fs.lstatSync(path.join(dataDir, COPILOT_HOOKS_REQUIRED_FILE));
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
+}
+
 // --- Plain errors ---------------------------------------------------------------------
 
 export function copilotNotSignedInText(machine: string = hostname()): string {
@@ -415,8 +437,11 @@ async function realClient(env: Readonly<Record<string, string | undefined>>, wor
   const Client = sdk['CopilotClient'] as new (options: unknown) => Record<string, (...args: never[]) => unknown>;
   const client = new Client({ env, workingDirectory, logLevel: 'error', useLoggedInUser: true }) as unknown as CopilotClientLike & {
     readonly rpc: { readonly hooks: { discover(params: unknown): Promise<{ readonly hooks: readonly CopilotHookReading[] }> } };
+    /** Private in the SDK, which offers no other way to the process (1.0.28). */
+    readonly cliProcess?: { readonly pid?: number } | null;
   };
   client.discoverHooks = async () => (await client.rpc.hooks.discover({})).hooks;
+  client.processId = () => client.cliProcess?.pid ?? null;
   return client;
 }
 
@@ -464,8 +489,11 @@ export interface CopilotSdkAdapterOptions {
   readonly policy: CopilotToolPolicy;
   /** Environment for the runtime, before {@link copilotEnvironment}. Defaults to `process.env`. */
   readonly env?: Readonly<Record<string, string | undefined>>;
-  /** Refuse work unless the runtime reports a pre-tool hook from a user or managed source. */
-  readonly requireManagedHooks?: boolean;
+  /**
+   * Refuse work unless the runtime reports a pre-tool hook from a user or managed source. Asked
+   * at each session start and resume, so a changed requirement needs no restart.
+   */
+  readonly requireManagedHooks?: boolean | (() => boolean);
   /** A substitute SDK client. Production passes nothing. */
   readonly clientFactory?: CopilotClientFactory;
   readonly toolFactory?: CopilotToolFactory;
@@ -492,6 +520,9 @@ interface CopilotSessionState {
   readonly dspatchSessionId: DspatchSessionId;
   config: SessionConfig;
   session: CopilotSessionLike | null;
+  /** The session's own runtime: ending it touches no other session. */
+  runtime: CopilotClientLike | null;
+  pingFailures: number;
   readonly listeners: Set<AgentEventListener>;
   run: ActiveRun | null;
   modelReported: string | null;
@@ -538,13 +569,15 @@ export class CopilotSdkAdapter implements AgentAdapter {
 
   private readonly sessions = new Map<DspatchSessionId, CopilotSessionState>();
 
-  private client: Promise<CopilotClientLike> | null = null;
+  /** The runtime that lists models; it holds no session. */
+  private catalogue: Promise<CopilotClientLike> | null = null;
+
+  /** Every runtime started and not yet ended. */
+  private readonly runtimes = new Set<Promise<CopilotClientLike>>();
 
   private disposed = false;
 
   private watch: NodeJS.Timeout | null = null;
-
-  private pingFailures = 0;
 
   private accountLine: string | null = null;
 
@@ -586,32 +619,85 @@ export class CopilotSdkAdapter implements AgentAdapter {
     };
   }
 
-  /** The running runtime, started on first use. One per adapter. */
-  private connect(): Promise<CopilotClientLike> {
-    if (this.client === null) {
-      const { env, removed } = copilotEnvironment(this.options.env ?? process.env);
-      if (removed.length > 0) {
-        this.log(`left out of the runtime's environment: ${removed.join(', ')}`);
-      }
-      const started = (async () => {
-        // The process stands outside the sessions' folders: on Windows a process's working
-        // folder cannot be removed, and revision folders are written again and removed.
-        const client = await (this.options.clientFactory ?? realClient)(env, tmpdir());
-        await client.start();
-        return client;
-      })();
-      this.client = started;
+  /**
+   * A new runtime process. Each session has its own, because a hook that does not end can be
+   * stopped only by ending the runtime (`session.abort()` waits for it): a stop must not reach
+   * another session's work. One costs about 25 MB of its own and 70 ms (runtime 1.0.105, Linux).
+   */
+  private startRuntime(): Promise<CopilotClientLike> {
+    const { env, removed } = copilotEnvironment(this.options.env ?? process.env);
+    if (removed.length > 0) {
+      this.log(`left out of the runtime's environment: ${removed.join(', ')}`);
+    }
+    const started = (async () => {
+      // The process stands outside the sessions' folders: on Windows a process's working
+      // folder cannot be removed, and revision folders are written again and removed.
+      const client = await (this.options.clientFactory ?? realClient)(env, tmpdir());
+      await client.start();
+      return client;
+    })();
+    this.runtimes.add(started);
+    started.catch(() => {
+      this.runtimes.delete(started);
+    });
+    return started;
+  }
+
+  private forgetRuntime(client: CopilotClientLike): void {
+    for (const started of this.runtimes) {
+      void started.then(
+        (running) => {
+          if (running === client) {
+            this.runtimes.delete(started);
+          }
+        },
+        () => undefined,
+      );
+    }
+  }
+
+  /** Ends a runtime and what it started. Throws what `forceStop` threw. */
+  private async endRuntime(client: CopilotClientLike): Promise<void> {
+    this.forgetRuntime(client);
+    const forceStop = (): Promise<void> => client.forceStop();
+    const pid = client.processId?.() ?? null;
+    if (pid === null) {
+      await forceStop();
+      return;
+    }
+    const ended = await endProcessTree(pid, forceStop);
+    this.log(`ended the runtime${ended === null ? ' and its process tree' : ` and ${String(ended)} process(es) under it`}`);
+  }
+
+  private catalogueRuntime(): Promise<CopilotClientLike> {
+    if (this.catalogue === null) {
+      const started = this.startRuntime();
+      this.catalogue = started;
       started.catch(() => {
-        if (this.client === started) {
-          this.client = null;
+        if (this.catalogue === started) {
+          this.catalogue = null;
         }
       });
     }
-    return this.client;
+    return this.catalogue;
   }
 
   /** The login, and the hooks in force, before anything is sent. Throws a plain sentence. */
   private async ready(client: CopilotClientLike): Promise<void> {
+    const required = typeof this.options.requireManagedHooks === 'function' ? this.options.requireManagedHooks() : this.options.requireManagedHooks === true;
+    const hooks = (await client.discoverHooks?.()) ?? null;
+    if (hooks !== null) {
+      const managed = hooks.filter((hook) => hook.enabled && MANAGED_HOOK_ORIGINS.includes(hook.origin));
+      this.log(`the runtime reports ${String(managed.length)} user or managed hook(s): ${managed.map((hook) => `${hook.origin}/${hook.hookType}`).join(', ') || 'none'}`);
+      if (required && !managed.some((hook) => hook.hookType === 'preToolUse')) {
+        throw new CopilotAdapterError(
+          'This host requires managed Copilot hooks, and the runtime reports no pre-tool hook from a user or managed source, so nothing was sent. Install them on this machine, or start the host without the requirement for synthetic material.',
+          'managed-hooks-missing',
+        );
+      }
+    } else if (required) {
+      throw new CopilotAdapterError('This host requires managed Copilot hooks, and it could not be established that they are in force, so nothing was sent.', 'managed-hooks-unknown');
+    }
     if (this.options.testProvider === undefined) {
       const status = await client.getAuthStatus();
       if (!status.isAuthenticated) {
@@ -620,26 +706,13 @@ export class CopilotSdkAdapter implements AgentAdapter {
       this.accountLine = `${status.login ?? 'unknown account'}${status.host === undefined ? '' : ` at ${status.host}`} (${status.authType ?? 'unknown'} login)`;
       this.log(`signed in as ${this.accountLine}`);
     }
-    const hooks = (await client.discoverHooks?.()) ?? null;
-    if (hooks !== null) {
-      const managed = hooks.filter((hook) => hook.enabled && MANAGED_HOOK_ORIGINS.includes(hook.origin));
-      this.log(`the runtime reports ${String(managed.length)} user or managed hook(s): ${managed.map((hook) => `${hook.origin}/${hook.hookType}`).join(', ') || 'none'}`);
-      if (this.options.requireManagedHooks === true && !managed.some((hook) => hook.hookType === 'preToolUse')) {
-        throw new CopilotAdapterError(
-          'This host requires managed Copilot hooks, and the runtime reports no pre-tool hook from a user or managed source, so nothing was sent. Install them on this machine, or start the host without the requirement for synthetic material.',
-          'managed-hooks-missing',
-        );
-      }
-    } else if (this.options.requireManagedHooks === true) {
-      throw new CopilotAdapterError('This host requires managed Copilot hooks, and it could not be established that they are in force, so nothing was sent.', 'managed-hooks-unknown');
-    }
   }
 
   /** The model the runtime said it selected when none was named, once a session has told. */
   private defaultSelected: string | null = null;
 
   async listModels(): Promise<readonly ModelInfo[]> {
-    const client = await this.connect();
+    const client = await this.catalogueRuntime();
     const status = this.options.testProvider === undefined ? await client.getAuthStatus() : { isAuthenticated: true };
     if (!status.isAuthenticated) {
       throw new CopilotAdapterError(copilotNotSignedInText(), 'not-signed-in');
@@ -708,6 +781,9 @@ export class CopilotSdkAdapter implements AgentAdapter {
   private permission(state: CopilotSessionState, request: CopilotPermissionRequest): CopilotPermissionResult {
     if (state.run?.controlFailed === true) {
       return { kind: 'reject', feedback: COPILOT_CONTROL_FAILED_REASON };
+    }
+    if (state.run?.cancelRequested === true) {
+      return { kind: 'reject', feedback: 'The person stopped this turn.' };
     }
     const answer = copilotPermission(request, this.policy, this.folders(state.config), state.config.workspacePath);
     if (answer.kind === 'reject') {
@@ -960,11 +1036,13 @@ export class CopilotSdkAdapter implements AgentAdapter {
     }
   }
 
-  private newState(config: SessionConfig, dspatchSessionId: DspatchSessionId): CopilotSessionState {
+  private newState(config: SessionConfig, dspatchSessionId: DspatchSessionId, runtime: CopilotClientLike): CopilotSessionState {
     const state: CopilotSessionState = {
       dspatchSessionId,
       config,
       session: null,
+      runtime,
+      pingFailures: 0,
       listeners: new Set(),
       run: null,
       modelReported: null,
@@ -994,14 +1072,16 @@ export class CopilotSdkAdapter implements AgentAdapter {
         clearInterval(this.watch);
         this.watch = null;
       }
-      this.pingFailures = 0;
       return;
     }
+    await Promise.all(active.map((state) => this.checkSessionRuntime(state)));
+  }
+
+  private async checkSessionRuntime(state: CopilotSessionState): Promise<void> {
     try {
-      const client = await this.client;
       let timer: NodeJS.Timeout | undefined;
       await Promise.race([
-        client?.ping(),
+        state.runtime?.ping(),
         new Promise((_resolve, reject) => {
           timer = setTimeout(() => {
             reject(new Error('no answer'));
@@ -1011,27 +1091,31 @@ export class CopilotSdkAdapter implements AgentAdapter {
       ]).finally(() => {
         clearTimeout(timer);
       });
-      this.pingFailures = 0;
+      state.pingFailures = 0;
     } catch (error) {
-      this.pingFailures += 1;
-      if (this.pingFailures >= 2) {
+      state.pingFailures += 1;
+      if (state.pingFailures >= 2) {
         this.log(`the runtime does not answer: ${String(error)}`);
-        this.runtimeGone(active);
+        this.runtimeGone(state);
       }
     }
   }
 
-  /** The runtime ended under these runs. How far they got is not known. */
-  private runtimeGone(active: readonly CopilotSessionState[]): void {
-    this.client = null;
-    this.pingFailures = 0;
-    for (const state of active) {
-      state.session = null;
-      const run = state.run;
-      if (run !== null) {
-        run.error = { message: "Copilot's runtime stopped during this turn. How far it got is unknown, and nothing was sent again.", providerCode: 'runtime-gone' };
-        this.finish(state, 'error', null, 'unconfirmed');
-      }
+  /** The runtime ended under this run. How far it got is not known. */
+  private runtimeGone(state: CopilotSessionState): void {
+    state.pingFailures = 0;
+    const runtime = state.runtime;
+    state.runtime = null;
+    state.session = null;
+    if (runtime !== null) {
+      void this.endRuntime(runtime).catch((error: unknown) => {
+        this.log(`ending a runtime that stopped answering failed: ${String(error)}`);
+      });
+    }
+    const run = state.run;
+    if (run !== null) {
+      run.error = { message: "Copilot's runtime stopped during this turn. How far it got is unknown, and nothing was sent again.", providerCode: 'runtime-gone' };
+      this.finish(state, 'error', null, 'unconfirmed');
     }
   }
 
@@ -1044,12 +1128,17 @@ export class CopilotSdkAdapter implements AgentAdapter {
   async startSession(config: SessionConfig): Promise<SessionHandle> {
     this.refuseIfDisposed();
     const dspatchSessionId = config.dspatchSessionId ?? randomUUID();
-    const client = await this.connect();
-    await this.ready(client);
-    const state = this.newState(config, dspatchSessionId);
+    const client = await this.startRuntime();
+    let state: CopilotSessionState | null = null;
     try {
+      await this.ready(client);
+      state = this.newState(config, dspatchSessionId, client);
       state.session = await client.createSession(await this.sessionOptions(state, true));
     } catch (error) {
+      await this.endRuntime(client).catch(() => undefined);
+      if (state === null) {
+        throw error;
+      }
       this.sessions.delete(dspatchSessionId);
       throw new CopilotAdapterError(plainCopilotError(error instanceof Error ? error.message : String(error)), 'session-start', error);
     }
@@ -1070,13 +1159,22 @@ export class CopilotSdkAdapter implements AgentAdapter {
         'policy-changed',
       );
     }
-    const client = await this.connect();
-    await this.ready(client);
-    await this.sessions.get(sessionId)?.session?.disconnect().catch(() => undefined);
-    const state = this.newState(config, sessionId);
+    const client = await this.startRuntime();
+    let state: CopilotSessionState | null = null;
     try {
+      await this.ready(client);
+      const previous = this.sessions.get(sessionId);
+      await previous?.session?.disconnect().catch(() => undefined);
+      if (previous?.runtime !== null && previous?.runtime !== undefined) {
+        await this.endRuntime(previous.runtime).catch(() => undefined);
+      }
+      state = this.newState(config, sessionId, client);
       state.session = await client.resumeSession(sessionId, await this.sessionOptions(state, false));
     } catch (error) {
+      await this.endRuntime(client).catch(() => undefined);
+      if (state === null) {
+        throw error;
+      }
       this.sessions.delete(sessionId);
       throw new CopilotAdapterError(`Copilot could not resume this session: ${error instanceof Error ? error.message : String(error)}`, 'resume', error);
     }
@@ -1130,8 +1228,9 @@ export class CopilotSdkAdapter implements AgentAdapter {
 
   /**
    * `session.abort()`, then the runtime's `session.idle` is the evidence the turn ended. If
-   * that does not come within {@link ABORT_GRACE_MS} the runtime process is ended, and a
-   * returned `forceStop` is the evidence; without it the end stays unconfirmed.
+   * that does not come within {@link ABORT_GRACE_MS}, as with a hook that goes on running, this
+   * session's runtime is ended with its process tree, and a returned `forceStop` is the
+   * evidence; without it the end stays unconfirmed. No other session uses that runtime.
    */
   async cancel(sessionId: DspatchSessionId): Promise<void> {
     const state = this.state(sessionId);
@@ -1158,14 +1257,15 @@ export class CopilotSdkAdapter implements AgentAdapter {
       return;
     }
     this.log('the runtime did not go idle after an abort; ending it');
-    const client = this.client;
+    const runtime = state.runtime;
     let ended = false;
     try {
-      const running = client === null ? null : await client;
       await Promise.race([
-        running?.forceStop().then(() => {
-          ended = true;
-        }),
+        runtime === null
+          ? null
+          : this.endRuntime(runtime).then(() => {
+              ended = true;
+            }),
         new Promise((resolve) => setTimeout(resolve, FORCE_STOP_BOUND_MS).unref()),
       ]);
     } catch (error) {
@@ -1174,14 +1274,12 @@ export class CopilotSdkAdapter implements AgentAdapter {
     if (state.run !== run) {
       return;
     }
-    this.client = null;
+    state.runtime = null;
     state.session = null;
     if (!ended) {
       state.unconfirmedEnd = true;
     }
     this.finish(state, 'cancelled', null, ended ? 'forced' : 'unconfirmed');
-    // The runtime is shared by the adapter's sessions, and it is gone for all of them.
-    this.runtimeGone([...this.sessions.values()].filter((other) => other !== state && (other.run !== null || other.session !== null)));
   }
 
   setSessionModel(sessionId: DspatchSessionId, modelId: string): void {
@@ -1228,29 +1326,39 @@ export class CopilotSdkAdapter implements AgentAdapter {
       clearInterval(this.watch);
       this.watch = null;
     }
+    // A runtime with a turn going may be held by a hook, which `stop()` would leave running.
+    const busy = new Set<CopilotClientLike>();
     for (const state of this.sessions.values()) {
       if (state.run !== null) {
         state.run.cancelRequested = true;
         this.finish(state, 'cancelled', null, 'unconfirmed');
+        if (state.runtime !== null) {
+          busy.add(state.runtime);
+        }
       }
       await state.session?.disconnect().catch(() => undefined);
     }
-    const client = this.client;
-    this.client = null;
-    if (client !== null) {
-      try {
-        const running = await client;
-        const stopped = await Promise.race([
-          running.stop().then(() => true),
-          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), FORCE_STOP_BOUND_MS).unref()),
-        ]);
-        if (!stopped) {
-          await running.forceStop().catch(() => undefined);
+    this.catalogue = null;
+    const runtimes = [...this.runtimes];
+    this.runtimes.clear();
+    await Promise.all(
+      runtimes.map(async (started) => {
+        try {
+          const running = await started;
+          const stopped =
+            !busy.has(running) &&
+            (await Promise.race([
+              running.stop().then(() => true),
+              new Promise<boolean>((resolve) => setTimeout(() => resolve(false), FORCE_STOP_BOUND_MS).unref()),
+            ]));
+          if (!stopped) {
+            await this.endRuntime(running).catch(() => undefined);
+          }
+        } catch {
+          // The runtime never started, or is already gone.
         }
-      } catch {
-        // The runtime never started, or is already gone.
-      }
-    }
+      }),
+    );
   }
 }
 
