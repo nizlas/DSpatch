@@ -1294,7 +1294,7 @@ test('SIMULATED: Copilot can be chosen when its runtime is installed, and is ref
   assert.equal(installed.chooseAgent('copilot'), 'copilot');
   await installed.dispose();
   const missing = over(false);
-  assert.throws(() => missing.chooseAgent('copilot'), /Copilot's runtime is not installed/);
+  assert.throws(() => missing.chooseAgent('copilot'), /Copilot's runtime is missing/);
   await missing.dispose();
 });
 

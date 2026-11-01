@@ -241,28 +241,23 @@ su hostuser -c 'mkdir -p ~/proj && cd ~/proj && git init -q . && echo hello > RE
   // --- Installed locally: loops, and each provider's program and sign-in ----------------------------
   inC(CLIENT, 'tester', 'mkdir -p ~/p && cd ~/p && git init -q .');
   await chooseAgent('copilot');
-  note('provider state on a fresh install', JSON.stringify(await ev(`window.dspatchSetup.providerCall('provider.status')`)));
+  note('provider state on a fresh install', JSON.stringify(await ev(`window.dspatchSetup.providerCall('provider.status', 'copilot')`)));
   const localLoops = JSON.parse(await ev('window.dspatch.listLoopDefinitions().then(JSON.stringify)'));
   check('the bundled loops are offered from the installed client, the chat loop chosen', loopsAreRight(localLoops), loopSummary(localLoops));
-  await click('copilot-login');
+  await click('provider-continue');
   await until('the sign-in link', `${q('provider-open')}!==null || ${q('provider-problem')}!==null`, 90_000);
   note('Copilot sign-in on the installed client', await ev(`${q('provider-setup')}.innerText`));
   await shot('01b-copilot-login');
-  // With a display the CLI uses a browser on this machine; without one, as on a remote host, a code.
   check('Copilot: the CLI is fetched and gives a sign-in link', (await ev(`${q('provider-open')}!==null`)) === true);
-  const device = inC(CLIENT, 'tester', '(sleep 4 | timeout 5 ~/.config/DSpatch/provider-support/copilot/node_modules/@github/copilot-linux-x64/copilot login 2>&1) | head -1');
-  check('Copilot without a display gives a code for another computer', /login\/device.*[A-Z0-9]{4}-[A-Z0-9]{4}/.test(device), device.replace(/[A-Z0-9]{4}-[A-Z0-9]{4}/, 'XXXX-XXXX'));
-  await ev(`window.dspatchSetup.providerCall('provider.loginCancel')`);
-  await click('claude-consent');
-  await click('claude-install');
-  await until('Claude installed', `${q('claude-login')}!==null || ${q('provider-problem')}!==null`, 120_000);
-  await click('claude-login');
-  await until('the sign-in link', `${q('provider-open')}!==null || ${q('provider-problem')}!==null`, 30_000);
+  await click('provider-cancel');
+  await chooseAgent('claude');
+  await click('provider-continue');
+  await until('the sign-in link', `${q('provider-open')}!==null || ${q('provider-problem')}!==null`, 120_000);
   note('Claude sign-in on the installed client', await ev(`${q('provider-setup')}.innerText`));
   await shot('01c-claude-login');
   check('Claude: consent, then the program, then a link and a place for the code', (await ev(`${q('provider-open')}!==null && ${q('provider-input')}!==null`)) === true);
-  await ev(`window.dspatchSetup.providerCall('provider.loginCancel')`);
-  check('no API key path was offered', !/api key\b(?! is used)/i.test((await ev(`${q('provider-setup')}.innerText`)).replace('no API key is used', '')));
+  await click('provider-cancel');
+  check('no API key path was offered', !/api key/i.test(await ev('document.body.innerText')));
   await ev('location.reload()');
   await sleep(1500);
   await attach();

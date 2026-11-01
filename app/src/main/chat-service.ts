@@ -1774,6 +1774,9 @@ export class ChatService {
   }
 
   private availabilityOf(provider: StoredSessionProvider): ProviderAvailability {
+    if (provider === 'claude' && this.options.claudeSupport?.reason === CLAUDE_REPAIR_TEXT) {
+      return { provider, choosable: false, reason: CLAUDE_REPAIR_TEXT };
+    }
     return providerAvailability(provider, {
       claudeAuthorized: this.claudeReference() !== null,
       claudeInstalled: this.claudeInstalled(),
