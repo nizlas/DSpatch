@@ -880,6 +880,11 @@ function spawnUtilityHost(): HostProcess {
     }
   }
   env[HOST_CONFIG_ENV] = JSON.stringify(hostStartConfig());
+  // A packaged trial's simulated provider for this computer's host, the way sshd's environment
+  // gives it to a remote one; the window stays an ordinary window (`scripts/trial-package/`).
+  if (process.env['DSPATCH_TRIAL_HOST_RUN'] !== undefined) {
+    env['DSPATCH_CHAT_RUN'] = process.env['DSPATCH_TRIAL_HOST_RUN'];
+  }
   const child = utilityProcess.fork(entry, [], {
     env,
     stdio: 'pipe',

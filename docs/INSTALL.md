@@ -1,20 +1,34 @@
 # Installing DSpatch and working on another machine
 
-*Status: built and tried on Linux x64 with a simulated provider; see [what has been shown](#what-has-been-shown). Windows is built and not run. Nothing is published yet.*
+*Status: built and tried on Linux x64 with a simulated provider; see [what has been shown](#what-has-been-shown). Windows is built and not run.*
 
 ## For a person using DSpatch
 
 **Ubuntu or Debian x64:**
 
 ```bash
-sudo apt install ./dspatch_0.1.0_amd64.deb
+sudo apt install ./dspatch_VERSION_amd64.deb
 ```
 
-**Windows x64:** run `DSpatch Setup 0.1.0.exe`. It installs for your user and needs no administrator rights. The installer is not signed yet, so Windows warns about it.
+**Windows x64:** run `DSpatch-Setup-VERSION.exe`. It installs for your user and needs no administrator rights. The installer is not signed yet, so Windows warns about it.
 
 Start DSpatch from the menu. To work on this computer, choose an agent and open a project.
 
 **To work on another machine,** choose **Remote Session**, give `user@machine` or an alias from your SSH config, and press **Connect**. DSpatch uses your own `ssh`, with your config, agent and keys. It asks when ssh needs an answer: a new machine's fingerprint, or a password. On that machine it installs a host if none is there, starts it, and opens the tunnel; there is nothing to copy and no terminal to keep open. **Leave** closes this computer's connection. The host goes on, and so does work started there.
+
+**Starting locally and continuing from elsewhere.** A computer holds one work context per user, however it is reached. If you have used DSpatch on a computer, connecting to the same account over SSH finds the same projects, conversations, reviews, review decisions, loop runs and provider logins. Nothing has to be moved.
+
+One host works on that context at a time, so the handover is always clear:
+
+- **DSpatch left open on that computer with nothing running.** Connecting asks you first, then takes over. The window there says *In use from another computer* and keeps **Use here**, which brings the work back and tells the other client.
+- **Work is running in that window.** It is not interrupted and nothing changes; you are told, and can connect again when it is done.
+- **Back at that computer after working remotely.** The host started over SSH stays running, with any work in it. Opening DSpatch, or pressing **Use here**, attaches to it: a running job is shown as running and is neither sent again nor started twice. **End host** ends that host when nothing runs in it, and the window goes on alone.
+
+Only the client attached at that moment works on the host. Another client that connects replaces it, and the replaced one says so. Reopening a saved conversation is not the same as attaching to running work: reopening reads what is saved, and nothing is ever resent.
+
+**After an upgrade.** A host from an earlier version kept its data in `~/.local/share/dspatch-host` (Windows: `%LOCALAPPDATA%\dspatch-host`). The first host that starts on that computer brings that data in, after backing up both sides under `backups/` in the data folder. Nothing is overwritten and the old folder stays as it was. If a record exists in both places with different content, both are kept and you are told: a conversation then appears twice, the second one ending in `from-older-host`. If an earlier version saved a manual tunnel that no longer answers, DSpatch says so at the start and offers **Connect over SSH**; nothing is lost.
+
+If an alias is refused, the message shows the user, host and port that ssh actually resolved. `ssh -G <alias>` shows the same in a terminal.
 
 **Providers** are set up where the work runs, from the start page:
 
@@ -25,14 +39,14 @@ A login that already exists on the machine is used. DSpatch offers no API-key or
 
 ### Copilot hooks at work
 
-Copilot's hooks in `~/.copilot/hooks` run on the machine where the work runs: your own for local work, the remote machine over SSH. Installing or updating DSpatch does not touch them. To refuse Copilot work on a machine where no such hook is found, create an empty file `copilot-hooks-required` in DSpatch's data folder there: `~/.local/share/dspatch-host/` on a remote Linux host, `~/.config/DSpatch/` for local work on Linux. It takes effect at the next session, with no restart of the host. What they do and do not cover is in the [content-exclusion contract](DSPATCH_CONTENT_EXCLUSION_CONTRACT.md#6-tool-hooks-on-dspatchs-path-1-november-2026-dsp-154).
+Copilot's hooks in `~/.copilot/hooks` run on the machine where the work runs: your own for local work, the remote machine over SSH. Installing or updating DSpatch does not touch them. To refuse Copilot work on a machine where no such hook is found, create an empty file `copilot-hooks-required` in DSpatch's data folder there: `~/.config/DSpatch/` on Linux, `%APPDATA%\DSpatch\` on Windows, for local and remote work alike. It takes effect at the next session, with no restart of the host. What they do and do not cover is in the [content-exclusion contract](DSPATCH_CONTENT_EXCLUSION_CONTRACT.md#6-tool-hooks-on-dspatchs-path-1-november-2026-dsp-154).
 
 ## How it fits together
 
 - **Client.** Electron with the built app and its production dependencies. No `asar`: provider runtimes must be real files. `resources/bundled/` holds the loops, their graphs and roles, the pinned provider lists and `host-manifest.json`. It is read-only and replaced by an update; a person's own loops are in their projects and are not touched.
 - **Host package.** `dspatch-host-<version>-<commit>-<platform>-x64.tar.gz`: a fixed Node runtime (`HOST_NODE_VERSION` in `app/scripts/build-host-package.mjs`, checked against Node's `SHASUMS256.txt`), the built host, production dependencies for that platform and the same bundled folder. No Electron and no window system.
 - **Which package.** The client carries `host-manifest.json` for its own commit, with each package's SHA-256. A package is looked for in `DSPATCH_HOST_PACKAGES`, then `<client data>/host-packages/`, then the GitHub release of that version, and is used only if it matches. The client sends it over SSH, so the remote machine never reaches GitHub.
-- **On the machine.** Versions in `${XDG_DATA_HOME:-~/.local/share}/dspatch/host/versions/<version>-<commit>/` (Windows: `%LOCALAPPDATA%\DSpatch\host\versions\`), unpacked beside the others and renamed when whole. Data stays in `dspatch-host/` beside it, as it always was. A running host records its port and build in `host-running.json`, readable by that user; the port is chosen by the system, and the token stays in the host's own file and reaches the client on the SSH channel, into memory only.
+- **On the machine.** Versions in `${XDG_DATA_HOME:-~/.local/share}/dspatch/host/versions/<version>-<commit>/` (Windows: `%LOCALAPPDATA%\DSpatch\host\versions\`), unpacked beside the others and renamed when whole. Data is in the application's own folder (`${XDG_CONFIG_HOME:-~/.config}/DSpatch`, Windows: `%APPDATA%\DSpatch`), the same for local and remote use. A host claims that folder in `host-claim.json` before reading it, and a second host is refused. A running host records its port and build in `host-running.json`, readable by that user; the port is chosen by the system, and the token stays in the host's own file and reaches the client on the SSH channel, into memory only.
 - **Another version running.** The person is asked: replacing stops work there, with an unknown outcome. If the two can work together, *No* keeps using it. Old version folders stay.
 - **SSH.** The system's OpenSSH, with `StrictHostKeyChecking=ask`: an unknown key is asked about with its fingerprint, and a changed key is refused by ssh. On Linux one master connection carries everything. Windows' ssh has no multiplexing, so each step is its own connection. A password stays in memory for that session's reconnects and is never written.
 - **A provider's support.** See [what is installed where](#what-is-installed-where).
@@ -90,7 +104,7 @@ Hooks over ssh on the packaged host: `node scripts/trial-package/hooks.mjs`, aft
 | `@anthropic-ai/claude-agent-sdk`, its `claude` program in the platform package, and what the lockfile pins beside it, among them zod and `@modelcontextprotocol/sdk` | fetched on request | `<data>/provider-support/claude` |
 | `@github/copilot` with its `copilot` program, used to sign in | fetched on request, only when Copilot is not signed in | `<data>/provider-support/copilot` |
 
-`<data>` is `~/.config/DSpatch` for local work on Linux, `%APPDATA%\DSpatch` on Windows, and `~/.local/share/dspatch-host` on a remote Linux host. The versions are those in `claude-support/` and `copilot-support/`; each download is checked against the lockfile's integrity, so that machine must reach the npm registry. Before fetched support is put in place, the program starts and, for Claude, the SDK and zod load and a tool server is built from where the files stand. Node and npm are not involved beyond the runtime the product carries.
+`<data>` is `~/.config/DSpatch` on Linux and `%APPDATA%\DSpatch` on Windows. The versions are those in `claude-support/` and `copilot-support/`; each download is checked against the lockfile's integrity, so that machine must reach the npm registry. Before fetched support is put in place, the program starts and, for Claude, the SDK and zod load and a tool server is built from where the files stand. Node and npm are not involved beyond the runtime the product carries.
 
 On a remote Linux host with no keychain, Copilot's own `copilot login` signs in but cannot keep the token when it is not run in a terminal, and DSpatch says so. It does not switch on plain-text storage for you. Claude's program keeps its login in `~/.claude`.
 

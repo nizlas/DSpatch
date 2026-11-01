@@ -116,7 +116,7 @@ cd DSpatch/app
 npm run host
 ```
 
-Start it so that it outlives your SSH session: inside `tmux` on Linux (`tmux new -s dspatch`, then the command), or from a local desktop session on the machine. It prints its address, data folder and commit. It listens on `127.0.0.1:47917` only and has no option for anything else. Data: `~/.local/share/dspatch-host` (Windows: `%LOCALAPPDATA%\dspatch-host`), or `--data <folder>`; another port with `npm run host -- --port <n>`. Ctrl+C closes the adapters and ends it.
+Start it so that it outlives your SSH session: inside `tmux` on Linux (`tmux new -s dspatch`, then the command), or from a local desktop session on the machine. It prints its address, data folder and commit. It listens on `127.0.0.1:47917` only and has no option for anything else. Data: `~/.config/DSpatch` (Windows: `%APPDATA%\DSpatch`), the application's own folder, or `--data <folder>`; another port with `npm run host -- --port <n>`. Ctrl+C closes the adapters and ends it.
 
 Print the token once, and carry it to the client as you would a password:
 
