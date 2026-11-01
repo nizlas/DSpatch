@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   JSX,
   KeyboardEvent,
@@ -10,7 +10,6 @@ import type {
 import type { Capability, CapabilitySupport } from '../adapter/types';
 import type {
   AdapterInfo,
-  AgentChoiceInfo,
   AttemptInfo,
   AttemptReconciliation,
   AttemptRef,
@@ -58,7 +57,7 @@ import {
   type WorkspaceView,
 } from '../shared/workspace-folders';
 import {
-  connectionRecheckNote,
+  forProvider,
   connectionRetryPlan,
   shouldCheckCursorConnection,
   describeBridgeFailure,
@@ -72,6 +71,8 @@ import {
   type BridgeFailure,
 } from './recovery';
 import { describePlainly } from './plain-error';
+import { ProviderSetupDialog } from './ProviderSetupDialog';
+import { providerProblem, providerProblemAction } from '../shared/provider-ready';
 import { StartPage, RecentDialog, NoWorkspaceBar, ModelSelect } from './StartPage';
 import {
   COPIED_NOTE,
@@ -310,15 +311,27 @@ export function App(): JSX.Element {
         </p>
       )}
 
-      {state.kind === 'ready' && <Workbench environment={state.environment} />}
+      {state.kind === 'ready' && (
+        <Workbench
+          environment={state.environment}
+          onSetupFinished={() => {
+            void window.dspatch.getEnvironment().then((environment) => {
+              setState({ kind: 'ready', environment });
+            });
+          }}
+        />
+      )}
     </main>
   );
 }
 
 function Workbench({
   environment,
+  onSetupFinished,
 }: {
   readonly environment: EnvironmentInfo;
+  /** The agent choice is read with the environment; setup changes what it says. */
+  readonly onSetupFinished: () => void;
 }): JSX.Element {
   // DSP-136: nothing is checked until Cursor is the agent in play (or asked for).
   const [connection, setConnection] = useState<ConnectionStatus>({
@@ -398,8 +411,6 @@ function Workbench({
   /** When the restore's readings of the working copy were taken. */
   const [restoredAtUtc, setRestoredAtUtc] = useState<string | null>(null);
   const [resumeError, setResumeError] = useState<BridgeFailure | null>(null);
-  /** Why the connection card was re-read without being asked. */
-  const [recheckNote, setRecheckNote] = useState<string | null>(null);
   /** What happened to the composer text after a failure, in the user's terms. */
   const [composerNote, setComposerNote] = useState<string | null>(null);
   const [resolvedNote, setResolvedNote] = useState<string | null>(null);
@@ -863,13 +874,22 @@ function Workbench({
    * bounded: the effect below schedules a re-check only while the policy allows
    * one, and the button below it is what happens after that.
    */
+  const connectionCheck = useRef(0);
   const checkConnection = useCallback(async (): Promise<void> => {
+    connectionCheck.current += 1;
+    const check = connectionCheck.current;
     setConnection({ kind: 'checking' });
     try {
       const status = await window.dspatch.getConnection();
+      if (check !== connectionCheck.current) {
+        return;
+      }
       setConnection(status);
       setConnectionAttempts((previous) => (status.kind === 'connected' ? 0 : previous + 1));
     } catch (error) {
+      if (check !== connectionCheck.current) {
+        return;
+      }
       setConnection({
         kind: 'error',
         message: describeBridgeFailure(error).message,
@@ -895,10 +915,22 @@ function Workbench({
       setConnectionAttempts(0);
       void checkConnection();
     } else {
+      // An answer still on its way belongs to Cursor, which is no longer in play.
+      connectionCheck.current += 1;
       setConnection({ kind: 'not-checked' });
       setConnectionAttempts(0);
     }
   }, [cursorInPlay, checkConnection]);
+
+  /** A failure re-reads Cursor's card only when the work that failed was Cursor's. */
+  const cursorInPlayNow = useRef(cursorInPlay);
+  cursorInPlayNow.current = cursorInPlay;
+  const recheckCursorAfterFailure = useCallback((): void => {
+    if (cursorInPlayNow.current) {
+      setConnectionAttempts(0);
+      void checkConnection();
+    }
+  }, [checkConnection]);
 
   /** DSP-136: the explicit check, from Session details, whatever the agent. */
   const checkCursorNow = useCallback((): void => {
@@ -906,13 +938,48 @@ function Workbench({
     void checkConnection();
   }, [checkConnection]);
 
+  /**
+   * DSP-155: getting a provider ready, for the operation that needs it. One request at a time;
+   * a newer one replaces the dialog of the older, whose answer is then dropped with it.
+   */
+  const [setupRequest, setSetupRequest] = useState<{
+    readonly id: number;
+    readonly provider: 'claude' | 'copilot';
+    readonly startAtOnce: boolean;
+    readonly then: (shown: boolean) => void;
+  } | null>(null);
+  const setupRequests = useRef(0);
+  const [setupsFinished, setSetupsFinished] = useState(0);
+  const prepareProvider = useCallback(
+    (provider: StoredSessionProvider | null, then: (shown: boolean) => void, startAtOnce = false): void => {
+      if (provider === null || provider === 'cursor') {
+        then(false);
+        return;
+      }
+      setupRequests.current += 1;
+      setSetupRequest({ id: setupRequests.current, provider, startAtOnce, then });
+    },
+    [],
+  );
+  const providerFix = useCallback(
+    (message: string): (() => void) | undefined => {
+      const problem = providerProblem(message);
+      return problem === null ? undefined : () => {
+        prepareProvider(problem.provider, () => undefined, true);
+      };
+    },
+    [prepareProvider],
+  );
+
   /** DSP-136: an explicit agent choice in *Open a project*, recorded in the main process. */
   const chooseOpenAgent = useCallback((provider: StoredSessionProvider): void => {
-    setOpenProvider(provider);
-    void window.dspatch.chooseAgent(provider).catch((error: unknown) => {
-      setSessionError(describeBridgeFailure(error));
+    prepareProvider(provider, () => {
+      setOpenProvider(provider);
+      void window.dspatch.chooseAgent(provider).catch((error: unknown) => {
+        setSessionError(describeBridgeFailure(error));
+      });
     });
-  }, []);
+  }, [prepareProvider]);
 
   /**
    * The bounded automatic retry.
@@ -1491,9 +1558,7 @@ function Workbench({
         // Report 005 measured the card reading `connected` for a whole 60-second
         // outage while the attempt beside it read `failed`. The check sends nothing
         // and starts nothing, so a run that ended badly is a good enough reason.
-        setRecheckNote(connectionRecheckNote('run-failed', event.errorMessage ?? null));
-        setConnectionAttempts(0);
-        void checkConnection();
+        recheckCursorAfterFailure();
       }
       if (event.type === 'run.finished') {
         void window.dspatch
@@ -1533,7 +1598,6 @@ function Workbench({
     if (outcome.restore) {
       setPrompt(outcome.text);
     }
-    setComposerNote(outcome.note);
   }, [chat.turns, prompt]);
 
   /**
@@ -1892,7 +1956,6 @@ function Workbench({
       applyLoopInstructionEvent({ kind: 'conversation-replaced' });
       setLoopLines([]);
       setCurrentStepLabel(null);
-      setRecheckNote(null);
       setComposerNote(null);
       setResolvedNote(null);
       setRecapDiscarded(false);
@@ -2026,7 +2089,6 @@ function Workbench({
       setCancelObs(null);
       setStopNote(null);
       setStopWaitingNote(null);
-      setRecheckNote(null);
       setComposerNote(null);
       setResolvedNote(null);
       try {
@@ -2299,9 +2361,7 @@ function Workbench({
           const failure = describeBridgeFailure(error);
           setActionError(failure);
           if (failure.kind === 'connection') {
-            setRecheckNote(connectionRecheckNote('send-failed', failure.message));
-            setConnectionAttempts(0);
-            void checkConnection();
+            recheckCursorAfterFailure();
           }
         }
       } finally {
@@ -2689,11 +2749,35 @@ function Workbench({
     </div>
   ) : null;
 
+  const setupDialog =
+    setupRequest === null ? null : (
+      <ProviderSetupDialog
+        key={setupRequest.id}
+        provider={setupRequest.provider}
+        startAtOnce={setupRequest.startAtOnce}
+        onDone={(shown) => {
+          setSetupRequest(null);
+          setupRequest.then(shown);
+          if (shown) {
+            setActionError(null);
+            setSessionError(null);
+            setSetupsFinished((count) => count + 1);
+            onSetupFinished();
+          }
+        }}
+        onCancel={() => {
+          setSetupRequest(null);
+        }}
+      />
+    );
+
   // DSP-149: with nothing open, the start page is the whole window.
   if (session === null && restored === null) {
     return (
       <>
+        {setupDialog}
         <StartPage
+          key={setupsFinished}
           agentChoice={environment.agentChoice}
           provider={openProvider}
           onChooseProvider={chooseOpenAgent}
@@ -2704,6 +2788,7 @@ function Workbench({
               <Failure
                 failure={sessionError}
                 testId="session-error"
+                onProviderSetup={providerFix(sessionError.message)}
                 onRetry={() => {
                   void pickFolder();
                 }}
@@ -2719,11 +2804,17 @@ function Workbench({
           prompt={prompt}
           onPrompt={setPrompt}
           onSend={() => {
-            setSendWhenOpen(true);
-            void startSession({ kind: 'loose', provider: openProvider }).then((opened) => {
-              if (!opened) {
-                setSendWhenOpen(false);
+            // A dialog in between ends with the person back here: a send is theirs to repeat.
+            prepareProvider(openProvider, (shown) => {
+              if (shown) {
+                return;
               }
+              setSendWhenOpen(true);
+              void startSession({ kind: 'loose', provider: openProvider }).then((opened) => {
+                if (!opened) {
+                  setSendWhenOpen(false);
+                }
+              });
             });
           }}
           onOpenProject={() => {
@@ -2746,7 +2837,12 @@ function Workbench({
   }
 
   return (
-    <>
+    <FailureContext.Provider
+      value={{
+        shownElsewhere: actionError?.message ?? null,
+        onFix: (message) => providerFix(message)?.(),
+      }}
+    >
       {/*
         No project row. DSpatch's name, the project, *Open another project*,
         *connected* and *Session details* were a line of chrome above every
@@ -2758,6 +2854,7 @@ function Workbench({
         What stays out here is only what has gone wrong: `headerProblems` decides
         what counts, and it draws nothing at all when nothing is wrong.
       */}
+      {setupDialog}
       <AppBarProblems
         header={header}
         connection={connection}
@@ -2767,12 +2864,6 @@ function Workbench({
           void checkConnection();
         }}
       />
-
-      {recheckNote !== null && (
-        <p className="app__note" data-ev="connection-recheck-note">
-          {recheckNote}
-        </p>
-      )}
 
       {/*
         The work area: one column of fixed height, holding the conversation and,
@@ -3348,11 +3439,14 @@ function Workbench({
                   session={session}
                   busy={busy !== null || activeTurn !== null || loopBusy}
                   onSwitch={(provider) => {
-                    void startSession({ kind: 'new-provider-session', provider });
+                    prepareProvider(provider, () => {
+                      void startSession({ kind: 'new-provider-session', provider });
+                    });
                   }}
                 />
                 {/* DSP-149: the models the agent offers, chosen here as on the start page. */}
                 <ModelSelect
+                  key={setupsFinished}
                   provider={session.provider}
                   disabled={busy !== null || activeTurn !== null || loopBusy}
                   compact
@@ -3559,8 +3653,9 @@ function Workbench({
               )}
               {actionError !== null && (
                 <Failure
-                  failure={actionError}
+                  failure={forProvider(actionError, session?.provider ?? null)}
                   testId="action-error"
+                  onProviderSetup={providerFix(actionError.message)}
                   onRetry={() => {
                     void send();
                   }}
@@ -3754,7 +3849,7 @@ function Workbench({
       </div>
       </div>
       </div>
-    </>
+    </FailureContext.Provider>
   );
 }
 
@@ -3762,22 +3857,11 @@ function Workbench({
  * Which agent the conversation talks to (DSP-117).
  *
  * A select rather than a toggle, so the choice reads as "Agent: Cursor" and the
- * unavailable option can say why. Claude is disabled, with its reason in the option
- * itself, unless this launch was started with an authorization reference. Choosing
+ * unavailable option can say why. Claude can always be chosen: choosing it gets it ready
+ * first (DSP-155). Choosing
  * the other agent asks for a new provider session with it; nothing is resumed
  * across providers and nothing is sent until Send.
  */
-/**
- * The Claude option's label (DSP-133): what is missing, shortest first. "not
- * installed" outranks "off", because enabling a launch does not help without support.
- */
-function claudeOptionLabel(agent: AgentChoiceInfo): string {
-  if (agent.claudeEnabled) {
-    return 'Claude';
-  }
-  return agent.claudeInstalled ? 'Claude (off)' : 'Claude (not installed)';
-}
-
 function AgentChooser({
   session,
   busy,
@@ -3819,10 +3903,7 @@ function AgentChooser({
             </option>
           )}
           <option value="cursor">Cursor</option>
-          <option value="claude" disabled={!session.agent.claudeEnabled}>
-            {/* Short, so the control row does not wrap; the reason is in the tooltip. */}
-            {claudeOptionLabel(session.agent)}
-          </option>
+          <option value="claude">Claude</option>
           <option value="copilot" disabled={!session.agent.copilotEnabled} title={session.agent.copilotNote}>
             {session.agent.copilotEnabled ? 'Copilot' : 'Copilot (not installed)'}
           </option>
@@ -5817,6 +5898,12 @@ function TestPanel({
  * The action is whatever genuinely applies. A handler that is not supplied leaves
  * the button out rather than showing a dead one.
  */
+/** What a turn's error line needs from the window it is in. */
+const FailureContext = createContext<{ readonly shownElsewhere: string | null; readonly onFix: (message: string) => void }>({
+  shownElsewhere: null,
+  onFix: () => undefined,
+});
+
 function Failure({
   failure,
   testId,
@@ -5826,9 +5913,12 @@ function Failure({
   onAcknowledge,
   onChooseFolder,
   onContinueInNewSession,
+  onProviderSetup,
 }: {
   readonly failure: BridgeFailure;
   readonly testId: string;
+  /** DSP-155: repair, set up or sign in, for the provider the failure names. */
+  readonly onProviderSetup?: (() => void) | undefined;
   readonly onRetry?: () => void;
   readonly onReconnect?: () => void;
   readonly onOpenAgain?: () => void;
@@ -5849,9 +5939,14 @@ function Failure({
               ? onChooseFolder
               : failure.action === 'continue-in-new-session'
                 ? onContinueInNewSession
-                : undefined;
+                : failure.action === 'provider-setup'
+                  ? onProviderSetup
+                  : undefined;
+  const problem = providerProblem(failure.message);
   const label =
-    failure.action === 'retry'
+    problem !== null
+      ? providerProblemAction(problem)
+      : failure.action === 'retry'
       ? 'Try again'
       : failure.action === 'reconnect'
         ? 'Check the connection again'
@@ -5874,16 +5969,18 @@ function Failure({
           {plain.nextStep}
         </p>
       )}
-      <details className="error-detail" data-ev={`${testId}-detail`}>
-        <summary className="error-detail__summary" data-ev={`${testId}-detail-summary`}>
-          Technical detail
-        </summary>
-        {plain.detail.map((line) => (
-          <p className="card__detail" key={line.label}>
-            <strong>{line.label}:</strong> {line.value}
-          </p>
-        ))}
-      </details>
+      {problem === null && (
+        <details className="error-detail" data-ev={`${testId}-detail`}>
+          <summary className="error-detail__summary" data-ev={`${testId}-detail-summary`}>
+            Technical detail
+          </summary>
+          {plain.detail.map((line) => (
+            <p className="card__detail" key={line.label}>
+              <strong>{line.label}:</strong> {line.value}
+            </p>
+          ))}
+        </details>
+      )}
       {handler !== undefined && (
         <button
           type="button"
@@ -7334,10 +7431,11 @@ function Turn({
       {turn.answer === '' ? (
         <>
           <pre
+            hidden={!active}
             className="turn__answer"
             data-ev={active ? 'active-answer' : `turn-${String(index)}-answer`}
           >
-            {active ? '…' : '(no text in this turn)'}
+            {active ? '…' : ''}
           </pre>
           {steering.map((entry) => (
             <InstructionEntry key={entry.instruction.id} instruction={entry.instruction} testId={entry.testId} inline />
@@ -7455,12 +7553,31 @@ function Turn({
       {turn.approvalSummary !== null && (
         <p className="app__note">{turn.approvalSummary}</p>
       )}
-      {turn.errorMessage !== null && (
-        <p className="app__error" data-ev={`turn-${String(index)}-error`}>
-          {turn.errorMessage}
-        </p>
-      )}
+      {turn.errorMessage !== null && <TurnError message={turn.errorMessage} testId={`turn-${String(index)}-error`} />}
     </article>
+  );
+}
+
+/**
+ * A failed turn's one line (DSP-155), in the same words as a refused send, and nothing when the
+ * failure is already on screen below the composer. The whole message is in the session log.
+ */
+function TurnError({ message, testId }: { readonly message: string; readonly testId: string }): JSX.Element | null {
+  const { shownElsewhere, onFix } = useContext(FailureContext);
+  if (shownElsewhere === message) {
+    return null;
+  }
+  const plain = describePlainly(describeBridgeFailure(new Error(message)));
+  const problem = providerProblem(message);
+  return (
+    <div className="app__error" data-ev={testId}>
+      <p>{plain.headline}</p>
+      {problem !== null && (
+        <button type="button" className="button" data-ev={`${testId}-action`} onClick={() => onFix(message)}>
+          {providerProblemAction(problem)}
+        </button>
+      )}
+    </div>
   );
 }
 

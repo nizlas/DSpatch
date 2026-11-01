@@ -97,8 +97,8 @@ import {
   REVIEW_PERMISSIONS,
   describePermissionPolicy,
 } from '../adapter/claude-agent-sdk-adapter';
-import { claudeSupportStatus, useClaudeSupportDir } from '../adapter/claude-support';
-import { ProviderSetup, type SupportTool } from '../main/provider-setup';
+import { CLAUDE_REPAIR_TEXT, claudeSupportDir, claudeSupportStatus, useClaudeSupportDir } from '../adapter/claude-support';
+import { ProviderSetup, SetupCancelled, type SupportTool } from '../main/provider-setup';
 import { browseHostFolder } from './host-browse';
 import {
   COPILOT_ANALYSIS_POLICY,
@@ -405,13 +405,12 @@ function claudeAuthorizationReference(): string | null {
 }
 
 /**
- * DSP-133: whether Claude support (`app/claude-support/`) is installed, read once
- * at launch from `package.json` files only. Nothing installs it here, at reopen
- * or when the agent choice renders: `npm run claude:install` in `app/` does, and
- * a restart picks it up. A packaged build has none.
+ * DSP-133, DSP-155: whether Claude support is installed and whole, from `package.json` files
+ * only. Nothing installs it here, at reopen or when the agent choice renders. A folder that
+ * lacks a part of its lockfile is not installed, whatever its marker says.
  */
 function claudeInstalledNow(): boolean {
-  return claudeSupportStatus().installed;
+  return claudeSupportStatus().installed && (providerSetup === null || claudeSupportDir() !== providerSetup.folderOf('claude') || providerSetup.programState('claude') === 'ready');
 }
 
 /** Fetching a provider's program and signing in to it (DSP-153). Set when the host starts. */
@@ -616,7 +615,8 @@ function createChatService(): ChatService {
   },
   get claudeSupport() {
     const { installed, reason } = claudeSupportStatus();
-    return { installed, reason };
+    const whole = claudeInstalledNow();
+    return { installed: whole, reason: installed && !whole ? CLAUDE_REPAIR_TEXT : reason };
   },
   copilotInstalled: COPILOT_INSTALLED,
   agentChoiceStore: { read: () => agentChoiceStore.read(), write: (provider) => agentChoiceStore.write(provider) },
@@ -1856,27 +1856,26 @@ async function copilotSignedIn(): Promise<boolean> {
 /** `DSPATCH_PRESENTATION_LOGIN=1`, SIMULATED: a machine with no provider signed in, until asked. */
 const presentationLogin = { wanted: presentationMode && process.env['DSPATCH_PRESENTATION_LOGIN'] === '1', signedIn: new Set<SupportTool>() };
 
-async function providerSetupState(): Promise<ProviderSetupState> {
+/** One provider's state. The other provider is not asked anything. */
+async function providerSetupState(tool: SupportTool): Promise<ProviderSetupState> {
   const setup = providerSetup;
   if (setup === null) {
     throw new Error('The project host has not started.');
   }
-  const claudeProgram = claudeInstalledNow();
   if (presentationLogin.wanted) {
-    return {
-      machine: hostname(),
-      copilot: { program: true, signedIn: presentationLogin.signedIn.has('copilot') },
-      claude: { program: true, consent: setup.claudeConsent(), signedIn: presentationLogin.signedIn.has('claude') },
-    };
+    return { tool, machine: hostname(), program: 'ready', consent: tool === 'copilot' || setup.claudeConsent(), signedIn: presentationLogin.signedIn.has(tool) };
   }
+  if (tool === 'copilot') {
+    return { tool, machine: hostname(), program: await setup.provenState('copilot'), consent: true, signedIn: await copilotSignedIn().catch(() => null) };
+  }
+  // A working copy's own `claude-support` is that copy's to keep: it counts as it stands.
+  const fetched = claudeSupportDir() === setup.folderOf('claude');
   return {
+    tool,
     machine: hostname(),
-    copilot: { program: setup.installed('copilot'), signedIn: await copilotSignedIn().catch(() => null) },
-    claude: {
-      program: claudeProgram,
-      consent: claudeAuthorizationReference() !== null,
-      signedIn: await setup.claudeSignedIn(),
-    },
+    program: fetched ? await setup.provenState('claude') : claudeInstalledNow() ? 'ready' : 'absent',
+    consent: claudeAuthorizationReference() !== null,
+    signedIn: await setup.claudeSignedIn(),
   };
 }
 
@@ -1887,16 +1886,25 @@ function registerProviderSetup(): void {
     }
     return providerSetup;
   };
-  handle('provider.status', () => providerSetupState());
+  handle('provider.status', (_context, tool) => providerSetupState(tool));
   handle('provider.install', async (_context, tool) => {
-    await setup().install(tool, (done, total) => {
-      sendToEveryWindow('dspatch:provider-step', { tool, step: { kind: 'fetching', done, total } });
-    });
-    return providerSetupState();
+    try {
+      await setup().install(tool, (done, total) => {
+        sendToEveryWindow('dspatch:provider-step', { tool, step: { kind: 'fetching', done, total } });
+      });
+    } catch (error) {
+      if (!(error instanceof SetupCancelled)) {
+        throw error;
+      }
+    }
+    return providerSetupState(tool);
+  });
+  handle('provider.installCancel', (_context, tool) => {
+    setup().cancelInstall(tool);
   });
   handle('provider.acceptClaude', () => {
     setup().recordClaudeConsent();
-    return providerSetupState();
+    return providerSetupState('claude');
   });
   handle('provider.loginStart', (_context, tool) => {
     const step = (next: ProviderLoginStep): void => {
@@ -4435,7 +4443,8 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
     dataDir: start.config.userDataDir,
     log,
   });
-  if (start.config.bundledRoot !== undefined) {
+  // A working copy with its own `npm run claude:install` keeps using that one.
+  if (start.config.bundledRoot !== undefined || !claudeSupportStatus().installed) {
     useClaudeSupportDir(providerSetup.folderOf('claude'));
   }
   chatService = createChatService();

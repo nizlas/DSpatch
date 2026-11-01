@@ -3,8 +3,6 @@ import { useEffect, useId, useMemo, useRef, useState, type JSX, type KeyboardEve
 import type {
   AgentChoiceInfo,
   ModelListing,
-  ProviderLoginStep,
-  ProviderSetupState,
   RecentWorkspaceEntry,
   RecentWorkspaces,
   StoredSessionProvider,
@@ -98,146 +96,6 @@ function RemoteSessionForm({ onClose }: { readonly onClose: () => void }): JSX.E
         </div>
       </details>
     </form>
-  );
-}
-
-/**
- * Getting a provider ready on the machine where the work runs (DSP-153), shown only when
- * something is missing. Each step is the person's: fetching the vendor's program, accepting that
- * DSpatch uses their Claude subscription through Claude Code, and signing in. API keys are not
- * offered here. The sign-in page opens on this computer, whichever machine the host is.
- */
-function ProviderSetupLine({ provider, claudeEnabled }: { readonly provider: StoredSessionProvider | null; readonly claudeEnabled: boolean }): JSX.Element | null {
-  const bridge = window.dspatchSetup;
-  const [state, setState] = useState<ProviderSetupState | null>(null);
-  const [tool, setTool] = useState<'claude' | 'copilot' | null>(null);
-  const [step, setStep] = useState<ProviderLoginStep | null>(null);
-  const [link, setLink] = useState<{ readonly url: string; readonly code?: string } | null>(null);
-  const [typed, setTyped] = useState('');
-  const [problem, setProblem] = useState('');
-  const refresh = (): void => {
-    void bridge?.providerCall<ProviderSetupState>('provider.status').then(setState, () => undefined);
-  };
-  useEffect(() => {
-    refresh();
-    return bridge?.onProviderStep(({ tool: from, step: next }) => {
-      setTool(from);
-      setStep(next);
-      if (next.kind === 'open-url') {
-        setLink(next);
-      }
-      if (next.kind === 'failed') {
-        setProblem(next.message);
-      }
-      if (next.kind === 'done') {
-        // The agent choice and the model lists are read as a window starts.
-        window.location.reload();
-      }
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider]);
-  if (bridge === undefined || state === null) {
-    return null;
-  }
-  const act = (method: string, argument: unknown, then?: () => void): void => {
-    setProblem('');
-    bridge.providerCall<ProviderSetupState | undefined>(method, argument).then(
-      (next) => {
-        if (next !== undefined) {
-          setState(next);
-        }
-        then?.();
-      },
-      (error: unknown) => {
-        setProblem(error instanceof Error ? error.message.replace(/^.*Error: /, '') : String(error));
-      },
-    );
-  };
-  const signIn = (which: 'claude' | 'copilot'): void => {
-    setTool(which);
-    setLink(null);
-    act('provider.loginStart', which);
-  };
-  const where = state.machine;
-  const claudeOffer = !claudeEnabled || (provider === 'claude' && state.claude.signedIn === false);
-  const copilotOffer = provider === 'copilot' && state.copilot.signedIn === false;
-  if (!claudeOffer && !copilotOffer && tool === null && problem === '') {
-    return null;
-  }
-  return (
-    <div className="start__setup" data-ev="provider-setup">
-      {claudeOffer && !state.claude.consent && (
-        <p>
-          <button type="button" data-ev="claude-consent" onClick={() => act('provider.acceptClaude', undefined)}>
-            Use my Claude subscription
-          </button>{' '}
-          DSpatch runs Claude Code on {where}, signed in to your own account. Anthropic&apos;s terms apply, and no API key is used.
-        </p>
-      )}
-      {claudeOffer && state.claude.consent && !state.claude.program && (
-        <p>
-          <button type="button" data-ev="claude-install" onClick={() => act('provider.install', 'claude')}>
-            Install Claude Code
-          </button>{' '}
-          Fetches Anthropic&apos;s program from npm to {where}.
-        </p>
-      )}
-      {claudeOffer && state.claude.consent && state.claude.program && state.claude.signedIn === false && (
-        <p>
-          <button type="button" data-ev="claude-login" onClick={() => signIn('claude')}>
-            Sign in to Claude
-          </button>
-        </p>
-      )}
-      {copilotOffer && (
-        <p>
-          <button
-            type="button"
-            data-ev="copilot-login"
-            onClick={() => {
-              if (state.copilot.program) {
-                signIn('copilot');
-              } else {
-                act('provider.install', 'copilot', () => signIn('copilot'));
-              }
-            }}
-          >
-            Sign in to Copilot
-          </button>{' '}
-          {state.copilot.program ? '' : `Fetches GitHub's Copilot CLI from npm to ${where} first.`}
-        </p>
-      )}
-      {step?.kind === 'fetching' && <p data-ev="provider-fetching">Fetching… {String(step.done)} of {String(step.total)}</p>}
-      {link !== null && (
-        <p data-ev="provider-link">
-          <button type="button" data-ev="provider-open" onClick={() => void bridge.openLink(link.url)}>
-            Open the sign-in page
-          </button>
-          {link.code !== undefined && (
-            <>
-              {' '}
-              and enter <code data-ev="provider-code">{link.code}</code>
-            </>
-          )}
-        </p>
-      )}
-      {step?.kind === 'input' && (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void bridge.providerCall('provider.loginAnswer', typed);
-            setTyped('');
-          }}
-        >
-          <label>
-            {step.prompt}
-            <input data-ev="provider-input" autoComplete="off" value={typed} onChange={(event) => setTyped(event.target.value)} />
-          </label>
-          <button type="submit">Send</button>
-        </form>
-      )}
-      {problem !== '' && <p className="start__remote-note" data-ev="provider-problem">{problem}</p>}
-    </div>
   );
 }
 
@@ -401,7 +259,7 @@ export function ProviderSelect({
   readonly disabled: boolean;
   readonly onChoose: (provider: StoredSessionProvider) => void;
 }): JSX.Element {
-  const shown = provider === 'claude' && !agentChoice.claudeEnabled ? null : provider;
+  const shown = provider;
   return (
     <label className={`provider${shown === null ? ' provider--none' : ''}`} title={agentChoice.claudeNote}>
       <span className={`provider__dot provider__dot--${shown ?? 'none'}`} aria-hidden="true" />
@@ -422,8 +280,8 @@ export function ProviderSelect({
           Choose an agent
         </option>
         <option value="cursor">Cursor</option>
-        <option value="claude" disabled={!agentChoice.claudeEnabled}>
-          {agentChoice.claudeEnabled ? 'Claude' : 'Claude (not available)'}
+        <option value="claude">
+          Claude
         </option>
         <option value="copilot" disabled={!agentChoice.copilotEnabled} title={agentChoice.copilotNote}>
           {agentChoice.copilotEnabled ? 'Copilot' : 'Copilot (not available)'}
@@ -642,7 +500,6 @@ export function StartPage({
       <header className="start__top">
         <ProviderSelect agentChoice={agentChoice} provider={provider} disabled={busy} onChoose={onChooseProvider} />
         <ModelSelect provider={provider === 'claude' && !agentChoice.claudeEnabled ? null : provider} disabled={busy} />
-        <ProviderSetupLine provider={provider} claudeEnabled={agentChoice.claudeEnabled} />
       </header>
       <main className="start__content">
         <Wordmark />

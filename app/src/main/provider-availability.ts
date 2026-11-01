@@ -45,7 +45,7 @@ export const CURSOR_LOGIN_NOTE =
   'check it on its own.';
 
 /** Copilot's login is the runtime's, on the machine where the work runs (DSP-148). */
-export const COPILOT_NOT_INSTALLED_TEXT = "Copilot's runtime is not installed for this machine. Run `npm ci` in `app/`, then restart DSpatch.";
+export const COPILOT_NOT_INSTALLED_TEXT = "Copilot's runtime is missing from this installation of DSpatch. Reinstall DSpatch to use Copilot.";
 
 export function providerAvailability(
   provider: StoredSessionProvider,

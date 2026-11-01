@@ -38,6 +38,7 @@
  * measured fifteen. That note now says what was observed — see `classify` again.
  */
 
+import { providerProblem } from '../shared/provider-ready';
 import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
 
 /** What kind of failure this is, which decides what is offered. */
@@ -64,6 +65,8 @@ export type FailureKind =
    * choices are always on screen beside it.
    */
   | 'no-provider-session'
+  /** Setup can resolve this one: support to repair or set up, or a sign-in (DSP-155). */
+  | 'provider-setup'
   | 'other';
 
 /** The action the window offers beside the message. */
@@ -74,7 +77,8 @@ export type RecoveryAction =
   | 'acknowledge-then-repeat'
   | 'choose-another-folder'
   | 'open-project-again'
-  | 'continue-in-new-session';
+  | 'continue-in-new-session'
+  | 'provider-setup';
 
 export interface BridgeFailure {
   /** The message to show, with the transport's own wrapping removed. */
@@ -120,6 +124,9 @@ function classify(message: string): {
   action: RecoveryAction;
   actionNote: string;
 } {
+  if (providerProblem(message) !== null) {
+    return { kind: 'provider-setup', action: 'provider-setup', actionNote: '' };
+  }
   if (message.startsWith('Refusing to delete')) {
     return {
       kind: 'refused-generated-folder',
@@ -477,21 +484,12 @@ export function runEndingNeedsConnectionRecheck(
   return status !== undefined || errorMessage !== undefined;
 }
 
-/** Why the connection card was re-read without the user asking. */
-export function connectionRecheckNote(
-  reason: 'run-failed' | 'send-failed',
-  detail: string | null,
-): string {
-  const cause =
-    reason === 'run-failed'
-      ? 'a run reported an ending that was not a completion'
-      : 'a message could not be handed to the provider';
-  return (
-    `The connection above was re-read because ${cause}, so the card cannot keep ` +
-    'saying "connected" while an attempt beside it says otherwise. Nothing was ' +
-    'sent to do this; only the login and the model list were read.' +
-    (detail === null || detail.trim() === '' ? '' : ` What failed: ${detail}`)
-  );
+/**
+ * A failure belongs to the provider of the work that failed. Only Cursor has a connection card,
+ * so with any other agent a failed reach is a thing to try again, and Cursor is not asked.
+ */
+export function forProvider(failure: BridgeFailure, provider: 'cursor' | 'claude' | 'copilot' | null): BridgeFailure {
+  return failure.action === 'reconnect' && provider !== 'cursor' ? { ...failure, action: 'retry' } : failure;
 }
 
 /**
@@ -542,46 +540,21 @@ export const FAILURE_RESOLVED_NOTE =
  *
  * The text goes back in the box only when the box is empty. Overwriting something
  * the user has since started typing would be a worse failure than the one this
- * fixes, so in that case the note says where the text actually is instead of
- * claiming something untrue.
+ * fixes, so in that case the text stays where the conversation shows it.
  */
 export interface ComposerRestore {
   readonly restore: boolean;
   readonly text: string;
-  readonly note: string;
 }
 
 export function restoreComposerAfterRunFailure(
   failedPrompt: string,
   composerText: string,
 ): ComposerRestore {
-  if (failedPrompt.trim() === '') {
-    return {
-      restore: false,
-      text: composerText,
-      note:
-        'DSpatch has no record of the text for this attempt, so there is nothing ' +
-        'to put back. Whatever the turn above shows is what it has.',
-    };
+  if (failedPrompt.trim() === '' || composerText.trim() !== '') {
+    return { restore: false, text: composerText };
   }
-  if (composerText.trim() !== '') {
-    return {
-      restore: false,
-      text: composerText,
-      note:
-        'Your message is kept in the conversation above. It has not been put back ' +
-        'in the box, because you have text in there already and overwriting it ' +
-        'would lose more than it saved.',
-    };
-  }
-  return {
-    restore: true,
-    text: failedPrompt,
-    note:
-      'The message that failed has been put back in the box, so sending it again ' +
-      'does not mean retyping it. Everything already received is still in the ' +
-      'conversation above.',
-  };
+  return { restore: true, text: failedPrompt };
 }
 
 export function connectionRetryPlan(automaticAttemptsSoFar: number): RetryPlan {

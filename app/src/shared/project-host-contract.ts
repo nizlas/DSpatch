@@ -94,8 +94,9 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'chat.setModel': (modelId: string) => string;
   readonly 'chat.listModels': (provider: StoredSessionProvider) => BridgeAnswer<'listModels'>;
   readonly 'chat.chooseModel': (provider: StoredSessionProvider, modelId: string) => string;
-  readonly 'provider.status': () => ProviderSetupState;
+  readonly 'provider.status': (tool: 'claude' | 'copilot') => ProviderSetupState;
   readonly 'provider.install': (tool: 'claude' | 'copilot') => ProviderSetupState;
+  readonly 'provider.installCancel': (tool: 'claude' | 'copilot') => void;
   readonly 'provider.acceptClaude': () => ProviderSetupState;
   readonly 'provider.loginStart': (tool: 'claude' | 'copilot') => void;
   readonly 'provider.loginAnswer': (text: string) => void;
@@ -286,6 +287,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'chat.chooseModel': true,
   'provider.status': true,
   'provider.install': true,
+  'provider.installCancel': true,
   'provider.acceptClaude': true,
   'provider.loginStart': true,
   'provider.loginAnswer': true,

@@ -115,7 +115,7 @@ test('every labelled detail line has both a label and something in it', () => {
 test('an unclassified failure claims no cause it does not know', () => {
   const plain = describePlainly(describeBridgeFailure(new Error('something nobody classified')));
   assert.equal(plain.nextStep, SHORT_NEXT_STEP.other);
-  assert.match(plain.nextStep, /Your text is kept/);
+  assert.match(plain.nextStep, /Trying again starts a new attempt/);
   // No invented cause, and no promise about what will happen.
   assert.doesNotMatch(plain.nextStep, /network|provider|connection|will work|should/i);
 });
@@ -124,6 +124,10 @@ test('every kind of failure has a short next step, and none is a paragraph', () 
   // The whole set, so a kind added later cannot arrive without one — and so that
   // "short" stays a measurable claim rather than a style note.
   for (const [kind, sentence] of Object.entries(SHORT_NEXT_STEP)) {
+    // Its button is the next step: one line and an action, nothing to add to them.
+    if (kind === 'provider-setup') {
+      continue;
+    }
     assert.notEqual(sentence.trim(), '', `${kind} has nothing to say`);
     assert.ok(sentence.length <= 140, `${kind} is ${String(sentence.length)} characters`);
     assert.ok(/[.!?]$/.test(sentence), `${kind} does not end a sentence`);
@@ -135,7 +139,7 @@ test('the next step matches the action the window actually offers', () => {
   // worse than the long one it replaced, so the two are checked against each other.
   const cases: readonly { readonly message: string; readonly says: RegExp }[] = [
     { message: 'No session is open, so there is nothing to send.', says: /Open a project first/ },
-    { message: 'Cursor adapter operation "send" failed: TypeError: fetch failed', says: /check the connection again/ },
+    { message: 'Cursor adapter operation "send" failed: TypeError: fetch failed', says: /Check the network connection/ },
   ];
   for (const { message, says } of cases) {
     assert.match(describePlainly(describeBridgeFailure(new Error(message))).nextStep, says);

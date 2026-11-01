@@ -15,6 +15,7 @@ import {
 } from '../adapter/claude-agent-sdk-adapter';
 import {
   CLAUDE_NOT_INSTALLED_TEXT,
+  CLAUDE_REPAIR_TEXT,
   claudeUnavailableReason,
 } from '../adapter/claude-support';
 import { CursorSdkAdapter } from '../adapter/cursor-sdk-adapter';
@@ -1821,6 +1822,9 @@ export class ChatService {
 
   /** Why Claude cannot be chosen (each missing part named), or `null` when it can. */
   private claudeUnavailable(): string | null {
+    if (this.options.claudeSupport?.reason === CLAUDE_REPAIR_TEXT) {
+      return CLAUDE_REPAIR_TEXT;
+    }
     return claudeUnavailableReason({
       authorized: this.claudeReference() !== null,
       installed: this.claudeInstalled(),

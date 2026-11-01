@@ -549,7 +549,7 @@ test('without Claude support installed, Claude is not choosable, says how to ins
   assert.equal(session.provider, 'cursor');
   assert.equal(session.agent.claudeEnabled, false, 'authorized but not installed is not available');
   assert.equal(session.agent.claudeInstalled, false);
-  assert.match(session.agent.claudeNotInstalledText ?? '', /npm run claude:install.*in `app\/`.*restart DSpatch/);
+  assert.match(session.agent.claudeNotInstalledText ?? '', /Choose Claude to set it up/);
   assert.match(session.agent.claudeNote, /Claude support is not installed/);
   assert.match(h.service.agentChoice('claude').connectionText, /Claude support not installed/);
 
@@ -729,7 +729,7 @@ test('a stored choice that cannot be used in this launch is named with its reaso
   assert.match(session.continuity.unusableChoice?.reason ?? '', /^Claude is not enabled for this launch/);
   assert.match(
     session.continuity.statement,
-    /^Claude was chosen, but it cannot be used in this launch: Claude is not enabled for this launch\. Start DSpatch with DSPATCH_CLAUDE_AUTHORIZATION set to enable it\. DSpatch opened no session/,
+    /^Claude was chosen, but it cannot be used in this launch: Claude is not enabled for this launch\. Choose Claude to set it up\. DSpatch opened no session/,
   );
   assert.doesNotMatch(session.continuity.statement, /No agent is chosen/);
   assert.match(session.continuity.statement, /Choose another agent to start a session\.$/);

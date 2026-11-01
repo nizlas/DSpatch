@@ -641,7 +641,7 @@ async function connectOverSsh(target: string): Promise<string> {
 }
 
 /** What a window may ask the host about a provider's program and sign-in. */
-const PROVIDER_CALLS = ['provider.status', 'provider.install', 'provider.acceptClaude', 'provider.loginStart', 'provider.loginAnswer', 'provider.loginCancel'] as const;
+const PROVIDER_CALLS = ['provider.status', 'provider.install', 'provider.installCancel', 'provider.acceptClaude', 'provider.loginStart', 'provider.loginAnswer', 'provider.loginCancel'] as const;
 
 /** Back to this computer's own host. */
 function leaveRemoteSession(): Promise<string> {

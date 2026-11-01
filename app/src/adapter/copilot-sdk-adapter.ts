@@ -402,7 +402,7 @@ export function copilotHooksRequired(dataDir: string, env: Readonly<Record<strin
 // --- Plain errors ---------------------------------------------------------------------
 
 export function copilotNotSignedInText(machine: string = hostname()): string {
-  return `Copilot is not signed in on ${machine}, where this work runs. Use Sign in to Copilot on the start page, then try again. Nothing was sent.`;
+  return `Copilot is not signed in on ${machine}, where this work runs. Nothing was sent.`;
 }
 
 /** One plain sentence for a provider failure; the original stays in the error's cause. */

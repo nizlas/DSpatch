@@ -205,7 +205,7 @@ describe('Copilot policies', () => {
     assert.equal(providerAvailability('copilot', { claudeAuthorized: false, claudeInstalled: false, copilotInstalled: true }).choosable, true);
     const missing = providerAvailability('copilot', { claudeAuthorized: false, claudeInstalled: false });
     assert.equal(missing.choosable, false);
-    assert.match(missing.reason ?? '', /npm ci/);
+    assert.match(missing.reason ?? '', /Reinstall DSpatch/);
   });
 });
 

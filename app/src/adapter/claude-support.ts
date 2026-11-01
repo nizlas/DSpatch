@@ -24,9 +24,10 @@ import type { AdapterError } from './types';
 export const CLAUDE_SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
 /** The visible line when Claude support is missing. */
-export const CLAUDE_NOT_INSTALLED_TEXT =
-  'Claude support is not installed. Use Set up Claude on the start page, or in a working copy ' +
-  'run `npm run claude:install` in `app/` and restart DSpatch.';
+export const CLAUDE_NOT_INSTALLED_TEXT = 'Claude support is not installed. Choose Claude to set it up.';
+
+/** The visible line when support is there but a part of it is missing or does not load. */
+export const CLAUDE_REPAIR_TEXT = 'Claude support needs repair.';
 
 /**
  * A failure inside the Claude adapter or while loading its SDK. Defined here so
@@ -202,7 +203,7 @@ export interface ClaudeSdkModule {
 }
 
 /** The SDK's entry file, from its `package.json` (`exports["."]`, then `main`). */
-function sdkEntry(directory: string): string {
+export function sdkEntry(directory: string): string {
   const root = path.join(directory, 'node_modules', ...CLAUDE_SDK_PACKAGE.split('/'));
   let entry = 'sdk.mjs';
   try {
@@ -243,7 +244,11 @@ export async function loadClaudeSdk(
       'claude_support_missing',
     );
   }
-  return (await import(pathToFileURL(sdkEntry(directory)).href)) as ClaudeSdkModule;
+  try {
+    return (await import(pathToFileURL(sdkEntry(directory)).href)) as ClaudeSdkModule;
+  } catch (error) {
+    throw new ClaudeAdapterError(CLAUDE_REPAIR_TEXT, 'claude_support_missing', error);
+  }
 }
 
 /**
@@ -294,8 +299,7 @@ export async function loadClaudeToolKit(directory: string = claudeSupportDir()):
     zodModule = (await import(pathToFileURL(requireFromSupport.resolve('zod')).href)) as typeof zodModule;
   } catch (error) {
     throw new ClaudeAdapterError(
-      'Claude support is installed without zod, which the Claude SDK needs for DSpatch\'s ' +
-        'tools. Run `npm run claude:install` in `app/` again.',
+      CLAUDE_REPAIR_TEXT,
       'claude_support_missing',
       error,
     );
@@ -323,16 +327,14 @@ export function claudeUnavailableReason(input: ClaudeAvailabilityInput): string 
   }
   if (!input.installed && !input.authorized) {
     return (
-      'Claude support is not installed, and Claude is not enabled for this launch. To ' +
-      'use Claude, run `npm run claude:install` in `app/`, then start DSpatch with ' +
-      'DSPATCH_CLAUDE_AUTHORIZATION set.'
+      'Claude support is not installed, and Claude is not enabled for this launch. Choose ' +
+      'Claude to set it up.'
     );
   }
   if (!input.installed) {
     return CLAUDE_NOT_INSTALLED_TEXT;
   }
   return (
-    'Claude is not enabled for this launch. Start DSpatch with ' +
-    'DSPATCH_CLAUDE_AUTHORIZATION set to enable it.'
+    'Claude is not enabled for this launch. Choose Claude to set it up.'
   );
 }

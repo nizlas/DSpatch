@@ -14,7 +14,7 @@ import { test } from 'node:test';
 
 import {
   CONNECTION_RETRY_DELAYS_MS,
-  connectionRecheckNote,
+  forProvider,
   connectionRetryPlan,
   describeBridgeFailure,
   describeReconciledRepeat,
@@ -151,13 +151,12 @@ test('a completed or confirmed-cancelled run is not', () => {
   assert.equal(runEndingNeedsConnectionRecheck(undefined, undefined), false);
 });
 
-test('the re-check says why it happened and that nothing was sent', () => {
-  const note = connectionRecheckNote('run-failed', 'fetch failed');
-  assert.match(note, /re-read/);
-  assert.match(note, /Nothing was sent/);
-  assert.match(note, /fetch failed/);
-  // No detail is not an empty sentence fragment.
-  assert.doesNotMatch(connectionRecheckNote('send-failed', null), /What failed:/);
+test('a failed reach belongs to the provider of the work: only Cursor has a card to re-read', () => {
+  const failure = describeBridgeFailure(new Error('fetch failed'));
+  assert.equal(failure.action, 'reconnect');
+  assert.equal(forProvider(failure, 'cursor').action, 'reconnect');
+  assert.equal(forProvider(failure, 'claude').action, 'retry');
+  assert.equal(forProvider(failure, 'copilot').action, 'retry');
 });
 
 // --- A block that has stopped being true (report 005) -----------------------
@@ -229,7 +228,6 @@ test('a failed turn text goes back in an empty composer', () => {
   const outcome = restoreComposerAfterRunFailure('explain the diff', '');
   assert.equal(outcome.restore, true);
   assert.equal(outcome.text, 'explain the diff');
-  assert.match(outcome.note, /put back in the box/);
 });
 
 test('text the user has since typed is never overwritten', () => {
@@ -239,15 +237,11 @@ test('text the user has since typed is never overwritten', () => {
   );
   assert.equal(outcome.restore, false);
   assert.equal(outcome.text, 'something else I started typing');
-  // And it says where the failed message actually is rather than claiming it is kept
-  // in a place it is not. That claim is the defect report 005 found.
-  assert.match(outcome.note, /kept in the conversation above/);
 });
 
 test('with no recorded text, nothing is claimed', () => {
   const outcome = restoreComposerAfterRunFailure('', '');
   assert.equal(outcome.restore, false);
-  assert.match(outcome.note, /no record of the text/);
 });
 
 // --- DSP-136: Cursor is checked only when it is the agent in play ------------

@@ -31,6 +31,7 @@
  * short sentence beside the headline comes from {@link SHORT_NEXT_STEP}.
  */
 
+import { providerProblem, providerProblemText } from '../shared/provider-ready';
 import type { BridgeFailure, FailureKind } from './recovery';
 
 /** One labelled piece of technical detail, shown only when asked for. */
@@ -68,13 +69,14 @@ export const SHORT_NEXT_STEP: Record<FailureKind, string> = {
   'needs-acknowledgement':
     'An earlier attempt has no known outcome; confirming it starts a new one.',
   connection:
-    'The provider could not be reached. Nothing was sent twice — check the connection again.',
+    'The provider could not be reached. Check the network connection and try again.',
   'session-holds-a-run':
     'This agent session is holding a run. Start a new session to continue.',
   'nothing-open': 'Open a project first.',
   'no-provider-session':
-    'Nothing was sent and your text is kept. Choose how to continue below the message box.',
-  other: 'Your text is kept. Trying again starts a new attempt.',
+    'Nothing was sent. Choose how to continue below the message box.',
+  'provider-setup': '',
+  other: 'Trying again starts a new attempt.',
 };
 
 /**
@@ -107,7 +109,8 @@ export function firstSentence(message: string): string {
  * and finding the message missing from them is the expensive half.
  */
 export function describePlainly(failure: BridgeFailure): PlainError {
-  const headline = firstSentence(failure.message);
+  const problem = providerProblem(failure.message);
+  const headline = problem !== null ? providerProblemText(problem) : firstSentence(failure.message);
   const detail: ErrorDetailLine[] = [
     { label: 'What DSpatch reported, in full', value: failure.message },
   ];

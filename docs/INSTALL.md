@@ -18,8 +18,8 @@ Start DSpatch from the menu. To work on this computer, choose an agent and open 
 
 **Providers** are set up where the work runs, from the start page:
 
-- *Copilot:* **Sign in to Copilot** fetches GitHub's Copilot CLI to that machine and gives a sign-in page and, on a machine with no display, a code to enter there. The page opens on the computer in front of you.
-- *Claude:* **Use my Claude subscription**, **Install Claude Code**, **Sign in to Claude**. Sign-in gives a page and a place to paste its code.
+- Choose **Claude** or **Copilot** in the agent list. If it needs preparing, a small **Get started** dialog opens: **Continue** fetches what is needed on the machine where the work runs and goes on to the vendor's own sign-in page, in the browser on the computer in front of you. A one-time code is shown in the dialog. A valid login on that machine is reused, and with everything ready no dialog opens. Your draft stays, and nothing is sent for you.
+- If support turns out incomplete, the failure says so once, with **Repair**. Repair fetches support again on that machine and keeps sign-in, conversations and settings.
 
 A login that already exists on the machine is used. DSpatch offers no API-key or other billed route, and never moves to one by itself.
 
@@ -35,8 +35,8 @@ Copilot's hooks in `~/.copilot/hooks` run on the machine where the work runs: yo
 - **On the machine.** Versions in `${XDG_DATA_HOME:-~/.local/share}/dspatch/host/versions/<version>-<commit>/` (Windows: `%LOCALAPPDATA%\DSpatch\host\versions\`), unpacked beside the others and renamed when whole. Data stays in `dspatch-host/` beside it, as it always was. A running host records its port and build in `host-running.json`, readable by that user; the port is chosen by the system, and the token stays in the host's own file and reaches the client on the SSH channel, into memory only.
 - **Another version running.** The person is asked: replacing stops work there, with an unknown outcome. If the two can work together, *No* keeps using it. Old version folders stay.
 - **SSH.** The system's OpenSSH, with `StrictHostKeyChecking=ask`: an unknown key is asked about with its fingerprint, and a changed key is refused by ssh. On Linux one master connection carries everything. Windows' ssh has no multiplexing, so each step is its own connection. A password stays in memory for that session's reconnects and is never written.
-- **A provider's program.** Claude Code's licence reserves redistribution and the Copilot CLI is GitHub's, so neither ships with DSpatch. Asked by the person, the machine fetches the versions in `claude-support/` and `copilot-support/` from the npm registry and checks each against the lockfile's integrity. That machine needs to reach the npm registry. Copilot's SDK is MIT licensed and ships in the app and the host.
-- **Consent.** Accepting the Claude line writes `claude-consent.json` in that machine's data. It stands where `DSPATCH_CLAUDE_AUTHORIZATION` stood, which still works.
+- **A provider's support.** See [what is installed where](#what-is-installed-where).
+- **Consent.** Continuing in the Claude dialog, which shows the consent once, writes `claude-consent.json` in that machine's data. It stands where `DSPATCH_CLAUDE_AUTHORIZATION` stood, which still works.
 
 ## Building
 
@@ -77,6 +77,26 @@ The real .deb and host package on two clean Ubuntu containers without Node, a re
 <a id="what-has-been-shown"></a>
 
 Hooks over ssh on the packaged host: `node scripts/trial-package/hooks.mjs`, after `npm run package:host -- --platform linux` and the same image.
+
+## What is installed where
+
+| Part | Comes with | Where it lives |
+| --- | --- | --- |
+| `@github/copilot-sdk` and its platform package, which holds the Copilot runtime for sessions | the app and the host package (MIT) | inside the installation |
+| `@anthropic-ai/claude-agent-sdk`, its `claude` program in the platform package, and what the lockfile pins beside it, among them zod and `@modelcontextprotocol/sdk` | fetched on request | `<data>/provider-support/claude` |
+| `@github/copilot` with its `copilot` program, used to sign in | fetched on request, only when Copilot is not signed in | `<data>/provider-support/copilot` |
+
+`<data>` is `~/.config/DSpatch` for local work on Linux, `%APPDATA%\DSpatch` on Windows, and `~/.local/share/dspatch-host` on a remote Linux host. The versions are those in `claude-support/` and `copilot-support/`; each download is checked against the lockfile's integrity, so that machine must reach the npm registry. Before fetched support is put in place, the program starts and, for Claude, the SDK and zod load and a tool server is built from where the files stand. Node and npm are not involved beyond the runtime the product carries.
+
+Logins are the vendors' own and stay outside these folders, in `~/.claude` and in the Copilot runtime's store, so repairing support does not touch them. Claude Desktop is a separate application with its own installation. DSpatch does not use it. What DSpatch installs is its own copy of the Agent SDK and the Claude Code program, and it reuses a login only if that copy reports one on that machine.
+
+### Why support is fetched, and what the terms say
+
+Read on 1 November 2026. This is a record of sources, not legal advice, and the distribution strategy has not changed.
+
+- *Copilot CLI.* The package's `LICENSE.md` allows redistributing unmodified copies as part of an application with material functionality of its own, on conditions. An earlier version of this page implied otherwise.
+- *Claude.* The SDK's `LICENSE.md` reserves all rights and refers to Anthropic's [Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance) page. That page allows preinstalling or running Claude Code in a product under the Commercial Terms and conditions: the program unmodified, with no authentication method removed, and each end user authenticating with their own credentials. The [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview) puts the SDK under the Commercial Terms.
+- *Open question, for a decision before public release.* Both pages say third-party developers may not offer claude.ai login in their products unless approved, and should use API keys. The first page also says this does not prevent an end user from signing in to the unmodified Claude Code program with their own subscription. Whether DSpatch's use, running that program through the SDK for a person's own account, needs Anthropic's approval is not settled by the text. The same page's rule against removing an authentication method also bears on DSpatch offering no API-key route.
 
 ## What has been shown
 

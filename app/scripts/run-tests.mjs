@@ -153,6 +153,7 @@ const AREAS = {
       { file: 'remote-transport.test.ts', heavy: true },
       'ssh-connection.test.ts',
       'provider-setup.test.ts',
+      'provider-ready.test.ts',
     ],
   },
   project: {

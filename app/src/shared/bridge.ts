@@ -3326,11 +3326,17 @@ export type ProviderLoginStep =
   | { readonly kind: 'done' }
   | { readonly kind: 'failed'; readonly message: string };
 
-/** Whether each provider is ready on the machine where work runs. `null` is not known. */
+/** A provider's fetched support: whether it is there, and whole. */
+export type ProviderProgramState = 'ready' | 'absent' | 'incomplete';
+
+/** Whether one provider is ready on the machine where work runs. `null` is not known. */
 export interface ProviderSetupState {
+  readonly tool: 'claude' | 'copilot';
   readonly machine: string;
-  readonly copilot: { readonly program: boolean; readonly signedIn: boolean | null };
-  readonly claude: { readonly program: boolean; readonly consent: boolean; readonly signedIn: boolean | null };
+  readonly program: ProviderProgramState;
+  /** Whether what must be accepted has been. Copilot asks nothing. */
+  readonly consent: boolean;
+  readonly signedIn: boolean | null;
 }
 
 export type BridgeChannel =

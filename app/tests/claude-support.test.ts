@@ -21,6 +21,7 @@ import {
   claudeSupportStatus,
   claudeUnavailableReason,
   CLAUDE_NOT_INSTALLED_TEXT,
+  CLAUDE_REPAIR_TEXT,
   loadClaudeSdk,
   type ClaudeSupportPlatform,
 } from '../src/adapter/claude-support.ts';
@@ -137,7 +138,11 @@ test('the offline guard refuses the loader path into a claude-support folder', a
     expectRefusal(specifier: string): void;
   };
   guard.expectRefusal(pathToFileURL(path.join(root, 'sdk.mjs')).href);
-  await assert.rejects(loadClaudeSdk(dir, WINDOWS), /offline-guard/);
+  await assert.rejects(loadClaudeSdk(dir, WINDOWS), (error: Error) => {
+    assert.equal(error.message, CLAUDE_REPAIR_TEXT);
+    assert.match(String(error.cause), /offline-guard/);
+    return true;
+  });
   assert.equal(evaluated(), false, 'the SDK entry was never evaluated');
 });
 
