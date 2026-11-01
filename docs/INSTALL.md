@@ -56,6 +56,8 @@ npm run package:client -- --linux deb --x64
 
 The host packages come first, because the client carries their manifest. Everything lands in `app/release/`. Build from a clean commit: the manifest binds packages to it. A Windows installer needs Windows or Wine, and Windows dependencies: on Linux, build it from a copy of `app/` after `npm ci --os=win32 --cpu=x64 --ignore-scripts`, or it carries the Linux Copilot runtime; `.github/workflows/package.yml` builds everything from one commit by hand and publishes nothing.
 
+**A release.** Commit the version, build everything from that commit, run `node scripts/stage-release.mjs`, which gathers the files and `SHA256SUMS` into `release/stage-v<version>` and refuses anything else, and try it with `node scripts/trial-package/release.mjs --stage`. Publish that folder under the tag `v<version>`, with `--prerelease` for a test build. The client asks for exactly its own tag, never `latest`. Then `release.mjs --published` tries the real release.
+
 **Before a release exists,** put the host package in the client's data, which needs no rebuild:
 
 ```bash

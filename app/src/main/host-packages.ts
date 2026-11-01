@@ -47,7 +47,10 @@ function sha256Of(file: string): Promise<string> {
   });
 }
 
-/** The release a version's packages are published under. Nothing is published by this code. */
+/** How long a download may take; a stalled one must end in a sentence, not a waiting window. */
+const FETCH_MS = 15 * 60_000;
+
+/** The release of exactly this version, prerelease or not: never `latest`. Publishes nothing. */
 export function releaseUrl(appVersion: string, file: string): string {
   return `https://github.com/nizlas/DSpatch/releases/download/v${appVersion}/${file}`;
 }
@@ -59,6 +62,7 @@ export async function findHostPackage(input: {
   readonly folders: readonly string[];
   readonly cacheDir: string;
   readonly status: (text: string) => void;
+  readonly log?: (message: string) => void;
   readonly fetchFile?: (url: string) => Promise<Buffer>;
 }): Promise<HostPackage | string> {
   const { manifest } = input;
@@ -85,7 +89,7 @@ export async function findHostPackage(input: {
   try {
     const fetched =
       input.fetchFile === undefined
-        ? await fetch(url).then(async (response) => {
+        ? await fetch(url, { signal: AbortSignal.timeout(FETCH_MS) }).then(async (response) => {
             if (!response.ok) {
               throw new Error(String(response.status));
             }
@@ -93,14 +97,15 @@ export async function findHostPackage(input: {
           })
         : await input.fetchFile(url);
     if (createHash('sha256').update(fetched).digest('hex') !== entry.sha256) {
-      return 'The host package from the release does not match this build, so it was not used.';
+      return 'The host package that was downloaded does not match this DSpatch, so it was not used. Connect to try again.';
     }
     fs.mkdirSync(input.cacheDir, { recursive: true });
     const target = path.join(input.cacheDir, entry.file);
     fs.writeFileSync(`${target}.part`, fetched);
     fs.renameSync(`${target}.part`, target);
     return { ...found, path: target };
-  } catch {
-    return `${entry.file} was not found${wrong ? ' in a form matching this build' : ''}. Put it in ${input.cacheDir} and try again, or publish it as a release.`;
+  } catch (error) {
+    input.log?.(`Fetching ${url}${wrong ? ' after a local copy did not match' : ''} failed: ${error instanceof Error ? error.message : String(error)}`);
+    return 'The host package could not be downloaded from GitHub. Check the network connection and connect again.';
   }
 }

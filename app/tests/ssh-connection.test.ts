@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
-import { findHostPackage, readHostManifest, type HostManifest } from '../src/main/host-packages.ts';
+import { releaseUrl, findHostPackage, readHostManifest, type HostManifest } from '../src/main/host-packages.ts';
 import { sshProblem, validTarget } from '../src/main/ssh-connection.ts';
 import { credentials, install, packagePlatform, probe, readLines, receive, start } from '../src/shared/host-bootstrap.ts';
 
@@ -88,6 +88,10 @@ describe('the steps on the machine, run by a real sh', () => {
     process.kill(pid);
   });
 
+  it('takes a prerelease from its own tag, never from latest', () => {
+    assert.equal(releaseUrl('0.1.1-rc.1', 'host.tar.gz'), 'https://github.com/nizlas/DSpatch/releases/download/v0.1.1-rc.1/host.tar.gz');
+  });
+
   it('refuses a package that does not match, and leaves the versions alone', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-steps-'));
     const made = packageIn(fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-package-')));
@@ -124,7 +128,7 @@ describe('where a host package comes from', () => {
     const common = { platform: 'linux', arch: 'x64', folders: [folder], cacheDir: folder, status: () => undefined, fetchFile: () => Promise.reject(new Error('offline')) };
     const found = await findHostPackage({ ...common, manifest: manifestFor('p.tar.gz', sha256) });
     assert.equal(typeof found === 'string' ? found : found.path, path.join(folder, 'p.tar.gz'));
-    assert.match(String(await findHostPackage({ ...common, manifest: manifestFor('p.tar.gz', '0') })), /in a form matching this build/);
+    assert.match(String(await findHostPackage({ ...common, manifest: manifestFor('p.tar.gz', '0') })), /could not be downloaded/);
     assert.match(String(await findHostPackage({ ...common, manifest: null })), /built without host packages/);
     assert.match(String(await findHostPackage({ ...common, arch: 'arm64', manifest: manifestFor('p.tar.gz', sha256) })), /no host package/);
   });
@@ -134,6 +138,10 @@ describe('where a host package comes from', () => {
     const sha256 = createHash('sha256').update('real').digest('hex');
     const common = { platform: 'linux', arch: 'x64', folders: [], cacheDir: folder, status: () => undefined, manifest: manifestFor('p.tar.gz', sha256) };
     assert.match(String(await findHostPackage({ ...common, fetchFile: () => Promise.resolve(Buffer.from('tampered')) })), /does not match/);
+    const said: string[] = [];
+    const failed = await findHostPackage({ ...common, log: (line) => said.push(line), fetchFile: () => Promise.reject(new Error('getaddrinfo ENOTFOUND')) });
+    assert.equal(failed, 'The host package could not be downloaded from GitHub. Check the network connection and connect again.');
+    assert.match(said.join(' '), /ENOTFOUND/);
     assert.deepEqual(fs.readdirSync(folder), []);
     const fetched = await findHostPackage({ ...common, fetchFile: () => Promise.resolve(Buffer.from('real')) });
     assert.notEqual(typeof fetched, 'string');

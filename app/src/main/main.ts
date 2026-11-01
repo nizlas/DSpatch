@@ -575,6 +575,7 @@ function hostPackageFor(platform: string, arch: string, status: (text: string) =
     folders: [...(own === undefined || own === '' ? [] : [own]), cacheDir, developing],
     cacheDir,
     status,
+    log,
   });
 }
 
