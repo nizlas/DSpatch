@@ -1,8 +1,28 @@
 # Using DSpatch
 
-DSpatch brings three activities into one workspace: **talking with a development agent, running a repeatable agent workflow, and understanding the resulting code**. You choose how much work to delegate and how closely to follow it.
+DSpatch brings three activities into one workspace: **talking with a development agent, running a repeatable agent workflow, and understanding the resulting code**. You choose how much work to delegate and how closely to follow it. The aim is to make larger changes manageable while keeping their purpose, behaviour and review decisions understandable.
 
-The central idea is that greater autonomy should not mean less understanding. A loop can carry work through several agent steps, while a review can take you from the overall change down to a single expression and back again.
+## Why use a loop?
+
+In interactive development, you and an agent decide what to do next through conversation. The agent may already investigate, edit files and run tests autonomously within one request. You guide the assignment, assess its response and ask for the next action when needed.
+
+A loop makes the process around that work explicit. It defines roles, handovers, checks and routes between steps. For example, one agent step implements a change, another checks the result against the assignment, and a failed check sends specific feedback back for correction. The workflow decides whether to continue, request rework or stop according to its defined outcomes and limits.
+
+The fundamental difference is **who carries the process forward**. In interactive mode, the conversation and the agent's judgement organize the work. In a loop, a defined workflow also controls which responsibilities must be fulfilled and what happens after each outcome. You do not have to remember to ask for every checking or correction step.
+
+That structure is intended to make repeated work more consistent, reduce missed checks and give an assessment a separate role from implementation. It does not guarantee better code: the quality of the roles, checks and evidence still matters, and different agents can repeat the same mistake. Interactive work suits exploration and changing requirements; a loop becomes useful when you have a process worth repeating. You can steer a running loop in the same conversation and choose whether its next steps start automatically or wait for you.
+
+## Review built around understanding
+
+DSpatch's review flow is designed to help you understand a change's **purpose and behaviour**, as well as inspect its changed lines. The traditional diff and **code walks** provide complementary ways into the same review.
+
+The **diff gives you the overview**: which files changed, the exact additions and removals, surrounding context, and what still needs review. A **code walk gives you a path through the behaviour**: related locations across files, the order and relationships that matter, and an explanation of how those pieces contribute to the purpose of the change. A walk may connect an entry point, a condition, a call and the state it updates, even when some of those locations are unchanged.
+
+This is a central DSpatch concept: the explanation becomes a navigable sequence tied to specific code at specific revisions. You can follow the flow, examine a step in depth and return to the full diff to check what that path did not cover. A walk is an agent's interpretation, not an execution trace or proof of correctness.
+
+Agent support is woven into this reading process. You can select an expression in the diff or a walk and choose **Explain this**, ask your own question in the shared **Discussion**, request a simpler explanation, or follow an answer's references into expandable code context. DSpatch carries the selected code, location and revision into the question. You spend less effort assembling context and directing a separate conversation before you can investigate the code.
+
+The goal is to lower the barrier to reviewing complex changes while keeping actual understanding and review decisions with you. Reading a walk or receiving an answer never counts as approval. You can selectively delegate an assessment when you consider that appropriate—for example, for a well-bounded, lower-risk part of a change—and inspect the agent's findings and recorded approvals. You choose the scope; using agent assistance does not automatically hand over the whole review.
 
 This tutorial describes the current user workflow. For installation, start with the [README](README.md#install-from-a-release). For version-specific limitations, read your [release notes](https://github.com/nizlas/DSpatch/releases).
 
