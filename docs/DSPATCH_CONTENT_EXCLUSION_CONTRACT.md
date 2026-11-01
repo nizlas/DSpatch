@@ -123,7 +123,7 @@ Preserve meaningful differences from the original scripts as explicit design dec
 
 **S1:** Companion [*DSpatch: Runtime, Workspaces and Platform Evolution*](RUNTIME_PLATFORM_ROADMAP.md), v0.4. Existing working-memory and orchestration documents remain the product principles; this draft narrows their application to mandatory control integration.
 
-**Status:** requirements incomplete; no script modification, security verification or workplace deployment performed. This revision updates documentation only.
+**Status:** requirements incomplete; no workplace script has been reviewed or run, and no workplace deployment has been made. Sections 5 and 6 record what has been established with synthetic material.
 
 ## 5. Findings from the Copilot SDK path, 31 October 2026
 
@@ -144,3 +144,50 @@ Established with `@github/copilot-sdk` 1.0.28 and runtime 1.0.105, from its typi
 | Main chat with shell | Commands run with the person's rights; `preToolUse` sees the line, not what the program reads. |
 
 **Remaining obstacles to work code.** The prompt flow above needs a decision or a mechanism; the scripts have not been reviewed; the questions in section 4 are open. Synthetic or public material only until then, which is also what a failed or missing control must not silently change.
+
+## 6. Tool hooks on DSpatch's path, 1 November 2026 (DSP-154)
+
+Established with the same SDK and runtime versions as section 5, by real runtime runs of real scripts from a synthetic hook home, against a local stand-in model whose received requests are what "reached the model" means here (`app/tests/copilot-hooks.test.ts`). Repeated on Linux from the packaged host, with its own Node, over real ssh, with hooks in the account's default `~/.copilot/hooks` (`app/scripts/trial-package/hooks.mjs`). No real scripts, account or model. It is not a security result, and no gate of section 4 is met. Where this differs from section 5, this section is newer: tool results and post hooks have now been tried.
+
+**The contract as it behaves.** `hooks.discover` and the runtime find `*.json` in `$COPILOT_HOME/hooks`, by default `~/.copilot/hooks`, with DSpatch's session settings. The runtime process runs the `bash` command, or `powershell` on Windows, with the session's folder as working directory and the runtime's environment, plus `COPILOT_HOOK_DIR` (the hook file's folder) and `COPILOT_PROJECT_DIR` (the session's folder). Standard input is JSON with `sessionId`, `timestamp`, `cwd`, `toolName` and `toolArgs`, as an object; `postToolUse` adds `toolResult` with `resultType` and `textResultForLlm`. The agent and the hooks run on the same machine, the host, whether DSpatch is used locally or over SSH. DSpatch runs no script, reads no rule, and each hook runs once per call.
+
+| Outcome | What the runtime does | With DSpatch |
+| --- | --- | --- |
+| `preToolUse` answers `deny` | Stops the call, no post hook, the reason reaches the model | Same; the agent is told, and the refusal is logged |
+| `preToolUse` exits 2 | Stops the call, as a denial | Same |
+| `preToolUse` exits with another code, or its script cannot be started | Stops the call | Same, and the turn is stopped with one sentence |
+| `preToolUse` times out | **Runs the call** and sends its result to the model | Stopped before it runs: read, search, write and command tried. One sentence, the turn ends |
+| `preToolUse` exits 0 with unreadable output | **Treats it as allowing** | **Not covered.** The runtime reports success, as for no output, so DSpatch cannot tell |
+| `postToolUse` answers `modifiedResult` | The replacement is what reaches the model | Same |
+| `postToolUse` answers `additionalContext` | Added to the result for the model | Same |
+| `postToolUse` answers `permissionDecision` | Ignored | Same |
+| `postToolUse` errors or times out | The original result goes on | The turn is stopped and says that result may have reached the model. **It is not held back**: the failure is reported after the result has left the hook stage |
+| A tool fails | `postToolUse` does not run, so the error text reaches the model unseen | **Not covered** |
+
+So a post hook can remove a result before the model sees it when it runs and answers, and this runtime honours that. It cannot be relied on when it fails. What a real script does is a separate question: section 2's warning about its actual function stands.
+
+**How a failed pre hook is stopped.** The runtime reports `hook.end` with `success: false`, and asks `onPermissionRequest` after that and before the tool runs. DSpatch's existing permission callback refuses there, its `onPostToolUse` callback holds back the result of a call that asks no permission, such as DSpatch's own tools, and the turn ends. No script runs twice. This relies on that order, which the tests pin for this runtime version; recheck it on an upgrade. Per Niclas's instruction of 1 November 2026 this is stricter than GitHub's documented timeout behaviour (section 2), and it applies to every `preToolUse` and `postToolUse` hook in force, not only one marked mandatory. The responsible tooling team has not confirmed the rule (section 4).
+
+**Required hooks.** `DSPATCH_COPILOT_REQUIRE_HOOKS=1`, or a file `copilot-hooks-required` in the host's data folder, refuses Copilot work when no enabled user or managed `preToolUse` hook is reported. The file exists for a host started over SSH, which does not get the person's variables; putting it in place by hand on a host has been read as code only and not run. It is checked at every session start and resume, so it holds across installs and updates: hooks live in the person's home, not in a package. An unreadable hook file gives no hook, so it is refused like none; without the requirement, it silently means no hooks. Whether a hook is the right one is not checked. The agent's shell runs with the person's rights, so it could change a hook in the home; policy hooks are the documented answer and have not been tried.
+
+**Search and shell.** `preToolUse` sees the call, not what it will read.
+
+| Path | With a path rule in a pre hook | With a post hook reading results |
+| --- | --- | --- |
+| `view` of the path | Denied | Not reached |
+| `grep` or `glob` naming the path, or a command containing it | Denied | Not reached |
+| `grep` of the whole folder | **Passes**, and matching lines reach the model | Caught if the script recognises the content |
+| `glob` of the whole folder | **Passes**, and file names reach the model | As above |
+| A command that does not contain the path, such as a wildcard, a variable or a program that reads it | **Passes** | Caught if the script recognises the content; the command has run |
+
+The tests' post hook recognises a known marker, which a real rule on paths cannot do. A real script's rules may be able to judge a search's arguments; that is unknown until it is reviewed.
+
+**Exported revisions.** Walks, delegated review, Worth checking and code questions read `<data>/reviews/revisions/<pair>/base|target/…`, and the session's folder is `<pair>`. The hook therefore sees `cwd` and `COPILOT_PROJECT_DIR` as that folder, which is no Git repository, and a path such as `…/<pair>/target/src/file.ts`. A pattern on the end of the path, such as `**/secret/**`, matches. A rule anchored at a repository's root does not, because the path relative to `cwd` starts with `target/`. A rule on the repository's location or name, or a script asking Git for the repository, gets nothing it recognises, and whether the script then allows or denies is its own behaviour. Results keep their link to the repository and commits as before: they name repository paths at a commit, not the folder. **The real script must be tried against this layout before review is used with protected material.** Both sides of a change are there, so a rule must hold for each.
+
+**Stop during a hook.** `session.abort()` does not answer until a running hook has ended, which used to hold back DSpatch's escalation for as long as the hook ran. Now the turn ends within the eight-second bound by ending the runtime, and the tool does not run. The script itself is left to end on its own, and every other session of that runtime ends with it.
+
+**Text that passes no tool hook.** None of this touches what DSpatch itself puts in a prompt: the diffs and file lists of walks and delegated review, marked lines and the question and context in the review discussion, the question and excerpt of a code question, Worth checking's material, what a person writes or pastes in chat, role and node instructions, loop handovers and results passed to the next step, and earlier history of a resumed conversation. Review questions offer no tools, so no tool hook runs at all. Those flows are unfiltered, and this task builds no filter for them.
+
+**Surfaces.** All Copilot work uses one adapter. Project chat and loops use the chat policy; reads, searches, writes, commands, failures and Stop were tried on it through the adapter, not through the chat and loop services. Walk generation was run through the real job service in a real revision folder; delegated review and code questions use the same analysis policy and folder. Remote differs only in where the host runs; the trial shows the adapter and hooks on a machine reached over ssh, not a turn over DSpatch's own tunnel, because a real turn needs a sign-in.
+
+**Not tried.** Windows at all: the fixture has a PowerShell path, which has only been read. Policy hooks. Real scripts, including the 15-second timeouts of the reported example. Two hooks on one event. Tools running in parallel in one model response. Delegated sub-agents remain off. A real model's handling of a denial.

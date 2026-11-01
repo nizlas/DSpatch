@@ -68,6 +68,7 @@ export interface CopilotPreToolInput {
 
 export interface CopilotSessionHooks {
   onPreToolUse(input: CopilotPreToolInput): { readonly permissionDecision: 'deny'; readonly permissionDecisionReason: string } | undefined;
+  onPostToolUse(): { readonly modifiedResult: { readonly textResultForLlm: string; readonly resultType: 'failure' } } | undefined;
 }
 
 /** The session configuration DSpatch passes, a subset of the SDK's `SessionConfig`. */
@@ -222,6 +223,17 @@ export const COPILOT_ANALYSIS_DENY_REASON =
   'This is read-only analysis of two revisions: only view, glob and grep inside your working folder (base/ and target/) may be used, and this call was not run. Paths must stay inside that folder.';
 
 export const COPILOT_POLICY_DENY_REASON = 'DSpatch does not allow this for this session, and it was not run.';
+
+/** To the model, for a call stopped because a hook could not answer. */
+export const COPILOT_CONTROL_FAILED_REASON = 'A content control on this machine could not answer, so this call was not run and its result is not available.';
+
+/** To the person, when a `preToolUse` hook failed or timed out: nothing of that call ran. */
+export const COPILOT_PRE_CONTROL_FAILED_TEXT =
+  'A content control on this machine could not answer, so the tool call was not run and this turn was stopped. Check the hook script, then try again. The host log names it.';
+
+/** To the person, when a `postToolUse` hook failed: the runtime has passed the result on by then. */
+export const COPILOT_POST_CONTROL_FAILED_TEXT =
+  'A content control failed after a tool had run, so this turn was stopped. That tool result may already have reached the model. Check the hook script before going on. The host log names it.';
 
 export const COPILOT_MANAGED_APPROVAL_REASON =
   'A managed policy asks for a person to approve this, and DSpatch has no such approval on this path, so it was not run.';
@@ -470,6 +482,8 @@ interface ActiveRun {
   cancelRequested: boolean;
   /** Set when the runtime aborted; `session.idle` is then the end of the run. */
   error: AdapterError | null;
+  /** A `preToolUse` or `postToolUse` hook failed: nothing more of this turn runs or is returned. */
+  controlFailed: boolean;
   readonly calls: Map<string, { readonly name: string; readonly raw: string; readonly startedAt: Timestamp; readonly command: string | null; readonly commandId: string | null }>;
   graceTimer: NodeJS.Timeout | null;
 }
@@ -598,15 +612,14 @@ export class CopilotSdkAdapter implements AgentAdapter {
 
   /** The login, and the hooks in force, before anything is sent. Throws a plain sentence. */
   private async ready(client: CopilotClientLike): Promise<void> {
-    if (this.options.testProvider !== undefined) {
-      return;
+    if (this.options.testProvider === undefined) {
+      const status = await client.getAuthStatus();
+      if (!status.isAuthenticated) {
+        throw new CopilotAdapterError(copilotNotSignedInText(), 'not-signed-in');
+      }
+      this.accountLine = `${status.login ?? 'unknown account'}${status.host === undefined ? '' : ` at ${status.host}`} (${status.authType ?? 'unknown'} login)`;
+      this.log(`signed in as ${this.accountLine}`);
     }
-    const status = await client.getAuthStatus();
-    if (!status.isAuthenticated) {
-      throw new CopilotAdapterError(copilotNotSignedInText(), 'not-signed-in');
-    }
-    this.accountLine = `${status.login ?? 'unknown account'}${status.host === undefined ? '' : ` at ${status.host}`} (${status.authType ?? 'unknown'} login)`;
-    this.log(`signed in as ${this.accountLine}`);
     const hooks = (await client.discoverHooks?.()) ?? null;
     if (hooks !== null) {
       const managed = hooks.filter((hook) => hook.enabled && MANAGED_HOOK_ORIGINS.includes(hook.origin));
@@ -669,7 +682,7 @@ export class CopilotSdkAdapter implements AgentAdapter {
       availableTools: [...builtIn.map((tool) => `builtin:${tool}`), ...appTools.map((tool) => `custom:${tool.name}`)],
       ...(tools.length > 0 ? { tools } : {}),
       onPermissionRequest: (request) => this.permission(state, request),
-      hooks: { onPreToolUse: (input) => this.preToolUse(state, input) },
+      hooks: { onPreToolUse: (input) => this.preToolUse(state, input), onPostToolUse: () => this.postToolUse(state) },
       onEvent: (event) => {
         this.onProviderEvent(state, event);
       },
@@ -687,7 +700,15 @@ export class CopilotSdkAdapter implements AgentAdapter {
     };
   }
 
+  /**
+   * The point where a failed `preToolUse` hook is stopped. The runtime lets a call through
+   * after a hook timeout, but it asks this after `hook.end` and before the tool runs; its
+   * order, with the real runtime, is in `tests/copilot-hooks.test.ts`.
+   */
   private permission(state: CopilotSessionState, request: CopilotPermissionRequest): CopilotPermissionResult {
+    if (state.run?.controlFailed === true) {
+      return { kind: 'reject', feedback: COPILOT_CONTROL_FAILED_REASON };
+    }
     const answer = copilotPermission(request, this.policy, this.folders(state.config), state.config.workspacePath);
     if (answer.kind === 'reject') {
       this.log(`refused a ${request.kind} request`);
@@ -698,6 +719,9 @@ export class CopilotSdkAdapter implements AgentAdapter {
   private preToolUse(state: CopilotSessionState, input: CopilotPreToolInput): { permissionDecision: 'deny'; permissionDecisionReason: string } | undefined {
     if (state.run?.cancelRequested === true) {
       return { permissionDecision: 'deny', permissionDecisionReason: 'The person stopped this turn.' };
+    }
+    if (state.run?.controlFailed === true) {
+      return { permissionDecision: 'deny', permissionDecisionReason: COPILOT_CONTROL_FAILED_REASON };
     }
     if (this.policy.surface === 'review') {
       return { permissionDecision: 'deny', permissionDecisionReason: COPILOT_REVIEW_DENY_REASON };
@@ -711,6 +735,29 @@ export class CopilotSdkAdapter implements AgentAdapter {
       return { permissionDecision: 'deny', permissionDecisionReason: COPILOT_POLICY_DENY_REASON };
     }
     return undefined;
+  }
+
+  /** Holds back the result of a call that asks no permission, such as DSpatch's own tools. */
+  private postToolUse(state: CopilotSessionState): { modifiedResult: { textResultForLlm: string; resultType: 'failure' } } | undefined {
+    return state.run?.controlFailed === true ? { modifiedResult: { textResultForLlm: COPILOT_CONTROL_FAILED_REASON, resultType: 'failure' } } : undefined;
+  }
+
+  /**
+   * A tool hook that errored or timed out ends the turn. Which script, and why, goes to the
+   * log; its message can hold the command line, so the person's sentence does not quote it.
+   */
+  private controlFailed(state: CopilotSessionState, run: ActiveRun, hookType: string, error: Record<string, unknown>): void {
+    const message = typeof error['message'] === 'string' ? error['message'] : '';
+    const source = typeof error['source'] === 'string' ? ` from ${error['source']}` : '';
+    this.log(`a ${hookType} hook${source} ${message.includes('timed out') ? 'timed out' : 'failed'}; the turn is stopped`);
+    if (run.controlFailed) {
+      return;
+    }
+    run.controlFailed = true;
+    run.error = { message: hookType === 'preToolUse' ? COPILOT_PRE_CONTROL_FAILED_TEXT : COPILOT_POST_CONTROL_FAILED_TEXT, providerCode: 'control-failed' };
+    void state.session?.abort().catch((caught: unknown) => {
+      this.log(`stopping the turn after a failed hook did not succeed: ${String(caught)}`);
+    });
   }
 
   private emit(state: CopilotSessionState, event: AgentEvent): void {
@@ -830,6 +877,11 @@ export class CopilotSdkAdapter implements AgentAdapter {
           this.emit(state, { ...base, type: 'assistant.message', text: data['content'] });
         }
         return;
+      case 'hook.end':
+        if (data['success'] === false && (data['hookType'] === 'preToolUse' || data['hookType'] === 'postToolUse')) {
+          this.controlFailed(state, run, data['hookType'], record(data['error']));
+        }
+        return;
       case 'tool.execution_start': {
         const toolCallId = typeof data['toolCallId'] === 'string' ? data['toolCallId'] : randomUUID();
         const raw = typeof data['toolName'] === 'string' ? data['toolName'] : 'unknown';
@@ -850,6 +902,9 @@ export class CopilotSdkAdapter implements AgentAdapter {
         const call = run.calls.get(toolCallId);
         run.calls.delete(toolCallId);
         const name = call?.name ?? 'unknown';
+        if (record(data['error'])['code'] === 'denied') {
+          this.log(`a ${call?.raw ?? 'tool'} call was refused`);
+        }
         this.emit(state, { ...base, type: 'tool.finished', toolCallId, name, status: data['success'] === true ? 'ok' : 'error' });
         if (call?.commandId !== undefined && call.commandId !== null) {
           const shell = record(data['shellExecution']);
@@ -1057,7 +1112,7 @@ export class CopilotSdkAdapter implements AgentAdapter {
       throw new CopilotAdapterError('The session has no connection to Copilot.', 'no-session');
     }
     const dspatchRunId = randomUUID();
-    state.run = { dspatchRunId, cancelRequested: false, error: null, calls: new Map(), graceTimer: null };
+    state.run = { dspatchRunId, cancelRequested: false, error: null, controlFailed: false, calls: new Map(), graceTimer: null };
     this.emit(state, { type: 'run.started', dspatchSessionId: sessionId, dspatchRunId, at: this.now(), rawProviderEvent: null });
     this.watchRuntime();
     try {
@@ -1086,18 +1141,16 @@ export class CopilotSdkAdapter implements AgentAdapter {
     }
     run.cancelRequested = true;
     this.emit(state, { type: 'run.cancel_requested', dspatchSessionId: sessionId, dspatchRunId: run.dspatchRunId, at: this.now(), rawProviderEvent: null });
+    // Before the abort is awaited: it answers only once a running hook has ended.
+    run.graceTimer = setTimeout(() => {
+      void this.escalate(state, run);
+    }, ABORT_GRACE_MS);
+    run.graceTimer.unref();
     try {
       await state.session?.abort();
     } catch (error) {
       this.log(`abort failed: ${String(error)}`);
     }
-    if (state.run !== run) {
-      return;
-    }
-    run.graceTimer = setTimeout(() => {
-      void this.escalate(state, run);
-    }, ABORT_GRACE_MS);
-    run.graceTimer.unref();
   }
 
   private async escalate(state: CopilotSessionState, run: ActiveRun): Promise<void> {

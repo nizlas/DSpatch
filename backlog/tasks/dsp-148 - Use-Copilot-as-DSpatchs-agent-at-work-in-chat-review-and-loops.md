@@ -149,7 +149,7 @@ Night session, 30-31 Oct 2026 (Niclas's instruction). Built dry against `@github
 
 Established from the SDK's typings, `tools.list`, `hooks.discover`, and a local stand-in model behind the real runtime (facts for P3a):
 - Tools are per session through `availableTools`; reading tools are `view` (`path`), `glob` and `grep` (`paths`, a list), which differ from Claude's. The shell is `bash` or `powershell`. Enforcement: `onPermissionRequest`, `onPreToolUse`.
-- A user hook in `COPILOT_HOME/hooks` runs with config discovery off, so native loading is the path and DSpatch adds no bridge. A hook or AGENTS.md in the reviewed folder is not used. Details and uncovered flows: content-exclusion contract section 5.
+- A user hook in `COPILOT_HOME/hooks` runs with config discovery off, so native loading is the path and DSpatch adds no bridge. A hook or AGENTS.md in the reviewed folder is not used. Details and uncovered flows: content-exclusion contract sections 5 and 6 (DSP-154).
 - `session.abort()` then `session.idle` with `aborted`; a stop during a model call was confirmed that way. A stop during a real command is not tried.
 - Login: `copilot login` on the machine that runs the host. A VS Code login is not among the documented sources. Steering is left out (`AgentAdapter.steer` absent).
 

@@ -27,6 +27,8 @@ export interface StandInModel {
   readonly requests: ModelRequest[];
   /** The next request's answer. */
   script(...turns: readonly ScriptedTurn[]): void;
+  /** Drop the last scripted answer: one a stopped turn never asked for. */
+  forget(): void;
   close(): Promise<void>;
 }
 
@@ -82,6 +84,9 @@ export async function startStandInModel(): Promise<StandInModel> {
     requests,
     script: (...turns) => {
       queue.push(...turns);
+    },
+    forget: () => {
+      queue.pop();
     },
     close: () =>
       new Promise((resolve) => {

@@ -82,7 +82,7 @@ export interface ProviderAdaptersOptions {
   readonly claudeInstalled: boolean;
   /** Whether Copilot's runtime is installed here (DSP-148). */
   readonly copilotInstalled?: boolean;
-  /** `DSPATCH_COPILOT_REQUIRE_HOOKS`: refuse Copilot work unless managed hooks are in force. */
+  /** Refuse Copilot work unless managed hooks are in force: the variable, or the host's file. */
   readonly copilotRequireManagedHooks?: boolean;
   /** Where the Copilot adapter logs. */
   readonly log?: (message: string) => void;

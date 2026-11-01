@@ -23,6 +23,10 @@ Start DSpatch from the menu. To work on this computer, choose an agent and open 
 
 A login that already exists on the machine is used. DSpatch offers no API-key or other billed route, and never moves to one by itself.
 
+### Copilot hooks at work
+
+Copilot's hooks in `~/.copilot/hooks` run on the machine where the work runs: your own for local work, the remote machine over SSH. Installing or updating DSpatch does not touch them. To refuse Copilot work on a machine where no such hook is found, create an empty file `copilot-hooks-required` in DSpatch's data folder there: `~/.local/share/dspatch-host/` on a remote Linux host, `~/.config/DSpatch/` for local work on Linux. What they do and do not cover is in the [content-exclusion contract](DSPATCH_CONTENT_EXCLUSION_CONTRACT.md#6-tool-hooks-on-dspatchs-path-1-november-2026-dsp-154).
+
 ## How it fits together
 
 - **Client.** Electron with the built app and its production dependencies. No `asar`: provider runtimes must be real files. `resources/bundled/` holds the loops, their graphs and roles, the pinned provider lists and `host-manifest.json`. It is read-only and replaced by an update; a person's own loops are in their projects and are not touched.
@@ -71,6 +75,8 @@ node scripts/trial-package/run.mjs
 The real .deb and host package on two clean Ubuntu containers without Node, a real sshd and a real window on Xvfb, with a SIMULATED provider on the host. Nothing of the machine it runs on is touched. Evidence lands in `app/release/trial/`.
 
 <a id="what-has-been-shown"></a>
+
+Hooks over ssh on the packaged host: `node scripts/trial-package/hooks.mjs`, after `npm run package:host -- --platform linux` and the same image.
 
 ## What has been shown
 

@@ -450,7 +450,9 @@ const adapterFactory = providerAdapters({
     return claudeInstalledNow();
   },
   copilotInstalled: COPILOT_INSTALLED,
-  copilotRequireManagedHooks: process.env['DSPATCH_COPILOT_REQUIRE_HOOKS'] === '1',
+  get copilotRequireManagedHooks() {
+    return process.env['DSPATCH_COPILOT_REQUIRE_HOOKS'] === '1' || fs.existsSync(path.join(userDataDir(), 'copilot-hooks-required'));
+  },
   log,
 });
 
