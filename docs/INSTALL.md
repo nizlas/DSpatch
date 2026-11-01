@@ -1,6 +1,6 @@
 # Installing DSpatch and working on another machine
 
-*Status: built and tried on Linux x64 with a simulated provider; see [what has been shown](#what-has-been-shown). Windows is built and not run.*
+*Status: published as v0.1.1. Tried on Linux x64 with a simulated provider; see [what has been shown](#what-has-been-shown). Windows is built and not run.*
 
 ## For a person using DSpatch
 

@@ -259,6 +259,9 @@ async function main() {
   const sentBefore = (standInLog().match(/POST \S+ \/v1\/messages/g) ?? []).length;
   await sleep(1500);
   check('still nothing sent after a wait', (standInLog().match(/POST \S+ \/v1\/messages/g) ?? []).length === sentBefore);
+  // Reading the provider's models after Repair takes seconds, and the composer waits for it.
+  await until('the composer can send', `${q('send')}===null || !${q('send')}.disabled`, 30_000);
+  await sleep(6500);
   await sendFromBox();
   await until('the second answer', `[...document.querySelectorAll('[data-ev$="-answer"]')].filter((n)=>n.innerText.includes('STAND-IN-REPLY')).length>=2 && ${q('active-answer')}===null`, 90_000);
   check('the repaired install answers', true);
