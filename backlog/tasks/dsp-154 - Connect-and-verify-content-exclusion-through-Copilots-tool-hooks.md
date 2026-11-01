@@ -4,7 +4,7 @@ title: Connect and verify content exclusion through Copilot's tool hooks
 status: In Progress
 assignee: []
 created_date: '2026-11-01 12:00'
-updated_date: '2026-11-01 12:00'
+updated_date: '2026-11-01 13:00'
 labels:
   - integration
   - security
@@ -39,7 +39,9 @@ Governing: the content-exclusion contract, sections 2 and 5: native hook loading
 <!-- SECTION:NOTES:BEGIN -->
 Verified on Linux with synthetic scripts and a stand-in model: `app/tests/copilot-hooks.test.ts` and, from the packaged host over ssh, `app/scripts/trial-package/hooks.mjs`. Windows has not been run. Agent tests do not accept criteria that need Niclas's trial, so none is ticked here.
 
-Changed: a failed `preToolUse` or `postToolUse` hook ends the turn; the permission callback stops the call of a failed pre hook, which the runtime would otherwise run after a timeout. Stop no longer waits for a running hook. `copilot-hooks-required` in the host's data folder asks for hooks where no variable reaches the host; that file's reading has not been run.
+Changed: a failed `preToolUse` or `postToolUse` hook ends the turn; the permission callback stops the call of a failed pre hook, which the runtime would otherwise run after a timeout. Stop no longer waits for a running hook. `copilot-hooks-required` in the host's data folder asks for hooks where no variable reaches the host.
+
+Three checks after that report, before the manual trial. **Review questions:** the report said they have no tools, which was wrong: since 30 October a question reads the revisions through `codeAccess`, and nothing needed changing. It had not been run with Copilot; `app/tests/copilot-review-questions.test.ts` now does, through the real services and runtime, from the diff and a walk. **Stop:** ending the runtime took every session on the adapter with it and left the hook process running; each session now has its own runtime, ended with its process tree. Linux measured, Windows simulated. **Required hooks:** a dangling link read as no requirement, sign-in was asked first so a host without a login never reached the check, and an adapter kept the value it was built with; all three fixed, and the file was run on the real host and on the packaged host over ssh (`app/tests/copilot-hooks-required.test.ts`, `app/scripts/trial-package/hooks.mjs`). No host restart is needed.
 
 Remaining gaps, in the contract's section 6: unreadable output from a pre hook counts as allowing; a failed post hook cannot hold back its result; failed tools pass no post hook; a search of the whole folder and indirect commands pass a path rule; rules anchored at a repository's root do not match an exported revision; prompt content passes no tool hook.
 

@@ -124,7 +124,7 @@ Print the token once, and carry it to the client as you would a password:
 npm run host -- --print-token
 ```
 
-To refuse Copilot work unless the runtime reports an enabled pre-tool hook from a user or managed source, start the host with `DSPATCH_COPILOT_REQUIRE_HOOKS=1`. It checks that one exists, not what it does.
+To refuse Copilot work unless the runtime reports an enabled pre-tool hook from a user or managed source, start the host with `DSPATCH_COPILOT_REQUIRE_HOOKS=1`, or put a file `copilot-hooks-required` in its data folder, which needs no restart. It checks that one exists, not what it does.
 
 ### The tunnel, on the CLIENT
 

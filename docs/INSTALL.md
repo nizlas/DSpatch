@@ -25,7 +25,7 @@ A login that already exists on the machine is used. DSpatch offers no API-key or
 
 ### Copilot hooks at work
 
-Copilot's hooks in `~/.copilot/hooks` run on the machine where the work runs: your own for local work, the remote machine over SSH. Installing or updating DSpatch does not touch them. To refuse Copilot work on a machine where no such hook is found, create an empty file `copilot-hooks-required` in DSpatch's data folder there: `~/.local/share/dspatch-host/` on a remote Linux host, `~/.config/DSpatch/` for local work on Linux. What they do and do not cover is in the [content-exclusion contract](DSPATCH_CONTENT_EXCLUSION_CONTRACT.md#6-tool-hooks-on-dspatchs-path-1-november-2026-dsp-154).
+Copilot's hooks in `~/.copilot/hooks` run on the machine where the work runs: your own for local work, the remote machine over SSH. Installing or updating DSpatch does not touch them. To refuse Copilot work on a machine where no such hook is found, create an empty file `copilot-hooks-required` in DSpatch's data folder there: `~/.local/share/dspatch-host/` on a remote Linux host, `~/.config/DSpatch/` for local work on Linux. It takes effect at the next session, with no restart of the host. What they do and do not cover is in the [content-exclusion contract](DSPATCH_CONTENT_EXCLUSION_CONTRACT.md#6-tool-hooks-on-dspatchs-path-1-november-2026-dsp-154).
 
 ## How it fits together
 
