@@ -1,7 +1,7 @@
 ---
 id: DSP-155
 title: Reliable provider setup and a clean first use in the installed product
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-01 18:00'
 updated_date: '2026-11-01 18:00'
@@ -33,5 +33,11 @@ Niclas's trial of the installed .deb on Ubuntu, 1 November 2026: Claude was inst
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Current focus (1 November 2026): root causes traced. `packagesFor` in `provider-setup.ts` dropped every lockfile entry marked `peer`, among them zod and @modelcontextprotocol/sdk, and `installed()` read only a marker file. `App.tsx` called the Cursor-only `getConnection` after any failed run, whatever the provider.
+Causes (1 November 2026): `packagesFor` dropped every lockfile entry marked `peer`, among them zod and @modelcontextprotocol/sdk, and "installed" meant a marker file. `App.tsx` called the Cursor-only `getConnection` after any failed run, whatever the provider.
+
+Done: support is compared with the lockfile and proved from where it stands (the program starts; the SDK and zod load and a tool server is built, in a process of its own) before it is put in place; swaps are two renames; Repair, Cancel and a shared install per provider. Setup is one dialog keyed to the operation's provider, with state read after each step, so a valid login is reused. Cursor's card is read only with Cursor in play and late answers are dropped.
+
+Verified with `scripts/trial-package/setup.mjs` on Linux, in containers, with a stand-in behind every Anthropic, GitHub and Cursor name. UX acceptance is Niclas's. Windows is built and not run.
+
+Open for Niclas: whether running Claude Code through the Agent SDK with a person's own subscription needs Anthropic's approval, and whether DSpatch may leave out the API-key route (sources in docs/INSTALL.md). Whether to offer plain-text token storage on a Copilot host with no keychain.
 <!-- SECTION:NOTES:END -->

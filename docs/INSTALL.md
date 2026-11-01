@@ -64,6 +64,8 @@ mkdir -p ~/.config/DSpatch/host-packages && cp dspatch-host-*.tar.gz ~/.config/D
 
 ## Packaged trial
 
+`scripts/trial-package/setup.mjs` is the setup trial (DSP-155): the real .deb and host package, the real SDK and programs fetched from npm, and a local stand-in behind every Anthropic, GitHub and Cursor name, so no model or account is reached.
+
 ```bash
 docker build -t dspatch-trial -f scripts/trial-package/Dockerfile scripts/trial-package
 ```
@@ -87,6 +89,8 @@ Hooks over ssh on the packaged host: `node scripts/trial-package/hooks.mjs`, aft
 | `@github/copilot` with its `copilot` program, used to sign in | fetched on request, only when Copilot is not signed in | `<data>/provider-support/copilot` |
 
 `<data>` is `~/.config/DSpatch` for local work on Linux, `%APPDATA%\DSpatch` on Windows, and `~/.local/share/dspatch-host` on a remote Linux host. The versions are those in `claude-support/` and `copilot-support/`; each download is checked against the lockfile's integrity, so that machine must reach the npm registry. Before fetched support is put in place, the program starts and, for Claude, the SDK and zod load and a tool server is built from where the files stand. Node and npm are not involved beyond the runtime the product carries.
+
+On a remote Linux host with no keychain, Copilot's own `copilot login` signs in but cannot keep the token when it is not run in a terminal, and DSpatch says so. It does not switch on plain-text storage for you. Claude's program keeps its login in `~/.claude`.
 
 Logins are the vendors' own and stay outside these folders, in `~/.claude` and in the Copilot runtime's store, so repairing support does not touch them. Claude Desktop is a separate application with its own installation. DSpatch does not use it. What DSpatch installs is its own copy of the Agent SDK and the Claude Code program, and it reuses a login only if that copy reports one on that machine.
 

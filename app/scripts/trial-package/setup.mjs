@@ -124,7 +124,7 @@ const choose = (select, value) =>
   ev(`(()=>{const s=${q(select)};Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'${value}');s.dispatchEvent(new Event('change',{bubbles:true}))})()`);
 const standInLog = (name = CLIENT) => inC(name, 'root', 'cat /tmp/standin/log');
 /** What a person reads: the agent list's options are always there and are not a message. */
-const readable = () => ev(`(()=>{const s=document.createElement('style');s.textContent='select,.details-view{display:none!important}';document.head.append(s);const t=document.body.innerText;s.remove();return t})()`);
+const readable = () => ev(`(()=>{const out=[];const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);for(let n=w.nextNode();n;n=w.nextNode()){const e=n.parentElement;if(!e.closest('select,script,style')&&e.checkVisibility({visibilityProperty:true})&&e.getClientRects().length>0){out.push(n.textContent)}}return out.join(' ')})()`);
 const clean = (text) => ['npm ', 'Cursor', 'no text in this turn', 'put back', 'zod', 'claude:install', 'node_modules', 'Technical detail', 're-read'].filter((word) => text.includes(word));
 
 const startClient = async () => {
@@ -370,11 +370,12 @@ su hostuser -c 'mkdir -p ~/proj && cd ~/proj && git init -q .'`);
   await attach();
   await until('the page', `${q('open-agent-select')}!==null`, 30_000);
   await typeInto('textarea', 'remote draft');
+  await ev(`window.__steps=[];window.dspatchSetup.onProviderStep((u)=>window.__steps.push(u.step))`);
   await choose('open-agent-select', 'copilot');
   await click('provider-continue');
   await until('the one-time code', `${q('provider-code')}!==null || ${q('provider-problem')}!==null`, 120_000);
   await shot('14a-remote-copilot-code');
-  const code = await ev(`${q('provider-code')}?.innerText ?? ''`);
+  const code = String(await ev(`window.__steps.filter((s)=>s.kind==='open-url').at(-1)?.code ?? ''`));
   check('on a machine with no display Copilot gives a one-time code, shown in the dialog', /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code), code || await ev(`${q('provider-problem')}?.innerText`));
   await until('the host sign-in ended', `${q('provider-setup')}===null || ${q('provider-problem')}!==null`, 60_000);
   const kept = await ev(`${q('provider-problem')}?.innerText ?? ''`);
