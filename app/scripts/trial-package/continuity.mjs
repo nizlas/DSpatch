@@ -293,8 +293,8 @@ async function backHere(work, laptop) {
   check('the job is known as running, not unknown and not started again', !state.unresolved.some((one) => one.state === 'outcome-unknown'), JSON.stringify(state.unresolved.map((one) => one.state)));
   await work.until('the job finished', `window.dspatch.getRunState().then((s) => s.unresolved.length === 0)`, 180_000);
   const conversation = JSON.parse(inC(WORK, 'hostuser', `cat ${data}/conversations/*.json`));
-  const sent = conversation.messages.filter((one) => one.role === 'user' && JSON.stringify(one).includes('REMOTE-RUNNING-MARK'));
-  check('the job was sent once, and ended once', sent.length === 1, `${String(sent.length)} message(s)`);
+  const sent = conversation.attempts.filter((one) => JSON.stringify(one).includes('REMOTE-RUNNING-MARK'));
+  check('the job was sent once, and ended once', sent.length === 1 && sent[0].state !== 'outcome-unknown', JSON.stringify(sent.map((one) => one.state)));
 }
 
 async function laptopReturns(work, laptop) {

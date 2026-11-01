@@ -151,6 +151,8 @@ export class HostConnection {
     }
     this.stateNow = 'starting';
     this.lastFailure = null;
+    // A new process's channel: a last connection that was refused says nothing about it.
+    this.linked = true;
     const startedAt = Date.now();
     const boundMs = typeof this.options.startTimeoutMs === 'number' ? this.options.startTimeoutMs : this.options.startTimeoutMs();
     this.starting = new Promise<HostStartOutcome>((resolve) => {
