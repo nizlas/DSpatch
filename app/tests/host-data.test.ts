@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import {
@@ -93,6 +94,19 @@ describe('the claim, from the side of a live host', () => {
     assert.equal(heldClaim(target)?.pid, process.pid);
     assert.equal(fs.readdirSync(target).filter((name) => name !== 'host-claim.json').length, 0);
     claim.release();
+  });
+
+  it('does not take a process that has ended and is not yet collected for a host', { skip: process.platform !== 'linux' }, async () => {
+    const child = spawn('sleep', ['30'], { stdio: 'ignore' });
+    const pid = child.pid ?? 0;
+    await once(child, 'spawn');
+    const fields = fs.readFileSync(`/proc/${String(pid)}/stat`, 'utf8').split(') ')[1]?.split(' ') ?? [];
+    const boot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    write(target, 'host-claim.json', JSON.stringify({ pid, kind: 'desktop', startedAtUtc: '', identity: `${boot}:${fields[19] ?? ''}` }));
+    assert.equal(heldClaim(target)?.pid, pid);
+    child.kill('SIGKILL');
+    await once(child, 'exit');
+    assert.equal(heldClaim(target), null);
   });
 
   it('gives a fresh claim back if it was taken aside by a slower starter', () => {

@@ -61,9 +61,10 @@ function processIdentity(pid: number): string {
   try {
     const boot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
     const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, 'utf8');
-    // After the command, which can hold anything: the 20th field from there is its start.
-    const start = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
-    return `${boot}:${start ?? ''}`;
+    // After the command, which can hold anything: its state, and 19 fields on its start.
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    // A process that has ended and not been collected answers a signal, and holds nothing.
+    return fields[0] === 'Z' ? 'ended' : `${boot}:${fields[19] ?? ''}`;
   } catch {
     return '';
   }
