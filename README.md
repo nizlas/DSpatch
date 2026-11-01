@@ -2,9 +2,11 @@
 
 **Develop with agents. Understand the code. Choose how much to delegate.**
 
-DSpatch is an experimental desktop workspace for interactive agent-assisted development, configurable agent loops, and code review. Work in conversation, let a workflow carry an assignment through implementation and checking, and explore the result through a complete diff or guided code walks.
+DSpatch is an experimental desktop workspace for interactive agent-assisted development, configurable agent loops, and code review. Work in conversation when you want to guide the next action; use a loop to make implementation, checking and correction an explicit, repeatable workflow. The intended benefit is more consistent follow-through with less manual coordination, while you can still steer the work or pause between steps.
 
-You can also use review on its own, for changes made in any editor. Select code and ask the integrated agent what it means, follow references into surrounding code, and keep track of what you have reviewed.
+Review combines a traditional diff for the overview with **code walks** that connect related code into an explained flow, including the purpose of the change. Select code, ask questions and follow references within the same review: the integrated agent receives the relevant code and revision without you having to assemble the context yourself. The aim is to make complex changes easier to understand while leaving review decisions with you, with selective agent delegation when you judge it appropriate. Review also works independently of development in DSpatch, for changes made in any editor.
+
+See the [tutorial introduction](TUTORIAL.md#why-use-a-loop) for the reasoning behind loops and this approach to code understanding.
 
 **[Download a release](https://github.com/nizlas/DSpatch/releases) · [Read the tutorial](TUTORIAL.md) · [Run from source](#run-from-source)**
 
