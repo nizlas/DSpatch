@@ -169,6 +169,7 @@ const AREAS = {
     what: 'a real command, really spawned, really stopped',
     files: [
       { file: 'loop-live.test.ts', heavy: true },
+      'loop-snapshot.test.ts',
       { file: 'gate-command-reality.test.ts', heavy: true },
       { file: 'loop-gate-check.test.ts', heavy: true },
       { file: 'workspace-command.test.ts', heavy: true },
