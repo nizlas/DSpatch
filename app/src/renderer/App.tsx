@@ -584,14 +584,15 @@ function Workbench({
     });
     return placed;
   }, [chat.turns, loopTurns, loopInstructions]);
+  const restoredMessages = session?.restoredHistory.messages ?? NO_RESTORED_MESSAGES;
   const transcript = useMemo(
     () =>
-      mergeTranscript(chat.turns, loopTurns, loopInstructions).filter(
+      mergeTranscript(chat.turns, loopTurns, loopInstructions, restoredMessages).filter(
         (item) =>
           item.kind !== 'instruction' ||
           !(placedMessages.get(item.instruction.runId) ?? []).some((entry) => entry.instruction.id === item.instruction.id),
       ),
-    [chat.turns, loopTurns, loopInstructions, placedMessages],
+    [chat.turns, loopTurns, loopInstructions, placedMessages, restoredMessages],
   );
   /** DSP-147: what the column shows now, read when a message is sent into running work. */
   const shownChat = useRef(chat);
@@ -3141,14 +3142,6 @@ function Workbench({
                 read from, when it was saved and how many messages came back are in
                 the diagnostics.
               */}
-              {session.restoredHistory.messages.map((message) => (
-                <RestoredMessage
-                  key={`history-${String(message.ordinal)}-${message.dspatchRunId}`}
-                  message={message}
-                  prefix="history-turn"
-                  quiet
-                />
-              ))}
               {session.restoredHistory.error !== null && (
                 <p className="app__error" data-ev="history-error">
                   {session.restoredHistory.error}
@@ -3162,7 +3155,14 @@ function Workbench({
                 drawn above it and misstate the order of the user's own work.
               */}
               {transcript.map((item) =>
-                item.kind === 'chat' ? (
+                item.kind === 'history' ? (
+                  <RestoredMessage
+                    key={`history-${String(item.message.ordinal)}-${item.message.dspatchRunId}`}
+                    message={item.message}
+                    prefix="history-turn"
+                    quiet
+                  />
+                ) : item.kind === 'chat' ? (
                   <Turn
                     key={item.turn.dspatchRunId}
                     turn={item.turn}
@@ -7044,6 +7044,7 @@ interface PlacedMessage {
 }
 
 const NO_PLACED_MESSAGES: readonly PlacedMessage[] = [];
+const NO_RESTORED_MESSAGES: readonly StoredMessage[] = [];
 
 /**
  * DSP-147: an answer with the messages sent into it drawn where each was sent: the text

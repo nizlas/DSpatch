@@ -1557,9 +1557,16 @@ export function loopTurnsFromRecordText(text: string): readonly LoopTurn[] {
  * otherwise be drawn above it, which would misstate the order of the user's own
  * work.
  */
-export type TranscriptItem<Chat> =
+export type TranscriptItem<Chat, History = never> =
   /** `index` is the position within its own list, which is what `data-ev` names. */
   | { readonly kind: 'chat'; readonly atUtc: string; readonly index: number; readonly turn: Chat }
+  /**
+   * A message read back from the saved conversation. In the same order by time as the
+   * rest: drawn above everything instead, a loop run restored from its records was drawn
+   * below messages sent after it, and the window opened on that run as if it were the
+   * latest thing.
+   */
+  | { readonly kind: 'history'; readonly atUtc: string; readonly index: number; readonly message: History }
   | { readonly kind: 'loop'; readonly atUtc: string; readonly index: number; readonly turn: LoopTurn }
   /**
    * A message the user typed while a run was working.
@@ -1577,12 +1584,23 @@ export type TranscriptItem<Chat> =
       readonly instruction: LoopInstruction;
     };
 
-export function mergeTranscript<Chat extends { readonly startedAtUtc: string }>(
+export function mergeTranscript<
+  Chat extends { readonly startedAtUtc: string },
+  History extends { readonly startedAtUtc: string } = never,
+>(
   chatTurns: readonly Chat[],
   loopTurns: readonly LoopTurn[],
   instructions: readonly LoopInstruction[] = [],
-): readonly TranscriptItem<Chat>[] {
-  const items: TranscriptItem<Chat>[] = [
+  history: readonly History[] = [],
+): readonly TranscriptItem<Chat, History>[] {
+  // History first, so on a tie with something sent in this window it stays above it.
+  const items: TranscriptItem<Chat, History>[] = [
+    ...history.map((message, index) => ({
+      kind: 'history' as const,
+      atUtc: message.startedAtUtc,
+      index,
+      message,
+    })),
     ...chatTurns.map((turn, index) => ({
       kind: 'chat' as const,
       atUtc: turn.startedAtUtc,

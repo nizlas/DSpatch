@@ -963,6 +963,23 @@ describe('one conversation column', () => {
     );
   });
 
+  it('puts saved messages sent after a restored loop run below it, not above every loop run', () => {
+    const loop = only(sent());
+    const at = Date.parse(loop.sentAtUtc);
+    const saved = (id: string, offsetMs: number): { readonly dspatchRunId: string; readonly startedAtUtc: string } =>
+      chatTurn(id, new Date(at + offsetMs).toISOString());
+    const merged = mergeTranscript([chatTurn('run-now', new Date(at + 120_000).toISOString())], [loop], [], [
+      saved('saved-before', -60_000),
+      saved('saved-after', 60_000),
+    ]);
+    assert.deepEqual(
+      merged.map((item) =>
+        item.kind === 'history' ? item.message.dspatchRunId : item.kind === 'chat' ? item.turn.dspatchRunId : item.kind,
+      ),
+      ['saved-before', 'loop', 'saved-after', 'run-now'],
+    );
+  });
+
   /**
    * DSP-53 #3. A message typed during a run belongs in the same column as the run
    * and as the user's other messages, at the moment it was typed — not in a
