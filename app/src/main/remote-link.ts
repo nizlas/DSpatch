@@ -39,6 +39,8 @@ export interface RemoteLinkOptions {
   readonly log: (message: string) => void;
   /** Between attempts to reconnect, longest. */
   readonly retryMaxMs?: number;
+  readonly rediscoverEndpoint?: () => RemoteEndpoint | null;
+  readonly rediscoveryTimeoutMs?: number;
 }
 
 const ACK_MS = 1_000;
@@ -74,6 +76,10 @@ export function probeHost(options: RemoteLinkOptions, boundMs: number): Promise<
 
 export class RemoteLink implements HostProcess {
   private readonly options: RemoteLinkOptions;
+
+  private endpoint: RemoteEndpoint;
+
+  private rediscovery: NodeJS.Timeout | null = null;
 
   private readonly clientId = randomBytes(12).toString('hex');
 
@@ -117,6 +123,7 @@ export class RemoteLink implements HostProcess {
 
   constructor(options: RemoteLinkOptions) {
     this.options = options;
+    this.endpoint = options.endpoint;
   }
 
   /** The machine the host says it is, once it has. */
@@ -175,6 +182,8 @@ export class RemoteLink implements HostProcess {
     if (this.retry !== null) {
       clearTimeout(this.retry);
     }
+    clearTimeout(this.rediscovery ?? undefined);
+    clearTimeout(this.handshakeTimer ?? undefined);
     this.stopBeat();
     this.socket?.destroy();
   }
@@ -198,7 +207,15 @@ export class RemoteLink implements HostProcess {
     if (this.stopped || this.refusal !== null) {
       return;
     }
-    const { host, port, token } = this.options.endpoint;
+    if (this.instance !== null && this.options.rediscoverEndpoint !== undefined) {
+      const endpoint = this.options.rediscoverEndpoint();
+      if (endpoint === null) {
+        this.dropped();
+        return;
+      }
+      this.endpoint = endpoint;
+    }
+    const { host, port, token } = this.endpoint;
     const nonce = randomBytes(24).toString('hex');
     const socket = net.connect({ host, port });
     this.socket = socket;
@@ -279,8 +296,7 @@ export class RemoteLink implements HostProcess {
   private refuse(message: string): void {
     this.options.log(`the host refused this client: ${message}`);
     this.refusal = message;
-    this.stopped = true;
-    this.socket?.destroy();
+    this.kill();
     if (this.instance === null) {
       // The first connection: a start that failed.
       this.exitListener?.(null);
@@ -292,10 +308,11 @@ export class RemoteLink implements HostProcess {
   private welcome(welcome: Extract<RemoteHandshake, { t: 'welcome' }>): void {
     const first = this.instance === null;
     const restarted = !first && this.instance !== welcome.instance;
+    clearTimeout(this.rediscovery ?? undefined);
+    this.rediscovery = null;
     if (restarted) {
       this.options.log('the host was restarted; its work in memory is gone and nothing can be resumed');
-      this.stopped = true;
-      this.socket?.destroy();
+      this.kill();
       this.exitListener?.(null);
       return;
     }
@@ -365,6 +382,14 @@ export class RemoteLink implements HostProcess {
     }
     if (wasOpen) {
       this.options.log('the connection to the host dropped; reconnecting');
+      if (this.options.rediscoverEndpoint !== undefined) {
+        this.rediscovery = setTimeout(() => {
+          this.lastFailure = 'The local host could not be reached. Unanswered work has an unknown outcome; nothing was sent again.';
+          this.kill();
+          this.exitListener?.(null);
+        }, this.options.rediscoveryTimeoutMs ?? HANDSHAKE_MS);
+        this.rediscovery.unref();
+      }
       this.linkListener?.({ kind: 'disconnected' });
     }
     this.attempts += 1;

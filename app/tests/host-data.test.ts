@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   ADOPTION_REPORT,
@@ -109,7 +110,7 @@ describe('the claim, from the side of a live host', () => {
     assert.equal(heldClaim(target), null);
   });
 
-  it('gives a fresh claim back if it was taken aside by a slower starter', () => {
+  it('reclaims a malformed claim while excluding a second starter', () => {
     write(target, 'host-claim.json', '{}');
     const claim = claimDataFolder(target, 'desktop');
     assert.ok('release' in claim);
@@ -117,6 +118,161 @@ describe('the claim, from the side of a live host', () => {
     assert.ok('held' in again);
     claim.release();
   });
+
+  it('refuses reentrant starters throughout stale-claim reclamation', (context) => {
+    write(target, 'host-claim.json', '{}');
+    const remove = fs.rmSync;
+    let checked = false;
+    context.mock.method(fs, 'rmSync', (...args: Parameters<typeof fs.rmSync>) => {
+      if (args[0] === path.join(target, 'host-claim.json')) {
+        checked = true;
+        for (let contender = 0; contender < 2; contender += 1) {
+          const result = claimDataFolder(target, 'standalone');
+          assert.ok('held' in result);
+          assert.equal(result.held.pid, process.pid);
+          assert.equal(result.held.kind, 'desktop');
+        }
+      }
+      return remove(...args);
+    });
+    const claim = claimDataFolder(target, 'desktop');
+    assert.ok('release' in claim);
+    assert.equal(checked, true);
+    context.mock.restoreAll();
+    assert.equal(heldClaim(target)?.kind, 'desktop');
+    claim.release();
+  });
+
+  it('cannot clean away a replacement live acquisition or its claim', (context) => {
+    const lock = path.join(target, 'host-claim.json.acquiring');
+    const stale = `${'a'.repeat(32)}.json`;
+    const replacement = `${'b'.repeat(32)}.json`;
+    write(lock, stale, JSON.stringify({ pid: process.pid, identity: 'earlier-boot' }));
+    const remove = fs.rmSync;
+    let winner: ReturnType<typeof claimDataFolder> | undefined;
+    let intercepted = false;
+    context.mock.method(fs, 'rmSync', (...args: Parameters<typeof fs.rmSync>) => {
+      if (!intercepted && args[0] === path.join(lock, stale)) {
+        intercepted = true;
+        winner = claimDataFolder(target, 'standalone');
+        assert.ok('release' in winner);
+        write(lock, replacement, read(target, 'host-claim.json'));
+      }
+      return remove(...args);
+    });
+    const loser = claimDataFolder(target, 'desktop');
+    assert.ok('held' in loser);
+    assert.equal(loser.held.kind, 'standalone');
+    assert.equal(intercepted, true);
+    assert.deepEqual(fs.readdirSync(lock), [replacement]);
+    assert.equal(heldClaim(target)?.kind, 'standalone');
+    context.mock.restoreAll();
+    assert.ok(winner !== undefined && 'release' in winner);
+    winner.release();
+  });
+
+  it('keeps a later claim when an old release is called again', () => {
+    const first = claimDataFolder(target, 'desktop');
+    assert.ok('release' in first);
+    first.release();
+    const second = claimDataFolder(target, 'standalone');
+    assert.ok('release' in second);
+    first.release();
+    assert.equal(heldClaim(target)?.kind, 'standalone');
+    second.release();
+  });
+});
+
+describe('concurrent claim acquisition', () => {
+  const moduleUrl = new URL('../src/main/host-data.ts', import.meta.url).href;
+  const resolver = fileURLToPath(new URL('../scripts/ts-resolve.mjs', import.meta.url));
+
+  for (const phase of ['acquisition published', 'claim published']) {
+    it(`refuses a live acquirer at ${phase} and recovers after it is killed`, { timeout: 10_000 }, async (context) => {
+      const child = spawn(process.execPath, ['--import', resolver, '--input-type=module', '-e', `
+        import fs from 'node:fs';
+        import { claimDataFolder } from ${JSON.stringify(moduleUrl)};
+        const method = ${JSON.stringify(phase)} === 'acquisition published' ? 'renameSync' : 'linkSync';
+        const operation = fs[method];
+        fs[method] = (...args) => {
+          operation(...args);
+          process.send('locked');
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+        };
+        claimDataFolder(process.argv[1], 'standalone');
+      `, target], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+      const exited = once(child, 'exit');
+      context.after(async () => {
+        child.kill('SIGKILL');
+        await exited;
+      });
+      assert.deepEqual(await once(child, 'message'), ['locked', undefined]);
+      const refused = claimDataFolder(target, 'desktop');
+      assert.ok('held' in refused);
+      assert.equal(refused.held.pid, child.pid);
+      assert.equal(fs.existsSync(path.join(target, 'host-claim.json')), phase === 'claim published');
+      child.kill('SIGKILL');
+      await exited;
+      const recovered = claimDataFolder(target, 'desktop');
+      assert.ok('release' in recovered);
+      recovered.release();
+      assert.deepEqual(fs.readdirSync(target), []);
+    });
+  }
+
+  for (const initial of ['absent', 'stale claim', 'stale acquisition', 'empty acquisition']) {
+    it(`admits exactly one of eight real starters with ${initial}`, { timeout: 15_000 }, async (context) => {
+      if (initial === 'stale claim') {
+        write(target, 'host-claim.json', '{}');
+      } else if (initial === 'stale acquisition') {
+        write(target, `host-claim.json.acquiring/${'a'.repeat(32)}.json`, JSON.stringify({ pid: process.pid, identity: 'earlier-boot' }));
+      } else if (initial === 'empty acquisition') {
+        fs.mkdirSync(path.join(target, 'host-claim.json.acquiring'));
+      }
+      const children = Array.from({ length: 8 }, () => {
+        const child = spawn(process.execPath, ['--import', resolver, '--input-type=module', '-e', `
+          import { claimDataFolder } from ${JSON.stringify(moduleUrl)};
+          let claim;
+          process.on('message', (message) => {
+            if (message === 'go') {
+              claim = claimDataFolder(process.argv[1], 'standalone');
+              process.send({ writer: 'release' in claim, pid: process.pid });
+            } else {
+              if (claim && 'release' in claim) claim.release();
+              process.exit(0);
+            }
+          });
+          process.send('ready');
+        `, target], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+        const exited = once(child, 'exit');
+        context.after(async () => {
+          child.kill('SIGKILL');
+          await exited;
+        });
+        return { child, ready: once(child, 'message'), exited };
+      });
+      await Promise.all(children.map(({ ready }) => ready));
+      const results = await Promise.all(children.map(async ({ child }) => {
+        const result = once(child, 'message');
+        child.send('go');
+        const [message] = await result;
+        return message as { writer: boolean; pid: number };
+      }));
+      const writers = results.filter((result) => result.writer);
+      assert.equal(writers.length, 1, JSON.stringify(results));
+      assert.equal(heldClaim(target)?.pid, writers[0]?.pid);
+      assert.deepEqual(fs.readdirSync(target), ['host-claim.json']);
+      for (const { child } of children) {
+        child.send('finish');
+      }
+      const exits = await Promise.all(children.map(({ exited }) => exited));
+      assert.ok(exits.every(([code]) => code === 0));
+      assert.equal(heldClaim(target), null);
+      const next = claimDataFolder(target, 'desktop');
+      assert.ok('release' in next);
+      next.release();
+    });
+  }
 });
 
 describe('a handover request', () => {

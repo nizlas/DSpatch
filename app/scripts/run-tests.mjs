@@ -151,6 +151,7 @@ const AREAS = {
       { file: 'host-connection.test.ts', heavy: true },
       { file: 'project-host-process.test.ts', heavy: true },
       { file: 'remote-transport.test.ts', heavy: true },
+      { file: 'local-host.test.ts', heavy: true },
       'ssh-connection.test.ts',
       'host-data.test.ts',
       'provider-setup.test.ts',

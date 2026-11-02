@@ -109,55 +109,101 @@ export function heldClaim(dataDir: string): HostClaim | null {
 }
 
 /**
- * Take the folder for this process, or answer who has it. The file is created exclusively, so of
- * two hosts starting together one gets it; a claim left by a process that is gone is removed first.
+ * Take the folder for this process, or answer who has it. A nonempty acquisition directory
+ * serializes claim replacement; its unique owner entry makes stale cleanup safe across reuse.
  */
 export function claimDataFolder(dataDir: string, kind: HostKind): { readonly held: HostClaim } | { readonly release: () => void } {
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const file = path.join(dataDir, CLAIM_FILE);
   const mine: HostClaim = { pid: process.pid, kind, startedAtUtc: new Date().toISOString(), identity: processIdentity(process.pid) };
-  const spare = `${file}.${String(process.pid)}.${randomBytes(4).toString('hex')}`;
-  fs.writeFileSync(spare, `${JSON.stringify(mine, null, 2)}\n`, { mode: 0o600 });
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  const lock = `${file}.acquiring`;
+  const owner = `${randomBytes(16).toString('hex')}.json`;
+  const prepared = `${lock}.${owner}`;
+  fs.mkdirSync(prepared, { mode: 0o700 });
+  let acquired = false;
+  const clearLock = (entry?: string): void => {
+    if (entry !== undefined) {
+      fs.rmSync(path.join(lock, entry), { force: true });
+    }
     try {
-      // A link appears whole or not at all, so nobody ever reads a half-written claim.
-      fs.linkSync(spare, file);
-      fs.rmSync(spare, { force: true });
-      const release = (): void => {
-        const held = heldClaim(dataDir);
-        if (held?.pid === process.pid) {
-          fs.rmSync(file, { force: true });
-        }
-      };
-      process.on('exit', release);
-      return { release };
+      fs.rmdirSync(lock);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-        fs.rmSync(spare, { force: true });
+      if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) {
         throw error;
       }
     }
+  };
+  try {
+    fs.writeFileSync(path.join(prepared, owner), `${JSON.stringify(mine, null, 2)}\n`, { mode: 0o600 });
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      try {
+        fs.renameSync(prepared, lock);
+        acquired = true;
+        break;
+      } catch (error) {
+        if (!['EEXIST', 'ENOTEMPTY', 'EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+          throw error;
+        }
+      }
+      try {
+        const entries = fs.readdirSync(lock);
+        if (entries.length === 0) {
+          clearLock();
+          continue;
+        }
+        const entry = entries[0];
+        if (entries.length !== 1 || entry === undefined || !/^[a-f0-9]{32}\.json$/.test(entry)) {
+          throw new Error(`The acquisition lock in ${dataDir} is invalid.`);
+        }
+        const contender = JSON.parse(fs.readFileSync(path.join(lock, entry), 'utf8')) as HostClaim;
+        if (typeof contender.pid !== 'number') {
+          throw new Error(`The acquisition lock in ${dataDir} has no process owner.`);
+        }
+        if (claimHolds(contender)) {
+          return { held: heldClaim(dataDir) ?? contender };
+        }
+        clearLock(entry);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error;
+        }
+      }
+    }
+    if (!acquired) {
+      throw new Error(`The data folder ${dataDir} is changing owners; try connecting again.`);
+    }
     const held = heldClaim(dataDir);
     if (held !== null) {
-      fs.rmSync(spare, { force: true });
       return { held };
     }
-    // Taken aside rather than deleted: if another starter got there first, what was taken is its
-    // fresh claim, which goes back.
-    const aside = `${file}.gone.${randomBytes(4).toString('hex')}`;
-    try {
-      fs.renameSync(file, aside);
-      const taken = JSON.parse(fs.readFileSync(aside, 'utf8') || '{}') as HostClaim;
-      if (typeof taken.pid === 'number' && claimHolds(taken)) {
-        fs.linkSync(aside, file);
+    fs.rmSync(file, { force: true });
+    fs.linkSync(path.join(lock, owner), file);
+    const claimed = fs.statSync(file);
+    let released = false;
+    const release = (): void => {
+      if (!released) {
+        released = true;
+        process.removeListener('exit', release);
+        try {
+          const current = fs.statSync(file);
+          if (current.dev === claimed.dev && current.ino === claimed.ino) {
+            fs.rmSync(file, { force: true });
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            throw error;
+          }
+        }
       }
-    } catch {
-      // Someone else moved it; the next round finds out.
+    };
+    process.on('exit', release);
+    return { release };
+  } finally {
+    if (acquired) {
+      clearLock(owner);
     }
-    fs.rmSync(aside, { force: true });
+    fs.rmSync(prepared, { recursive: true, force: true });
   }
-  fs.rmSync(spare, { force: true });
-  throw new Error(`The data folder ${dataDir} could not be claimed.`);
 }
 
 /** What a person is told when a folder is taken. */

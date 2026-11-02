@@ -20,11 +20,20 @@ jobs:
           node-version: 24
       - run: npm ci
         working-directory: app
+      - run: node --test scripts/prepare-bundled.test.mjs
+        working-directory: app
       - run: npm run package:host -- --platform linux
         working-directory: app
       - run: node scripts/build-host-package.mjs --platform win32
+        if: github.event_name == 'workflow_dispatch'
         working-directory: app
       - run: npm run package:client -- --linux deb --x64
+        working-directory: app
+      - name: Build isolated installed-package trial environment
+        run: docker build -t dspatch-trial -f scripts/trial-package/Dockerfile scripts/trial-package
+        working-directory: app
+      - name: Verify installed standalone host and SSH continuity
+        run: node scripts/trial-package/standalone.mjs
         working-directory: app
       - uses: actions/upload-artifact@v4
         with:

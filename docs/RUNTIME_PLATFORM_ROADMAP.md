@@ -170,6 +170,12 @@ Still on the client side or not yet done, as next steps: a separate host process
 
 ## 2. Common architecture and persistence
 
+### Unified standalone host: decision, 2 November 2026
+
+Niclas approved one standalone host model for local and SSH use. This supersedes the desktop-host lifetime described in the historical DSP-111/DSP-161 observations above. A local client discovers or starts the host and uses the authenticated loopback protocol. A remote client discovers or starts the same host through SSH tunnelling. The host owns work, provider sessions and durable state; closing or changing a client disconnects without stopping started work. Reattachment reads current state and never resends an assignment. A replacement client takes over the connection, not the host process.
+
+The host starts on demand, not as a login-time system service. One user data folder has one host owner; live incompatible hosts require an explicit stop decision. Stopping work and ending a host remain separate actions. Existing provider permission policies and content-exclusion boundaries stay on the host. A Linux installation includes its verified standalone host archive for local startup and SSH deployment without a separate host-package download. Windows delivery is outside this increment. Isolated scripted test harnesses may retain the process-channel host; ordinary local use does not depend on that lifetime.
+
 <a id="keep-the-product-common"></a>
 
 ### Keep the product common

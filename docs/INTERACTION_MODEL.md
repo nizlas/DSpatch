@@ -55,6 +55,8 @@ The external Cursor development loop used to build DSpatch is a separate process
 
 ## 2 Autonomy and when a person is needed
 
+**Standalone host decision, 2 November 2026.** Local and remote work use the same standalone host. Closing the desktop client disconnects; it does not cancel work already started on that host. Opening the client again attaches to the host's current work and history without resending the assignment. Another client can take over the connection without restarting the host or the work. Stop work and End host are distinct actions. The host starts on demand; no login-time service is required. Authentication, one-writer ownership and provider control boundaries are unchanged.
+
 Direct conversation is a complete way of working throughout a project: discussion, investigation, implementation and review. Autonomous work is optional. Switching between these ways of working preserves the conversation and relevant context.
 
 Autonomous work continues within its mandate without routine permission questions. Human involvement is required when:

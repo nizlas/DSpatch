@@ -2,12 +2,12 @@ import childProcess from 'node:child_process';
 import type { HostLinkState } from '../shared/host-link';
 import { remoteBuild } from '../shared/remote-build';
 import { RemoteLink, probeHost, type RemoteEndpoint } from './remote-link';
+import { ensureLocalHost, runningLocalHost } from './local-host';
 import { findHostPackage, readHostManifest, type HostPackage } from './host-packages';
 import { SshConnection, validTarget, type SshPrompt } from './ssh-connection';
 import { endRemoteSession, parseRemoteAddress, readRemoteSession, saveRemoteSession } from './remote-session';
 import type { HostLinkEvent } from './host-connection';
 import { adoptionWaiting, heldClaim, olderHostDataDir, takeHandoverRequest, writeHandoverAnswer } from './host-data';
-import type { HostRunning } from '../shared/host-bootstrap';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -582,7 +582,7 @@ function hostPackageFor(platform: string, arch: string, status: (text: string) =
     manifest: readHostManifest(path.join(bundledRoot() ?? developing, 'host-manifest.json')),
     platform,
     arch,
-    folders: [...(own === undefined || own === '' ? [] : [own]), cacheDir, developing],
+    folders: [...(own === undefined || own === '' ? [] : [own]), ...(bundledRoot() === null ? [] : [path.join(bundledRoot() ?? '', 'host-packages')]), cacheDir, developing],
     cacheDir,
     status,
     log,
@@ -595,16 +595,7 @@ function hostPackageFor(platform: string, arch: string, status: (text: string) =
  * second host, which the claim would refuse. Running work there goes on, and nothing is resent.
  */
 function ownRunningHost(): { readonly endpoint: RemoteEndpoint; readonly pid: number } | null {
-  const folder = app.getPath('userData');
-  if (heldClaim(folder)?.kind !== 'standalone') {
-    return null;
-  }
-  try {
-    const running = JSON.parse(fs.readFileSync(path.join(folder, 'host-running.json'), 'utf8')) as HostRunning;
-    return { endpoint: { host: '127.0.0.1', port: running.port, token: fs.readFileSync(path.join(folder, 'remote-token'), 'utf8').trim() }, pid: running.pid };
-  } catch {
-    return null;
-  }
+  return runningLocalHost(app.getPath('userData'));
 }
 
 /** A window should open the connection form: the saved tunnel gave way to Connect over SSH. */
@@ -768,7 +759,7 @@ async function leaveRemoteSession(): Promise<string> {
     () => {
       endRemoteSession(app.getPath('userData'));
     },
-    'leaving the remote session; working on this computer',
+    own === null ? 'leaving the remote session; working on this computer' : 'the host ended; starting a fresh standalone host on this computer',
   );
 }
 
@@ -944,10 +935,25 @@ const host = new HostConnection({
   spawn: () => {
     const remote = remoteSession();
     if (remote === null) {
-      return spawnUtilityHost();
+      if (isolatedHostHarness()) {
+        return spawnUtilityHost();
+      }
+      throw new Error('The standalone host must be started before connecting.');
     }
     publishLink({ phase: 'connecting', note: '' });
-    remoteLink = new RemoteLink({ endpoint: remote, build: remoteBuild(app.getAppPath()), log });
+    remoteLink = new RemoteLink({
+      endpoint: remote, build: remoteBuild(app.getAppPath()), log,
+      ...(sharedHere ? {
+        rediscoverEndpoint: () => {
+          const endpoint = ownRunningHost()?.endpoint ?? null;
+          if (endpoint !== null) {
+            remoteEndpoint = endpoint;
+          }
+          return endpoint;
+        },
+        rediscoveryTimeoutMs: HOST_START_TIMEOUT_MS,
+      } : {}),
+    });
     return remoteLink;
   },
   // Adopting a host's older data happens before the host is ready, and it may be a lot of files.
@@ -1043,14 +1049,14 @@ function reloadOpenWindows(): void {
 const pickers = {
   showOpenDialog: (first: BrowserWindow | Electron.OpenDialogOptions, second?: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> => {
     const options = second ?? (first as Electron.OpenDialogOptions);
-    if (remoteSession() !== null) {
+    if (remoteSession() !== null && !sharedHere) {
       return pickOnHost(options);
     }
     return second === undefined ? dialog.showOpenDialog(options) : dialog.showOpenDialog(first as BrowserWindow, options);
   },
   showSaveDialog: (first: BrowserWindow | Electron.SaveDialogOptions, second?: Electron.SaveDialogOptions): Promise<Electron.SaveDialogReturnValue> => {
     const options = second ?? (first as Electron.SaveDialogOptions);
-    if (remoteSession() !== null) {
+    if (remoteSession() !== null && !sharedHere) {
       return pickOnHost({ ...options, properties: ['openFile'], ...{ saving: true } }).then((picked) => ({ canceled: picked.canceled, filePath: picked.filePaths[0] ?? '' }));
     }
     return second === undefined ? dialog.showSaveDialog(options) : dialog.showSaveDialog(first as BrowserWindow, options);
@@ -1163,6 +1169,10 @@ function unattended(): boolean {
   return smokeMode || probeMode || (chatRunMode && !chatRunHold);
 }
 
+function isolatedHostHarness(): boolean {
+  return (smokeMode || probeMode || chatRunMode) && process.env['DSPATCH_TRIAL_HOST_RUN'] === undefined;
+}
+
 /**
  * Start the project host before any window asks it anything, and say plainly when it
  * cannot be started. Nothing is open yet, so nothing can be lost: the person can try
@@ -1171,10 +1181,31 @@ function unattended(): boolean {
  */
 async function startHostOrQuit(): Promise<boolean> {
   for (;;) {
+    let bootstrapFailure: string | null = null;
+    if (sharedHere && ownRunningHost() === null) {
+      forgetHost(null);
+    }
+    if (remoteSession() === null && !isolatedHostHarness()) {
+      try {
+        remoteEndpoint = await ensureLocalHost({
+          dataDir: app.getPath('userData'),
+          appPath: app.getAppPath(),
+          bundledRoot: bundledRoot(),
+          packaged: app.isPackaged,
+          startTimeoutMs: adoptionWaiting(app.getPath('userData'), olderHostDataDir()) ? HOST_ADOPTION_TIMEOUT_MS : HOST_START_TIMEOUT_MS,
+        });
+        sharedHere = true;
+        savedTunnel = false;
+        senderOffset = null;
+      } catch (error) {
+        bootstrapFailure = error instanceof Error ? error.message : String(error);
+      }
+    }
     // A tunnel saved by an older version: found out in seconds rather than at the start bound.
     const wanted = remoteSession();
     const tunnelGone = wanted !== null && savedTunnel ? await probeHost({ endpoint: wanted, build: remoteBuild(app.getAppPath()), log }, HOST_PROBE_MS) : null;
-    const started = tunnelGone === null ? await host.start() : ({ ok: false, failure: { kind: 'host-error', code: 'host-unavailable', message: tunnelGone } } satisfies HostStartOutcome);
+    const startupFailure = bootstrapFailure ?? tunnelGone;
+    const started = startupFailure === null ? await host.start() : ({ ok: false, failure: { kind: 'host-error', code: 'host-unavailable', message: startupFailure } } satisfies HostStartOutcome);
     if (started.ok) {
       void host
         .call<string | null>('host.dataNotice', NO_SENDER)
@@ -1212,7 +1243,12 @@ async function startHostOrQuit(): Promise<boolean> {
         app.exit(HOST_EXIT_START_FAILED);
         return false;
       }
-      await endOwnHost(own.pid);
+      const stopFailure = await endOwnHost(own.pid);
+      if (stopFailure !== '') {
+        await askPerson({ type: 'error', buttons: ['OK'], title: 'DSpatch could not stop the host', message: stopFailure });
+        app.exit(HOST_EXIT_START_FAILED);
+        return false;
+      }
       sharedHere = false;
       forgetHost(null);
       continue;
@@ -1304,7 +1340,7 @@ async function startHostOrQuit(): Promise<boolean> {
  * fresh sessions on the new host.
  */
 async function hostLost(loss: HostLoss): Promise<void> {
-  if (remoteSession() !== null) {
+  if (remoteSession() !== null && (!sharedHere || ownRunningHost() !== null)) {
     // A host on another machine that was restarted: every call waiting has its answer, and
     // the windows read what it saved. Nothing is started or sent again, so nothing to ask.
     log(`the remote host was restarted; ${String(loss.unanswered.length)} unanswered call(s) read as unknown`);
@@ -4384,7 +4420,7 @@ function registerIpc(): void {
           'conversation may already have been moved or deleted from outside DSpatch.',
       };
     }
-    if (remoteSession() !== null) {
+    if (remoteSession() !== null && !sharedHere) {
       return { revealed: false, note: `The file is on the host, at ${filePath}.` };
     }
     shell.showItemInFolder(filePath);
@@ -4811,7 +4847,7 @@ function registerLoopGraphIpc(): void {
       if (!('target' in located)) {
         return located;
       }
-      if (remoteSession() !== null) {
+      if (remoteSession() !== null && !sharedHere) {
         return { revealed: false, note: `The file is on the host, at ${located.target}.` };
       }
       shell.showItemInFolder(located.target);
@@ -5149,7 +5185,7 @@ function main(): void {
         }
       },
       development: !app.isPackaged,
-      hostPicker: () => (remoteSession() === null ? undefined : (options: Electron.OpenDialogOptions) => pickOnHost(options)),
+      hostPicker: () => (remoteSession() === null || sharedHere ? undefined : (options: Electron.OpenDialogOptions) => pickOnHost(options)),
       // A held window is a person's: their review chooser is the real dialog, never the queue.
       scriptedPick: chatRunMode && !chatRunHold ? () => scriptedFilePick('review definition') : null,
       log: (message) => {

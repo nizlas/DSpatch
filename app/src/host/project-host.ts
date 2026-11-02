@@ -1059,6 +1059,15 @@ async function openWorkspaceFor(request: WorkspaceOpenRequest): Promise<Workspac
 async function openLooseConversation(request: Extract<StartSessionRequest, { kind: 'loose' }>): Promise<ChatSessionInfo> {
   const store = requireProjectStore();
   const conversationId = request.conversationId === undefined ? store.read().looseConversationId : request.conversationId;
+  const busy = workInSession();
+  const opened = chatService.openSession();
+  if (busy !== null && opened !== null) {
+    if (opened.origin !== 'no-workspace' || (conversationId !== undefined && conversationId !== null && conversationId !== opened.conversationId)) {
+      throw new Error(`${busy} Continue the open conversation or wait until it is done. Nothing was closed or changed.`);
+    }
+    const running = chatService.runningTurn();
+    return running === undefined ? opened : { ...opened, running };
+  }
   const session = await chatService.startChatSession({ ...request, conversationId });
   openWorkspaceId = null;
   const outcome = store.setLooseConversation(session.conversationId);

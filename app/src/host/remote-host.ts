@@ -52,9 +52,9 @@ async function main(): Promise<void> {
   // The application's own folder, so this machine's work is the same however it is reached.
   const chosen = argument('--data') ?? process.env['DSPATCH_HOST_DATA'];
   const dataDir = path.resolve(chosen ?? sharedDataDir());
-  const { token, file } = tokenIn(dataDir);
   const runningFile = path.join(dataDir, 'host-running.json');
   if (process.argv.includes('--print-token')) {
+    const { token } = tokenIn(dataDir);
     process.stdout.write(`${token}\n`);
     return;
   }
@@ -64,6 +64,7 @@ async function main(): Promise<void> {
     process.stderr.write(`${claimRefusal(claim.held)}\n`);
     process.exit(3);
   }
+  const { token, file } = tokenIn(dataDir);
   const older = argument('--older-data') ?? (chosen === undefined ? olderHostDataDir() : undefined);
   if (older !== undefined) {
     adoptWithoutFailing(dataDir, older, log);
