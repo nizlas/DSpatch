@@ -155,6 +155,12 @@ export interface ClaudePermissionPolicy {
 export const SHELL_TOOLS: readonly string[] = Object.freeze(['Bash', 'PowerShell']);
 
 /**
+ * DSP-163: the longest a shell command's start or end hook holds the agent while DSpatch
+ * observes the working folders. Past it the agent goes on and the observation is late.
+ */
+export const COMMAND_OBSERVATION_HOLD_MS = 120_000;
+
+/**
  * Set in every Claude Code process this adapter starts (DSP-146). Claude Code's
  * documented switch (env-vars and tools reference, read 27 Oct 2026): it removes
  * `run_in_background` from the shell tools and stops a command that reaches its timeout
@@ -3190,10 +3196,10 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     fields: Record<string, unknown>,
     toolName: string,
     toolUseId: string | null,
-  ): void {
+  ): Promise<void> {
     const open = openShellCommand(fields, toolName, toolUseId, state.config.workspacePath, Date.now());
     run.openCommands.set(toolUseId ?? open.commandId, open);
-    this.emit(state, {
+    return this.emitAndHold(state, {
       type: 'command.started',
       dspatchSessionId: state.dspatchSessionId,
       dspatchRunId: run.dspatchRunId,
@@ -3234,8 +3240,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         const took = typeof fields['duration_ms'] === 'number' ? fields['duration_ms'] : 0;
         open = openShellCommand(fields, toolName, toolUseId, state.config.workspacePath, now - took);
       }
-      this.recordCommand(state, run, open, shellCommandEnd(fields, outcome), now);
-      return Promise.resolve({});
+      return this.recordCommand(state, run, open, shellCommandEnd(fields, outcome), now).then(() => ({}));
     };
   }
 
@@ -3247,7 +3252,8 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
         ? { ending: 'stopped', endingMessage: SHELL_COMMAND_CANCELLED_NOTE, exitCode: null, stdout: '', stderr: '', outputNote: null, durationMs: null }
         : { ending: 'not-reported', endingMessage: SHELL_COMMAND_UNREPORTED_NOTE, exitCode: null, stdout: '', stderr: '', outputNote: null, durationMs: null };
     for (const open of [...run.openCommands.values()]) {
-      this.recordCommand(state, run, open, end, now);
+      // The run is ending and nothing is held: whatever a listener observes now is approximate.
+      void this.recordCommand(state, run, open, end, now);
     }
     run.openCommands.clear();
   }
@@ -3258,10 +3264,10 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
     open: OpenShellCommand,
     end: ShellCommandEnd,
     finishedAt: number,
-  ): void {
+  ): Promise<void> {
     const record = shellCommandRecord(open, end, finishedAt);
     run.commands.push(record);
-    this.emit(state, {
+    return this.emitAndHold(state, {
       type: 'command.finished',
       dspatchSessionId: state.dspatchSessionId,
       dspatchRunId: run.dspatchRunId,
@@ -3558,7 +3564,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       });
       if (!deny) {
         if (SHELL_TOOLS.includes(toolName) && this.recordsShellCommands()) {
-          this.commandStarted(state, run, fields, toolName, toolUseId);
+          return this.commandStarted(state, run, fields, toolName, toolUseId).then(() => ({}));
         }
         return Promise.resolve({});
       }
@@ -3795,6 +3801,36 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       throw new ClaudeAdapterError(`Unknown session "${sessionId}". Start it first.`);
     }
     return state;
+  }
+
+  /**
+   * Emit from inside a hook and hold the agent until every listener's observation of this
+   * moment has settled (DSP-163), or {@link COMMAND_OBSERVATION_HOLD_MS} has passed: a scan
+   * that cannot finish in time must not hold the agent indefinitely. Never rejects.
+   */
+  private emitAndHold(state: SessionState, event: AgentEvent): Promise<void> {
+    const held: PromiseLike<void>[] = [];
+    for (const listener of state.listeners) {
+      try {
+        const result = listener(event);
+        if (result !== undefined && result !== null && typeof result.then === 'function') {
+          held.push(result);
+        }
+      } catch {
+        // A listener must not throw; one bad subscriber must not break the stream.
+      }
+    }
+    if (held.length === 0) {
+      return Promise.resolve();
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, COMMAND_OBSERVATION_HOLD_MS);
+      timer.unref?.();
+    });
+    return Promise.race([Promise.allSettled(held).then(() => undefined), bound]).finally(() => {
+      clearTimeout(timer);
+    });
   }
 
   private emit(state: SessionState, event: AgentEvent): void {

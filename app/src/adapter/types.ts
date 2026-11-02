@@ -498,5 +498,13 @@ export interface AgentCommandRecord {
 /** Remove a subscription. Idempotent. */
 export type Unsubscribe = () => void;
 
-/** Receive normalised events. Must not throw. */
-export type AgentEventListener = (event: AgentEvent) => void;
+/**
+ * Receive normalised events. Must not throw.
+ *
+ * DSP-163: for `command.started` and `command.finished` a listener may return a promise that
+ * never rejects. An adapter that can hold the agent at that moment (Claude's hooks) waits for
+ * it, within a bound, before the command runs or the agent goes on; so what a listener
+ * observes then is the folders as the command found or left them. Every other event, and an
+ * adapter that cannot hold the agent, ignores what a listener returns.
+ */
+export type AgentEventListener = (event: AgentEvent) => void | PromiseLike<void>;

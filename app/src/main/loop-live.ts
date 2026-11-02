@@ -39,13 +39,20 @@ import type {
 } from '../adapter/types';
 import {
   diffSnapshots,
-  snapshotTree,
   type ChangedFile,
   type FileEntry,
   type TreeDiff,
   type TreeSnapshot,
 } from './experiment-repo';
 import { snapshotIdFor } from './workspace-baseline';
+import {
+  changedSince,
+  describeSnapshotScope,
+  fingerprintRoots,
+  LoopSnapshotter,
+  type CommandFingerprint,
+  type RootSnapshot,
+} from './loop-snapshot';
 import { undeclaredOutcomeOf, type LoopNode, type StepLimits } from '../shared/loop-graph';
 import {
   carriesRunChange,
@@ -123,6 +130,8 @@ export const DEFAULT_LIVE_MODEL = 'composer-2';
 
 /** When a node has no `maxMinutes`, still refuse to wait forever. */
 export const FALLBACK_DEADLINE_MS = 20 * 60_000;
+/** After Stop, one bounded attempt to read working folders for a final account. */
+export const AFTER_STOP_SNAPSHOT_MS = 5_000;
 
 export type { LiveCommandRecord } from './workspace-command';
 
@@ -200,6 +209,16 @@ export interface LiveInspection {
    * absent where not observed - never "unchanged".
    */
   finalSnapshotId?: string | null;
+  /**
+   * DSP-163: what the snapshots cover (git's listing, metadata-only files), in a sentence,
+   * once a snapshot has been taken. Absent where nothing was read.
+   */
+  snapshotScope?: string;
+  /**
+   * DSP-163: why some snapshot of this run covered only part of a folder, or absent. An
+   * incomplete snapshot is never the basis of "unchanged".
+   */
+  snapshotIncomplete?: string;
 }
 
 /**
@@ -431,6 +450,13 @@ export interface LiveExecutorOptions {
    * say so: see {@link LiveInspection.rootsNote}.
    */
   readonly hashWorkingRoots?: boolean;
+  /**
+   * DSP-163: where the snapshots' diagnostics go (duration, file count, bytes read, scope).
+   * Counts and the root's path only, never file content.
+   */
+  readonly log?: (message: string) => void;
+  /** DSP-163: a substitute for the run's snapshotter. Tests only. */
+  readonly snapshotter?: LoopSnapshotter;
   readonly fallbackDeadlineMs?: number;
   /**
    * The step's own prompt, built by the caller.
@@ -536,25 +562,82 @@ function applyDiff(inspection: LiveInspection, before: TreeSnapshot, after: Tree
  * linear in the number of roots a person opened, and a run with one root walks one
  * tree exactly as it did before DSP-72.
  */
-function snapshotEveryRoot(
+/**
+ * The trees of a set of snapshots that were taken incompletely, with the reason (DSP-163).
+ * Kept beside the map rather than in it so every caller that only needs the trees is
+ * unchanged; whoever turns trees into identities must ask here first.
+ */
+const incompleteSnapshots = new WeakMap<ReadonlyMap<string, TreeSnapshot>, string>();
+
+/** The scans behind a set of trees, for comparing them with a {@link CommandFingerprint}. */
+const scansOf = new WeakMap<ReadonlyMap<string, TreeSnapshot>, ReadonlyMap<string, RootSnapshot>>();
+
+function rootPathsOf(inspection: LiveInspection): string[] {
+  const paths = inspection.roots.map((root) => root.path);
+  if (!paths.includes(inspection.workspacePath)) {
+    // A run whose roots somehow do not include its own working copy still has to
+    // measure the working copy: that is the snapshot every existing record line and
+    // every step's sentence is about.
+    paths.push(inspection.workspacePath);
+  }
+  return paths;
+}
+
+function unobservedRoots(inspection: LiveInspection, why: string): ReadonlyMap<string, TreeSnapshot> {
+  const snapshots = new Map<string, TreeSnapshot>();
+  for (const root of rootPathsOf(inspection)) {
+    snapshots.set(root, { root, takenAtUtc: new Date().toISOString(), files: [] });
+  }
+  incompleteSnapshots.set(snapshots, why);
+  inspection.snapshotIncomplete ??= why;
+  return snapshots;
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof Error && error.name === 'AbortError') ||
+    (typeof error === 'object' &&
+      error !== null &&
+      'name' in error &&
+      (error as { readonly name?: unknown }).name === 'AbortError')
+  );
+}
+
+async function snapshotEveryRoot(
   inspection: LiveInspection,
   hashProject: boolean,
-): ReadonlyMap<string, TreeSnapshot> {
+  snapshotter: LoopSnapshotter,
+): Promise<ReadonlyMap<string, TreeSnapshot>> {
+  const paths = rootPathsOf(inspection);
   const snapshots = new Map<string, TreeSnapshot>();
-  const walk = (root: string): TreeSnapshot =>
+  if (!hashProject) {
     // DSP-91 #7. An empty tree rather than a skipped step, so every caller below keeps
     // working and the per-root diffs come out empty instead of absent. `rootsNote` on the
     // inspection is where a reader is told nothing was measured; an empty list of files
     // must never be read here as a measurement that found nothing.
-    hashProject ? snapshotTree(root) : { root, takenAtUtc: new Date().toISOString(), files: [] };
-  for (const root of inspection.roots) {
-    snapshots.set(root.path, walk(root.path));
+    for (const root of paths) {
+      snapshots.set(root, { root, takenAtUtc: new Date().toISOString(), files: [] });
+    }
+    return snapshots;
   }
-  if (!snapshots.has(inspection.workspacePath)) {
-    // A run whose roots somehow do not include its own working copy still has to
-    // measure the working copy: that is the snapshot every existing record line and
-    // every step's sentence is about.
-    snapshots.set(inspection.workspacePath, walk(inspection.workspacePath));
+  // DSP-163: off the event loop, coalesced, bounded and stoppable; see `loop-snapshot.ts`.
+  const taken = await snapshotter.snapshotAll(paths);
+  const incomplete: string[] = [];
+  for (const root of paths) {
+    const one = taken.get(root) as RootSnapshot;
+    snapshots.set(root, one.tree);
+    if (!one.coverage.complete) {
+      incomplete.push(`${root}: ${one.coverage.incompleteBecause ?? 'not fully observed'}`);
+    }
+  }
+  scansOf.set(snapshots, taken);
+  inspection.snapshotScope = describeSnapshotScope([...taken.values()].map((one) => one.coverage));
+  if (incomplete.length > 0) {
+    const reason =
+      `DSpatch could observe only part of ${incomplete.length === 1 ? 'a working folder' : 'the working folders'} ` +
+      `(${incomplete.join('; ')}), so it does not say whether they changed.`;
+    incompleteSnapshots.set(snapshots, reason);
+    inspection.snapshotIncomplete ??= reason;
   }
   return snapshots;
 }
@@ -1087,7 +1170,7 @@ interface TurnWait {
 function waitForTurn(
   adapter: Pick<AgentAdapter, 'subscribe'>,
   sessionId: DspatchSessionId,
-  onActivity?: (event: AgentEvent) => void,
+  onActivity?: (event: AgentEvent) => void | PromiseLike<void>,
 ): TurnWait {
   let assistantText = '';
   let terminalStatus: string | null = null;
@@ -1115,7 +1198,11 @@ function waitForTurn(
       event.type === 'command.finished' ||
       event.type === 'approval.requested'
     ) {
-      onActivity?.(event);
+      const held = onActivity?.(event);
+      if (event.type === 'command.started' || event.type === 'command.finished') {
+        // DSP-163: the adapter may hold the agent until this moment has been observed.
+        return held;
+      }
     }
     if (event.type === 'assistant.message') {
       assistantText += event.text;
@@ -1231,6 +1318,9 @@ export function runChangeAccountOf(
     // the step's reader are owed the same account.
     return { kind: 'not-measured', why: inspection.rootsNote };
   }
+  if (inspection.snapshotIncomplete !== undefined) {
+    return { kind: 'not-measured', why: inspection.snapshotIncomplete };
+  }
   const before = inspection.snapshotBefore;
   const after = inspection.snapshotAfter;
   if (before === null || after === null) {
@@ -1273,6 +1363,53 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
   const now = options.now ?? (() => Date.now());
   // Defaulting to true keeps every caller written before DSP-91 byte-for-byte what it was.
   const hashRoots = options.hashWorkingRoots ?? true;
+  // DSP-163: one snapshotter per run, so scans of a root by its steps and commands coalesce,
+  // and stopped by the run's own signal so Stop is not held up by a scan.
+  const snapshotter =
+    options.snapshotter ??
+    new LoopSnapshotter({
+      ...(options.abortSignal === undefined ? {} : { signal: options.abortSignal }),
+      ...(options.log === undefined ? {} : { log: options.log }),
+    });
+  /**
+   * Every root's tree now. After the run was stopped, one short attempt is still made, so the
+   * record says what the folders hold where that can be had quickly (the identities of
+   * unchanged files are remembered); where it cannot, the folders read as not observed, never
+   * as unchanged.
+   */
+  const takeRoots = async (): Promise<ReadonlyMap<string, TreeSnapshot>> => {
+    if (options.abortSignal?.aborted !== true) {
+      try {
+        return await snapshotEveryRoot(inspection, hashRoots, snapshotter);
+      } catch (error) {
+        if (!isAbortError(error)) {
+          throw error;
+        }
+      }
+    }
+    try {
+      return await snapshotEveryRoot(
+        inspection,
+        hashRoots,
+        new LoopSnapshotter({
+          signal: AbortSignal.timeout(AFTER_STOP_SNAPSHOT_MS),
+          ...(options.log === undefined ? {} : { log: options.log }),
+        }),
+      );
+    } catch (error) {
+      if (!isAbortError(error)) {
+        throw error;
+      }
+      return unobservedRoots(
+        inspection,
+        'The run was stopped while DSpatch was still reading the working folders, so what ' +
+          'they hold now was not observed.',
+      );
+    }
+  };
+  /** Every root's identity, or `null` where they were not read or were read only in part. */
+  const observedIds = (taken: ReadonlyMap<string, TreeSnapshot>): ReadonlyMap<string, string> | null =>
+    !hashRoots || incompleteSnapshots.has(taken) ? null : snapshotIdsOf(taken);
   const fallbackMs = options.fallbackDeadlineMs ?? FALLBACK_DEADLINE_MS;
   const completed = new Map<string, StepExecution>();
   const inspection = options.inspection;
@@ -1560,7 +1697,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         }
         return ids;
       })();
-      const afterByRoot = snapshotEveryRoot(inspection, hashRoots);
+      const afterByRoot = await takeRoots();
       const after = workingCopyIn(inspection, afterByRoot);
       // A gate's command can write into any root â€” a build in one, a generated file in
       // another â€” so the per-root lists are updated here too. Each root diffs from the
@@ -1580,7 +1717,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
           : ranAgainst.snapshotId !== snapshotIdFor(after);
       // What a later step handed this result may treat it as evidence about (DSP-139).
       // Compared against what the command ran against, not what it left (review A2).
-      const afterIds = snapshotIdsOf(afterByRoot);
+      const afterIds = observedIds(afterByRoot);
       gateEvidence.set(`${node.id}#${String(context.occurrence)}`, {
         testedSnapshotId: testedIds === null ? null : (ranAgainst?.snapshotId ?? null),
         tested: testedIds,
@@ -1593,7 +1730,10 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
               : testedIds === null
                 ? 'DSpatch had not observed the working folders before the command ran, so which ' +
                   'code it tested is not established.'
-                : differingRoots(testedIds, afterIds).length > 0
+                : afterIds === null
+                  ? 'DSpatch could not fully observe the working folders after the command ran, so ' +
+                    'it cannot establish whether what it measured is what it left behind.'
+                  : differingRoots(testedIds, afterIds).length > 0
                   ? 'The command changed the working folders while it ran, so what it measured ' +
                     'is not what it left behind.'
                   : null,
@@ -1614,7 +1754,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         completed: command.notRun === null,
         after: hashRoots ? afterIds : null,
       });
-      inspection.finalSnapshotId = hashRoots ? combinedSnapshotId(afterIds) : null;
+      inspection.finalSnapshotId = combinedSnapshotId(afterIds);
       const selfModified =
         changedWhileChecking === true
           ? ` This command changed the working copy while it ran (${ranAgainst?.snapshotId ?? 'unknown'} ` +
@@ -1816,7 +1956,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     }
     const openSession = session;
 
-    const beforeByRoot = snapshotEveryRoot(inspection, hashRoots);
+    const beforeByRoot = await takeRoots();
     const before = workingCopyIn(inspection, beforeByRoot);
     if (inspection.snapshotBefore === null) {
       inspection.snapshotBefore = snapshotRef(before);
@@ -1837,39 +1977,102 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     // the end were observed.
     const commandStarts = new Map<
       string,
-      { readonly ids: ReadonlyMap<string, string> | null; readonly atUtc: string }
+      Promise<{ readonly ids: ReadonlyMap<string, string> | null; readonly atUtc: string }>
     >();
-    const idsNow = (): ReadonlyMap<string, string> | null =>
-      hashRoots ? snapshotIdsOf(snapshotEveryRoot(inspection, true)) : null;
-    const observeCommand = (event: AgentEvent): void => {
+    const commandObservations: Promise<void>[] = [];
+    let commandObservationError: Error | null = null;
+    const recordObservation = (work: () => Promise<void>): Promise<void> => {
+      const observed = work().catch((error: unknown) => {
+        if (commandObservationError === null) {
+          commandObservationError = error instanceof Error ? error : new Error(String(error));
+        }
+      });
+      commandObservations.push(observed);
+      return observed;
+    };
+    const flushCommandObservations = async (): Promise<void> => {
+      await Promise.all(commandObservations);
+      if (commandObservationError !== null) {
+        throw commandObservationError;
+      }
+    };
+    const idsNow = async (): Promise<ReadonlyMap<string, string> | null> => observedIds(await takeRoots());
+    /**
+     * For an event the provider cannot hold the agent at: read the folders' metadata now,
+     * synchronously, and trust the scan that follows only where nothing changed since.
+     */
+    const fingerprintNow = (): CommandFingerprint | null =>
+      hashRoots ? fingerprintRoots(rootPathsOf(inspection), options.log) : null;
+    const idsAt = async (moment: CommandFingerprint | null): Promise<ReadonlyMap<string, string> | null> => {
+      const taken = await takeRoots();
+      const ids = observedIds(taken);
+      const scans = scansOf.get(taken);
+      if (ids === null || moment === null || scans === undefined) {
+        return null;
+      }
+      const late = changedSince(moment, scans);
+      if (late !== null) {
+        options.log?.(`[snapshot] not at the command's moment: ${late}`);
+        return null;
+      }
+      return ids;
+    };
+    /**
+     * For `command.*` the returned promise settles (never rejects) once that moment has been
+     * observed; an adapter that can hold the agent waits for it (DSP-163), so the snapshot is
+     * of the folders as the command found or left them. A failure surfaces at the step's end.
+     */
+    const observeCommand = (event: AgentEvent): Promise<void> | undefined => {
       if (event.type === 'command.started') {
-        commandStarts.set(event.commandId, { ids: idsNow(), atUtc: event.at });
-        return;
+        const started = idsNow().then((ids) => ({
+          ids,
+          atUtc: event.at,
+        }));
+        commandStarts.set(event.commandId, started);
+        return started.then(
+          () => undefined,
+          () => undefined,
+        );
       }
       if (event.type === 'command.finished') {
         const started = commandStarts.get(event.command.commandId);
         commandStarts.delete(event.command.commandId);
-        takeCommand(agentCommandEntry(event.command, node.id, context.occurrence, started?.ids ?? null, idsNow()));
-        return;
+        return recordObservation(async () => {
+          const [startedAt, endedAt] = await Promise.all([started, idsNow()]);
+          takeCommand(
+            agentCommandEntry(event.command, node.id, context.occurrence, startedAt?.ids ?? null, endedAt),
+          );
+        });
       }
       if (event.type === 'tool.started' && event.name === 'shell') {
-        commandStarts.set(`shell:${event.toolCallId}`, { ids: idsNow(), atUtc: event.at });
-        return;
+        commandStarts.set(
+          `shell:${event.toolCallId}`,
+          idsAt(fingerprintNow()).then((ids) => ({
+            ids,
+            atUtc: event.at,
+          })),
+        );
+        return undefined;
       }
       if (event.type === 'tool.finished' && event.name === 'shell') {
         const key = `shell:${event.toolCallId}`;
         const started = commandStarts.get(key);
         commandStarts.delete(key);
-        takeCommand(
-          providerReportedEntry(event, node.id, context.occurrence, options.workspacePath, started, idsNow()),
-        );
+        const moment = fingerprintNow();
+        void recordObservation(async () => {
+          const [startedAt, endedAt] = await Promise.all([started, idsAt(moment)]);
+          takeCommand(
+            providerReportedEntry(event, node.id, context.occurrence, options.workspacePath, startedAt, endedAt),
+          );
+        });
       }
+      return undefined;
     };
     const commandRunning = (): boolean => [...commandStarts.keys()].some((key) => !key.startsWith('shell:'));
     const turn = waitForTurn(options.adapter, openSession.dspatchSessionId, (event) => {
-      observeCommand(event);
+      const held = observeCommand(event);
       if (event.type === 'command.started' || event.type === 'command.finished') {
-        return;
+        return held;
       }
       if (emit === undefined) {
         return;
@@ -1953,7 +2156,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
           unusable: 'DSpatch has no record in this run of which code that command ran against.',
         },
       }));
-    const startIds = hashRoots ? snapshotIdsOf(beforeByRoot) : null;
+    const startIds = observedIds(beforeByRoot);
     const staleAtStart = handedGates.map((gate) => staleBecause(gate.evidence, startIds));
     const evidenceStandings: GateEvidenceStanding[] = handedGates.map((gate, index) => ({
       nodeId: gate.nodeId,
@@ -2056,9 +2259,9 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         }),
       ]);
     } catch (error) {
-      const afterByRoot = snapshotEveryRoot(inspection, hashRoots);
+      const afterByRoot = await takeRoots();
       // R3: the working folders as this step left them, on every path out of it.
-      inspection.finalSnapshotId = hashRoots ? combinedSnapshotId(snapshotIdsOf(afterByRoot)) : null;
+      inspection.finalSnapshotId = combinedSnapshotId(observedIds(afterByRoot));
       const after = workingCopyIn(inspection, afterByRoot);
       applyDiff(inspection, before, after);
       applyRootDiffs(inspection, beforeByRoot, afterByRoot);
@@ -2096,9 +2299,29 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       }
     }
 
-    const afterByRoot = snapshotEveryRoot(inspection, hashRoots);
+    try {
+      await flushCommandObservations();
+    } catch (error) {
+      const afterByRoot = await takeRoots();
+      inspection.finalSnapshotId = combinedSnapshotId(observedIds(afterByRoot));
+      const after = workingCopyIn(inspection, afterByRoot);
+      applyDiff(inspection, before, after);
+      applyRootDiffs(inspection, beforeByRoot, afterByRoot);
+      return remember(context, {
+        product: {
+          kind: 'runtime-fault',
+          fault: 'executor-threw',
+          detail: `DSpatch could not record this step's command snapshots: ${
+            error instanceof Error ? error.message : String(error)
+          }.`,
+        },
+        summary: `Command observation failed. Snapshot after: ${snapshotIdFor(after)}. Files were not reset.`,
+        providerTurns: 1,
+      });
+    }
+    const afterByRoot = await takeRoots();
     // R3: the working folders as this step left them, on every path out of it.
-    inspection.finalSnapshotId = hashRoots ? combinedSnapshotId(snapshotIdsOf(afterByRoot)) : null;
+    inspection.finalSnapshotId = combinedSnapshotId(observedIds(afterByRoot));
     const after = workingCopyIn(inspection, afterByRoot);
     const diff = applyDiff(inspection, before, after);
     // Every root, not only the working copy. A step that read code in one root and
@@ -2188,7 +2411,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     // these working folders, or on a run that changed nothing. Otherwise the node's own
     // `whenUndeclared` is recorded instead; a declared failure, or a verdict that leads
     // anywhere else, stands.
-    const endIds = hashRoots ? snapshotIdsOf(afterByRoot) : null;
+    const endIds = observedIds(afterByRoot);
     inspection.finalSnapshotId = combinedSnapshotId(endIds);
     let product: StepProduct = declared.product;
     let staleNote = '';
@@ -2404,6 +2627,8 @@ export function formatLiveInspection(inspection: LiveInspection): string {
     `provider    ${inspection.providerSessionId ?? '(none)'}`,
     `snap before ${inspection.snapshotBefore?.snapshotId ?? '(none)'}  files=${String(inspection.snapshotBefore?.fileCount ?? 0)}`,
     `snap after  ${inspection.snapshotAfter?.snapshotId ?? '(none)'}  files=${String(inspection.snapshotAfter?.fileCount ?? 0)}`,
+    `snap scope  ${inspection.snapshotScope ?? '(none recorded)'}`,
+    `snap limits ${inspection.snapshotIncomplete ?? '(all observed)'}`,
     `changed     ${changed}`,
     `commands    ${commands}`,
     `cost        ${inspection.cost === 'unknown' ? 'unknown (not zero)' : `${String(inspection.cost)} cents`}`,
