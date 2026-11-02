@@ -6,9 +6,9 @@ import { after, before, describe, it } from 'node:test';
 
 import {
   COPILOT_ANALYSIS_POLICY,
+  COPILOT_CALL_CONTROL_FAILED_REASON,
   COPILOT_CHAT_POLICY,
   COPILOT_POST_CONTROL_FAILED_TEXT,
-  COPILOT_PRE_CONTROL_FAILED_TEXT,
   COPILOT_REVIEW_POLICY,
   CopilotSdkAdapter,
   type CopilotToolPolicy,
@@ -211,7 +211,7 @@ describe('Copilot tool hooks through the real runtime', { timeout: 240_000 }, ()
     assert.deepEqual(fixture.invocations().map((run) => run.kind), ['pre']);
   });
 
-  it('a pre hook that errors or is missing stops the call, and the turn says so', async () => {
+  it('a pre hook that errors or is missing stops that call, and the turn goes on', async () => {
     for (const [fixture, what] of [
       [hooks(), 'exit 1'],
       [hooks({ missingPre: true }), 'missing script'],
@@ -221,12 +221,12 @@ describe('Copilot tool hooks through the real runtime', { timeout: 240_000 }, ()
       assert.ok(!result.sent.includes(EXCLUDED_MARKER), what);
       assert.ok(result.events.some((event) => event.type === 'tool.finished' && event.status === 'error'), what);
       // `sh` answers 2 for a script it cannot open, which the runtime reads as a denial.
-      assert.equal(result.status, what === 'exit 1' ? 'error' : 'finished', what);
-      assert.equal(result.error, what === 'exit 1' ? COPILOT_PRE_CONTROL_FAILED_TEXT : undefined, what);
+      assert.equal(result.status, 'finished', what);
+      assert.equal(result.error, undefined, what);
     }
   });
 
-  it('a pre hook that times out stops a read, a write and a command before they run (the runtime alone would let them through)', async () => {
+  it('a pre hook that times out stops a read, a write and a command before they run (the runtime alone would let them through), and only that call', async () => {
     const fixture = hooks({ timeoutSec: 1 });
     fixture.behave({ pre: { sleepMs: 4_000 } });
     const made = path.join(folder, 'made-after-timeout.txt');
@@ -240,8 +240,10 @@ describe('Copilot tool hooks through the real runtime', { timeout: 240_000 }, ()
     ] satisfies ScriptedTurn[]) {
       const result = await turn(COPILOT_CHAT_POLICY, fixture, [call, { text: 'done' }], { log: (line) => lines.push(line) });
       assert.ok(!result.sent.includes(EXCLUDED_MARKER), JSON.stringify(call));
-      assert.equal(result.status, 'error', JSON.stringify(call));
-      assert.equal(result.error, COPILOT_PRE_CONTROL_FAILED_TEXT);
+      assert.equal(result.status, 'finished', JSON.stringify(call));
+      assert.equal(result.error, undefined);
+      assert.ok(result.sent.includes(COPILOT_CALL_CONTROL_FAILED_REASON), JSON.stringify(call));
+      assert.ok(result.events.some((event) => event.type === 'tool.finished' && event.status === 'error'), JSON.stringify(call));
     }
     assert.equal(fs.existsSync(made), false);
     assert.equal(fs.existsSync(ran), false);
@@ -254,7 +256,29 @@ describe('Copilot tool hooks through the real runtime', { timeout: 240_000 }, ()
     const tool: AppTool = { name: 'dspatch_probe', description: 'A probe', parameters: {}, execute: () => Promise.resolve({ text: EXCLUDED_MARKER, isError: false }) };
     const result = await turn(COPILOT_CHAT_POLICY, fixture, [{ tool: 'dspatch_probe', args: {} }, { text: 'done' }], { appTools: [tool] });
     assert.ok(!result.sent.includes(EXCLUDED_MARKER));
-    assert.equal(result.status, 'error');
+    assert.ok(result.sent.includes(COPILOT_CALL_CONTROL_FAILED_REASON));
+    assert.equal(result.status, 'finished');
+  });
+
+  it('after a pre hook times out for one call, the next calls run and their results reach the model', async () => {
+    const fixture = hooks({ timeoutSec: 1 });
+    fixture.behave({ pre: { sleepMs: 4_000, sleepMatching: 'secret' } });
+    const ran = path.join(folder, 'ran-after-refused.txt');
+    const lines: string[] = [];
+    const result = await turn(
+      COPILOT_CHAT_POLICY,
+      fixture,
+      [view('secret/file.txt'), view('allowed.txt'), shell(`node -e "require('fs').writeFileSync('${ran.replace(/\\/g, '/')}','x')"`), { text: 'done' }],
+      { log: (line) => lines.push(line) },
+    );
+    assert.equal(result.status, 'finished');
+    assert.equal(result.error, undefined);
+    assert.ok(!result.sent.includes(EXCLUDED_MARKER));
+    assert.ok(result.sent.includes(COPILOT_CALL_CONTROL_FAILED_REASON));
+    assert.ok(result.sent.includes('allowed content'));
+    assert.equal(fs.existsSync(ran), true, 'a call after the refused one did not run');
+    assert.ok(lines.some((line) => line.includes('1 call is refused and the turn goes on')), lines.join('\n'));
+    fs.rmSync(ran, { force: true });
   });
 
   it('known gap: a pre hook that exits 0 with unreadable output counts as allowing, and DSpatch cannot tell', async () => {

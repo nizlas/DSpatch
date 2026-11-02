@@ -55,6 +55,7 @@ export interface CopilotEvent {
 
 export interface CopilotPermissionRequest {
   readonly kind: string;
+  readonly toolCallId?: string;
   readonly path?: string;
   readonly fileName?: string;
   readonly managedApprovalRequired?: boolean;
@@ -69,7 +70,7 @@ export interface CopilotPreToolInput {
 
 export interface CopilotSessionHooks {
   onPreToolUse(input: CopilotPreToolInput): { readonly permissionDecision: 'deny'; readonly permissionDecisionReason: string } | undefined;
-  onPostToolUse(): { readonly modifiedResult: { readonly textResultForLlm: string; readonly resultType: 'failure' } } | undefined;
+  onPostToolUse(input: CopilotPreToolInput): { readonly modifiedResult: { readonly textResultForLlm: string; readonly resultType: 'failure' } } | undefined;
 }
 
 /** The session configuration DSpatch passes, a subset of the SDK's `SessionConfig`. */
@@ -230,7 +231,17 @@ export const COPILOT_POLICY_DENY_REASON = 'DSpatch does not allow this for this 
 /** To the model, for a call stopped because a hook could not answer. */
 export const COPILOT_CONTROL_FAILED_REASON = 'A content control on this machine could not answer, so this call was not run and its result is not available.';
 
-/** To the person, when a `preToolUse` hook failed or timed out: nothing of that call ran. */
+/**
+ * To the model, for the one call whose `preToolUse` hook failed or timed out. Only that call is
+ * refused; the turn goes on, so the model is told it may try a smaller call.
+ */
+export const COPILOT_CALL_CONTROL_FAILED_REASON =
+  'A content control on this machine could not answer for this call (it failed or timed out), so this call was not run and its result is not available. Other calls are not affected; a shorter command or a smaller request may pass.';
+
+/**
+ * To the person, when a `preToolUse` hook failed or timed out and DSpatch could not tell which
+ * call it was for: then nothing more of the turn runs.
+ */
 export const COPILOT_PRE_CONTROL_FAILED_TEXT =
   'A content control on this machine could not answer, so the tool call was not run and this turn was stopped. Check the hook script, then try again. The host log names it.';
 
@@ -510,8 +521,16 @@ interface ActiveRun {
   cancelRequested: boolean;
   /** Set when the runtime aborted; `session.idle` is then the end of the run. */
   error: AdapterError | null;
-  /** A `preToolUse` or `postToolUse` hook failed: nothing more of this turn runs or is returned. */
+  /** A `postToolUse` hook failed, or a `preToolUse` one for no known call: nothing more of this turn runs or is returned. */
   controlFailed: boolean;
+  /** The tool calls each running `preToolUse` hook invocation answers for, by invocation id. */
+  readonly preHookCalls: Map<string, readonly { readonly id: string; readonly key: string }[]>;
+  /**
+   * Calls whose `preToolUse` hook failed or timed out, by tool call id, with their name and
+   * arguments as a key: the runtime would run them, so DSpatch refuses each at its permission
+   * request and replaces its result. Only these calls; the turn goes on.
+   */
+  readonly refusedCalls: Map<string, string>;
   readonly calls: Map<string, { readonly name: string; readonly raw: string; readonly startedAt: Timestamp; readonly command: string | null; readonly commandId: string | null }>;
   graceTimer: NodeJS.Timeout | null;
 }
@@ -755,7 +774,7 @@ export class CopilotSdkAdapter implements AgentAdapter {
       availableTools: [...builtIn.map((tool) => `builtin:${tool}`), ...appTools.map((tool) => `custom:${tool.name}`)],
       ...(tools.length > 0 ? { tools } : {}),
       onPermissionRequest: (request) => this.permission(state, request),
-      hooks: { onPreToolUse: (input) => this.preToolUse(state, input), onPostToolUse: () => this.postToolUse(state) },
+      hooks: { onPreToolUse: (input) => this.preToolUse(state, input), onPostToolUse: (input) => this.postToolUse(state, input) },
       onEvent: (event) => {
         this.onProviderEvent(state, event);
       },
@@ -781,6 +800,11 @@ export class CopilotSdkAdapter implements AgentAdapter {
   private permission(state: CopilotSessionState, request: CopilotPermissionRequest): CopilotPermissionResult {
     if (state.run?.controlFailed === true) {
       return { kind: 'reject', feedback: COPILOT_CONTROL_FAILED_REASON };
+    }
+    const refused = state.run?.refusedCalls;
+    // A request that names no call is refused while any refused call is open: it may be that one.
+    if (refused !== undefined && (request.toolCallId === undefined ? refused.size > 0 : refused.has(request.toolCallId))) {
+      return { kind: 'reject', feedback: COPILOT_CALL_CONTROL_FAILED_REASON };
     }
     if (state.run?.cancelRequested === true) {
       return { kind: 'reject', feedback: 'The person stopped this turn.' };
@@ -814,8 +838,35 @@ export class CopilotSdkAdapter implements AgentAdapter {
   }
 
   /** Holds back the result of a call that asks no permission, such as DSpatch's own tools. */
-  private postToolUse(state: CopilotSessionState): { modifiedResult: { textResultForLlm: string; resultType: 'failure' } } | undefined {
-    return state.run?.controlFailed === true ? { modifiedResult: { textResultForLlm: COPILOT_CONTROL_FAILED_REASON, resultType: 'failure' } } : undefined;
+  private postToolUse(state: CopilotSessionState, input: CopilotPreToolInput): { modifiedResult: { textResultForLlm: string; resultType: 'failure' } } | undefined {
+    if (state.run?.controlFailed === true) {
+      return { modifiedResult: { textResultForLlm: COPILOT_CONTROL_FAILED_REASON, resultType: 'failure' } };
+    }
+    // A call that asks no permission (DSpatch's own tools) ran; its result is not passed on.
+    const key = callKey(input.toolName, input.toolArgs);
+    return [...(state.run?.refusedCalls.values() ?? [])].includes(key)
+      ? { modifiedResult: { textResultForLlm: COPILOT_CALL_CONTROL_FAILED_REASON, resultType: 'failure' } }
+      : undefined;
+  }
+
+  /**
+   * A `preToolUse` hook failed or timed out. The runtime would run the call anyway, so DSpatch
+   * refuses just that call (DSP-163 follow-up); the turn goes on. When the hook's calls are not
+   * known, the whole turn stops as before.
+   */
+  private preControlFailed(state: CopilotSessionState, run: ActiveRun, invocationId: string, error: Record<string, unknown>): void {
+    const calls = run.preHookCalls.get(invocationId) ?? [];
+    run.preHookCalls.delete(invocationId);
+    if (calls.length === 0) {
+      this.controlFailed(state, run, 'preToolUse', error);
+      return;
+    }
+    const message = typeof error['message'] === 'string' ? error['message'] : '';
+    const source = typeof error['source'] === 'string' ? ` from ${error['source']}` : '';
+    for (const call of calls) {
+      run.refusedCalls.set(call.id, call.key);
+    }
+    this.log(`a preToolUse hook${source} ${message.includes('timed out') ? 'timed out' : 'failed'}; ${String(calls.length)} call${calls.length === 1 ? ' is' : 's are'} refused and the turn goes on`);
   }
 
   /**
@@ -953,8 +1004,23 @@ export class CopilotSdkAdapter implements AgentAdapter {
           this.emit(state, { ...base, type: 'assistant.message', text: data['content'] });
         }
         return;
+      case 'hook.start':
+        if (data['hookType'] === 'preToolUse' && typeof data['hookInvocationId'] === 'string') {
+          const listed = record(data['input'])['toolCalls'];
+          const calls = (Array.isArray(listed) ? listed : []).map(record).filter((call) => typeof call['id'] === 'string' && typeof call['name'] === 'string');
+          run.preHookCalls.set(
+            data['hookInvocationId'],
+            calls.map((call) => ({ id: call['id'] as string, key: callKey(call['name'] as string, call['args']) })),
+          );
+        }
+        return;
       case 'hook.end':
-        if (data['success'] === false && (data['hookType'] === 'preToolUse' || data['hookType'] === 'postToolUse')) {
+        if (data['hookType'] === 'preToolUse' && typeof data['hookInvocationId'] === 'string' && data['success'] !== false) {
+          run.preHookCalls.delete(data['hookInvocationId']);
+        }
+        if (data['success'] === false && data['hookType'] === 'preToolUse') {
+          this.preControlFailed(state, run, typeof data['hookInvocationId'] === 'string' ? data['hookInvocationId'] : '', record(data['error']));
+        } else if (data['success'] === false && data['hookType'] === 'postToolUse') {
           this.controlFailed(state, run, data['hookType'], record(data['error']));
         }
         return;
@@ -977,6 +1043,7 @@ export class CopilotSdkAdapter implements AgentAdapter {
         const toolCallId = typeof data['toolCallId'] === 'string' ? data['toolCallId'] : '';
         const call = run.calls.get(toolCallId);
         run.calls.delete(toolCallId);
+        run.refusedCalls.delete(toolCallId);
         const name = call?.name ?? 'unknown';
         if (record(data['error'])['code'] === 'denied') {
           this.log(`a ${call?.raw ?? 'tool'} call was refused`);
@@ -1210,7 +1277,7 @@ export class CopilotSdkAdapter implements AgentAdapter {
       throw new CopilotAdapterError('The session has no connection to Copilot.', 'no-session');
     }
     const dspatchRunId = randomUUID();
-    state.run = { dspatchRunId, cancelRequested: false, error: null, controlFailed: false, calls: new Map(), graceTimer: null };
+    state.run = { dspatchRunId, cancelRequested: false, error: null, controlFailed: false, preHookCalls: new Map(), refusedCalls: new Map(), calls: new Map(), graceTimer: null };
     this.emit(state, { type: 'run.started', dspatchSessionId: sessionId, dspatchRunId, at: this.now(), rawProviderEvent: null });
     this.watchRuntime();
     try {
@@ -1374,4 +1441,23 @@ export function copilotRuntimeInstalled(
   } catch {
     return false;
   }
+}
+
+/** A tool call's name and arguments as one comparable string, keys in a stable order. */
+function callKey(toolName: string, args: unknown): string {
+  let value = args;
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value) as unknown;
+    } catch {
+      // Arguments that are not JSON compare as the text they are.
+    }
+  }
+  const stable = (one: unknown): unknown =>
+    Array.isArray(one)
+      ? one.map(stable)
+      : one !== null && typeof one === 'object'
+        ? Object.fromEntries(Object.keys(one).sort().map((key) => [key, stable((one as Record<string, unknown>)[key])]))
+        : one;
+  return `${toolName}\u0000${JSON.stringify(stable(value ?? null))}`;
 }
