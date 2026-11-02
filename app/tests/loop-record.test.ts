@@ -141,6 +141,40 @@ function recordText(
 }
 
 describe('a run kept on disk', () => {
+  it('restores report delivery separately from verification without interpreting the terminal name', () => {
+    const walk: RunWalkEnding = {
+      terminalNodeId: 'done', terminalEnding: 'report-delivered', movedPaths: ['report.md'], movedPathsNotListed: 0,
+    };
+    const outcome = runOutcomeFrom({ commands: [], status: 'completed', cancelled: false, recordComplete: true, walk });
+    assert.equal(outcome, 'verification-not-performed');
+    const outcomeText = describeRunOutcome(outcome, { commands: [], walk });
+    const text = recordText({ ending: ending({ terminalEnding: 'report-delivered', outcome, outcomeText, commands: [] }) });
+    assert.equal(parseRunRecord(text).ending?.terminalEnding, 'report-delivered');
+    const turn = loopTurnsFromRecordText(text)[0];
+    assert.ok(turn);
+    assert.equal(loopTurnBadgeText(turn), 'report delivered');
+    assert.equal(turn.ending?.shortText, 'Report delivered. This does not establish that the code was verified.');
+    assert.match(turn.ending?.text ?? '', /report was delivered/);
+    assert.doesNotMatch(turn.ending?.text ?? '', /assignment was met/);
+  });
+
+  it('keeps command failure visible beside a delivered report', () => {
+    const turn = loopTurnsFromRecordText(recordText({
+      ending: ending({ terminalEnding: 'report-delivered', outcome: 'tests-failed' }),
+    }))[0];
+    assert.ok(turn);
+    assert.equal(loopTurnBadgeText(turn), 'report delivered; a started command failed');
+  });
+
+  it('does not present a cancelled report run as report delivered', () => {
+    const turn = loopTurnsFromRecordText(recordText({
+      ending: ending({ terminalEnding: 'report-delivered', kind: 'cancelled', cancelled: true, outcome: 'unresolved' }),
+    }))[0];
+    assert.ok(turn);
+    assert.equal(turn.ending?.terminalEnding, undefined);
+    assert.doesNotMatch(loopTurnBadgeText(turn), /report delivered/);
+  });
+
   it('reads back with the run, the project, the conversation and the exact graph version', () => {
     const parsed = parseRunRecord(recordText());
     assert.equal(parsed.completeness, 'complete', 'a record written to the end reads back whole');

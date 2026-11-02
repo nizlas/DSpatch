@@ -48,6 +48,7 @@
 import { describeMovedPaths } from './loop-chat';
 import type { CommandProvenance } from './loop-command';
 import type { InstructionAnchor, LoopInstructionDelivery } from './loop-instruction';
+import type { TerminalEnding } from './loop-graph';
 import type { RunJournalEntry, RunStatus } from './loop-run';
 
 export const LOOP_RUN_RECORD_VERSION = 1;
@@ -289,6 +290,7 @@ export interface RecordedRunEnding {
   /** The runner's status word, or `null` when there was no result to read. */
   readonly status: RunStatus | null;
   readonly terminalNodeId: string | null;
+  readonly terminalEnding?: TerminalEnding;
   readonly outcome: RunOutcomeKind;
   /** The sentence that goes with `outcome`, written once and read everywhere. */
   readonly outcomeText: string;
@@ -697,6 +699,7 @@ export const NOT_MET_TERMINAL = 'not-met';
 export interface RunWalkEnding {
   /** The terminal the walk reached, or `null` when it reached none. */
   readonly terminalNodeId: string | null;
+  readonly terminalEnding?: TerminalEnding;
   /** Paths DSpatch measured as changed, added or removed. Already bounded. */
   readonly movedPaths: readonly string[];
   /** How many further paths there were beyond `movedPaths`. Never silently dropped. */
@@ -921,6 +924,9 @@ function describeGateOutcome(
     case 'verification-not-performed': {
       const why = attempted?.notRun?.message.trim() ?? '';
       const noCommand = why === '' ? ownCommand : why;
+      if (input.walk?.terminalEnding === 'report-delivered') {
+        return `The report was delivered. Delivery does not establish that the code was verified. ${noCommand}${andMoved}`;
+      }
       switch (input.walk?.terminalNodeId) {
         case 'done':
           return (
@@ -1033,7 +1039,11 @@ function describeGateOutcome(
 export function briefRunOutcome(
   outcome: RunOutcomeKind,
   terminalNodeId: string | null,
+  terminalEnding?: TerminalEnding,
 ): string | null {
+  if (terminalEnding === 'report-delivered' && outcome === 'verification-not-performed') {
+    return 'Report delivered. This does not establish that the code was verified.';
+  }
   switch (outcome) {
     case 'work-verified':
       return 'A command DSpatch started ran and exited 0.';

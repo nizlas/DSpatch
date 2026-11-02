@@ -543,7 +543,13 @@ describe('a terminal that declares success', () => {
     );
   });
 
-  it('is refused by the loader when it is not one of the two values', () => {
+  it('accepts explicit report delivery without declaring success', () => {
+    const parsed = parseLoopGraph(TWO_TERMINALS.replace('"not-success"', '"report-delivered"'));
+    assert.equal(parsed.ok, true);
+    assert.equal(terminalDeclaresSuccess({ id: 'report', kind: 'terminal', ending: 'report-delivered' }), false);
+  });
+
+  it('is refused by the loader when it is not a declared ending value', () => {
     const parsed = parseLoopGraph(TWO_TERMINALS.replace('"not-success"', '"maybe"'));
     assert.equal(parsed.ok, false);
     assert.ok(!parsed.ok);

@@ -16,6 +16,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -71,6 +72,7 @@ function buggyProject(name: string): string {
   const project = path.join(tempRoot(`loop-agent-${name}`), 'sum-project');
   fs.mkdirSync(path.join(project, 'src'), { recursive: true });
   fs.mkdirSync(path.join(project, 'test'), { recursive: true });
+  execFileSync('git', ['init', '--quiet', project]);
   fs.writeFileSync(
     path.join(project, 'package.json'),
     JSON.stringify({ name: 'sum-project', version: '1.0.0', private: true, scripts: { test: 'node --test' } }, null, 2),
@@ -117,14 +119,14 @@ async function walk(
   name: string,
   workspace: string,
   factory: LoopRunAgentRequest['adapters'],
-  options: { readonly provider?: 'claude' | 'cursor'; readonly abort?: AbortController } = {},
+  options: { readonly provider?: 'claude' | 'cursor'; readonly abort?: AbortController; readonly graph?: LoopGraph } = {},
 ) {
   const prepared = prepareLoopRun(request(factory, options.provider));
   assert.equal(prepared.ok, true, prepared.ok ? '' : prepared.reason);
   if (!prepared.ok) {
     throw new Error('unreachable');
   }
-  return runLiveGraph(chatLoop(), {
+  return runLiveGraph(options.graph ?? chatLoop(), {
     runId: `loop-agent-${name}`,
     repoRoot,
     outDir: null,
@@ -159,6 +161,56 @@ function outcomeOf(delivery: Awaited<ReturnType<typeof walk>>) {
 }
 
 describe('the chat loop with Claude running its own tests through DSpatch', () => {
+  for (const ending of ['report-delivered', 'success'] as const) {
+    it(`a report written after the last command can reach ${ending} only under its declared contract`, async () => {
+      const workspace = buggyProject(`report-after-command-${ending}`);
+      const graph = chatLoop();
+      const configured: LoopGraph = {
+        ...graph,
+        nodes: graph.nodes.map((node) => node.id === 'done'
+          ? { ...node, ending }
+          : node.id === 'check'
+            ? { ...node, produces: { required: true, form: 'stored-result' } }
+            : node),
+      };
+      const { factory } = claude([
+        { kind: 'script', steps: [fix(workspace), runTests], text: 'Fixed and checked.\n\nRESULT: succeeded' },
+        {
+          kind: 'script',
+          steps: [runTests, { act: () => fs.writeFileSync(path.join(workspace, 'report.md'), 'Final report.\n') }],
+          text: 'Report delivered.\n\nRESULT: met',
+        },
+      ]);
+      const delivery = await walk(`report-after-command-${ending}`, workspace, factory, { graph: configured });
+      assert.equal(delivery.result.status, 'completed', formatRunJournal(delivery.result));
+      assert.equal(delivery.result.terminalNodeId, ending === 'report-delivered' ? 'done' : 'not-established');
+      assert.equal(delivery.result.terminalEnding, ending === 'report-delivered' ? 'report-delivered' : 'not-success');
+      assert.equal(recordedCommandsAtEnd(delivery.inspection).at(-1)?.currentAtEnd, false);
+      assert.notEqual(outcomeOf(delivery).outcome, 'work-verified');
+      assert.equal(fs.readFileSync(path.join(workspace, 'report.md'), 'utf8'), 'Final report.\n');
+    });
+  }
+
+  it('does not deliver an empty required report', async () => {
+    const workspace = buggyProject('empty-final-report');
+    const graph = chatLoop();
+    const configured: LoopGraph = {
+      ...graph,
+      nodes: graph.nodes.map((node) => node.id === 'done'
+        ? { ...node, ending: 'report-delivered' }
+        : node.id === 'check'
+          ? { ...node, produces: { required: true, form: 'stored-result' } }
+          : node),
+    };
+    const { factory } = claude([
+      { kind: 'script', steps: [fix(workspace), runTests], text: 'Fixed.\n\nRESULT: succeeded' },
+      { kind: 'answer', text: '' },
+    ]);
+    const delivery = await walk('empty-final-report', workspace, factory, { graph: configured });
+    assert.notEqual(delivery.result.terminalNodeId, 'done');
+    assert.notEqual(delivery.result.terminalEnding, 'report-delivered');
+  });
+
   it('(a) work fails, fixes and passes in one step; check runs the tests itself and the run ends done, not tests-failed', async () => {
     const workspace = buggyProject('a');
     const { sdk, factory, built } = claude([
@@ -537,6 +589,7 @@ describe('the approval rule compares every working folder (review B3)', () => {
   async function twoFolders(name: string, writeSecondBeforeCommand: boolean) {
     const first = buggyProject(`${name}-a`);
     const second = tempRoot(`loop-agent-${name}-b`);
+    execFileSync('git', ['init', '--quiet', second]);
     fs.writeFileSync(path.join(second, 'notes.md'), 'before\n', 'utf8');
     const touchSecond = (): void => {
       fs.writeFileSync(path.join(second, 'notes.md'), 'after\n', 'utf8');

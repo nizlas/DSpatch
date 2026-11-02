@@ -656,9 +656,9 @@ describe('reaching Delivered is a claim about the walk and not about the work', 
     assert.deepEqual(result.edgesTaken, ['e01', 'e02', 'e09', 'e11', 'e14']);
     assert.equal(result.terminalNodeId, 'delivered');
 
-    // The drawing does declare this ending a success, so the graph view ticks it.
     const delivered = graph.nodes.find((node) => node.id === 'delivered');
-    assert.equal(terminalDeclaresSuccess(delivered), true);
+    assert.equal(delivered?.ending, 'report-delivered');
+    assert.equal(terminalDeclaresSuccess(delivered), false);
 
     // And the step now has a way to say it was in trouble that the graph can route:
     // DSP-97's own tests below walk it. It still declares no failure, which is why part 1
@@ -843,7 +843,7 @@ describe('a step that must name its result does not pass by not naming one', () 
     assert.match(stopped?.purpose ?? '', /not a verdict on the work/);
     assert.match(
       graph.nodes.find((node) => node.id === 'delivered')?.purpose ?? '',
-      /^The assignment was carried out, verified, reviewed and reported/,
+      /^The final report was delivered\./,
     );
   });
 
@@ -1036,18 +1036,14 @@ describe('a run that could not report on accepted work says that and nothing mor
     assert.match(purpose, /stated separately from this ending/);
   });
 
-  /**
-   * The bounds, asserted rather than trusted. Delivered keeps its label, its ending and
-   * its sentence, and no other terminal was touched.
-   */
-  it('leaves Delivered and the other endings exactly as they were', () => {
+  it('keeps report delivery distinct from verification and preserves the other endings', () => {
     const graph = loadRunnable();
     const delivered = graph.nodes.find((node) => node.id === 'delivered');
     assert.equal(delivered?.label, 'Delivered');
-    assert.equal(delivered?.ending, 'success');
+    assert.equal(delivered?.ending, 'report-delivered');
     assert.match(
       delivered?.purpose ?? '',
-      /^The assignment was carried out, verified, reviewed and reported/,
+      /^The final report was delivered\./,
     );
     const stopped = graph.nodes.find((node) => node.id === 'stopped');
     assert.equal(stopped?.label, 'Stopped without a result');

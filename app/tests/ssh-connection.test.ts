@@ -13,7 +13,7 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { releaseUrl, findHostPackage, readHostManifest, type HostManifest } from '../src/main/host-packages.ts';
-import { sshProblem, validTarget } from '../src/main/ssh-connection.ts';
+import { installedHostToStart, SshConnection, sshProblem, validTarget } from '../src/main/ssh-connection.ts';
 import { credentials, handover, install, packagePlatform, probe, readLines, receive, start } from '../src/shared/host-bootstrap.ts';
 
 describe('a machine to connect to', () => {
@@ -31,6 +31,96 @@ describe('a machine to connect to', () => {
     assert.deepEqual(packagePlatform('Windows AMD64'), { os: 'windows', platform: 'win32', arch: 'x64' });
     assert.equal(packagePlatform('Linux aarch64'), null);
     assert.equal(packagePlatform('Darwin arm64'), null);
+  });
+});
+
+describe('an installed host to start', () => {
+  const build = { appVersion: '1.0', commit: 'client', protocol: 1, contract: 'same' };
+  const installation = (commit: string, extra: Record<string, unknown> = {}) => ({
+    ...build, commit, hostId: `1.0-${commit}`, ...extra,
+  });
+  const factsFor = (...installed: ReturnType<typeof installation>[]) => new Map([
+    ['version', installed.map((host) => host.hostId)],
+    ['installed', installed.map((host) => JSON.stringify(host))],
+  ]);
+
+  it('prefers the exact build to another compatible installation', () => {
+    assert.equal(installedHostToStart(build, factsFor(installation('other'), installation('client'))), '1.0-client');
+  });
+
+  it('selects a compatible installed build without needing a client package manifest', () => {
+    assert.equal(installedHostToStart(build, factsFor(installation('other'))), '1.0-other');
+  });
+
+  it('rejects different protocols, contracts, unsafe paths and missing installation folders', () => {
+    for (const extra of [{ protocol: 2 }, { contract: 'different' }, { hostId: '../other' }, { hostId: '1.0-wrong' }]) {
+      assert.equal(installedHostToStart(build, factsFor(installation('other', extra))), null);
+    }
+    const facts = factsFor(installation('other'));
+    facts.set('version', []);
+    assert.equal(installedHostToStart(build, facts), null);
+    facts.set('installed', ['not-json', 'null']);
+    assert.equal(installedHostToStart(build, facts), null);
+  });
+
+  it('does not fall back to the stopped build when replacement was explicitly requested', () => {
+    assert.equal(installedHostToStart(build, factsFor(installation('other')), false), null);
+    assert.equal(installedHostToStart(build, factsFor(installation('client')), false), '1.0-client');
+  });
+
+  it('selects deterministically and prefers the same application version', () => {
+    const otherVersion = installation('older', { appVersion: '0.9', hostId: '0.9-older' });
+    assert.equal(installedHostToStart(build, factsFor(otherVersion, installation('z'), installation('a'))), '1.0-a');
+    assert.equal(installedHostToStart(build, factsFor(installation('a'), installation('z'), otherVersion)), '1.0-a');
+    assert.equal(installedHostToStart(build, factsFor(otherVersion)), '0.9-older');
+  });
+
+  it('starts the compatible installation without requesting a package or installation tools', async () => {
+    const facts = factsFor(installation('other'));
+    facts.set('missing', ['tar', 'sha256sum']);
+    const statuses: string[] = [];
+    const connection = new SshConnection({
+      target: 'user@host.example.com', build, log: () => undefined,
+      status: (text) => statuses.push(text), ask: async () => { throw new Error('No question expected'); },
+      packageFor: async () => { throw new Error('No package expected'); },
+      askpassScript: '', nodeRunner: process.execPath,
+    });
+    const internal = connection as unknown as {
+      identify(): Promise<{ os: string; platform: string; arch: string }>;
+      must(step: { stdin?: string }): Promise<ReadonlyMap<string, readonly string[]>>;
+      ensureHost(interactive: boolean): Promise<{ running: { commit: string }; token: string }>;
+    };
+    const steps: string[] = [];
+    internal.identify = async () => ({ os: 'posix', platform: 'linux', arch: 'x64' });
+    internal.must = async (step) => {
+      steps.push(step.stdin ?? '');
+      if (step.stdin === probe('posix').stdin) {
+        return facts;
+      }
+      if (step.stdin === start('posix', '1.0-other').stdin) {
+        return new Map([['started', ['yes']]]);
+      }
+      assert.equal(step.stdin, credentials('posix').stdin);
+      return new Map([
+        ['running', [JSON.stringify({ ...installation('other'), pid: 123, port: 4321 })]],
+        ['token', ['test-only-token']],
+      ]);
+    };
+    try {
+      const answer = await internal.ensureHost(true);
+      assert.equal(answer.running.commit, 'other');
+      assert.equal(answer.token, 'test-only-token');
+      assert.equal(steps.length, 3);
+      assert.ok(statuses.includes('Starting compatible host 1.0-other...'));
+
+      facts.set('installed', [JSON.stringify(installation('other', { protocol: 2 }))]);
+      await assert.rejects(internal.ensureHost(true), /missing tar and sha256sum/);
+      facts.delete('missing');
+      await assert.rejects(internal.ensureHost(true), /No package expected/);
+      assert.equal(steps.length, 5);
+    } finally {
+      connection.close();
+    }
   });
 });
 
@@ -72,6 +162,24 @@ describe('the steps on the machine, run by a real sh', () => {
     const bytes = fs.readFileSync(file);
     return { file: 'p.tar.gz', bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
   }
+
+  it('reports the installed compatibility metadata without starting a host', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-probe-installed-'));
+    const metadata = { hostId: '1.0-other', appVersion: '1.0', commit: 'other', protocol: 1, contract: 'same' };
+    const top = path.join(home, '.local', 'share', 'dspatch', 'host', 'versions', metadata.hostId, 'dspatch-host');
+    try {
+      fs.mkdirSync(top, { recursive: true });
+      fs.writeFileSync(path.join(top, 'manifest.json'), JSON.stringify(metadata, null, 2));
+      const facts = readLines(run(home, probe('posix')));
+      assert.deepEqual(facts.get('version'), [metadata.hostId]);
+      assert.deepEqual(JSON.parse(facts.get('installed')?.[0] ?? '{}'), metadata);
+      assert.equal(installedHostToStart({ ...metadata, commit: 'client' }, facts), metadata.hostId);
+      assert.equal(facts.get('running'), undefined);
+      assert.equal(fs.existsSync(path.join(home, '.config', 'DSpatch', 'host-claim.json')), false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 
   it('installs into a version folder, starts it and reads it back', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-steps-'));

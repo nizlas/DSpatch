@@ -195,6 +195,31 @@ describe('looking is not doing', () => {
 });
 
 describe('the run that has ended', () => {
+  it('distinguishes working from a ready drawing before and after a run', () => {
+    const audience = new LoopRunAudience();
+    const ready: LiveRunAnnouncement = { ...run, runId: 'ready-graph-1111', phase: 'ready' };
+
+    assert.equal(audience.working(), false);
+    assert.equal(audience.prepare(ready), true);
+    assert.equal(audience.working(), false);
+    assert.deepEqual(audience.current(), ready);
+
+    audience.start({ ...run, phase: 'running' });
+    assert.equal(audience.working(), true);
+    assert.equal(audience.prepare(ready), false);
+    audience.standDown();
+    assert.equal(audience.working(), true);
+
+    audience.end({ runId: run.runId, graphVersionId: run.graphVersionId, status: 'cancelled', note: 'stopped' });
+    assert.equal(audience.working(), false);
+    assert.equal(audience.prepare(ready), true);
+    assert.equal(audience.working(), false);
+    assert.equal(audience.currentView()?.run.phase, 'ready');
+
+    audience.start(run);
+    assert.equal(audience.working(), true);
+  });
+
   it('is announced as ended and stops being the current run', () => {
     const audience = new LoopRunAudience();
     const window = fakeWindow();

@@ -36,7 +36,7 @@
  * provider to call, so it *cannot* spend a turn rather than being trusted not to.
  */
 
-import type { LoopEdge, LoopGraph, LoopNode, ResultForm, StepLimits } from './loop-graph';
+import type { LoopEdge, LoopGraph, LoopNode, ResultForm, StepLimits, TerminalEnding } from './loop-graph';
 import { isWorkStep, stepWorkFor, type StepHold, type StepRef } from './loop-control';
 import {
   bodyBytes,
@@ -406,6 +406,7 @@ export interface RunResult {
   /** Edge ids in the order they were taken. This is the answer to "which edge, and why". */
   readonly edgesTaken: readonly string[];
   readonly terminalNodeId: string | null;
+  readonly terminalEnding?: TerminalEnding;
   /** Bounds that were spent during the run, whether or not the run then continued. */
   readonly limitsReached: readonly string[];
   readonly fault: RuntimeFault | null;
@@ -1058,6 +1059,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     detail: string,
     parts: {
       readonly terminalNodeId?: string | null;
+      readonly terminalEnding?: TerminalEnding;
       readonly fault?: RuntimeFault | null;
       readonly awaiting?: { readonly nodeId: string; readonly question: string } | null;
       readonly refusal?: string | null;
@@ -1084,6 +1086,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       path,
       edgesTaken,
       terminalNodeId: parts.terminalNodeId ?? null,
+      ...(parts.terminalEnding === undefined ? {} : { terminalEnding: parts.terminalEnding }),
       limitsReached,
       fault: parts.fault ?? null,
       awaiting: parts.awaiting ?? null,
@@ -1217,7 +1220,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         'completed',
         `The run reached terminal "${current.id}" after ${transitions} transitions and ` +
           `${calls} calls.`,
-        { terminalNodeId: current.id },
+        { terminalNodeId: current.id, ...(current.ending === undefined ? {} : { terminalEnding: current.ending }) },
       );
     }
 

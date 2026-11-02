@@ -1,10 +1,14 @@
-# Build the installers and host packages for one commit (DSP-153). Started by hand; it publishes
-# nothing. The artifacts are what a release would carry: both host packages, their manifest, the
-# .deb and the Windows installer, all from the same commit, because the client carries the
-# manifest and accepts only packages that match it.
+# Build installers and host packages from one commit. Manual runs keep artifacts;
+# version tags publish the matching packages and checksums as a GitHub release.
 name: package
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
 
 jobs:
   hosts-and-deb:
@@ -48,3 +52,39 @@ jobs:
         with:
           name: windows
           path: app/release/*.exe
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [hosts-and-deb, windows-installer]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: app/release
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: app/release
+      - name: Validate release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node -e 'const {version} = require("./app/package.json"); if (process.env.RELEASE_TAG !== `v${version}`) throw new Error("Tag and package version differ");'
+      - run: node scripts/stage-release.mjs
+        working-directory: app
+      - name: Publish installers, hosts and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          extra=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then extra+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" app/release/stage-"$RELEASE_TAG"/* \
+            --verify-tag --title "DSpatch $RELEASE_TAG" \
+            --notes-file "docs/releases/$RELEASE_TAG.md" "${extra[@]}"

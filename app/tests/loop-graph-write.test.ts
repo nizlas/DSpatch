@@ -26,6 +26,24 @@ function readGraphFile(): string {
 }
 
 describe('serialiseLoopGraph', () => {
+  it('preserves explicit report delivery across editor saves independently of its label', () => {
+    const parsed = parseLoopGraph(readGraphFile());
+    assert.ok(parsed.ok);
+    const configured = {
+      ...parsed.graph,
+      nodes: parsed.graph.nodes.map((node) => node.id === 'run-complete'
+        ? { ...node, ending: 'report-delivered' as const }
+        : node),
+    };
+    const written = serialiseLoopGraph(configured);
+    const restored = parseLoopGraph(written);
+    assert.ok(restored.ok);
+    const terminal = restored.graph.nodes.find((node) => node.id === 'run-complete');
+    assert.equal(terminal?.ending, 'report-delivered');
+    assert.equal(terminal?.label, 'Run complete');
+    assert.equal(serialiseLoopGraph(restored.graph), written);
+  });
+
   it('writes our own development loop back byte for byte', () => {
     const original = readGraphFile();
     const loaded = loadLoopGraph(original, {

@@ -920,7 +920,7 @@ function removeWorkspaceFolder(folderPath: string): WorkspaceView {
  */
 /** Work under way in this host's open session, as a sentence. */
 function workInSession(): string | null {
-  return chatService.workRunning() ?? (runAudience.current() !== null ? 'A loop run is in progress.' : null);
+  return chatService.workRunning() ?? (runAudience.working() ? 'A loop run is in progress.' : null);
 }
 
 /**
@@ -3686,6 +3686,7 @@ function closeChatLoopRecord(
   });
   const terminalNodeId =
     input.result?.status === 'completed' ? (input.result.terminalNodeId ?? null) : null;
+  const terminalEnding = terminalNodeId === null ? undefined : input.result?.terminalEnding;
   /**
    * What the walk ended at, for the sentence beside the badge.
    *
@@ -3705,6 +3706,7 @@ function closeChatLoopRecord(
   ]);
   const walk: RunWalkEnding = {
     terminalNodeId,
+    ...(terminalEnding === undefined ? {} : { terminalEnding }),
     movedPaths: moved.named,
     movedPathsNotListed: moved.notListed,
   };
@@ -3713,6 +3715,7 @@ function closeChatLoopRecord(
     kind: input.kind,
     status: input.result?.status ?? null,
     terminalNodeId,
+    ...(terminalEnding === undefined ? {} : { terminalEnding }),
     outcome,
     outcomeText: describeRunOutcome(outcome, { commands, walk }),
     modelRequested: input.modelRequested,
@@ -4268,7 +4271,7 @@ function registerCoreMethods(): void {
     'host.busy',
     (): string | null =>
       chatService.workRunning() ??
-      (runAudience.current() !== null ? 'A loop run is in progress.' : reviewAgentJobs?.working() === true ? 'A review job is running.' : null),
+      (runAudience.working() ? 'A loop run is in progress.' : reviewAgentJobs?.working() === true ? 'A review job is running.' : null),
   );
   handle('host.dataNotice', (): string | null => adoptionNotice(userDataDir()));
   handle('chat.runTest', (_event, request: TestRunRequest) => chatService.runWorkspaceTest(request));

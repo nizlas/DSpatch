@@ -84,6 +84,35 @@ async function closeHost(started: Started, observeConversationFiles = false): Pr
 }
 
 describe('the project host process', () => {
+  it('allows host handover with a ready loop drawing and no running work', async () => {
+    const scratch = path.resolve(appRoot, '..', 'tmp');
+    fs.mkdirSync(scratch, { recursive: true });
+    const userDataDir = fs.mkdtempSync(path.join(scratch, 'host-ready-handover-'));
+    let host: Started | null = null;
+    try {
+      host = await startHost({
+        userDataDir,
+        appVersion: '0.0.0-test',
+        appPath: appRoot,
+        clientPid: process.pid,
+      });
+      assert.equal(await host.connection.call('host.busy', NO_SENDER), null);
+      const prepared = await host.connection.call<{ kind: string; run?: { phase: string } }>(
+        'loop.prepareChatLoop', NO_SENDER, true, null,
+      );
+      assert.equal(prepared.kind, 'shown', JSON.stringify(prepared));
+      assert.equal(prepared.run?.phase, 'ready');
+      assert.equal(await host.connection.call('host.busy', NO_SENDER), null);
+      await host.connection.call('loop.prepareChatLoop', NO_SENDER, false, null);
+      assert.equal(await host.connection.call('host.busy', NO_SENDER), null);
+    } finally {
+      if (host !== null) {
+        await closeHost(host);
+      }
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  });
+
   it('serves the product methods from its own process, with their own words, and keeps data where it is told', async () => {
     const config = freshConfig();
     const host = await startHost(config);

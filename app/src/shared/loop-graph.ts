@@ -490,7 +490,8 @@ export const RESULT_FORMS = ['markdown-file', 'stored-result', 'none'] as const;
  * not: success is decided from what the graph **records**, never from what a node is
  * called.
  *
- * **Two values, not four.** `not-success` covers *Assignment not met*, *Could not
+ * `report-delivered` records delivery without declaring the assignment met or the
+ * code verified. `not-success` covers *Assignment not met*, *Could not
  * establish* and *Stopped without doing the work* alike, and it is deliberately not
  * called `failure`: whether the project is broken, whether the work was refused and
  * whether nothing could be decided are three different things, they are already told
@@ -507,8 +508,8 @@ export const RESULT_FORMS = ['markdown-file', 'stored-result', 'none'] as const;
  * (DSP-26 #3, enforced in `runOutcomeFrom`). This says only *the walk ended where this
  * loop says a met assignment ends*.
  */
-export type TerminalEnding = 'success' | 'not-success';
-export const TERMINAL_ENDINGS = ['success', 'not-success'] as const;
+export type TerminalEnding = 'success' | 'not-success' | 'report-delivered';
+export const TERMINAL_ENDINGS = ['success', 'not-success', 'report-delivered'] as const;
 
 /**
  * Whether this node is a terminal its own graph declares as success.

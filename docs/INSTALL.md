@@ -26,6 +26,8 @@ One host works on that context at a time, so the handover is always clear:
 
 Only the client attached at that moment works on the host. Another client that connects replaces it, and the replaced one says so. Reopening a saved conversation is not the same as attaching to running work: reopening reads what is saved, and nothing is ever resent.
 
+**An installed host that is not running.** Connect starts an installed host with the same protocol and contract as the client. An exact build match takes precedence; otherwise a compatible installation of the same application version is preferred, with a stable host-id ordering between remaining candidates. Its build is shown while starting. This path needs no host-package manifest on the client and no package download. With no compatible installation, the client installs its own package as described below. An explicit choice to replace a running host uses the client's build, not a fallback to the host just stopped. A desktop application still has to hand over safely before any host starts.
+
 **After an upgrade.** A host from an earlier version kept its data in `~/.local/share/dspatch-host` (Windows: `%LOCALAPPDATA%\dspatch-host`). The first host that starts on that computer brings that data in, after backing up both sides under `backups/` in the data folder. Nothing is overwritten and the old folder stays as it was. If a record exists in both places with different content, both are kept and you are told: a conversation then appears twice, the second one ending in `from-older-host`. If an earlier version saved a manual tunnel that no longer answers, DSpatch says so at the start and offers **Connect over SSH**; nothing is lost.
 
 If an alias is refused, the message shows the user, host and port that ssh actually resolved. `ssh -G <alias>` shows the same in a terminal.
@@ -71,6 +73,8 @@ npm run package:client -- --linux deb --x64
 The host packages come first, because the client carries their manifest. Everything lands in `app/release/`. Build from a clean commit: the manifest binds packages to it. A Windows installer needs Windows or Wine, and Windows dependencies: on Linux, build it from a copy of `app/` after `npm ci --os=win32 --cpu=x64 --ignore-scripts`, or it carries the Linux Copilot runtime; `.github/workflows/package.yml` builds everything from one commit by hand and publishes nothing.
 
 **A release.** Commit the version, build everything from that commit, run `node scripts/stage-release.mjs`, which gathers the files and `SHA256SUMS` into `release/stage-v<version>` and refuses anything else, and try it with `node scripts/trial-package/release.mjs --stage`. Publish that folder under the tag `v<version>`, with `--prerelease` for a test build. The client asks for exactly its own tag, never `latest`. Then `release.mjs --published` tries the real release.
+
+**Building on GitHub.** The `package` workflow keeps artifacts when started manually. Pushing a `v*` tag builds the Linux and Windows host packages, the `.deb` and the Windows installer from the tagged commit, checks the package version against the tag, stages matching artifacts with `SHA256SUMS`, and publishes them with `docs/releases/<tag>.md` as release notes. Tags containing a hyphen are published as prereleases. Only the publication job receives write permission. Build success does not replace the packaged or manual trials above; release notes state outstanding verification.
 
 **Before a release exists,** put the host package in the client's data, which needs no rebuild:
 

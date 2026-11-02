@@ -51,6 +51,7 @@ import {
   type RunOutcomeKind,
 } from './loop-record';
 import type { RunJournalEntry, RunResult, RunStatus } from './loop-run';
+import type { TerminalEnding } from './loop-graph';
 
 /** One agent node's own words during a loop run. */
 export interface LoopAgentReply {
@@ -152,6 +153,7 @@ export interface LoopEnding {
    * word says nothing about which.
    */
   readonly terminalNodeId: string | null;
+  readonly terminalEnding?: TerminalEnding;
   /**
    * That terminal's label from the drawing, or `null` when there is none to read.
    *
@@ -598,6 +600,9 @@ export function describeLoopEnding(
       return {
         kind: endingKindOf(outcome.result.status),
         terminalNodeId,
+        ...(terminalNodeId === null || lead !== '' || outcome.result.terminalEnding === undefined
+          ? {}
+          : { terminalEnding: outcome.result.terminalEnding }),
         terminalLabel: terminalNameFor(terminalNodeId, outcome.result.journal),
         outcome: recordedOutcome,
         // Only a run that ended of its own accord gets a short line. `lead` is
@@ -606,7 +611,7 @@ export function describeLoopEnding(
         // view rather than being summarised away.
         shortText:
           lead === '' && recordedOutcome !== null
-            ? briefRunOutcome(recordedOutcome, terminalNodeId)
+            ? briefRunOutcome(recordedOutcome, terminalNodeId, outcome.result.terminalEnding)
             : null,
         actionNote: recordFault(outcome),
         text: withRecordedOutcome(
@@ -1093,8 +1098,12 @@ export function loopTurnBadgeText(turn: LoopTurn): string {
   // still reads `stopped short` and a run DSpatch started no command in is named by
   // the ending it actually reached rather than by what DSpatch did not do.
   const said = ending.outcome === null ? null : RUN_OUTCOME_BADGE_TEXT[ending.outcome];
+  const reportDelivered = ending.terminalEnding === 'report-delivered' && ending.terminalNodeId !== null && ending.outcome !== 'unresolved';
   if (said !== null) {
-    return said;
+    return reportDelivered ? `report delivered; ${said}` : said;
+  }
+  if (reportDelivered) {
+    return 'report delivered';
   }
   if (ending.terminalNodeId === null) {
     return LOOP_ENDING_BADGE_TEXT[ending.kind];
@@ -1509,6 +1518,7 @@ function endingFromRecord(record: ParsedRunRecord, readError: string | null): Lo
   return {
     kind: endingKindFromRecordedStatus(ending.kind, ending.status),
     terminalNodeId: ending.terminalNodeId,
+    ...(ending.cancelled || ending.terminalEnding === undefined ? {} : { terminalEnding: ending.terminalEnding }),
     // The record keeps the runner's journal entries as they were written, so the
     // label the badge needs is already on disk for every run ever recorded.
     terminalLabel: terminalNameFor(ending.terminalNodeId, record.journal),
@@ -1523,7 +1533,7 @@ function endingFromRecord(record: ParsedRunRecord, readError: string | null): Lo
     // derived from the outcome the run actually recorded, so an old conclusion is not
     // presented as a current finding.
     shortText:
-      ending.cancelled ? null : briefRunOutcome(ending.outcome, ending.terminalNodeId),
+      ending.cancelled ? null : briefRunOutcome(ending.outcome, ending.terminalNodeId, ending.terminalEnding),
     actionNote: unreadable,
     text: `${ending.outcomeText} ${ending.note}`.trim(),
   };

@@ -95,6 +95,45 @@ export function validTarget(text: string): boolean {
 
 const POSIX_CLIENT = process.platform !== 'win32';
 
+export function installedHostToStart(
+  build: RemoteBuild,
+  facts: ReadonlyMap<string, readonly string[]>,
+  allowCompatible = true,
+): string | null {
+  const compatible: { hostId: string; appVersion: string }[] = [];
+  for (const text of facts.get('installed') ?? []) {
+    try {
+      const installed = JSON.parse(text) as Record<string, unknown>;
+      const hostId = installed['hostId'];
+      const appVersion = installed['appVersion'];
+      const commit = installed['commit'];
+      if (
+        typeof hostId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(hostId) || hostId.includes('..') ||
+        typeof appVersion !== 'string' || typeof commit !== 'string' ||
+        hostId !== `${appVersion}-${commit}` || !(facts.get('version') ?? []).includes(hostId) ||
+        installed['protocol'] !== build.protocol || installed['contract'] !== build.contract
+      ) {
+        continue;
+      }
+      compatible.push({ hostId, appVersion });
+    } catch {
+      continue;
+    }
+  }
+  const exact = `${build.appVersion}-${build.commit}`;
+  if (compatible.some((installed) => installed.hostId === exact)) {
+    return exact;
+  }
+  if (!allowCompatible) {
+    return null;
+  }
+  compatible.sort((left, right) =>
+    Number(right.appVersion === build.appVersion) - Number(left.appVersion === build.appVersion) ||
+    left.hostId.localeCompare(right.hostId),
+  );
+  return compatible[0]?.hostId ?? null;
+}
+
 export class SshConnection {
   private readonly options: SshConnectionOptions;
 
@@ -450,11 +489,7 @@ export class SshConnection {
     const machine = await this.identify();
     this.remoteOs = machine.os;
     const facts = await this.must(probe(machine.os));
-    const missing = facts.get('missing');
-    if (missing !== undefined) {
-      throw new Error(`${this.options.target} is missing ${missing.join(' and ')}, which installing a host needs. Install it there and try again.`);
-    }
-    const hostId = `${this.options.build.appVersion}-${this.options.build.commit}`;
+    let replacing = false;
     let running = this.parseRunning(facts.get('running')?.[0]);
     if (running === null && (facts.get('hostpids')?.[0] ?? '').trim() !== '') {
       throw new Error(`A DSpatch host started by hand is running on ${this.options.target}, without saying where it listens. Stop it there, or use the address and token under Advanced.`);
@@ -471,6 +506,7 @@ export class SshConnection {
           text: `The host on ${this.options.target} is version ${running.appVersion} (${running.commit}); this DSpatch is ${this.options.build.appVersion} (${this.options.build.commit}). Replace it? Work running there would stop, and its outcome would be unknown.${usable ? ' Choosing No keeps using it as it is.' : ' They cannot work together, so choosing No stops here.'}`,
         });
         if (answer === 'yes') {
+          replacing = true;
           this.options.status('Stopping the old host…');
           const stopped = await this.must(stop(machine.os, running.pid));
           if (stopped.get('stopped') === undefined) {
@@ -486,10 +522,19 @@ export class SshConnection {
       await this.askToHandOver(machine.os, interactive);
     }
     if (running === null) {
-      if (!(facts.get('version') ?? []).includes(hostId)) {
+      const installed = installedHostToStart(this.options.build, facts, !replacing);
+      const hostId = installed ?? `${this.options.build.appVersion}-${this.options.build.commit}`;
+      if (installed === null) {
+        const missing = facts.get('missing');
+        if (missing !== undefined) {
+          throw new Error(`${this.options.target} is missing ${missing.join(' and ')}, which installing a host needs. Install it there and try again.`);
+        }
         await this.putInPlace(machine.platform, machine.arch);
       }
-      this.options.status('Starting host…');
+      this.options.status(installed !== null && hostId !== `${this.options.build.appVersion}-${this.options.build.commit}`
+        ? `Starting compatible host ${hostId}...`
+        : 'Starting host…');
+      this.options.log(`starting host ${hostId} on ${this.options.target}`);
       const started = await this.must(start(machine.os, hostId));
       if (started.get('started') === undefined) {
         throw new Error(`The host did not start on ${this.options.target}. ${(started.get('log') ?? []).join(' ')}`.trim());

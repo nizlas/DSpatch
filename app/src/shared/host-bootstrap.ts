@@ -56,7 +56,7 @@ export const IDENTIFY_WINDOWS: RemoteStep = windows(`Write-Output "Windows $env:
 export function probe(os: RemoteOs): RemoteStep {
   if (os === 'windows') {
     return windows(`
-if (Test-Path "$root\\versions") { Get-ChildItem "$root\\versions" -Directory | ForEach-Object { if (Test-Path "$($_.FullName)\\dspatch-host\\manifest.json") { Write-Output "version=$($_.Name)" } } }
+if (Test-Path "$root\\versions") { Get-ChildItem "$root\\versions" -Directory | ForEach-Object { $manifest = "$($_.FullName)\\dspatch-host\\manifest.json"; if (Test-Path $manifest) { Write-Output "version=$($_.Name)"; Write-Output ("installed=" + ((Get-Content $manifest -Raw) -replace '\\s+',' ')) } } }
 foreach ($folder in @($data, $older)) {
   $record = "$folder\\host-running.json"
   if (Test-Path $record) { $r = Get-Content $record -Raw | ConvertFrom-Json; if (Get-Process -Id $r.pid -ErrorAction SilentlyContinue) { Write-Output ("running=" + ((Get-Content $record -Raw) -replace '\\s+',' ')); break } }
@@ -70,7 +70,10 @@ Write-Output "hostpids=$other"
   return posix(`
 if [ -d "$root/versions" ]; then
   for found in "$root"/versions/*/; do
-    [ -f "$found/dspatch-host/manifest.json" ] && echo "version=$(basename "$found")"
+    if [ -f "$found/dspatch-host/manifest.json" ]; then
+      echo "version=$(basename "$found")"
+      echo "installed=$(tr -d '\\n' < "$found/dspatch-host/manifest.json")"
+    fi
   done
 fi
 for folder in "$data" "$older"; do

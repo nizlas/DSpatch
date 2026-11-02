@@ -184,6 +184,10 @@ export class LoopRunAudience {
     return this.active;
   }
 
+  working(): boolean {
+    return this.active !== null && this.active.phase !== 'ready';
+  }
+
   /**
    * What is running now and how far it has got, for a window that has just opened.
    *

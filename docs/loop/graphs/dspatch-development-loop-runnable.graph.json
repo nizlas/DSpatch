@@ -180,8 +180,8 @@
       "id": "delivered",
       "kind": "terminal",
       "label": "Delivered",
-      "purpose": "The assignment was carried out, verified, reviewed and reported — the change, where one was asked for, and the answer, analysis or activity where that was the assignment. Whether the backlog task is done is a person's judgement on the criteria, not this run's.",
-      "ending": "success",
+      "purpose": "The final report was delivered. Verification evidence, review findings and remaining uncertainty are recorded separately; report delivery does not certify the code. Whether the backlog task is done is a person's judgement on the criteria, not this run's.",
+      "ending": "report-delivered",
       "view": { "x": 400, "y": 740 }
     },
     {

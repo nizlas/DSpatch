@@ -49,6 +49,7 @@ import type {
   TargetChangeReport,
 } from '../shared/loop-graph';
 import { checkLoopGraph, loadLoopGraph } from '../shared/loop-graph-load';
+import type { TerminalEnding } from '../shared/loop-graph';
 import type { Finding } from '../shared/loop-graph-load';
 import {
   KIND_HINTS,
@@ -3886,6 +3887,29 @@ function NodeInspector({
             ))}
           </select>
         </label>
+
+        {node.kind !== 'terminal' ? null : (
+          <label>
+            Terminal outcome
+            <select
+              value={node.ending ?? ''}
+              onChange={(event) => {
+                const updated = { ...node };
+                if (event.target.value === '') {
+                  delete updated.ending;
+                } else {
+                  updated.ending = event.target.value as TerminalEnding;
+                }
+                onChange(updated);
+              }}
+            >
+              <option value="">Not declared</option>
+              <option value="success">Assignment met</option>
+              <option value="not-success">Assignment not established</option>
+              <option value="report-delivered">Report delivered</option>
+            </select>
+          </label>
+        )}
 
         {node.role === undefined ? null : (
           <fieldset>
