@@ -33,6 +33,7 @@ jobs:
             app/release/*.deb
             app/release/host/
   windows-installer:
+    if: github.event_name == 'workflow_dispatch'
     needs: hosts-and-deb
     runs-on: windows-latest
     steps:
@@ -55,7 +56,7 @@ jobs:
 
   publish-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [hosts-and-deb, windows-installer]
+    needs: [hosts-and-deb]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -68,15 +69,11 @@ jobs:
         with:
           name: linux
           path: app/release
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows
-          path: app/release
       - name: Validate release version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node -e 'const {version} = require("./app/package.json"); if (process.env.RELEASE_TAG !== `v${version}`) throw new Error("Tag and package version differ");'
-      - run: node scripts/stage-release.mjs
+      - run: node scripts/stage-release.mjs --linux-only
         working-directory: app
       - name: Publish installers, hosts and checksums
         env:

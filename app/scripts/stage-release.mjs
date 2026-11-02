@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const release = path.join(app, 'release');
+const linuxOnly = process.argv.includes('--linux-only');
 const { version } = JSON.parse(fs.readFileSync(path.join(app, 'package.json'), 'utf8'));
 const manifest = JSON.parse(fs.readFileSync(path.join(release, 'host', 'host-manifest.json'), 'utf8'));
 const git = (...args) => execFileSync('git', args, { cwd: app, encoding: 'utf8' }).trim();
@@ -35,7 +36,7 @@ if (git('status', '--porcelain') !== '') {
 }
 const files = [
   [`dspatch_${version}_amd64.deb`, `dspatch_${version}_amd64.deb`],
-  [`DSpatch Setup ${version}.exe`, `DSpatch-Setup-${version}.exe`],
+  ...(linuxOnly ? [] : [[`DSpatch Setup ${version}.exe`, `DSpatch-Setup-${version}.exe`]]),
   ...manifest.packages.map((entry) => [path.join('host', entry.file), entry.file]),
   [path.join('host', 'host-manifest.json'), 'host-manifest.json'],
 ];
