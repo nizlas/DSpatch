@@ -75,14 +75,17 @@ test(`a detached local host preserves ${loose ? 'workspace-less' : 'workspace'} 
   let second: HostConnection | null = null;
   try {
     const boot = `import { ensureLocalHost } from ${JSON.stringify(pathToFileURL(path.join(appPath, 'src/main/local-host.ts')).href)}; process.stdout.write(JSON.stringify(await ensureLocalHost(JSON.parse(process.argv[1]))));`;
-    const launched = await execute(process.execPath, ['--import', path.join(appPath, 'scripts/ts-resolve.mjs'), '--input-type=module', '--eval', boot, JSON.stringify(options)], { timeout: 20_000, env: options.env });
+    const launched = await execute(process.execPath, ['--import', pathToFileURL(path.join(appPath, 'scripts/ts-resolve.mjs')).href, '--input-type=module', '--eval', boot, JSON.stringify(options)], { timeout: 20_000, env: options.env });
     const endpoint = JSON.parse(launched.stdout) as RemoteEndpoint;
     const running = runningLocalHost(options.dataDir);
     assert.ok(running !== null);
     assert.equal(endpoint.host, '127.0.0.1');
     assert.notEqual(running.pid, process.pid);
     assert.equal(heldClaim(options.dataDir)?.kind, 'standalone');
-    assert.equal(fs.statSync(path.join(options.dataDir, 'remote-token')).mode & 0o777, 0o600);
+    // POSIX modes; on Windows the folder's own permissions are what keep the token to its user.
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(path.join(options.dataDir, 'remote-token')).mode & 0o777, 0o600);
+    }
     assert.match((await probeHost({ endpoint: { ...endpoint, token: 'wrong-token' }, build: remoteBuild(appPath), log: () => undefined }, 2_000)) ?? '', /token/);
     const incompatible = { ...remoteBuild(appPath), contract: 'incompatible' };
     assert.notEqual(await probeHost({ endpoint, build: incompatible, log: () => undefined }, 2_000), null);
@@ -234,7 +237,9 @@ test(`a live desktop detects a dead local host ${restart ? 'and rediscovers its 
 });
 }
 
-test('a bundled host archive is verified and installed before its standalone runtime starts', { timeout: 40_000 }, async () => {
+// The archive is built here in the Linux layout (`node/bin/node`, links into this checkout), and
+// only Linux packages carry a bundled host; a Windows package would need its own fixture.
+test('a bundled host archive is verified and installed before its standalone runtime starts', { timeout: 40_000, skip: process.platform === 'win32' ? 'the bundled host is published for Linux only' : false }, async () => {
   const { root, options } = fixture();
   const bundledRoot = path.join(root, 'bundled');
   const top = path.join(root, 'stage', 'dspatch-host');

@@ -37,7 +37,9 @@ if (rendererUrl === undefined) {
   throw new Error('Vite started without providing a local URL to load.');
 }
 
-const electron = spawn(electronExecutable, [appDir], {
+// Arguments after `npm run dev --` go to Electron, so a separate profile is
+// `npm run dev -- --user-data-dir=<folder>`, as with `npm start`.
+const electron = spawn(electronExecutable, [appDir, ...process.argv.slice(2)], {
   stdio: 'inherit',
   env: { ...process.env, DSPATCH_RENDERER_URL: rendererUrl },
 });
