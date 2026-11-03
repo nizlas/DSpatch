@@ -4,7 +4,9 @@ title: Default to the larger loop and remove confusing duplicates
 status: Review
 assignee: []
 created_date: '2026-11-01'
-labels: [loop]
+updated_date: '2026-11-03 21:18'
+labels:
+  - loop
 dependencies: []
 ---
 
@@ -27,4 +29,6 @@ Implemented 1 November 2026; awaits independent verification and review.
 Checks: `npm run test:loop` in `app/` passes apart from 4 failures that also fail on clean HEAD on Linux (two `C:` path fixtures, two role CRLF byte comparisons). Window trial on Xvfb in a networkless container, isolated data dirs, packaged layout built from HEAD plus this change: new installation, upgrade with chat key, upgrade with empty key, external identical, external different, all as above; a preview left an empty key empty.
 
 Not verified: Windows; a real installer from `package:client`; a remote host; the closed `<select>` truncates long names, so `variant` is readable in the open list only. With a shared host data folder (DSP-161), a saved key is a path on one host, so on the other it is listed as unreadable and the default applies; the key itself is kept.
+
+Decision confirmed by Niclas on 3 November 2026 (no earlier date recorded): making the larger loop the default was intended and approved. A workspace's remembered choice stands. The shipped declaration's notes say so.
 <!-- SECTION:NOTES:END -->

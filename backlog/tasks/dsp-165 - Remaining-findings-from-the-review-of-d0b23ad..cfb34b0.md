@@ -4,7 +4,7 @@ title: Remaining findings from the review of d0b23ad..cfb34b0
 status: To Do
 assignee: []
 created_date: '2026-11-03 19:33'
-updated_date: '2026-11-03 20:52'
+updated_date: '2026-11-03 21:18'
 labels:
   - review
   - follow-up
@@ -40,4 +40,6 @@ Acceptance criterion #4 done (3 November 2026, commits b6d4a4e and d400557):
 Observed, not fixed: on Windows the standalone host inherits a listening socket of the client that started it (the client's DevTools port stayed bound after the client ended until the host ended). Only a debugging port was seen held; whether other client handles leak into the host is not established.
 
 Not done here, by Niclas's instruction: the default loop (DSP-160) and whether a failed Copilot pre hook ends the turn remain his open decisions. POSIX host identity (DSP-164) is still not verified on Linux: no Linux environment is reachable from this Windows machine (no WSL, Docker or SSH host).
+
+Decision confirmed by Niclas on 3 November 2026 (no earlier date recorded): both questions this card left open are settled: a failed Copilot pre hook refuses only the identified call (contract section 6), and DSP-160's default loop was intended, with remembered choices kept.
 <!-- SECTION:NOTES:END -->

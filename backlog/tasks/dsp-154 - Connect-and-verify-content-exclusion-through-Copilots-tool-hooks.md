@@ -4,7 +4,7 @@ title: Connect and verify content exclusion through Copilot's tool hooks
 status: In Progress
 assignee: []
 created_date: '2026-11-01 12:00'
-updated_date: '2026-11-03 19:33'
+updated_date: '2026-11-03 21:18'
 labels:
   - integration
   - security
@@ -39,7 +39,7 @@ Governing: the content-exclusion contract, sections 2 and 5: native hook loading
 <!-- SECTION:NOTES:BEGIN -->
 Verified on Linux with synthetic scripts and a stand-in model: `app/tests/copilot-hooks.test.ts` and, from the packaged host over ssh, `app/scripts/trial-package/hooks.mjs`. Windows has not been run. Agent tests do not accept criteria that need Niclas's trial, so none is ticked here.
 
-Changed: a failed `preToolUse` or `postToolUse` hook ends the turn; the permission callback stops the call of a failed pre hook, which the runtime would otherwise run after a timeout. Stop no longer waits for a running hook. `copilot-hooks-required` in the host's data folder asks for hooks where no variable reaches the host.
+Changed (superseded for `preToolUse` by `8f19cc3` and Niclas's decision below): a failed `preToolUse` or `postToolUse` hook ends the turn; the permission callback stops the call of a failed pre hook, which the runtime would otherwise run after a timeout. Stop no longer waits for a running hook. `copilot-hooks-required` in the host's data folder asks for hooks where no variable reaches the host.
 
 Three checks after that report, before the manual trial. **Review questions:** the report said they have no tools, which was wrong: since 30 October a question reads the revisions through `codeAccess`, and nothing needed changing. It had not been run with Copilot; `app/tests/copilot-review-questions.test.ts` now does, through the real services and runtime, from the diff and a walk. **Stop:** ending the runtime took every session on the adapter with it and left the hook process running; each session now has its own runtime, ended with its process tree. Linux measured, Windows simulated. **Required hooks:** a dangling link read as no requirement, sign-in was asked first so a host without a login never reached the check, and an adapter kept the value it was built with; all three fixed, and the file was run on the real host and on the packaged host over ssh (`app/tests/copilot-hooks-required.test.ts`, `app/scripts/trial-package/hooks.mjs`). No host restart is needed.
 
@@ -48,4 +48,6 @@ Remaining gaps, in the contract's section 6: unreadable output from a pre hook c
 Next: try the real scripts against a local project and a revision folder, on a machine where that is permitted.
 
 DSP-164 (3 November 2026, commit a03e711): DSpatch's own tools are refused before execute when their pre hook failed. On Windows the hook fixture read $input, which a script run with & does not receive; fixed, and the real-runtime hook tests now pass on Windows. Open decision for Niclas: whether a failed pre hook ends the turn (contract) or refuses only that call (code since 8f19cc3).
+
+Decision confirmed by Niclas on 3 November 2026 (no earlier date recorded): a failed or timed-out preToolUse hook refuses only the tool call it answered for, before it runs and with no side effect, and the turn goes on. A failed pre hook that names no identifiable call, a failed postToolUse hook, and runtime or control failures still stop the turn. The contract's section 6 says so.
 <!-- SECTION:NOTES:END -->
