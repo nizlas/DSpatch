@@ -1,6 +1,7 @@
 import childProcess from 'node:child_process';
 import type { HostLinkState } from '../shared/host-link';
 import { remoteBuild } from '../shared/remote-build';
+import { EXPECT_USERDATA_ENV, profileRefusal } from './profile-guard';
 import { hostBuildNote } from '../shared/remote-protocol';
 import { RemoteLink, probeHost, type RemoteEndpoint } from './remote-link';
 import { ensureLocalHost, runningLocalHost } from './local-host';
@@ -5074,6 +5075,17 @@ function registerLifecycle(): void {
 }
 
 function main(): void {
+  // DSP-165.1: first, before the single-instance lock writes into the profile and before any host
+  // starts or connects. A start that names its isolated profile goes no further on another one.
+  const wrongProfile = profileRefusal(process.env[EXPECT_USERDATA_ENV], app.getPath('userData'), process.argv);
+  if (wrongProfile !== null) {
+    log(`start refused: ${wrongProfile}. No host was started or reached and nothing of DSpatch's was written; exiting with ${String(CHAT_EXIT_WRONG_USERDATA)}.`);
+    app.exit(CHAT_EXIT_WRONG_USERDATA);
+    return;
+  }
+  if (process.env[EXPECT_USERDATA_ENV] !== undefined) {
+    log(`userData matches ${EXPECT_USERDATA_ENV} (${app.getPath('userData')})`);
+  }
   const forbidden = process.env['DSPATCH_CLIENT_FORBIDDEN_ROOT'];
   if (chatRunMode && forbidden !== undefined && forbidden !== '') {
     guardProjectFiles(forbidden);

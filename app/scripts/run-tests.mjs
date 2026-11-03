@@ -154,6 +154,7 @@ const AREAS = {
       { file: 'local-host.test.ts', heavy: true },
       'ssh-connection.test.ts',
       'host-data.test.ts',
+      'profile-guard.test.ts',
       'provider-setup.test.ts',
       'provider-ready.test.ts',
     ],

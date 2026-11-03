@@ -23,6 +23,32 @@ const electronExecutable = /** @type {string} */ (
   /** @type {unknown} */ (require('electron'))
 );
 
+/*
+ * `--isolated-profile <folder>` (DSP-165.1): run on that profile and nothing else. The folder goes
+ * to Electron as an argument, never through a shell, and the main process checks that Electron
+ * chose it before any host starts. Start this script with `node`, not through `npm run`: npm runs
+ * scripts through cmd on Windows, which reads `%`, `&`, `^` and `!` in a folder name as its own.
+ */
+const passed = process.argv.slice(2);
+const isolatedAt = passed.findIndex((arg) => arg === '--isolated-profile' || arg.startsWith('--isolated-profile='));
+const electronArgs = [...passed];
+const electronEnv = {};
+if (isolatedAt >= 0) {
+  const flag = passed[isolatedAt] ?? '';
+  const value = flag.includes('=') ? flag.slice(flag.indexOf('=') + 1) : (passed[isolatedAt + 1] ?? '');
+  if (value.trim() === '' || value.startsWith('--')) {
+    process.stderr.write('dev: --isolated-profile needs a folder. Nothing was started.\n');
+    process.exit(2);
+  }
+  if (passed.some((arg) => arg.startsWith('--user-data-dir'))) {
+    process.stderr.write('dev: give either --isolated-profile or --user-data-dir, not both. Nothing was started.\n');
+    process.exit(2);
+  }
+  const profile = path.resolve(value);
+  electronArgs.splice(isolatedAt, flag.includes('=') ? 1 : 2, `--user-data-dir=${profile}`);
+  electronEnv.DSPATCH_EXPECT_USERDATA = profile;
+}
+
 const server = await createServer({
   configFile: path.join(appDir, 'vite.config.mts'),
 });
@@ -37,11 +63,10 @@ if (rendererUrl === undefined) {
   throw new Error('Vite started without providing a local URL to load.');
 }
 
-// Arguments after `npm run dev --` go to Electron, so a separate profile is
-// `npm run dev -- --user-data-dir=<folder>`, as with `npm start`.
-const electron = spawn(electronExecutable, [appDir, ...process.argv.slice(2)], {
+// Other arguments after `npm run dev --` go to Electron unchanged.
+const electron = spawn(electronExecutable, [appDir, ...electronArgs], {
   stdio: 'inherit',
-  env: { ...process.env, DSPATCH_RENDERER_URL: rendererUrl },
+  env: { ...process.env, ...electronEnv, DSPATCH_RENDERER_URL: rendererUrl },
 });
 // A stop of this script reaches the window, or it is left running on its own.
 for (const signal of /** @type {const} */ (['SIGINT', 'SIGTERM'])) {

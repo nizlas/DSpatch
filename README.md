@@ -132,6 +132,8 @@ npm start -- --user-data-dir="$HOME/.local/share/dspatch-dev-profile"
 npm start -- --user-data-dir="$env:LOCALAPPDATA\DSpatch-dev-profile"
 ```
 
+In development mode, `node scripts/dev.mjs --isolated-profile <folder>` (from `app/`, after `npm run build:node`) runs on that folder and refuses to start if Electron would use another profile. Start it with `node`, not `npm run dev --`: on Windows npm passes the arguments through `cmd`, which treats `%`, `&`, `^` and `!` in a folder name as its own.
+
 This separates DSpatch's conversations and settings, not the project files an agent edits. Use a branch or separate worktree for those changes.
 
 Commit on your branch and open a pull request if you want to share the result. Personal UI and workflow variations are welcome experiments; include the problem solved, screenshots for interface changes, and the checks you ran. DSpatch is MIT-licensed; provider software and services retain their own terms.
