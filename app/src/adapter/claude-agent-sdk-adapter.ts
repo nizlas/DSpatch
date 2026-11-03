@@ -3209,6 +3209,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       commandId: open.commandId,
       line: open.line,
       cwd: open.cwd,
+      observationHoldMs: COMMAND_OBSERVATION_HOLD_MS,
     });
   }
 
@@ -3275,6 +3276,7 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
       rawProviderEvent: null,
       toolCallId: open.toolCallId,
       command: record,
+      observationHoldMs: COMMAND_OBSERVATION_HOLD_MS,
     });
   }
 

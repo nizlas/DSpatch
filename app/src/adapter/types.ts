@@ -395,6 +395,11 @@ export type AgentEvent =
       readonly type: 'command.started';
       /** The provider's tool call this command answers, when it could be matched; else `null`. */
       readonly toolCallId: string | null;
+      /**
+       * How long, at most, the adapter holds the agent at this moment while a listener observes it
+       * (DSP-163); absent where the agent is not held. A look finished later is not of this moment.
+       */
+      readonly observationHoldMs?: number;
       readonly commandId: string;
       readonly line: string;
       readonly cwd: string;
@@ -408,6 +413,11 @@ export type AgentEvent =
   | (AgentEventBase & {
       readonly type: 'command.finished';
       readonly toolCallId: string | null;
+      /**
+       * How long, at most, the adapter holds the agent at this moment while a listener observes it
+       * (DSP-163); absent where the agent is not held. A look finished later is not of this moment.
+       */
+      readonly observationHoldMs?: number;
       readonly command: AgentCommandRecord;
     })
   | (AgentEventBase & {

@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { AgentAdapter } from '../src/adapter/agent-adapter';
 import type {
+  AgentCommandRecord,
   AgentEvent,
   AgentEventListener,
   CapabilityReport,
@@ -37,6 +38,7 @@ import {
   emptyInspection,
   formatLiveInspection,
   runConfiguredProjectTest,
+  runChangeAccountOf,
   runNodeProjectTest,
   stepSessionId,
   type LiveCommandRecord,
@@ -150,6 +152,11 @@ interface FakeOptions {
    * cannot express either, because it is relative to the working copy by construction.
    */
   readonly writeAbsolute?: readonly { readonly path: string; readonly content: string }[];
+  /**
+   * DSP-164: one shell command the agent runs, reported the way Claude's hooks report it, with
+   * the agent held at its start and end for `holdMs` while DSpatch looks at the folders.
+   */
+  readonly heldCommand?: { readonly holdMs: number };
   /**
    * Called as each prompt arrives, before the fake writes anything or replies.
    *
@@ -270,6 +277,9 @@ class FakeAdapter implements AgentAdapter {
     const runId = dspatchRunId;
     const scripted = this.nextReply;
     this.nextReply = null;
+    if (this.options.heldCommand !== undefined) {
+      await this.runHeldCommand(sessionId, runId, this.options.heldCommand.holdMs);
+    }
     queueMicrotask(() => {
       this.emit(sessionId, {
         type: 'assistant.message',
@@ -336,6 +346,49 @@ class FakeAdapter implements AgentAdapter {
     for (const listener of this.listeners.get(sessionId) ?? []) {
       listener(event);
     }
+  }
+
+  /** Emit and wait for every listener's look, as an adapter that holds the agent does. */
+  private async emitHeld(sessionId: string, event: AgentEvent): Promise<void> {
+    const held: PromiseLike<void>[] = [];
+    for (const listener of this.listeners.get(sessionId) ?? []) {
+      const result = listener(event);
+      if (result !== undefined && result !== null && typeof result.then === 'function') {
+        held.push(result);
+      }
+    }
+    await Promise.all(held);
+  }
+
+  private async runHeldCommand(sessionId: string, runId: string, holdMs: number): Promise<void> {
+    const at = new Date().toISOString();
+    const base = { dspatchSessionId: sessionId, dspatchRunId: runId, rawProviderEvent: null, toolCallId: 'held-1' };
+    await this.emitHeld(sessionId, { ...base, type: 'command.started', at, commandId: 'held-1', line: 'npm test', cwd: this.workspace, observationHoldMs: holdMs });
+    const record: AgentCommandRecord = {
+      commandId: 'held-1',
+      requestedBy: 'provider-reported',
+      line: 'npm test',
+      shell: 'sh',
+      cwd: this.workspace,
+      pid: null,
+      startedAtUtc: at,
+      finishedAtUtc: new Date().toISOString(),
+      durationMs: 1,
+      timeoutMs: null,
+      ending: 'exited',
+      endingMessage: null,
+      exitCode: 0,
+      signal: null,
+      killedByDspatch: false,
+      stdout: '',
+      stderr: '',
+      outputTruncated: false,
+      outputNote: null,
+      testedSnapshotId: null,
+      afterRunSnapshotId: null,
+      snapshotRoots: [],
+    };
+    await this.emitHeld(sessionId, { ...base, type: 'command.finished', at: record.finishedAtUtc, command: record, observationHoldMs: holdMs });
   }
 }
 
@@ -457,6 +510,65 @@ describe('createLiveExecutor — only agent nodes reach the adapter', () => {
    * half meaningful: a run that reported no changed files because there were none would
    * pass a weaker version of this.
    */
+  /**
+   * DSP-164. An adapter that holds the agent at a command's start and end (Claude's hooks) holds
+   * it for a bounded time. A look that ends inside the hold is the command's moment; one that ends
+   * after it is not, because the agent was let go and may have written meanwhile.
+   */
+  for (const [holdMs, attributed] of [[60_000, true], [1, false]] as const) {
+    it(`a held command's look ${attributed ? 'inside' : 'outside'} its hold is ${attributed ? '' : 'not '}the command's moment`, async () => {
+      const workspace = path.join(scratch(`held-${String(holdMs)}`), 'duration-repo');
+      generateExperimentRepo(workspace, repoRoot);
+      const adapter = new FakeAdapter({ heldCommand: { holdMs } });
+      const inspection = emptyInspection(workspace, 'composer-2');
+      await runLoopGraph(loadLiveGraph(), {
+        runId: `live-held-${String(holdMs)}`,
+        dryRun: false,
+        executor: createLiveExecutor({
+          workspacePath: workspace,
+          adapter,
+          modelRequested: 'composer-2',
+          modelReported: () => adapter.modelReported(),
+          inspection,
+          runProjectTest: passingTest,
+        }),
+      });
+      const held = inspection.commands.find((command) => command.line === 'npm test');
+      assert.ok(held !== undefined, JSON.stringify(inspection.commands.map((command) => command.line)));
+      if (attributed) {
+        assert.ok(held.testedSnapshotId !== null && held.afterRunSnapshotId !== null, JSON.stringify(held));
+      } else {
+        assert.equal(held.testedSnapshotId, null);
+        assert.equal(held.afterRunSnapshotId, null);
+      }
+    });
+  }
+
+  it('a working folder that cannot be read leaves the run unmeasured, never "nothing changed"', async () => {
+    const workspace = path.join(scratch('unreadable-root'), 'duration-repo');
+    generateExperimentRepo(workspace, repoRoot);
+    const missing = path.join(scratch('unreadable-root'), 'not-there');
+    const roots = workingRootsFrom([workspace, missing], workspace, process.platform === 'win32');
+    const adapter = new FakeAdapter();
+    const inspection = emptyInspection(workspace, 'composer-2', roots);
+    await runLoopGraph(loadLiveGraph(), {
+      runId: 'live-unreadable-root',
+      dryRun: false,
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        modelReported: () => adapter.modelReported(),
+        inspection,
+        workingRoots: roots,
+        runProjectTest: passingTest,
+      }),
+    });
+    assert.match(inspection.snapshotIncomplete ?? '', /could not be read/);
+    assert.equal(runChangeAccountOf(inspection, true).kind, 'not-measured');
+    assert.deepEqual([inspection.changedFiles, inspection.addedFiles, inspection.removedFiles], [[], [], []]);
+  });
+
   it('reads no project bytes when hashing is off, and the record says so rather than "nothing changed"', async () => {
     const workspace = path.join(scratch('no-hash'), 'duration-repo');
     generateExperimentRepo(workspace, repoRoot);

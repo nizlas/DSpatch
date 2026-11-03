@@ -530,7 +530,16 @@ function snapshotRef(snapshot: TreeSnapshot): LiveSnapshotRef {
  * before and now needs to be: it is the run's origin, and diffing from anything later
  * would lose the first step's work again by a different route.
  */
-function applyDiff(inspection: LiveInspection, before: TreeSnapshot, after: TreeSnapshot): TreeDiff {
+function applyDiff(inspection: LiveInspection, before: TreeSnapshot, after: TreeSnapshot, observed = true): TreeDiff {
+  if (!observed) {
+    // DSP-164: a part of a folder is not the folder. A bounded listing that shifts as files are
+    // added, or a folder that could not be read, would turn into files changed, added or removed
+    // that were not. The run's account says why it does not say (`snapshotIncomplete`).
+    inspection.changedFiles = [];
+    inspection.addedFiles = [];
+    inspection.removedFiles = [];
+    return { changed: [], added: [], removed: [], unchangedCount: 0 };
+  }
   const stepDiff = diffSnapshots(before, after);
   if (inspection.snapshotBefore === null) {
     inspection.snapshotBefore = snapshotRef(before);
@@ -568,6 +577,11 @@ function applyDiff(inspection: LiveInspection, before: TreeSnapshot, after: Tree
  * unchanged; whoever turns trees into identities must ask here first.
  */
 const incompleteSnapshots = new WeakMap<ReadonlyMap<string, TreeSnapshot>, string>();
+
+/** Whether both sides of a comparison were observed whole (DSP-164). */
+function observedPair(before: ReadonlyMap<string, TreeSnapshot>, after: ReadonlyMap<string, TreeSnapshot>): boolean {
+  return !incompleteSnapshots.has(before) && !incompleteSnapshots.has(after);
+}
 
 /** The scans behind a set of trees, for comparing them with a {@link CommandFingerprint}. */
 const scansOf = new WeakMap<ReadonlyMap<string, TreeSnapshot>, ReadonlyMap<string, RootSnapshot>>();
@@ -607,6 +621,12 @@ async function snapshotEveryRoot(
   inspection: LiveInspection,
   hashProject: boolean,
   snapshotter: LoopSnapshotter,
+  /**
+   * Whether this look is one of the step's own, before or after it. A look taken while a command
+   * runs can be incomplete for a moment (a file changing as it is read) without the run's account
+   * having been unobservable; it marks only itself (DSP-164).
+   */
+  stepBoundary = true,
 ): Promise<ReadonlyMap<string, TreeSnapshot>> {
   const paths = rootPathsOf(inspection);
   const snapshots = new Map<string, TreeSnapshot>();
@@ -637,7 +657,9 @@ async function snapshotEveryRoot(
       `DSpatch could observe only part of ${incomplete.length === 1 ? 'a working folder' : 'the working folders'} ` +
       `(${incomplete.join('; ')}), so it does not say whether they changed.`;
     incompleteSnapshots.set(snapshots, reason);
-    inspection.snapshotIncomplete ??= reason;
+    if (stepBoundary) {
+      inspection.snapshotIncomplete ??= reason;
+    }
   }
   return snapshots;
 }
@@ -887,6 +909,14 @@ function applyRootDiffs(
   before: ReadonlyMap<string, TreeSnapshot>,
   after: ReadonlyMap<string, TreeSnapshot>,
 ): void {
+  if (incompleteSnapshots.has(before) || incompleteSnapshots.has(after)) {
+    for (const root of inspection.roots) {
+      root.changedFiles = [];
+      root.addedFiles = [];
+      root.removedFiles = [];
+    }
+    return;
+  }
   for (const root of inspection.roots) {
     const first = before.get(root.path);
     const latest = after.get(root.path);
@@ -1377,10 +1407,10 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
    * unchanged files are remembered); where it cannot, the folders read as not observed, never
    * as unchanged.
    */
-  const takeRoots = async (): Promise<ReadonlyMap<string, TreeSnapshot>> => {
+  const takeRoots = async (stepBoundary = true): Promise<ReadonlyMap<string, TreeSnapshot>> => {
     if (options.abortSignal?.aborted !== true) {
       try {
-        return await snapshotEveryRoot(inspection, hashRoots, snapshotter);
+        return await snapshotEveryRoot(inspection, hashRoots, snapshotter, stepBoundary);
       } catch (error) {
         if (!isAbortError(error)) {
           throw error;
@@ -1395,6 +1425,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
           signal: AbortSignal.timeout(AFTER_STOP_SNAPSHOT_MS),
           ...(options.log === undefined ? {} : { log: options.log }),
         }),
+        stepBoundary,
       );
     } catch (error) {
       if (!isAbortError(error)) {
@@ -1996,7 +2027,25 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         throw commandObservationError;
       }
     };
-    const idsNow = async (): Promise<ReadonlyMap<string, string> | null> => observedIds(await takeRoots());
+    /**
+     * For an event the adapter holds the agent at (Claude's hooks): the folders now, which is the
+     * command's moment only while the agent is still held. The hold has a bound; a look finished
+     * after it is late, since the agent was let go and may have written, so it is attributed to no
+     * moment (DSP-164). An event that says nothing of a hold is treated as one that has none.
+     */
+    const idsHeld = async (heldForMs: number | undefined): Promise<ReadonlyMap<string, string> | null> => {
+      if (heldForMs === undefined) {
+        return idsAt(fingerprintNow());
+      }
+      // The adapter's own clock started a little before this one: a second of margin.
+      const releasedAt = performance.now() + Math.max(0, heldForMs - 1_000);
+      const ids = observedIds(await takeRoots(false));
+      if (performance.now() > releasedAt) {
+        options.log?.(`[snapshot] not at the command's moment: the look took longer than the agent was held (${String(heldForMs)} ms)`);
+        return null;
+      }
+      return ids;
+    };
     /**
      * For an event the provider cannot hold the agent at: read the folders' metadata now,
      * synchronously, and trust the scan that follows only where nothing changed since.
@@ -2004,7 +2053,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     const fingerprintNow = (): CommandFingerprint | null =>
       hashRoots ? fingerprintRoots(rootPathsOf(inspection), options.log) : null;
     const idsAt = async (moment: CommandFingerprint | null): Promise<ReadonlyMap<string, string> | null> => {
-      const taken = await takeRoots();
+      const taken = await takeRoots(false);
       const ids = observedIds(taken);
       const scans = scansOf.get(taken);
       if (ids === null || moment === null || scans === undefined) {
@@ -2019,12 +2068,12 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     };
     /**
      * For `command.*` the returned promise settles (never rejects) once that moment has been
-     * observed; an adapter that can hold the agent waits for it (DSP-163), so the snapshot is
+     * observed; an adapter that can hold the agent waits for it (DSP-163), so within that hold the snapshot is
      * of the folders as the command found or left them. A failure surfaces at the step's end.
      */
     const observeCommand = (event: AgentEvent): Promise<void> | undefined => {
       if (event.type === 'command.started') {
-        const started = idsNow().then((ids) => ({
+        const started = idsHeld(event.observationHoldMs).then((ids) => ({
           ids,
           atUtc: event.at,
         }));
@@ -2038,7 +2087,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         const started = commandStarts.get(event.command.commandId);
         commandStarts.delete(event.command.commandId);
         return recordObservation(async () => {
-          const [startedAt, endedAt] = await Promise.all([started, idsNow()]);
+          const [startedAt, endedAt] = await Promise.all([started, idsHeld(event.observationHoldMs)]);
           takeCommand(
             agentCommandEntry(event.command, node.id, context.occurrence, startedAt?.ids ?? null, endedAt),
           );
@@ -2263,7 +2312,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       // R3: the working folders as this step left them, on every path out of it.
       inspection.finalSnapshotId = combinedSnapshotId(observedIds(afterByRoot));
       const after = workingCopyIn(inspection, afterByRoot);
-      applyDiff(inspection, before, after);
+      applyDiff(inspection, before, after, observedPair(beforeByRoot, afterByRoot));
       applyRootDiffs(inspection, beforeByRoot, afterByRoot);
       return remember(context, {
         product: {
@@ -2305,7 +2354,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       const afterByRoot = await takeRoots();
       inspection.finalSnapshotId = combinedSnapshotId(observedIds(afterByRoot));
       const after = workingCopyIn(inspection, afterByRoot);
-      applyDiff(inspection, before, after);
+      applyDiff(inspection, before, after, observedPair(beforeByRoot, afterByRoot));
       applyRootDiffs(inspection, beforeByRoot, afterByRoot);
       return remember(context, {
         product: {
@@ -2323,7 +2372,8 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     // R3: the working folders as this step left them, on every path out of it.
     inspection.finalSnapshotId = combinedSnapshotId(observedIds(afterByRoot));
     const after = workingCopyIn(inspection, afterByRoot);
-    const diff = applyDiff(inspection, before, after);
+    const stepObserved = observedPair(beforeByRoot, afterByRoot);
+    const diff = applyDiff(inspection, before, after, stepObserved);
     // Every root, not only the working copy. A step that read code in one root and
     // wrote it into another changed nothing measurable in `diff` above, and that is
     // precisely the assignment DSP-72 exists for.
@@ -2359,7 +2409,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
 
     if (timedOut || aborted) {
       inspection.cancelled = true;
-      const changed = diff.changed.map((file) => file.relPath).join(', ') || 'none';
+      const changed = stepObserved ? diff.changed.map((file) => file.relPath).join(', ') || 'none' : 'not observed';
       return remember(context, {
         product: {
           kind: 'runtime-fault',
@@ -2470,7 +2520,9 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
           `another, and a completed command shows only that it ran on that code.`;
       }
     }
-    const corroboration = describeSnapshotChange({
+    const corroboration = !stepObserved
+      ? (inspection.snapshotIncomplete ?? 'DSpatch observed only part of the working folders, so it does not say what this step changed.')
+      : describeSnapshotChange({
       changedFiles: diff.changed.length,
       addedFiles: diff.added.length,
       removedFiles: diff.removed.length,

@@ -30,10 +30,11 @@ import { snapshotIdFor, type FileListSource } from './workspace-baseline';
  *   keeps its earlier identity without being read again; one modified within the last two
  *   seconds is always re-read, because a second write in the same instant could leave its
  *   times unchanged.
- * - **Completeness.** A scan is complete when every file in scope was listed. A root with more
- *   files than the bound, or one whose listing failed, gives an *incomplete* snapshot, and an
- *   incomplete snapshot is never the basis of "unchanged" or "nothing changed": its callers
- *   treat it as not observed.
+ * - **Completeness.** A scan is complete when every file in scope was listed and read. A root
+ *   with more files than the bound, a root or folder that could not be listed, a file that could
+ *   not be examined or read, and a file that changed while it was read each give an *incomplete*
+ *   snapshot, and an incomplete snapshot is never the basis of "unchanged" or "nothing changed":
+ *   its callers treat it as not observed (DSP-164).
  * - **Not a guard.** A snapshot observes; it prevents nothing. A write is stopped, where it is
  *   stopped at all, by the tool permissions and hooks, not by comparing two snapshots.
  *
@@ -210,8 +211,9 @@ async function listByWalk(
   root: string,
   maxFiles: number,
   signal: AbortSignal | undefined,
-): Promise<{ readonly files: readonly string[]; readonly overflowed: boolean }> {
+): Promise<{ readonly files: readonly string[]; readonly overflowed: boolean; readonly unreadable: readonly string[] }> {
   const files: string[] = [];
+  const unreadable: string[] = [];
   const pending = [root];
   while (pending.length > 0) {
     if (signal?.aborted === true) {
@@ -221,7 +223,9 @@ async function listByWalk(
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      // A folder that cannot be listed is not an empty one.
+      unreadable.push(`${dir === root ? 'the folder itself' : path.relative(root, dir)}: ${(error as NodeJS.ErrnoException).code ?? 'error'}`);
       continue;
     }
     for (const entry of entries) {
@@ -236,12 +240,12 @@ async function listByWalk(
         continue;
       }
       if (files.length >= maxFiles) {
-        return { files, overflowed: true };
+        return { files, overflowed: true, unreadable };
       }
       files.push(path.relative(root, full).split(path.sep).join('/'));
     }
   }
-  return { files, overflowed: false };
+  return { files, overflowed: false, unreadable };
 }
 
 async function hashFile(full: string, size: number, signal: AbortSignal | undefined): Promise<string> {
@@ -286,7 +290,12 @@ export async function scanRoot(
       source = 'directory-walk';
       const walked = await listByWalk(root, limits.maxFiles, signal);
       listed = walked.files;
-      if (walked.overflowed) {
+      if (walked.unreadable.length > 0) {
+        incompleteBecause =
+          walked.unreadable[0]?.startsWith('the folder itself') === true
+            ? `the folder could not be read (${walked.unreadable[0].split(': ')[1] ?? 'error'}), so nothing in it was observed`
+            : `${String(walked.unreadable.length)} folder${walked.unreadable.length === 1 ? '' : 's'} in it could not be read, so only part of it was observed`;
+      } else if (walked.overflowed) {
         incompleteBecause = `the folder holds more than ${String(limits.maxFiles)} files, so only part of it was observed`;
       }
     } else {
@@ -310,6 +319,9 @@ export async function scanRoot(
     let totalBytes = 0;
     let budget = limits.maxHashBytesPerScan;
     let cursor = 0;
+    /** Files that could not be examined or read, and files that changed while they were read. */
+    let unreadableFiles = 0;
+    let changedWhileRead = 0;
 
     const one = async (index: number): Promise<void> => {
       const relPath = listed[index] as string;
@@ -317,17 +329,22 @@ export async function scanRoot(
       let info;
       try {
         info = await stat(full, { bigint: true });
-      } catch {
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
         // Listed by git and absent from disk: a deleted tracked file. Its absence shows as removed.
+        // Anything else is a file DSpatch could not look at, which is not an absent one.
+        if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+          unreadableFiles += 1;
+        }
         return;
       }
       if (!info.isFile()) {
         return;
       }
       const size = Number(info.size);
-      const signature = signatureOf(info);
+      let signature = signatureOf(info);
       signatures.set(relPath, signature);
-      const racy = Date.now() - Number(info.mtimeMs) < RACY_MS || Date.now() - Number(info.ctimeMs) < RACY_MS;
+      let racy = Date.now() - Number(info.mtimeMs) < RACY_MS || Date.now() - Number(info.ctimeMs) < RACY_MS;
       const cached = previous.get(relPath);
       let identity: string;
       if (cached !== undefined && cached.signature === signature && !racy) {
@@ -338,11 +355,23 @@ export async function scanRoot(
         budget -= size;
         try {
           identity = await hashFile(full, size, signal);
+          // Its metadata again: a write between the first look and the end of the read leaves
+          // a hash of neither version, so the file is counted as changed while read, and the
+          // later signature is the one compared with any earlier moment.
+          const again = await stat(full, { bigint: true });
+          if (signatureOf(again) !== signature) {
+            signature = signatureOf(again);
+            signatures.set(relPath, signature);
+            changedWhileRead += 1;
+            racy = true;
+          }
         } catch (error) {
           if (signal?.aborted === true) {
             throw abortError();
           }
           identity = `unreadable:${error instanceof Error ? (error as NodeJS.ErrnoException).code ?? 'error' : 'error'}`;
+          unreadableFiles += 1;
+          racy = true;
         }
         readFiles += 1;
         readBytes += size;
@@ -374,6 +403,12 @@ export async function scanRoot(
     };
     await Promise.all(Array.from({ length: Math.max(1, limits.concurrency) }, () => worker()));
 
+    if (incompleteBecause === null && unreadableFiles > 0) {
+      incompleteBecause = `${String(unreadableFiles)} file${unreadableFiles === 1 ? '' : 's'} in it could not be read, so only part of it was observed`;
+    }
+    if (incompleteBecause === null && changedWhileRead > 0) {
+      incompleteBecause = `${String(changedWhileRead)} file${changedWhileRead === 1 ? '' : 's'} in it changed while DSpatch read ${changedWhileRead === 1 ? 'it' : 'them'}, so the folder was not observed at one moment`;
+    }
     if (incompleteBecause === null) {
       identityCache.set(root, next);
     }
@@ -481,16 +516,24 @@ export class LoopSnapshotter {
 }
 
 /**
- * The working folders' metadata at one moment, read synchronously (DSP-163).
+ * The working folders' metadata when DSpatch hears of a command, read synchronously (DSP-163).
  *
  * For a provider that reports a shell command by an event and cannot hold the agent there
  * (Copilot, Cursor), an asynchronous scan begun at the event can see what the agent did after
  * it. So at the event DSpatch reads, synchronously, only the size, times and inode of each file
- * in the root's most recent listing: no listing is made and nothing is hashed. On a workspace of
- * about 50,000 listed files that is about 0.2 s, against minutes for the full hash it replaces.
- * The scan that follows is trusted for that moment only if nothing it saw differs from this;
- * see {@link changedSince}.
+ * in the root's most recent listing: no listing is made and nothing is hashed. The scan that
+ * follows is trusted for that moment only if nothing it saw differs from this; see
+ * {@link changedSince}.
+ *
+ * What this moment is, and is not (DSP-164): it is when the event reached DSpatch, which is
+ * after the command began or ended in the agent's own process. A write the command made before
+ * the event is already in it, so it is not the folders "as the command found them", only as they
+ * were when DSpatch was told. And it is bounded: past {@link FINGERPRINT_LIMITS} a root is left
+ * unread, and a scan of that root is then not attributed to the moment at all, rather than
+ * holding the host's event loop for as long as a large folder takes.
  */
+export const FINGERPRINT_LIMITS = { maxFiles: 50_000, maxMs: 250 } as const;
+
 export interface CommandFingerprint {
   /** Wall-clock time of the reading, in nanoseconds since the epoch. */
   readonly takenAtNs: bigint;
@@ -500,19 +543,30 @@ export interface CommandFingerprint {
   readonly durationMs: number;
 }
 
-export function fingerprintRoots(roots: readonly string[], log?: (message: string) => void): CommandFingerprint {
+export function fingerprintRoots(
+  roots: readonly string[],
+  log?: (message: string) => void,
+  limits: { readonly maxFiles: number; readonly maxMs: number } = FINGERPRINT_LIMITS,
+): CommandFingerprint {
   const startedAt = performance.now();
   const takenAtNs = BigInt(Date.now()) * 1_000_000n;
   const byRoot = new Map<string, ReadonlyMap<string, string> | null>();
   let fileCount = 0;
+  let unread = 0;
   for (const root of new Set(roots)) {
     const listing = lastListing.get(root);
-    if (listing === undefined) {
+    if (listing === undefined || fileCount + listing.length > limits.maxFiles || performance.now() - startedAt > limits.maxMs) {
       byRoot.set(root, null);
+      unread += listing === undefined ? 0 : 1;
       continue;
     }
     const signatures = new Map<string, string>();
+    let overran = false;
     for (const relPath of listing) {
+      if ((signatures.size & 1023) === 0 && performance.now() - startedAt > limits.maxMs) {
+        overran = true;
+        break;
+      }
       let info: BigIntStats | undefined;
       try {
         info = statSync(path.join(root, relPath), { bigint: true, throwIfNoEntry: false });
@@ -521,11 +575,19 @@ export function fingerprintRoots(roots: readonly string[], log?: (message: strin
       }
       signatures.set(relPath, info !== undefined && info.isFile() ? signatureOf(info) : 'absent');
     }
-    fileCount += listing.length;
+    fileCount += signatures.size;
+    if (overran) {
+      byRoot.set(root, null);
+      unread += 1;
+      continue;
+    }
     byRoot.set(root, signatures);
   }
   const durationMs = Math.round(performance.now() - startedAt);
-  log?.(`[snapshot] fingerprint roots=${String(byRoot.size)} files=${String(fileCount)} durationMs=${String(durationMs)}`);
+  log?.(
+    `[snapshot] fingerprint roots=${String(byRoot.size)} files=${String(fileCount)} durationMs=${String(durationMs)}` +
+      (unread > 0 ? ` unread=${String(unread)} (over its bound; not attributed to the moment)` : ''),
+  );
   return { takenAtNs, roots: byRoot, fileCount, durationMs };
 }
 
@@ -542,7 +604,7 @@ export function changedSince(
   for (const [root, scan] of scans) {
     const before = fingerprint.roots.get(root);
     if (before === undefined || before === null) {
-      return `${root} had not been listed before the command's moment, so it was not observed at it`;
+      return `${root} was not read when DSpatch heard of the command (never listed, or past the bound), so it was not observed at that moment`;
     }
     let differing = 0;
     for (const [relPath, signature] of before) {
@@ -563,7 +625,7 @@ export function changedSince(
       }
     }
     if (differing > 0) {
-      return `${root}: ${String(differing)} file${differing === 1 ? '' : 's'} changed after the command's moment and before DSpatch read them`;
+      return `${root}: ${String(differing)} file${differing === 1 ? '' : 's'} changed after DSpatch heard of the command and before it read them`;
     }
   }
   return null;
