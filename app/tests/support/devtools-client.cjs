@@ -19,8 +19,8 @@ app.whenReady().then(() => {
     spawn(process.execPath, child, { env, detached: true, stdio: 'ignore', windowsHide: true }).unref();
   } else {
     const { windowsHostStart } = require(path.join(__dirname, '..', '..', 'dist', 'main', 'local-host.js'));
-    const script = windowsHostStart(process.execPath, child, path.join(out, 'child.log'), out);
-    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { env, windowsHide: true });
+    const start = windowsHostStart(process.execPath, child, path.join(out, 'child.log'), out);
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(start.script, 'utf16le').toString('base64')], { env: { ...env, ...start.env }, windowsHide: true });
   }
   fs.writeFileSync(path.join(out, 'client.json'), JSON.stringify({ client: process.pid }));
   setTimeout(() => app.quit(), 1000);

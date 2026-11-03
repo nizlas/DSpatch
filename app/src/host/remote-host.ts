@@ -48,7 +48,36 @@ function tokenIn(dataDir: string): { readonly token: string; readonly file: stri
   return { token, file };
 }
 
+/**
+ * Write everything this process prints to `file` (DSP-165.1). A local start on Windows names the
+ * log here instead of redirecting through `cmd`, whose `>>` cannot open a file another start's
+ * `cmd` holds: with several starts at once, every start but the first ended before its host ran.
+ * Node opens the file for appending with sharing, so several hosts can each say why they stopped.
+ */
+function writeOutputTo(file: string): void {
+  const fd = fs.openSync(file, 'a', 0o600);
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.write = ((chunk: string | Uint8Array, encoding?: unknown, callback?: unknown): boolean => {
+      // Narrowed so each call meets one of writeSync's overloads.
+      if (typeof chunk === 'string') {
+        fs.writeSync(fd, chunk);
+      } else {
+        fs.writeSync(fd, chunk);
+      }
+      const done = typeof encoding === 'function' ? encoding : callback;
+      if (typeof done === 'function') {
+        (done as () => void)();
+      }
+      return true;
+    }) as typeof stream.write;
+  }
+}
+
 async function main(): Promise<void> {
+  const ownLog = argument('--log');
+  if (ownLog !== undefined) {
+    writeOutputTo(ownLog);
+  }
   // The application's own folder, so this machine's work is the same however it is reached.
   const chosen = argument('--data') ?? process.env['DSPATCH_HOST_DATA'];
   const dataDir = path.resolve(chosen ?? sharedDataDir());

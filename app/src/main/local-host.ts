@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -89,9 +89,8 @@ async function localProgram(options: LocalHostOptions): Promise<{ readonly runti
 }
 
 /**
- * The command line that starts the host on Windows without this process's handles (DSP-165.1), or
- * `null` when an argument cannot be quoted for `cmd` safely, in which case the host is spawned as
- * on other systems.
+ * How to start the host on Windows without this process's handles (DSP-165.1): a PowerShell
+ * script and the environment it runs with.
  *
  * A process spawned from here inherits every inheritable handle this one holds: Node starts
  * children on Windows with handle inheritance on, and Chromium's DevTools socket is inheritable.
@@ -100,16 +99,41 @@ async function localProgram(options: LocalHostOptions): Promise<{ readonly runti
  * process none of the caller's handles, and keeps the caller's environment; `cmd` writes the
  * host's output to its log as the redirection of `spawn` does. The host then outlives the client
  * with nothing of it but its environment.
+ *
+ * **Every path and argument is data.** None is written into the script or the command line: each
+ * goes in an environment variable, and the command line names the variables. `cmd` expands a
+ * variable once and does not read what it expanded to again, so `%`, `&`, `^`, `!`, `'`, brackets
+ * and spaces in a folder's name stay that name (`/v:off` keeps `!` from a second expansion even
+ * where the registry turns it on). An argument is escaped for the program's own reading of its
+ * command line: backslashes before the closing quote are doubled. A value with a double quote, NUL
+ * or line break cannot be passed this way and is refused; none is a valid Windows path.
  */
-export function windowsHostStart(runtime: string, args: readonly string[], logFile: string, cwd: string): string | null {
-  const parts = [runtime, ...args, logFile, cwd];
-  if (parts.some((part) => /["%\r\n]/.test(part))) {
-    return null;
+export function windowsHostStart(
+  runtime: string,
+  args: readonly string[],
+  logFile: string,
+  cwd: string,
+): { readonly script: string; readonly env: Readonly<Record<string, string>> } {
+  for (const value of [runtime, ...args, logFile, cwd]) {
+    if (/["\0\r\n]/.test(value)) {
+      throw new Error(`The host cannot be started with ${JSON.stringify(value)}: a Windows path cannot hold a double quote or a line break.`);
+    }
   }
-  const quoted = [runtime, ...args].map((part) => `"${part}"`).join(' ');
-  const line = `/d /s /c "${quoted} >> "${logFile}" 2>&1"`;
-  const literal = (text: string): string => `'${text.replaceAll("'", "''")}'`;
-  return `(Start-Process -FilePath $env:ComSpec -ArgumentList ${literal(line)} -WorkingDirectory ${literal(cwd)} -WindowStyle Hidden -PassThru).Id`;
+  const env: Record<string, string> = {
+    DSPATCH_HOST_RUNTIME: runtime,
+    DSPATCH_HOST_CWD: cwd,
+    DSPATCH_HOST_LOG: logFile,
+  };
+  // Inside quotes a program reads `\"` as a quote; a trailing backslash is doubled so it stays one.
+  args.forEach((arg, index) => {
+    env[`DSPATCH_HOST_ARG${String(index)}`] = arg.replace(/(\\+)$/, '$1$1');
+  });
+  const program = ['"%DSPATCH_HOST_RUNTIME%"', ...args.map((_, index) => `"%DSPATCH_HOST_ARG${String(index)}%"`)].join(' ');
+  env['DSPATCH_HOST_COMMAND'] = `/d /v:off /s /c "cd /d "%DSPATCH_HOST_CWD%" && ${program} >> "%DSPATCH_HOST_LOG%" 2>&1"`;
+  return {
+    script: '(Start-Process -FilePath $env:ComSpec -ArgumentList $env:DSPATCH_HOST_COMMAND -WindowStyle Hidden -PassThru).Id',
+    env,
+  };
 }
 
 /** How long a host started through the shell may be gone with no claim before it counts as failed. */
@@ -124,6 +148,33 @@ function processAlive(pid: number): boolean {
   }
 }
 
+/** How long a stopped start is waited for before its failure is reported. */
+const STOP_START_BOUND_MS = 5_000;
+
+/**
+ * Stop the host this start began, and the `cmd` that runs it on Windows, and wait until they have
+ * ended. `true` when there was something of this start's to stop.
+ */
+async function stopOwnStart(startedPid: number | null, startedChild: ChildProcess | null): Promise<boolean> {
+  let pid: number | null = null;
+  if (startedPid !== null && processAlive(startedPid)) {
+    pid = startedPid;
+    // The tree: cmd and the host it runs. A host that had already ended leaves nothing to stop.
+    await extract('taskkill', ['/PID', String(startedPid), '/T', '/F'], { timeout: STOP_START_BOUND_MS, windowsHide: true }).catch(() => undefined);
+  } else if (startedChild !== null && startedChild.exitCode === null && startedChild.signalCode === null && startedChild.pid !== undefined) {
+    pid = startedChild.pid;
+    startedChild.kill('SIGKILL');
+  }
+  if (pid === null) {
+    return false;
+  }
+  const until = Date.now() + STOP_START_BOUND_MS;
+  while (processAlive(pid) && Date.now() < until) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return true;
+}
+
 export async function ensureLocalHost(options: LocalHostOptions): Promise<RemoteEndpoint> {
   const running = runningLocalHost(options.dataDir);
   if (running !== null) {
@@ -136,6 +187,10 @@ export async function ensureLocalHost(options: LocalHostOptions): Promise<Remote
   let exited: string | null = null;
   /** On Windows, the `cmd` that runs the host and lives as long as it does. */
   let startedPid: number | null = null;
+  /** Elsewhere, the host process this start spawned. */
+  let startedChild: ChildProcess | null = null;
+  /** On Windows, where this start's cmd writes what the host prints before its own log is open. */
+  let startLog: string | null = null;
   /** What this start told its host, so the host that becomes ready can be known as this one. */
   const startToken = randomBytes(8).toString('hex');
   if (owner === null) {
@@ -153,10 +208,21 @@ export async function ensureLocalHost(options: LocalHostOptions): Promise<Remote
     fs.mkdirSync(options.dataDir, { recursive: true, mode: 0o700 });
     const logFile = path.join(options.dataDir, 'host.log');
     const args = [program.entry, '--data', options.dataDir, '--older-data', options.olderDataDir ?? olderHostDataDir(process.platform, env), '--port', '0'];
-    const viaShell = process.platform === 'win32' ? windowsHostStart(program.runtime, args, logFile, path.dirname(program.entry)) : null;
-    if (viaShell !== null) {
-      const encoded = Buffer.from(viaShell, 'utf16le').toString('base64');
-      const started = await extract('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { env, timeout: 30_000, windowsHide: true });
+    if (process.platform === 'win32') {
+      // The host writes host.log itself (`--log`): cmd's `>>` cannot share a file with another
+      // start's cmd. What cmd catches, such as a crash before the host's own logging, goes to a
+      // file of this start's own; earlier ones are cleared where nothing holds them any more.
+      for (const old of fs.readdirSync(options.dataDir).filter((name) => /^host-start-[a-f0-9]{16}\.log$/.test(name))) {
+        try {
+          fs.rmSync(path.join(options.dataDir, old));
+        } catch {
+          // Still held by a running start.
+        }
+      }
+      startLog = path.join(options.dataDir, `host-start-${startToken}.log`);
+      const start = windowsHostStart(program.runtime, [...args, '--log', logFile], startLog, path.dirname(program.entry));
+      const encoded = Buffer.from(start.script, 'utf16le').toString('base64');
+      const started = await extract('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { env: { ...env, ...start.env }, timeout: 30_000, windowsHide: true });
       startedPid = Number(started.stdout.trim()) || null;
     } else {
       const output = fs.openSync(logFile, 'a', 0o600);
@@ -177,6 +243,7 @@ export async function ensureLocalHost(options: LocalHostOptions): Promise<Remote
           }
         });
         child.unref();
+        startedChild = child;
       } finally {
         fs.closeSync(output);
       }
@@ -205,7 +272,7 @@ export async function ensureLocalHost(options: LocalHostOptions): Promise<Remote
     if (startedPid !== null && !processAlive(startedPid) && holder === null) {
       endedAt ??= Date.now();
       if (Date.now() - endedAt > ENDED_HOST_GRACE_MS) {
-        throw new Error(`The host ended before it was ready. See ${path.join(options.dataDir, 'host.log')}.`);
+        throw new Error(`The host ended before it was ready. See ${startLog ?? path.join(options.dataDir, 'host.log')} and ${path.join(options.dataDir, 'host.log')}.`);
       }
     }
     if (holder?.kind === 'desktop') {
@@ -213,5 +280,16 @@ export async function ensureLocalHost(options: LocalHostOptions): Promise<Remote
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`The standalone host did not become ready. See ${path.join(options.dataDir, 'host.log')}. Try again to attach; no work was sent.`);
+  // DSP-165.1: a host still on its way when the bound passes would take the folder after this
+  // start had been reported as failed, with nobody attached to it. So this start's own host is
+  // stopped and waited for before the failure is reported; another starter's is left alone.
+  const stopped = await stopOwnStart(startedPid, startedChild);
+  const late = runningLocalHost(options.dataDir);
+  if (late !== null) {
+    return late.endpoint;
+  }
+  throw new Error(
+    `The standalone host did not become ready within ${String(Math.round(options.startTimeoutMs / 1000))} s` +
+      `${stopped ? ', so that start was stopped' : ''}. See ${path.join(options.dataDir, 'host.log')}. Try again to attach; no work was sent.`,
+  );
 }

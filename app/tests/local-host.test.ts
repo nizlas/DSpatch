@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 
 import { claimDataFolder, heldClaim } from '../src/main/host-data.ts';
 import { HostConnection, type HostLoss } from '../src/main/host-connection.ts';
-import { ensureLocalHost, runningLocalHost, type LocalHostOptions } from '../src/main/local-host.ts';
+import { ensureLocalHost, runningLocalHost, windowsHostStart, type LocalHostOptions } from '../src/main/local-host.ts';
 import { RemoteLink, probeHost, type RemoteEndpoint } from '../src/main/remote-link.ts';
 import type { ChatSessionInfo, RunStateReport } from '../src/shared/bridge.ts';
 import { remoteBuild } from '../src/shared/remote-build.ts';
@@ -176,7 +176,8 @@ test("on Windows the host starts holding none of the client's DevTools port", { 
     (await execute('netstat', ['-ano', '-p', 'TCP'])).stdout.split(/\r?\n/).some((line) => line.includes(`127.0.0.1:${String(port)} `) && line.includes('LISTENING'));
   const results: Record<string, { held: boolean; childAlive: boolean }> = {};
   for (const [mode, port] of [['spawn', 9471], ['shell', 9472]] as const) {
-    const out = fs.mkdtempSync(path.join(scratch, `devtools-${mode}-`));
+    // The shell start in a folder whose name cmd and PowerShell would act on (DSP-165.1).
+    const out = fs.mkdtempSync(path.join(scratch, mode === 'shell' ? 'devtools 100% a&b ^!(x) åäö-' : `devtools-${mode}-`));
     let childPid = 0;
     try {
       await execute(electron, [client, `--remote-debugging-port=${String(port)}`, `--user-data-dir=${path.join(out, 'profile')}`, mode, out], { timeout: 30_000 });
@@ -203,6 +204,106 @@ test("on Windows the host starts holding none of the client's DevTools port", { 
   // The control: Node's start passes the socket on, which is what the fix is for.
   assert.deepEqual(results['spawn'], { held: true, childAlive: true });
   assert.deepEqual(results['shell'], { held: false, childAlive: true });
+});
+
+/**
+ * DSP-165.1. Paths and arguments reach the host as data through the whole start: PowerShell,
+ * Start-Process, cmd and the program's own reading of its command line. Folder names with the
+ * characters cmd and PowerShell would otherwise act on, and an argument ending in a backslash.
+ */
+test('on Windows the host is started with its paths and arguments exactly as given', { timeout: 60_000, skip: process.platform === 'win32' ? false : 'a Windows start' }, async () => {
+  const names = ['with space', '100%', '%PATH%', 'a&b', 'x^y', 'bang!', "it's", '(p)', '[b]', 'semi;comma,eq=', 'åäö'];
+  const root = fs.mkdtempSync(path.join(scratch, 'special-'));
+  try {
+    const where = path.join(root, names.join(' '));
+    fs.mkdirSync(where, { recursive: true });
+    const entry = path.join(where, 'child.js');
+    fs.writeFileSync(
+      entry,
+      "require('fs').writeFileSync(require('path').join(__dirname, 'child.json'), JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() })); console.log('logged from the child');\n",
+    );
+    const args = [entry, '--data', path.join(where, 'data'), '--older-data', `${where}\\`, '--port', '0', ...names];
+    const logFile = path.join(where, 'host.log');
+    const start = windowsHostStart(process.execPath, args, logFile, where);
+    await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(start.script, 'utf16le').toString('base64')], {
+      env: { ...process.env, ...start.env },
+      timeout: 30_000,
+    });
+    await until(() => fs.existsSync(path.join(where, 'child.json')) && fs.existsSync(logFile) && fs.readFileSync(logFile, 'utf8').includes('logged'));
+    const seen = JSON.parse(fs.readFileSync(path.join(where, 'child.json'), 'utf8')) as { argv: string[]; cwd: string };
+    assert.deepEqual(seen.argv, args.slice(1));
+    assert.equal(path.resolve(seen.cwd), path.resolve(where));
+    assert.match(fs.readFileSync(logFile, 'utf8'), /logged from the child/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
+test('a value no Windows path can hold is refused, not started another way', () => {
+  assert.throws(() => windowsHostStart('C:\\node.exe', ['a"b'], 'C:\\log', 'C:\\'), /cannot hold a double quote/);
+});
+
+/**
+ * DSP-165.1. A host program that waits before it starts the real one, or that fails, in an
+ * application folder of its own: what a start does with a slow host, a failing one, and one slower
+ * than the start's bound, alone and several at once.
+ */
+function stubbedApp(root: string, body: string): LocalHostOptions {
+  const stub = path.join(root, 'stub-app');
+  fs.mkdirSync(path.join(stub, 'dist', 'host'), { recursive: true });
+  fs.copyFileSync(path.join(appPath, 'package.json'), path.join(stub, 'package.json'));
+  fs.writeFileSync(path.join(stub, 'dist', 'host', 'remote-host.js'), body);
+  return { ...fixture().options, dataDir: path.join(root, 'data'), olderDataDir: path.join(root, 'older'), appPath: stub };
+}
+const realHost = path.join(appPath, 'dist', 'host', 'remote-host.js');
+const delayed = (ms: number): string => `setTimeout(() => require(${JSON.stringify(realHost)}), ${String(ms)});\n`;
+
+test('starters at once with a slow host all get that host, and none reports a failure (DSP-165.1)', { timeout: 60_000 }, async () => {
+  const root = fs.mkdtempSync(path.join(scratch, 'slow-together-'));
+  const options = { ...stubbedApp(root, delayed(3_000)), startTimeoutMs: 20_000 };
+  try {
+    const outcomes = await Promise.allSettled(Array.from({ length: 4 }, () => ensureLocalHost(options)));
+    assert.deepEqual(outcomes.map((one) => one.status), ['fulfilled', 'fulfilled', 'fulfilled', 'fulfilled'], JSON.stringify(outcomes));
+    const ports = new Set(outcomes.map((one) => (one as PromiseFulfilledResult<RemoteEndpoint>).value.port));
+    assert.equal(ports.size, 1);
+    assert.equal(heldClaim(options.dataDir)?.kind, 'standalone');
+  } finally {
+    await clean(root, options.dataDir);
+  }
+});
+
+test('a start slower than its bound is stopped, and no host takes the folder after it was reported (DSP-165.1)', { timeout: 60_000 }, async () => {
+  const root = fs.mkdtempSync(path.join(scratch, 'slow-bound-'));
+  const options = { ...stubbedApp(root, delayed(8_000)), startTimeoutMs: 2_000 };
+  try {
+    const outcomes = await Promise.allSettled([ensureLocalHost(options), ensureLocalHost(options)]);
+    for (const outcome of outcomes) {
+      assert.equal(outcome.status, 'rejected');
+      assert.match(String((outcome as PromiseRejectedResult).reason), /did not become ready within 2 s, so that start was stopped/);
+    }
+    // Past the moment the stopped hosts would have started.
+    await new Promise((resolve) => setTimeout(resolve, 9_000));
+    assert.equal(heldClaim(options.dataDir), null);
+    assert.equal(runningLocalHost(options.dataDir), null);
+  } finally {
+    await clean(root, options.dataDir);
+  }
+});
+
+test('a host that fails at its start is reported, with where to read what it said (DSP-165.1)', { timeout: 60_000 }, async () => {
+  const root = fs.mkdtempSync(path.join(scratch, 'failing-'));
+  const options = { ...stubbedApp(root, "console.error('a start that fails'); process.exit(1);\n"), startTimeoutMs: 20_000 };
+  try {
+    const started = Date.now();
+    const failure = await ensureLocalHost(options).then(() => null, (error: unknown) => String(error));
+    assert.ok(failure !== null);
+    assert.ok(Date.now() - started < 10_000, 'a failed start is reported well within its bound');
+    const named = /See (.+?\.log)/.exec(failure)?.[1] ?? '';
+    assert.match(fs.readFileSync(named, 'utf8'), /a start that fails/, failure);
+    assert.equal(heldClaim(options.dataDir), null);
+  } finally {
+    await clean(root, options.dataDir);
+  }
 });
 
 for (const restart of [false, true]) {
