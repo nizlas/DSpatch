@@ -107,7 +107,15 @@ async function main(): Promise<void> {
   log(`the client's token is in ${file}`);
   // Written last, whole: a client that finds this finds a host listening.
   // With the identity its claim holds, so a client can tell this process from another at its id.
-  const running = { pid: process.pid, identity: ownIdentity(), port, ...build, startedAtUtc: new Date().toISOString() };
+  const startedBy = process.env['DSPATCH_HOST_START_TOKEN'];
+  const running = {
+    pid: process.pid,
+    identity: ownIdentity(),
+    ...(startedBy === undefined || startedBy === '' ? {} : { startedBy }),
+    port,
+    ...build,
+    startedAtUtc: new Date().toISOString(),
+  };
   fs.writeFileSync(`${runningFile}.tmp`, `${JSON.stringify(running, null, 2)}\n`, { mode: 0o600 });
   fs.renameSync(`${runningFile}.tmp`, runningFile);
   process.on('exit', () => {

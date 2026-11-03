@@ -319,6 +319,8 @@ export interface HostRunning {
   readonly pid: number;
   /** The process's identity as `host-data.ts` reads it; absent from a host older than DSP-164. */
   readonly identity?: string;
+  /** DSP-165.1: the token the local start gave this host, so the starter knows it as its own. */
+  readonly startedBy?: string;
   readonly port: number;
   readonly appVersion: string;
   readonly commit: string;

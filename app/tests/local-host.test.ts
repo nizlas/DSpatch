@@ -51,7 +51,8 @@ async function clean(root: string, dataDir: string): Promise<void> {
     process.kill(claim.pid, 'SIGTERM');
     await until(() => heldClaim(dataDir) === null);
   }
-  fs.rmSync(root, { recursive: true, force: true });
+  // On Windows the cmd that ran the host lets go of its log a moment after the host ends.
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 
 async function connect(endpoint: RemoteEndpoint): Promise<HostConnection> {
@@ -161,6 +162,47 @@ test('starters at once get one host between them, and none of them reports a fai
   } finally {
     await clean(root, options.dataDir);
   }
+});
+
+/**
+ * DSP-165.1. A client started with a DevTools port, which starts a child and ends. Started by Node,
+ * the child inherits the client's listening socket and the port stays taken until the child ends;
+ * started as `windowsHostStart` starts the host, the port is free while the child lives on.
+ */
+test("on Windows the host starts holding none of the client's DevTools port", { timeout: 60_000, skip: process.platform === 'win32' ? false : 'a Windows start' }, async () => {
+  const electron = path.join(appPath, 'node_modules', 'electron', 'dist', 'electron.exe');
+  const client = path.join(appPath, 'tests', 'support', 'devtools-client.cjs');
+  const listening = async (port: number): Promise<boolean> =>
+    (await execute('netstat', ['-ano', '-p', 'TCP'])).stdout.split(/\r?\n/).some((line) => line.includes(`127.0.0.1:${String(port)} `) && line.includes('LISTENING'));
+  const results: Record<string, { held: boolean; childAlive: boolean }> = {};
+  for (const [mode, port] of [['spawn', 9471], ['shell', 9472]] as const) {
+    const out = fs.mkdtempSync(path.join(scratch, `devtools-${mode}-`));
+    let childPid = 0;
+    try {
+      await execute(electron, [client, `--remote-debugging-port=${String(port)}`, `--user-data-dir=${path.join(out, 'profile')}`, mode, out], { timeout: 30_000 });
+      await until(() => fs.existsSync(path.join(out, 'child.json')));
+      childPid = (JSON.parse(fs.readFileSync(path.join(out, 'child.json'), 'utf8')) as { pid: number }).pid;
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      let childAlive = true;
+      try {
+        process.kill(childPid, 0);
+      } catch {
+        childAlive = false;
+      }
+      results[mode] = { held: await listening(port), childAlive };
+    } finally {
+      try {
+        process.kill(childPid);
+      } catch {
+        // Already gone.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      fs.rmSync(out, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
+  }
+  // The control: Node's start passes the socket on, which is what the fix is for.
+  assert.deepEqual(results['spawn'], { held: true, childAlive: true });
+  assert.deepEqual(results['shell'], { held: false, childAlive: true });
 });
 
 for (const restart of [false, true]) {
