@@ -5,12 +5,14 @@
  */
 
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import { releaseUrl, findHostPackage, readHostManifest, type HostManifest } from '../src/main/host-packages.ts';
 import { installedHostToStart, SshConnection, sshProblem, validTarget } from '../src/main/ssh-connection.ts';
@@ -361,6 +363,76 @@ describe('the Windows steps, run by PowerShell', { skip: process.platform === 'w
       child.kill();
       await ended(child);
       fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * DSP-165.1. The start a client sends, with an installed version whose launcher runs a stand-in:
+   * one that waits, then starts the real host, or one that fails. cmd's `>>` cannot open a file
+   * another start's cmd holds, so before the host logged itself, every start but one ended before
+   * its host ran; and a failed start was reported after three minutes with nothing said.
+   */
+  const installed = (home: string, body: string): string => {
+    const top = path.join(home, 'Local', 'DSpatch', 'host', 'versions', 'test-1', 'dspatch-host');
+    fs.mkdirSync(top, { recursive: true });
+    fs.writeFileSync(path.join(top, 'manifest.json'), '{"hostId":"test-1"}');
+    fs.writeFileSync(path.join(top, 'stub.js'), body);
+    fs.writeFileSync(path.join(top, 'dspatch-host.cmd'), `@echo off\r\n"${process.execPath}" "%~dp0stub.js" %*\r\n`);
+    return top;
+  };
+  const runAsync = async (home: string, step: { readonly command: string }): Promise<ReadonlyMap<string, readonly string[]>> => {
+    const encoded = step.command.split(' ').at(-1) ?? '';
+    const out = await promisify(execFile)('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+      env: { ...process.env, APPDATA: path.join(home, 'Roaming'), LOCALAPPDATA: path.join(home, 'Local') },
+      encoding: 'utf8',
+      timeout: 120_000,
+      windowsHide: true,
+    });
+    return readLines(out.stdout);
+  };
+  const realHost = fileURLToPath(new URL('../dist/host/remote-host.js', import.meta.url));
+
+  it('starts at once reach one host, and each start reached its host program and logged', { timeout: 120_000 }, async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
+    const top = installed(
+      home,
+      `require('fs').appendFileSync(require('path').join(__dirname, 'args.txt'), JSON.stringify(process.argv.slice(2)) + '\\n'); setTimeout(() => require(${JSON.stringify(realHost)}), 3000);\n`,
+    );
+    let pid = 0;
+    try {
+      const answers = await Promise.all([1, 2, 3].map(() => runAsync(home, start('windows', 'test-1'))));
+      assert.deepEqual(answers.map((one) => one.get('started')), [['yes'], ['yes'], ['yes']]);
+      const running = JSON.parse(run(home, probe('windows')).get('running')?.[0] ?? '{}') as { pid: number; identity: string };
+      pid = running.pid;
+      const shared = path.join(home, 'Roaming', 'DSpatch');
+      const reached = fs.readFileSync(path.join(top, 'args.txt'), 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line) as string[]);
+      assert.equal(reached.length, 3, 'a start ended before its host ran');
+      assert.deepEqual(reached[0], ['--port', '0', '--data', shared, '--older-data', path.join(home, 'Local', 'dspatch-host'), '--log', path.join(shared, 'host.log')]);
+      const log = fs.readFileSync(path.join(shared, 'host.log'), 'utf8');
+      assert.equal(log.match(/already runs over this data folder/g)?.length, 2);
+      assert.equal(log.match(/serving pid=/g)?.length, 1);
+      assert.deepEqual(run(home, stop('windows', running)).get('stopped'), ['yes']);
+    } finally {
+      try {
+        process.kill(pid);
+      } catch {
+        // Stopped.
+      }
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
+  });
+
+  it('a host that fails at its start is reported within seconds, with what it said', { timeout: 60_000 }, async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
+    installed(home, "console.error('a remote start that fails'); process.exit(1);\n");
+    try {
+      const started = Date.now();
+      const answer = await runAsync(home, start('windows', 'test-1'));
+      assert.deepEqual(answer.get('failed'), ['start']);
+      assert.ok(Date.now() - started < 20_000, `reported after ${String(Date.now() - started)} ms`);
+      assert.ok((answer.get('log') ?? []).some((line) => line.includes('a remote start that fails')), JSON.stringify(answer.get('log')));
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     }
   });
 

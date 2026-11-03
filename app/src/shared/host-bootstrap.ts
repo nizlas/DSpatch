@@ -191,11 +191,23 @@ export function start(os: RemoteOs, hostId: string): RemoteStep {
 New-Item -ItemType Directory -Force $data | Out-Null
 $exe = "$root\\versions\\${hostId}\\dspatch-host\\dspatch-host.cmd"
 if (Test-Path "$data\\host-running.json") { $r = Get-Content "$data\\host-running.json" -Raw | ConvertFrom-Json; if (-not (Test-Host $r.pid $r.identity 'remote-host.js')) { Remove-Item "$data\\host-running.json" } }
+Get-ChildItem $data -Filter 'host-start-*.log' -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
+$own = "$data\\host-start-" + [guid]::NewGuid().ToString('N').Substring(0, 16) + ".log"
 $before = (Get-Date).ToUniversalTime()
-$line = "cmd /c \`"\`"$exe\`" --port 0 --data \`"$data\`" --older-data \`"$older\`" >> \`"$data\\host.log\`" 2>&1\`""
-Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $line } | Out-Null
-for ($i = 0; $i -lt 360; $i++) { if ((Test-Path "$data\\host-running.json") -and (Get-Item "$data\\host-running.json").LastWriteTimeUtc -ge $before) { Write-Output 'started=yes'; exit 0 }; Start-Sleep -Milliseconds 500 }
+$line = "cmd /d /c \`"\`"$exe\`" --port 0 --data \`"$data\`" --older-data \`"$older\`" --log \`"$data\\host.log\`" >> \`"$own\`" 2>&1\`""
+$id = (Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $line }).ProcessId
+$gone = -1
+for ($i = 0; $i -lt 360; $i++) {
+  if ((Test-Path "$data\\host-running.json") -and (Get-Item "$data\\host-running.json").LastWriteTimeUtc -ge $before) { Write-Output 'started=yes'; exit 0 }
+  if (-not (Get-Process -Id $id -ErrorAction SilentlyContinue)) {
+    $claimed = $false
+    if (Test-Path "$data\\host-claim.json") { $c = Get-Content "$data\\host-claim.json" -Raw | ConvertFrom-Json; $claimed = Test-Host $c.pid $c.identity 'remote-host.js' }
+    if ($claimed) { $gone = -1 } elseif ($gone -lt 0) { $gone = $i } elseif ($i - $gone -ge 6) { break }
+  }
+  Start-Sleep -Milliseconds 500
+}
 Write-Output 'failed=start'
+foreach ($f in @($own, "$data\\host.log")) { if (Test-Path $f) { Get-Content $f -Tail 5 | ForEach-Object { Write-Output ('log=' + $_) } } }
 `);
   }
   return posix(`
