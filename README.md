@@ -19,7 +19,7 @@ See the [tutorial introduction](TUTORIAL.md#why-use-a-loop) for the reasoning be
 | Two Git revisions | Browse every changed file, expand context, ask about selected code, generate code walks, and review or delegate selected changes. |
 | A remote development machine | Keep the interface on your computer while the repository, agents and tools run on the host over SSH. |
 
-DSpatch uses TypeScript, React and Electron. Linux x64 and Windows x64 are the current packaging targets. Read the chosen release's notes for platform verification and known limitations; a built artifact is not necessarily a tested platform.
+DSpatch uses TypeScript, React and Electron. Releases publish a Linux x64 Debian package; on Windows, DSpatch is run from the repository (see [Run from source](#run-from-source)). Read the chosen release's notes for platform verification and known limitations; a built artifact is not necessarily a tested platform.
 
 ## Install from a release
 
@@ -38,7 +38,7 @@ sudo apt install "./dspatch_VERSION_amd64.deb"
 
 Start **DSpatch** from your application menu. The package includes the application runtime and configures its sandbox; you do not need the source-build sandbox steps below.
 
-**Windows x64:** download `DSpatch-Setup-VERSION.exe`, run it, and start **DSpatch** from the Start menu. The installer is per-user. Builds may be unsigned; check the release's publisher and notes before accepting a Windows warning.
+**Windows x64:** current releases publish no Windows installer; run DSpatch from the repository instead ([Run from source](#run-from-source)). Only v0.1.1 has one, `DSpatch-Setup-0.1.1.exe`, and it is not maintained.
 
 ### 2. Choose where to work
 
@@ -89,6 +89,8 @@ npm run dev
 ```
 
 This compiles the Node-side code, starts the renderer development server, and opens Electron. Renderer changes are served by Vite; restart the command after changes to the host, main process or preload. Stop agent work in the UI before restarting the development process.
+
+If Electron says it failed to install, npm skipped its download: npm 11 runs no package's install script it has not been told to allow. From `app/`, run `node node_modules/electron/install.js` once and start again; the same applies after every `npm ci`.
 
 On Linux, if Electron reports that its SUID sandbox helper is incorrectly configured, stop the app and run the following **from `app/`** for your trusted checkout:
 
