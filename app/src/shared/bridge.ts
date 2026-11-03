@@ -1428,6 +1428,12 @@ export interface StoredMessage {
   readonly toolEvents: number;
   /** The provider's own terminal word, or `null` when none ever arrived. */
   readonly terminalStatus: string | null;
+  /**
+   * DSP-165: how a stopped turn's own process ended, as the live turn was told
+   * (`stopped`, `forced`, `unconfirmed`). Absent in files written before it was kept, and
+   * for a turn that was not stopped, so a reopened turn says what the live one said.
+   */
+  readonly terminalEnd?: RunEnd;
   readonly errorMessage: string | null;
   /** `null` means no usage record arrived — unknown, never 0. */
   readonly totalTokens: number | null;

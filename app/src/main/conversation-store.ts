@@ -806,6 +806,9 @@ function parseMessages(value: unknown): StoredConversation['messages'] {
       toolEvents: asNumber(entry['toolEvents'], 0),
       terminalStatus:
         typeof entry['terminalStatus'] === 'string' ? entry['terminalStatus'] : null,
+      ...(entry['terminalEnd'] === 'stopped' || entry['terminalEnd'] === 'forced' || entry['terminalEnd'] === 'unconfirmed'
+        ? { terminalEnd: entry['terminalEnd'] as 'stopped' | 'forced' | 'unconfirmed' }
+        : {}),
       errorMessage: typeof entry['errorMessage'] === 'string' ? entry['errorMessage'] : null,
       totalTokens:
         typeof entry['totalTokens'] === 'number' && Number.isFinite(entry['totalTokens'])

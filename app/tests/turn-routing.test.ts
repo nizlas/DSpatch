@@ -27,6 +27,7 @@ import {
   emptyChatState,
   markCancelRequested,
   routeEvent,
+  savedTurnStatusLabel,
   summariseContext,
   turnStatusLabel,
   unfinishedSupersededTurns,
@@ -368,4 +369,19 @@ test('what the agent does is one line, replaced in place and gone with the run, 
   for (const status of ['finished', 'cancelled', 'error'] as const) {
     assert.equal(routeEvent(state, event('run.finished', RUN_A, { status }), '').turns[0]?.activity, null);
   }
+});
+
+test("a saved turn reads with the live turn's words, from its saved outcome (DSP-165)", () => {
+  for (const end of ['stopped', 'forced', 'unconfirmed'] as const) {
+    assert.equal(
+      savedTurnStatusLabel({ terminalStatus: 'cancelled', terminalEnd: end, answer: '' }),
+      turnStatusLabel({ status: 'cancelled', end }),
+    );
+  }
+  // A file from before the end was kept reads as a cancel with no end did live.
+  assert.equal(savedTurnStatusLabel({ terminalStatus: 'cancelled', answer: '' }), turnStatusLabel({ status: 'cancelled' }));
+  assert.equal(savedTurnStatusLabel({ terminalStatus: 'error', answer: 'x' }), turnStatusLabel({ status: 'error' }));
+  assert.equal(savedTurnStatusLabel({ terminalStatus: 'finished', answer: '' }), 'finished with no text');
+  assert.equal(savedTurnStatusLabel({ terminalStatus: 'finished', answer: 'a reply' }), null);
+  assert.equal(savedTurnStatusLabel({ terminalStatus: null, answer: '' }), 'no ending was reported for this turn');
 });

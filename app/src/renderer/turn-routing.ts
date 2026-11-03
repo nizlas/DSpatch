@@ -310,6 +310,29 @@ function addToolName(
  * label says so. A cancel without `end` (every Cursor run) reads as before.
  * Details belong in Session details, not here.
  */
+/**
+ * DSP-165: what a saved turn's badge says, from its saved outcome, in the live turn's words:
+ * `null` where the live turn showed no badge either (a finished reply with text). A turn that
+ * never reported an ending is the one case only history has.
+ */
+export function savedTurnStatusLabel(message: {
+  readonly terminalStatus: string | null;
+  readonly terminalEnd?: RunEnd;
+  readonly answer: string;
+}): string | null {
+  const status = message.terminalStatus;
+  if (status === null) {
+    return message.answer === '' ? 'no ending was reported for this turn' : null;
+  }
+  if (status === 'finished') {
+    return message.answer === '' ? 'finished with no text' : null;
+  }
+  if (status === 'cancelled' || status === 'error') {
+    return turnStatusLabel({ status, ...(message.terminalEnd === undefined ? {} : { end: message.terminalEnd }) });
+  }
+  return status;
+}
+
 export function turnStatusLabel(turn: Pick<TurnState, 'status' | 'end'>): string {
   if (turn.status === 'cancelled') {
     switch (turn.end) {

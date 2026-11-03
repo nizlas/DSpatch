@@ -19,6 +19,7 @@
  *     node --test tests/chat-service.test.ts        (from app/)
  */
 
+import { savedTurnStatusLabel, turnStatusLabel } from '../src/renderer/turn-routing.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1705,9 +1706,13 @@ test('SIMULATED: a refused resume opens nothing, sends nothing and keeps the ses
   );
 });
 
-test('SIMULATED: a refused resume of a conversation with no saved messages promises no recap and no history (DSP-121 review B1)', async () => {
-  // A project opened and closed before anything was sent: the session block is saved
-  // with no messages, so the reopen attempts a resume, and here it is refused.
+test('SIMULATED: a reopened chat that never sent anything opens as a first session, with no resume and no error (DSP-165)', async () => {
+  // A project opened and closed before anything was sent: the session block is saved with no
+  // messages. A provider may keep nothing of such a session (Copilot stores one from its first
+  // message), so there is nothing to resume, and this is the ordinary state of a chat left
+  // empty rather than a failure. Earlier (DSP-121 review B1) this attempted the resume and,
+  // when it was refused, showed the no-session choices; Niclas asked on 3 November 2026 for
+  // the empty chat to open normally.
   const workspace = makeDir('continuity-empty');
   fs.writeFileSync(path.join(workspace, 'readme.txt'), 'x\n', 'utf8');
   const store = storeFor('continuity-empty');
@@ -1718,22 +1723,16 @@ test('SIMULATED: a refused resume of a conversation with no saved messages promi
 
   const second = serviceOver('continuity-empty-2', workspace, store);
   await second.service.resumeConversation(opened.conversationId);
+  // Whatever the provider would say of it, it is not asked.
   second.adapter.resumeBehaviour = 'not-found';
   const session = await second.service.startChatSession({ kind: 'folder', path: workspace });
-  assert.equal(session.continuity.kind, 'resume-refused');
-  assert.equal(session.continuity.savedMessageCount, 0);
-  assert.deepEqual(session.continuity.choices, RETRY_AND_NEW);
-  assert.doesNotMatch(session.continuity.statement, /recap you can remove|stays readable/);
-  assert.match(
-    session.continuity.statement,
-    /or start a new provider session, which begins from your next message alone \(this conversation has no saved messages, so there is no recap\)\.$/,
-  );
-  assert.doesNotMatch(session.continuity.contextNote, /shows its recap|0 saved messages/);
-  assert.match(session.continuity.contextNote, /has no saved messages, so a new provider session, if you choose one, has no recap to show/);
-  // And indeed: the new session it would open carries no recap.
-  const fresh = await second.service.startChatSession({ kind: 'new-provider-session' });
-  assert.equal(fresh.continuity.kind, 'new-provider-session');
-  assert.equal(fresh.continuity.contextToResend, null);
+  assert.deepEqual(second.adapter.resumeAttempts, []);
+  assert.equal(session.continuity.kind, 'first-session');
+  assert.equal(session.continuity.providerSessionOpen, true);
+  assert.equal(session.continuity.resumeFailure, null);
+  assert.deepEqual(session.continuity.choices, []);
+  assert.equal(session.continuity.contextToResend, null);
+  assert.equal(session.conversationId, opened.conversationId);
   assert.deepEqual(second.adapter.sent, []);
   await second.service.dispose();
 });
@@ -2663,4 +2662,19 @@ test('a run.finished crosses the bridge with the end its adapter reported, and w
   }
   const cursor = toUiEvent({ ...base, type: 'run.finished', status: 'cancelled' });
   assert.ok(!('end' in cursor));
+});
+
+test('SIMULATED: a stopped turn is saved with how it ended, and reads as it did live (DSP-165)', async () => {
+  const workspace = makeDir('stopped-saved');
+  fs.writeFileSync(path.join(workspace, 'readme.txt'), 'x\n', 'utf8');
+  const store = storeFor('stopped-saved');
+  const first = serviceOver('stopped-saved-1', workspace, store);
+  const session = await first.service.startChatSession({ kind: 'folder', path: workspace });
+  await first.service.sendPrompt('a long job');
+  first.adapter.emit({ type: 'run.finished', status: 'cancelled', end: 'stopped' });
+  await first.service.dispose();
+  const message = store.read(session.conversationId).conversation?.messages[0];
+  assert.ok(message !== undefined);
+  assert.equal(message.terminalEnd, 'stopped');
+  assert.equal(savedTurnStatusLabel(message), turnStatusLabel({ status: 'cancelled', end: 'stopped' }));
 });

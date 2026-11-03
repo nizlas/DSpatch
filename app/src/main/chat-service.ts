@@ -27,6 +27,7 @@ import type {
   CapabilityReport,
   ModelInfo,
   ResumeEvidence,
+  RunEnd,
   RunReference,
   SessionConfig,
   SessionHandle,
@@ -830,6 +831,8 @@ interface TurnRecord {
   finalMessage: string | null;
   toolEvents: number;
   terminalStatus: string | null;
+  /** DSP-165: the run's own `end` on `run.finished`, kept so a saved turn reads as the live one. */
+  terminalEnd: RunEnd | null;
   errorMessage: string | null;
   finishedAtUtc: string | null;
   readonly usageEvents: Array<{ atUtc: string; readings: readonly UsageReading[] }>;
@@ -2809,7 +2812,17 @@ export class ChatService {
       };
     }
 
-    if (saved !== null && previousId !== null) {
+    // DSP-165: a session that never had anything sent through it has nothing to resume, and a
+    // provider may keep no record of it at all (Copilot stores a session from its first
+    // message). That is the ordinary state of a chat opened and left, not a failure: it opens
+    // as a first session does. Nothing was sent, so nothing can be lost or repeated.
+    const neverSent =
+      savedMessageCount === 0 &&
+      (this.held.get(conversationId)?.ledger.all().every((attempt) => attempt.kind !== 'agent-turn') ?? true);
+    if (saved !== null && previousId !== null && neverSent) {
+      this.options.log(`${previousId} had nothing sent through it; a new session is opened instead of a resume`);
+    }
+    if (saved !== null && previousId !== null && !neverSent) {
       // DSP-117 back-stop: never resume a session through another provider. Before
       // any adapter call, so nothing is asked of either provider and nothing is sent.
       const recordedProvider = storedSessionProvider(saved);
@@ -5958,6 +5971,7 @@ export class ChatService {
         finalMessage: null,
         toolEvents: 0,
         terminalStatus: null,
+        terminalEnd: null,
         errorMessage: null,
         finishedAtUtc: null,
         usageEvents: [],
@@ -6126,6 +6140,7 @@ export class ChatService {
         }
         case 'run.finished': {
           turn.terminalStatus = event.status;
+          turn.terminalEnd = event.end ?? null;
           turn.finishedAtUtc = event.at;
           turn.errorMessage = event.error?.message ?? null;
           this.terminalSeenForTurn = true;
@@ -6285,6 +6300,7 @@ function toStoredMessage(turn: TurnRecord): StoredMessage {
     deltaCount: turn.deltaCount,
     toolEvents: turn.toolEvents,
     terminalStatus: turn.terminalStatus,
+    ...(turn.terminalEnd === null ? {} : { terminalEnd: turn.terminalEnd }),
     errorMessage: turn.errorMessage,
     totalTokens: total?.value ?? null,
     startedAtUtc: turn.startedAtUtc,

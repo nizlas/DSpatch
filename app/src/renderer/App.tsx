@@ -100,6 +100,7 @@ import {
   markCancelRequested,
   routeEvent,
   summariseContext,
+  savedTurnStatusLabel,
   turnStatusLabel,
   type ChatState,
   type TurnState,
@@ -4868,6 +4869,7 @@ function RestoredMessage({
   readonly quiet?: boolean;
 }): JSX.Element {
   const at = `${prefix}-${String(message.ordinal)}`;
+  const savedStatus = savedTurnStatusLabel(message);
   // DSP-147: steering whose place in the answer was saved goes back to that place.
   const placedSteering: readonly PlacedMessage[] = (message.steering ?? []).flatMap((entry, position) =>
     entry.anchor === undefined
@@ -4902,14 +4904,20 @@ function RestoredMessage({
       />
       {/* AC#5's second half: a saved reply is read back formatted, not as the raw
           characters it was stored as. */}
-      {message.answer === '' ? (
-        <div className="turn__answer" data-ev={`${at}-answer`}>
-          <p className="app__note">
-            Nothing was received for this turn before DSpatch stopped listening.
-          </p>
-        </div>
-      ) : (
+      {/* DSP-165: the saved outcome in the live turn's words, so a stopped turn reads the same
+          after reopening as it did when it stopped. */}
+      {message.answer !== '' && (
         <AnswerWithMessages text={message.answer} messages={placedSteering} testId={`${at}-answer`} />
+      )}
+      {savedStatus !== null && (
+        <p className="turn__meta">
+          <span
+            className={`badge badge--${message.terminalStatus === 'finished' ? 'supported' : message.terminalStatus === null ? 'unknown' : 'unsupported'}`}
+            data-ev={`${at}-status`}
+          >
+            {savedStatus}
+          </span>
+        </p>
       )}
       {/*
         A saved turn that carried a summary says so when it is read back, in the
