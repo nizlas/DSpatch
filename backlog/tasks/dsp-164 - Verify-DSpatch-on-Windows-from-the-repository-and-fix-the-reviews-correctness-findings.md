@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-03 18:29'
-updated_date: '2026-11-03 19:33'
+updated_date: '2026-11-03 20:52'
 labels:
   - windows
   - review
@@ -55,4 +55,6 @@ Verified on Windows:
 Not verified: the POSIX host steps' identity match (needs a Linux /proc; syntax-checked and helpers run in Git's sh only); the POSIX suites' new cases; Claude on Windows; the larger development loop; a real SSH connection to or from Windows; UX acceptance.
 
 Observed and not fixed (recorded for later): reopening a project whose last chat sent nothing shows "Could not resume the agent session" because Copilot keeps no session without a message; a stopped turn reads "stopped · provider work unknown" live and "Nothing was received for this turn before DSpatch stopped listening" after reopening; `npm run dev` does not refresh the build identity, so a development host reports an old commit.
+
+Still open (3 November 2026): the POSIX identity match is not verified on Linux; no Linux environment was reachable from the Windows machine. Run tests/ssh-connection.test.ts on Linux.
 <!-- SECTION:NOTES:END -->
