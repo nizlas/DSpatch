@@ -113,7 +113,8 @@ export function makeHookFixture(options: { readonly timeoutSec?: number; readonl
   for (const kind of ['pre', 'post'] as const) {
     const check = path.join(scripts, 'check.mjs');
     fs.writeFileSync(path.join(scripts, `${kind}.sh`), `#!/bin/sh\nexec node "${check.replace(/\\/g, '/')}" ${kind} "${scripts.replace(/\\/g, '/')}"\n`);
-    fs.writeFileSync(path.join(scripts, `${kind}.ps1`), `$input | & node "${check}" ${kind} "${scripts.replace(/\\/g, '/')}"\nexit $LASTEXITCODE\n`);
+    // In a script run with `&`, `$input` is that script's pipeline, not the hook's standard input.
+    fs.writeFileSync(path.join(scripts, `${kind}.ps1`), `[Console]::In.ReadToEnd() | & node "${check}" ${kind} "${scripts.replace(/\\/g, '/')}"\nexit $LASTEXITCODE\n`);
   }
   const timeoutSec = options.timeoutSec ?? 15;
   fs.writeFileSync(

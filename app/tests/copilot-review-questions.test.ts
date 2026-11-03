@@ -179,7 +179,7 @@ describe('Copilot review questions through the real services and runtime', { tim
     assert.ok(prompt.includes('saveProject'), 'the selection goes with the question');
     assert.ok(!prompt.includes('scroll: number;\\n  lane') , 'the definition is not in what was sent first');
     assert.ok(sentSince(asked).includes(DEFINITION_AT_TO), 'it reached the model through the read');
-    assert.deepEqual(answer.reads, ['Read target/src/workspace.ts']);
+    assert.deepEqual(answer.reads, [`Read ${path.join('target', 'src', 'workspace.ts')}`]);
     assert.deepEqual(answer.references?.map((reference) => [reference.range.side, reference.range.path, reference.range.end]), [['target', 'src/workspace.ts', 6]]);
     assert.equal(answer.adjustments?.length, 2, JSON.stringify(answer.adjustments));
 
@@ -191,7 +191,7 @@ describe('Copilot review questions through the real services and runtime', { tim
     assert.equal(next.kind, 'sent', JSON.stringify(next));
     const followed = await answerTo(service, next.kind === 'sent' ? next.questionId : '');
     assert.equal(followed.status, 'done', JSON.stringify(followed));
-    assert.deepEqual(followed.reads, ['Read base/src/workspace.ts']);
+    assert.deepEqual(followed.reads, [`Read ${path.join('base', 'src', 'workspace.ts')}`]);
     assert.deepEqual(followed.references?.map((reference) => reference.range.side), ['base']);
     assert.equal(followed.adjustments?.length ?? 0, 0);
     const results = model.requests.at(-1)?.messages.filter((message) => message.role === 'tool') ?? [];
@@ -221,7 +221,7 @@ describe('Copilot review questions through the real services and runtime', { tim
     assert.equal(simpler.kind, 'sent', JSON.stringify(simpler));
     const again = await answerTo(service, simpler.kind === 'sent' ? simpler.questionId : '');
     assert.equal(again.status, 'done', JSON.stringify(again));
-    assert.deepEqual(again.reads, ['Read target/src/workspace.ts']);
+    assert.deepEqual(again.reads, [`Read ${path.join('target', 'src', 'workspace.ts')}`]);
     const prompt = JSON.stringify(model.requests[asked]?.messages.at(-1));
     assert.ok(prompt.includes('saveProject'), 'the selected code of the earlier question');
     assert.ok(prompt.includes('The first answer.'));
@@ -240,7 +240,7 @@ describe('Copilot review questions through the real services and runtime', { tim
     assert.equal(sent.kind, 'sent', JSON.stringify(sent));
     const answer = await answerTo(service, sent.kind === 'sent' ? sent.questionId : '');
     assert.equal(answer.status, 'done', JSON.stringify(answer));
-    assert.deepEqual(answer.reads, ['Read target/src/workspace.ts']);
+    assert.deepEqual(answer.reads, [`Read ${path.join('target', 'src', 'workspace.ts')}`]);
     assert.equal(answer.references?.length, 1);
     await all.dispose();
   });

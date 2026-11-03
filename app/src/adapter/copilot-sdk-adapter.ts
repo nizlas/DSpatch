@@ -485,6 +485,12 @@ async function realToolFactory(tool: AppTool): Promise<unknown> {
 /** How long a run may take to end after an abort before the runtime is ended. */
 const ABORT_GRACE_MS = 8_000;
 
+/**
+ * How long a DSpatch tool waits for the end of a `preToolUse` hook that answers for its call, when
+ * the runtime calls the tool before that end has reached DSpatch. Past it the call is refused.
+ */
+const PRE_HOOK_SETTLE_MS = 2_000;
+
 /** How long the runtime gets to end once it is told to, on top of the grace. */
 const FORCE_STOP_BOUND_MS = 4_000;
 
@@ -762,7 +768,7 @@ export class CopilotSdkAdapter implements AgentAdapter {
     const extra = this.folders(config).slice(1);
     const appTools = this.policy.surface === 'chat' ? (config.appTools ?? []) : [];
     const factory = this.options.toolFactory ?? realToolFactory;
-    const tools = await Promise.all(appTools.map((tool) => factory(tool)));
+    const tools = await Promise.all(appTools.map((tool) => factory(this.guarded(state, tool))));
     const builtIn = conversation ? [] : this.policy.tools;
     return {
       clientName: 'DSpatch',
@@ -837,12 +843,54 @@ export class CopilotSdkAdapter implements AgentAdapter {
     return undefined;
   }
 
-  /** Holds back the result of a call that asks no permission, such as DSpatch's own tools. */
+  /**
+   * DSpatch's own tool, run only when nothing refused its call. These tools ask no permission, so
+   * the runtime would run them after a failed hook; refusing here, before `execute`, is what keeps
+   * a refused call from doing anything. Holding back its result afterwards would leave a workspace
+   * created or a folder added.
+   */
+  private guarded(state: CopilotSessionState, tool: AppTool): AppTool {
+    return {
+      ...tool,
+      execute: async (args) => {
+        const refusal = await this.toolRefusal(state, callKey(tool.name, args));
+        if (refusal !== null) {
+          this.log(`a ${tool.name} call was refused before it ran`);
+          return { text: refusal, isError: true };
+        }
+        return tool.execute(args);
+      },
+    };
+  }
+
+  private async toolRefusal(state: CopilotSessionState, key: string): Promise<string | null> {
+    const pending = (): boolean => [...(state.run?.preHookCalls.values() ?? [])].some((calls) => calls.some((call) => call.key === key));
+    // The runtime calls the tool after its hooks have ended; their end may still be on its way here.
+    const settles = Date.now() + PRE_HOOK_SETTLE_MS;
+    while (pending() && Date.now() < settles) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const run = state.run;
+    if (run === null) {
+      return null;
+    }
+    if (run.controlFailed) {
+      return COPILOT_CONTROL_FAILED_REASON;
+    }
+    if (run.cancelRequested) {
+      return 'The person stopped this turn.';
+    }
+    // A hook that has not answered for this call by now counts as one that failed.
+    return [...run.refusedCalls.values()].includes(key) || pending() ? COPILOT_CALL_CONTROL_FAILED_REASON : null;
+  }
+
+  /** Holds back the result of a call that asks no permission, should one have run regardless. */
   private postToolUse(state: CopilotSessionState, input: CopilotPreToolInput): { modifiedResult: { textResultForLlm: string; resultType: 'failure' } } | undefined {
     if (state.run?.controlFailed === true) {
       return { modifiedResult: { textResultForLlm: COPILOT_CONTROL_FAILED_REASON, resultType: 'failure' } };
     }
-    // A call that asks no permission (DSpatch's own tools) ran; its result is not passed on.
+    // DSpatch's own tools are refused before they run (`guarded`); this holds back the result of
+    // any call that still ran, so nothing refused reaches the model either way.
     const key = callKey(input.toolName, input.toolArgs);
     return [...(state.run?.refusedCalls.values() ?? [])].includes(key)
       ? { modifiedResult: { textResultForLlm: COPILOT_CALL_CONTROL_FAILED_REASON, resultType: 'failure' } }

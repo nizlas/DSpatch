@@ -250,11 +250,21 @@ describe('Copilot tool hooks through the real runtime', { timeout: 240_000 }, ()
     assert.ok(lines.some((line) => line.includes('hook') && line.includes('timed out')), lines.join('\n'));
   });
 
-  it('after a pre hook fails, a DSpatch tool that asks no permission has its result held back', async () => {
+  it('after a pre hook fails, a DSpatch tool that asks no permission is not run', async () => {
     const fixture = hooks({ timeoutSec: 1 });
     fixture.behave({ pre: { sleepMs: 4_000 } });
-    const tool: AppTool = { name: 'dspatch_probe', description: 'A probe', parameters: {}, execute: () => Promise.resolve({ text: EXCLUDED_MARKER, isError: false }) };
+    let runs = 0;
+    const tool: AppTool = {
+      name: 'dspatch_probe',
+      description: 'A probe',
+      parameters: {},
+      execute: () => {
+        runs += 1;
+        return Promise.resolve({ text: EXCLUDED_MARKER, isError: false });
+      },
+    };
     const result = await turn(COPILOT_CHAT_POLICY, fixture, [{ tool: 'dspatch_probe', args: {} }, { text: 'done' }], { appTools: [tool] });
+    assert.equal(runs, 0, 'the tool ran after its pre hook failed');
     assert.ok(!result.sent.includes(EXCLUDED_MARKER));
     assert.ok(result.sent.includes(COPILOT_CALL_CONTROL_FAILED_REASON));
     assert.equal(result.status, 'finished');

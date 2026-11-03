@@ -57,7 +57,11 @@ interface Host {
 async function startHost(userDataDir: string, copilotHome: string): Promise<Host> {
   const config: HostStartConfig = { userDataDir, appVersion: '0.0.0-test', appPath: appRoot, clientPid: process.pid };
   const home = fs.mkdtempSync(path.join(scratch, 'home-'));
-  const env = { [HOST_CONFIG_ENV]: JSON.stringify(config), COPILOT_HOME: copilotHome, HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), GH_TOKEN: '', GITHUB_TOKEN: '', COPILOT_GITHUB_TOKEN: '', DSPATCH_COPILOT_REQUIRE_HOOKS: '' };
+  const env: Record<string, string> = { [HOST_CONFIG_ENV]: JSON.stringify(config), COPILOT_HOME: copilotHome, HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), GH_CONFIG_DIR: path.join(home, 'gh'), USERPROFILE: home, APPDATA: path.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(home, 'AppData', 'Local'), GH_TOKEN: '', GITHUB_TOKEN: '', COPILOT_GITHUB_TOKEN: '', DSPATCH_COPILOT_REQUIRE_HOOKS: '' };
+  // And no login of this machine's: the GitHub CLI answers from the system's keyring, whatever the
+  // variables say, so it is left off the path. Without it the runtime finds no login to use.
+  const pathName = Object.keys(process.env).find((name) => name.toUpperCase() === 'PATH') ?? 'PATH';
+  Object.assign(env, { [pathName]: (process.env[pathName] ?? '').split(path.delimiter).filter((entry) => !fs.existsSync(path.join(entry, process.platform === 'win32' ? 'gh.exe' : 'gh'))).join(path.delimiter) });
   let child: ReturnType<typeof forkHost> | null = null;
   const connection = new HostConnection({
     spawn: () => {

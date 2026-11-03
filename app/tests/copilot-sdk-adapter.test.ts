@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 
 import {
   COPILOT_ANALYSIS_POLICY,
+  COPILOT_CALL_CONTROL_FAILED_REASON,
   COPILOT_CHAT_POLICY,
   COPILOT_MANAGED_APPROVAL_REASON,
   COPILOT_REVIEW_POLICY,
@@ -20,7 +21,8 @@ import {
   type CopilotSessionLike,
   type CopilotSessionOptions,
 } from '../src/adapter/copilot-sdk-adapter.ts';
-import type { AgentEvent } from '../src/adapter/types.ts';
+import type { AgentEvent, AppTool } from '../src/adapter/types.ts';
+import { workspaceTools, type WorkspaceToolHost } from '../src/host/workspace-tools.ts';
 import { copilotPolicyFor } from '../src/main/provider-adapters.ts';
 import { providerAvailability } from '../src/main/provider-availability.ts';
 
@@ -330,5 +332,110 @@ describe('the Copilot adapter on a substituted client', () => {
     const handle = await adapter.resume('s', { ...session, expectedToolPolicy: copilotPolicyDigest(COPILOT_ANALYSIS_POLICY) });
     assert.equal(handle.resumeEvidence, 'provider-answered');
     assert.equal(fake.configs[0]?.sessionId, undefined);
+  });
+});
+
+describe('a DSpatch tool whose pre hook failed is not run (DSP-164)', () => {
+  // The workspace tools, over a host that records every side effect they would have.
+  const recorded = (): { host: WorkspaceToolHost; effects: string[] } => {
+    const effects: string[] = [];
+    const open = { id: 'w0', name: 'Open', folders: [CWD] };
+    const host: WorkspaceToolHost = {
+      recent: () => [open, { id: 'w1', name: 'Other', folders: [CWD] }],
+      openWorkspace: () => open,
+      checkFolder: (folder) => folder,
+      createWorkspace: (name) => {
+        effects.push(`created ${name}`);
+        return { id: 'w2' };
+      },
+      addFolders: (folders) => {
+        effects.push(`added ${folders.join(',')}`);
+        return { folders: [CWD, ...folders] };
+      },
+      openWhenTurnEnds: (id) => {
+        effects.push(`opens ${id}`);
+      },
+    };
+    return { host, effects };
+  };
+
+  const CALLS = [
+    { name: 'create_workspace', args: { name: 'New', folders: [CWD] }, effects: ['created New', 'opens w2'] },
+    { name: 'add_folders_to_workspace', args: { folders: [OUT] }, effects: [`added ${OUT}`] },
+    { name: 'open_workspace', args: { name: 'Other' }, effects: ['opens w1'] },
+  ] as const;
+
+  async function turnWithTools(): Promise<{ live: FakeSession; tools: Map<string, AppTool>; effects: string[]; lines: string[] }> {
+    const fake = fakeClient();
+    const { host, effects } = recorded();
+    const tools = new Map<string, AppTool>();
+    const lines: string[] = [];
+    const adapter = new CopilotSdkAdapter({
+      policy: COPILOT_CHAT_POLICY,
+      env: {},
+      clientFactory: () => Promise.resolve(fake.client),
+      // What the runtime would call is what DSpatch hands the factory.
+      toolFactory: (tool) => {
+        tools.set(tool.name, tool);
+        return Promise.resolve(tool.name);
+      },
+      log: (line) => lines.push(line),
+    });
+    const handle = await adapter.startSession({ provider: 'copilot', modelRequested: 'gpt-x', workspacePath: CWD, appTools: workspaceTools(host) });
+    await adapter.send(handle.dspatchSessionId, 'hello');
+    return { live: fake.sessions[0] as FakeSession, tools, effects, lines };
+  }
+
+  const hookFor = (live: FakeSession, invocation: string, call: { name: string; args: unknown }): void => {
+    live.event({ type: 'hook.start', data: { hookType: 'preToolUse', hookInvocationId: invocation, input: { toolCalls: [{ id: `id-${invocation}`, name: call.name, args: call.args }] } } });
+  };
+
+  for (const call of CALLS) {
+    it(`${call.name} does nothing when its pre hook timed out`, async () => {
+      const { live, tools, effects } = await turnWithTools();
+      hookFor(live, 'h1', call);
+      live.event({ type: 'hook.end', data: { hookType: 'preToolUse', hookInvocationId: 'h1', success: false, error: { message: 'Hook timed out' } } });
+      const result = await tools.get(call.name)?.execute(call.args);
+      assert.deepEqual(result, { text: COPILOT_CALL_CONTROL_FAILED_REASON, isError: true });
+      assert.deepEqual(effects, []);
+    });
+
+    it(`${call.name} still runs when its pre hook allowed it`, async () => {
+      const { live, tools, effects } = await turnWithTools();
+      hookFor(live, 'h1', call);
+      live.event({ type: 'hook.end', data: { hookType: 'preToolUse', hookInvocationId: 'h1', success: true } });
+      const result = await tools.get(call.name)?.execute(call.args);
+      assert.equal(result?.isError, false, result?.text);
+      assert.deepEqual(effects, call.effects);
+    });
+  }
+
+  it('a call whose hook has not answered when the tool is called waits for it, and runs once it allows', async () => {
+    const { live, tools, effects } = await turnWithTools();
+    const call = CALLS[0];
+    hookFor(live, 'h1', call);
+    const running = tools.get(call.name)?.execute(call.args);
+    setTimeout(() => live.event({ type: 'hook.end', data: { hookType: 'preToolUse', hookInvocationId: 'h1', success: true } }), 100);
+    assert.equal((await running)?.isError, false);
+    assert.deepEqual(effects, call.effects);
+  });
+
+  it('a call whose hook never answers is refused, not run', async () => {
+    const { live, tools, effects, lines } = await turnWithTools();
+    const call = CALLS[1];
+    hookFor(live, 'h1', call);
+    const result = await tools.get(call.name)?.execute(call.args);
+    assert.deepEqual(result, { text: COPILOT_CALL_CONTROL_FAILED_REASON, isError: true });
+    assert.deepEqual(effects, []);
+    assert.ok(lines.some((line) => line.includes('add_folders_to_workspace call was refused before it ran')), lines.join('\n'));
+  });
+
+  it('only the refused call is held: another call in the same turn runs', async () => {
+    const { live, tools, effects } = await turnWithTools();
+    hookFor(live, 'h1', CALLS[0]);
+    live.event({ type: 'hook.end', data: { hookType: 'preToolUse', hookInvocationId: 'h1', success: false, error: { message: 'failed' } } });
+    assert.equal((await tools.get(CALLS[0].name)?.execute(CALLS[0].args))?.isError, true);
+    assert.equal((await tools.get(CALLS[2].name)?.execute(CALLS[2].args))?.isError, false);
+    assert.deepEqual(effects, ['opens w1']);
   });
 });
