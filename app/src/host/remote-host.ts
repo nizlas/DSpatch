@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DISPOSE_TIMEOUT_MS } from '../main/dispose-timeout';
 import { remoteBuild } from '../shared/remote-build';
 import { REMOTE_DEFAULT_PORT } from '../shared/remote-protocol';
-import { adoptWithoutFailing, claimDataFolder, claimRefusal, olderHostDataDir, sharedDataDir } from '../main/host-data';
+import { adoptWithoutFailing, claimDataFolder, claimRefusal, olderHostDataDir, ownIdentity, sharedDataDir } from '../main/host-data';
 import { emitTo, serveHost, type HostMethods } from './host-server';
 import { shutdownProjectHost, startProjectHost } from './project-host';
 import { RemoteServer } from './remote-server';
@@ -106,7 +106,8 @@ async function main(): Promise<void> {
   log(`serving pid=${String(process.pid)} on 127.0.0.1:${String(port)}, data in ${dataDir}, ${build.appVersion} at ${build.commit}`);
   log(`the client's token is in ${file}`);
   // Written last, whole: a client that finds this finds a host listening.
-  const running = { pid: process.pid, port, ...build, startedAtUtc: new Date().toISOString() };
+  // With the identity its claim holds, so a client can tell this process from another at its id.
+  const running = { pid: process.pid, identity: ownIdentity(), port, ...build, startedAtUtc: new Date().toISOString() };
   fs.writeFileSync(`${runningFile}.tmp`, `${JSON.stringify(running, null, 2)}\n`, { mode: 0o600 });
   fs.renameSync(`${runningFile}.tmp`, runningFile);
   process.on('exit', () => {

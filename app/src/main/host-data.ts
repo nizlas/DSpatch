@@ -64,7 +64,7 @@ export function olderHostDataDir(
   return path.posix.join(env['XDG_DATA_HOME'] ?? path.posix.join(home, '.local', 'share'), 'dspatch-host');
 }
 
-function processIdentity(pid: number): string {
+export function processIdentity(pid: number): string {
   try {
     const boot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
     const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, 'utf8');

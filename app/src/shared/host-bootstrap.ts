@@ -20,7 +20,7 @@ export interface RemoteStep {
 }
 
 function posix(script: string): RemoteStep {
-  return { command: 'sh -s', stdin: `${POSIX_PATHS}${script}` };
+  return { command: 'sh -s', stdin: `${POSIX_PATHS}${POSIX_HOST_CHECK}${script}` };
 }
 
 /** One argument for `sh`. */
@@ -30,7 +30,7 @@ export function shQuote(text: string): string {
 
 /** Run a script given to PowerShell in the command itself: no quoting survives cmd.exe otherwise. */
 function windows(script: string): RemoteStep {
-  const text = `$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';${WINDOWS_PATHS}${script}`;
+  const text = `$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';${WINDOWS_PATHS}${WINDOWS_HOST_CHECK}${script}`;
   // PowerShell wants UTF-16LE; every character in these scripts fits one unit.
   const encoded = btoa([...text].map((character) => `${character}\0`).join(''));
   return { command: `powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}` };
@@ -43,10 +43,52 @@ data="\${XDG_CONFIG_HOME:-$HOME/.config}/DSpatch"
 older="$base/dspatch-host"
 `;
 
+/**
+ * Whether a process is still the one a record names (DSP-164). A process id alone is no proof: after
+ * a crash or a reboot the id can belong to anything. A record carries the identity the host had, the
+ * boot and the process's start from /proc, as \`host-data.ts\` writes it; only that process matches.
+ * A record without one, from an older host, matches a process whose command line names \`$3\`.
+ * \`recorded FILE FIELD\` reads one field of a record written by DSpatch.
+ */
+const POSIX_HOST_CHECK = `
+host_alive() {
+  [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
+  if [ -n "$2" ]; then
+    [ -r "/proc/$1/stat" ] || return 1
+    boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+    set -- "$1" "$2" "$3" $(sed 's/^.*) //' "/proc/$1/stat")
+    [ "$4" != Z ] && [ -n "$boot" ] && [ "$2" = "$boot:\${23}" ]
+    return
+  fi
+  { tr '\\0' ' ' < "/proc/$1/cmdline" 2>/dev/null || ps -o args= -p "$1" 2>/dev/null; } | grep -qi -- "$3"
+}
+recorded() {
+  sed -n "s/.*\\"$2\\": *\\"\\{0,1\\}\\([^\\",]*\\).*/\\1/p" "$1" | head -n 1
+}
+`;
+
 const WINDOWS_PATHS = `
 $root = Join-Path $env:LOCALAPPDATA 'DSpatch\\host'
 $data = Join-Path $env:APPDATA 'DSpatch'
 $older = Join-Path $env:LOCALAPPDATA 'dspatch-host'
+`;
+
+/**
+ * The same question on Windows: a host's identity is a named pipe only it holds, which the system
+ * removes when it ends. A record without one, from an older host, matches by its command line.
+ */
+const WINDOWS_HOST_CHECK = `
+function Test-Host($id, $identity, $pattern) {
+  if (-not $id -or -not (Get-Process -Id $id -ErrorAction SilentlyContinue)) { return $false }
+  if ($identity -match '^pipe:(dspatch-host-[0-9a-f]{32})$') {
+    $pipe = '\\\\.\\pipe\\' + $Matches[1]
+    # Listed, not opened: opening one would connect to the host. A name .NET refuses in the list falls back.
+    try { return [IO.Directory]::GetFiles('\\\\.\\pipe\\') -contains $pipe } catch { return Test-Path -LiteralPath $pipe }
+  }
+  if ($identity) { return $false }
+  $p = Get-CimInstance Win32_Process -Filter "ProcessId=$id"
+  return [bool]($p -and $p.CommandLine -like "*$pattern*")
+}
 `;
 
 /** What machine this is. The one step that has to work before the shell is known. */
@@ -59,10 +101,10 @@ export function probe(os: RemoteOs): RemoteStep {
 if (Test-Path "$root\\versions") { Get-ChildItem "$root\\versions" -Directory | ForEach-Object { $manifest = "$($_.FullName)\\dspatch-host\\manifest.json"; if (Test-Path $manifest) { Write-Output "version=$($_.Name)"; Write-Output ("installed=" + ((Get-Content $manifest -Raw) -replace '\\s+',' ')) } } }
 foreach ($folder in @($data, $older)) {
   $record = "$folder\\host-running.json"
-  if (Test-Path $record) { $r = Get-Content $record -Raw | ConvertFrom-Json; if (Get-Process -Id $r.pid -ErrorAction SilentlyContinue) { Write-Output ("running=" + ((Get-Content $record -Raw) -replace '\\s+',' ')); break } }
+  if (Test-Path $record) { $r = Get-Content $record -Raw | ConvertFrom-Json; if (Test-Host $r.pid $r.identity 'remote-host.js') { Write-Output ("running=" + ((Get-Content $record -Raw) -replace '\\s+',' ')); break } }
 }
 $claim = "$data\\host-claim.json"
-if (Test-Path $claim) { $c = Get-Content $claim -Raw | ConvertFrom-Json; if ($c.kind -eq 'desktop' -and (Get-Process -Id $c.pid -ErrorAction SilentlyContinue)) { Write-Output 'desktop=open' } }
+if (Test-Path $claim) { $c = Get-Content $claim -Raw | ConvertFrom-Json; if ($c.kind -eq 'desktop' -and (Test-Host $c.pid $c.identity 'dspatch')) { Write-Output 'desktop=open' } }
 $other = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*remote-host.js*' } | ForEach-Object { $_.ProcessId }) -join ' '
 Write-Output "hostpids=$other"
 `);
@@ -78,15 +120,13 @@ if [ -d "$root/versions" ]; then
 fi
 for folder in "$data" "$older"; do
   record="$folder/host-running.json"
-  if [ -f "$record" ]; then
-    pid=$(sed -n 's/.*"pid": *\\([0-9]*\\).*/\\1/p' "$record")
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "running=$(tr -d '\\n' < "$record")"; break; fi
+  if [ -f "$record" ] && host_alive "$(recorded "$record" pid)" "$(recorded "$record" identity)" remote-host.js; then
+    echo "running=$(tr -d '\\n' < "$record")"; break
   fi
 done
 claim="$data/host-claim.json"
-if [ -f "$claim" ] && grep -q '"desktop"' "$claim"; then
-  pid=$(sed -n 's/.*"pid": *\\([0-9]*\\).*/\\1/p' "$claim")
-  if [ -n "$pid" ] && tr '\\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -qi dspatch; then echo desktop=open; fi
+if [ -f "$claim" ] && grep -q '"desktop"' "$claim" && host_alive "$(recorded "$claim" pid)" "$(recorded "$claim" identity)" dspatch; then
+  echo desktop=open
 fi
 echo "hostpids=$(pgrep -u "$(id -u)" -f 'dist/host/remote-host.js' 2>/dev/null | tr '\\n' ' ')"
 for tool in tar sha256sum; do command -v "$tool" >/dev/null 2>&1 || echo "missing=$tool"; done
@@ -150,7 +190,7 @@ export function start(os: RemoteOs, hostId: string): RemoteStep {
     return windows(`
 New-Item -ItemType Directory -Force $data | Out-Null
 $exe = "$root\\versions\\${hostId}\\dspatch-host\\dspatch-host.cmd"
-if (Test-Path "$data\\host-running.json") { $r = Get-Content "$data\\host-running.json" -Raw | ConvertFrom-Json; if (-not (Get-Process -Id $r.pid -ErrorAction SilentlyContinue)) { Remove-Item "$data\\host-running.json" } }
+if (Test-Path "$data\\host-running.json") { $r = Get-Content "$data\\host-running.json" -Raw | ConvertFrom-Json; if (-not (Test-Host $r.pid $r.identity 'remote-host.js')) { Remove-Item "$data\\host-running.json" } }
 $before = (Get-Date).ToUniversalTime()
 $line = "cmd /c \`"\`"$exe\`" --port 0 --data \`"$data\`" --older-data \`"$older\`" >> \`"$data\\host.log\`" 2>&1\`""
 Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $line } | Out-Null
@@ -160,9 +200,8 @@ Write-Output 'failed=start'
   }
   return posix(`
 mkdir -p "$data"
-if [ -f "$data/host-running.json" ]; then
-  pid=$(sed -n 's/.*"pid": *\\([0-9]*\\).*/\\1/p' "$data/host-running.json")
-  if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then rm -f "$data/host-running.json"; fi
+if [ -f "$data/host-running.json" ] && ! host_alive "$(recorded "$data/host-running.json" pid)" "$(recorded "$data/host-running.json" identity)" remote-host.js; then
+  rm -f "$data/host-running.json"
 fi
 launcher="$root/versions/${hostId}/dspatch-host/dspatch-host"
 runner=nohup
@@ -181,16 +220,29 @@ tail -n 5 "$data/host.log" | sed 's/^/log=/'
 `);
 }
 
-/** Ask a running host to close and wait for it: in order on POSIX; Windows ends the process. */
-export function stop(os: RemoteOs, pid: number): RemoteStep {
+/**
+ * Ask a running host to close and wait for it: in order on POSIX; Windows ends the process. Only the
+ * process the record names is signalled: one at that id that cannot be confirmed as that host is
+ * left alone and answered with \`failed=unverified\`, and one already gone with \`stopped=yes\`.
+ */
+export function stop(os: RemoteOs, running: Pick<HostRunning, 'pid' | 'identity'>): RemoteStep {
+  const pid = running.pid;
+  const identity = running.identity ?? '';
+  if (!Number.isInteger(pid) || pid <= 0 || !/^[A-Za-z0-9:._-]*$/.test(identity)) {
+    throw new Error('The running host gave a record DSpatch cannot act on, so nothing was stopped.');
+  }
   if (os === 'windows') {
     return windows(`
+if (-not (Get-Process -Id ${String(pid)} -ErrorAction SilentlyContinue)) { Write-Output 'stopped=yes'; exit 0 }
+if (-not (Test-Host ${String(pid)} '${identity}' 'remote-host.js')) { Write-Output 'failed=unverified'; exit 0 }
 Stop-Process -Id ${String(pid)} -ErrorAction SilentlyContinue
 for ($i = 0; $i -lt 40; $i++) { if (-not (Get-Process -Id ${String(pid)} -ErrorAction SilentlyContinue)) { Write-Output 'stopped=yes'; exit 0 }; Start-Sleep -Milliseconds 500 }
 Write-Output 'failed=stop'
 `);
   }
   return posix(`
+kill -0 ${String(pid)} 2>/dev/null || { echo stopped=yes; exit 0; }
+host_alive ${String(pid)} '${identity}' remote-host.js || { echo failed=unverified; exit 0; }
 kill -TERM ${String(pid)} 2>/dev/null
 i=0
 while [ $i -lt 40 ]; do
@@ -265,6 +317,8 @@ export function readLines(text: string): ReadonlyMap<string, readonly string[]> 
 /** What the host writes when it listens, and removes when it ends. */
 export interface HostRunning {
   readonly pid: number;
+  /** The process's identity as `host-data.ts` reads it; absent from a host older than DSP-164. */
+  readonly identity?: string;
   readonly port: number;
   readonly appVersion: string;
   readonly commit: string;

@@ -14,7 +14,8 @@ import { after, describe, it } from 'node:test';
 
 import { releaseUrl, findHostPackage, readHostManifest, type HostManifest } from '../src/main/host-packages.ts';
 import { installedHostToStart, SshConnection, sshProblem, validTarget } from '../src/main/ssh-connection.ts';
-import { credentials, handover, install, packagePlatform, probe, readLines, receive, start } from '../src/shared/host-bootstrap.ts';
+import { processIdentity } from '../src/main/host-data.ts';
+import { credentials, handover, install, packagePlatform, probe, readLines, receive, start, stop } from '../src/shared/host-bootstrap.ts';
 
 /**
  * The steps a Linux or macOS host runs, run here by a real `sh` with its `tar`, `sleep` and `/proc`.
@@ -161,7 +162,8 @@ describe('the steps on the machine, run by a real sh', { skip: POSIX_STEPS_HERE 
     fs.writeFileSync(path.join(top, 'manifest.json'), '{}\n');
     fs.writeFileSync(
       path.join(top, 'dspatch-host'),
-      '#!/bin/sh\necho secret-token > "$4/remote-token"\nprintf \'{"pid": %s, "port": 4321}\\n\' $$ > "$4/host-running.json"\nexec sleep 30\n',
+      // With the identity a real host records: the boot and this process's start, kept across exec.
+      '#!/bin/sh\necho secret-token > "$4/remote-token"\nboot=$(cat /proc/sys/kernel/random/boot_id)\nstarted=$(sed \'s/^.*) //\' /proc/$$/stat | cut -d\' \' -f20)\nprintf \'{"pid": %s, "identity": "%s:%s", "port": 4321}\\n\' $$ "$boot" "$started" > "$4/host-running.json"\nexec sleep 30\n',
       { mode: 0o755 },
     );
     const file = path.join(dir, 'p.tar.gz');
@@ -238,13 +240,13 @@ describe('one work context on the machine (DSP-161)', { skip: POSIX_STEPS_HERE }
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
     const older = path.join(home, '.local', 'share', 'dspatch-host');
     fs.mkdirSync(older, { recursive: true });
-    fs.writeFileSync(path.join(older, 'host-running.json'), JSON.stringify({ pid: live.pid, port: 7, commit: 'old' }, null, 2));
+    fs.writeFileSync(path.join(older, 'host-running.json'), JSON.stringify({ pid: live.pid, identity: processIdentity(live.pid ?? 0), port: 7, commit: 'old' }, null, 2));
     fs.writeFileSync(path.join(older, 'remote-token'), 'older-token\n');
     assert.match(run(home, probe('posix')).get('running')?.[0] ?? '', /"port": 7/);
     assert.equal(run(home, credentials('posix')).get('token')?.[0], 'older-token');
     const shared = path.join(home, '.config', 'DSpatch');
     fs.mkdirSync(shared, { recursive: true });
-    fs.writeFileSync(path.join(shared, 'host-running.json'), JSON.stringify({ pid: live.pid, port: 8, commit: 'new' }, null, 2));
+    fs.writeFileSync(path.join(shared, 'host-running.json'), JSON.stringify({ pid: live.pid, identity: processIdentity(live.pid ?? 0), port: 8, commit: 'new' }, null, 2));
     fs.writeFileSync(path.join(shared, 'remote-token'), 'shared-token\n');
     assert.match(run(home, probe('posix')).get('running')?.[0] ?? '', /"port": 8/);
     assert.equal(run(home, credentials('posix')).get('token')?.[0], 'shared-token');
@@ -257,6 +259,22 @@ describe('one work context on the machine (DSP-161)', { skip: POSIX_STEPS_HERE }
     fs.writeFileSync(path.join(shared, 'host-claim.json'), JSON.stringify({ pid: live.pid, kind: 'desktop' }, null, 2));
     // A live process that is not DSpatch: a reused id after a restart.
     assert.equal(run(home, probe('posix')).get('desktop'), undefined);
+  });
+
+  it('takes no other process at a recorded id for the host, and Replace leaves it alone (DSP-164)', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
+    const shared = path.join(home, '.config', 'DSpatch');
+    fs.mkdirSync(shared, { recursive: true });
+    // The id is alive, but it is not the process that wrote the record: an earlier boot's host.
+    fs.writeFileSync(path.join(shared, 'host-running.json'), JSON.stringify({ pid: live.pid, identity: 'an-earlier-boot:1', port: 9, commit: 'old' }, null, 2));
+    assert.equal(run(home, probe('posix')).get('running'), undefined);
+    // An older host's record names no identity: only a process running a host matches it.
+    fs.writeFileSync(path.join(shared, 'host-running.json'), JSON.stringify({ pid: live.pid, port: 9, commit: 'old' }, null, 2));
+    assert.equal(run(home, probe('posix')).get('running'), undefined);
+    for (const identity of ['an-earlier-boot:1', undefined]) {
+      assert.deepEqual(run(home, stop('posix', { pid: live.pid ?? 0, ...(identity === undefined ? {} : { identity }) })).get('failed'), ['unverified']);
+      assert.equal(live.exitCode, null, 'the process at that id was signalled');
+    }
   });
 
   it('asks for a handover and reads the answer the application writes', () => {
@@ -272,6 +290,93 @@ describe('one work context on the machine (DSP-161)', { skip: POSIX_STEPS_HERE }
 
   it('hands the older folder to the host it starts', () => {
     assert.match(start('posix', '1-a').stdin ?? '', /--older-data "\$older"/);
+  });
+});
+
+/**
+ * The Windows host's steps, run here by Windows PowerShell over a folder of the test's own (DSP-164):
+ * a record or claim counts only while its process holds the pipe it named, and Stop signals nothing
+ * it cannot confirm.
+ */
+describe('the Windows steps, run by PowerShell', { skip: process.platform === 'win32' ? false : 'the Windows host steps need Windows PowerShell' }, () => {
+  const run = (home: string, step: { readonly command: string }): ReadonlyMap<string, readonly string[]> => {
+    const encoded = step.command.split(' ').at(-1) ?? '';
+    return readLines(
+      execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+        env: { ...process.env, APPDATA: path.join(home, 'Roaming'), LOCALAPPDATA: path.join(home, 'Local') },
+        encoding: 'utf8',
+        windowsHide: true,
+      }),
+    );
+  };
+  const moduleUrl = new URL('../src/main/host-data.ts', import.meta.url).href;
+  const resolver = new URL('../scripts/ts-resolve.mjs', import.meta.url).href;
+  /** A process that holds a pipe identity, as a host does, and says what it is. */
+  const holder = async (): Promise<{ readonly child: ReturnType<typeof spawn>; readonly identity: string }> => {
+    const child = spawn(process.execPath, ['--import', resolver, '--input-type=module', '-e', `
+      import { ownIdentity } from ${JSON.stringify(moduleUrl)};
+      process.send(ownIdentity());
+      setInterval(() => undefined, 1000);
+    `], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+    const identity = await new Promise<string>((resolve) => child.once('message', (message) => resolve(String(message))));
+    return { child, identity };
+  };
+  const ended = (child: ReturnType<typeof spawn>): Promise<void> =>
+    child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise((resolve) => child.once('exit', () => resolve()));
+  const record = (home: string, file: string, value: object): void => {
+    const shared = path.join(home, 'Roaming', 'DSpatch');
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, file), JSON.stringify(value, null, 2));
+  };
+
+  it('a record whose id is now another process is no host, and Stop leaves that process alone', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
+    const bystander = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1000)'], { stdio: 'ignore' });
+    try {
+      const pid = bystander.pid ?? 0;
+      for (const identity of [`pipe:dspatch-host-${'e'.repeat(32)}`, undefined]) {
+        record(home, 'host-running.json', { pid, ...(identity === undefined ? {} : { identity }), port: 9, commit: 'old' });
+        assert.equal(run(home, probe('windows')).get('running'), undefined, String(identity));
+        assert.deepEqual(run(home, stop('windows', { pid, ...(identity === undefined ? {} : { identity }) })).get('failed'), ['unverified']);
+        assert.equal(bystander.exitCode, null, 'the process at that id was stopped');
+      }
+    } finally {
+      bystander.kill();
+      await ended(bystander);
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('a host that holds its identity is found, and Replace stops it', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
+    const { child, identity } = await holder();
+    try {
+      assert.match(identity, /^pipe:dspatch-host-[0-9a-f]{32}$/);
+      record(home, 'host-running.json', { pid: child.pid, identity, port: 10, commit: 'old' });
+      assert.match(run(home, probe('windows')).get('running')?.[0] ?? '', /"port": 10/);
+      assert.deepEqual(run(home, stop('windows', { pid: child.pid ?? 0, identity })).get('stopped'), ['yes']);
+      await ended(child);
+      assert.equal(run(home, probe('windows')).get('running'), undefined);
+    } finally {
+      child.kill();
+      await ended(child);
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('sees an application open there only while the process that claimed it holds its identity', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
+    const { child, identity } = await holder();
+    try {
+      record(home, 'host-claim.json', { pid: child.pid, kind: 'desktop', identity });
+      assert.deepEqual(run(home, probe('windows')).get('desktop'), ['open']);
+      record(home, 'host-claim.json', { pid: child.pid, kind: 'desktop', identity: `pipe:dspatch-host-${'f'.repeat(32)}` });
+      assert.equal(run(home, probe('windows')).get('desktop'), undefined);
+    } finally {
+      child.kill();
+      await ended(child);
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

@@ -429,9 +429,17 @@ export class SshConnection {
     });
   }
 
+  /** A record DSpatch can act on: a process id, a port, and an identity of the expected form. */
   private parseRunning(line: string | undefined): HostRunning | null {
     try {
-      return line === undefined ? null : (JSON.parse(line) as HostRunning);
+      const running = line === undefined ? null : (JSON.parse(line) as HostRunning);
+      const sound =
+        running !== null &&
+        Number.isInteger(running.pid) &&
+        running.pid > 0 &&
+        Number.isInteger(running.port) &&
+        (running.identity === undefined || (typeof running.identity === 'string' && /^[A-Za-z0-9:._-]*$/.test(running.identity)));
+      return sound ? running : null;
     } catch {
       return null;
     }
@@ -508,7 +516,10 @@ export class SshConnection {
         if (answer === 'yes') {
           replacing = true;
           this.options.status('Stopping the old host…');
-          const stopped = await this.must(stop(machine.os, running.pid));
+          const stopped = await this.must(stop(machine.os, running));
+          if (stopped.get('failed')?.[0] === 'unverified') {
+            throw new Error(`The process the old host on ${this.options.target} named could not be confirmed as that host, so nothing was stopped. Stop the host there by hand and connect again.`);
+          }
           if (stopped.get('stopped') === undefined) {
             throw new Error(`The old host on ${this.options.target} did not stop. Nothing else was changed.`);
           }
