@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-03 18:29'
-updated_date: '2026-11-03 21:18'
+updated_date: '2026-11-03 22:29'
 labels:
   - windows
   - review
@@ -59,4 +59,6 @@ Observed and not fixed (recorded for later): reopening a project whose last chat
 Still open (3 November 2026): the POSIX identity match is not verified on Linux; no Linux environment was reachable from the Windows machine. Run tests/ssh-connection.test.ts on Linux.
 
 Decision confirmed by Niclas on 3 November 2026 (no earlier date recorded): both questions this card left open are settled: a failed Copilot pre hook refuses only the identified call (contract section 6), and DSP-160's default loop was intended, with remembered choices kept.
+
+Linux still to verify (3 November 2026): the POSIX process identity in the remote steps and Replace refusing an unconfirmed process; and, from DSP-165.1, a local start stopping its own late host when the start bound passes. Windows tests do not establish either.
 <!-- SECTION:NOTES:END -->
