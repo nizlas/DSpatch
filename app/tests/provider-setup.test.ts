@@ -118,7 +118,8 @@ describe('fetching a pinned program', () => {
     await setup.install('claude', () => undefined);
     assert.equal(setup.programState('claude'), 'ready');
     const tool = path.join(setup.folderOf('claude'), 'node_modules', 'a', 'bin', 'tool');
-    assert.ok((fs.statSync(tool).mode & 0o100) !== 0);
+    // Windows keeps no execute bit: there the file is in place and runs by its extension.
+    assert.ok(process.platform === 'win32' ? fs.statSync(tool).isFile() : (fs.statSync(tool).mode & 0o100) !== 0);
   });
 
   it('leaves what was there when a package does not match', async () => {

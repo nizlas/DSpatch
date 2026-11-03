@@ -185,7 +185,8 @@ describe('the claim, from the side of a live host', () => {
 
 describe('concurrent claim acquisition', () => {
   const moduleUrl = new URL('../src/main/host-data.ts', import.meta.url).href;
-  const resolver = fileURLToPath(new URL('../scripts/ts-resolve.mjs', import.meta.url));
+  // A URL, not a path: Node refuses a Windows path as a module to import.
+  const resolver = new URL('../scripts/ts-resolve.mjs', import.meta.url).href;
 
   for (const phase of ['acquisition published', 'claim published']) {
     it(`refuses a live acquirer at ${phase} and recovers after it is killed`, { timeout: 10_000 }, async (context) => {
@@ -219,6 +220,44 @@ describe('concurrent claim acquisition', () => {
       assert.deepEqual(fs.readdirSync(target), []);
     });
   }
+
+  it('honours a claim made by Electron running as Node, whatever the program is called', { timeout: 20_000 }, async (context) => {
+    // A development host runs as electron.exe. Its claim must hold by its identity, not by a name.
+    const electron = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
+    if (!fs.existsSync(electron)) {
+      context.skip('Electron is not installed');
+      return;
+    }
+    const child = spawn(electron, ['--import', resolver, '--input-type=module', '-e', `
+      import { claimDataFolder } from ${JSON.stringify(moduleUrl)};
+      const claim = claimDataFolder(process.argv[process.argv.length - 1], 'desktop');
+      process.send({ writer: 'release' in claim });
+      setInterval(() => undefined, 1000);
+    `, target], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+    const exited = once(child, 'exit');
+    context.after(async () => {
+      child.kill('SIGKILL');
+      await exited;
+    });
+    assert.deepEqual(await once(child, 'message'), [{ writer: true }, undefined]);
+    assert.equal(heldClaim(target)?.pid, child.pid);
+    const refused = claimDataFolder(target, 'standalone');
+    assert.ok('held' in refused);
+    assert.equal(refused.held.kind, 'desktop');
+    child.kill('SIGKILL');
+    await exited;
+    assert.equal(heldClaim(target), null);
+  });
+
+  it('does not take a live process for a host when the identity it recorded is gone', () => {
+    // The id is reused by a live process (this one); the identity that claim named has ended.
+    const identity = process.platform === 'win32' ? `pipe:dspatch-host-${'c'.repeat(32)}` : 'an-earlier-boot:1';
+    write(target, 'host-claim.json', JSON.stringify({ pid: process.pid, kind: 'desktop', startedAtUtc: '', identity }));
+    assert.equal(heldClaim(target), null);
+    const claim = claimDataFolder(target, 'standalone');
+    assert.ok('release' in claim);
+    claim.release();
+  });
 
   for (const initial of ['absent', 'stale claim', 'stale acquisition', 'empty acquisition']) {
     it(`admits exactly one of eight real starters with ${initial}`, { timeout: 15_000 }, async (context) => {
@@ -342,7 +381,8 @@ describe('adopting an older host folder', () => {
   it('leaves fetched programs out, and copes with what is not a file', () => {
     write(older, 'provider-support/claude/program', 'x'.repeat(100));
     write(older, 'conversations/a.json', '{}');
-    fs.symlinkSync('/no/such/thing', path.join(older, 'conversations', 'dangling'));
+    // A file link needs a privilege on Windows that a directory junction does not; both dangle.
+    fs.symlinkSync(path.join(root, 'no-such-thing'), path.join(older, 'conversations', 'dangling'), process.platform === 'win32' ? 'junction' : 'file');
     const report = adoptOlderData(target, older, quiet);
     assert.equal(report?.copied, 1);
     assert.equal(fs.existsSync(path.join(target, 'provider-support')), false);

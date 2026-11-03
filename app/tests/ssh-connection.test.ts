@@ -16,6 +16,13 @@ import { releaseUrl, findHostPackage, readHostManifest, type HostManifest } from
 import { installedHostToStart, SshConnection, sshProblem, validTarget } from '../src/main/ssh-connection.ts';
 import { credentials, handover, install, packagePlatform, probe, readLines, receive, start } from '../src/shared/host-bootstrap.ts';
 
+/**
+ * The steps a Linux or macOS host runs, run here by a real `sh` with its `tar`, `sleep` and `/proc`.
+ * A Windows computer has none of them as a host would: its own steps are PowerShell, and are run
+ * where they are tested. Git's `sh` on Windows is not that host and would only test itself.
+ */
+const POSIX_STEPS_HERE = process.platform === 'win32' ? 'the POSIX host steps need a POSIX host' : false;
+
 describe('a machine to connect to', () => {
   it('cannot be read as an option of ssh', () => {
     for (const bad of ['-oProxyCommand=x', '-F', 'a b', 'a;b', '']) {
@@ -139,7 +146,7 @@ describe("what ssh says, in a person's words", () => {
   });
 });
 
-describe('the steps on the machine, run by a real sh', () => {
+describe('the steps on the machine, run by a real sh', { skip: POSIX_STEPS_HERE }, () => {
   const run = (home: string, step: { readonly command: string; readonly stdin?: string }, input?: Buffer): string => {
     assert.ok(step.stdin !== undefined || step.command.startsWith('sh -c '));
     const args = step.stdin !== undefined ? ['-s'] : ['-c', step.command.slice('sh -c '.length).replace(/^'|'$/g, '').replaceAll(`'\\''`, `'`)];
@@ -221,7 +228,7 @@ describe('the steps on the machine, run by a real sh', () => {
   });
 });
 
-describe('one work context on the machine (DSP-161)', () => {
+describe('one work context on the machine (DSP-161)', { skip: POSIX_STEPS_HERE }, () => {
   const run = (home: string, step: { readonly stdin?: string }): ReadonlyMap<string, readonly string[]> =>
     readLines(execFileSync('sh', ['-s'], { input: step.stdin, env: { PATH: process.env['PATH'], HOME: home }, encoding: 'utf8' }));
   const live = spawn('sleep', ['30'], { stdio: 'ignore' });

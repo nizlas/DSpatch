@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -26,12 +27,18 @@ export interface HostClaim {
   readonly startedAtUtc: string;
   /**
    * What makes a process this one and no other, where the system says: on Linux the boot and the
-   * process's start, so a reused id is no claim. Never the clock, which can step under a live host.
+   * process's start, so a reused id is no claim; on Windows a named pipe only that process holds
+   * (`pipe:<name>`), which the system removes when it ends. Never the clock, which can step under a
+   * live host, and never a program's name, which a development build and a reused id can both fool.
    */
   readonly identity: string;
 }
 
 const CLAIM_FILE = 'host-claim.json';
+
+const PIPE_IDENTITY = 'pipe:';
+const PIPE_DIR = '\\\\.\\pipe\\';
+const PIPE_NAME = /^dspatch-host-[a-f0-9]{32}$/;
 
 /** Electron's `userData` for an application called DSpatch. */
 export function sharedDataDir(
@@ -70,7 +77,50 @@ function processIdentity(pid: number): string {
   }
 }
 
-/** Windows has no such reading at hand: a process of another program at that id is no claim. */
+/** Whether a named pipe is there, read from the system's own list. Unknown counts as there. */
+function pipeListed(name: string): boolean {
+  try {
+    return fs.readdirSync(PIPE_DIR).includes(name);
+  } catch {
+    return true;
+  }
+}
+
+let identityPipe: { readonly name: string; readonly server: net.Server } | null = null;
+
+/**
+ * This process's identity, as a claim records it. On Windows it opens the pipe that stands for this
+ * process: the first listener of a name owns it, and it goes when the process does, whatever the
+ * process is called. `''` when the system gives nothing to go by.
+ */
+export function ownIdentity(): string {
+  if (process.platform !== 'win32') {
+    return processIdentity(process.pid);
+  }
+  if (identityPipe === null) {
+    const name = `dspatch-host-${randomBytes(16).toString('hex')}`;
+    const server = net.createServer((socket) => socket.destroy());
+    server.on('error', () => undefined);
+    server.listen(`${PIPE_DIR}${name}`);
+    server.unref();
+    identityPipe = { name, server };
+  }
+  return pipeListed(identityPipe.name) ? `${PIPE_IDENTITY}${identityPipe.name}` : '';
+}
+
+/** Whether the process a recorded identity names is still the one at its id. */
+export function identityHolds(identity: string, pid: number): boolean {
+  if (identity.startsWith(PIPE_IDENTITY)) {
+    const name = identity.slice(PIPE_IDENTITY.length);
+    return process.platform === 'win32' && PIPE_NAME.test(name) && pipeListed(name);
+  }
+  return identity === processIdentity(pid);
+}
+
+/**
+ * A claim written before identities existed on Windows. A process of another program at that id is
+ * no claim; this is the one place a name is read, and only for such a claim.
+ */
 function runsAHost(pid: number): boolean {
   if (process.platform !== 'win32') {
     return true;
@@ -95,7 +145,7 @@ function claimHolds(claim: HostClaim): boolean {
   if (!processAlive(claim.pid)) {
     return false;
   }
-  return claim.identity === '' ? runsAHost(claim.pid) : claim.identity === processIdentity(claim.pid);
+  return claim.identity === '' ? runsAHost(claim.pid) : identityHolds(claim.identity, claim.pid);
 }
 
 /** The claim on a folder, when a live host holds it. */
@@ -109,13 +159,22 @@ export function heldClaim(dataDir: string): HostClaim | null {
 }
 
 /**
+ * Whether an error only says that another starter is removing what was read. Windows answers
+ * `EPERM` or `EBUSY` for a file another process has just deleted and not yet let go of.
+ */
+function vanishing(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code ?? '';
+  return code === 'ENOENT' || (process.platform === 'win32' && ['EPERM', 'EBUSY', 'EACCES'].includes(code));
+}
+
+/**
  * Take the folder for this process, or answer who has it. A nonempty acquisition directory
  * serializes claim replacement; its unique owner entry makes stale cleanup safe across reuse.
  */
 export function claimDataFolder(dataDir: string, kind: HostKind): { readonly held: HostClaim } | { readonly release: () => void } {
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const file = path.join(dataDir, CLAIM_FILE);
-  const mine: HostClaim = { pid: process.pid, kind, startedAtUtc: new Date().toISOString(), identity: processIdentity(process.pid) };
+  const mine: HostClaim = { pid: process.pid, kind, startedAtUtc: new Date().toISOString(), identity: ownIdentity() };
   const lock = `${file}.acquiring`;
   const owner = `${randomBytes(16).toString('hex')}.json`;
   const prepared = `${lock}.${owner}`;
@@ -128,7 +187,7 @@ export function claimDataFolder(dataDir: string, kind: HostKind): { readonly hel
     try {
       fs.rmdirSync(lock);
     } catch (error) {
-      if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+      if (!vanishing(error) && !['ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) {
         throw error;
       }
     }
@@ -164,7 +223,7 @@ export function claimDataFolder(dataDir: string, kind: HostKind): { readonly hel
         }
         clearLock(entry);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        if (!vanishing(error)) {
           throw error;
         }
       }
