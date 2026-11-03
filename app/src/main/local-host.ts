@@ -120,7 +120,13 @@ export async function ensureLocalHost(options: LocalHostOptions): Promise<Remote
         windowsHide: true,
       });
       child.once('error', (error) => { exited = error.message; });
-      child.once('exit', (code) => { exited = `Host exited with code ${String(code)}. See ${path.join(options.dataDir, 'host.log')}.`; });
+      child.once('exit', (code) => {
+        // 3 is a host that found the folder claimed: another starter won, and its host is the one
+        // to wait for. Any other ending of this one is a failure to start (DSP-164).
+        if (code !== 3) {
+          exited = `Host exited with code ${String(code)}. See ${path.join(options.dataDir, 'host.log')}.`;
+        }
+      });
       child.unref();
     } finally {
       fs.closeSync(output);
@@ -134,6 +140,10 @@ export async function ensureLocalHost(options: LocalHostOptions): Promise<Remote
     }
     if (exited !== null) {
       throw new Error(exited);
+    }
+    const holder = heldClaim(options.dataDir);
+    if (holder?.kind === 'desktop') {
+      throw new Error(claimRefusal(holder));
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

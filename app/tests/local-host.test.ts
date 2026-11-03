@@ -144,6 +144,25 @@ test('an older desktop owner is refused without ending it or launching a second 
   }
 });
 
+test('starters at once get one host between them, and none of them reports a failure (DSP-164)', { timeout: 60_000 }, async () => {
+  const { root, options } = fixture();
+  try {
+    const boot = `import { ensureLocalHost } from ${JSON.stringify(pathToFileURL(path.join(appPath, 'src/main/local-host.ts')).href)}; process.stdout.write(JSON.stringify(await ensureLocalHost(JSON.parse(process.argv[1]))));`;
+    const started = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        execute(process.execPath, ['--import', pathToFileURL(path.join(appPath, 'scripts/ts-resolve.mjs')).href, '--input-type=module', '--eval', boot, JSON.stringify(options)], { timeout: 40_000, env: options.env }),
+      ),
+    );
+    const endpoints = started.map((one) => JSON.parse(one.stdout) as RemoteEndpoint);
+    assert.equal(new Set(endpoints.map((endpoint) => endpoint.port)).size, 1, 'every starter has the one host');
+    const owner = heldClaim(options.dataDir);
+    assert.equal(owner?.kind, 'standalone');
+    assert.equal(runningLocalHost(options.dataDir)?.pid, owner?.pid);
+  } finally {
+    await clean(root, options.dataDir);
+  }
+});
+
 for (const restart of [false, true]) {
 test(`a live desktop detects a dead local host ${restart ? 'and rediscovers its changed port' : 'without starting a replacement'}`, { timeout: 35_000 }, async () => {
   const { root, options } = fixture();
