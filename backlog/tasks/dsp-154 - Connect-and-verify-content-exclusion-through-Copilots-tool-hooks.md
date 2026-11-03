@@ -4,7 +4,7 @@ title: Connect and verify content exclusion through Copilot's tool hooks
 status: In Progress
 assignee: []
 created_date: '2026-11-01 12:00'
-updated_date: '2026-11-01 13:00'
+updated_date: '2026-11-03 19:33'
 labels:
   - integration
   - security
@@ -46,4 +46,6 @@ Three checks after that report, before the manual trial. **Review questions:** t
 Remaining gaps, in the contract's section 6: unreadable output from a pre hook counts as allowing; a failed post hook cannot hold back its result; failed tools pass no post hook; a search of the whole folder and indirect commands pass a path rule; rules anchored at a repository's root do not match an exported revision; prompt content passes no tool hook.
 
 Next: try the real scripts against a local project and a revision folder, on a machine where that is permitted.
+
+DSP-164 (3 November 2026, commit a03e711): DSpatch's own tools are refused before execute when their pre hook failed. On Windows the hook fixture read $input, which a script run with & does not receive; fixed, and the real-runtime hook tests now pass on Windows. Open decision for Niclas: whether a failed pre hook ends the turn (contract) or refuses only that call (code since 8f19cc3).
 <!-- SECTION:NOTES:END -->

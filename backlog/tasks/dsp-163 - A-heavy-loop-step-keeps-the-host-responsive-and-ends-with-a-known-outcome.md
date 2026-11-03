@@ -4,7 +4,11 @@ title: A heavy loop step keeps the host responsive and ends with a known outcome
 status: In Progress
 assignee: []
 created_date: '2026-11-02'
-labels: [loop, remote, reliability]
+updated_date: '2026-11-03 19:33'
+labels:
+  - loop
+  - remote
+  - reliability
 dependencies: []
 ---
 
@@ -89,4 +93,6 @@ Progress (2 November 2026, continuation):
 - `typecheck:node` passes; `loop-snapshot`, `loop-live`, `loop-agent-commands`, `loop-gate-check`, `gate-command-reality`, `loop-instruction-wiring`, `loop-activity` tests: 124, 0 failing (6 Windows-only skipped). Host test group not run.
 - The run that showed the problem: `dsp-attempt-0028` (loop run `chat-loop-2026-11-01T22-41-15-166Z`, step "Executive: intake", conversation `dsp-conv-20261101221503-0njt7l`) ended `runtime-fault` and stays `outcome-unknown`, acknowledged. Trivial commands took 200-400 s each from synchronous hashing of about 43 GB in scope. Evidence that nothing was done: the combined snapshot id stayed `roots-f9beab…` for the whole run, reid-next-gen stayed at `4124ee1`, and no process of it was left. Its state was not edited by hand.
 - That run also left host `0.1.1-a99d1e9d35aa` reporting "A loop run is in progress" after the step was stopped, so **End host** refused until the host was ended with SIGTERM. A run whose step never confirms its end should not hold the host's busy state forever.
+
+DSP-164 (3 November 2026, commit 4d93435) changed this card's snapshot code: incomplete looks for unreadable folders/files, no file lists from an incomplete look, a Claude look past its hold attributed to no moment, a bounded fingerprint described as when DSpatch hears of the command. Tests in loop-snapshot.test.ts and loop-live.test.ts.
 <!-- SECTION:NOTES:END -->
