@@ -1,5 +1,5 @@
 import type { HostBrowsePage, HostLinkBridge, HostLinkState, SetupBridge, SshQuestion } from '../shared/host-link';
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webFrame } from 'electron';
 
 import type {
   AbandonOutcome,
@@ -78,6 +78,21 @@ import type { DirectoryPage, FileView, WorkspaceView } from '../shared/workspace
 
 // Sandboxed preload: only Electron modules may be imported as values.
 // Channel names are therefore typed literals so misspellings are caught.
+/*
+ * This window's zoom, applied before the page runs (DSP-167). The main process keeps one level
+ * per window identity (`main/window-zoom.ts`); asked here, synchronously, so the page is never
+ * drawn at another size first. The channel name is written out because a sandboxed preload can
+ * require no module of DSpatch's; `tests/window-zoom.test.ts` holds it to the shared constant.
+ */
+try {
+  const level: unknown = ipcRenderer.sendSync('dspatch:window-zoom-level');
+  if (typeof level === 'number' && Number.isFinite(level)) {
+    webFrame.setZoomLevel(level);
+  }
+} catch {
+  // Normal size, as a page with no remembered level.
+}
+
 const GET_ENVIRONMENT: BridgeChannel = 'dspatch:get-environment';
 const RENDERER_READY: BridgeChannel = 'dspatch:renderer-ready';
 const GET_CONNECTION: BridgeChannel = 'dspatch:get-connection';

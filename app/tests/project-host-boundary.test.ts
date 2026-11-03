@@ -86,8 +86,9 @@ test("the client loads none of the project's services and no provider SDK", () =
     'main/host-packages.ts',
     'main/ssh-connection.ts',
     'main/launch-mode.ts',
-    // The isolated-profile guard (DSP-165.1): the client's own.
+    // The isolated-profile guard (DSP-165.1) and each window's zoom (DSP-167): the client's own.
     'main/profile-guard.ts',
+    'main/window-zoom.ts',
     'main/own-repository.ts',
     'main/probe-exit.ts',
     'main/review-ipc.ts',

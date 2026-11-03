@@ -2,6 +2,8 @@ import childProcess from 'node:child_process';
 import type { HostLinkState } from '../shared/host-link';
 import { remoteBuild } from '../shared/remote-build';
 import { EXPECT_USERDATA_ENV, profileRefusal } from './profile-guard';
+import { WINDOW_ZOOM_FILE, WindowZoom, WindowZoomStore, zoomMenuItems } from './window-zoom';
+import { WINDOW_ZOOM_LEVEL_CHANNEL } from '../shared/window-zoom';
 import { hostBuildNote } from '../shared/remote-protocol';
 import { RemoteLink, probeHost, type RemoteEndpoint } from './remote-link';
 import { ensureLocalHost, runningLocalHost } from './local-host';
@@ -1071,6 +1073,9 @@ let browseDone: ((chosen: string | null) => void) | null = null;
 
 let browseWindow: BrowserWindow | null = null;
 
+/** Each window's zoom (DSP-167); made once user data is known, before any window. */
+let windowZoom: WindowZoom | null = null;
+
 /** The host chooser, one at a time, in a window of its own. */
 function pickOnHost(options: Electron.OpenDialogOptions & { readonly saving?: boolean }): Promise<Electron.OpenDialogReturnValue> {
   return new Promise((resolve) => {
@@ -1086,6 +1091,7 @@ function pickOnHost(options: Electron.OpenDialogOptions & { readonly saving?: bo
       webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
     window.removeMenu();
+    windowZoom?.adopt(window, 'host-browse');
     browseWindow = window;
     let answered = false;
     const answer = (chosen: string | null): void => {
@@ -2580,9 +2586,9 @@ function installApplicationMenu(): void {
           { role: 'reload' },
           { role: 'toggleDevTools' },
           { type: 'separator' },
-          { role: 'resetZoom' },
-          { role: 'zoomIn' },
-          { role: 'zoomOut' },
+          // DSP-167: DSpatch's own zoom, per window and remembered, in place of Electron's
+          // roles, which step by 0.5 and share one level between windows of one origin.
+          ...zoomMenuItems(() => windowZoom),
           { type: 'separator' },
           {
             // DSP-86 #9. The journal was a pane under the canvas, opening itself whenever
@@ -2652,6 +2658,7 @@ function createWindow(): BrowserWindow {
   // No navigation and no additional windows. A second window is opened by the main
   // process on request (`openLoopEditorWindow`), never by renderer script.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  windowZoom?.adopt(window, 'main');
 
   // Held now, while the window is alive, because `closed` must not ask for it.
   // See the handler below: that question is what kept DSpatch running.
@@ -2783,6 +2790,7 @@ function openLoopEditorWindow(): LoopEditorWindowOutcome {
     editorWindow = window;
 
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    windowZoom?.adopt(window, 'editor');
     // Held while the window is alive; `closed` must not ask a destroyed window for
     // it. Same rule and same reason as the chat window above (DSP-62).
     const contents = window.webContents;
@@ -5112,6 +5120,12 @@ function main(): void {
   installApplicationMenu();
 
   void app.whenReady().then(async () => {
+    // DSP-167: before any window, so the first one opens at its remembered size; the preload
+    // of every page asks on this channel as its document starts.
+    windowZoom = new WindowZoom(new WindowZoomStore(path.join(app.getPath('userData'), WINDOW_ZOOM_FILE), log), log);
+    ipcMain.on(WINDOW_ZOOM_LEVEL_CHANNEL, (event) => {
+      event.returnValue = windowZoom?.levelForPage(event.sender.id) ?? 0;
+    });
     // First lines in the log on purpose. Which build this is and where its data
     // goes are the two questions every later line depends on, and a packaged
     // application answers neither by looking at it. `userData` is here because a
@@ -5184,6 +5198,7 @@ function main(): void {
     reviewWindows = new ReviewWindows({
       host: reviewHost,
       preloadPath: path.join(__dirname, '..', 'preload', 'review-preload.js'),
+      zoom: windowZoom,
       load: (window, view) => {
         // `window=review` makes the renderer mount review alone (`renderer/main.tsx`);
         // `view=diff` (DSP-150) mounts the diff review of a chosen revision pair, and

@@ -1,5 +1,5 @@
 import type { HostBrowsePage, HostLinkBridge, HostLinkState } from '../shared/host-link';
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webFrame } from 'electron';
 
 import type {
   ReviewBridge,
@@ -24,6 +24,21 @@ import type { DiffLocation, PairChangedEvent, PanelAction, PanelFollow, PanelSta
  * literals here because the sandboxed preload cannot load that module, and a test
  * compares the two. The main process answers them only for review windows.
  */
+/*
+ * This window's zoom, applied before the page runs (DSP-167). The main process keeps one level
+ * per window identity (`main/window-zoom.ts`); asked here, synchronously, so the page is never
+ * drawn at another size first. The channel name is written out because a sandboxed preload can
+ * require no module of DSpatch's; `tests/window-zoom.test.ts` holds it to the shared constant.
+ */
+try {
+  const level: unknown = ipcRenderer.sendSync('dspatch:window-zoom-level');
+  if (typeof level === 'number' && Number.isFinite(level)) {
+    webFrame.setZoomLevel(level);
+  }
+} catch {
+  // Normal size, as a page with no remembered level.
+}
+
 const reviewBridge: ReviewBridge = {
   initial: () => ipcRenderer.invoke('dspatch:review-initial') as Promise<ReviewOpenOutcome>,
   choose: () => ipcRenderer.invoke('dspatch:review-choose') as Promise<ReviewOpenOutcome>,

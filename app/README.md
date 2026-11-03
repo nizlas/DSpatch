@@ -240,6 +240,16 @@ ordinary single-agent chat. With it on, Send walks
 the composer text is the entry mandate. `npm run editor` opens the editor
 directly.
 
+**Zoom.** Every window is enlarged and shrunk on its own: Ctrl and `+` (or `=`),
+Ctrl and `-`, and Ctrl and `0` for normal size, with the keypad's own keys too, and
+the same three items in each window's View menu. One press is one of VS Code's
+steps (zoom level ±1, scale 1.2 to its power, bounded to −8..8). The level is kept
+per window identity in the client's user data (`window-zoom.json`: the chat, the
+loop editor, a review of a definition, a review of a revision pair, the review's
+panel in its own window, and the host chooser) and applied before the page is
+shown when such a window opens again. A docked review panel follows the window it
+is in; in its own window it has a level of its own.
+
 In the editor, a loop is opened through its definition. **Open the chosen loop**
 opens whatever `.loop.json` this workspace has chosen, with no file dialog, and
 **Open a loop or graph…** takes either a `.loop.json` — read as the loop it
@@ -1718,7 +1728,7 @@ has not yet assessed.
 - Application menu: there is one, and every item does something. **Project** (Open a
   project…, Old sample projects…, Exit), **Session** (Session details, identifiers
   and diagnostics · Ctrl+I; Back to the conversation) and **View** (Reload, Toggle
-  Developer Tools, zoom). *Old sample projects…* shows what DSpatch has generated
+  Developer Tools, Zoom In · Ctrl+=, Zoom Out · Ctrl+-, Reset Zoom · Ctrl+0). *Old sample projects…* shows what DSpatch has generated
   under `%TEMP%\dspatch-chat` and offers to remove it; nothing is deleted until that
   button is used, and nothing outside that location can be.
 - Installer, signing and automatic updates.

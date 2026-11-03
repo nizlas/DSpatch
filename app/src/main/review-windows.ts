@@ -3,6 +3,9 @@ import path from 'node:path';
 
 import { BrowserWindow, Menu, WebContentsView, app, dialog, screen, type MenuItemConstructorOptions, type Rectangle, type WebContents } from 'electron';
 
+import { zoomMenuItems } from './window-zoom';
+import type { ZoomCommand } from '../shared/window-zoom';
+
 import {
   isReviewHostError,
   type ReviewHostApi,
@@ -93,7 +96,16 @@ export interface ReviewWindowsOptions {
    * Called only while a scripted run is on; see `DSPATCH_PICK_FILE` in `main.ts`.
    */
   readonly scriptedPick: (() => string | null) | null;
+  /** DSP-167: each window's zoom; `null` only in a test that opens no window. */
+  readonly zoom: WindowZoomApi | null;
   readonly log: (message: string) => void;
+}
+
+/** What the review windows need of `WindowZoom`: a window's identity, and which page is in it. */
+export interface WindowZoomApi {
+  adopt(window: BrowserWindow, kind: 'review-walk' | 'review-diff' | 'review-panel'): void;
+  attach(page: WebContents, window: BrowserWindow): void;
+  zoom(window: BrowserWindow, command: ZoomCommand): number | null;
 }
 
 /** One review window and what it is showing. */
@@ -822,6 +834,7 @@ export class ReviewWindows {
       pairLabel: null,
     };
     this.entries.add(entry);
+    this.options.zoom?.adopt(window, entry.view === 'diff' ? 'review-diff' : 'review-walk');
 
     window.setMenu(this.viewMenu());
     // A review window opens no window of its own; the review's panel is made here.
@@ -1108,6 +1121,10 @@ export class ReviewWindows {
       webPreferences: { preload: this.options.preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
     view.setBackgroundColor('#101317');
+    // The panel's own window has a remembered level of its own; its page starts there and
+    // follows whichever window it is docked in (`placePanel`).
+    this.options.zoom?.adopt(frame, 'review-panel');
+    this.options.zoom?.attach(view.webContents, frame);
     const entry: ReviewWindowEntry = {
       window: frame,
       contents: view.webContents,
@@ -1178,6 +1195,8 @@ export class ReviewWindows {
     }
     panel.place = place;
     panel.host = host;
+    // DSP-167: docked, the panel is zoomed with its code window; in its own window, with that.
+    this.options.zoom?.attach(panel.view.webContents, host === null ? panel.frame : host.window);
     if (host === null) {
       if (!panel.frame.isDestroyed()) {
         panel.frame.contentView.addChildView(panel.view);
@@ -1345,11 +1364,8 @@ export class ReviewWindows {
 
   /** Review windows have no File or Session menu: those are the chat's. View stays. */
   private viewMenu(): Menu {
-    const view: MenuItemConstructorOptions[] = [
-      { role: 'resetZoom' },
-      { role: 'zoomIn' },
-      { role: 'zoomOut' },
-    ];
+    // DSP-167: DSpatch's own zoom items; Electron's roles would share a level per origin.
+    const view: MenuItemConstructorOptions[] = [...zoomMenuItems(() => this.options.zoom)];
     if (this.options.development) {
       view.push({ type: 'separator' }, { role: 'reload' }, { role: 'toggleDevTools' });
     }

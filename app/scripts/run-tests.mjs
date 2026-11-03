@@ -155,6 +155,7 @@ const AREAS = {
       'ssh-connection.test.ts',
       'host-data.test.ts',
       'profile-guard.test.ts',
+      'window-zoom.test.ts',
       'provider-setup.test.ts',
       'provider-ready.test.ts',
     ],
