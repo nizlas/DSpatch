@@ -31,6 +31,27 @@ export interface RemoteBuild {
   readonly appVersion: string;
   /** The commit the build came from, or `unknown`. Shown; a difference alone is allowed. */
   readonly commit: string;
+  /**
+   * DSP-165: the digest of the sources the build was made from (`dist/build-identity.json`), so
+   * two builds of one commit with different working-copy changes can be told apart. Read once
+   * when the process starts: a host that is still running reports the build it started from,
+   * never one made after it. Absent from older builds; a difference alone is allowed.
+   */
+  readonly digest?: string;
+}
+
+/**
+ * What a person is told when the host they reached was started from another build than this
+ * client: a short fact for the host line, or `''` when both are the same or nothing says.
+ */
+export function hostBuildNote(host: RemoteBuild | null, client: RemoteBuild): string {
+  if (host === null) {
+    return '';
+  }
+  const named = (build: RemoteBuild): string => (build.digest === undefined ? build.commit : `${build.commit}, build ${build.digest.slice(0, 8)}`);
+  const differs =
+    host.digest !== undefined && client.digest !== undefined ? host.digest !== client.digest : host.commit !== client.commit;
+  return differs ? `The host runs ${named(host)}; this window is ${named(client)}. End the host to run this build.` : '';
 }
 
 export type RemoteHandshake =

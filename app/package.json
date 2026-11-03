@@ -19,7 +19,7 @@
     "build:identity": "node scripts/build-identity.mjs",
     "build:node": "tsc -p tsconfig.node.json",
     "build:renderer": "vite build",
-    "dev": "npm run build:node && node scripts/dev.mjs",
+    "dev": "npm run build:node && npm run build:identity && node scripts/dev.mjs",
     "editor": "npm run build:node && node scripts/editor.mjs",
     "review": "npm run build:node && node scripts/review.mjs",
     "loop:dry-run": "node --import ./scripts/ts-resolve.mjs scripts/run-loop-graph.mjs",

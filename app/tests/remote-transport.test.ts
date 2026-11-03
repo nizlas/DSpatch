@@ -8,7 +8,7 @@ import { RemoteServer } from '../src/host/remote-server.ts';
 import { HostConnection, type HostLinkEvent } from '../src/main/host-connection.ts';
 import { RemoteLink, probeHost } from '../src/main/remote-link.ts';
 import { parseRemoteAddress } from '../src/main/remote-session.ts';
-import { decodeFrame, encodeFrame, type RemoteBuild } from '../src/shared/remote-protocol.ts';
+import { decodeFrame, encodeFrame, hostBuildNote, type RemoteBuild } from '../src/shared/remote-protocol.ts';
 import { isHostCallFailure } from '../src/shared/host-protocol.ts';
 
 /*
@@ -320,4 +320,23 @@ it('Connect asks first: a port with nothing behind it answers a sentence, and le
     300,
   );
   assert.match(answer ?? '', /No DSpatch host answered at 127\.0\.0\.1:\d+\..*Nothing was sent, and you are still on this computer\./);
+});
+
+describe('which build a running host is (DSP-165)', () => {
+  const base: RemoteBuild = { protocol: 1, contract: 'c', appVersion: '1', commit: 'abc123' };
+
+  it('says nothing when the host is this build', () => {
+    assert.equal(hostBuildNote({ ...base, digest: 'd1' }, { ...base, digest: 'd1' }), '');
+    assert.equal(hostBuildNote(base, base), '');
+    assert.equal(hostBuildNote(null, base), '');
+  });
+
+  it("names an earlier build of the same commit as the host's own, not as this window's", () => {
+    const note = hostBuildNote({ ...base, digest: 'aaaaaaaa11' }, { ...base, digest: 'bbbbbbbb22' });
+    assert.match(note, /The host runs abc123, build aaaaaaaa; this window is abc123, build bbbbbbbb/);
+  });
+
+  it('falls back to the commit for a build without a digest', () => {
+    assert.match(hostBuildNote({ ...base, commit: 'old' }, { ...base, digest: 'x' }), /The host runs old; this window is abc123/);
+  });
 });

@@ -103,7 +103,7 @@ async function main(): Promise<void> {
     );
     process.exit(2);
   }
-  log(`serving pid=${String(process.pid)} on 127.0.0.1:${String(port)}, data in ${dataDir}, ${build.appVersion} at ${build.commit}`);
+  log(`serving pid=${String(process.pid)} on 127.0.0.1:${String(port)}, data in ${dataDir}, ${build.appVersion} at ${build.commit}${build.digest === undefined ? '' : `, build ${build.digest}`}`);
   log(`the client's token is in ${file}`);
   // Written last, whole: a client that finds this finds a host listening.
   // With the identity its claim holds, so a client can tell this process from another at its id.

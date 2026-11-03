@@ -1,6 +1,7 @@
 import childProcess from 'node:child_process';
 import type { HostLinkState } from '../shared/host-link';
 import { remoteBuild } from '../shared/remote-build';
+import { hostBuildNote } from '../shared/remote-protocol';
 import { RemoteLink, probeHost, type RemoteEndpoint } from './remote-link';
 import { ensureLocalHost, runningLocalHost } from './local-host';
 import { findHostPackage, readHostManifest, type HostPackage } from './host-packages';
@@ -528,7 +529,7 @@ async function moveToHost(next: RemoteEndpoint | null, remember: () => void, rea
     remember();
     if (await startHostOrQuit()) {
       if (remoteSession() === null) {
-        publishLink({ phase: 'connected', note: '' });
+        publishLink({ phase: 'connected', note: hostBuildNote(remoteLink?.build() ?? null, remoteBuild(app.getAppPath())) });
       }
       liveMainWindow()?.webContents.reload();
     }
@@ -1023,7 +1024,9 @@ function linkChanged(event: HostLinkEvent): void {
   } else if (event.kind === 'refused') {
     publishLink({ phase: 'stopped', note: event.message });
   } else {
-    publishLink({ phase: 'connected', note: '' });
+    // DSP-165: a host that was already running may be from an earlier build; say so, rather
+    // than let the window's own build stand for it.
+    publishLink({ phase: 'connected', note: hostBuildNote(remoteLink?.build() ?? null, remoteBuild(app.getAppPath())) });
     if (!event.first && !event.resumed) {
       // Too much happened while away to replay: the windows read what the host has now.
       void reviewWindows?.reattach(true);
@@ -1218,7 +1221,7 @@ async function startHostOrQuit(): Promise<boolean> {
       if (remoteSession() !== null) {
         const hostBuild = remoteLink?.build();
         const mine = remoteBuild(app.getAppPath());
-        publishLink({ phase: 'connected', note: hostBuild !== null && hostBuild !== undefined && hostBuild.commit !== mine.commit ? `The host is at ${hostBuild.commit}, this client at ${mine.commit}.` : '' });
+        publishLink({ phase: 'connected', note: hostBuildNote(hostBuild ?? null, mine) });
       }
       return true;
     }
@@ -1351,7 +1354,7 @@ async function hostLost(loss: HostLoss): Promise<void> {
     if (remoteSession() === null) {
       // The person chose this computer instead: what the review windows show is the other host's.
       await reviewWindows?.closeAll(HOST_MOVE_WINDOW_MS);
-      publishLink({ phase: 'connected', note: '' });
+      publishLink({ phase: 'connected', note: hostBuildNote(remoteLink?.build() ?? null, remoteBuild(app.getAppPath())) });
       reloadOpenWindows();
       return;
     }

@@ -9,18 +9,20 @@ import { REMOTE_PROTOCOL_VERSION, type RemoteBuild } from './remote-protocol';
 export function remoteBuild(appPath: string): RemoteBuild {
   let appVersion = '0.0.0';
   let commit = 'unknown';
+  let digest: string | undefined;
   try {
     appVersion = (JSON.parse(fs.readFileSync(path.join(appPath, 'package.json'), 'utf8')) as { version?: string }).version ?? appVersion;
   } catch {
     // Unknown version; the contract digest is what decides.
   }
   try {
-    const identity = JSON.parse(fs.readFileSync(path.join(appPath, 'dist', 'build-identity.json'), 'utf8')) as { git?: { revision?: string | null } };
+    const identity = JSON.parse(fs.readFileSync(path.join(appPath, 'dist', 'build-identity.json'), 'utf8')) as { digest?: unknown; git?: { revision?: string | null } };
     commit = identity.git?.revision?.slice(0, 12) ?? commit;
+    digest = typeof identity.digest === 'string' && identity.digest !== '' ? identity.digest.slice(0, 16) : undefined;
   } catch {
     // A build without an identity file.
   }
   const contract = createHash('sha256').update([...PROJECT_HOST_METHOD_NAMES].sort().join('\n')).digest('hex').slice(0, 16);
   const protocol = Number(process.env['DSPATCH_REMOTE_PROTOCOL_FOR_TEST'] ?? REMOTE_PROTOCOL_VERSION);
-  return { protocol, contract, appVersion, commit };
+  return { protocol, contract, appVersion, commit, ...(digest === undefined ? {} : { digest }) };
 }
