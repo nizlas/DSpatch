@@ -132,6 +132,8 @@ export interface LiveCliOptions {
   readonly claimWorkingRoots?: (paths: readonly string[]) => WorkingCopyClaim;
   /** DSP-147: see {@link LiveExecutorOptions.onSteerableStep}. */
   readonly onSteerableStep?: (step: SteerableStep | null) => void;
+  /** DSP-173: may DSpatch's own command observations run now; see `LiveExecutorOptions`. */
+  readonly resourceGovernor?: LiveExecutorOptions['resourceGovernor'];
   /**
    * Who decides that the next work step starts (DSP-29, DSP-30). Left out — as the
    * CLI leaves it out — the run is autonomous and never waits.
@@ -394,6 +396,7 @@ async function driveLive(
           : { onStepActivity: options.onStepActivity }),
         ...(options.onCommand === undefined ? {} : { onCommand: options.onCommand }),
         ...(options.onSteerableStep === undefined ? {} : { onSteerableStep: options.onSteerableStep }),
+        ...(options.resourceGovernor === undefined ? {} : { resourceGovernor: options.resourceGovernor }),
       }),
     });
 

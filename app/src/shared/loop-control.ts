@@ -212,7 +212,8 @@ export function controlPhase(state: LoopControlState): ControlPhase {
 }
 
 /** Why a step is not starting. */
-export type StepHold = 'pause' | 'interactive-mode' | 'human-node';
+/** `resources`: the resource governor holds a new step while the machine is under pressure (DSP-173). */
+export type StepHold = 'pause' | 'interactive-mode' | 'human-node' | 'resources';
 
 export type StepDecision =
   | { readonly start: true; readonly why: string }

@@ -174,6 +174,8 @@ import { earlierDiscussion, pairEnvelopeSource } from './review-pair-discussion'
 import { definitionFrom } from '../shared/review-agent';
 import { ReviewAgentJobs } from './review-agent-jobs';
 import { RevisionSnapshots } from './revision-snapshots';
+import { ResourceGovernor, ResourceSampler, availableCpus, governorConfig } from '../main/resource-governor';
+import { GovernedRunControl } from '../main/resource-governor-control';
 import { REVIEW_PAIR_CHANGED } from '../shared/review-pair';
 
 /*
@@ -1394,6 +1396,39 @@ const loopControl = new LoopRunController({
     runAudience.broadcastOn(LOOP_CONTROL_CHANNEL, report);
   },
 });
+
+/**
+ * The resource governor (DSP-173): one per host, made on the first run, reading the machine
+ * only while a run uses it. `DSPATCH_RESOURCE_GOVERNOR` (off | observe | enforce) or a
+ * `resource-governor.json` in the host's data folder; observe when neither says.
+ */
+let governor: ResourceGovernor | null = null;
+function resourceGovernor(): ResourceGovernor {
+  if (governor !== null) {
+    return governor;
+  }
+  let file: unknown;
+  const filePath = path.join(userDataDir(), 'resource-governor.json');
+  try {
+    file = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      log(`resource governor: ${filePath} could not be read and is ignored (${String(error)})`);
+    }
+  }
+  const { config, notes } = governorConfig(process.env, file);
+  for (const note of notes) {
+    log(`resource governor: ${note}`);
+  }
+  governor = new ResourceGovernor(
+    config,
+    new ResourceSampler({ platform: process.platform, readText: (name) => fs.promises.readFile(name, 'utf8'), cpus: availableCpus }),
+    undefined,
+    { log },
+  );
+  log(`resource governor: ${config.mode}${process.platform === 'linux' ? '' : ` (no measurement on ${process.platform} yet: the health stays unknown and nothing changes)`}`);
+  return governor;
+}
 /** The same directory, however it was spelled: resolved, and case-blind on Windows. */
 function samePathSpelling(left: string, right: string): boolean {
   const a = path.resolve(left);
@@ -2545,6 +2580,7 @@ function registerLoopMethods(): void {
       // leaves no window showing a run that never walked. The same run, and the same
       // control: the mode the user is working in survives into it; a pause they asked
       // of the previous run does not.
+      const governed = new GovernedRunControl(loopControl, resourceGovernor(), abort.signal);
       const began = loopControl.beginRun(request.runId, abort.signal);
       if (!began.started) {
         editorLoopAbort = null;
@@ -2611,7 +2647,8 @@ function registerLoopMethods(): void {
             return WORKING_COPY_LOCK.claim({ kind: 'agent-work', folders: paths, label: 'a run from the graph editor' });
           },
           abortSignal: abort.signal,
-          control: loopControl,
+          control: governed,
+          resourceGovernor: resourceGovernor(),
           // The chosen agent's adapter from the shared factory (DSP-138), which in
           // presentation mode is the presentation adapter: the same seam as the chat's
           // loop run, so the editor's Run builds no real adapter in it.
@@ -2689,6 +2726,7 @@ function registerLoopMethods(): void {
         // far as announcing. `runAudience.end` guards on the run id, so an ending for
         // a run no window heard start clears nothing and every window drops it.
         editorLoopAbort = null;
+        governed.dispose();
         loopControl.endRun(request.runId);
         runAudience.end({
           runId: request.runId,
@@ -2949,6 +2987,7 @@ function registerLoopMethods(): void {
       let endedStatus: RunStatus | null = null;
       let endedNote = 'The run ended without saying how.';
       let endedTerminal: string | null = null;
+      const governed = new GovernedRunControl(loopControl, resourceGovernor(), abort.signal);
       const began = loopControl.beginRun(request.runId, abort.signal);
       if (!began.started) {
         workClaim.release();
@@ -3005,7 +3044,8 @@ function registerLoopMethods(): void {
           keepWorkspace: true,
           bindingKind: 'chat-loop',
           abortSignal: abort.signal,
-          control: loopControl,
+          control: governed,
+          resourceGovernor: resourceGovernor(),
           // The chosen agent's adapter from the shared factory (DSP-138), built once by
           // the run and disposed by it. In presentation mode it is the presentation
           // adapter - the same seam the direct chat has had since DSP-1 - so a scripted
@@ -3247,6 +3287,7 @@ function registerLoopMethods(): void {
           runId: request.runId,
           undelivered: undelivered.map((entry) => entry.id),
         } satisfies LoopInstructionEventPayload);
+        governed.dispose();
         loopControl.endRun(request.runId);
         runAudience.end({
           runId: request.runId,

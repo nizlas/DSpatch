@@ -336,6 +336,12 @@ export const JOURNAL_KINDS = [
    * reconstructing a run needs to see the outcome and the evidence as two statements.
    */
   'result-filed',
+  /**
+   * The resource governor (DSP-173): the health of the machine the host runs on changed
+   * while the run was going, or DSpatch held back its own work because of it. Rare by
+   * design: a change of the health, never every reading.
+   */
+  'resource-governor',
 ] as const;
 export type JournalKind = (typeof JOURNAL_KINDS)[number];
 
@@ -346,7 +352,7 @@ export type JournalKind = (typeof JOURNAL_KINDS)[number];
  * waiting on a person and that the wait ended, and it does not get to write
  * `run-ended`, `edge-taken` or a fault. The walk owns the account of the walk.
  */
-export const STEP_NOTE_KINDS = ['waiting-for-person', 'person-answered'] as const;
+export const STEP_NOTE_KINDS = ['waiting-for-person', 'person-answered', 'resource-governor'] as const;
 export type StepNoteKind = (typeof STEP_NOTE_KINDS)[number];
 
 /**
@@ -436,6 +442,11 @@ export interface StepReleaseOutcome {
   /** `null` when the step was never held, so the journal stays quiet in the ordinary case. */
   readonly heldBy: StepHold | null;
   readonly waitedMs: number;
+  /**
+   * DSP-173: what the control knows of the step's start that the journal should carry on
+   * `node-entered`, such as the resource governor's mode and the machine's health then.
+   */
+  readonly stepData?: Readonly<Record<string, string | number | boolean>>;
 }
 
 /**
@@ -466,6 +477,12 @@ export interface RunControlPort {
   ): Promise<StepReleaseOutcome>;
   stepStarted(step: StepRef): void;
   stepEnded(step: StepRef): void;
+  /**
+   * DSP-173: lines the control has for the journal while the run goes on, such as a change
+   * of the machine's health. Called once when the run starts; the returned function is
+   * called when it ends. A control without such lines leaves it out.
+   */
+  notices?(post: (detail: string, data: Readonly<Record<string, string | number | boolean>>) => void): () => void;
 }
 
 export interface RunOptions {
@@ -1054,6 +1071,16 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     options.onJournalEntry?.(entry);
   };
 
+  // Declared before `finish`, which a refusal reaches before the walk subscribes (DSP-173).
+  let noticesOpen = false;
+  let stopNotices: (() => void) | null = null;
+  const closeNotices = (): void => {
+    noticesOpen = false;
+    const stop = stopNotices;
+    stopNotices = null;
+    stop?.();
+  };
+
   const finish = (
     status: RunStatus,
     detail: string,
@@ -1065,6 +1092,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       readonly refusal?: string | null;
     } = {},
   ): RunResult => {
+    closeNotices();
     record(status === 'refused' ? 'refused' : 'run-ended', detail, {
       data: {
         status,
@@ -1188,6 +1216,16 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     return finish('refused', refusal, { refusal });
   }
 
+  // DSP-173: the control's own lines (the machine's health) go into the journal while the
+  // walk goes on, and stop when it ends, whichever way it ends.
+  noticesOpen = true;
+  stopNotices =
+    options.control?.notices?.((detail, data) => {
+      if (noticesOpen) {
+        record('resource-governor', detail, { data });
+      }
+    }) ?? null;
+
   let current: LoopNode = entry;
   /**
    * The edge that brought the run to `current`, which is what lets a step's inputs and
@@ -1249,6 +1287,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     // would train them to click past the prompts that do matter. A human node is not
     // asked about here either — it waits by its own mechanism, further down, and
     // `decideNextStep` says so rather than this gate taking it over.
+    let stepData: Readonly<Record<string, string | number | boolean>> = {};
     if (options.control !== undefined && isWorkStep(step.work)) {
       const release = await options.control.awaitStepRelease(step, (hold, why) => {
         record('run-held', why, {
@@ -1269,6 +1308,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       if (release.kind === 'cancelled') {
         return fail(neverStarted(current.id, release.detail));
       }
+      stepData = release.stepData ?? {};
     }
 
     // Has the operator cancelled? (DSP-37.)
@@ -1317,6 +1357,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           ...(placement
             ? { archive: placement.path, reportWrittenBy: placement.writtenBy }
             : {}),
+          ...stepData,
         },
       },
     );
@@ -1969,6 +2010,7 @@ const MARKERS: Readonly<Record<JournalKind, string>> = {
   'waiting-for-person': '?|',
   'person-answered': '?>',
   'result-filed': '[=',
+  'resource-governor': '%%',
 };
 
 /**

@@ -89,6 +89,8 @@ const AREAS = {
       'loop-run-audience.test.ts',
       'loop-stop-means-stop.test.ts',
       'loop-transcript.test.ts',
+      'resource-governor.test.ts',
+      'resource-governor-run.test.ts',
       'role-generate.test.ts',
       'working-roots.test.ts',
     ],

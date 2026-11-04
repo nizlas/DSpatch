@@ -44,6 +44,16 @@ A login that already exists on the machine is used. DSpatch offers no API-key or
 
 Copilot's hooks in `~/.copilot/hooks` run on the machine where the work runs: your own for local work, the remote machine over SSH. Installing or updating DSpatch does not touch them. To refuse Copilot work on a machine where no such hook is found, create an empty file `copilot-hooks-required` in DSpatch's data folder there: `~/.config/DSpatch/` on Linux, `%APPDATA%\DSpatch\` on Windows, for local and remote work alike. It takes effect at the next session, with no restart of the host. What they do and do not cover is in the [content-exclusion contract](DSPATCH_CONTENT_EXCLUSION_CONTRACT.md#6-tool-hooks-on-dspatchs-path-1-november-2026-dsp-154).
 
+### The machine's load during a loop run (DSP-173)
+
+While a loop run goes on, the host reads how hard the machine is pressed, on Linux only so far: memory and disk stall (`/proc/pressure`), available memory, swap traffic and, without stall figures, the load per CPU. Busy CPUs and swap that is merely in use do not count as pressure. It says the machine's health, GREEN, YELLOW, RED or UNKNOWN, in the run's journal when the run starts and each time the health changes, and on each step's start. A signal it cannot read is unknown, never GREEN; on Windows everything is unknown and nothing changes.
+
+- **`observe`**, the default, only records.
+- **`enforce`** also acts on DSpatch's own work. Under sustained YELLOW a new step waits 5 s. Under sustained RED a new step waits for the pressure to ease, ended at once by Stop. After 5 minutes the run pauses for you and does not go on by itself; Continue starts the step. Also under RED, DSpatch takes no snapshot of the folders at the agents' shell commands. Such a command is then recorded as not observed, never as unchanged or verified. The step's own before and after snapshots are still taken.
+- **`off`** reads nothing.
+
+Commands a provider already runs with its own shell tool are not paused, slowed or ended by this, and can go on loading the machine. Set the mode with `DSPATCH_RESOURCE_GOVERNOR=off|observe|enforce` when the host starts, or with `{"mode": "enforce"}` in a file `resource-governor.json` in DSpatch's data folder; the environment wins. The same file can change the timings and thresholds (`sampleEveryMs`, `escalateAfterMs`, `recoverAfterMs`, `yellowPauseMs`, `maxWaitMs`, `thresholds.yellow.*`, `thresholds.red.*`, as named in `app/src/main/resource-governor.ts`). A value it does not understand is ignored and named in the host's log.
+
 ## How it fits together
 
 - **Client.** Electron with the built app and its production dependencies. No `asar`: provider runtimes must be real files. `resources/bundled/` holds the loops, their graphs and roles, the pinned provider lists and `host-manifest.json`. It is read-only and replaced by an update; a person's own loops are in their projects and are not touched.

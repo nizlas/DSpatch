@@ -451,6 +451,14 @@ export interface LiveExecutorOptions {
    */
   readonly hashWorkingRoots?: boolean;
   /**
+   * DSP-173: the resource governor's answer to whether DSpatch's own heavy observation may run
+   * now. Asked before the snapshot at an agent shell command's start and end; a deferred one is
+   * recorded as not observed at the command's moment (`null`), exactly as a late one is, and
+   * never as unchanged. The step's own before and after snapshots are not deferred: without them
+   * the step's outcome could not be checked at all. Left out, nothing is ever deferred.
+   */
+  readonly resourceGovernor?: { heavyWork(): { readonly run: boolean; readonly health: string; readonly reason?: string } };
+  /**
    * DSP-163: where the snapshots' diagnostics go (duration, file count, bytes read, scope).
    * Counts and the root's path only, never file content.
    */
@@ -2012,6 +2020,24 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     >();
     const commandObservations: Promise<void>[] = [];
     let commandObservationError: Error | null = null;
+    // DSP-173: command observations deferred in this step because of the machine's load. The
+    // first is journalled at once, the count when the step's turn is over.
+    let observationsDeferred = 0;
+    const deferredForLoad = (): boolean => {
+      const answer = options.resourceGovernor?.heavyWork();
+      if (answer === undefined || answer.run) {
+        return false;
+      }
+      observationsDeferred += 1;
+      if (observationsDeferred === 1) {
+        context.note(
+          'resource-governor',
+          `Not observing the folders at "${node.label ?? node.id}"'s shell commands for now: ${answer.reason ?? 'the machine is under heavy pressure'}. Each such command is recorded as not observed at its moment, never as unchanged; the step's own before and after snapshots are still taken.`,
+          { acted: true, action: 'observation-deferred', health: answer.health },
+        );
+      }
+      return true;
+    };
     const recordObservation = (work: () => Promise<void>): Promise<void> => {
       const observed = work().catch((error: unknown) => {
         if (commandObservationError === null) {
@@ -2034,6 +2060,9 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
      * moment (DSP-164). An event that says nothing of a hold is treated as one that has none.
      */
     const idsHeld = async (heldForMs: number | undefined): Promise<ReadonlyMap<string, string> | null> => {
+      if (deferredForLoad()) {
+        return null;
+      }
       if (heldForMs === undefined) {
         return idsAt(fingerprintNow());
       }
@@ -2051,8 +2080,12 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
      * synchronously, and trust the scan that follows only where nothing changed since.
      */
     const fingerprintNow = (): CommandFingerprint | null =>
-      hashRoots ? fingerprintRoots(rootPathsOf(inspection), options.log) : null;
+      // Not read when the observation it is for will be deferred (DSP-173); `idsAt` counts that.
+      hashRoots && options.resourceGovernor?.heavyWork().run !== false ? fingerprintRoots(rootPathsOf(inspection), options.log) : null;
     const idsAt = async (moment: CommandFingerprint | null): Promise<ReadonlyMap<string, string> | null> => {
+      if (deferredForLoad()) {
+        return null;
+      }
       const taken = await takeRoots(false);
       const ids = observedIds(taken);
       const scans = scansOf.get(taken);
@@ -2348,6 +2381,13 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       }
     }
 
+    if (observationsDeferred > 1) {
+      context.note(
+        'resource-governor',
+        `${String(observationsDeferred)} folder observations at "${node.label ?? node.id}"'s shell commands were deferred because of the machine's load; those commands are recorded as not observed at their moment.`,
+        { acted: true, action: 'observations-deferred', count: observationsDeferred },
+      );
+    }
     try {
       await flushCommandObservations();
     } catch (error) {

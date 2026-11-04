@@ -886,7 +886,9 @@ describe('the run record vocabulary is added to, not changed', () => {
     // DSP-74's, appended after those for the same reason again. The rule this test is
     // about is the position, not the length: every kind an older build knows is still
     // where it was, so its records still parse.
-    assert.deepEqual(JOURNAL_KINDS.slice(13), ['result-filed']);
+    assert.deepEqual(JOURNAL_KINDS.slice(13, 14), ['result-filed']);
+    // DSP-173's resource governor, appended after DSP-74's for the same reason.
+    assert.deepEqual(JOURNAL_KINDS.slice(14), ['resource-governor']);
   });
 
   it('renders the added kinds rather than printing undefined into the journal', () => {

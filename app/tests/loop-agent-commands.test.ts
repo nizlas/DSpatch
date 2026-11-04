@@ -119,7 +119,12 @@ async function walk(
   name: string,
   workspace: string,
   factory: LoopRunAgentRequest['adapters'],
-  options: { readonly provider?: 'claude' | 'cursor'; readonly abort?: AbortController; readonly graph?: LoopGraph } = {},
+  options: {
+    readonly provider?: 'claude' | 'cursor';
+    readonly abort?: AbortController;
+    readonly graph?: LoopGraph;
+    readonly resourceGovernor?: { heavyWork(): { readonly run: boolean; readonly health: string; readonly reason?: string } };
+  } = {},
 ) {
   const prepared = prepareLoopRun(request(factory, options.provider));
   assert.equal(prepared.ok, true, prepared.ok ? '' : prepared.reason);
@@ -136,6 +141,7 @@ async function walk(
     keepWorkspace: true,
     bindingKind: 'chat-loop',
     ...(options.abort === undefined ? {} : { abortSignal: options.abort.signal }),
+    ...(options.resourceGovernor === undefined ? {} : { resourceGovernor: options.resourceGovernor }),
     promptFor: (node) => `Mandate: the sum test fails; fix it. This is step "${node.id}".`,
     provider: prepared.provider,
     createAdapter: prepared.createAdapter,
@@ -512,6 +518,52 @@ describe('the chat loop with Cursor', () => {
     const { text } = outcomeOf(delivery);
     assert.match(text, /2 the provider reported running with its own tool/);
     assert.doesNotMatch(text, /A command DSpatch started/);
+  });
+});
+
+describe("the resource governor defers the observations at the agent's commands (DSP-173)", () => {
+  it('a command whose folders were not observed is recorded as not observed, never as current, and a met resting on it does not reach done', async () => {
+    const workspace = buggyProject('cursor-deferred');
+    const cursor = new ScriptedCursor([
+      (emit) => {
+        fs.writeFileSync(path.join(workspace, 'src', 'sum.js'), 'exports.sum = (a, b) => a + b;\n', 'utf8');
+        shell(emit, 'c1', 'npm test', 0);
+        emit({ type: 'assistant.message', text: 'Fixed; npm test passes.\n\nRESULT: succeeded' } as Partial<AgentEvent>);
+      },
+      (emit) => {
+        shell(emit, 'c2', 'npm test', 0);
+        shell(emit, 'c3', 'npm test', 0);
+        emit({ type: 'assistant.message', text: 'npm test passes.\n\nRESULT: met' } as Partial<AgentEvent>);
+      },
+    ]);
+    const factory = providerAdapters({
+      presentation: false,
+      claudeAuthorizationReference: null,
+      claudeInstalled: false,
+      env: CLEAN_ENV,
+      construct: { cursor: () => cursor as unknown as ChatAdapter, claude: () => { throw new Error('no Claude in a Cursor run'); } },
+    });
+    let asked = 0;
+    const delivery = await walk('cursor-deferred', workspace, factory, {
+      provider: 'cursor',
+      resourceGovernor: { heavyWork: () => { asked += 1; return { run: false, health: 'RED', reason: 'deferred under RED: memory stalled (PSI full) 35 ≥ 10' }; } },
+    });
+    assert.ok(asked > 0);
+    const recorded = delivery.inspection.commands;
+    assert.equal(recorded.length, 3);
+    for (const command of recorded) {
+      assert.equal(command.testedSnapshotId, null);
+      assert.equal(command.afterRunSnapshotId, null);
+      assert.equal(command.changedWhileRunning, null);
+    }
+    const { commands, text } = outcomeOf(delivery);
+    assert.ok(commands.every((command) => command.currentAtEnd === null), JSON.stringify(commands.map((command) => command.currentAtEnd)));
+    assert.match(text, /None of them completed on the code exactly as the run left it/);
+    assert.notEqual(delivery.result.terminalNodeId, 'done', formatRunJournal(delivery.result));
+    // Said in the journal: the first deferral of each step at once, and the count where there were more.
+    const notes = delivery.result.journal.filter((entry) => entry.kind === 'resource-governor');
+    assert.ok(notes.some((entry) => entry.data?.['action'] === 'observation-deferred' && /never as unchanged/.test(entry.detail)), JSON.stringify(notes));
+    assert.ok(notes.some((entry) => entry.data?.['action'] === 'observations-deferred' && entry.data?.['count'] === 4), JSON.stringify(notes));
   });
 });
 

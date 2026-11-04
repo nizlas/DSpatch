@@ -2080,6 +2080,10 @@ export function formatChatLiveLogLine(
     case 'run-held':
     case 'run-released':
       return null;
+    // DSP-173: what DSpatch did because of the machine's load is said in the conversation; a
+    // change of the health it only observed stays in the journal, so observe mode adds no chatter.
+    case 'resource-governor':
+      return entry.data?.['acted'] === true ? entry.detail : null;
     default: {
       // Every journal kind, listed. This is what the switch was missing on 20 September
       // 2026, when an edit that appeared only to *add* a case silently removed
