@@ -1,0 +1,125 @@
+# The Linux checks of a release candidate, by hand, on GitHub's Ubuntu runners (DSP-168): the test
+# groups on Linux, among them the POSIX host identity and the late-host stop that Windows cannot
+# run, and the window zoom in real Xvfb windows. With `published`, the published release of the
+# checked-out version is tried in clean containers, and an upgrade from the previous release.
+name: linux-verify
+on:
+  workflow_dispatch:
+    inputs:
+      published:
+        description: Try the published release of this version and an upgrade to it
+        type: boolean
+        default: false
+      previous:
+        description: The previous release's tag, for the upgrade trial
+        type: string
+        default: v0.1.4
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    if: ${{ !inputs.published }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+      - run: npm ci
+        working-directory: app
+      - run: npm run build
+        working-directory: app
+      - run: npm run typecheck
+        working-directory: app
+      - name: fast
+        if: ${{ !cancelled() }}
+        run: xvfb-run -a node scripts/run-tests.mjs fast
+        working-directory: app
+      - name: host (the POSIX identity, Replace, the late host, the bundled host)
+        if: ${{ !cancelled() }}
+        run: xvfb-run -a node scripts/run-tests.mjs host
+        working-directory: app
+      - name: review
+        if: ${{ !cancelled() }}
+        run: xvfb-run -a node scripts/run-tests.mjs review
+        working-directory: app
+      - name: chat
+        if: ${{ !cancelled() }}
+        run: xvfb-run -a node scripts/run-tests.mjs chat
+        working-directory: app
+      - name: presentation
+        if: ${{ !cancelled() }}
+        run: xvfb-run -a node scripts/run-tests.mjs presentation
+        working-directory: app
+
+  provider-tests:
+    if: ${{ !inputs.published }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+      - run: npm ci
+        working-directory: app
+      - run: npm run build
+        working-directory: app
+      - name: provider (the Copilot runtime with a stand-in model)
+        run: xvfb-run -a node scripts/run-tests.mjs provider
+        working-directory: app
+
+  windows:
+    if: ${{ !inputs.published }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xdotool openbox x11-xkb-utils x11-xserver-utils imagemagick
+      - run: npm ci
+        working-directory: app
+      - run: npm run build
+        working-directory: app
+      # Chromium's sandbox helper must be setuid root on a runner that restricts user namespaces.
+      - run: sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+        working-directory: app
+      - name: The zoom trial in real windows
+        run: node scripts/zoom-trial.mjs release/trial-zoom/ci
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: zoom-trial
+          path: app/release/trial-zoom/ci
+
+  published:
+    if: ${{ inputs.published }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: docker build -t dspatch-trial -f scripts/trial-package/Dockerfile scripts/trial-package
+        working-directory: app
+      - name: The published release, in clean containers
+        run: node scripts/trial-package/release.mjs --published
+        working-directory: app
+      - name: An upgrade from the previous release
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/trial-package/upgrade.mjs --from ${{ inputs.previous }}
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: published-trials
+          path: |
+            app/release/trial-published
+            app/release/trial-upgrade
