@@ -4,10 +4,10 @@ title: >-
   Release 0.1.7 for Linux: the host status, wheel zoom, the review discussion's
   reading, the docked panel on Linux, the resource governor and the DSP-163
   follow-ups
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-04 19:30'
-updated_date: '2026-11-04 19:30'
+updated_date: '2026-11-05 00:45'
 labels:
   - release
 dependencies: []
@@ -22,17 +22,17 @@ Niclas's assignment of 4 November 2026, run from the Linux machine. Integrate th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Local main is origin/main plus the two follow-up commits, with backup/linux-dsp163 and dsp-163-linux-followups kept
-- [ ] #2 The relevant test groups, the typecheck and the release checks pass on Linux, and remaining failures are compared by their output on the same base
-- [ ] #3 The package of the release commit is tried on Linux: install and start, upgrade from 0.1.6 keeping conversations, settings, project and own loop, meeting the older host and switching to the new one, the docked discussion drawn and taking input after A → B, redocking and zoom, Ctrl and the wheel with saved levels, and a light loop in observe reading real Linux signals with time-stamped records
-- [ ] #4 The release is published from the tagged commit with the .deb, the Linux host package, the manifest and SHA256SUMS, and their checksums and build identities match that commit
-- [ ] #5 Release notes state the user-visible changes and the verification limits honestly
+- [x] #1 Local main is origin/main plus the two follow-up commits, with backup/linux-dsp163 and dsp-163-linux-followups kept
+- [x] #2 The relevant test groups, the typecheck and the release checks pass on Linux, and remaining failures are compared by their output on the same base
+- [x] #3 The package of the release commit is tried on Linux: install and start, upgrade from 0.1.6 keeping conversations, settings, project and own loop, meeting the older host and switching to the new one, the docked discussion drawn and taking input after A → B, redocking and zoom, Ctrl and the wheel with saved levels, and a light loop in observe reading real Linux signals with time-stamped records
+- [x] #4 The release is published from the tagged commit with the .deb, the Linux host package, the manifest and SHA256SUMS, and their checksums and build identities match that commit
+- [x] #5 Release notes state the user-visible changes and the verification limits honestly
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Current focus (4 November 2026): integration done (main = origin/main 75eaa74 + 84ce8d8, eb0ab50; backup/linux-dsp163 at 26b89d8 kept). Verifying on Linux before the version commit.
+Integration (4 November 2026): done (main = origin/main 75eaa74 + 84ce8d8, eb0ab50; backup/linux-dsp163 at 26b89d8 kept). Verifying on Linux before the version commit.
 
 Tests on this Linux machine (kernel 7.0.0-42, 28 CPUs), main at eb0ab50. The three fast failures seen earlier came from a stale local install: node_modules held Electron 44.3.0 against the pinned 44.9.3 (`tests/electron-version.test.ts`); after `npm ci` and Electron's own install the fast group passes on both origin/main 75eaa74 and main eb0ab50 (1523 passed, 5 skipped, 0 failed). Typecheck clean. live 116 passed (6 skipped), loop 674, host 145 (2 skipped), chat 362 (7 skipped), presentation 288, review 199. project: one failure, `experiment-repo.test.ts` "names the real cause when a live process holds the working directory" (Missing expected exception), the same output on origin/main; it expects Windows' refusal to remove a directory a process sits in, which Linux does not have; not in linux-verify, not a regression and not a release blocker. The heavy group as one run, and the provider group while the package build and container trials ran, exceeded the runner's 420 s bound (stopped, neither pass nor fail).
 
@@ -43,4 +43,12 @@ Container trials of the same package (dspatch-trial image, real sshd, SIMULATED 
 release.mjs --stage stopped twice at the same point: after its first 9 checks it restarts the client with a stand-in github.com, and the restarted client's DevTools port (9362) never answers, while the client itself is up (renderer ready) and idle; a listening socket on 9362 is held by no process visible in the container. Not resolved; it sits in the trial's restart, before any check of the product's own, and its remaining checks (Connect over SSH installing the carried host, a simulated Copilot turn) are covered by loop-remote and standalone and run again by `release.mjs --published` after publication.
 
 Provider group: `copilot-runtime.test.ts` "with no login the session is refused with one sentence, and nothing is sent" is not refused on this machine (Missing expected rejection), and the file then does not end; the Copilot code and the test are unchanged since v0.1.6. The test empties COPILOT_HOME, GH_CONFIG_DIR and HOME, but the runtime evidently still finds a sign-in on this desktop (a hypothesis: the session keyring). It was not run again here so as not to reach Niclas's real Copilot account; the provider group runs on linux-verify's clean runner instead.
+
+Before the tag: linux-verify on edbc458 (run 41933174112) green: fast 1522 (6 skipped), host 144 (3 skipped), review 199, chat 362 (7 skipped), presentation 288, provider 170, loop 674, live 116 (6 skipped), zoom trial 78, dock trial 54, governor 27.
+
+Published (5 November 2026): v0.1.7 at 554cafa (tag v0.1.7, annotated), https://github.com/nizlas/DSpatch/releases/tag/v0.1.7, built by the package workflow (run 41934039485; its installed trial on the tagged build 40 checks): dspatch_0.1.7_amd64.deb (sha256 23195e45cb3d61f3c4b04e3d335ae155cd67d4ef62d217dd877cf93f1afb7c07), dspatch-host-0.1.7-554cafa7039f-linux-x64.tar.gz (34437646fc7726a604720249cd38d9263432b32cef3e63b32043a08612dc80bc), host-manifest.json, SHA256SUMS. Downloaded and checked: SHA256SUMS holds for all three; the client's and the host archive's build-identity.json both name git revision 554cafa7039f337fd2eaac4f859c14744e410d42 with no changed files; the manifest names hostId 0.1.7-554cafa7039f; the manifest inside the .deb is the published one byte for byte, and the host archive inside it has the published SHA-256.
+
+After publication, on the Linux machine: the dock trial with the published .deb's client under Xvfb 54 checks; release.mjs --published 14 checks (the .deb from the release, installed in a clean container, Connect over real SSH installing the carried host with github.com unreachable, a simulated Copilot turn there); upgrade.mjs --from v0.1.6 to the published .deb 22 checks.
+
+Not established: a real provider; a physical mouse or keyboard; the docked discussion on a real desktop session (the machine's desktop was locked throughout); Windows; a machine under real pressure. DSP-169 to DSP-173 stay in Review for Niclas's acceptance.
 <!-- SECTION:NOTES:END -->
