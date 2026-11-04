@@ -350,7 +350,9 @@ export class ConversationStore {
     try {
       raw = fs.readFileSync(filePath, 'utf8');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      // No such file. POSIX says ENOTDIR when a folder on the way is a file, where Windows says
+      // ENOENT: there is no conversation file either way, and what is wrong is found at the save.
+      if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) {
         return {
           filePath,
           conversation: null,
