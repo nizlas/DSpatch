@@ -1,10 +1,10 @@
 ---
 id: DSP-171
 title: Make the review discussion's answers easier to read
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-04 10:40'
-updated_date: '2026-11-04 11:10'
+updated_date: '2026-11-04 11:28'
 labels:
   - ui
   - review
@@ -20,12 +20,12 @@ Niclas, 4 November 2026. The answers already have paragraphs, lists and code, an
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Body text in the discussion has a line height of about 1.5, clear space between paragraphs and between separate list items, and nested lists that still read as one
-- [ ] #2 Prose keeps a measure of about 75-85 characters in a wide window; a narrow docked panel uses its width
-- [ ] #3 A question is told from its answer and exchanges from one another by space and quiet marks, not by colour alone
-- [ ] #4 Inline code is monospace on a subtle background without a border around each identifier; code blocks are surfaces of their own that scroll long lines inside the block
-- [ ] #5 Show more, The code it rests on and Explain more simply sit in one quiet action row with room above it, wrapping well
-- [ ] #6 Judged in real windows with one content-rich example, docked narrow and in a wide window of its own, at more than one zoom level, with before and after of the same content
+- [x] #1 Body text in the discussion has a line height of about 1.5, clear space between paragraphs and between separate list items, and nested lists that still read as one
+- [x] #2 Prose keeps a measure of about 75-85 characters in a wide window; a narrow docked panel uses its width
+- [x] #3 A question is told from its answer and exchanges from one another by space and quiet marks, not by colour alone
+- [x] #4 Inline code is monospace on a subtle background without a border around each identifier; code blocks are surfaces of their own that scroll long lines inside the block
+- [x] #5 Show more, The code it rests on and Explain more simply sit in one quiet action row with room above it, wrapping well
+- [x] #6 Judged in real windows with one content-rich example, docked narrow and in a wide window of its own, at more than one zoom level, with before and after of the same content
 <!-- AC:END -->
 
 ## Implementation Notes

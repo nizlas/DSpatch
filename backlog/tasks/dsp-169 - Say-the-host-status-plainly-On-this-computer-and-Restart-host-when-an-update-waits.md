@@ -3,10 +3,10 @@ id: DSP-169
 title: >-
   Say the host status plainly: On this computer, and Restart host when an update
   waits
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-04 10:40'
-updated_date: '2026-11-04 11:10'
+updated_date: '2026-11-04 11:28'
 labels:
   - ui
   - host
@@ -22,11 +22,11 @@ Niclas, 4 November 2026. Remove 'through the host that stays running' from the s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The local status line reads 'On this computer' with no clause about the host staying running, in the chat, editor and review windows
-- [ ] #2 An updated client attached to an older host reads 'Restart needed to finish updating' with a 'Restart host' button that does what End host did: ends the old host, starts this build's and reconnects the window
-- [ ] #3 No commit id or build digest is in the status line; the builds are still told apart in the log and in a technical detail the person can open
-- [ ] #4 Running work is still protected and said; a remote connection still names its machine; two development builds of one version are not called an update
-- [ ] #5 Verified in real windows on an isolated profile: the short status, the update status and the restart that follows, with the existing tests adjusted
+- [x] #1 The local status line reads 'On this computer' with no clause about the host staying running, in the chat, editor and review windows
+- [x] #2 An updated client attached to an older host reads 'Restart needed to finish updating' with a 'Restart host' button that does what End host did: ends the old host, starts this build's and reconnects the window
+- [x] #3 No commit id or build digest is in the status line; the builds are still told apart in the log and in a technical detail the person can open
+- [x] #4 Running work is still protected and said; a remote connection still names its machine; two development builds of one version are not called an update
+- [x] #5 Verified in real windows on an isolated profile: the short status, the update status and the restart that follows, with the existing tests adjusted
 <!-- AC:END -->
 
 ## Implementation Notes
