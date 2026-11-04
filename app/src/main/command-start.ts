@@ -192,9 +192,9 @@ export interface ResolveOptions {
  * spawn, not reasoned about. (Niclas's own `PATH` has no quoted entry today, so
  * this one was an over-claim waiting rather than an over-claim happening.)
  */
-function pathEntries(pathValue: string): readonly string[] {
+function pathEntries(pathValue: string, delimiter: string): readonly string[] {
   return pathValue
-    .split(path.delimiter)
+    .split(delimiter)
     .map((value) => value.trim().replace(/^"(.*)"$/, '$1').trim())
     .filter((value) => value !== '');
 }
@@ -207,6 +207,9 @@ export function resolveExecutable(token: string, options: ResolveOptions): Execu
   const suffixes = options.isWindows
     ? ['', ...options.pathExt.split(';').map((value) => value.trim()).filter((value) => value !== '')]
     : [''];
+  // The path rules of the platform the options describe, not this machine's: the resolution
+  // is simulated for either platform in the tests, on either platform (DSP-168).
+  const rules = options.isWindows ? path.win32 : path.posix;
 
   const hasSeparator = token.includes('/') || token.includes('\\') || /^[A-Za-z]:/.test(token);
   const directories = hasSeparator
@@ -216,7 +219,7 @@ export function resolveExecutable(token: string, options: ResolveOptions): Execu
         // word there is a `PATH` lookup only. Modelling the difference matters,
         // because otherwise `./build.sh` written as `build.sh` reads as found.
         ...(options.isWindows ? [options.cwd] : []),
-        ...pathEntries(options.pathValue),
+        ...pathEntries(options.pathValue, rules.delimiter),
       ];
   if (directories.length === 0) {
     return { kind: 'undecidable', why: 'there is no PATH to search and no directory to look in' };
@@ -224,7 +227,7 @@ export function resolveExecutable(token: string, options: ResolveOptions): Execu
 
   for (const directory of directories) {
     for (const suffix of suffixes) {
-      const candidate = path.resolve(directory, `${token}${suffix}`);
+      const candidate = rules.resolve(directory, `${token}${suffix}`);
       let found = false;
       try {
         found = options.exists(candidate);
