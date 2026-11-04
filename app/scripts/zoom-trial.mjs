@@ -257,6 +257,10 @@ class Main {
       return new Promise((resolve) => setTimeout(() => resolve(wc.getZoomLevel()), 300));
     })()`);
   }
+  /** The level of a page by its contents id: a window's own page, or a view's. */
+  async levelOfContents(contentsId) {
+    return this.ev(`process.mainModule.require('electron').webContents.fromId(${String(contentsId)}).getZoomLevel()`);
+  }
   /** Click a View menu item for a window, as the menu does with that window focused. */
   async menu(itemId, windowId) {
     return this.ev(`(() => {
@@ -424,7 +428,7 @@ async function wheelOver(w, view, page, css, notches, control = true) {
   xdotool('click', '--repeat', String(Math.abs(notches)), '--delay', '80', notches > 0 ? '4' : '5');
   if (control) xdotool('keyup', 'ctrl');
   await delay(350);
-  return { x, y, level: await levelOf(view === null ? (url) => url === w.url : (url) => url === view.url) };
+  return { x, y, level: await client.main.levelOfContents(view === null ? w.contentsId : view.contentsId) };
 }
 
 /** Press keys as a keyboard would, on the focused window; `keys` in xdotool's words. */
