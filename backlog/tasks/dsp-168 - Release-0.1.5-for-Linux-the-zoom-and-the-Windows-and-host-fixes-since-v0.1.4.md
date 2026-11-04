@@ -3,10 +3,10 @@ id: DSP-168
 title: >-
   Release 0.1.6 for Linux: the zoom and the Windows and host fixes since v0.1.4,
   after an unpublished v0.1.5 tag
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-04 06:33'
-updated_date: '2026-11-04 08:29'
+updated_date: '2026-11-04 09:04'
 labels:
   - release
 dependencies: []
@@ -22,9 +22,9 @@ A new Linux release from the completed changes since v0.1.4: each window's own z
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The POSIX host identity and Replace refusal, the late-host stop and the window zoom are run on Linux, with the evidence named
-- [ ] #2 The release v0.1.5 is published on GitHub from the tagged commit with the .deb, the Linux host package, the manifest and SHA256SUMS
-- [ ] #3 The published .deb installs and starts in a clean Linux container, and an upgrade from v0.1.4 keeps conversations, settings and the person's own loops
-- [ ] #4 Release notes state the user-visible changes and the verification limits honestly
+- [x] #2 The release v0.1.5 is published on GitHub from the tagged commit with the .deb, the Linux host package, the manifest and SHA256SUMS
+- [x] #3 The published .deb installs and starts in a clean Linux container, and an upgrade from v0.1.4 keeps conversations, settings and the person's own loops
+- [x] #4 Release notes state the user-visible changes and the verification limits honestly
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -41,4 +41,6 @@ Current focus (4 November 2026): a Linux CI workflow for the three Linux verific
 Linux verification (4 November 2026): the linux-verify workflow, run 41792402401 at a4c2bbd20f4b on the linux-verify branch: fast 1488 pass (6 skipped), host 138 (3 skipped), review 199, chat 362 (7 skipped), presentation 288, provider 170; the host group holds the POSIX identity through /proc, Replace's refusal of an unconfirmed process, the late-host stop and the concurrent slow starts, run by a real sh. The zoom trial: 55 checks in real Xvfb windows (see DSP-167). Found and fixed on the way: on POSIX a start whose own host was still on its way returned when another starter won, leaving that host to take the folder later (local-host.ts, the Windows-only wait made general); a conversation path through a file read as an unreadable file on POSIX (ENOTDIR) where Windows reads it as no file; the executable resolver used this machine's path rules for the platform it was told about; and six tests assumed Windows (drive-letter fixtures, the live file's line ending, a late-result fixture that is a Windows case by the product's own rule in stopWorkspaceTest). The standalone trial pinned the version to 0.1.4. The review tests need a full clone (fetch-depth 0).
 
 The tagged v0.1.5 build (871eccd) was not published: the package workflow's installed trial failed in 'remote attach during work', and its evidence (kept on failure from here on, with the time on each client line) showed renderer-ready 5 s after did-finish-load locally and 36 s for the remote client, each at the moment a screenshot was taken. The window is shown when its page reports ready from its first animation frame; on Linux a zoom set before that frame (by the main process at adoption, or by the preload for normal size) left the hidden renderer drawing nothing. Fixed in a5d1a9d: a page seen for the first time is not touched, its preload sets only a level other than normal size; the zoom trial now checks that the first window and the restarted window at level 2 are shown on their own (1 ms), 57 checks, run 41798827206; the installed trial passed on the same code by hand, 40 checks with v0.1.4's timings, run 41798830717. The v0.1.5 tag stays, unpublished, as v0.1.2 did; the release is 0.1.6. In run 41798827206 the provider group's 'a stop during the job ends as cancelled, on the runtime's word' failed once with the job failed 43 ms after its start, before the stop; the same code passed that test in five runs before.
+
+Published (4 November 2026): v0.1.6 at 8dab081, https://github.com/nizlas/DSpatch/releases/tag/v0.1.6, with dspatch_0.1.6_amd64.deb (sha256 a463d477e1c505ee9fdd646303c7a1041fdd048201a13a2dcc76b6f84abdede9), dspatch-host-0.1.6-8dab08129cbb-linux-x64.tar.gz, host-manifest.json and SHA256SUMS; the tagged build's installed trial passed 40 checks (run 41799972405), linux-verify on the release commit passed (run 41799972433). After publication (run 41803270349): release.mjs --published 14 checks, the .deb installed in a clean container and Connect installing the carried host over real SSH with github.com unreachable, a simulated turn on it; upgrade.mjs --from v0.1.4 22 checks, the new client meeting the v0.1.4 host left running, ending it on request, the conversation, agent and project choices and the person's own loop kept, also after a restart. Both trial scripts were stale from before v0.1.4 and were updated for a client that carries its host and for the local host's line. Observed, not in this task: the package workflow's manual windows-installer job fails on its -c.win.signAndEditExecutable=true argument being read as a file (pre-existing, v0.1.2 too); release.mjs --stage still raises a stand-in github.com that sees no request now. Not established: a real provider, a real Linux desktop (Xvfb with openbox only), Niclas's acceptance of the zoom (DSP-167 stays in Review).
 <!-- SECTION:NOTES:END -->
