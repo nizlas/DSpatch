@@ -26,7 +26,10 @@ jobs:
     if: ${{ !inputs.published }}
     runs-on: ubuntu-24.04
     steps:
+      # The review tests open this repository's own commits: a shallow clone has none of them.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -88,7 +91,10 @@ jobs:
         working-directory: app
       - run: npm run build
         working-directory: app
+      # npm on the runner leaves Electron's install script unrun, so its binary is fetched here; and
       # Chromium's sandbox helper must be setuid root on a runner that restricts user namespaces.
+      - run: test -f node_modules/electron/dist/chrome-sandbox || node node_modules/electron/install.js
+        working-directory: app
       - run: sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
         working-directory: app
       - name: The zoom trial in real windows
