@@ -220,6 +220,7 @@ class Main {
         url: w.webContents.getURL(),
         level: w.webContents.getZoomLevel(),
         focused: w.isFocused(),
+        visible: w.isVisible(),
         xid: ((handle) => (handle.length >= 8 ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0)))(w.getNativeWindowHandle()),
         views: (w.contentView?.children ?? []).filter((v) => v.webContents !== undefined).map((v) => ({ url: v.webContents.getURL(), level: v.webContents.getZoomLevel() })),
       })));
@@ -299,8 +300,18 @@ const panelView = async () => {
 
 /** Bring a window to the front through the window manager, so the X server's keys reach it. */
 async function activate(w) {
+  const state = async () => (await client.main.windows()).find((one) => one.id === w.id);
+  // A window is shown once its page is ready; the editor and the review take a moment.
+  await poll(`window ${String(w.id)} shown`, async () => (await state())?.visible === true, 30_000);
   xdotool('windowactivate', '--sync', String(w.xid));
-  await poll(`window ${String(w.id)} focused`, async () => (await client.main.windows()).find((one) => one.id === w.id)?.focused === true, 10_000);
+  const end = Date.now() + 15_000;
+  while (Date.now() < end) {
+    if ((await state())?.focused === true) return;
+    await delay(300);
+    xdotool('windowfocus', '--sync', String(w.xid));
+    await client.main.ev(`process.mainModule.require('electron').BrowserWindow.fromId(${String(w.id)})?.focus()`);
+  }
+  throw new Error(`window ${String(w.id)} did not take the focus: ${JSON.stringify(await state())}`);
 }
 /** Press keys as a keyboard would, on the focused window; `keys` in xdotool's words. */
 async function press(keys) {
