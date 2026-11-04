@@ -1,3 +1,4 @@
+import type { HostBuildDifference } from './host-link';
 import type { HostMessage } from './host-protocol';
 
 /*
@@ -40,23 +41,17 @@ export interface RemoteBuild {
   readonly digest?: string;
 }
 
-/**
- * How the host a client reached differs from the client's own build, when it does (DSP-165,
- * DSP-169). `update`: the host is an older version than this client, which is what an
- * installed update leaves behind until the host is restarted. `other`: any other difference,
- * in development usually a host started from another working copy of the same version, which
- * no one installed. `null` when the two are the same build, or when nothing says. The detail
- * names both builds for the log and for a technical detail the person can open; the status
- * line says what to do, not which commit either side is.
- */
-export interface HostBuildDifference {
-  readonly kind: 'update' | 'other';
-  readonly detail: string;
-}
-
 /** `remoteBuild`'s version when the build's `package.json` could not be read. */
 const UNKNOWN_VERSION = '0.0.0';
 
+/**
+ * How the host a client reached differs from the client's own build, when it does (DSP-165,
+ * DSP-169): see {@link HostBuildDifference}. `update` when the host is an older version than
+ * this client, which is what an installed update leaves behind until the host is restarted;
+ * `other` for any other difference, in development usually a host started from another working
+ * copy of the same version, which no one installed; `null` when the two are the same build, or
+ * when nothing says.
+ */
 export function hostBuildDifference(host: RemoteBuild | null, client: RemoteBuild): HostBuildDifference | null {
   if (host === null) {
     return null;

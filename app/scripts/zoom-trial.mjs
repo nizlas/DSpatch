@@ -521,11 +521,15 @@ async function main() {
   let chat = await windowShowing(isMainPage, 'the main window');
   await activate(chat);
   await main.ev(`${q('prompt')}.focus()`);
+  // A point is read in the page's pixels at the level in force, and placed on the screen at
+  // that level: read again after every change, or taken near the corner, which stays inside
+  // the window at every level.
   const promptPoint = await main.centre(q('prompt'));
+  const corner = { x: 30, y: 30 };
   const wheelSteps = [[1, 1], [1, 2], [-1, 1], [-1, 0]];
   for (const [notches, expected] of wheelSteps) {
     chat = await windowShowing(isMainPage, 'the main window');
-    const turned = await wheelOver(chat, null, main, promptPoint, notches);
+    const turned = await wheelOver(chat, null, main, await main.centre(q('prompt')), notches);
     const reading = await main.reading();
     check(`one notch ${notches > 0 ? 'forward' : 'back'} over the chat field → level ${String(expected)}, nothing typed, nothing scrolled`, turned.level === expected && reading.value === '' && Math.abs(reading.dpr - 1.2 ** expected) < 0.001, JSON.stringify({ turned, reading }));
   }
@@ -534,10 +538,10 @@ async function main() {
   const plain = await wheelOver(chat, null, main, promptPoint, 1, false);
   check('a notch without Control leaves the level alone', plain.level === 0, JSON.stringify(plain));
   chat = await windowShowing(isMainPage, 'the main window');
-  const burst = await wheelOver(chat, null, main, promptPoint, 3);
+  const burst = await wheelOver(chat, null, main, corner, 3);
   check('three notches in a burst → three levels', burst.level === 3, JSON.stringify(burst));
   chat = await windowShowing(isMainPage, 'the main window');
-  const far = await wheelOver(chat, null, main, promptPoint, 9);
+  const far = await wheelOver(chat, null, main, corner, 9);
   check('nine more notches stop at 8', far.level === 8, JSON.stringify(far));
   await client.main.menu('dspatch-zoom-reset', chat.id);
   // Fractions of a notch, as a high-resolution wheel reports them, cannot be made with an X
@@ -604,7 +608,9 @@ async function main() {
   codeWindow = await windowShowing(isDiffPage, 'the review window');
   const codeOut = await wheelOver(codeWindow, null, diff, codePoint, -1);
   const stayed = await diff.scrollAt(codePoint);
-  check('Control and a notch back over the code → the review at -3, nothing scrolled, the chat still at 2', codeOut.level === -3 && stayed.top === scrolled.top && (await levelOf(isMainPage)) === 2, JSON.stringify({ codeOut, scrolled, stayed }));
+  // The zoom itself moves the scroll position with the content, the rows now smaller; a notch
+  // of scrolling would move it the other way.
+  check('Control and a notch back over the code → the review at -3, nothing scrolled, the chat still at 2', codeOut.level === -3 && stayed.top <= scrolled.top + 10 && stayed.top >= scrolled.top / 1.3 && (await levelOf(isMainPage)) === 2, JSON.stringify({ codeOut, scrolled, stayed }));
   codeWindow = await windowShowing(isDiffPage, 'the review window');
   const codeIn = await wheelOver(codeWindow, null, diff, codePoint, 1);
   check('and a notch forward → -2 again, saved', codeIn.level === -2 && savedLevels()['review-diff'] === -2, JSON.stringify({ codeIn, saved: savedLevels() }));

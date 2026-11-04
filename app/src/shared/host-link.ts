@@ -1,5 +1,4 @@
 import type { ProviderLoginStep } from './bridge';
-import type { HostBuildDifference } from './remote-protocol';
 
 /*
  * What a window knows of the connection to a host on another machine (DSP-111), and the
@@ -7,6 +6,19 @@ import type { HostBuildDifference } from './remote-protocol';
  */
 
 export type HostLinkPhase = 'connecting' | 'connected' | 'reconnecting' | 'stopped';
+
+/**
+ * The host a window reached is another build than the window (DSP-165, DSP-169): `update` when
+ * the host is an older version, which an installed update leaves behind until the host is
+ * restarted; `other` for any other difference. The detail names both builds, for the log and
+ * for a technical detail the person can open; the status line says what to do, not which commit
+ * either side is. Decided by `hostBuildDifference` in `remote-protocol.ts`; the type is here,
+ * with the window's state, so the renderer never reads the protocol's code.
+ */
+export interface HostBuildDifference {
+  readonly kind: 'update' | 'other';
+  readonly detail: string;
+}
 
 export interface HostLinkState {
   /** `false` on an ordinary local start, where there is nothing to show. */
