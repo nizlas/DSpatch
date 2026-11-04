@@ -250,8 +250,14 @@ const isMainPage = (url) => url !== '' && !url.includes('window=');
  */
 async function openPair(page) {
   const chosen = (count) => `document.querySelectorAll('.rv-pair-commit[aria-pressed=true]').length === ${String(count)}`;
-  await page.until('the repositories, the log or the review', `${q('pair-repo-0')}!==null || ${q('pair-commit-1')}!==null || ${q('pair-discussion')}!==null`, 60_000);
+  await page.until('the reviews, the repositories, the log or the review', `${q('pair-ongoing-open-0')}!==null || ${q('pair-repo-0')}!==null || ${q('pair-commit-1')}!==null || ${q('pair-discussion')}!==null`, 60_000);
   if ((await page.ev(`${q('pair-discussion')}!==null`)) === true) return;
+  // After a restart the window opens on the list of reviews, with the ongoing one to resume.
+  if ((await page.ev(`${q('pair-ongoing-open-0')}!==null`)) === true) {
+    await page.click('pair-ongoing-open-0');
+    await page.until('the review resumed', `${q('pair-discussion')}!==null`, 60_000);
+    return;
+  }
   if ((await page.ev(`${q('pair-repo-0')}!==null`)) === true) await page.click('pair-repo-0');
   await page.until('the log', `${q('pair-commit-1')}!==null`);
   await page.click('pair-commit-1');
