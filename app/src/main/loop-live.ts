@@ -2000,6 +2000,22 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     if (inspection.snapshotBefore === null) {
       inspection.snapshotBefore = snapshotRef(before);
     }
+    // DSP-163: a Stop that arrives while the folders are read must not be followed by a send.
+    if ((options.abortSignal as AbortSignal | undefined)?.aborted) {
+      inspection.cancelled = true;
+      if (sessionRef !== undefined) {
+        sessionRef.turns -= 1;
+      }
+      return remember(context, {
+        product: {
+          kind: 'runtime-fault',
+          fault: 'no-outcome-delivered',
+          detail: `The operator cancelled before "${node.id}" started. Files were left as they are.`,
+        },
+        summary: 'The agent was not started. Nothing was replayed.',
+        providerTurns: 0,
+      });
+    }
 
     // Who the activity below belongs to. Carried once here rather than rebuilt at
     // each emission, so the graph view, the chat and the step they are both about

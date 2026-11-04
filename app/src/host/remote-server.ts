@@ -31,6 +31,10 @@ const KEPT_BYTES = 512 * 1024 * 1024;
 /** A connection that has not proved itself within this is dropped. */
 const HANDSHAKE_MS = 10_000;
 
+/** How often the host checks that it is free to answer, and what counts as having been held. */
+const HELD_CHECK_MS = 1_000;
+const HELD_REPORT_MS = 3_000;
+
 function sameProof(one: string, other: string): boolean {
   const left = Buffer.from(one, 'utf8');
   const right = Buffer.from(other, 'utf8');
@@ -112,7 +116,25 @@ export class RemoteServer {
         const address = server.address();
         resolve(typeof address === 'object' && address !== null ? address.port : port);
       });
+      this.watchHeld();
     });
+  }
+
+  /**
+   * A host that cannot run cannot answer a ping, and the client then reports a lost connection
+   * with nothing wrong on the network. This is what tells the two apart in the logs (DSP-163).
+   */
+  private watchHeld(): void {
+    let last = Date.now();
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const held = now - last - HELD_CHECK_MS;
+      last = now;
+      if (held >= HELD_REPORT_MS) {
+        this.options.log(`[remote] this process was held for ${String(held)} ms and answered nothing meanwhile`);
+      }
+    }, HELD_CHECK_MS);
+    timer.unref();
   }
 
   close(): void {

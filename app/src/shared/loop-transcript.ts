@@ -340,6 +340,8 @@ export type LoopTurnEvent =
       readonly abandonsWait: boolean;
     }
   /** The `startChatLoopRun` call came back. */
+  /** The stop never reached the host: the run is going on, as it was. */
+  | { readonly kind: 'stop-not-delivered'; readonly runId: string }
   | { readonly kind: 'run-settled'; readonly runId: string; readonly outcome: ChatLoopRunOutcome }
   /** The call itself failed, so there is no outcome to read. */
   | { readonly kind: 'send-threw'; readonly runId: string; readonly message: string }
@@ -473,6 +475,9 @@ export function loopTurnsAfter(
         cancelRequested: true,
         abandoned: turn.abandoned || event.abandonsWait,
       });
+    }
+    case 'stop-not-delivered': {
+      return turn.ending !== null ? turns : replaced({ ...turn, cancelRequested: false });
     }
     case 'run-settled': {
       if (turn.ending !== null) {

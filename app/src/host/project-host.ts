@@ -3033,6 +3033,7 @@ function registerLoopMethods(): void {
           roles: resolvedRolesWith(referencedRoles(graphText), resolveRole),
         };
         runAudience.start(announcement);
+        log(`[loop] ${request.runId} started: ${loaded.graph.id} on ${agent.provider}`);
         const delivery = await runLiveGraph(loaded.graph, {
           runId: request.runId,
           repoRoot: ownRoot,

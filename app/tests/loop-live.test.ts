@@ -496,6 +496,42 @@ describe('createLiveExecutor — only agent nodes reach the adapter', () => {
     assert.equal(inspection.cost, 'unknown');
   });
 
+  // DSP-163. Reading the project gives the thread back, so a Stop can land during it, and
+  // the step must then not be sent: an agent started after Stop is a job nobody wanted.
+  it('sends nothing when a Stop arrives while the project is being read', async () => {
+    const workspace = path.join(scratch('stop-while-reading'), 'duration-repo');
+    generateExperimentRepo(workspace, repoRoot);
+    const adapter = new FakeAdapter({ writeRelPath: 'src/duration.ts', writeContent: 'changed\n' });
+    const stop = new AbortController();
+    const inspection = emptyInspection(workspace, 'composer-2');
+    const session = adapter.startSession.bind(adapter);
+    adapter.startSession = async (config) => {
+      const opened = await session(config);
+      setImmediate(() => {
+        stop.abort();
+      });
+      return opened;
+    };
+    const result = await runLoopGraph(loadLiveGraph(), {
+      runId: 'live-stop-while-reading',
+      dryRun: false,
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        modelReported: () => adapter.modelReported(),
+        inspection,
+        runProjectTest: passingTest,
+        abortSignal: stop.signal,
+      }),
+    });
+    assert.equal(adapter.sends.length, 0);
+    assert.notEqual(result.status, 'completed');
+    assert.equal(inspection.cancelled, true);
+    assert.equal(inspection.sessions[0]?.turns, 0);
+  });
+
+
   /**
    * DSP-91 #7, at the level where the absence could be mistaken for a finding.
    *

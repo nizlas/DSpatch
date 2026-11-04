@@ -3370,7 +3370,22 @@ function Workbench({
                       setUseLoop(next);
                       if (!next && loopBusyRef.current) {
                         noteLoopStopRequested(false);
-                        void window.dspatch.cancelChatLoopRun().then(noteChatLoopCancel);
+                        // DSP-163: a stop that did not reach the host stops nothing, so the
+                        // tick goes back and the window says so; the run is still going.
+                        void window.dspatch.cancelChatLoopRun().then(
+                          (outcome) => {
+                            noteChatLoopCancel(outcome);
+                            void window.dspatch.prepareChatLoop(false, null).catch(() => undefined);
+                          },
+                          (error: unknown) => {
+                            setUseLoop(true);
+                            if (loopRunId.current !== null) {
+                              applyLoopTurnEvent({ kind: 'stop-not-delivered', runId: loopRunId.current });
+                            }
+                            setActionError(describeBridgeFailure(error));
+                          },
+                        );
+                        return;
                       }
                       /*
                        * Show the loop that has just been chosen, in the graph view if
