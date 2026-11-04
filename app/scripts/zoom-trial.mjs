@@ -421,6 +421,9 @@ async function main() {
   const editor = new Page(client.cdp, 'editor', isEditorPage);
   await editor.attach();
   await editor.until('the editor loaded', 'document.body.innerText.length > 0');
+  // Under Xvfb a second window's renderer draws no first frame while the window is hidden, so
+  // Electron's ready-to-show, which shows the window, waits; a capture asks for that frame.
+  await editor.shot('02a-editor-opened');
   await activate(editorWindow);
   await press('ctrl+equal');
   check('the editor at 1, the chat still at 2', (await levelOf(isEditorPage)) === 1 && (await levelOf(isMainPage)) === 2, JSON.stringify(await client.main.windows()));
@@ -436,6 +439,7 @@ async function main() {
   await diff.until('both chosen', "document.querySelectorAll('.rv-pair-commit[aria-pressed=\"true\"]').length === 2");
   await diff.click('pair-open');
   await diff.until('the review of the pair', `${q('pair-discussion')}!==null`, 60_000);
+  await diff.shot('03a-review-opened');
   await activate(diffWindow);
   await diff.ev('document.body.focus()');
   await press('ctrl+minus');
@@ -455,6 +459,7 @@ async function main() {
   const panelPage = new Page(client.cdp, 'panel', isPanelPage);
   await panelPage.attach();
   const composer = `(document.querySelector('[data-ev="discussion-composer"] textarea') ?? document.querySelector('[data-ev="discussion-composer"]') ?? document.body)`;
+  await panelPage.shot('04a-panel-opened');
   await activate(panel.frame);
   await panelPage.ev(`${composer}.focus()`);
   await press('ctrl+equal');
