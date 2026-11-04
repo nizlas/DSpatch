@@ -935,11 +935,13 @@ const sleep = (ms: number): Promise<void> =>
 function exitsWhileOutputStaysOpen(code: number, holdMs: number): string {
   const leaf = path.join(makeDir('leaf'), 'leaf.js');
   fs.writeFileSync(leaf, `setTimeout(function () {}, ${String(holdMs)});\n`, 'utf8');
-  // Detached from the shell's own group either way (`start /b`, `setsid`): what holds the
-  // output is not in the tree a switch ends, so the result that arrives late is a real one.
+  // The shell's own exit code is the result. On Windows the started process holds no pipe of
+  // the shell's; on POSIX it would inherit them, and a command whose output is still open at
+  // a switch is one the switch ends, which is not what this is about: so there the leaf is
+  // detached from the group and from the pipes, and the result is complete when the shell ends.
   return process.platform === 'win32'
     ? `start /b "" "${process.execPath}" "${leaf}" & exit /b ${String(code)}`
-    : `setsid "${process.execPath}" "${leaf}" & exit ${String(code)}`;
+    : `setsid "${process.execPath}" "${leaf}" >/dev/null 2>&1 </dev/null & exit ${String(code)}`;
 }
 
 test('WS-1 follow-up (A1): a hidden conversation\'s result whose save failed is told, kept and written at close', async () => {
