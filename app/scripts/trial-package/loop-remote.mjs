@@ -377,7 +377,8 @@ async function realBreak(laptop) {
 
 async function local(laptop) {
   await laptop.click('host-link-leave');
-  await laptop.until('this computer again', `${q('host-link')}===null`, 30_000);
+  // Since DSP-169 a local window may say it is on this computer rather than draw nothing.
+  await laptop.until('this computer again', `${q('host-link')}===null || /^On this computer/.test(${q('host-link')}?.textContent ?? '')`, 30_000);
   inC(LAPTOP, 'tester', 'mkdir -p ~/here && cd ~/here && git init -q . && echo hi > README.md');
   await laptop.chooseAgent('copilot');
   await laptop.ev(`window.dspatch.startChatSession({ kind: 'folder', path: '/home/tester/here' })`);
@@ -396,7 +397,7 @@ async function local(laptop) {
     await sleep(500);
   }
   check('a local loop starts and ends', ended() === '1', ended());
-  check('no status line appears locally', (await laptop.ev(`${q('host-link')}===null`)) === true);
+  check('the status line says this computer, not a remote one', (await laptop.ev(`${q('host-link')}===null || /^On this computer/.test(${q('host-link')}?.textContent ?? '')`)) === true);
 }
 
 void main();

@@ -137,7 +137,7 @@ export class Win {
         await sleep(300);
         continue;
       }
-      if (/^On /.test(state.on)) {
+      if (/^On (?!this computer)/.test(state.on)) {
         return { connected: true, seen, asked };
       }
       if (state.busy === false && seen.length > 1) {
