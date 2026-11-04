@@ -4,6 +4,9 @@
 # checked-out version is tried in clean containers, and an upgrade from the previous release.
 name: linux-verify
 on:
+  push:
+    branches:
+      - linux-verify
   workflow_dispatch:
     inputs:
       published:
