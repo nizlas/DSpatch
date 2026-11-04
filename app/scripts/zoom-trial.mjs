@@ -453,7 +453,9 @@ async function main() {
   project = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-zoom-project-'));
   const git = (...args) => run('git', ['-C', project, '-c', 'user.name=Trial', '-c', 'user.email=trial@example.invalid', ...args]);
   git('init', '-q');
-  for (const [n, text] of [['one', 'a start\n'], ['two', 'a start\nand a change\n'], ['three', 'a start\nand a change\nand one more\n']]) {
+  // The last commit adds enough lines for the review's code view to scroll (DSP-170).
+  const many = Array.from({ length: 240 }, (_, index) => `line ${String(index + 1)} of the change`).join('\n');
+  for (const [n, text] of [['one', 'a start\n'], ['two', 'a start\nand a change\n'], ['three', `a start\nand a change\nand one more\n${many}\n`]]) {
     fs.writeFileSync(path.join(project, 'notes.md'), text);
     git('add', '.');
     git('commit', '-qm', `Commit ${n}`);
