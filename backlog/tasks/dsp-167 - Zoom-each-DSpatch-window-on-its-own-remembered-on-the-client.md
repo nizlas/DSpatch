@@ -4,7 +4,7 @@ title: 'Zoom each DSpatch window on its own, remembered on the client'
 status: Review
 assignee: []
 created_date: '2026-11-03 23:25'
-updated_date: '2026-11-03 23:48'
+updated_date: '2026-11-04 07:31'
 labels:
   - ui
   - windows
@@ -49,4 +49,6 @@ Panel: in its own window three steps up to 3 (saved review-panel 3); docked into
 Tests: `tests/window-zoom.test.ts` (16: the scale and bounds, US and Swedish keys and the keypad, AltGr, the Windows key and key-up ignored, the saved file's parsing and writing, two windows of one identity, a key in a page, a docked page, closed windows, the menu items); fast 1486 + the boundary test after its allowlist gained the two client files, review 199, presentation 288, typecheck.
 
 Limits: no physical keyboard was pressed; the Swedish layout's `key` values are covered by the unit tests and the mapping is by the character Windows reports, so a press on a real Swedish keyboard is Niclas's check. The menu's accelerator text is drawn by Windows from the layout in use and was not seen. The host chooser (host-browse) is adopted but was not opened: it appears only in a remote session. The Windows key with + is left to Windows (Magnifier). Linux: the same code paths, nothing run there (no Linux environment on this machine).
+
+Linux (4 November 2026, DSP-168): the zoom trial, scripts/zoom-trial.mjs, ran on GitHub's Ubuntu 24.04 runner in real Electron windows on Xvfb with openbox, the keys pressed through the X server (xdotool): the US layout (Ctrl+=, Ctrl+Shift+=, Ctrl+-, Ctrl+0), the Swedish layout (Ctrl and its + key, Ctrl and its - key, Ctrl+0), the keypad (+, -, 0 with Num Lock on), each press one level with nothing typed; the View menu items, drawn by GTK as Ctrl+=, Ctrl+- and Ctrl+0 (screenshot in the run's evidence); the chat at 2, the loop editor at 1 and the review at -2 at once, the file holding the three; the discussion in its own window at 3, docked at the review's level with 3 kept, a key in the docked field moving both to -1 and typing nothing, undock, dock, undock; a restart with the chat at 2 before any project is open and drawn at that ratio, the editor at 1, the review at -1, the panel docked at -1 and at 3 when undocked; Ctrl+0 leaving main out of the file. 55 checks, run 41792402401 of the linux-verify workflow. Observed there, not a zoom matter: under Xvfb a hidden window's renderer draws no first frame until one is asked for, so Electron's ready-to-show waits; the trial asks for one through a page capture. A real Linux desktop and a physical keyboard remain Niclas's checks.
 <!-- SECTION:NOTES:END -->
