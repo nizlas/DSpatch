@@ -658,25 +658,21 @@ async function main() {
   const typed = await panelPage.reading();
   check('a key in the docked discussion zooms the review and the panel together, and types nothing', panel.view.level === -1 && (await levelOf(isDiffPage)) === -1 && savedLevels()['review-diff'] === -1 && savedLevels()['review-panel'] === 3 && (typed.value ?? '') === '', JSON.stringify({ panel, saved: savedLevels(), typed }));
   await diff.shot('05-review-with-docked-panel-at-minus-1');
-  // Recorded, not required (DSP-170): on the runner's Xvfb a notch over the docked view reached
-  // nothing in the first runs, while the same notch over the review's code and over the panel in
-  // its own window zoomed, and on Windows a notch over the docked field zooms the review and the
-  // panel together. What the page and the X server see is kept for a Linux desktop to settle.
+  // DSP-172: on Electron 44.0.0–44.7.0 a view moved into another window stayed hidden on Linux
+  // (electron/electron#54626), so this notch reached nothing on the runner; since Electron 44.9.3
+  // it is required again, the page said visible first.
   const dockedPoint = await panelPage.centre(composer);
-  const dockedSeen = await panelPage.ev('JSON.stringify({ visibility: document.visibilityState, focused: document.hasFocus(), width: window.innerWidth, height: window.innerHeight })');
+  const dockedSeen = JSON.parse(await panelPage.ev('JSON.stringify({ visibility: document.visibilityState, focused: document.hasFocus(), width: window.innerWidth, height: window.innerHeight })'));
   if (run('sh', ['-c', 'command -v import'], true) !== '') {
     run('import', ['-display', display, '-window', 'root', path.join(evidence, 'docked-panel-before-wheel.png')], true);
   }
+  check('the docked discussion says it is visible', dockedSeen.visibility === 'visible', JSON.stringify(dockedSeen));
   const dockedOut = await wheelOver(panel.frame, panel.view, panelPage, dockedPoint, -1);
-  const pointer = run('xdotool', ['getmouselocation'], true);
   panel = await panelView();
-  const dockedWheeled = dockedOut.level === -2 && panel.view.level === -2 && (await levelOf(isDiffPage)) === -2 && savedLevels()['review-panel'] === 3;
-  results.push({ stage, what: `Control and a notch back over the docked field: the review and the panel at -2 together, the panel's own 3 kept (recorded: ${dockedWheeled ? 'yes' : 'no'})`, ok: true, detail: JSON.stringify({ dockedOut, pointer, dockedSeen, view: panel.view, saved: savedLevels() }) });
-  if (dockedWheeled) {
-    const dockedIn = await wheelOver(panel.frame, panel.view, panelPage, dockedPoint, 1);
-    panel = await panelView();
-    check('and a notch forward → -1 together again', dockedIn.level === -1 && panel.view.level === -1 && (await levelOf(isDiffPage)) === -1, JSON.stringify({ dockedIn, panel }));
-  }
+  check("Control and a notch back over the docked field: the review and the panel at -2 together, the panel's own 3 kept", dockedOut.level === -2 && panel.view.level === -2 && (await levelOf(isDiffPage)) === -2 && savedLevels()['review-panel'] === 3, JSON.stringify({ dockedOut, view: panel.view, saved: savedLevels() }));
+  const dockedIn = await wheelOver(panel.frame, panel.view, panelPage, dockedPoint, 1);
+  panel = await panelView();
+  check('and a notch forward → -1 together again', dockedIn.level === -1 && panel.view.level === -1 && (await levelOf(isDiffPage)) === -1, JSON.stringify({ dockedIn, panel }));
   await panelPage.click('panel-own-window');
   await poll('the panel in its own window again', async () => (await panelView())?.docked === false, 20_000);
   panel = await panelView();
