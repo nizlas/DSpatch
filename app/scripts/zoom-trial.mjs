@@ -543,7 +543,12 @@ async function main() {
   check('the saved levels survive the quit', JSON.stringify(savedLevels()) === JSON.stringify(levelsBefore), JSON.stringify(savedLevels()));
   main = await launch('second');
   check('the chat opens at 2 before any project is open', (await levelOf(isMainPage)) === 2 && /window main opens at zoom level 2/.test(clientLog()), JSON.stringify(await client.main.windows()));
-  const opened = await main.reading();
+  // The level is the page's from its first script; the ratio the page reports follows once the
+  // renderer has laid it out, which a hidden window does a moment later.
+  const opened = await poll('the page drawn at level 2', async () => {
+    const reading = await main.reading();
+    return Math.abs(reading.dpr - 1.44) < 0.001 ? reading : false;
+  }, 20_000).catch(() => main.reading());
   check('the page is drawn at that size', Math.abs(opened.dpr - 1.44) < 0.001, JSON.stringify(opened));
   await main.until('the recent project', `${q('open-project-0')}!==null`);
   await main.click('open-project-0');
