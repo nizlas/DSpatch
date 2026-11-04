@@ -18,22 +18,28 @@ import { Markdown } from './Markdown';
  * October 2026): *Show more* opens the details written with it, and *The code it rests on*
  * opens the checked references. Both start closed, appear only when there is something to
  * open, ask nothing again, and keep their state while the answer streams and when the panel
- * moves to its own window. An answer written before it had details is shown whole.
+ * moves to its own window. An answer written before it had details is shown whole. Whatever
+ * else can be done with the answer (`actions`) sits in the same row, so an answer has one
+ * quiet row of actions under it, with room above it (DSP-171).
  */
 export function ShortThenMore({
   short,
   details,
   rests,
+  actions,
 }: {
   readonly short: string;
   readonly details: string | null | undefined;
   /** The references as links, when there are any. Kept in the page while closed. */
   readonly rests?: ReactNode;
+  /** Further actions on the answer, in the same row as the toggles. */
+  readonly actions?: ReactNode;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const [restsOpen, setRestsOpen] = useState(false);
   const more = details ?? '';
   const hasRests = rests !== undefined && rests !== null && rests !== false;
+  const hasActions = actions !== undefined && actions !== null && actions !== false;
   return (
     <>
       <Markdown text={short} />
@@ -42,7 +48,7 @@ export function ShortThenMore({
           <Markdown text={more} />
         </div>
       )}
-      {(more.trim() !== '' || hasRests) && (
+      {(more.trim() !== '' || hasRests || hasActions) && (
         <div className="rv-answer-toggles">
           {more.trim() !== '' && (
             <button type="button" className="rv-link rv-show-more" data-ev="answer-show-more" aria-expanded={open} onClick={() => setOpen(!open)}>
@@ -54,6 +60,7 @@ export function ShortThenMore({
               The code it rests on
             </button>
           )}
+          {hasActions && actions}
         </div>
       )}
       {hasRests && (
@@ -115,6 +122,13 @@ export function DiscussionAnswer({
         <ShortThenMore
           short={shown}
           details={parts.details}
+          actions={
+            onSimpler !== undefined && answer.status === 'done' ? (
+              <button type="button" className="rv-link rv-show-more rv-quiet-link" data-ev="answer-simpler" title="A new answer that explains this one more simply; this one is kept" onClick={onSimpler}>
+                Explain more simply
+              </button>
+            ) : undefined
+          }
           rests={
             references.length === 0 ? undefined : (
               <ul>
@@ -140,13 +154,6 @@ export function DiscussionAnswer({
             )
           }
         />
-      )}
-      {onSimpler !== undefined && answer.status === 'done' && shown !== '' && (
-        <div className="rv-answer-actions">
-          <button type="button" className="rv-link rv-quiet-link" data-ev="answer-simpler" title="A new answer that explains this one more simply; this one is kept" onClick={onSimpler}>
-            Explain more simply
-          </button>
-        </div>
       )}
       {(answer.adjustments ?? []).length > 0 && (
         <details className="rv-agent-adjustments">

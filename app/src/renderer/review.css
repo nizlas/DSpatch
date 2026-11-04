@@ -3258,17 +3258,13 @@
   margin: 0.2rem 0 0.3rem;
 }
 
-.rv-answer-actions {
-  margin-top: 0.25rem;
-}
-
-.rv-answer-actions .rv-quiet-link {
+/* Explain more simply sits in the answer's row of toggles (DSP-171), quieter than they are. */
+.rv-answer-toggles .rv-quiet-link {
   color: var(--muted);
-  font-size: 0.8rem;
 }
 
-.rv-answer-actions .rv-quiet-link:hover,
-.rv-answer-actions .rv-quiet-link:focus-visible {
+.rv-answer-toggles .rv-quiet-link:hover,
+.rv-answer-toggles .rv-quiet-link:focus-visible {
   color: var(--text);
 }
 
@@ -3593,4 +3589,123 @@
 
 .rv-panel-room[hidden] {
   display: none;
+}
+
+/* --- DSP-171: the discussion's answers, easier to follow ----------------------------------
+   Room and quiet marks rather than colour: body text at 1.5 lines; space between paragraphs
+   and between separate list items while a nested list stays with its item; the measure the
+   panel already keeps (78 characters) where the window is wide, the whole width where it is
+   narrow; each question on a surface of its own, and exchanges told apart by room and a faint
+   rule; inline code as monospace on a faint tint with no box around every name; code blocks
+   as surfaces of their own that scroll long lines inside; and one quiet row under an answer
+   for what can be done with it. The answers' text, references and actions are as they were. */
+
+.rv-discussion-thread {
+  gap: 1.5rem;
+}
+
+.rv-discussion-turn + .rv-discussion-turn {
+  border-top: 1px solid var(--line);
+  padding-top: 1.2rem;
+}
+
+.rv-discussion-question {
+  border-left: 3px solid color-mix(in srgb, var(--muted) 55%, var(--line));
+  background: color-mix(in srgb, var(--text) 4%, var(--bg));
+  border-radius: 0 6px 6px 0;
+  padding: 0.5rem 0.8rem 0.5rem 0.75rem;
+}
+
+.rv-discussion-text {
+  line-height: 1.5;
+  margin: 0;
+}
+
+.rv-discussion-answer {
+  margin-top: 0.9rem;
+  line-height: 1.5;
+  min-width: 0;
+}
+
+.rv-discussion .rv-answer .markdown__p,
+.rv-discussion .rv-answer .markdown__list,
+.rv-discussion .rv-answer .markdown__quote,
+.rv-discussion .rv-answer .markdown__table-box {
+  margin: 0 0 0.85rem;
+}
+
+.rv-discussion .rv-answer .markdown__list li {
+  margin: 0.4rem 0;
+}
+
+/* A nested list belongs to its item: closer to it, and its own items closer together. */
+.rv-discussion .rv-answer .markdown__list .markdown__list {
+  margin: 0.25rem 0 0;
+}
+
+.rv-discussion .rv-answer .markdown__list .markdown__list li {
+  margin: 0.2rem 0;
+}
+
+.rv-discussion .rv-answer .markdown__code,
+.rv-discussion-text code {
+  border: none;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.08em 0.32em;
+  font-size: 0.88em;
+}
+
+.rv-discussion .rv-answer .markdown__pre {
+  max-width: 100%;
+  margin: 0 0 0.9rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 5%, var(--bg));
+}
+
+.rv-discussion .rv-answer .markdown__code-block {
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.rv-discussion .rv-answer .markdown__table {
+  line-height: 1.4;
+}
+
+.rv-discussion .rv-answer-details {
+  margin: 0.7rem 0 0.5rem;
+  padding-left: 0.85rem;
+  border-left: 2px solid color-mix(in srgb, var(--muted) 50%, var(--line));
+}
+
+.rv-discussion .rv-answer-toggles {
+  margin-top: 0.8rem;
+  gap: 0.35rem 1.3rem;
+  align-items: baseline;
+}
+
+.rv-discussion .rv-answer-toggles .rv-link {
+  margin: 0;
+  font-family: inherit;
+  font-size: 0.82rem;
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--muted) 55%, transparent);
+  text-underline-offset: 0.15em;
+}
+
+.rv-discussion .rv-answer-toggles .rv-link:hover,
+.rv-discussion .rv-answer-toggles .rv-link:focus-visible {
+  color: var(--text);
+  text-decoration-color: var(--text);
+}
+
+.rv-discussion .rv-answer-refs {
+  margin-top: 0.5rem;
+}
+
+.rv-discussion .rv-answer-refs li {
+  margin: 0.3rem 0;
+  line-height: 1.45;
 }
