@@ -193,7 +193,8 @@ function assertOneAttempt() {
 }
 function launch(name, user, port, display) {
   const env = { HOME: `/home/${user}`, USER: user, LOGNAME: user, PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', DISPLAY: display, ...simulated };
-  docker('exec', '-d', '-u', user, name, 'env', '-i', ...Object.entries(env).map(([key, value]) => `${key}=${value}`), 'bash', '-c', `exec dspatch --remote-debugging-port=${port} >>/tmp/standalone-client.log 2>&1`);
+  // Each line stamped with the time it arrived, so a slow step can be placed (DSP-168).
+  docker('exec', '-d', '-u', user, name, 'env', '-i', ...Object.entries(env).map(([key, value]) => `${key}=${value}`), 'bash', '-c', `dspatch --remote-debugging-port=${port} 2>&1 | while IFS= read -r line; do printf '%s %s\n' "$(date +%T.%3N)" "$line"; done >>/tmp/standalone-client.log`);
 }
 async function quit(name, user, window) {
   const pid = inside(name, user, 'pgrep -o -x dspatch');

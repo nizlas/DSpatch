@@ -36,11 +36,13 @@ jobs:
         run: node scripts/trial-package/standalone.mjs
         working-directory: app
       - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
         with:
           name: linux
           path: |
             app/release/*.deb
             app/release/host/
+            app/release/trial-standalone/
   windows-installer:
     if: github.event_name == 'workflow_dispatch'
     needs: hosts-and-deb
