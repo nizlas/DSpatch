@@ -255,7 +255,13 @@ async function openPair(page) {
   await page.click('pair-commit-0');
   await page.until('both chosen', chosen(2));
   await page.click('pair-open');
-  await page.until('the review of the pair', `${q('pair-discussion')}!==null`, 60_000);
+  // A mouse click that lands while the header is still settling can be lost; the control's own
+  // click then opens the pair.
+  const opened = await page.until('the review of the pair', `${q('pair-discussion')}!==null`, 15_000).catch(() => false);
+  if (opened !== true) {
+    await page.ev(`${q('pair-open')}?.click()`);
+    await page.until('the review of the pair', `${q('pair-discussion')}!==null`, 60_000);
+  }
 }
 const isEditorPage = (url) => url.includes('window=editor');
 const isDiffPage = (url) => url.includes('view=diff');
