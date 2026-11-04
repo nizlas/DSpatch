@@ -597,7 +597,7 @@ async function main() {
   await activate(diffWindow);
   // The review opens on its file list; the code view is a file's.
   await diff.click('pair-file-0');
-  await diff.until('the code', `document.querySelector('.rv-pair-diff')!==null`, 30_000);
+  await diff.until('the code drawn', `document.querySelectorAll('.rv-pair-diff tr').length > 50`, 30_000);
   const codePoint = await diff.centre(`document.querySelector('.rv-pair-diff')`);
   let codeWindow = await windowShowing(isDiffPage, 'the review window');
   const codeScroll = await diff.scrollAt(codePoint);

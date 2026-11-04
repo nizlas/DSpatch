@@ -1019,13 +1019,20 @@ export class ReviewWindows {
     this.placePanel(panel, panel.place);
   }
 
-  /** A code window says where it keeps room for the panel docked in it. */
+  /**
+   * A code window says where it keeps room for the panel docked in it, measured in its page's
+   * own pixels. The view is placed in the window's device-independent pixels, which the page's
+   * zoom relates (DSP-167, DSP-170): at level -2 a room at CSS x 1628 lies at 1130 in a window
+   * 1500 wide, and a page zoomed in reports a room smaller than its place. The page measures
+   * again when its zoom changes, since that resizes its viewport.
+   */
   panelSlot(host: ReviewWindowEntry, rect: Rectangle | null): void {
     const panel = host.pairKey === null ? undefined : this.panels.get(host.pairKey);
     if (panel === undefined || panel.host !== host) {
       return;
     }
-    panel.slot = rect;
+    const factor = host.window.webContents.getZoomFactor();
+    panel.slot = rect === null ? null : { x: rect.x * factor, y: rect.y * factor, width: rect.width * factor, height: rect.height * factor };
     this.layoutPanel(panel);
   }
 
