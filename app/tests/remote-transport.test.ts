@@ -8,7 +8,7 @@ import { RemoteServer } from '../src/host/remote-server.ts';
 import { HostConnection, type HostLinkEvent } from '../src/main/host-connection.ts';
 import { RemoteLink, probeHost } from '../src/main/remote-link.ts';
 import { parseRemoteAddress } from '../src/main/remote-session.ts';
-import { decodeFrame, encodeFrame, hostBuildNote, type RemoteBuild } from '../src/shared/remote-protocol.ts';
+import { compareVersions, decodeFrame, encodeFrame, hostBuildDifference, type RemoteBuild } from '../src/shared/remote-protocol.ts';
 import { isHostCallFailure } from '../src/shared/host-protocol.ts';
 
 /*
@@ -322,21 +322,40 @@ it('Connect asks first: a port with nothing behind it answers a sentence, and le
   assert.match(answer ?? '', /No DSpatch host answered at 127\.0\.0\.1:\d+\..*Nothing was sent, and you are still on this computer\./);
 });
 
-describe('which build a running host is (DSP-165)', () => {
-  const base: RemoteBuild = { protocol: 1, contract: 'c', appVersion: '1', commit: 'abc123' };
+describe('which build a running host is (DSP-165, DSP-169)', () => {
+  const base: RemoteBuild = { protocol: 1, contract: 'c', appVersion: '0.1.6', commit: 'abc123' };
 
   it('says nothing when the host is this build', () => {
-    assert.equal(hostBuildNote({ ...base, digest: 'd1' }, { ...base, digest: 'd1' }), '');
-    assert.equal(hostBuildNote(base, base), '');
-    assert.equal(hostBuildNote(null, base), '');
+    assert.equal(hostBuildDifference({ ...base, digest: 'd1' }, { ...base, digest: 'd1' }), null);
+    assert.equal(hostBuildDifference(base, base), null);
+    assert.equal(hostBuildDifference(null, base), null);
   });
 
-  it("names an earlier build of the same commit as the host's own, not as this window's", () => {
-    const note = hostBuildNote({ ...base, digest: 'aaaaaaaa11' }, { ...base, digest: 'bbbbbbbb22' });
-    assert.match(note, /The host runs abc123, build aaaaaaaa; this window is abc123, build bbbbbbbb/);
+  it('an older version on the host is an update waiting for a restart, with both builds in the detail', () => {
+    const difference = hostBuildDifference({ ...base, appVersion: '0.1.4', commit: 'cfb34b0', digest: 'aaaaaaaa11' }, { ...base, digest: 'bbbbbbbb22' });
+    assert.equal(difference?.kind, 'update');
+    assert.equal(difference?.detail, 'The host runs 0.1.4 (cfb34b0, build aaaaaaaa); this window is 0.1.6 (abc123, build bbbbbbbb).');
+    assert.equal(hostBuildDifference({ ...base, appVersion: '0.1.9' }, { ...base, appVersion: '0.1.10' })?.kind, 'update', 'compared number by number, not as text');
   });
 
-  it('falls back to the commit for a build without a digest', () => {
-    assert.match(hostBuildNote({ ...base, commit: 'old' }, { ...base, digest: 'x' }), /The host runs old; this window is abc123/);
+  it("another build of the same version is another build, not an update, told apart by the digest first", () => {
+    const sameCommit = hostBuildDifference({ ...base, digest: 'aaaaaaaa11' }, { ...base, digest: 'bbbbbbbb22' });
+    assert.equal(sameCommit?.kind, 'other');
+    assert.match(sameCommit?.detail ?? '', /The host runs 0\.1\.6 \(abc123, build aaaaaaaa\); this window is 0\.1\.6 \(abc123, build bbbbbbbb\)\./);
+    assert.equal(hostBuildDifference({ ...base, commit: 'old' }, { ...base, digest: 'x' })?.detail, 'The host runs 0.1.6 (old); this window is 0.1.6 (abc123, build x).', 'a build without a digest is told by its commit');
+    assert.equal(hostBuildDifference({ ...base, appVersion: '0.2.0', commit: 'new' }, base)?.kind, 'other', 'a newer host is no update of this window either');
+  });
+
+  it('a side without a known version is compared by its sources alone', () => {
+    assert.equal(hostBuildDifference({ ...base, appVersion: '0.0.0' }, base), null);
+    assert.equal(hostBuildDifference({ ...base, appVersion: '0.0.0', commit: 'old' }, base)?.kind, 'other');
+  });
+
+  it('compares versions number by number', () => {
+    assert.equal(compareVersions('0.1.6', '0.1.6'), 0);
+    assert.equal(compareVersions('0.1.6', '0.1.10'), -1);
+    assert.equal(compareVersions('1.0', '1.0.0'), 0);
+    assert.equal(compareVersions('2.0.0', '1.9.9'), 1);
+    assert.equal(compareVersions('x', '0.0.1'), -1);
   });
 });

@@ -1756,7 +1756,9 @@ body {
 }
 
 .host-link--connecting .host-link__dot,
-.host-link--reconnecting .host-link__dot {
+.host-link--reconnecting .host-link__dot,
+/* A restart waits on the person (DSP-169): the words say so, and the dot agrees. */
+.host-link--restart .host-link__dot {
   background: #d9a441;
 }
 

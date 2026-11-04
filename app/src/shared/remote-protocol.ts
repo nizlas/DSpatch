@@ -41,17 +41,48 @@ export interface RemoteBuild {
 }
 
 /**
- * What a person is told when the host they reached was started from another build than this
- * client: a short fact for the host line, or `''` when both are the same or nothing says.
+ * How the host a client reached differs from the client's own build, when it does (DSP-165,
+ * DSP-169). `update`: the host is an older version than this client, which is what an
+ * installed update leaves behind until the host is restarted. `other`: any other difference,
+ * in development usually a host started from another working copy of the same version, which
+ * no one installed. `null` when the two are the same build, or when nothing says. The detail
+ * names both builds for the log and for a technical detail the person can open; the status
+ * line says what to do, not which commit either side is.
  */
-export function hostBuildNote(host: RemoteBuild | null, client: RemoteBuild): string {
+export interface HostBuildDifference {
+  readonly kind: 'update' | 'other';
+  readonly detail: string;
+}
+
+/** `remoteBuild`'s version when the build's `package.json` could not be read. */
+const UNKNOWN_VERSION = '0.0.0';
+
+export function hostBuildDifference(host: RemoteBuild | null, client: RemoteBuild): HostBuildDifference | null {
   if (host === null) {
-    return '';
+    return null;
   }
-  const named = (build: RemoteBuild): string => (build.digest === undefined ? build.commit : `${build.commit}, build ${build.digest.slice(0, 8)}`);
-  const differs =
-    host.digest !== undefined && client.digest !== undefined ? host.digest !== client.digest : host.commit !== client.commit;
-  return differs ? `The host runs ${named(host)}; this window is ${named(client)}. End the host to run this build.` : '';
+  // A side whose version is unknown is compared by its sources alone.
+  const versions = host.appVersion === UNKNOWN_VERSION || client.appVersion === UNKNOWN_VERSION ? 0 : compareVersions(host.appVersion, client.appVersion);
+  const sameSources = host.digest !== undefined && client.digest !== undefined ? host.digest === client.digest : host.commit === client.commit;
+  if (versions === 0 && sameSources) {
+    return null;
+  }
+  const named = (build: RemoteBuild): string => `${build.appVersion} (${build.commit}${build.digest === undefined ? '' : `, build ${build.digest.slice(0, 8)}`})`;
+  return { kind: versions < 0 ? 'update' : 'other', detail: `The host runs ${named(host)}; this window is ${named(client)}.` };
+}
+
+/** Two versions as `major.minor.patch`, number by number: negative when `a` is the older. A part that is no number counts as 0. */
+export function compareVersions(a: string, b: string): number {
+  const parts = (version: string): number[] => version.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const left = parts(a);
+  const right = parts(b);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) {
+      return Math.sign(difference);
+    }
+  }
+  return 0;
 }
 
 export type RemoteHandshake =

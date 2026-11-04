@@ -1,4 +1,5 @@
 import type { ProviderLoginStep } from './bridge';
+import type { HostBuildDifference } from './remote-protocol';
 
 /*
  * What a window knows of the connection to a host on another machine (DSP-111), and the
@@ -20,6 +21,12 @@ export interface HostLinkState {
   readonly here?: boolean;
   /** Handed over: another computer is using this machine's work now. */
   readonly away?: boolean;
+  /**
+   * The host reached is another build than this window (DSP-165, DSP-169): an update waiting
+   * for the host to be restarted, or another build of the same version. Absent while the host
+   * is this build, and while the connection is not up.
+   */
+  readonly build?: HostBuildDifference;
 }
 
 export interface HostBrowseEntry {

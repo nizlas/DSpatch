@@ -22,7 +22,8 @@ One host works on that context at a time, so the handover is always clear:
 
 - **DSpatch left open on that computer, idle or working.** A connecting client attaches to the same standalone host. The last client is told it was replaced; the work is neither interrupted nor sent again. **Use here** brings the connection back to the local client.
 - **Both clients closed.** Work already started continues on the host. Reopening locally or connecting over SSH recovers its current state and saved history.
-- **End host.** This explicit action is refused while work is running. When idle, it ends the host and the local window starts a fresh standalone host. Stop work and closing a window are separate actions.
+- **End host.** This explicit action is refused while work is running. When idle, it ends the host and the local window starts a fresh standalone host. Stop work and closing a window are separate actions. The window's line reads *On this computer* while it is attached to this computer's host.
+- **Restart host.** The same action under the name it deserves when the host is another build than the window: after an update, the host the closed windows left running is still the old version, the line reads *Restart needed to finish updating*, and the restart ends it once nothing runs in it and starts the installed build's host. A host of the same version from other sources, as in development, reads *The host is another build*. Which commit and build each side is stays in the line's detail and the log.
 
 Only the client attached at that moment works on the host. Another client that connects replaces it, and the replaced one says so. Reopening a saved conversation is not the same as attaching to running work: reopening reads what is saved, and nothing is ever resent.
 

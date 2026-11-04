@@ -129,7 +129,7 @@ async function connect() {
     } else if (state.kind !== null && state.kind !== undefined) {
       await click('ssh-yes');
     }
-    // "On this computer, through the host that stays running" is the local host's line (v0.1.4).
+    // "On this computer" is the local host's line (DSP-169; "…, through the host that stays running" before).
     const line = (await hostLine().catch(() => '')) ?? '';
     if (/^On /.test(line) && !/^On this computer/.test(line)) {
       return 'connected';

@@ -4,7 +4,7 @@ import { remoteBuild } from '../shared/remote-build';
 import { EXPECT_USERDATA_ENV, profileRefusal } from './profile-guard';
 import { WINDOW_ZOOM_FILE, WindowZoom, WindowZoomStore, zoomMenuItems } from './window-zoom';
 import { WINDOW_ZOOM_LEVEL_CHANNEL } from '../shared/window-zoom';
-import { hostBuildNote } from '../shared/remote-protocol';
+import { hostBuildDifference } from '../shared/remote-protocol';
 import { RemoteLink, probeHost, type RemoteEndpoint } from './remote-link';
 import { ensureLocalHost, runningLocalHost } from './local-host';
 import { findHostPackage, readHostManifest, type HostPackage } from './host-packages';
@@ -532,7 +532,7 @@ async function moveToHost(next: RemoteEndpoint | null, remember: () => void, rea
     remember();
     if (await startHostOrQuit()) {
       if (remoteSession() === null) {
-        publishLink({ phase: 'connected', note: hostBuildNote(remoteLink?.build() ?? null, remoteBuild(app.getAppPath())) });
+        publishLink({ phase: 'connected', note: '' });
       }
       liveMainWindow()?.webContents.reload();
     }
@@ -1003,6 +1003,10 @@ let hostLink: HostLinkState = { remote: false, phase: 'connected', machine: '', 
 function publishLink(change: Pick<HostLinkState, 'phase' | 'note'>): void {
   const remote = remoteSession();
   const address = remote === null ? '' : `${remote.host}:${String(remote.port)}`;
+  // DSP-165, DSP-169: a host that was already running may be another build than this window.
+  // The line says what that means for the person; which commit and build each side is goes to
+  // the log here and to the line's detail, never to the line itself.
+  const build = remote !== null && change.phase === 'connected' ? hostBuildDifference(remoteLink?.build() ?? null, remoteBuild(app.getAppPath())) : null;
   hostLink = {
     remote: remote !== null || handedOver,
     address,
@@ -1010,8 +1014,9 @@ function publishLink(change: Pick<HostLinkState, 'phase' | 'note'>): void {
     ...change,
     ...(sharedHere ? { here: true } : {}),
     ...(handedOver ? { away: true } : {}),
+    ...(build === null ? {} : { build }),
   };
-  log(`host link: ${hostLink.phase}${hostLink.note === '' ? '' : ` (${hostLink.note})`}`);
+  log(`host link: ${hostLink.phase}${hostLink.note === '' ? '' : ` (${hostLink.note})`}${build === null ? '' : ` [${build.kind === 'update' ? 'an update waits for a restart' : 'another build'}: ${build.detail}]`}`);
   for (const contents of webContents.getAllWebContents()) {
     if (!contents.isDestroyed()) {
       contents.send('dspatch:host-link', hostLink);
@@ -1027,9 +1032,9 @@ function linkChanged(event: HostLinkEvent): void {
   } else if (event.kind === 'refused') {
     publishLink({ phase: 'stopped', note: event.message });
   } else {
-    // DSP-165: a host that was already running may be from an earlier build; say so, rather
-    // than let the window's own build stand for it.
-    publishLink({ phase: 'connected', note: hostBuildNote(remoteLink?.build() ?? null, remoteBuild(app.getAppPath())) });
+    // DSP-165: a host that was already running may be from an earlier build; `publishLink`
+    // says so, rather than let the window's own build stand for it.
+    publishLink({ phase: 'connected', note: '' });
     if (!event.first && !event.resumed) {
       // Too much happened while away to replay: the windows read what the host has now.
       void reviewWindows?.reattach(true);
@@ -1226,9 +1231,7 @@ async function startHostOrQuit(): Promise<boolean> {
         })
         .catch(() => undefined);
       if (remoteSession() !== null) {
-        const hostBuild = remoteLink?.build();
-        const mine = remoteBuild(app.getAppPath());
-        publishLink({ phase: 'connected', note: hostBuildNote(hostBuild ?? null, mine) });
+        publishLink({ phase: 'connected', note: '' });
       }
       return true;
     }
@@ -1361,7 +1364,7 @@ async function hostLost(loss: HostLoss): Promise<void> {
     if (remoteSession() === null) {
       // The person chose this computer instead: what the review windows show is the other host's.
       await reviewWindows?.closeAll(HOST_MOVE_WINDOW_MS);
-      publishLink({ phase: 'connected', note: hostBuildNote(remoteLink?.build() ?? null, remoteBuild(app.getAppPath())) });
+      publishLink({ phase: 'connected', note: '' });
       reloadOpenWindows();
       return;
     }

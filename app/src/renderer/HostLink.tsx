@@ -35,23 +35,40 @@ export function HostLinkLine(): JSX.Element | null {
       </div>
     );
   }
+  // The builds: which commit and build each side is stays a detail (the title, and the log),
+  // and the line says what it means (DSP-169). A restart is the End host action by another
+  // name: it ends the host once nothing runs in it, this build's host starts, and the window
+  // reconnects.
+  const build = state.phase === 'connected' ? state.build : undefined;
   if (state.here === true) {
+    const words = state.phase !== 'connected' ? 'This computer’s host stopped answering' : build === undefined ? 'On this computer' : build.kind === 'update' ? 'Restart needed to finish updating' : 'The host is another build';
+    const restart = build !== undefined;
     return (
-      <div className={`host-link host-link--${state.phase}`} data-ev="host-link" data-phase={state.phase}>
+      <div className={`host-link host-link--${state.phase}${restart ? ' host-link--restart' : ''}`} data-ev="host-link" data-phase={state.phase} data-build={build?.kind ?? 'same'}>
         <span className="host-link__dot" aria-hidden="true" />
-        <span>{state.phase === 'connected' ? 'On this computer, through the host that stays running' : 'This computer’s host stopped answering'}</span>
+        <span data-ev="host-link-words" title={build?.detail}>{words}</span>
         {state.note !== '' && <span className="host-link__note">{state.note}</span>}
-        <button type="button" data-ev="host-link-leave" title="End the host once nothing runs in it, and work in this window alone" onClick={() => window.dspatchHost?.leave()}>
-          End host
+        <button
+          type="button"
+          data-ev="host-link-leave"
+          title={restart ? `${build.detail} Restarting ends the host once nothing runs in it and starts this build’s; this window then reconnects.` : 'End the host once nothing runs in it, and work in this window alone'}
+          onClick={() => window.dspatchHost?.leave()}
+        >
+          {restart ? 'Restart host' : 'End host'}
         </button>
       </div>
     );
   }
   const words = state.phase === 'connected' ? `On ${state.machine}` : state.phase === 'connecting' ? `Connecting to ${state.machine}…` : state.phase === 'reconnecting' ? `Disconnected from ${state.machine}, reconnecting…` : `Disconnected from ${state.machine}`;
   return (
-    <div className={`host-link host-link--${state.phase}`} data-ev="host-link" data-phase={state.phase}>
+    <div className={`host-link host-link--${state.phase}`} data-ev="host-link" data-phase={state.phase} data-build={build?.kind ?? 'same'}>
       <span className="host-link__dot" aria-hidden="true" />
-      <span>{words}</span>
+      <span data-ev="host-link-words" title={build?.detail}>{words}</span>
+      {build !== undefined && (
+        <span className="host-link__note" title={build.detail}>
+          {build.kind === 'update' ? 'The host there is an older version' : 'The host there is another build'}
+        </span>
+      )}
       {state.note !== '' && <span className="host-link__note">{state.note}</span>}
       {state.phase === 'reconnecting' && (
         <button type="button" data-ev="host-link-retry" onClick={() => window.dspatchHost?.retry()}>
