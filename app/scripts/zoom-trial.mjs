@@ -301,15 +301,18 @@ const panelView = async () => {
 /** Bring a window to the front through the window manager, so the X server's keys reach it. */
 async function activate(w) {
   const state = async () => (await client.main.windows()).find((one) => one.id === w.id);
-  // A window is shown once its page is ready; the editor and the review take a moment.
-  await poll(`window ${String(w.id)} shown`, async () => (await state())?.visible === true, 30_000);
-  xdotool('windowactivate', '--sync', String(w.xid));
-  const end = Date.now() + 15_000;
+  // A new window is mapped once its page is ready, and the window manager gives it the focus a
+  // moment later; until then an activation is asked for again, through the manager, X and
+  // Electron in turn.
+  const end = Date.now() + 40_000;
   while (Date.now() < end) {
     if ((await state())?.focused === true) return;
-    await delay(300);
-    xdotool('windowfocus', '--sync', String(w.xid));
+    run('xdotool', ['windowactivate', '--sync', String(w.xid)], true);
+    await delay(400);
+    if ((await state())?.focused === true) return;
+    run('xdotool', ['windowfocus', '--sync', String(w.xid)], true);
     await client.main.ev(`process.mainModule.require('electron').BrowserWindow.fromId(${String(w.id)})?.focus()`);
+    await delay(400);
   }
   throw new Error(`window ${String(w.id)} did not take the focus: ${JSON.stringify(await state())}`);
 }
