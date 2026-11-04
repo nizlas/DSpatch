@@ -156,6 +156,7 @@ const AREAS = {
       'host-data.test.ts',
       'profile-guard.test.ts',
       'window-zoom.test.ts',
+      'electron-version.test.ts',
       'provider-setup.test.ts',
       'provider-ready.test.ts',
     ],
