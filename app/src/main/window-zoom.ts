@@ -38,6 +38,19 @@ import {
  * handlers and before menu accelerators, so a zoom key pressed in the chat's text field, in a
  * code view or anywhere else changes the window and reaches nothing else; the menu items carry
  * the same shortcuts for the person to see, and act when the keys do not reach a page.
+ *
+ * **The wheel is read here too, after the page (DSP-170).** Control and the wheel are not a
+ * scroll in Chromium on Windows and Linux: a wheel event with Control held and a wheel's
+ * ordinary deltas scrolls nothing, wherever the pointer is; what the page's own handlers do
+ * not cancel comes back to the browser process, which counts notches, carrying a
+ * high-resolution wheel's fractions of a notch over and rounding the sum to the nearest notch
+ * (so the step comes at half a notch, and a notch's fractions make exactly one), and asks its
+ * embedder to zoom in or out once per notch (`WebContentsImpl::HandleWheelEvent`). Electron
+ * passes that on as the `zoom-changed` event and zooms nothing itself. So one notch forward
+ * is one step in, one notch back one step out, on the same levels, bounds, memory and window
+ * as the keys, and nothing scrolls or zooms besides. The one thing a page must not do is
+ * cancel a Control+wheel event, and no page of DSpatch does: the timeline reads Shift+wheel
+ * only. A touchpad's precise deltas with Control are a scroll to Chromium, as in Chrome.
  */
 
 /** The file in the client's user data. */
@@ -93,6 +106,8 @@ export interface ZoomContents {
   setZoomMode(mode: 'default' | 'isolated' | 'manual' | 'disabled'): void;
   setZoomLevel(level: number): void;
   on(event: 'before-input-event', listener: (event: { preventDefault(): void }, input: ZoomKeyInput) => void): this;
+  /** Chromium's request to zoom, once per notch of a wheel turned with Control held. */
+  on(event: 'zoom-changed', listener: (event: unknown, direction: 'in' | 'out') => void): this;
   once(event: 'destroyed', listener: () => void): this;
 }
 
@@ -168,6 +183,13 @@ export class WindowZoom {
         }
         event.preventDefault();
         this.apply(at, command);
+      });
+      // A notch of the wheel with Control held, whichever window the page is in by then.
+      page.on('zoom-changed', (_event, direction) => {
+        const at = this.pageWindows.get(page.id);
+        if (at !== undefined) {
+          this.apply(at, direction);
+        }
       });
       page.once('destroyed', () => {
         const at = this.pageWindows.get(page.id);

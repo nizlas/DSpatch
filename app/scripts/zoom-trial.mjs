@@ -159,6 +159,14 @@ class Page {
   reading() {
     return this.ev("JSON.stringify({dpr: window.devicePixelRatio, width: window.innerWidth, focused: document.hasFocus(), active: document.activeElement?.tagName ?? null, value: document.activeElement?.value ?? null})").then((text) => JSON.parse(text));
   }
+  /** The centre of an element, in the page's own CSS pixels. */
+  async centre(expression) {
+    return this.ev(`(()=>{const element=${expression};if(!element)return null;const box=element.getBoundingClientRect();return {x:box.x+box.width/2,y:box.y+box.height/2}})()`);
+  }
+  /** The scroll container under a point of the page, and where it is scrolled to. */
+  async scrollAt(point) {
+    return this.ev(`(()=>{let e=document.elementFromPoint(${String(point.x)},${String(point.y)});while(e&&e!==document.documentElement){const s=getComputedStyle(e);if((s.overflowY==='auto'||s.overflowY==='scroll')&&e.scrollHeight>e.clientHeight+1)return {tag:e.tagName,cls:String(e.className).slice(0,60),top:Math.round(e.scrollTop),max:e.scrollHeight-e.clientHeight};e=e.parentElement}return {tag:'none',top:Math.round(document.scrollingElement.scrollTop),max:0}})()`);
+  }
 }
 
 /** The main process, over the inspector: every window, its level and the X window it is. */
@@ -222,13 +230,32 @@ class Main {
         id: w.id,
         title: w.getTitle(),
         url: w.webContents.getURL(),
+        contentsId: w.webContents.id,
         level: w.webContents.getZoomLevel(),
         focused: w.isFocused(),
         visible: w.isVisible(),
         xid: ((handle) => (handle.length >= 8 ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0)))(w.getNativeWindowHandle()),
-        views: (w.contentView?.children ?? []).filter((v) => v.webContents !== undefined).map((v) => ({ url: v.webContents.getURL(), level: v.webContents.getZoomLevel() })),
+        content: w.getContentBounds(),
+        views: (w.contentView?.children ?? []).filter((v) => v.webContents !== undefined).map((v) => ({ contentsId: v.webContents.id, url: v.webContents.getURL(), level: v.webContents.getZoomLevel(), bounds: v.getBounds() })),
       })));
     })()`));
+  }
+  /**
+   * A wheel turned over a page through Electron's own input path (`webContents.sendInputEvent`),
+   * for the fractions of a notch a high-resolution wheel reports, which no X button press can
+   * make. `ticks` forward when positive. Electron follows every injected wheel event with a
+   * synthetic phase-ended copy that keeps the ticks, so Chromium's counter sees each injection
+   * twice: nothing a mouse does, and why the trial's checks of whole notches go through the X
+   * server instead.
+   */
+  async wheel(contentsId, point, ticks, control = true) {
+    return this.ev(`(() => {
+      const { webContents } = process.mainModule.require('electron');
+      const wc = webContents.fromId(${String(contentsId)});
+      const f = wc.getZoomFactor();
+      wc.sendInputEvent({ type: 'mouseWheel', x: Math.round(${String(point.x)} * f), y: Math.round(${String(point.y)} * f), deltaX: 0, deltaY: ${String(ticks)} * 100, wheelTicksX: 0, wheelTicksY: ${String(ticks)}, modifiers: ${JSON.stringify(control ? ['control'] : [])} });
+      return new Promise((resolve) => setTimeout(() => resolve(wc.getZoomLevel()), 300));
+    })()`);
   }
   /** Click a View menu item for a window, as the menu does with that window focused. */
   async menu(itemId, windowId) {
@@ -379,6 +406,27 @@ async function activate(w) {
   }
   throw new Error(`window ${String(w.id)} did not take the focus in 90 s: ${JSON.stringify(await state())}`);
 }
+/**
+ * Turn the wheel as a mouse would, through the X server: the pointer moved over a point of a
+ * page (`css`, in that page's pixels; `view` when the page is a view in the window), Control
+ * held, the wheel's button pressed `notches` times (button 4 forward, 5 back), Control let go.
+ * The X server delivers each press to the window under the pointer with Control in its state,
+ * as a physical wheel's would arrive; Chromium makes one wheel event of one notch from each.
+ */
+async function wheelOver(w, view, page, css, notches, control = true) {
+  const level = view === null ? w.level : view.level;
+  const factor = 1.2 ** level;
+  const x = Math.round(w.content.x + (view === null ? 0 : view.bounds.x) + css.x * factor);
+  const y = Math.round(w.content.y + (view === null ? 0 : view.bounds.y) + css.y * factor);
+  xdotool('mousemove', '--sync', String(x), String(y));
+  await delay(120);
+  if (control) xdotool('keydown', 'ctrl');
+  xdotool('click', '--repeat', String(Math.abs(notches)), '--delay', '80', notches > 0 ? '4' : '5');
+  if (control) xdotool('keyup', 'ctrl');
+  await delay(350);
+  return { x, y, level: await levelOf(view === null ? (url) => url === w.url : (url) => url === view.url) };
+}
+
 /** Press keys as a keyboard would, on the focused window; `keys` in xdotool's words. */
 async function press(keys) {
   xdotool('key', '--clearmodifiers', '--delay', '40', keys);
@@ -467,6 +515,44 @@ async function main() {
     await delay(200);
   }
 
+  stage = 'the wheel with Control (DSP-170)';
+  let chat = await windowShowing(isMainPage, 'the main window');
+  await activate(chat);
+  await main.ev(`${q('prompt')}.focus()`);
+  const promptPoint = await main.centre(q('prompt'));
+  const wheelSteps = [[1, 1], [1, 2], [-1, 1], [-1, 0]];
+  for (const [notches, expected] of wheelSteps) {
+    chat = await windowShowing(isMainPage, 'the main window');
+    const turned = await wheelOver(chat, null, main, promptPoint, notches);
+    const reading = await main.reading();
+    check(`one notch ${notches > 0 ? 'forward' : 'back'} over the chat field → level ${String(expected)}, nothing typed, nothing scrolled`, turned.level === expected && reading.value === '' && Math.abs(reading.dpr - 1.2 ** expected) < 0.001, JSON.stringify({ turned, reading }));
+  }
+  check('normal size is not written after the wheel brought the chat back to it', savedLevels().main === undefined, JSON.stringify(savedLevels()));
+  chat = await windowShowing(isMainPage, 'the main window');
+  const plain = await wheelOver(chat, null, main, promptPoint, 1, false);
+  check('a notch without Control leaves the level alone', plain.level === 0, JSON.stringify(plain));
+  chat = await windowShowing(isMainPage, 'the main window');
+  const burst = await wheelOver(chat, null, main, promptPoint, 3);
+  check('three notches in a burst → three levels', burst.level === 3, JSON.stringify(burst));
+  chat = await windowShowing(isMainPage, 'the main window');
+  const far = await wheelOver(chat, null, main, promptPoint, 9);
+  check('nine more notches stop at 8', far.level === 8, JSON.stringify(far));
+  await client.main.menu('dspatch-zoom-reset', chat.id);
+  // Fractions of a notch, as a high-resolution wheel reports them, cannot be made with an X
+  // button. They are injected through Electron's sendInputEvent, which hands each injected
+  // wheel event to Chromium's counter twice (its synthetic phase-ended copy keeps the ticks), so
+  // an eighth of a notch per injection is a quarter counted. Recorded, not required: the counter
+  // that makes one step of one notch is Chromium's, checked above through the X server, and the
+  // same on every platform.
+  const fractions = [];
+  for (let part = 0; part < 4; part += 1) fractions.push(await client.main.wheel(chat.contentsId, promptPoint, 0.125));
+  for (let part = 0; part < 4; part += 1) fractions.push(await client.main.wheel(chat.contentsId, promptPoint, -0.125));
+  results.push({ stage, what: 'fractions of a notch through Electron: the level after each of four eighths forward, then four back', ok: true, detail: fractions.join(', ') });
+  await client.main.menu('dspatch-zoom-reset', chat.id);
+  await press('ctrl+equal');
+  check('the keys still work beside the wheel', (await levelOf(isMainPage)) === 1);
+  await press('ctrl+0');
+
   stage = 'windows apart';
   await activate(mainWindow);
   await main.ev(`${q('prompt')}.focus()`);
@@ -501,6 +587,24 @@ async function main() {
   await editor.shot('02-editor-at-1');
   await diff.shot('03-review-at-minus-2');
 
+  stage = 'the wheel over the code (DSP-170)';
+  await activate(diffWindow);
+  await diff.until('the code', `document.querySelector('.rv-pair-diff')!==null`, 30_000);
+  const codePoint = await diff.centre(`document.querySelector('.rv-pair-diff')`);
+  let codeWindow = await windowShowing(isDiffPage, 'the review window');
+  const codeScroll = await diff.scrollAt(codePoint);
+  check('the code view scrolls', codeScroll.max > 0, JSON.stringify(codeScroll));
+  await wheelOver(codeWindow, null, diff, codePoint, -3, false);
+  const scrolled = await diff.scrollAt(codePoint);
+  check('a plain wheel scrolls the code as before', scrolled.top > codeScroll.top, JSON.stringify({ codeScroll, scrolled }));
+  codeWindow = await windowShowing(isDiffPage, 'the review window');
+  const codeOut = await wheelOver(codeWindow, null, diff, codePoint, -1);
+  const stayed = await diff.scrollAt(codePoint);
+  check('Control and a notch back over the code → the review at -3, nothing scrolled, the chat still at 2', codeOut.level === -3 && stayed.top === scrolled.top && (await levelOf(isMainPage)) === 2, JSON.stringify({ codeOut, scrolled, stayed }));
+  codeWindow = await windowShowing(isDiffPage, 'the review window');
+  const codeIn = await wheelOver(codeWindow, null, diff, codePoint, 1);
+  check('and a notch forward → -2 again, saved', codeIn.level === -2 && savedLevels()['review-diff'] === -2, JSON.stringify({ codeIn, saved: savedLevels() }));
+
   stage = 'the discussion panel';
   await diff.click('pair-discussion');
   await poll('the discussion panel', panelView, 30_000);
@@ -518,6 +622,12 @@ async function main() {
   panel = await panelView();
   check('the panel in its own window at 3, the review still at -2', panel.view.level === 3 && (await levelOf(isDiffPage)) === -2 && savedLevels()['review-panel'] === 3, JSON.stringify({ panel, saved: savedLevels() }));
   await panelPage.shot('04-panel-own-window-at-3');
+  const composerPoint = await panelPage.centre(composer);
+  const ownOut = await wheelOver(panel.frame, panel.view, panelPage, composerPoint, -1);
+  check('Control and a notch back over the discussion field in its own window → 2, the review still at -2', ownOut.level === 2 && (await levelOf(isDiffPage)) === -2 && savedLevels()['review-panel'] === 2, JSON.stringify({ ownOut, saved: savedLevels() }));
+  panel = await panelView();
+  const ownIn = await wheelOver(panel.frame, panel.view, panelPage, composerPoint, 1);
+  check('and a notch forward → 3 again', ownIn.level === 3 && savedLevels()['review-panel'] === 3, JSON.stringify({ ownIn, saved: savedLevels() }));
   await panelPage.click('panel-dock-diff');
   await poll('the panel docked in the review', async () => (await panelView())?.docked === true, 20_000);
   panel = await panelView();
@@ -534,6 +644,13 @@ async function main() {
   const typed = await panelPage.reading();
   check('a key in the docked discussion zooms the review and the panel together, and types nothing', panel.view.level === -1 && (await levelOf(isDiffPage)) === -1 && savedLevels()['review-diff'] === -1 && savedLevels()['review-panel'] === 3 && (typed.value ?? '') === '', JSON.stringify({ panel, saved: savedLevels(), typed }));
   await diff.shot('05-review-with-docked-panel-at-minus-1');
+  const dockedPoint = await panelPage.centre(composer);
+  const dockedOut = await wheelOver(panel.frame, panel.view, panelPage, dockedPoint, -1);
+  panel = await panelView();
+  check('Control and a notch back over the docked field → the review and the panel at -2 together, the panel\'s own 3 kept', dockedOut.level === -2 && panel.view.level === -2 && (await levelOf(isDiffPage)) === -2 && savedLevels()['review-panel'] === 3, JSON.stringify({ dockedOut, panel, saved: savedLevels() }));
+  const dockedIn = await wheelOver(panel.frame, panel.view, panelPage, dockedPoint, 1);
+  panel = await panelView();
+  check('and a notch forward → -1 together again', dockedIn.level === -1 && panel.view.level === -1 && (await levelOf(isDiffPage)) === -1, JSON.stringify({ dockedIn, panel }));
   await panelPage.click('panel-own-window');
   await poll('the panel in its own window again', async () => (await panelView())?.docked === false, 20_000);
   panel = await panelView();

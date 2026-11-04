@@ -134,7 +134,7 @@ describe('what is saved and read back', () => {
   });
 });
 
-/** A page as `WindowZoom` sees it: its level, its mode, and the key listener it was given. */
+/** A page as `WindowZoom` sees it: its level, its mode, and the key and wheel listeners it was given. */
 class FakePage implements ZoomContents {
   static next = 1;
   readonly id = FakePage.next++;
@@ -142,6 +142,7 @@ class FakePage implements ZoomContents {
   mode = 'default';
   destroyed = false;
   private keys: ((event: { preventDefault(): void }, input: ZoomKeyInput) => void) | null = null;
+  private wheels: ((event: unknown, direction: 'in' | 'out') => void)[] = [];
   private onDestroyed: (() => void) | null = null;
   isDestroyed(): boolean {
     return this.destroyed;
@@ -152,8 +153,12 @@ class FakePage implements ZoomContents {
   setZoomLevel(level: number): void {
     this.level = level;
   }
-  on(_event: 'before-input-event', listener: (event: { preventDefault(): void }, input: ZoomKeyInput) => void): this {
-    this.keys = listener;
+  on(event: 'before-input-event' | 'zoom-changed', listener: ((event: { preventDefault(): void }, input: ZoomKeyInput) => void) | ((event: unknown, direction: 'in' | 'out') => void)): this {
+    if (event === 'before-input-event') {
+      this.keys = listener as (event: { preventDefault(): void }, input: ZoomKeyInput) => void;
+    } else {
+      this.wheels.push(listener as (event: unknown, direction: 'in' | 'out') => void);
+    }
     return this;
   }
   once(_event: 'destroyed', listener: () => void): this {
@@ -165,6 +170,16 @@ class FakePage implements ZoomContents {
     let prevented = false;
     this.keys?.({ preventDefault: () => (prevented = true) }, { type: 'keyDown', key: '', code: '', control: true, shift: false, alt: false, meta: false, ...input });
     return !prevented;
+  }
+  /** One notch of the wheel with Control held over this page, as Chromium reports it. */
+  wheel(direction: 'in' | 'out'): void {
+    for (const listener of this.wheels) {
+      listener({}, direction);
+    }
+  }
+  /** How many wheel listeners the page was given: one, however often it moves between windows. */
+  wheelListeners(): number {
+    return this.wheels.length;
   }
   destroy(): void {
     this.destroyed = true;
@@ -238,6 +253,57 @@ describe('windows and the pages in them', () => {
       assert.equal(zoom.levelOf(window), 0);
       assert.equal(window.webContents.press({ key: 'a', code: 'KeyA' }), true, 'an ordinary key goes on to the page');
       assert.equal(zoom.levelOf(window), 0);
+    });
+  });
+
+  it('a wheel notch with Control in a page zooms the window the page is in, as the keys do (DSP-170)', () => {
+    withDir((dir) => {
+      const { zoom, file } = zoomOver(dir);
+      const chat = new FakeWindow();
+      const review = new FakeWindow();
+      zoom.adopt(chat, 'main');
+      zoom.adopt(review, 'review-diff');
+      chat.webContents.wheel('in');
+      assert.equal(zoom.levelOf(chat), 1, 'one notch forward is one step in');
+      assert.equal(zoom.levelOf(review), 0, 'the other window is left alone');
+      chat.webContents.wheel('in');
+      chat.webContents.wheel('out');
+      assert.equal(zoom.levelOf(chat), 1, 'a notch back is one step out');
+      assert.equal(chat.webContents.level, 1, 'the page is at the window\'s level');
+      assert.deepEqual(parseWindowZoomLevels(fs.readFileSync(file, 'utf8')), { main: 1 }, 'remembered as a key press is');
+      for (let notch = 0; notch < 20; notch += 1) {
+        review.webContents.wheel('out');
+      }
+      assert.equal(zoom.levelOf(review), ZOOM_MIN_LEVEL, 'the wheel stops at the bounds');
+      assert.equal(chat.webContents.press({ key: '0', code: 'Digit0' }), false);
+      assert.equal(zoom.levelOf(chat), 0, 'the keys still work beside the wheel');
+    });
+  });
+
+  it('the wheel follows a page between windows, with one listener however often it moves', () => {
+    withDir((dir) => {
+      const { zoom } = zoomOver(dir);
+      const code = new FakeWindow();
+      const frame = new FakeWindow();
+      const panel = new FakePage();
+      zoom.adopt(code, 'review-diff');
+      zoom.adopt(frame, 'review-panel');
+      zoom.attach(panel, frame);
+      panel.wheel('in');
+      assert.equal(zoom.levelOf(frame), 1, 'in its own window the wheel zooms that window');
+      assert.equal(zoom.levelOf(code), 0);
+      zoom.attach(panel, code);
+      panel.wheel('out');
+      assert.equal(zoom.levelOf(code), -1, 'docked, the wheel over the panel zooms the code window');
+      assert.equal(panel.level, -1);
+      assert.equal(code.webContents.level, -1);
+      assert.equal(zoom.levelOf(frame), 1, 'and the panel window\'s own level is kept');
+      zoom.attach(panel, frame);
+      zoom.attach(panel, code);
+      assert.equal(panel.wheelListeners(), 1, 'moved twice more, still one listener');
+      panel.destroy();
+      panel.wheel('in');
+      assert.equal(zoom.levelOf(code), -1, 'a destroyed page zooms nothing');
     });
   });
 
