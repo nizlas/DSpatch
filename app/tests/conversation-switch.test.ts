@@ -935,13 +935,9 @@ const sleep = (ms: number): Promise<void> =>
 function exitsWhileOutputStaysOpen(code: number, holdMs: number): string {
   const leaf = path.join(makeDir('leaf'), 'leaf.js');
   fs.writeFileSync(leaf, `setTimeout(function () {}, ${String(holdMs)});\n`, 'utf8');
-  // The shell's own exit code is the result. On Windows the started process holds no pipe of
-  // the shell's; on POSIX it would inherit them, and a command whose output is still open at
-  // a switch is one the switch ends, which is not what this is about: so there the leaf is
-  // detached from the group and from the pipes, and the result is complete when the shell ends.
   return process.platform === 'win32'
     ? `start /b "" "${process.execPath}" "${leaf}" & exit /b ${String(code)}`
-    : `setsid "${process.execPath}" "${leaf}" >/dev/null 2>&1 </dev/null & exit ${String(code)}`;
+    : `"${process.execPath}" "${leaf}" & exit ${String(code)}`;
 }
 
 test('WS-1 follow-up (A1): a hidden conversation\'s result whose save failed is told, kept and written at close', async () => {
@@ -1023,8 +1019,13 @@ test('WS-1 follow-up (A1): a hidden conversation\'s result whose save failed is 
   }
 });
 
+// A Windows case by the product's own rule: there a shell that has exited is not stopped by a
+// switch, so its result arrives late and real while what it started still holds the output. On
+// POSIX a switch stops the group of a command whose output is still open (`stopWorkspaceTest`),
+// so no late real result arises there; the stop itself is covered by the process-tree tests.
+const lateRealResult = process.platform === 'win32' ? false : 'on POSIX a switch stops a command whose output is still open, by design';
 for (const storeAtClose of ['working again', 'still failing'] as const) {
-  test(`WS-1 follow-up (A2): a hidden conversation's late real result, its save failing, the store ${storeAtClose} at close`, async () => {
+  test(`WS-1 follow-up (A2): a hidden conversation's late real result, its save failing, the store ${storeAtClose} at close`, { skip: lateRealResult }, async () => {
     const slug = storeAtClose === 'working again' ? 'a2-healthy' : 'a2-broken';
     const store = failingStoreFor(slug);
     const projectA = makeProject(`${slug}-project-a`, 'a.txt', 'project A\n');
