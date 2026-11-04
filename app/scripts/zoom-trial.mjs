@@ -239,6 +239,24 @@ class Main {
 }
 
 const isMainPage = (url) => url !== '' && !url.includes('window=');
+
+/**
+ * The review of the project's last two commits, from wherever the review window opens: the
+ * repository list when several are known, the log when one is, or the pair it last showed.
+ */
+async function openPair(page) {
+  const chosen = (count) => `document.querySelectorAll('.rv-pair-commit[aria-pressed=true]').length === ${String(count)}`;
+  await page.until('the repositories, the log or the review', `${q('pair-repo-0')}!==null || ${q('pair-commit-1')}!==null || ${q('pair-discussion')}!==null`, 60_000);
+  if ((await page.ev(`${q('pair-discussion')}!==null`)) === true) return;
+  if ((await page.ev(`${q('pair-repo-0')}!==null`)) === true) await page.click('pair-repo-0');
+  await page.until('the log', `${q('pair-commit-1')}!==null`);
+  await page.click('pair-commit-1');
+  await page.until('From chosen', chosen(1));
+  await page.click('pair-commit-0');
+  await page.until('both chosen', chosen(2));
+  await page.click('pair-open');
+  await page.until('the review of the pair', `${q('pair-discussion')}!==null`, 60_000);
+}
 const isEditorPage = (url) => url.includes('window=editor');
 const isDiffPage = (url) => url.includes('view=diff');
 const isPanelPage = (url) => url.includes('view=panel');
@@ -442,14 +460,7 @@ async function main() {
   const diffWindow = await windowShowing(isDiffPage, 'the review window');
   const diff = new Page(client.cdp, 'review', isDiffPage);
   await diff.attach();
-  await diff.click('pair-repo-0');
-  await diff.until('the log', `${q('pair-commit-1')}!==null`);
-  await diff.click('pair-commit-1');
-  await diff.until('From chosen', "document.querySelectorAll('.rv-pair-commit[aria-pressed=\"true\"]').length === 1");
-  await diff.click('pair-commit-0');
-  await diff.until('both chosen', "document.querySelectorAll('.rv-pair-commit[aria-pressed=\"true\"]').length === 2");
-  await diff.click('pair-open');
-  await diff.until('the review of the pair', `${q('pair-discussion')}!==null`, 60_000);
+  await openPair(diff);
   await diff.shot('03a-review-opened');
   await activate(diffWindow);
   await diff.ev('document.body.focus()');
@@ -526,17 +537,7 @@ async function main() {
   const diffAgain = await windowShowing(isDiffPage, 'the review window again');
   const diff2 = new Page(client.cdp, 'review again', isDiffPage);
   await diff2.attach();
-  await diff2.until('the review shown', `${q('pair-discussion')}!==null || ${q('pair-repo-0')}!==null`, 60_000);
-  if ((await diff2.ev(`${q('pair-discussion')}===null`)) === true) {
-    await diff2.click('pair-repo-0');
-    await diff2.until('the log', `${q('pair-commit-1')}!==null`);
-    await diff2.click('pair-commit-1');
-    await diff2.until('From chosen', "document.querySelectorAll('.rv-pair-commit[aria-pressed=\"true\"]').length === 1");
-    await diff2.click('pair-commit-0');
-    await diff2.until('both chosen', "document.querySelectorAll('.rv-pair-commit[aria-pressed=\"true\"]').length === 2");
-    await diff2.click('pair-open');
-    await diff2.until('the review of the pair', `${q('pair-discussion')}!==null`, 60_000);
-  }
+  await openPair(diff2);
   check('the review opens at -1', (await levelOf(isDiffPage)) === -1 && /window review-diff opens at zoom level -1/.test(clientLog()), JSON.stringify(diffAgain));
   if ((await panelView()) === null) {
     await diff2.click('pair-discussion');
