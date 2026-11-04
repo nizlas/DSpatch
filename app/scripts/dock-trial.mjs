@@ -38,6 +38,9 @@ const appDir = path.resolve(scriptDir, '..');
 const helpers = path.join(scriptDir, 'dock-trial');
 const evidence = path.resolve(process.argv[2] ?? path.join(appDir, 'release', 'trial-dock', `${String(process.pid)}-${String(Date.now())}`));
 const electron = createRequire(import.meta.url)('electron');
+// DSPATCH_TRIAL_CLIENT names an installed or unpacked client's executable to try instead of this
+// checkout's build: the package itself, started with the same profile and debugging ports.
+const packaged = process.env.DSPATCH_TRIAL_CLIENT ?? '';
 const simulated = {
   DSPATCH_TRIAL_HOST_RUN: 'review-flow',
   DSPATCH_PRESENTATION_MODELS: 'copilot',
@@ -365,8 +368,8 @@ async function launch(label) {
   client.log = path.join(evidence, `client-${label}.log`);
   const output = fs.openSync(client.log, 'a');
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('DSPATCH_')));
-  const child = spawn(electron, [`--inspect=${String(client.inspect)}`, '.', `--user-data-dir=${profile}`, `--remote-debugging-port=${String(client.cdp)}`], {
-    cwd: appDir,
+  const child = spawn(packaged || electron, [`--inspect=${String(client.inspect)}`, ...(packaged ? [] : ['.']), `--user-data-dir=${profile}`, `--remote-debugging-port=${String(client.cdp)}`], {
+    cwd: packaged ? path.dirname(packaged) : appDir,
     env: { ...env, ...(display === '' ? {} : { DISPLAY: display }), DSPATCH_EXPECT_USERDATA: profile, ...simulated },
     stdio: ['ignore', output, output],
   });

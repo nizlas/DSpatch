@@ -26,6 +26,9 @@ import { fileURLToPath } from 'node:url';
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const evidence = path.resolve(process.argv[2] ?? path.join(appDir, 'release', 'trial-zoom', `${String(process.pid)}-${String(Date.now())}`));
 const electron = createRequire(import.meta.url)('electron');
+// DSPATCH_TRIAL_CLIENT names an installed or unpacked client's executable to try instead of this
+// checkout's build: the package itself, started with the same profile and debugging ports.
+const packaged = process.env.DSPATCH_TRIAL_CLIENT ?? '';
 const simulated = {
   DSPATCH_TRIAL_HOST_RUN: 'review-flow',
   DSPATCH_PRESENTATION_MODELS: 'copilot',
@@ -323,8 +326,8 @@ async function launch(label) {
   client.inspect = await freePort();
   client.log = path.join(evidence, `client-${label}.log`);
   const output = fs.openSync(client.log, 'a');
-  const child = spawn(electron, [`--inspect=${String(client.inspect)}`, '.', `--user-data-dir=${profile}`, `--remote-debugging-port=${String(client.cdp)}`], {
-    cwd: appDir,
+  const child = spawn(packaged || electron, [`--inspect=${String(client.inspect)}`, ...(packaged ? [] : ['.']), `--user-data-dir=${profile}`, `--remote-debugging-port=${String(client.cdp)}`], {
+    cwd: packaged ? path.dirname(packaged) : appDir,
     env: { ...process.env, DISPLAY: display, DSPATCH_EXPECT_USERDATA: profile, ...simulated },
     stdio: ['ignore', output, output],
   });
