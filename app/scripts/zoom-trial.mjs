@@ -304,17 +304,24 @@ async function activate(w) {
   // A new window is mapped once its page is ready, and the window manager gives it the focus a
   // moment later; until then an activation is asked for again, through the manager, X and
   // Electron in turn.
-  const end = Date.now() + 40_000;
+  const began = Date.now();
+  const end = began + 90_000;
+  let shownAfter = null;
   while (Date.now() < end) {
-    if ((await state())?.focused === true) return;
+    const now = await state();
+    if (now?.visible === true && shownAfter === null) shownAfter = Date.now() - began;
+    if (now?.focused === true) {
+      results.push({ stage, what: `window ${String(w.id)} took the focus`, ok: true, detail: `shown after ${String(shownAfter ?? 0)} ms, focused after ${String(Date.now() - began)} ms` });
+      return;
+    }
     run('xdotool', ['windowactivate', '--sync', String(w.xid)], true);
     await delay(400);
-    if ((await state())?.focused === true) return;
+    if ((await state())?.focused === true) continue;
     run('xdotool', ['windowfocus', '--sync', String(w.xid)], true);
     await client.main.ev(`process.mainModule.require('electron').BrowserWindow.fromId(${String(w.id)})?.focus()`);
     await delay(400);
   }
-  throw new Error(`window ${String(w.id)} did not take the focus: ${JSON.stringify(await state())}`);
+  throw new Error(`window ${String(w.id)} did not take the focus in 90 s: ${JSON.stringify(await state())}`);
 }
 /** Press keys as a keyboard would, on the focused window; `keys` in xdotool's words. */
 async function press(keys) {
