@@ -105,10 +105,26 @@ describe('one reading (DSP-173)', () => {
     assert.equal(assess({ at: 0, psi: { cpuSome: 99, memorySome: 0, memoryFull: 0, ioSome: 0, ioFull: 0 }, missing: [] }, T).level, 'YELLOW');
     // Without PSI, a high load is YELLOW at most.
     assert.equal(assess({ at: 0, loadPerCpu: 9, memoryAvailablePercent: 50, swapPagesPerSecond: 0, missing: [] }, T).level, 'YELLOW');
-    // Plenty of memory, no swap traffic (whatever swap holds): GREEN.
-    assert.equal(assess({ at: 0, memoryAvailablePercent: 40, swapPagesPerSecond: 0, missing: [] }, T).level, 'GREEN');
+    // Plenty of memory, no swap traffic (whatever swap holds), no stall: GREEN.
+    assert.equal(assess({ at: 0, ...calm, memoryAvailablePercent: 40, swapPagesPerSecond: 0 }, T).level, 'GREEN');
     // Little memory but no swapping is not RED.
     assert.equal(assess({ at: 0, memoryAvailablePercent: 4, swapPagesPerSecond: 0, missing: [] }, T).level, 'YELLOW');
+  });
+
+  it('a calm reading that lacks a signal is UNKNOWN, naming it; pressure in what was read still counts', () => {
+    // A kernel without PSI: memory and swap calm, but a disk stall cannot be seen.
+    const noPsi = assess({ at: 0, memoryAvailablePercent: 60, swapPagesPerSecond: 0, loadPerCpu: 0.2, missing: ['/proc/pressure/io unreadable'] }, T);
+    assert.equal(noPsi.level, 'UNKNOWN');
+    assert.match(noPsi.reasons[0] ?? '', /not read: memory stall \(PSI\), disk stall \(PSI\)/);
+    // The first read has no swap rate yet.
+    const { swapPagesPerSecond: _rate, ...firstRead } = calm;
+    assert.equal(assess({ at: 0, ...firstRead }, T).level, 'UNKNOWN');
+    assert.match(assess({ at: 0, ...firstRead }, T).reasons[0] ?? '', /not read: swap traffic/);
+    // Only the io file unreadable.
+    assert.equal(assess({ at: 0, ...calm, psi: { memorySome: 0, memoryFull: 0, cpuSome: 1 } }, T).level, 'UNKNOWN');
+    // Pressure in the part that was read is not hidden by what was not.
+    assert.equal(assess({ at: 0, memoryAvailablePercent: 3, swapPagesPerSecond: 2_000, missing: [] }, T).level, 'RED');
+    assert.equal(assess({ at: 0, psi: { memorySome: 20 }, missing: [] }, T).level, 'YELLOW');
   });
 
   it('nothing read is UNKNOWN with the reason, not GREEN', () => {

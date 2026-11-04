@@ -202,6 +202,42 @@ describe('the resource governor in a run (DSP-173)', () => {
     assert.ok(kinds(result, 'node-entered').some((entry) => entry.data?.['resourcePausedForPerson'] === true));
   });
 
+  it('Continue after the bound while still RED does not start the step: it is held again, said so, until the machine calms', async () => {
+    const t = setup('enforce', { maxWaitMs: 60_000 });
+    const journal: RunJournalEntry[] = [];
+    const running = runLoopGraph(developmentLoop(), { runId: 'governed', dryRun: true, control: t.control, onJournalEntry: (entry) => journal.push(entry), executor: pressureDuringFirstStep(t) });
+    await until('the second step held', () => heldForResources(journal));
+    await t.clock.advance(60_000);
+    await until('held for a person', () => t.controller.report().state.held !== null);
+    const entered = () => journal.filter((entry) => entry.kind === 'node-entered').length;
+    const before = entered();
+    // A plain Continue while the machine is still RED.
+    assert.equal(t.governor.health, 'RED');
+    t.controller.continueRun();
+    await until('held again after Continue', () => journal.some((entry) => entry.kind === 'resource-governor' && entry.data?.['action'] === 'hold-after-continue'));
+    assert.equal(entered(), before, 'Continue under RED started no step');
+    // The protection holds for its bound again and then waits for the person again; nothing
+    // goes on by itself.
+    await t.clock.advance(60_000);
+    await until('paused for the person a second time', () => journal.filter((entry) => entry.kind === 'resource-governor' && entry.data?.['action'] === 'paused').length === 2);
+    assert.equal(entered(), before, 'still nothing started');
+    // Continue once the machine has calmed starts the step, and the run goes as it would.
+    t.box.current = calm;
+    await t.clock.advance(120_000);
+    assert.equal(t.governor.health, 'GREEN');
+    t.controller.continueRun();
+    const result = await running;
+    t.control.dispose();
+    assert.deepEqual(walked(result), walked(await baseline()));
+    const again = kinds(result, 'resource-governor').find((entry) => entry.data?.['action'] === 'hold-after-continue');
+    assert.match(again?.detail ?? '', /after Continue: the machine is still under heavy pressure .* Continue does not override the resource protection/);
+    const paused = kinds(result, 'resource-governor').find((entry) => entry.data?.['action'] === 'paused');
+    assert.match(paused?.detail ?? '', /Continue checks the machine again/);
+    const held = kinds(result, 'node-entered').find((entry) => entry.data?.['resourcePausedForPerson'] === true);
+    assert.equal(held?.data?.['resourceHealth'], 'GREEN', 'the held step started only once the machine was calm');
+    assert.ok(Number(held?.data?.['resourceHeldMs']) >= 120_000, 'both bounded holds are counted');
+  });
+
   it('off adds nothing to the journal and never holds', async () => {
     const t = setup('off');
     const result = await runLoopGraph(developmentLoop(), { runId: 'governed', dryRun: true, control: t.control, executor: pressureDuringFirstStep(t) });

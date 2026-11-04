@@ -549,6 +549,10 @@ describe("the resource governor defers the observations at the agent's commands 
       resourceGovernor: { heavyWork: () => { asked += 1; return { run: false, health: 'RED', reason: 'deferred under RED: memory stalled (PSI full) 35 ≥ 10' }; } },
     });
     assert.ok(asked > 0);
+    // Not deferred, under RED too: the step's own snapshots before and after. They are the load
+    // that remains (DSP-173): the step's outcome cannot be checked without them.
+    assert.notEqual(delivery.inspection.snapshotBefore, null, 'the snapshot before the step is still taken under RED');
+    assert.notEqual(delivery.inspection.snapshotAfter, null, 'the snapshot at the step\'s end is still taken under RED');
     const recorded = delivery.inspection.commands;
     assert.equal(recorded.length, 3);
     for (const command of recorded) {

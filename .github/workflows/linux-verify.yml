@@ -132,6 +132,38 @@ jobs:
           name: dock-trial
           path: app/release/trial-dock/ci
 
+  # DSP-173: the resource governor on this runner's own /proc (units, intervals, unknown signals,
+  # its reading starting and stopping with a light dry loop run in observe), then the loop and live
+  # areas, where enforce is tried with injected pressure. No load is generated.
+  governor:
+    if: ${{ !inputs.published }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+        working-directory: app
+      - name: The governor on this machine's /proc
+        run: node --import ./scripts/ts-resolve.mjs scripts/governor-linux-check.mjs release/governor-linux-check
+        working-directory: app
+      - name: loop (the governor's tests, enforce with injected pressure)
+        if: ${{ !cancelled() }}
+        run: node scripts/run-tests.mjs loop
+        working-directory: app
+      - name: live (deferred command observations; the step's own snapshots)
+        if: ${{ !cancelled() }}
+        run: node scripts/run-tests.mjs live
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: governor-linux-check
+          path: app/release/governor-linux-check
+
   published:
     if: ${{ inputs.published }}
     runs-on: ubuntu-24.04

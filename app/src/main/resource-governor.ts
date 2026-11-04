@@ -164,7 +164,39 @@ export function assess(reading: ResourceReading, thresholds: GovernorThresholds)
   if (yellow.length > 0) {
     return { level: 'YELLOW', reasons: yellow };
   }
-  return { level: 'GREEN', reasons: ['no pressure in what could be read'] };
+  // Pressure seen in part of the signals counts; its absence does not. GREEN says the machine is
+  // not pressed, which holds only when every signal was read: without PSI, for one, a disk stall
+  // cannot be seen at all.
+  const unread = unreadSignals(reading);
+  if (unread.length > 0) {
+    return { level: 'UNKNOWN', reasons: [`no pressure in what could be read, but not read: ${unread.join(', ')}`] };
+  }
+  return { level: 'GREEN', reasons: ['no pressure in any signal'] };
+}
+
+/**
+ * The signals GREEN rests on that a reading lacks: memory and disk stall, CPU stall (or, without
+ * it, the load), available memory and swap traffic.
+ */
+export function unreadSignals(reading: ResourceReading): string[] {
+  const psi = reading.psi ?? {};
+  const unread: string[] = [];
+  if (psi.memorySome === undefined || psi.memoryFull === undefined) {
+    unread.push('memory stall (PSI)');
+  }
+  if (psi.ioSome === undefined || psi.ioFull === undefined) {
+    unread.push('disk stall (PSI)');
+  }
+  if (psi.cpuSome === undefined && reading.loadPerCpu === undefined) {
+    unread.push('CPU stall or load');
+  }
+  if (reading.memoryAvailablePercent === undefined) {
+    unread.push('available memory');
+  }
+  if (reading.swapPagesPerSecond === undefined) {
+    unread.push('swap traffic');
+  }
+  return unread;
 }
 
 function round(value: number): string {
