@@ -8,7 +8,9 @@
  *     node scripts/trial-package/release.mjs --stage     the staged files, behind a local github.com
  *     node scripts/trial-package/release.mjs --published the real release of this version
  *
- * First github.com cannot be reached, which must end in a sentence and a Connect that works again.
+ * github.com cannot be reached from the client. Since v0.1.4 the Linux client carries the host
+ * archive for its own build, so Connect installs it over ssh with nothing fetched (DSP-168); the
+ * stand-in of `--stage` therefore sees no request, and only the staged files are checked.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -174,11 +176,12 @@ S
   await ev(`${q('remote-session')}.click()`);
   await until('the form', `${q('ssh-target')}!==null`);
   await typeInto('[data-ev="ssh-target"]', 'trial');
-  const failed = await connect();
-  await shot('01-download-failed');
-  check('a failed download reads as a sentence, and Connect comes back', /could not be downloaded from GitHub/.test(failed) && (await ev(`${q('ssh-connect')}.disabled`)) === false, failed);
-  check('nothing was left on the host', inC(HOST, 'hostuser', 'ls ~/.local/share/dspatch/host/versions 2>/dev/null | wc -l') === '0');
+  const first = await connect();
+  await shot('01-connected-without-github');
+  check('Connect installs the host the client carries, with github.com unreachable', first === 'connected', first);
+  check('nothing was asked of GitHub', !/could not be downloaded|Downloading host/i.test(await ev('document.body.innerText')));
 
+  let answer = first;
   if (published) {
     inC(CLIENT, 'root', 'cat /tmp/hosts.good > /etc/hosts');
   } else {
@@ -200,19 +203,17 @@ S
     await ev(`${q('remote-form')}===null && ${q('remote-session')}.click()`);
     await until('the form', `${q('ssh-target')}!==null`);
     await typeInto('[data-ev="ssh-target"]', 'trial');
+    answer = await connect();
   }
-  const answer = await connect();
   await shot('02-connected');
-  check('Connect fetched, checked and installed the host', answer === 'connected', answer);
+  check('the host is reached', answer === 'connected', answer);
   const manifest = JSON.parse(fs.readFileSync(published ? path.join(evidence, 'host-manifest.json') : path.join(stage, 'host-manifest.json'), 'utf8'));
   const linux = manifest.packages.find((entry) => entry.platform === 'linux');
-  check('the package landed in the client\'s data', inC(CLIENT, 'tester', `sha256sum ~/.config/DSpatch/host-packages/${linux.file} | cut -d' ' -f1`) === linux.sha256);
+  check('the archive the client carries is the manifest\'s', inC(CLIENT, 'root', `sha256sum /opt/DSpatch/resources/bundled/host-packages/${linux.file} | cut -d' ' -f1`) === linux.sha256);
+  check('no host package was put in the client\'s data', inC(CLIENT, 'tester', 'ls ~/.config/DSpatch/host-packages 2>/dev/null | wc -l') === '0');
   const versions = inC(HOST, 'hostuser', 'ls ~/.local/share/dspatch/host/versions');
   check('the host runs exactly this build', versions.includes(manifest.hostId), versions);
   check('Node exists only inside the host package', inC(HOST, 'hostuser', 'command -v node npm || echo none') === 'none');
-  if (!published) {
-    check('the exact tag was asked for', inC(CLIENT, 'root', 'cat /tmp/release.log').includes(`/download/v${version}/${linux.file}`));
-  }
   await until('the host\'s page', `${q('open-agent-select')}!==null`, 30_000);
   await ev(`(()=>{const s=${q('open-agent-select')};Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'copilot');s.dispatchEvent(new Event('change',{bubbles:true}))})()`);
   await until('Copilot chosen', `${q('open-agent-select')}.value==='copilot'`, 30_000);

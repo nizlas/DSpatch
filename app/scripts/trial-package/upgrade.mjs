@@ -220,7 +220,7 @@ async function main() {
   docker('cp', previousDeb, `${NAME}:/tmp/previous.deb`);
   inside('root', 'dpkg -i /tmp/previous.deb');
   check('the previous release installs', installed() === `${previousTag.replace(/^v/, '')} install ok installed`, installed());
-  inside(USER, `mkdir -p ${project}/.dspatch/loops; cd ${project}; git init -q; echo fixture > README.md; git add .; git -c user.name=Trial -c user.email=trial@example.invalid commit -qm fixture`);
+  inside(USER, `mkdir -p ${project}/.dspatch/loops ${project}/docs; cd ${project}; git init -q; echo fixture > README.md; git add .; git -c user.name=Trial -c user.email=trial@example.invalid commit -qm fixture`);
   // The person's own loop: the runnable development loop under another id, with its graph and
   // roles in the project, as a loop a person keeps in their project is.
   docker('cp', path.join(repoRoot, 'docs', 'loop'), `${NAME}:${project}/docs/loop`);
