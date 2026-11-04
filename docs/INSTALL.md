@@ -76,6 +76,8 @@ The host packages come first, because the client carries their manifest. Everyth
 
 **Building on GitHub.** The `package` workflow keeps artifacts when started manually, including a Windows installer build. Pushing a `v*` tag builds the Linux standalone host package and the `.deb` from the tagged commit (the Windows host package and the Windows installer only on a manual run), checks the package version against the tag, stages those artifacts with `SHA256SUMS` using `stage-release.mjs --linux-only`, and publishes them with `docs/releases/<tag>.md` as release notes. Linux publication does not depend on the manual Windows installer job. Tags containing a hyphen are published as prereleases. Only the publication job receives write permission. Build success does not replace the packaged or manual trials above; release notes state outstanding verification.
 
+The `linux-verify` workflow, started by hand, runs the Linux checks of a release candidate on the same runners: the fast, host, review, chat, presentation and provider test groups, and the zoom trial in real Xvfb windows (`node scripts/zoom-trial.mjs`). Started with `published`, it instead tries the published release of the checked-out version in clean containers (`release.mjs --published`) and an upgrade to it from the previous release (`node scripts/trial-package/upgrade.mjs --from v<previous>`), which installs that release, uses it, installs this one over it, meets the host the closed window left running, ends it, and checks that the conversation, the choices and a loop of the person's own are still there.
+
 **Before a release exists,** put the host package in the client's data, which needs no rebuild:
 
 ```bash
@@ -124,7 +126,7 @@ Read on 1 November 2026. This is a record of sources, not legal advice, and the 
 
 ## What has been shown
 
-The packaged trial's table is in [DSP-153](../backlog/tasks/dsp-153%20-%20Install-DSpatch-and-connect-to-another-machine-over-SSH.md). Agent runs use a simulated provider and containers; they do not show what a real provider does, nor how the .deb behaves under Ubuntu's AppArmor on a real desktop.
+The packaged trial's table is in [DSP-153](../backlog/tasks/dsp-153%20-%20Install-DSpatch-and-connect-to-another-machine-over-SSH.md). Agent runs use a simulated provider and containers; they do not show what a real provider does, nor how the .deb behaves under Ubuntu's AppArmor on a real desktop. What each release had run on Linux before and after publication is in its notes under `docs/releases/`.
 
 ## Windows, to be tried on a Windows machine
 
