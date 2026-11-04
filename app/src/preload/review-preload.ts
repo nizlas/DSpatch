@@ -32,7 +32,9 @@ import type { DiffLocation, PairChangedEvent, PanelAction, PanelFollow, PanelSta
  */
 try {
   const level: unknown = ipcRenderer.sendSync('dspatch:window-zoom-level');
-  if (typeof level === 'number' && Number.isFinite(level)) {
+  // Normal size is left alone: a level set on a page that has not drawn yet kept a hidden
+  // window's renderer from drawing its first frame on Linux (DSP-168).
+  if (typeof level === 'number' && Number.isFinite(level) && level !== 0) {
     webFrame.setZoomLevel(level);
   }
 } catch {

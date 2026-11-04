@@ -179,7 +179,14 @@ export class WindowZoom {
     }
     zoomed.pages.add(page);
     this.pageWindows.set(page.id, window.id);
-    page.setZoomLevel(zoomed.level);
+    // A page moved between windows takes the new window's level now. A page seen for the first
+    // time is not touched: it has not loaded, a level set now is lost at its first load, and its
+    // preload applies the level as the page starts. On Linux a zoom set on a page that has not
+    // drawn yet kept the hidden window's renderer from drawing its first frame, and a window
+    // shown on that frame never appeared (DSP-168).
+    if (before !== undefined) {
+      page.setZoomLevel(zoomed.level);
+    }
   }
 
   /** The level a page's window has: what its preload applies before the page runs. */

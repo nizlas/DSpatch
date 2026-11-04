@@ -221,8 +221,9 @@ describe('windows and the pages in them', () => {
       assert.deepEqual(parseWindowZoomLevels(fs.readFileSync(file, 'utf8')), { 'review-diff': -1 });
       const third = new FakeWindow();
       zoom.adopt(third, 'review-diff');
-      assert.equal(third.webContents.level, -1, 'a new window of the identity opens at the last change');
-      assert.equal(zoom.levelForPage(third.webContents.id), -1);
+      // Its page has not loaded: it is not touched now, and its preload asks for the level.
+      assert.equal(third.webContents.level, 0, 'a page that has not drawn yet is left alone (DSP-168)');
+      assert.equal(zoom.levelForPage(third.webContents.id), -1, 'a new window of the identity opens at the last change');
     });
   });
 

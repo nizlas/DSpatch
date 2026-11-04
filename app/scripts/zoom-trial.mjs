@@ -332,6 +332,17 @@ const panelView = async () => {
   return null;
 };
 
+/**
+ * Whether the main window is shown without anything asking its page for a frame: the window is
+ * shown when its page reports ready, which the page does from its first animation frame. A
+ * renderer that draws no frame on its own leaves the window hidden (DSP-168).
+ */
+async function shownOnItsOwn(what) {
+  const began = Date.now();
+  const shown = await poll(what, async () => (await client.main.windows()).some((w) => isMainPage(w.url) && w.visible), 20_000).catch(() => false);
+  check(`${what} is shown on its own`, shown === true, shown === true ? `after ${String(Date.now() - began)} ms` : 'not within 20 s: its page drew no frame on its own');
+}
+
 /** Bring a window to the front through the window manager, so the X server's keys reach it. */
 async function activate(w) {
   const state = async () => (await client.main.windows()).find((one) => one.id === w.id);
@@ -402,6 +413,7 @@ async function main() {
 
   stage = 'first start';
   let main = await launch('first');
+  await shownOnItsOwn('the first window');
   check('every window starts at normal size', (await client.main.windows()).every((w) => w.level === 0), JSON.stringify(await client.main.windows()));
   check('simulated Copilot choice accepted', (await main.ev("window.dspatch.chooseAgent('copilot')")) === 'copilot');
   await main.ev(`window.dspatch.startChatSession({kind:'folder',path:${JSON.stringify(project)}})`);
@@ -542,6 +554,7 @@ async function main() {
   await quitClient();
   check('the saved levels survive the quit', JSON.stringify(savedLevels()) === JSON.stringify(levelsBefore), JSON.stringify(savedLevels()));
   main = await launch('second');
+  await shownOnItsOwn('the restarted window, at level 2');
   check('the chat opens at 2 before any project is open', (await levelOf(isMainPage)) === 2 && /window main opens at zoom level 2/.test(clientLog()), JSON.stringify(await client.main.windows()));
   // The level is the page's from its first script; the ratio the page reports follows once the
   // renderer has laid it out, which a hidden window does a moment later.
