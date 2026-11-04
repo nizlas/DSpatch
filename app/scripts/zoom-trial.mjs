@@ -146,7 +146,11 @@ class Page {
   }
   async click(name) {
     await this.until(`the ${name} control`, `${q(name)}!==null && !${q(name)}.disabled`);
-    const box = await this.ev(`(()=>{const element=${q(name)};element.scrollIntoView({block:'center'});const box=element.getBoundingClientRect();return {x:box.x+box.width/2,y:box.y+box.height/2}})()`);
+    await this.clickElement(q(name));
+  }
+  /** A mouse click on an element, as a person's: it also gives that page the focus. */
+  async clickElement(expression) {
+    const box = await this.ev(`(()=>{const element=${expression};element.scrollIntoView({block:'center'});const box=element.getBoundingClientRect();return {x:box.x+box.width/2,y:box.y+box.height/2}})()`);
     for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
       await this.cmd('Input.dispatchMouseEvent', { type, ...box, button: type === 'mouseMoved' ? 'none' : 'left', clickCount: 1 });
     }
@@ -501,6 +505,9 @@ async function main() {
   panel = await panelView();
   check('docked, the panel takes the review\'s level and its own stays saved', panel.view.level === -2 && panel.frame.id === diffWindow.id && savedLevels()['review-panel'] === 3, JSON.stringify({ panel, saved: savedLevels() }));
   await activate(panel.frame);
+  // Docked, the discussion is a view in the review window: a click in its field, as a person
+  // would make, is what gives the view the keyboard.
+  await panelPage.clickElement(composer);
   await panelPage.ev(`${composer}.focus()`);
   const inPanel = await panelPage.reading();
   check('the docked discussion field has the focus', inPanel.focused, JSON.stringify(inPanel));
