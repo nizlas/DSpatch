@@ -148,6 +148,14 @@ function processAlive(pid: number): boolean {
   }
 }
 
+/** Whether the host this start began is still on its way or running: by its id on Windows, by its child elsewhere. */
+function ownStartAlive(startedPid: number | null, startedChild: ChildProcess | null): boolean {
+  if (startedPid !== null) {
+    return processAlive(startedPid);
+  }
+  return startedChild !== null && startedChild.exitCode === null && startedChild.signalCode === null;
+}
+
 /** How long a stopped start is waited for before its failure is reported. */
 const STOP_START_BOUND_MS = 5_000;
 
@@ -254,10 +262,11 @@ export async function ensureLocalHost(options: LocalHostOptions): Promise<Remote
   while (Date.now() < deadline) {
     const ready = runningLocalHost(options.dataDir);
     if (ready !== null) {
-      // Another starter's host won. This start's own host, still on its way through the shell,
-      // finds the folder taken and ends; until it has, it could take the folder from a winner
-      // that ended meanwhile, so this start waits for it, within the same bound (DSP-165.1).
-      while (startedPid !== null && ready.startedBy !== startToken && processAlive(startedPid) && Date.now() < deadline) {
+      // Another starter's host won. This start's own host, still on its way through the shell on
+      // Windows or through its own startup elsewhere, finds the folder taken and ends; until it
+      // has, it could take the folder from a winner that ended meanwhile, so this start waits for
+      // it, within the same bound (DSP-165.1; the wait reached only Windows until DSP-168).
+      while (ready.startedBy !== startToken && ownStartAlive(startedPid, startedChild) && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       return ready.endpoint;
