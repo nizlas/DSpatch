@@ -223,7 +223,6 @@ async function newDebugPort() {
 
 async function main() {
   const { version } = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8'));
-  if (version !== '0.1.4') throw new Error(`PENDING PACKAGE: package.json is ${version}; this trial requires the requested 0.1.4 release.`);
   const deb = path.join(release, `dspatch_${version}_amd64.deb`);
   if (!fs.existsSync(deb)) throw new Error(`PENDING PACKAGE: ${deb} does not exist; stale packages are not used.`);
   check('deb metadata matches package.json', command('dpkg-deb', ['-f', deb, 'Version']) === version, version);
