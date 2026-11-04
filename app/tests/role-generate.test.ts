@@ -23,7 +23,9 @@ import {
   inspectGeneratedFile,
   writeDecision,
 } from '../src/main/role-generate.ts';
+import type { GenerateResult } from '../src/main/role-generate.ts';
 import { parseRoleSource } from '../src/main/role-source.ts';
+import type { RoleSource } from '../src/main/role-source.ts';
 import { REQUIREMENTS, capabilityAnswer } from '../src/shared/loop-graph.ts';
 import type { TargetCapabilities } from '../src/shared/loop-graph.ts';
 
@@ -386,12 +388,10 @@ test('each real role source reproduces its live Cursor definition byte for byte'
     const relativeSource = `docs/loop/roles/${name}`;
     const source = parseRoleSource(fs.readFileSync(path.join(sourceDir, name), 'utf8'));
     assert.ok(source.ok, `${name}: ${source.ok ? '' : JSON.stringify(source.problems)}`);
-    const result = generateRoleFile(source.source, 'cursor', { sourcePath: relativeSource });
-    assert.ok(result.ok, name);
-    const live = fs.readFileSync(path.join(repoRoot, result.file.path));
+    const { result, live } = generatedLike(source.source, 'cursor', relativeSource, repoRoot);
     assert.equal(
       withoutProvenance(result.file.text),
-      withoutProvenance(live.toString('utf8')),
+      withoutProvenance(live),
       `${result.file.path} differs from what ${relativeSource} generates`,
     );
   }
@@ -408,13 +408,25 @@ test('each real role source reproduces its Claude Code agent byte for byte', () 
     const source = parseRoleSource(fs.readFileSync(path.join(sourceDir, name), 'utf8'));
     assert.ok(source.ok, name);
     assert.ok(source.source.targets.includes('claude-code'), `${name} declares claude-code`);
-    const result = generateRoleFile(source.source, 'claude-code', { sourcePath: relativeSource });
-    assert.ok(result.ok, name);
-    const live = fs.readFileSync(path.join(repoRoot, result.file.path), 'utf8');
+    const { result, live } = generatedLike(source.source, 'claude-code', relativeSource, repoRoot);
     assert.equal(result.file.text, live, `${result.file.path} differs from what ${relativeSource} generates`);
     assert.ok(!/^tools: .*\bAgent\b/m.test(live), `${result.file.path} must not be able to delegate`);
   }
 });
+
+/**
+ * The live file and the role generated with the live file's own line ending: the ending is the
+ * checkout's (LF on Linux, CRLF through autocrlf on Windows), not a fact about the role.
+ */
+function generatedLike(source: RoleSource, target: 'cursor' | 'claude-code', sourcePath: string, repoRoot: string): { readonly result: Extract<GenerateResult, { ok: true }>; readonly live: string } {
+  const first = generateRoleFile(source, target, { sourcePath });
+  assert.ok(first.ok, sourcePath);
+  const live = fs.readFileSync(path.join(repoRoot, first.file.path), 'utf8');
+  const newline = live.includes('\r\n') ? '\r\n' : '\n';
+  const result = generateRoleFile(source, target, { sourcePath, newline });
+  assert.ok(result.ok, sourcePath);
+  return { result, live };
+}
 
 /** The front matter with its leading comment lines removed, line endings intact. */
 function withoutProvenance(text: string): string {

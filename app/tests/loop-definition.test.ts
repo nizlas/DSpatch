@@ -49,6 +49,9 @@ import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { chatPromptFor, ROLE_BLOCK_OPEN } from '../src/shared/loop-chat';
 import { parseLoopDefinition } from '../src/shared/loop-definition';
 import { loadLoopGraph } from '../src/shared/loop-graph-load';
+
+/** An absolute path on this platform's root, where a fixture needs one that exists nowhere. */
+const absolute = (...parts: string[]): string => path.resolve(path.sep, ...parts);
 import { createDryRunExecutor, runLoopGraph } from '../src/shared/loop-run';
 import { workingRootsFrom } from '../src/shared/working-roots';
 
@@ -859,8 +862,8 @@ describe('the definition that runs', () => {
   });
 
   it('offers one preselected row, lists each folder once, and follows a key it has never seen', () => {
-    const project = path.join('C:', 'work', 'project');
-    const own = path.join('C:', 'work', 'DSpatch');
+    const project = absolute('work', 'project');
+    const own = absolute('work', 'DSpatch');
     const loops = (folder: string): string => path.join(folder, '.dspatch', 'loops');
     const io = countingIo({
       [path.join(loops(project), 'ported.loop.json')]: declaration({
@@ -891,7 +894,7 @@ describe('the definition that runs', () => {
     // A key from no folder's list is a definition someone pointed at by hand, read
     // through the same path rather than a second mechanism.
     const rows = discoverLoopDefinitions([project, own], io).rows;
-    const byHand = path.join('C:', 'elsewhere', 'other.loop.json');
+    const byHand = absolute('elsewhere', 'other.loop.json');
     assert.equal(rowForKey(rows, byHand, io).filePath, byHand);
     assert.equal(rowForKey(rows, rows[0]?.filePath as string, io), rows[0]);
   });
@@ -945,18 +948,18 @@ describe('the definition that runs', () => {
    * hand-picked definition from a discovered one.
    */
   it('takes a definition from outside every folder into the same list, by origin', () => {
-    const project = path.join('C:', 'work', 'project');
-    const outside = path.join('C:', 'elsewhere', 'standalone.loop.json');
+    const project = absolute('work', 'project');
+    const outside = absolute('elsewhere', 'standalone.loop.json');
     const inProject = path.join(project, '.dspatch', 'loops', 'ours.loop.json');
     const io = countingIo({
       [inProject]: declaration({ id: 'ours', name: 'Ours', graph: 'g.graph.json' }),
       [outside]: declaration({ id: 'standalone', name: 'Standalone loop', graph: 'g.graph.json' }),
-      [path.join('C:', 'elsewhere', 'broken.loop.json')]: '{ not json',
+      [absolute('elsewhere', 'broken.loop.json')]: '{ not json',
     });
 
     const listing = listChoosableLoops(
       [project],
-      [outside, path.join('C:', 'elsewhere', 'broken.loop.json')],
+      [outside, absolute('elsewhere', 'broken.loop.json')],
       io,
     );
     assert.deepEqual(

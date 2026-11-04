@@ -220,7 +220,7 @@ class Main {
         url: w.webContents.getURL(),
         level: w.webContents.getZoomLevel(),
         focused: w.isFocused(),
-        xid: Number(w.getNativeWindowHandle().readBigUInt64LE(0)),
+        xid: ((handle) => (handle.length >= 8 ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0)))(w.getNativeWindowHandle()),
         views: (w.contentView?.children ?? []).filter((v) => v.webContents !== undefined).map((v) => ({ url: v.webContents.getURL(), level: v.webContents.getZoomLevel() })),
       })));
     })()`));

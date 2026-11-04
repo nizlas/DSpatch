@@ -935,9 +935,11 @@ const sleep = (ms: number): Promise<void> =>
 function exitsWhileOutputStaysOpen(code: number, holdMs: number): string {
   const leaf = path.join(makeDir('leaf'), 'leaf.js');
   fs.writeFileSync(leaf, `setTimeout(function () {}, ${String(holdMs)});\n`, 'utf8');
+  // Detached from the shell's own group either way (`start /b`, `setsid`): what holds the
+  // output is not in the tree a switch ends, so the result that arrives late is a real one.
   return process.platform === 'win32'
     ? `start /b "" "${process.execPath}" "${leaf}" & exit /b ${String(code)}`
-    : `"${process.execPath}" "${leaf}" & exit ${String(code)}`;
+    : `setsid "${process.execPath}" "${leaf}" & exit ${String(code)}`;
 }
 
 test('WS-1 follow-up (A1): a hidden conversation\'s result whose save failed is told, kept and written at close', async () => {
