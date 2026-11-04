@@ -589,6 +589,8 @@ async function main() {
 
   stage = 'the wheel over the code (DSP-170)';
   await activate(diffWindow);
+  // The review opens on its file list; the code view is a file's.
+  await diff.click('pair-file-0');
   await diff.until('the code', `document.querySelector('.rv-pair-diff')!==null`, 30_000);
   const codePoint = await diff.centre(`document.querySelector('.rv-pair-diff')`);
   let codeWindow = await windowShowing(isDiffPage, 'the review window');
