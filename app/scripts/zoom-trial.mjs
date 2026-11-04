@@ -307,9 +307,20 @@ async function activate(w) {
   const began = Date.now();
   const end = began + 90_000;
   let shownAfter = null;
+  let framed = false;
   while (Date.now() < end) {
     const now = await state();
     if (now?.visible === true && shownAfter === null) shownAfter = Date.now() - began;
+    // Under Xvfb a hidden window's renderer may draw no first frame, and Electron shows the
+    // window on that frame (ready-to-show): a capture of its page asks for one.
+    if (now?.visible !== true && !framed && Date.now() - began > 1_500) {
+      framed = true;
+      const page = pages.find((one) => one.ws !== undefined && (one.matches(now?.url ?? '') || (now?.views ?? []).some((view) => one.matches(view.url))));
+      if (page !== undefined) {
+        await page.shot(`frame-for-window-${String(w.id)}`).catch(() => undefined);
+        results.push({ stage, what: `window ${String(w.id)} was asked for a first frame`, ok: true, detail: page.label });
+      }
+    }
     if (now?.focused === true) {
       results.push({ stage, what: `window ${String(w.id)} took the focus`, ok: true, detail: `shown after ${String(shownAfter ?? 0)} ms, focused after ${String(Date.now() - began)} ms` });
       return;
