@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-04 14:50'
-updated_date: '2026-11-04 15:07'
+updated_date: '2026-11-04 16:36'
 labels:
   - host
   - linux
@@ -29,6 +29,8 @@ Niclas's assignment of 4 November 2026. In a real DSpatch 0.1.4 loop on Linux th
 - [x] #4 A deferred or skipped snapshot is never read as unchanged files, a passed verification or a known outcome
 - [x] #5 Missing or unreadable measurements are unknown, not GREEN; short spikes, high CPU use alone and swap already in use do not trigger protection; recovery needs a sustained calm period
 - [x] #6 Existing loop flows pass their tests unchanged with the governor in observe
+- [x] #7 On Linux, PSI, available memory, swap traffic and load are read from the real /proc with the right units and intervals, and reading starts and stops with a loop run without leftover timers or overlapping reads
+- [x] #8 Continue after the wait's bound does not start a step while the machine is still RED: the step is held again and the journal says so
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -51,4 +53,25 @@ Design.
 Verification, Windows, uncommitted tree on aaa2d86: typecheck; fast group 1519 passed, 2 skipped (with the new `resource-governor.test.ts`, 22 tests: one reading, spikes, sustained pressure, recovery, unknown signals, unreadable files, the sampler's parsing and swap rate, no overlapping reads, YELLOW pause, RED hold and release, the bound, Stop during a hold and a pause, UNKNOWN changing nothing, configuration; and `resource-governor-run.test.ts`, 6 tests: the development loop walked with the real LoopRunController in observe, enforce with a hold and release, Stop during the hold, the bound pausing for a person until Continue, off, and a command with no observation never current); `loop-agent-commands.test.ts` gained a Cursor walk with every command observation deferred: all three commands recorded as not observed, the run does not reach done, and the journal says so. The live group 121 passed (the real loop walks, snapshots, gate commands); the host group 140 passed, 2 skipped as before. A demonstration script printed the journal lines of both modes from injected readings; no load was generated. One existing test was extended: the journal vocabulary test pins the new kind's position at the end.
 
 Known limits: Linux only, and not run on Linux yet; no PSI on older kernels (fallbacks are memory, swap traffic, load); the editor's run writes no run record, so its journal lines reach the windows only; a step already running is never slowed; review jobs, the chat's own snapshots and other host work are not governed in this version; thresholds are first guesses to be set from observe-mode records. The 0.1.4 incident's cause is still not established; this gives records to find it, not a fix for it.
+
+4 November 2026 — Linux verification and two fixes (commit 110a655 on d3b7bc7). This supersedes "not run on Linux yet" and "Continue starts the step" above.
+
+Found and fixed.
+- Continue after the bound bypassed the protection silently: the run paused for a person, and a plain Continue started the step whatever the health. Now Continue asks the machine again; under RED the step is held again (journal action `hold-after-continue`: "Held again before … after Continue: the machine is still under heavy pressure (…). Continue does not override the resource protection; …"), bounded and ended by Stop as before, and pauses for the person again at the bound. Nothing goes on by itself. If the run cannot be paused (no run), the step is not started. There is no override that starts a step under RED; a person who wants that sets the mode to observe for the next host start.
+- A calm reading with an unread signal was GREEN: without PSI a disk stall is invisible, yet memory and swap alone gave GREEN. GREEN now needs every signal (memory and disk stall, CPU stall or load, available memory, swap traffic); otherwise UNKNOWN naming what was not read. Pressure in what was read still counts. A run's first reading is therefore UNKNOWN (a swap rate needs two reads) and becomes GREEN after the escalation time.
+
+Checked, unchanged: if RED begins during a running step, the step goes on and its end snapshot of the folders is still taken, as is the snapshot before each step. That is load the governor does not remove; enforce does not stop all of DSpatch's heavy work under RED. Pinned by the Cursor deferred test (`loop-agent-commands.test.ts`) and stated in docs/INSTALL.md.
+
+Linux verification: GitHub's ubuntu-24.04 runner, kernel 7.0.0-1017-azure, 4 CPUs, `linux-verify` run 41865526699 on 110a655, all jobs green. New job `governor`: `app/scripts/governor-linux-check.mjs`, 27 of 27 checks, reading the runner's real /proc with no load generated.
+- PSI: each value is the line's avg10 (percent of the last 10 s stalled), not avg60 or avg300; e.g. io some avg10=3.16 avg60=2.38 read 3.16.
+- Memory: MemAvailable 15197100 kB of MemTotal 16367524 kB read as 92.849 %.
+- Swap: first read has no rate; second is Δ(pswpin+pswpout) over the real 2.014 s between reads (0 → 0, 0 pages/s); swap in use 0 kB, not a signal.
+- Load: 1.22 over 4 CPUs read 0.305. Assessed GREEN, "no pressure in any signal".
+- Missing: the first real read UNKNOWN (swap traffic); real values without PSI UNKNOWN naming memory and disk stall; only /proc/pressure/io unreadable UNKNOWN naming it; nothing readable UNKNOWN.
+- Lifecycle, a dry development-loop run in observe with real time and the real sampler, shortened timings (read every 100 ms, change after 1 s) and each read slowed to 150 ms: no read and no timer before the run, 21 reads in 5.1 s, never more than one at once, none after the run ended, 0 of 21 timers pending afterwards.
+- Observe: the same status and path as the run without the governor (limit-reached, 17 steps); journal "Resource governor: observe. … Health UNKNOWN. …", then "The machine's health went from UNKNOWN to GREEN: no pressure in any signal." at 2026-11-04T16:16:42.514Z; each step's start carries resourceGovernor=observe and its health; nothing held or deferred. Host log: "2026-11-04T16:16:42.666Z [dspatch] resource governor (observe): UNKNOWN → GREEN: no pressure in any signal".
+- Tests on Linux, enforce with injected pressure: loop area 674 passed; live area 115 passed, 6 skipped (cmd.exe-only); fast 1522 passed, 6 skipped; host 144 passed, 3 skipped; review 199; chat 362 passed, 7 skipped; presentation 288; the zoom, dock and provider jobs also green (unchanged code, not counted as new evidence).
+- Windows, the same tree: typecheck; the two governor files 30 passed; loop and live areas passed; the Cursor deferred test passed.
+
+Remaining limits: the thresholds are first guesses, not tuned on a pressed machine; enforce was tried only with injected pressure, never under real pressure; a step already running, its end snapshot, the snapshot before each step, review jobs, the chat's snapshots and a provider's own commands are not governed; no PSI on some kernels leaves the health UNKNOWN unless memory, swap or load show pressure; a real Linux desktop (not a CI runner) has not run it. The 0.1.4 incident's cause is still not established.
 <!-- SECTION:NOTES:END -->
