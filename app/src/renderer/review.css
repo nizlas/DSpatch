@@ -1156,6 +1156,26 @@
   transition: opacity 400ms ease, filter 400ms ease;
 }
 
+/* Only the active place is marked (DSP-175): its focus rows carry the strong colour, an
+   amber edge (a shape, not only a colour) and the arrival flash. Other panes, also one
+   showing the same code later in the walk, draw their rows in the diff's quiet colours.
+   The pane's heading names the place in full: repository, side and commit, file, lines. */
+.rv-pane-active .rv-focus-active {
+  box-shadow: inset 4px 0 0 var(--rv-amber);
+}
+
+.rv-pane-focus {
+  flex-basis: 100%;
+  font-size: 0.78rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.rv-pane-focus-mark {
+  color: var(--rv-amber);
+  margin-right: 0.25rem;
+}
+
 /* Earlier and later panes: the focus is quieter, but added, removed and unchanged
    code keep their colours and the text stays readable. */
 .rv-pane-inactive {
@@ -3998,4 +4018,47 @@
 
 .rv-context-line-marked {
   background: color-mix(in srgb, var(--rv-ref, #4aa3df) 22%, var(--bg));
+}
+
+/* DSP-175: a walk step's place in another repository, read as context. Neutral: no diff colours. */
+.rv-walk-context {
+  margin: 0.6rem 0;
+}
+
+.rv-walk-context-pane {
+  margin: 0.4rem 0 0.6rem;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+}
+
+.rv-walk-context-badge {
+  display: inline-block;
+  padding: 0 0.4em;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.rv-walk-context-commit {
+  font-family: var(--mono, monospace);
+}
+
+.rv-walk-context-unestablished {
+  font-weight: 600;
+}
+
+/* DSP-175: a point worth checking as the review thread it is: status, kind and replies above its title. */
+.rv-check-thread {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.rv-check-thread-card {
+  margin: 0.4rem 0;
 }

@@ -31,6 +31,8 @@ export interface ThreadActions {
   readonly select: (thread: ReviewThread) => void;
   /** Open a checked place of the thread. */
   readonly show: (range: LineRange) => void;
+  /** In a walk: the same thread in the diff window, where it sits at its lines. */
+  readonly showInDiff?: (thread: ReviewThread) => void;
   /** Record a comment or decision; resolves to an error sentence, or `null`. */
   readonly act: (thread: ReviewThread, kind: ThreadEventKind, text: string) => Promise<string | null>;
   /**
@@ -67,7 +69,7 @@ function selectedIn(body: HTMLElement): SelectionQuote | null {
   return text === '' ? null : { kind: 'text', text: text.slice(0, 20_000), source: 'thread', context: (body.innerText || '').slice(0, 1_500) };
 }
 
-const STATUS_MARK: Record<ThreadStatus, string> = { open: '●', 'action-agreed': '◐', resolved: '✓', dismissed: '⊘' };
+export const STATUS_MARK: Record<ThreadStatus, string> = { open: '●', 'action-agreed': '◐', resolved: '✓', dismissed: '⊘' };
 
 function sideWord(side: LineRange['side']): string {
   return side === 'base' ? 'From' : 'To';
@@ -202,6 +204,7 @@ export function ThreadCard({ thread, inline = false }: { readonly thread: Review
       data-ev="review-thread"
       data-thread-id={thread.id}
       data-thread-status={thread.status}
+      data-thread-level={thread.level}
       data-thread-kind={thread.kind}
     >
       <ThreadHead thread={thread} replies={replyCountOf(thread, exchanges)} open={open} onToggle={toggle} />
@@ -214,8 +217,11 @@ export function ThreadCard({ thread, inline = false }: { readonly thread: Review
           onMouseUp={() => setTimeout(() => setOffer(body.current === null ? null : selectedIn(body.current)), 0)}
         >
           <p className="rv-thread-origin rv-sub">
-            {thread.origin.reviewer} · delegated review of {thread.origin.scope || 'the change'}
+            {thread.origin.source === 'worth-checking'
+              ? `${thread.origin.reviewer === '' ? 'From' : `${thread.origin.reviewer} · from`} Worth checking in the code walks`
+              : `${thread.origin.reviewer} · delegated review of ${thread.origin.scope || 'the change'}`}
             {thread.origin.at === '' ? '' : ` · ${when(thread.origin.at)}`}
+            {thread.origin.source === 'review' && thread.points.length > 0 && <span data-ev="thread-also-checking"> · also raised under Worth checking</span>}
           </p>
           {thread.anchors.length > 0 && (
             <p className="rv-thread-places">
@@ -224,6 +230,11 @@ export function ThreadCard({ thread, inline = false }: { readonly thread: Review
                   {anchorWords(anchor)}
                 </button>
               ))}
+              {actions.showInDiff !== undefined && (
+                <button type="button" className="rv-pair-link" data-ev="thread-show-in-diff" onClick={() => actions.showInDiff?.(thread)}>
+                  Show in diff
+                </button>
+              )}
             </p>
           )}
           {thread.missing.map((entry, index) => (
@@ -256,7 +267,10 @@ export function ThreadCard({ thread, inline = false }: { readonly thread: Review
           {recommendation === null ? (
             <div className="rv-thread-section rv-thread-norec" data-ev="thread-no-recommendation">
               <h5>Recommendation</h5>
-              <p>None was recorded: this review was made before the agent was asked for recommendations, or the agent gave none. None is made up.</p>
+              <p>
+                None was recorded: this {thread.origin.source === 'worth-checking' ? 'point was prepared' : 'review was made'} before the agent was asked for recommendations, or the agent gave none. None is made
+                up.
+              </p>
               <button
                 type="button"
                 className="rv-pair-link"

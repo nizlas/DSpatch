@@ -26,6 +26,7 @@ import {
   REVIEW_DISCUSSION_INSTRUCTION,
   adoptDiscussionRecord,
   buildEnvelopePrompt,
+  quoteFrom,
   emptyDiscussionRecord,
   recapFor,
   splitCodeAnswer,
@@ -378,4 +379,15 @@ test('every question is told to answer short first, and a simpler explanation ca
   assert.ok(section > 0 && section < simpler.indexOf('## Question'));
   assert.match(simpler, /Keep every fact as it is\. Keep the class, method and file names/);
   assert.match(simpler, /The person asked: What is it\?\n\nThe answer was:\nIt is the cache\./);
+});
+
+// DSP-175 completion: a passage selected in an answer or a step keeps where it is from.
+test('a text quote keeps its origin, bounded, and the prompt names it', () => {
+  const quote = quoteFrom({ kind: 'text', text: 'It retries three times.', source: 'answer', context: 'It retries three times. Then it stops.', origin: { label: 'the answer to “Why retry?”', messageId: 'q-12', stepId: 'W1.2' } });
+  assert.deepEqual(quote, { kind: 'text', text: 'It retries three times.', source: 'answer', context: 'It retries three times. Then it stops.', origin: { label: 'the answer to “Why retry?”', messageId: 'q-12', stepId: 'W1.2' } });
+  // An origin with no label, or ids that are not ids, is not kept as given.
+  assert.equal((quoteFrom({ kind: 'text', text: 'x', source: 'explanation', origin: { label: '  ' } }) as { origin?: unknown }).origin, undefined);
+  assert.deepEqual((quoteFrom({ kind: 'text', text: 'x', source: 'explanation', origin: { label: 'step W1.1', messageId: '../../etc' } }) as { origin?: unknown }).origin, { label: 'step W1.1' });
+  const prompt = buildEnvelopePrompt(envelope({ quote: { kind: 'text', text: 'It retries three times.', source: 'answer', context: '', origin: { label: 'the answer to “Why retry?”' } } }), 'Why three?', null);
+  assert.match(prompt, /It is from the answer to “Why retry\?”\./);
 });

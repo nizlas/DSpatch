@@ -1,4 +1,4 @@
-import type { QuoteSegment, SelectionQuote } from '../shared/review-discussion';
+import type { QuoteOrigin, QuoteSegment, SelectionQuote } from '../shared/review-discussion';
 
 /**
  * What the person has selected in the walk window to ask about (30 October 2026), read
@@ -92,7 +92,23 @@ function textQuote(range: Range): SelectionQuote | null {
     text,
     source: source.dataset['quoteSource'] === 'answer' ? 'answer' : source.dataset['quoteSource'] === 'thread' ? 'thread' : 'explanation',
     context: (source.innerText || source.textContent || '').replace(/\s+\n/g, '\n').trim().slice(0, 1_500),
+    ...originOf(source),
   };
+}
+
+/**
+ * The message or step the selected passage is from (DSP-175), as the element that shows it
+ * names it: `data-quote-origin` (a label), `data-quote-message` and `data-quote-step`.
+ */
+function originOf(source: HTMLElement): { readonly origin?: QuoteOrigin } {
+  const named = source.closest<HTMLElement>('[data-quote-origin]');
+  const label = named?.dataset['quoteOrigin'] ?? '';
+  if (named === null || label === '') {
+    return {};
+  }
+  const messageId = named.dataset['quoteMessage'];
+  const stepId = named.closest<HTMLElement>('[data-quote-step]')?.dataset['quoteStep'];
+  return { origin: { label, ...(messageId === undefined ? {} : { messageId }), ...(stepId === undefined ? {} : { stepId }) } };
 }
 
 /** The characters `from` to `to` of an element's text, as a range over its text nodes. */

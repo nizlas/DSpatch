@@ -50,9 +50,10 @@ import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuot
 import { quoteRanges, readQuote } from './walk-selection';
 import { isPairError, type AgentJob, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
-import { reviewThreadsOf, type ReviewThread } from '../shared/review-threads';
+import { KIND_WORDS, STATUS_WORDS, reviewThreadsOf, threadOfPoint, type ReviewThread } from '../shared/review-threads';
 import { PairKeyContext } from './DiscussionAnswer';
-import { ThreadCard, ThreadContext, exchangesByThread, type ThreadActions } from './ReviewThreads';
+import { WalkContextPlaces } from './WalkContextPlaces';
+import { STATUS_MARK, ThreadCard, ThreadContext, exchangesByThread, replyCountOf, type ThreadActions } from './ReviewThreads';
 
 declare global {
   interface Window {
@@ -638,13 +639,24 @@ function OpenReview({
   const threadActions: ThreadActions = useMemo(
     () => ({
       selectedId: selectedThread,
-      select: (thread) => showThreadInDiff(thread, null),
+      // Choosing a thread here shows its code in this window, its lines marked (DSP-175):
+      // the place the agent named, at its side and commit. A thread with no place that
+      // could be found opens with that said, and nothing else is marked as if it were it.
+      select: (thread) => {
+        setSelectedThread(thread.id);
+        const at = thread.anchors[0];
+        if (at !== undefined) {
+          goAway({ side: at.side, path: at.path, start: at.start, end: at.end });
+        }
+      },
       show: (range) => {
         const thread = threads.find((entry) => entry.anchors.includes(range));
         if (thread !== undefined) {
-          showThreadInDiff(thread, range);
+          setSelectedThread(thread.id);
         }
+        goAway({ side: range.side, path: range.path, start: range.start, end: range.end });
       },
+      showInDiff: (thread) => showThreadInDiff(thread, null),
       act: async (thread, kind, text) => {
         if (pairBridge === undefined || pair === null) {
           return 'This walk is not tied to a revision pair, so its threads cannot be changed here.';
@@ -788,6 +800,8 @@ function OpenReview({
   );
 
   const coverage = useMemo(() => computeCoverage(bundle.definition, bundle.files, shownState), [bundle, shownState]);
+  // What the active place's mark names besides its file and lines (DSP-175).
+  const focusRevision = useMemo(() => ({ repository: bundle.repository, base: bundle.base.sha, target: bundle.target.sha }), [bundle.repository, bundle.base.sha, bundle.target.sha]);
   const coverageByHunk = useMemo(() => new Map(coverage.hunks.map((entry) => [entry.hunk.id, entry])), [coverage]);
 
   const current = findStep(bundle, state.position.stepId);
@@ -811,7 +825,13 @@ function OpenReview({
     () =>
       focus === null
         ? []
-        : threads.filter((thread) => thread.anchors.some((anchor) => anchor.side === focus.side && anchor.path === focus.path && anchor.start <= focus.end && anchor.end >= focus.start)),
+        : threads.filter(
+            (thread) =>
+              thread.anchors.some((anchor) => anchor.side === focus.side && anchor.path === focus.path && anchor.start <= focus.end && anchor.end >= focus.start) ||
+              // A thread about this file whose place could not be found, or that named no line:
+              // listed here too, saying so, and nothing in the code is marked for it.
+              (thread.anchors.length === 0 && thread.file !== null && thread.file.path === focus.path),
+          ),
     [threads, focus?.side, focus?.path, focus?.start, focus?.end],
   );
   const contexts: readonly CodeLocation[] = away === null && place !== null ? place.context.map(asLocation) : [];
@@ -1104,6 +1124,9 @@ function OpenReview({
   // What a question asked now would be about: the place on screen, a location away
   // from the walk, or the review as a whole; and the lines selected, if any.
   const openCheck = openCheckId === null ? null : (bundle.definition.checks.find((check) => check.id === openCheckId) ?? null);
+  // DSP-175: the review thread a point worth checking is, from the pair record; shown with the point.
+  const checkThreadOf = useCallback((check: CheckPoint): ReviewThread | null => threadOfPoint(threads, bundle.definitionPath, check.id), [threads, bundle.definitionPath]);
+  const openCheckThread = openCheck === null ? null : checkThreadOf(openCheck);
   const discussionRequest: DiscussionRequest = useMemo(
     () => ({
       subject:
@@ -1616,10 +1639,11 @@ function OpenReview({
                   {diffNote !== '' && <span className="rv-sub">{diffNote}</span>}
                 </div>
               )}
-              {focus !== null && threadsHere.length > 0 && (
-                // DSP-175: the review's threads at the place shown, the same threads the diff shows.
+              {focus !== null && threadsHere.some((thread) => thread.id !== openCheckThread?.id) && (
+                // DSP-175: the review's threads at the place shown, the same threads the diff shows;
+                // an open point's own thread is shown with the point, not twice.
                 <div className="rv-threads-here" data-ev="walk-threads-here">
-                  {threadsHere.map((thread) => (
+                  {threadsHere.filter((thread) => thread.id !== openCheckThread?.id).map((thread) => (
                     <ThreadCard key={thread.id} thread={thread} />
                   ))}
                 </div>
@@ -1673,6 +1697,7 @@ function OpenReview({
               {openCheck !== null && (
                 <CheckPanel
                   check={openCheck}
+                  thread={openCheckThread}
                   inTour={current?.walk.kind === 'check' && current.walk.id === openCheck.id}
                   exchanges={pointExchanges(discussionMessages, openCheck.id)}
                   error={deepenError}
@@ -1930,6 +1955,8 @@ function OpenReview({
                   open={openCheck?.id ?? null}
                   words={words}
                   lang={lang}
+                  threadOf={checkThreadOf}
+                  replies={(thread) => replyCountOf(thread, threadExchanges.get(thread.id) ?? [])}
                   onOpen={openPoint}
                 />
                 <Collapsible title={words.tree.title} defaultOpen={false} ev="walk-files">
@@ -2060,6 +2087,7 @@ function OpenReview({
                 lang={lang}
                 onOpenLocation={goAway}
                 navRequest={navRequest}
+                revision={focusRevision}
               />
             </div>
           )}
@@ -2178,6 +2206,8 @@ function WorthChecking({
   open,
   words,
   lang,
+  threadOf,
+  replies,
   onOpen,
 }: {
   readonly checks: readonly CheckPoint[];
@@ -2187,11 +2217,27 @@ function WorthChecking({
   readonly open: string | null;
   readonly words: ReviewWords;
   readonly lang: Lang;
+  /** DSP-175: the review thread a point is, when the walk is tied to its revision pair. */
+  readonly threadOf: (check: CheckPoint) => ReviewThread | null;
+  readonly replies: (thread: ReviewThread) => number;
   readonly onOpen: (check: CheckPoint) => void;
 }): JSX.Element | null {
   if (checks.length === 0 && attention.trim() === '' && offer === null) {
     return null;
   }
+  // A point that is the same thread as one listed before it is not listed twice.
+  const seen = new Set<string>();
+  const listed = checks.filter((check) => {
+    const id = threadOf(check)?.id;
+    if (id === undefined) {
+      return true;
+    }
+    if (seen.has(id)) {
+      return false;
+    }
+    seen.add(id);
+    return true;
+  });
   return (
     <section className="rv-checks" data-ev="walk-attention">
       <h2 className="rv-walks-heading">{words.attentionTitle}</h2>
@@ -2206,17 +2252,32 @@ function WorthChecking({
         </>
       ) : (
         <ul className="rv-check-list">
-          {checks.map((check) => (
-            <li key={check.id}>
+          {listed.map((check) => {
+            const thread = threadOf(check);
+            const count = thread === null ? 0 : replies(thread);
+            return (
+            <li key={check.id} {...(thread === null ? {} : { 'data-thread-id': thread.id, 'data-thread-status': thread.status })}>
               <button
                 type="button"
-                className={check.id === open ? 'rv-check-item rv-check-on' : 'rv-check-item'}
+                className={`${check.id === open ? 'rv-check-item rv-check-on' : 'rv-check-item'}${thread === null ? '' : ` rv-thread-${thread.status}`}`}
                 data-ev={`check-${check.id}`}
                 aria-current={check.id === open ? 'true' : undefined}
                 onClick={() => onOpen(check)}
               >
+                {thread !== null && (
+                  // DSP-175: the point as the review thread it is: its status, kind and replies.
+                  <span className="rv-check-thread" data-ev="check-thread-line">
+                    <span className={`rv-thread-status rv-thread-status-${thread.status}`} data-ev="check-thread-status">
+                      <span aria-hidden="true">{STATUS_MARK[thread.status]}</span> {STATUS_WORDS[thread.status]}
+                    </span>{' '}
+                    <span className="rv-thread-kind">{KIND_WORDS[thread.kind]}</span>{' '}
+                    <span className="rv-sub" data-ev="check-thread-replies">
+                      {count === 0 ? 'no replies' : `${String(count)} ${count === 1 ? 'reply' : 'replies'}`}
+                    </span>
+                  </span>
+                )}
                 <span className="rv-check-head">
-                  <span className={`rv-check-kind rv-check-kind-${check.kind}`}>{CHECK_WORD[check.kind][lang]}</span>
+                  {thread === null && <span className={`rv-check-kind rv-check-kind-${check.kind}`}>{CHECK_WORD[check.kind][lang]}</span>}
                   <span className="rv-check-title">
                     <Inline text={pick(check.title, lang)} />
                   </span>
@@ -2228,7 +2289,8 @@ function WorthChecking({
                 )}
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </section>
@@ -2243,6 +2305,7 @@ function WorthChecking({
  */
 function CheckPanel({
   check,
+  thread,
   inTour,
   exchanges,
   error,
@@ -2254,6 +2317,8 @@ function CheckPanel({
   onAsk,
 }: {
   readonly check: CheckPoint;
+  /** DSP-175: the review thread the point is, with its recommendation and decisions; `null` when the walk has none. */
+  readonly thread: ReviewThread | null;
   /** Shown on its own tour, whose step already holds the reasoning. */
   readonly inTour: boolean;
   readonly exchanges: readonly Deepening[];
@@ -2303,6 +2368,11 @@ function CheckPanel({
           </ul>
         </div>
       )}
+      {thread !== null && (
+        <div className="rv-check-thread-card" data-ev="check-thread">
+          <ThreadCard thread={thread} />
+        </div>
+      )}
       <div className="rv-deepen-actions">
         <button type="button" data-ev="check-tell-more" disabled={waiting} onClick={() => onDeepen({ action: 'more' })}>
           Tell me more
@@ -2321,7 +2391,9 @@ function CheckPanel({
               {(status === 'failed' || status === 'unknown' || status === 'cancelled') && <span className="rv-sub"> · {status}</span>}
             </summary>
             {entry.answer !== null && entry.answer.text !== '' ? (
-              <DiscussionAnswer answer={entry.answer} onShow={onShow} />
+              <div data-quote-origin={`the answer to “${(entry.question.deepen?.text ?? entry.question.text).replace(/\s+/g, ' ').slice(0, 80)}”`} data-quote-message={entry.question.id}>
+                <DiscussionAnswer answer={entry.answer} onShow={onShow} />
+              </div>
             ) : (
               <PendingLine questionId={entry.question.id} pending={status === 'sending' || status === 'streaming' || status === 'sent'} />
             )}
@@ -2531,6 +2603,7 @@ function WalkList({
                         type="button"
                         className={active ? 'rv-step rv-step-on' : 'rv-step'}
                         aria-current={active ? 'step' : undefined}
+                        data-ev={`walk-step-${step.id}`}
                         onClick={() => onStep(step.id)}
                       >
                         <span className="rv-step-id">{step.id}</span>
@@ -2923,7 +2996,9 @@ function StepDeepening({
               {(status === 'failed' || status === 'unknown' || status === 'cancelled') && <span className="rv-sub"> · {status}</span>}
             </summary>
             {entry.answer !== null && entry.answer.text !== '' ? (
-              <DiscussionAnswer answer={entry.answer} onShow={onShow} />
+              <div data-quote-origin={`the answer to “${(entry.question.deepen?.text ?? entry.question.text).replace(/\s+/g, ' ').slice(0, 80)}”`} data-quote-message={entry.question.id}>
+                <DiscussionAnswer answer={entry.answer} onShow={onShow} />
+              </div>
             ) : (
               <PendingLine questionId={entry.question.id} pending={status === 'sending' || status === 'streaming' || status === 'sent'} />
             )}
@@ -3065,7 +3140,7 @@ function StepPanel({
   );
   const summaryLabels = [...new Set(step.evidence.map((entry) => entry.label))];
   return (
-    <section className="rv-step-panel" ref={panel}>
+    <section className="rv-step-panel" ref={panel} data-quote-step={step.id}>
       <div className="rv-walk-title">
         {walk.id} · <Inline text={pick(walk.title, lang)} />
       </div>
@@ -3087,7 +3162,7 @@ function StepPanel({
         {state.walkedSteps[step.id] !== undefined && <span className="rv-mark-walked"> ✓</span>}
       </div>
       {pick(step.summary, lang) !== '' && (
-        <p className="rv-summary" data-quote-source="explanation">
+        <p className="rv-summary" data-quote-source="explanation" data-quote-origin={`the explanation of step ${step.id} “${pick(step.title, lang)}”`}>
           <Inline text={pick(step.summary, lang)} />
         </p>
       )}
@@ -3106,6 +3181,10 @@ function StepPanel({
                 >
                   <span className="rv-place-number">{position + 1}</span>
                   <Markdown text={pick(entry.label, lang)} />
+                  {/* Which side and lines the place marks (DSP-175): Old and New in one pane are told apart by more than their label. */}
+                  <span className="rv-sub rv-place-where" data-ev={`place-where-${String(position + 1)}`}>
+                    {entry.focus.side === 'base' ? words.view.shownFrom : words.view.shownTo} · {entry.focus.path.split('/').pop()}:{rangeText(entry.focus)}
+                  </span>
                   {invalid.has(entry.focus.id) && <span className="rv-error"> ⚠</span>}
                 </button>
               </li>
@@ -3135,13 +3214,15 @@ function StepPanel({
         </div>
       )}
 
-      <div className="rv-explanation" data-quote-source="explanation">
+      <div className="rv-explanation" data-quote-source="explanation" data-quote-origin={`the explanation of step ${step.id} “${pick(step.title, lang)}”`}>
         <Markdown text={pick(step.body, lang)} />
       </div>
+      {/* DSP-175: code from other repositories of the workspace, read as context; never covered. */}
+      <WalkContextPlaces step={step} lang={lang} />
       {pick(step.why, lang) !== '' && (
         <>
           <div className="rv-section-title">{words.whyItMatters}</div>
-          <div className="rv-explanation" data-quote-source="explanation">
+          <div className="rv-explanation" data-quote-source="explanation" data-quote-origin={`the explanation of step ${step.id} “${pick(step.title, lang)}”`}>
             <Markdown text={pick(step.why, lang)} />
           </div>
         </>
@@ -3445,7 +3526,7 @@ function WalkNavBar({
         </span>
         <span className="rv-seg" role="group">
           {(['before', 'both', 'after'] as const).map((value) => (
-            <button key={value} type="button" className={view === value ? 'rv-on' : ''} aria-pressed={view === value} onClick={() => onView(value)}>
+            <button key={value} type="button" className={view === value ? 'rv-on' : ''} data-ev={`code-view-${value}`} aria-pressed={view === value} onClick={() => onView(value)}>
               {words.view[value]}
             </button>
           ))}
@@ -3792,7 +3873,7 @@ function CodePane({
         {changed ? (
           <span className="rv-seg" role="group">
             {(['before', 'both', 'after'] as const).map((value) => (
-              <button key={value} type="button" className={view === value ? 'rv-on' : ''} aria-pressed={view === value} onClick={() => onView(value)}>
+              <button key={value} type="button" className={view === value ? 'rv-on' : ''} data-ev={`code-view-${value}`} aria-pressed={view === value} onClick={() => onView(value)}>
                 {words.view[value]}
               </button>
             ))}

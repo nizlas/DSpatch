@@ -192,7 +192,40 @@ export interface QuoteSegment {
  */
 export type SelectionQuote =
   | { readonly kind: 'code'; readonly text: string; readonly segments: readonly QuoteSegment[] }
-  | { readonly kind: 'text'; readonly text: string; readonly source: 'explanation' | 'answer' | 'thread'; readonly context: string };
+  | {
+      readonly kind: 'text';
+      readonly text: string;
+      readonly source: 'explanation' | 'answer' | 'thread';
+      readonly context: string;
+      /**
+       * Where the passage is from, kept with the question (DSP-175): the answer's question
+       * id and the walk step, when the selection was in one, and a short label naming it.
+       */
+      readonly origin?: QuoteOrigin;
+    };
+
+/** The message or step a quoted passage of text comes from. */
+export interface QuoteOrigin {
+  readonly label: string;
+  readonly messageId?: string;
+  readonly stepId?: string;
+}
+
+/** A stored or sent origin, bounded; `undefined` when there is none. */
+export function quoteOriginFrom(raw: unknown): QuoteOrigin | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const value = raw as Record<string, unknown>;
+  const label = typeof value['label'] === 'string' ? value['label'].trim().slice(0, 200) : '';
+  if (label === '') {
+    return undefined;
+  }
+  const id = (key: string): string | undefined => (typeof value[key] === 'string' && /^[\w.:-]{1,120}$/.test(value[key]) ? value[key] : undefined);
+  const messageId = id('messageId');
+  const stepId = id('stepId');
+  return { label, ...(messageId === undefined ? {} : { messageId }), ...(stepId === undefined ? {} : { stepId }) };
+}
 
 /** Bounds on a quote: longer is refused, not cut silently. */
 export const QUOTE_LIMITS = { characters: 20_000, segments: 40, contextChars: 1_500 } as const;
@@ -212,7 +245,14 @@ export function quoteFrom(raw: unknown): SelectionQuote | null {
     return null;
   }
   if (value['kind'] === 'text') {
-    return { kind: 'text', text, source: value['source'] === 'answer' ? 'answer' : value['source'] === 'thread' ? 'thread' : 'explanation', context: typeof value['context'] === 'string' ? value['context'].slice(0, QUOTE_LIMITS.contextChars) : '' };
+    const origin = quoteOriginFrom(value['origin']);
+    return {
+      kind: 'text',
+      text,
+      source: value['source'] === 'answer' ? 'answer' : value['source'] === 'thread' ? 'thread' : 'explanation',
+      context: typeof value['context'] === 'string' ? value['context'].slice(0, QUOTE_LIMITS.contextChars) : '',
+      ...(origin === undefined ? {} : { origin }),
+    };
   }
   const segments = value['segments'];
   if (value['kind'] !== 'code' || !Array.isArray(segments) || segments.length === 0 || segments.length > QUOTE_LIMITS.segments) {
@@ -310,7 +350,7 @@ export interface EnvelopeNote {
 /** A selected quote as sent: code checked against its commit (with the commit named), or text as it was. */
 export type EnvelopeQuote =
   | { readonly kind: 'code'; readonly segments: readonly (QuoteSegment & { readonly sha: string; readonly text: string })[] }
-  | { readonly kind: 'text'; readonly text: string; readonly source: 'explanation' | 'answer' | 'thread'; readonly context: string };
+  | { readonly kind: 'text'; readonly text: string; readonly source: 'explanation' | 'answer' | 'thread'; readonly context: string; readonly origin?: QuoteOrigin };
 
 export interface EnvelopeIdentity {
   readonly title: string;
@@ -491,6 +531,9 @@ function quoteSection(quote: EnvelopeQuote): string {
       quote.text,
       fence,
     );
+    if (quote.origin !== undefined) {
+      lines.push('', `It is from ${quote.origin.label}.`);
+    }
     if (quote.context.trim() !== '' && quote.context.trim() !== quote.text.trim()) {
       lines.push('', 'The passage it is from:', clip(quote.context.trim(), QUOTE_LIMITS.contextChars));
     }

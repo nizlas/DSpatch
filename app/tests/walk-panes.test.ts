@@ -83,3 +83,14 @@ test('a pane presents the active station, else the one nearest it in walk order'
   assert.equal(shownStation(pane, 0), 2);
   assert.equal(shownStation(pane, 7), 4);
 });
+
+// DSP-175 completion: the active place's mark names it in full, not by file or line alone.
+test('the focus identity names the place, repository, side and commit, file and lines', async () => {
+  const { focusIdentity } = await import('../src/renderer/walk-panes');
+  const { WORDS } = await import('../src/renderer/review-i18n');
+  const revision = { repository: '/work/demo-app/', base: 'a'.repeat(40), target: 'b'.repeat(40) };
+  assert.equal(focusIdentity('W1.1 place 1 of 2', 'src/app.js', { side: 'base', start: 2, end: 2 }, revision, WORDS.en), 'W1.1 place 1 of 2 · demo-app · From aaaaaaa · src/app.js line 2');
+  assert.equal(focusIdentity('W1.2', 'src/app.js', { side: 'target', start: 2, end: 4 }, revision, WORDS.en), 'W1.2 · demo-app · To bbbbbbb · src/app.js lines 2–4');
+  // Without the revision pair it still says the side and the lines, and makes nothing up.
+  assert.equal(focusIdentity('', 'a.ts', { side: 'target', start: 7, end: 7 }, undefined, WORDS.en), 'To · a.ts line 7');
+});

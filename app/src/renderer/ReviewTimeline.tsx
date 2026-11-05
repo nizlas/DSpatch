@@ -4,7 +4,7 @@ import type { CSSProperties, JSX } from 'react';
 import { Inline, LineGutter, TokensView, fileName, lineDigits, rangeText, rowsOf, useRows, type Files } from './review-code';
 import { pick, type ReviewWords } from './review-i18n';
 import { activationLine } from './walk-activation';
-import { paneOfStation, panesOf, shownStation } from './walk-panes';
+import { focusIdentity, paneOfStation, panesOf, shownStation, type FocusRevision } from './walk-panes';
 import {
   isProsePath,
   type CodeLevel,
@@ -308,7 +308,10 @@ export function WalkTimeline({
   lang,
   onOpenLocation,
   navRequest,
+  revision,
 }: {
+  /** The repository and the two commits, named in the active place's mark (DSP-175). */
+  readonly revision?: FocusRevision;
   readonly walk: Walk;
   /** How this walk was entered: from the walk before it, or back from the one after. */
   readonly entry: 'forward' | 'backward';
@@ -899,6 +902,8 @@ export function WalkTimeline({
                     paneIndex={pane.index}
                     paneStations={paneMembers[pane.index] ?? NO_STATIONS}
                     isActive={isActive}
+                    focusName={isActive ? placeName(station.index) : ''}
+                    revision={revision}
                     direction={direction}
                     fromRow={isActive ? (activeStation?.place.from ?? null) : null}
                     fromHere={callPane === pane.index && activeStation !== undefined && activeStation.place.from !== null ? activeStation.place.from.ref : null}
@@ -999,6 +1004,7 @@ export function WalkTimeline({
               title={`${station.stepId} · ${pick(station.place.label, lang).replace(/`/g, '')} · ${fileName(station.place.focus.path)}`}
               aria-label={`${station.stepId} · ${pick(station.place.label, lang).replace(/`/g, '')} · ${fileName(station.place.focus.path)}`}
               aria-current={station.index === active ? 'step' : undefined}
+              data-station={station.index}
               onClick={() => onActivate(station.index)}
             />
           );
@@ -1015,6 +1021,8 @@ function TimelinePaneView({
   paneIndex,
   paneStations,
   isActive,
+  focusName,
+  revision,
   direction,
   fromRow,
   fromHere,
@@ -1048,6 +1056,9 @@ function TimelinePaneView({
   /** Every place the pane shows, in walk order: the two sides of one change share a pane. */
   readonly paneStations: readonly Station[];
   readonly isActive: boolean;
+  /** The active place's name, as the map's references give it; empty in other panes. */
+  readonly focusName: string;
+  readonly revision: FocusRevision | undefined;
   readonly direction: 'forward' | 'backward';
   readonly fromRow: Place['from'];
   readonly fromHere: CodeLocation | null;
@@ -1606,12 +1617,19 @@ function TimelinePaneView({
     const rowSide: RevisionSide = row.targetLine !== null ? 'target' : 'base';
     const lineTokens = rowSide === 'target' ? content?.tokens.target[(row.targetLine ?? 1) - 1] : content?.tokens.base[(row.baseLine ?? 1) - 1];
     const classes = ['rv-row'];
-    if (inShown) {
-      classes.push(row.kind === 'deleted' ? 'rv-old' : row.kind === 'added' ? 'rv-new' : 'rv-neutral-focus');
+    // Only the active place's focus is marked (DSP-175): the same code shown again in
+    // another pane, earlier or later in the walk, keeps the diff's own quiet colours, so
+    // the strong mark, the edge and the arrival flash are never in two places at once. And
+    // only its own side's lines: a place at From marks the old lines, one at To the new,
+    // though the place's reference also takes in the other side of a replacement.
+    const ownSide = side === 'target' ? row.targetLine !== null : row.baseLine !== null;
+    const activeHere = inShown && isActive && ownSide;
+    if (activeHere) {
+      classes.push(row.kind === 'deleted' ? 'rv-old' : row.kind === 'added' ? 'rv-new' : 'rv-neutral-focus', 'rv-focus-active');
       if (arriving) {
         classes.push('rv-arrive');
       }
-    } else if (otherFocus.has(index)) {
+    } else if (inShown || otherFocus.has(index)) {
       classes.push(row.kind === 'deleted' ? 'rv-old-faint' : row.kind === 'added' ? 'rv-new-faint' : 'rv-neutral-faint');
     } else if (row.kind === 'deleted') {
       classes.push('rv-old-faint');
@@ -1633,6 +1651,9 @@ function TimelinePaneView({
     }
     if (inShown) {
       attrs['data-focus'] = '1';
+      if (activeHere) {
+        attrs['data-focus-active'] = '1';
+      }
     }
     if (index === layoutRows.firstShown) {
       attrs['data-shown'] = '1';
@@ -1696,6 +1717,14 @@ function TimelinePaneView({
           {shownWord}
         </span>
         {content !== null && content.error === null && !changed && <span className="rv-unchanged-tag">{words.view.unchangedHere}</span>}
+        {isActive && (
+          // What the mark in this pane is, in full (DSP-175): the place, the repository,
+          // the revision and side its lines are at, and the lines — not a file name alone.
+          <span className="rv-pane-focus" data-ev="pane-focus-identity" data-focus-side={side} data-focus-start={station.place.focus.start} data-focus-end={station.place.focus.end}>
+            <span className="rv-pane-focus-mark" aria-hidden="true">▍</span>
+            {focusIdentity(focusName, path, station.place.focus, revision, words)}
+          </span>
+        )}
         {isActive && fromRow !== null && (
           <span className="rv-pane-from">
             ← <Inline text={pick(fromRow.label, lang)} /> ({fileName(fromRow.ref.path)}:{rangeText(fromRow.ref)})

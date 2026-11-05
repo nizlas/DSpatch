@@ -22,6 +22,7 @@
  * coverage and navigation are untouched, so saved walks get it without regeneration.
  */
 import type { RevisionSide } from '../shared/review-model';
+import type { ReviewWords } from './review-i18n';
 
 /** Lines on either side of a hunk that still belong to its change area: Git's default context. */
 export const CHANGE_AREA_MARGIN = 3;
@@ -122,4 +123,20 @@ export function shownStation(pane: WalkPane, active: number): number {
   const first = pane.stations[0] ?? active;
   const last = pane.stations[pane.stations.length - 1] ?? first;
   return active < first ? first : last;
+}
+
+/** The repository and commits of a walk's revision pair, for naming a place in full. */
+export interface FocusRevision {
+  readonly repository: string;
+  readonly base: string;
+  readonly target: string;
+}
+
+/** The active place in full: its name, repository, side and commit, file and lines (DSP-175). */
+export function focusIdentity(name: string, path: string, focus: { readonly side: RevisionSide; readonly start: number; readonly end: number }, revision: FocusRevision | undefined, words: ReviewWords): string {
+  const repository = revision === undefined ? '' : (revision.repository.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '');
+  const commit = revision === undefined ? '' : (focus.side === 'base' ? revision.base : revision.target).slice(0, 7);
+  const at = `${focus.side === 'base' ? words.view.shownFrom : words.view.shownTo}${commit === '' ? '' : ` ${commit}`}`;
+  const lines = focus.start === focus.end ? words.timeline.lineAt(focus.start) : words.timeline.linesAt(focus.start, focus.end);
+  return [name, repository, at, `${path} ${lines}`].filter((part) => part !== '').join(' · ');
 }

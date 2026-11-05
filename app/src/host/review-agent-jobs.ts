@@ -63,6 +63,7 @@ import {
   withCheckedFindings,
   withCheckedStandaloneChecks,
   withoutInvalidPlaces,
+  withContextCommits,
   type AnalysisMaterial,
   type ContextReader,
   type ExplainTurn,
@@ -1096,7 +1097,7 @@ export class ReviewAgentJobs {
     const read = this.reader(live);
     this.setActivity(live, 'Checking every place against the commits');
     let parsed = readWalksAnswer(answerJson(first.text));
-    let invalid = parsed.walks === null ? new Map<string, string>() : await walkPlaceProblems(parsed.walks, read);
+    let invalid = parsed.walks === null ? new Map<string, string>() : await walkPlaceProblems(parsed.walks, read, live.context);
     // One repair round, naming what was wrong. Never a loop.
     if (parsed.walks === null || parsed.problems.length > 0 || invalid.size > 0) {
       this.setActivity(live, `Asking the agent to correct ${String(parsed.problems.length + invalid.size)} problem(s) DSpatch found`);
@@ -1107,7 +1108,7 @@ export class ReviewAgentJobs {
       const again = readWalksAnswer(answerJson(second.text));
       if (again.walks !== null) {
         parsed = again;
-        invalid = await walkPlaceProblems(again.walks, read);
+        invalid = await walkPlaceProblems(again.walks, read, live.context);
       }
     }
     if (parsed.walks === null) {
@@ -1115,7 +1116,8 @@ export class ReviewAgentJobs {
       return;
     }
     // The points worth checking keep only the places that exist; their text stays.
-    const checked = await withCheckedChecks(withoutInvalidPlaces(parsed.walks, invalid), read);
+    // DSP-175: context places carry the commit this analysis recorded for their repository.
+    const checked = await withCheckedChecks(await withContextCommits(withoutInvalidPlaces(parsed.walks, invalid), live.context), read);
     const walks: ProposedWalks = checked.walks;
     if (walks.walks.length === 0) {
       this.finish(live, 'failed', 'None of the proposed walks had a place that exists at these commits, so none was kept.');
@@ -1138,12 +1140,16 @@ export class ReviewAgentJobs {
       (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) of the commits could not be given to the agent to read.` : '');
     fs.mkdirSync(path.dirname(definitionPath), { recursive: true });
     fs.writeFileSync(definitionPath, `${JSON.stringify(definitionFrom(walks, opened?.pair ?? { repository: '', base: '', target: '' }, heading, provenance), null, 2)}\n`, 'utf8');
+    // DSP-175: points written with the walks are review threads too (an answer of the older form).
+    this.options.pairs.adoptChecks(live.key, definitionPath, live.jobId);
     const uncoveredLines = uncovered.reduce((total, range) => total + range.end - range.start + 1, 0);
+    const contextPlaces = walks.walks.reduce((total, walk) => total + walk.steps.reduce((sum, step) => sum + (step.contextPlaces?.length ?? 0), 0), 0);
     this.finish(
       live,
       'done',
       `${String(walks.walks.length - readings)} walk(s) and ${String(readings)} reading(s), ${String(stepCount)} step(s).` +
         (uncoveredLines === 0 ? ' Every changed line is in one of them.' : ` ${String(uncoveredLines)} changed line(s) are in none of them.`) +
+        (contextPlaces > 0 ? ` ${String(contextPlaces)} place(s) show code from other repositories of the workspace, read as context; they cover nothing.` : '') +
         (invalid.size > 0 ? ` ${String(invalid.size)} place(s) were left out because they do not exist at their commit.` : '') +
         (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) could not be given to the agent to read.` : ''),
       { definitionPath, uncovered },
@@ -1177,6 +1183,8 @@ export class ReviewAgentJobs {
       `${JSON.stringify({ format: CHECKS_FILE_FORMAT, checks: checked.checks.map((check, index) => checkDefinition(check, `C${String(index + 1)}`)) }, null, 2)}\n`,
       'utf8',
     );
+    // DSP-175: the points are review threads from now on, read back by the host from the file just written.
+    this.options.pairs.adoptChecks(live.key, definitionPath, live.jobId);
     const count = (kind: string): number => checked.checks.filter((check) => check.kind === kind).length;
     const left = checked.left + parsed.problems.length;
     this.finish(

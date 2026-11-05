@@ -173,9 +173,7 @@ function PlainProblem({ text, words }: { readonly text: string; readonly words: 
 function SentQuote({ quote }: { readonly quote: EnvelopeQuote }): JSX.Element {
   const where =
     quote.kind === 'text'
-      ? quote.source === 'answer'
-        ? 'From an answer'
-        : 'From the explanation'
+      ? textQuoteWhere(quote)
       : quoteWhere({ kind: 'code', text: '', segments: quote.segments });
   const text = quote.kind === 'text' ? quote.text : quote.segments.map((segment) => segment.text).join('\n');
   const flat = text.replace(/\s+/g, ' ');
@@ -187,6 +185,14 @@ function SentQuote({ quote }: { readonly quote: EnvelopeQuote }): JSX.Element {
       </span>
     </div>
   );
+}
+
+/** Where a quoted passage of text is from: the answer or step it names, else its kind. */
+function textQuoteWhere(quote: { readonly source: 'explanation' | 'answer' | 'thread'; readonly origin?: { readonly label: string } }): string {
+  if (quote.origin !== undefined) {
+    return `From ${quote.origin.label}`;
+  }
+  return quote.source === 'answer' ? 'From an answer' : quote.source === 'thread' ? 'From a review thread' : 'From the explanation';
 }
 
 /** Where quoted code is, short: the file name, its first line and the side. */
@@ -751,7 +757,14 @@ export function ReviewDiscussion({
               )}
             </div>
             {answersOf(question.id).map((answer) => (
-              <div key={answer.id} className="rv-discussion-answer" data-status={answer.status}>
+              <div
+                key={answer.id}
+                className="rv-discussion-answer"
+                data-status={answer.status}
+                // What a passage selected here is from, kept with a question about it (DSP-175).
+                data-quote-origin={`the answer to “${question.text.replace(/\s+/g, ' ').slice(0, 80)}”`}
+                data-quote-message={question.id}
+              >
                 <DiscussionAnswer
                   answer={answer}
                   onShow={onGoToLocation}
@@ -852,7 +865,7 @@ export function ReviewDiscussion({
         {request.quote != null && (
           <div className="rv-quote-chip" data-ev="discussion-quote" title={request.quote.text}>
             <span className="rv-quote-chip-text">
-              {request.quote.kind === 'code' ? quoteWhere(request.quote) : request.quote.source === 'answer' ? 'From an answer' : request.quote.source === 'thread' ? 'From a review thread' : 'From the explanation'}: “{request.quote.text.replace(/\s+/g, ' ').slice(0, 80)}
+              {request.quote.kind === 'code' ? quoteWhere(request.quote) : textQuoteWhere(request.quote)}: “{request.quote.text.replace(/\s+/g, ' ').slice(0, 80)}
               {request.quote.text.length > 80 ? '…' : ''}”
             </span>
             {onClearQuote !== undefined && (

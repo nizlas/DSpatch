@@ -4021,7 +4021,7 @@ function registerReviewMethods(): void {
     return answer;
   });
   handle('reviewPair.open', async (_event, request: unknown) => reconciled(await requireReviewPairs().openPair(request)));
-  handle('reviewPair.openForWalk', async (_event, pair) => reconciled(await requireReviewPairs().openForWalk(pair)));
+  handle('reviewPair.openForWalk', async (_event, pair, definitionPath?: unknown) => reconciled(await requireReviewPairs().openForWalk(pair, definitionPath)));
   handle('reviewPair.readFile', (_event, key: unknown, side: unknown, filePath: unknown) =>
     requireReviewPairs().readFile(key, side, filePath),
   );

@@ -237,11 +237,16 @@ export function registerReviewIpc(
     if (entry.view === 'diff' || identity === null) {
       return { error: 'No walk is open in this window.' };
     }
-    const opened = (await pairs.call('reviewPair.openForWalk', {
-      repository: identity.repository,
-      base: identity.base,
-      target: identity.target,
-    })) as PairAnswer<OpenPair>;
+    // The definition this window shows, as main opened it: the host reads its points worth checking itself (DSP-175).
+    const opened = (await pairs.call(
+      'reviewPair.openForWalk',
+      {
+        repository: identity.repository,
+        base: identity.base,
+        target: identity.target,
+      },
+      identity.definitionPath,
+    )) as PairAnswer<OpenPair>;
     if (!isPairError(opened)) {
       windows.joinPair(entry, opened.key);
     }

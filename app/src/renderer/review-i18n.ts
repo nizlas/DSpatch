@@ -163,6 +163,8 @@ export interface ReviewWords {
     readonly showSource: (place: string) => string;
     readonly openSource: string;
     readonly sourceFor: (place: string) => string;
+    readonly lineAt: (line: number) => string;
+    readonly linesAt: (start: number, end: number) => string;
   };
   readonly nav: {
     readonly previous: string;
@@ -418,6 +420,8 @@ const sv: ReviewWords = {
   },
   timeline: {
     label: 'Walkens kodställen i tidsordning',
+    lineAt: (line) => `rad ${String(line)}`,
+    linesAt: (start, end) => `rad ${String(start)}–${String(end)}`,
     hint: 'Shift + vänster musknapp och dra panorerar kartan. Mushjulsknappen och dra scrollar en panel. Shift + scrollhjul eller Alt + ← / → stegar.',
     call: 'källa',
     sourceIn: (place) => `källan visas i ${place}`,
@@ -694,6 +698,8 @@ const en: ReviewWords = {
   },
   timeline: {
     label: 'The walk’s code places in time order',
+    lineAt: (line) => `line ${String(line)}`,
+    linesAt: (start, end) => `lines ${String(start)}–${String(end)}`,
     hint: 'Shift + left mouse button and drag pans the map. The wheel button and drag scrolls one pane. Shift + scroll wheel or Alt + ← / → steps.',
     call: 'source',
     sourceIn: (place) => `the source is shown in ${place}`,

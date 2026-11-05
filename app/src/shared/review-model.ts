@@ -137,6 +137,36 @@ export interface WalkStep {
   readonly evidenceRefs: readonly CodeReference[];
   /** Every reference of the step — focus, context and evidence — for validation and coverage. */
   readonly refs: readonly CodeReference[];
+  /**
+   * DSP-175: places in other repositories of the review's workspace, read as context at the
+   * commit the analysis recorded. Kept apart from `places` and `refs` on purpose: they are
+   * never stations, never covered, never marked and never approved. Absent when there are none.
+   */
+  readonly contextPlaces?: readonly ContextPlace[];
+}
+
+/**
+ * A walk place in another repository of the workspace (DSP-175), stored under a step's
+ * `contextPlaces`, never under `places`: `{"id", "label", "focus": {"kind": "context",
+ * "repository", "commit", "path", "start", "end", "role": "context", "anchor"?, "note"?}}`.
+ * It opens from Git at `commit` through the review's context record (`readContextFile`),
+ * which also says how that commit was chosen and whether it is established.
+ */
+export interface ContextPlace {
+  readonly id: string;
+  readonly label: LocalText;
+  readonly focus: {
+    readonly kind: 'context';
+    /** The context repository's name in the review: its folder under `context/`. */
+    readonly repository: string;
+    /** The full commit the analysis read it at. */
+    readonly commit: string;
+    readonly path: string;
+    readonly start: number;
+    readonly end: number;
+    readonly anchor?: string;
+    readonly note?: LocalText;
+  };
 }
 
 /**
@@ -565,6 +595,67 @@ export function parseReviewDefinition(raw: unknown): {
   };
 }
 
+const CONTEXT_FOCUS_COMMIT = /^[0-9a-f]{40}$/;
+
+/**
+ * A step's context places (DSP-175), each checked for shape only; whether it exists at its
+ * commit is for the reader of the context record. A malformed one is reported and left out.
+ */
+function parseContextPlaces(raw: unknown, stepId: string, problems: DefinitionProblem[]): ContextPlace[] {
+  if (raw === undefined) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    problems.push({ where: stepId, problem: '"contextPlaces" must be an array when present.' });
+    return [];
+  }
+  const out: ContextPlace[] = [];
+  raw.forEach((entry: unknown, index) => {
+    const where = `${stepId}.contextPlaces[${String(index)}]`;
+    const focus = isRecord(entry) ? entry['focus'] : null;
+    if (!isRecord(entry) || !isRecord(focus)) {
+      problems.push({ where, problem: 'A context place must be an object with a "focus".' });
+      return;
+    }
+    const { repository, commit, path, start, end } = focus;
+    if (
+      typeof entry['id'] !== 'string' ||
+      entry['id'] === '' ||
+      typeof repository !== 'string' ||
+      repository === '' ||
+      typeof commit !== 'string' ||
+      !CONTEXT_FOCUS_COMMIT.test(commit) ||
+      typeof path !== 'string' ||
+      path === '' ||
+      path.includes('\\') ||
+      path.startsWith('/') ||
+      path.split('/').includes('..') ||
+      !positiveInt(start) ||
+      !positiveInt(end) ||
+      end < start
+    ) {
+      problems.push({ where, problem: 'A context place names an id, a repository, a full commit, a repository-relative path and 1-based lines.' });
+      return;
+    }
+    const note = focus['note'] === undefined ? undefined : localText(focus, 'note', where, problems, { required: false, bilingual: true });
+    out.push({
+      id: entry['id'],
+      label: localText(entry, 'label', where, problems, { required: true, bilingual: true }),
+      focus: {
+        kind: 'context',
+        repository,
+        commit,
+        path,
+        start,
+        end,
+        ...(typeof focus['anchor'] === 'string' ? { anchor: focus['anchor'] } : {}),
+        ...(note === undefined ? {} : { note }),
+      },
+    });
+  });
+  return out;
+}
+
 function parseStepV2(raw: Record<string, unknown>, stepId: string, where: string, problems: DefinitionProblem[]): WalkStep | null {
   const text = (key: string, required = true): LocalText =>
     localText(raw, key, where, problems, { required, bilingual: true });
@@ -651,6 +742,7 @@ function parseStepV2(raw: Record<string, unknown>, stepId: string, where: string
       }
     });
   }
+  const contextPlaces = parseContextPlaces(raw['contextPlaces'], stepId, problems);
   const evidenceRefs: CodeReference[] = [];
   const evidenceRefsRaw = raw['evidenceRefs'];
   if (Array.isArray(evidenceRefsRaw)) {
@@ -680,6 +772,8 @@ function parseStepV2(raw: Record<string, unknown>, stepId: string, where: string
       ]),
       ...evidenceRefs,
     ],
+    // DSP-175: never part of `places` or `refs`, so nothing counts them as covered.
+    ...(contextPlaces.length === 0 ? {} : { contextPlaces }),
   };
 }
 
@@ -1275,6 +1369,8 @@ export function stepContentHash(step: WalkStep): string {
             : { ref: place.unit.ref, kind: place.unit.kind, name: place.unit.name, ...(place.unit.counterpart === null ? {} : { counterpart: place.unit.counterpart }) },
         from: place.from === null ? null : { ref: place.from.ref, label: place.from.label },
       })),
+      // Only where there are any, so steps without them keep their hash (DSP-175).
+      ...(step.contextPlaces === undefined || step.contextPlaces.length === 0 ? {} : { contextPlaces: step.contextPlaces }),
     }),
   );
 }

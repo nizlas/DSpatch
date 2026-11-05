@@ -34,6 +34,7 @@ import {
   type LineRange,
   type LineSide,
   type PairFile,
+  type Recommendation,
   type RevisionPairIdentity,
   type StepAnswer,
   type StepQuestion,
@@ -122,7 +123,7 @@ function contextSection(material: AnalysisMaterial): string[] {
     }),
     ...unavailable.map((entry) => `- ${entry.name} could not be given as context: ${entry.reason}`),
     'Where the version the reviewed build uses is not established, keep apart what this context code shows and what holds for the reviewed build, and say which you mean.',
-    'To point at context code, name its repository instead of a side: {"label": "What this place shows", "repository": "<name>", "path": "src/file.ts", "start": 3, "end": 9}, with the path inside that repository and 1-based lines at the commit named. DSpatch checks it at that commit. Context is never reviewed, approved or covered: approved and reviewed lines, walk places and points worth checking stay in base/ and target/; an answer\'s references and a finding may point at context code this way.',
+    'To point at context code, name its repository instead of a side: {"label": "What this place shows", "repository": "<name>", "path": "src/file.ts", "start": 3, "end": 9}, with the path inside that repository and 1-based lines at the commit named. DSpatch checks it at that commit. Context is never reviewed, approved or covered: approved and reviewed lines and points worth checking stay in base/ and target/; an answer\'s references, a finding and a walk step\'s places may point at context code this way. A walk step that shows context code also keeps at least one place in base/ or target/: the changed or calling code the context explains.',
   ];
 }
 
@@ -354,6 +355,8 @@ export const CHECK_RULES = [
   '"reasoning": why it is worth checking, in short Markdown paragraphs, naming the classes, functions and conditions involved. Keep apart what the code shows and what you could not establish.',
   '"places": where it is in the code, as references with a label. Every place must exist at its side.',
   '"step": the id of the walk step below (for example "W1.2") that shows exactly the context of this check. Leave it out when no step fits: DSpatch then gives the check its own tour through its places. Never link a step only because it is in the same file.',
+  '"evidence": what the point rests on: the code you read, a test, a document. Keep apart what the code shows and what you could not establish.',
+  '"recommendation": what to do about it, as for a review finding: "kind" is "change", "test", "measure", "ask-author", "investigate" or "keep" (keep the code as it is; say why in the rationale), with "action" in a sentence, a short "rationale", what remains "uncertainty", and a concrete "nextStep" when more needs to be established. Recommend a code change only when what you read shows one is needed; when the evidence is missing, recommend the test, measurement or investigation that would settle it. The person decides; accepting a recommendation starts nothing.',
 ] as const;
 
 /** One walk step as the checks prompt shows it: its id, title, summary and places. */
@@ -402,6 +405,8 @@ export function checksPrompt(
             reasoning: 'Why it is worth checking, in short Markdown paragraphs.',
             places: [{ label: 'What this place shows', path: 'src/file.ts', side: 'target', start: 20, end: 26 }],
             step: 'W1.2',
+            evidence: 'What it rests on: the code read, a test, a document.',
+            recommendation: { kind: 'investigate', action: 'The recommended action in a sentence', rationale: 'Why, briefly', uncertainty: 'What is still uncertain', nextStep: 'A concrete next step' },
           },
         ],
       },
@@ -835,12 +840,27 @@ export interface ProposedPlace {
   readonly from?: { readonly label: string; readonly range: LineRange };
 }
 
+/**
+ * A place in another repository of the workspace, read as context (DSP-175). Its commit is
+ * the one the analysis recorded for that repository, filled in by {@link withContextCommits}
+ * once {@link walkPlaceProblems} found it there; until then it is what the agent named, or
+ * empty. Never a place in the reviewed revisions: never covered, marked or approved.
+ */
+export interface ProposedContextPlace {
+  readonly label: string;
+  readonly range: ContextRange;
+  readonly anchor: string | null;
+  readonly note: string;
+}
+
 export interface ProposedStep {
   readonly title: string;
   readonly summary: string;
   readonly body: string;
   readonly why: string;
   readonly places: readonly ProposedPlace[];
+  /** DSP-175: places in context repositories, apart from `places`. Absent when there are none. */
+  readonly contextPlaces?: readonly ProposedContextPlace[];
 }
 
 export interface ProposedWalk {
@@ -860,6 +880,10 @@ export interface ProposedCheck {
   readonly reasoning: string;
   readonly places: readonly { readonly label: string; readonly range: LineRange }[];
   readonly step: { readonly walk: number; readonly step: number } | null;
+  /** What it rests on (DSP-175); `''` when the agent said nothing. */
+  readonly evidence?: string;
+  /** What the agent recommends (DSP-175); absent when it gave none: none is made up. */
+  readonly recommendation?: Recommendation;
 }
 
 export interface ProposedWalks {
@@ -899,7 +923,18 @@ export function readWalksAnswer(raw: unknown): { readonly walks: ProposedWalks |
         return;
       }
       const places: ProposedPlace[] = [];
+      const contextPlaces: ProposedContextPlace[] = [];
       (Array.isArray(stepRaw['places']) ? stepRaw['places'] : []).forEach((placeRaw: unknown, placeIndex) => {
+        // DSP-175: a place that names a repository is context, kept apart from the reviewed places.
+        if (isObject(placeRaw) && isContextEntry(placeRaw)) {
+          const pending = pendingContextPlace(placeRaw);
+          if (pending === null) {
+            problems.push(`${stepWhere}, place ${String(placeIndex + 1)} names a repository but not a path inside it and 1-based lines.`);
+          } else {
+            contextPlaces.push(pending);
+          }
+          return;
+        }
         const range = rangeOf(placeRaw);
         if (range === null || !isObject(placeRaw)) {
           problems.push(`${stepWhere}, place ${String(placeIndex + 1)} does not name a path, a side and 1-based lines.`);
@@ -924,9 +959,13 @@ export function readWalksAnswer(raw: unknown): { readonly walks: ProposedWalks |
         problems.push(`${stepWhere} has no title or no body.`);
       }
       if (places.length === 0) {
-        problems.push(`${stepWhere} has no usable place.`);
+        problems.push(
+          contextPlaces.length === 0
+            ? `${stepWhere} has no usable place.`
+            : `${stepWhere} has only places in context repositories; a step also needs a place in base/ or target/.`,
+        );
       }
-      steps.push({ title, summary: text(stepRaw['summary']), body, why: text(stepRaw['why']), places });
+      steps.push({ title, summary: text(stepRaw['summary']), body, why: text(stepRaw['why']), places, ...(contextPlaces.length === 0 ? {} : { contextPlaces }) });
     });
     if (steps.length === 0) {
       problems.push(`${where} has no steps.`);
@@ -978,6 +1017,8 @@ function checksOf(checksRaw: unknown, problems: string[]): (Omit<ProposedCheck, 
       }
       places.push({ label: text(placeRaw['label']) || `${range.path}:${String(range.start)}`, range });
     }
+    const recommendation = recommendationFrom(checkRaw['recommendation']);
+    const evidence = text(checkRaw['evidence']);
     checks.push({
       kind: kind === 'uncertainty' || kind === 'finding' ? kind : 'question',
       title: text(checkRaw['title']),
@@ -985,6 +1026,8 @@ function checksOf(checksRaw: unknown, problems: string[]): (Omit<ProposedCheck, 
       reasoning: text(checkRaw['reasoning']),
       places,
       stepRaw: checkRaw['step'],
+      ...(evidence === '' ? {} : { evidence }),
+      ...(recommendation === null ? {} : { recommendation }),
     });
   }
   return checks;
@@ -1062,10 +1105,20 @@ export async function placeProblem(place: ProposedPlace, read: LineReader): Prom
 }
 
 /** Every place problem of a proposal, keyed by walk/step/place, for the repair round. */
-export async function walkPlaceProblems(walks: ProposedWalks, read: LineReader): Promise<Map<string, string>> {
+export async function walkPlaceProblems(walks: ProposedWalks, read: LineReader, context: ContextReader | null = null): Promise<Map<string, string>> {
   const problems = new Map<string, string>();
   for (const [walkIndex, walk] of walks.walks.entries()) {
     for (const [stepIndex, step] of walk.steps.entries()) {
+      // DSP-175: context places, checked at the commit the analysis recorded; keyed apart (`.c<n>`).
+      for (const [placeIndex, place] of (step.contextPlaces ?? []).entries()) {
+        const problem = await contextPlaceProblem(place, context);
+        if (problem !== null) {
+          problems.set(
+            `${String(walkIndex)}.${String(stepIndex)}.c${String(placeIndex)}`,
+            `walk ${String(walkIndex + 1)}, step ${String(stepIndex + 1)}, context place ${String(placeIndex + 1)}: ${problem}`,
+          );
+        }
+      }
       for (const [placeIndex, place] of step.places.entries()) {
         const problem =
           (await placeProblem(place, read)) ??
@@ -1088,9 +1141,12 @@ export function withoutInvalidPlaces(walks: ProposedWalks, invalid: ReadonlyMap<
     const steps: ProposedStep[] = [];
     walk.steps.forEach((step, stepIndex) => {
       const places = step.places.filter((_, placeIndex) => !invalid.has(`${String(walkIndex)}.${String(stepIndex)}.${String(placeIndex)}`));
+      const contextPlaces = (step.contextPlaces ?? []).filter((_, placeIndex) => !invalid.has(`${String(walkIndex)}.${String(stepIndex)}.c${String(placeIndex)}`));
+      // A step stands on its places in the reviewed revisions; context only accompanies them.
       if (places.length > 0 && step.title !== '' && step.body !== '') {
         moved.set(`${String(walkIndex)}.${String(stepIndex)}`, { walk: kept.length, step: steps.length });
-        steps.push({ ...step, places });
+        const { contextPlaces: _left, ...rest } = step;
+        steps.push({ ...rest, places, ...(contextPlaces.length === 0 ? {} : { contextPlaces }) });
       }
     });
     if (steps.length > 0) {
@@ -1132,6 +1188,9 @@ export function checkDefinition(check: ProposedStandaloneCheck, id: string): Rec
     ...(check.detail === '' ? {} : { detail: lang2(check.detail) }),
     ...(check.reasoning === '' ? {} : { reasoning: lang2(check.reasoning) }),
     ...(check.stepId === null ? {} : { stepId: check.stepId }),
+    // DSP-175: kept as the agent wrote them; the thread reads them, the walk format ignores them.
+    ...(check.evidence === undefined || check.evidence === '' ? {} : { evidence: lang2(check.evidence) }),
+    ...(check.recommendation === undefined ? {} : { recommendation: { ...check.recommendation } }),
     places,
     // No step fits and there is code to show: a tour of its own, one place after another.
     ...(check.stepId !== null || check.places.length === 0
@@ -1232,6 +1291,26 @@ export function definitionFrom(
                   },
                 }),
           })),
+          // DSP-175: apart from `places`, so nothing that reads places counts them as covered.
+          ...((step.contextPlaces ?? []).length === 0
+            ? {}
+            : {
+                contextPlaces: (step.contextPlaces ?? []).map((place, placeIndex) => ({
+                  id: `K${String(placeIndex + 1)}`,
+                  label: lang2(place.label),
+                  focus: {
+                    kind: 'context',
+                    repository: place.range.repository,
+                    commit: place.range.commit,
+                    path: place.range.path,
+                    start: place.range.start,
+                    end: place.range.end,
+                    role: 'context',
+                    ...(place.anchor === null ? {} : { anchor: place.anchor }),
+                    ...(place.note === '' ? {} : { note: lang2(place.note) }),
+                  },
+                })),
+              }),
         })),
       };
     }),
@@ -1456,6 +1535,78 @@ async function checkedContextRange(raw: Record<string, unknown>, context: Contex
     return { problem: `${at}: the file has ${String(found.lines.length)} lines at ${found.commit.slice(0, 7)}.` };
   }
   return { kind: 'context', repository, commit: found.commit, path: filePath, start: start as number, end: end as number };
+}
+
+/** A walk's context place as the agent wrote it, before it is checked; `null` when it names no path and lines. */
+function pendingContextPlace(raw: Record<string, unknown>): ProposedContextPlace | null {
+  const repository = text(raw['repository']);
+  const filePath = typeof raw['path'] === 'string' ? raw['path'] : '';
+  const start = raw['start'];
+  const end = raw['end'] ?? raw['start'];
+  if (filePath === '' || !Number.isInteger(start) || !Number.isInteger(end) || (start as number) < 1 || (end as number) < (start as number)) {
+    return null;
+  }
+  return {
+    label: text(raw['label']) || `${repository}/${filePath}:${String(start)}`,
+    // A commit the agent named is kept only to be compared with the recorded one.
+    range: { kind: 'context', repository, commit: text(raw['commit']), path: filePath, start: start as number, end: end as number },
+    anchor: text(raw['anchor']) || null,
+    note: text(raw['note']),
+  };
+}
+
+/**
+ * Why a walk's context place cannot be shown (DSP-175), or `null` when it can: its repository
+ * must be context of this analysis, the file and lines must exist at the commit recorded for
+ * it, a commit the agent named must be that commit, and an anchor must occur on the lines.
+ */
+async function contextPlaceProblem(place: ProposedContextPlace, context: ContextReader | null): Promise<string | null> {
+  const checked = await checkedContextRange({ ...place.range }, context);
+  if ('problem' in checked) {
+    return checked.problem;
+  }
+  const at = `${place.range.repository}: ${place.range.path} lines ${String(place.range.start)}–${String(place.range.end)}`;
+  const asked = place.range.commit.toLowerCase();
+  if (asked !== '' && !(asked.length >= 7 && checked.commit.startsWith(asked))) {
+    return `${at}: it names commit ${asked.slice(0, 12)}, but this review read ${place.range.repository} at ${checked.commit.slice(0, 12)}; only that commit is shown.`;
+  }
+  if (place.anchor !== null) {
+    const found = await context?.read(place.range.repository, place.range.path);
+    const shown = (found?.lines ?? []).slice(place.range.start - 1, place.range.end).join('\n');
+    if (!shown.includes(place.anchor)) {
+      return `${at}: the anchor "${place.anchor.slice(0, 60)}" does not occur on those lines.`;
+    }
+  }
+  return null;
+}
+
+/**
+ * The proposal with every context place given the commit the analysis recorded for its
+ * repository (DSP-175). Run after {@link withoutInvalidPlaces}, so every place left exists
+ * there; one whose repository is somehow not context any more is left out.
+ */
+export async function withContextCommits(walks: ProposedWalks, context: ContextReader | null): Promise<ProposedWalks> {
+  const out: ProposedWalk[] = [];
+  for (const walk of walks.walks) {
+    const steps: ProposedStep[] = [];
+    for (const step of walk.steps) {
+      if (step.contextPlaces === undefined) {
+        steps.push(step);
+        continue;
+      }
+      const contextPlaces: ProposedContextPlace[] = [];
+      for (const place of step.contextPlaces) {
+        const checked = await checkedContextRange({ ...place.range }, context);
+        if (!('problem' in checked)) {
+          contextPlaces.push({ ...place, range: checked });
+        }
+      }
+      const { contextPlaces: _before, ...rest } = step;
+      steps.push({ ...rest, ...(contextPlaces.length === 0 ? {} : { contextPlaces }) });
+    }
+    out.push({ ...walk, steps });
+  }
+  return { ...walks, walks: out };
 }
 
 /**

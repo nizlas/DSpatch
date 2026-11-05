@@ -12,6 +12,7 @@ import {
   type EnvelopeRange,
   type EnvelopeRangeRole,
   type QuoteSegment,
+  quoteOriginFrom,
 } from './review-discussion';
 import type { CodeLocation, ReviewFileOutcome, RevisionSide } from './review-model';
 
@@ -36,7 +37,8 @@ export async function checkedQuote(raw: unknown, read: RevisionReader, shaOf: (s
   if (value['kind'] === 'text') {
     const source = value['source'] === 'answer' ? 'answer' : value['source'] === 'thread' ? 'thread' : 'explanation';
     const context = typeof value['context'] === 'string' ? value['context'].slice(0, QUOTE_LIMITS.contextChars) : '';
-    return { kind: 'text', text, source, context };
+    const origin = quoteOriginFrom(value['origin']);
+    return { kind: 'text', text, source, context, ...(origin === undefined ? {} : { origin }) };
   }
   if (value['kind'] !== 'code' || !Array.isArray(value['segments']) || value['segments'].length === 0 || value['segments'].length > QUOTE_LIMITS.segments) {
     return { error: 'The selection is not one DSpatch can read; nothing was sent.' };

@@ -31,7 +31,9 @@ import {
   parseLog,
   reviewTotalsOf,
   scopeFrom,
+  storedChecksFromDefinition,
   threadActionFrom,
+  type CheckSource,
   type LineRange,
   type LineSide,
   type LogCommit,
@@ -48,7 +50,8 @@ import {
   type RevisionPairIdentity,
 } from '../shared/review-pair';
 import { ORIENTATION_DIFF_CHARS, type AnalysisMaterial, type WalkStepOutline } from '../shared/review-agent';
-import { reviewThreadsOf, threadActionProblem } from '../shared/review-threads';
+import { CHECKS_FILE_FORMAT, checksFileOf } from '../shared/review-model';
+import { checkThreadId, reviewThreadsOf, reviewerOf, threadActionProblem } from '../shared/review-threads';
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -548,6 +551,73 @@ export class ReviewPairs {
     return isPairError(written) ? written : { ended: true };
   }
 
+  /**
+   * The points worth checking of a walk definition over exactly this pair, read by the host
+   * from the definition and its checks file and kept in the pair record (DSP-175), so they are
+   * review threads every window shows with the same status. Called when a job wrote them
+   * (`jobId`) and when a walk window joins the pair, so a walk prepared before adopts its
+   * points without being prepared again. A point the person commented on or decided about
+   * stays when the points are asked for again, retired from the walk. Writes only on a change.
+   */
+  adoptChecks(key: unknown, definitionPath: unknown, jobId?: string): void {
+    const opened = this.openOf(key);
+    if (opened === null || typeof definitionPath !== 'string' || definitionPath === '') {
+      return;
+    }
+    const resolved = path.resolve(definitionPath);
+    let raw: Record<string, unknown>;
+    try {
+      raw = JSON.parse(fs.readFileSync(resolved, 'utf8')) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    const repository = typeof raw['repository'] === 'string' ? path.resolve(path.dirname(resolved), raw['repository']) : null;
+    if (repository === null || folderIdentity(repository) !== folderIdentity(opened.pair.repository) || raw['base'] !== opened.pair.base || raw['target'] !== opened.pair.target) {
+      return;
+    }
+    // Points asked for on their own replace those written with the walks, as the walk window shows them.
+    let checksRaw: unknown = raw['checks'];
+    let separate = false;
+    try {
+      const kept = JSON.parse(fs.readFileSync(checksFileOf(resolved), 'utf8')) as { format?: unknown; checks?: unknown };
+      if (kept.format === CHECKS_FILE_FORMAT && Array.isArray(kept.checks)) {
+        checksRaw = kept.checks;
+        separate = true;
+      }
+    } catch {
+      // No checks file, or one that cannot be read: the definition's own points hold.
+    }
+    const checks = storedChecksFromDefinition(checksRaw, safeRepositoryPath);
+    const record = this.readRecord(opened.key, opened.pair);
+    const sources = record.checkSources ?? [];
+    const before = sources.find((source) => folderIdentity(source.definitionPath) === folderIdentity(resolved));
+    if (before === undefined && checks.length === 0) {
+      return;
+    }
+    const engaged = new Set(record.threads.filter((entry) => entry.events.length > 0).map((entry) => entry.threadId));
+    const now = new Set(checks.map(checkThreadId));
+    const retired = (before?.checks ?? [])
+      .filter((check) => !now.has(checkThreadId(check)) && engaged.has(checkThreadId(check)))
+      .map((check) => ({ ...check, retired: true }));
+    // Who prepared them: the job named, else the latest job over this definition that could have.
+    const over = (job: (typeof record.jobs)[number]): boolean => job.definitionPath !== null && folderIdentity(job.definitionPath) === folderIdentity(resolved);
+    const job =
+      (jobId === undefined ? undefined : record.jobs.find((entry) => entry.id === jobId)) ??
+      [...record.jobs].reverse().find((entry) => entry.state === 'done' && entry.kind === (separate ? 'checks' : 'walks') && over(entry));
+    const next: CheckSource = {
+      definitionPath: resolved,
+      jobId: job?.id ?? before?.jobId ?? null,
+      reviewer: job === undefined ? (before?.reviewer ?? '') : reviewerOf(job),
+      at: jobId !== undefined ? new Date().toISOString() : (before?.at ?? job?.endedAt ?? ''),
+      checks: [...checks, ...retired],
+    };
+    if (before !== undefined && JSON.stringify({ ...before, at: '' }) === JSON.stringify({ ...next, at: '' })) {
+      return;
+    }
+    const written = before === undefined ? [...sources, next] : sources.map((source) => (source === before ? next : source));
+    this.write(opened.key, { ...record, checkSources: written }, true);
+  }
+
   /** The walk definition just opened from this review, for the next *Code walks*. */
   walkOpened(key: unknown, definitionPath: unknown): void {
     const opened = this.openOf(key);
@@ -669,9 +739,15 @@ export class ReviewPairs {
    * The repository comes from the walk definition the host itself opened, never from a
    * window, which is why it may be admitted here.
    */
-  async openForWalk(pair: RevisionPairIdentity): Promise<PairAnswer<OpenPair>> {
+  async openForWalk(pair: RevisionPairIdentity, definitionPath?: unknown): Promise<PairAnswer<OpenPair>> {
     this.admit(pair.repository);
-    return this.openPair(pair);
+    const opened = await this.openPair(pair);
+    // DSP-175: the walk's points worth checking become the review's threads, read here from the file.
+    if (isPairError(opened) || typeof definitionPath !== 'string') {
+      return opened;
+    }
+    this.adoptChecks(opened.key, definitionPath);
+    return { ...opened, record: this.readRecord(opened.key, opened.pair) };
   }
 
   /**

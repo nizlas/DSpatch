@@ -43,6 +43,7 @@ import {
   type PairRecord,
 } from '../src/shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges } from '../src/shared/review-pair-walk';
+import { reviewThreadsOf } from '../src/shared/review-threads';
 import { makeHistoryFixture, type HistoryFixture } from './support/history-fixture';
 import { PAIR_WORKING_TREE_ONLY, makePairFixture, type PairFixture } from './support/pair-fixture';
 
@@ -715,5 +716,59 @@ describe('changes inside changed lines (Gerrit v3.14.4 behaviour)', () => {
   it('marks a block too large to compare throughout', () => {
     const long = 'x'.repeat(15_000);
     assert.equal(intralineBlock([long], [`${long}y`]), null);
+  });
+});
+
+describe('points worth checking become review threads (DSP-175)', () => {
+  const walkWith = (name: string, checks: unknown[], base = fixture.appBase): string => {
+    const definition = path.join(path.dirname(fixture.walkDefinition), `${name}.review.json`);
+    const raw = JSON.parse(fs.readFileSync(fixture.walkDefinition, 'utf8')) as Record<string, unknown>;
+    fs.writeFileSync(definition, `${JSON.stringify({ ...raw, base, checks }, null, 2)}\n`);
+    return definition;
+  };
+  const older = { id: 'C1', kind: 'uncertainty', title: { sv: 'Osäkert', en: 'Whether v3 is read elsewhere' }, places: [{ path: 'src/keep.ts', side: 'target', start: 3, end: 3, role: 'context' }] };
+  const pairOf = () => ({ repository: fixture.app, base: fixture.appBase, target: fixture.appTarget });
+
+  it('adopts an older walk\'s points when its window joins the pair, once, with no recommendation made up', async () => {
+    const definition = walkWith('older', [older]);
+    const opened = await pairs.openForWalk(pairOf(), definition);
+    assert.ok(!isPairError(opened));
+    const thread = reviewThreadsOf(opened.record).find((entry) => entry.points.some((point) => point.checkId === 'C1'));
+    assert.ok(thread !== undefined);
+    assert.equal(thread.kind, 'gap');
+    assert.equal(thread.recommendation, null);
+    assert.equal(thread.origin.source, 'worth-checking');
+    const writes = changes.length;
+    const again = await pairs.openForWalk(pairOf(), definition);
+    assert.ok(!isPairError(again));
+    assert.equal(changes.length, writes, 'opening the walk again wrote the record again');
+    assert.equal(reviewThreadsOf(again.record).filter((entry) => entry.id === thread.id).length, 1);
+  });
+
+  it('lets the host accept a point\'s recommendation as an agreed action, and keeps the point the person engaged with when the points are asked again', async () => {
+    const recommended = { id: 'C1', kind: 'finding', title: 'v3 is not covered by a test', places: [{ path: 'src/keep.ts', side: 'target', start: 3, end: 3 }], recommendation: { kind: 'change', action: 'Add a test.', rationale: 'Untested.' } };
+    const definition = walkWith('fresh', []);
+    fs.writeFileSync(definition.replace(/\.review\.json$/, '.checks.json'), JSON.stringify({ format: 'dspatch-checks/1', checks: [recommended] }));
+    const opened = await pairs.openForWalk(pairOf(), definition);
+    assert.ok(!isPairError(opened));
+    const thread = reviewThreadsOf(opened.record).find((entry) => entry.title === 'v3 is not covered by a test');
+    assert.ok(thread !== undefined);
+    const accepted = pairs.thread(opened.key, { threadId: thread.id, kind: 'accept', text: '' });
+    assert.ok(!isPairError(accepted));
+    assert.equal(reviewThreadsOf(accepted).find((entry) => entry.id === thread.id)?.status, 'action-agreed');
+    // Asked again: a new point replaces it in the walk, but the decided one stays a thread.
+    fs.writeFileSync(definition.replace(/\.review\.json$/, '.checks.json'), JSON.stringify({ format: 'dspatch-checks/1', checks: [{ ...older, id: 'C1' }] }));
+    pairs.adoptChecks(opened.key, definition);
+    const after = reviewThreadsOf(pairs.storedRecord(pairOf()));
+    const kept = after.find((entry) => entry.id === thread.id);
+    assert.equal(kept?.status, 'action-agreed');
+    assert.deepEqual(kept?.points, []);
+  });
+
+  it('reads no points from a walk over other commits', async () => {
+    const definition = walkWith('other', [{ ...older, title: 'Not this pair' }], fixture.libBase);
+    const opened = await pairs.openForWalk(pairOf(), definition);
+    assert.ok(!isPairError(opened));
+    assert.ok(!reviewThreadsOf(opened.record).some((entry) => entry.title === 'Not this pair'));
   });
 });

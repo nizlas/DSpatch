@@ -65,6 +65,8 @@ const simulated = {
   DSPATCH_PRESENTATION_DELTA_MS: '120',
   DSPATCH_CLAUDE_AUTHORIZATION: 'presentation-simulated',
   DSPATCH_REVIEW_SIM: 'threads',
+  // Answers to review questions long and slow enough to scroll against while they arrive.
+  DSPATCH_REVIEW_SIM_STREAM_MS: '150',
 };
 const results = [];
 const pages = [];
@@ -561,7 +563,11 @@ async function openPair(page) {
     await page.until('the review resumed', `${q('pair-discussion')}!==null`, 60_000);
     return;
   }
-  if ((await page.ev(`${q('pair-repo-0')}!==null`)) === true) await page.click('pair-repo-0');
+  if ((await page.ev(`${q('pair-repo-0')}!==null`)) === true) {
+    // The workspace holds the reviewed project and, inside it, the library: the project is chosen by its folder name.
+    const which = await page.ev(`[...document.querySelectorAll('[data-ev^="pair-repo-"]')].find((e) => e.textContent.includes(${JSON.stringify(path.basename(project))}) && !e.textContent.includes('count-lib'))?.dataset.ev ?? 'pair-repo-0'`);
+    await page.click(which);
+  }
   await page.until('the log', `${q('pair-commit-1')}!==null`);
   await page.click('pair-commit-1');
   await page.until('From chosen', chosen(1));
@@ -625,7 +631,7 @@ async function checkDocked(windowId, label, name, typed) {
 
 /** Where an element matched by a CSS selector is on the screen, in physical pixels. */
 async function pointAt(contentsId, selector, block = 'center') {
-  const inner = `(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;e.scrollIntoView({block:${JSON.stringify(block)}});const b=e.getBoundingClientRect();return {x:b.x+Math.min(b.width/2,40),y:b.y+b.height/2,w:b.width,h:b.height,top:b.y,left:b.x}})()`;
+  const inner = `(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;${block === null ? '' : `e.scrollIntoView({block:${JSON.stringify(block)}});`}const b=e.getBoundingClientRect();return {x:b.x+Math.min(b.width/2,40),y:b.y+b.height/2,w:b.width,h:b.height,top:b.y,left:b.x}})()`;
   const answer = JSON.parse(await client.main.ev(`(async () => {
     const { BrowserWindow, webContents } = process.mainModule.require('electron');
     const wc = webContents.fromId(${String(contentsId)});
@@ -667,6 +673,107 @@ async function shotThread(w, contentsId, name) {
   return shot;
 }
 
+
+// --- DSP-175 completion: helpers ----------------------------------------------------------------
+
+const DISCUSSION_SCROLLER = `(()=>{let e=document.querySelector('[data-ev="discussion"]');while(e&&!(['auto','scroll'].includes(getComputedStyle(e).overflowY)))e=e.parentElement;return e?JSON.stringify({top:Math.round(e.scrollTop),height:e.scrollHeight,client:e.clientHeight,gap:Math.round(e.scrollHeight-e.scrollTop-e.clientHeight)}):'null'})()`;
+const lastAnswerStatus = (contentsId) => read(contentsId, `[...document.querySelectorAll('.rv-discussion-answer')].at(-1)?.dataset.status ?? ''`);
+
+/** Select a paragraph's text with a real triple click, as a reader does. */
+async function selectText(contentsId, selector) {
+  const at = await pointAt(contentsId, selector, 'center');
+  if (onWindows) {
+    for (let i = 0; i < 3; i += 1) powershell('os-input.ps1', '-mode', 'click', '-x', String(at.physical.x), '-y', String(at.physical.y));
+  } else {
+    xdotool('mousemove', '--sync', String(at.physical.x), String(at.physical.y));
+    await delay(120);
+    xdotool('click', '--repeat', '3', '--delay', '90', '1');
+  }
+  await delay(600);
+  return read(contentsId, `getSelection().toString()`);
+}
+
+/** Empty the discussion's question field with the keyboard. */
+async function clearComposer(contentsId) {
+  await poll('no turn in progress', async () => (await read(contentsId, `document.querySelector('[data-ev="discussion-stop"]')===null`)) === true, 90_000);
+  await osClick((await pointAt(contentsId, '[data-ev="discussion-composer"]', null)).physical);
+  await osKey('ctrl+a');
+  await osKey('BackSpace');
+}
+
+/**
+ * A question sent, its long answer streaming, the reader at the bottom, scrolling up, an
+ * ordinary re-render, and New response ↓: in the discussion of `pc`, wherever it is shown.
+ * `pageState` reads what else could scroll in the window, which must not move.
+ */
+async function streamingScroll(pc, label, pageState) {
+  const state = async () => JSON.parse(await read(pc, DISCUSSION_SCROLLER));
+  await poll(`${label}: no turn in progress`, async () => (await read(pc, `document.querySelector('[data-ev="discussion-stop"]')===null`)) === true, 90_000);
+  const pageBefore = await pageState();
+  const turnsBefore = await turnCount(pc);
+  await clearComposer(pc);
+  await osType(`${label}: walk me through the whole change`);
+  await osKey('Return');
+  await poll(`${label}: the question shown`, async () => (await turnCount(pc)) > turnsBefore, 20_000);
+  await delay(250);
+  const sent = await state();
+  check(`${label}: a sent question is scrolled into view at once`, sent.gap <= 64, JSON.stringify(sent));
+  await poll(`${label}: the answer streaming`, async () => (await lastAnswerStatus(pc)) === 'streaming', 40_000);
+  const samples = [];
+  for (let i = 0; i < 4; i += 1) {
+    await delay(450);
+    samples.push(await state());
+  }
+  check(
+    `${label}: at the bottom, the view follows the answer as it streams`,
+    samples.at(-1).height > samples[0].height && samples.every((sample) => sample.gap <= 64) && (await lastAnswerStatus(pc)) === 'streaming',
+    JSON.stringify(samples),
+  );
+  const area = await pointAt(pc, '.rv-discussion-composer-area', null);
+  await osWheel({ x: area.physical.x + 80, y: area.physical.y - 160 }, 6, false);
+  await delay(250);
+  const upA = await state();
+  await delay(1500);
+  const upB = await state();
+  const still = await lastAnswerStatus(pc);
+  check(
+    `${label}: scrolled up while it streams, the reading position stays as more arrives`,
+    upA.gap > 64 && Math.abs(upB.top - upA.top) <= 2 && upB.height > upA.height && still === 'streaming',
+    JSON.stringify({ upA, upB, still }),
+  );
+  const offered = await read(pc, `document.querySelector('[data-ev="discussion-new-response"]')!==null`);
+  check(`${label}: New response ↓ is offered while the answer still arrives`, offered === true && still === 'streaming', JSON.stringify({ offered, still }));
+  // An ordinary re-render: typing a draft redraws the discussion; the reader stays put.
+  await osClick((await pointAt(pc, '[data-ev="discussion-composer"]', null)).physical);
+  await osType('unsent draft');
+  const typed = await state();
+  check(`${label}: typing a draft re-renders without pulling the reader to the bottom`, Math.abs(typed.top - upB.top) <= 2 && typed.gap > 64, JSON.stringify({ upB, typed }));
+  await w_shot(pc, `${label.replace(/\W+/g, '-')}-scrolled-up`);
+  await osClick((await pointAt(pc, '[data-ev="discussion-new-response"]', null)).physical);
+  await delay(200);
+  const back = await state();
+  await delay(900);
+  const later = await state();
+  const stillAfter = await lastAnswerStatus(pc);
+  check(
+    `${label}: New response ↓ goes back to the answer, and following resumes`,
+    back.gap <= 64 && later.gap <= 64 && (stillAfter !== 'streaming' || later.height > back.height),
+    JSON.stringify({ back, later, stillAfter }),
+  );
+  check(`${label}: the composer kept the unsent draft`, (await composerValue(pc))?.includes('unsent draft') === true);
+  check(`${label}: only the discussion's own scroller moved`, (await pageState()) === pageBefore, JSON.stringify({ pageBefore, after: await pageState() }));
+  await poll(`${label}: the answer done`, async () => (await lastAnswerStatus(pc)) === 'done', 90_000);
+  await clearComposer(pc);
+}
+
+/** A screenshot of the window a contents is shown in. */
+async function w_shot(contentsId, name) {
+  const at = await pointAt(contentsId, 'body', null);
+  const w = await activate(at.windowId);
+  await delay(300);
+  return shotWindow(w, name);
+}
+
 async function main() {
   stage = 'preflight';
   check('xdotool and import are here', run('sh', ['-c', 'command -v xdotool && command -v import'], true) !== '');
@@ -703,9 +810,22 @@ async function main() {
     {
       'src/app.js': `export function greet(name) {\n  return 'Hello, ' + name + '!';\n}\n${keep}\nexport function shout(name) {\n  return name.toUpperCase();\n}\n${stay}\n${lines(12, (n) => `export const added${String(n)} = ${String(n)};`)}\n`,
       'src/farewell.js': `export function farewell(name) {\n  return 'Goodbye, ' + name + '.';\n}\n`,
-      'src/count.js': `export const count = 2;\n`,
+      // DSP-175: a call into a library that is another repository of the workspace.
+      'src/count.js': `import { formatCount } from 'count-lib';\n\nexport const count = 2;\nexport const label = 'Items: ' + formatCount(count);\n`,
     },
   ];
+  // The library: its own repository inside the workspace folder, ignored by the reviewed one.
+  // Nothing declares which version the app uses, so the library is read at its HEAD and the
+  // walk must say that the relation to the reviewed build is not established.
+  const library = path.join(project, 'libs', 'count-lib');
+  fs.mkdirSync(path.join(library, 'src'), { recursive: true });
+  const libGit = (...args) => run('git', ['-C', library, '-c', 'user.name=Trial', '-c', 'user.email=trial@example.invalid', '-c', 'core.autocrlf=false', ...args]);
+  libGit('init', '-q');
+  fs.writeFileSync(path.join(library, 'package.json'), `{"name":"count-lib","version":"1.0.0"}\n`);
+  fs.writeFileSync(path.join(library, 'src', 'format.js'), `export function formatCount(count) {\n  if (count === 0) return 'none';\n  if (count === 1) return 'one';\n  return String(count);\n}\n`);
+  libGit('add', '.');
+  libGit('commit', '-qm', 'count-lib 1.0.0');
+  fs.writeFileSync(path.join(project, '.gitignore'), 'libs/\n');
   for (const [index, files] of versions.entries()) {
     for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(project, name), text);
     git('add', '.');
@@ -831,6 +951,8 @@ async function main() {
   check('the question asked in the thread is one line in the discussion', ((await read(pc, `document.querySelectorAll('[data-ev="discussion-in-thread"]').length`)) ?? 0) >= 1);
   const scrollerState = `(()=>{let e=document.querySelector('[data-ev="discussion"]');while(e&&!(['auto','scroll'].includes(getComputedStyle(e).overflowY)))e=e.parentElement;return e?JSON.stringify({top:e.scrollTop,height:e.scrollHeight,client:e.clientHeight,gap:e.scrollHeight-e.scrollTop-e.clientHeight}):'null'})()`;
   for (const question of ['First question about greet', 'Second question about farewell', 'Third question about count']) {
+    // An answer still arriving (the thread's, or the one before) is a turn in progress: wait for it.
+    await poll('no turn in progress', async () => (await read(pc, `document.querySelector('[data-ev="discussion-stop"]')===null`)) === true, 90_000);
     const composer = await client.main.pointOf(pc, 'discussion-composer');
     await osClick(composer.physical);
     await osType(question);
@@ -839,32 +961,10 @@ async function main() {
   }
   const atEnd = JSON.parse(await read(pc, scrollerState));
   check('after the answers, the docked discussion shows the latest at its bottom', atEnd.gap <= 64, JSON.stringify(atEnd));
-  {
-    const composer = await client.main.pointOf(pc, 'discussion-composer');
-    await osClick(composer.physical);
-    await osType('Explain the whole change in detail please');
-    await osKey('Return');
-    await poll('the answer streaming', async () => (await read(pc, `[...document.querySelectorAll('.rv-discussion-answer')].at(-1)?.dataset.status`)) === 'streaming', 30_000).catch(() => undefined);
-    const thread = await pointAt(pc, '[data-ev="discussion-thread"]', 'nearest');
-    await osWheel({ x: thread.physical.x + 100, y: thread.physical.y }, 5, false);
-    await delay(1500);
-    const up = JSON.parse(await read(pc, scrollerState));
-    const offered = await read(pc, `document.querySelector('[data-ev="discussion-new-response"]')!==null`);
-    const streaming = await read(pc, `[...document.querySelectorAll('.rv-discussion-answer')].at(-1)?.dataset.status`);
-    check('scrolled up while an answer arrives, the reader stays where they are', up.gap > 64, JSON.stringify({ up, streaming }));
-    note('New response ↓ offered while the answer was still arriving', `${String(offered)} (the answer was ${String(streaming)} at the time)`);
-    await poll('the answer done', async () => (await read(pc, `[...document.querySelectorAll('.rv-discussion-answer')].at(-1)?.dataset.status`)) === 'done', 90_000);
-    if ((await read(pc, `document.querySelector('[data-ev="discussion-new-response"]')!==null`)) === true) {
-      await osClick((await pointAt(pc, '[data-ev="discussion-new-response"]', 'nearest')).physical);
-      const back = JSON.parse(await read(pc, scrollerState));
-      check('New response ↓ goes back to the latest and follows again', back.gap <= 64, JSON.stringify(back));
-    } else {
-      check('New response ↓ is offered after the reader scrolled up', false, 'not shown');
-    }
-    w = await activate(diffWindow.id);
-    await delay(500);
-    await shotWindow(w, '14-docked-discussion');
-  }
+  await streamingScroll(pc, 'docked in the diff window', () => diff.ev(`JSON.stringify([...document.querySelectorAll('*')].filter((e) => e.scrollTop > 0).map((e) => e.scrollTop))`));
+  w = await activate(diffWindow.id);
+  await delay(500);
+  await shotWindow(w, '14-docked-discussion');
 
   stage = 'zoom';
   for (const [item, name] of [['dspatch-zoom-in', '15-thread-at-plus-1'], ['dspatch-zoom-out', '16-thread-at-0'], ['dspatch-zoom-out', '17-thread-at-minus-1']]) {
@@ -923,7 +1023,8 @@ async function main() {
   async function pan(dx) {
     w = await activate(walkWindow.id);
     const view = await pointAt(walkWindow.contentsId, '.rv-timeline-viewport', 'nearest');
-    const start = { x: view.physical.x + 500, y: view.physical.y };
+    // Inside the map whatever its width (a docked panel makes it narrower).
+    const start = { x: view.physical.x + Math.max(40, Math.min(460, Math.round(view.inWindow.width / 2))), y: view.physical.y };
     xdotool('mousemove', '--sync', String(start.x), String(start.y));
     xdotool('keydown', 'shift');
     xdotool('mousedown', '1');
@@ -962,11 +1063,11 @@ async function main() {
   for (let index = 0; index < stations && here === 0; index += 1) {
     await walk.ev(`document.querySelectorAll('.rv-strip-dot')[${String(index)}]?.click()`);
     await delay(700);
-    here = (await read(panelNow.view.contentsId, `document.querySelectorAll('[data-ev="walk-threads-here"] [data-ev="review-thread"]').length`)) ?? 0;
+    here = (await read(panelNow.view.contentsId, `document.querySelectorAll('[data-ev="walk-threads-here"] [data-ev="review-thread"][data-thread-level="lines"]').length`)) ?? 0;
   }
   check('a place of the walk shows the review threads anchored there, in the panel\'s Step', here > 0, String(here));
   if (here > 0) {
-    const id = await read(panelNow.view.contentsId, `document.querySelector('[data-ev="walk-threads-here"] [data-ev="review-thread"]').dataset.threadId`);
+    const id = await read(panelNow.view.contentsId, `document.querySelector('[data-ev="walk-threads-here"] [data-ev="review-thread"][data-thread-level="lines"]').dataset.threadId`);
     const field = `[data-ev="walk-threads-here"] [data-thread-id="${id}"] [data-ev="thread-comment-field"]`;
     if ((await read(panelNow.view.contentsId, `document.querySelector(${JSON.stringify(field)})===null`)) === true) {
       await osClickAt(panelNow.view.contentsId, `[data-ev="walk-threads-here"] [data-thread-id="${id}"] [data-ev="thread-toggle"]`);
@@ -982,6 +1083,363 @@ async function main() {
     await delay(500);
     await shotWindow(w, '20-walk-step-thread');
   }
+
+  // ---------------------------------------------------------------- DSP-175 completion round
+  const wc = walkWindow.contentsId;
+  const pcw = panelNow.view.contentsId;
+  const stationCount = await walk.ev(`document.querySelectorAll('.rv-strip-dot').length`);
+  const choose = async (index) => {
+    await activate(walkWindow.id);
+    await osClickAt(wc, `.rv-strip-dot[data-station="${String(index)}"]`);
+    await delay(900);
+  };
+  const activeState = () =>
+    walk.ev(`JSON.stringify((()=>{const p=document.querySelector('section.rv-pane-active');const id=p?.querySelector('[data-ev="pane-focus-identity"]');const rows=[...(p?.querySelectorAll('[data-focus-active="1"]')??[])];return {pane:Number(p?.dataset.paneIndex??-1),identity:id?.textContent??'',side:id?.dataset.focusSide??'',start:Number(id?.dataset.focusStart??0),end:Number(id?.dataset.focusEnd??0),heading:p?.querySelector('.rv-pane-shown')?.textContent??'',rows:rows.map((r)=>r.dataset.row),kinds:[...new Set(rows.map((r)=>r.classList.contains('rv-old')?'old':r.classList.contains('rv-new')?'new':'neutral'))],lines:rows.map((r)=>Number(r.dataset.line))}})())`).then((t) => JSON.parse(t));
+  const marksElsewhere = () =>
+    walk.ev(`JSON.stringify({activePanes:document.querySelectorAll('section.rv-pane:has(.rv-focus-active)').length,strongInactive:document.querySelectorAll('section.rv-pane-inactive :is(.rv-old,.rv-new,.rv-neutral-focus,.rv-focus-active,.rv-arrive)').length,arriveOutside:document.querySelectorAll('section.rv-pane-inactive .rv-arrive').length,oldVersion:[...document.querySelectorAll('.rv-pane-head')].some((h)=>/old version/i.test(h.textContent))})`).then((t) => JSON.parse(t));
+  const stepShown = () =>
+    read(pcw, `JSON.stringify({step:document.querySelector('.rv-step-panel h2 .rv-step-id')?.textContent??'',place:document.querySelector('.rv-place-on .rv-place-number')?.textContent??'1'})`).then((t) => JSON.parse(t));
+  const base7 = (await walk.ev(`document.querySelector('[data-ev="review-identity"]')?.title ?? ''`)).split('\n')[1]?.split(' → ').map((sha) => sha.slice(0, 7)) ?? [];
+
+  stage = 'focus: Old and New of one change in one pane';
+  await choose(0);
+  const oldPlace = await activeState();
+  await choose(1);
+  const newPlace = await activeState();
+  note('the first two places', JSON.stringify({ oldPlace, newPlace }));
+  check('the Old and the New place of one change share one pane', oldPlace.pane === newPlace.pane && oldPlace.pane >= 0, JSON.stringify({ old: oldPlace.pane, new: newPlace.pane }));
+  check('choosing Old marks the old (removed) lines at From', oldPlace.side === 'base' && oldPlace.kinds.includes('old') && !oldPlace.kinds.includes('new'), JSON.stringify(oldPlace));
+  check('choosing New moves the mark to the new lines at To in the same pane', newPlace.side === 'target' && newPlace.kinds.includes('new') && !newPlace.kinds.includes('old') && JSON.stringify(newPlace.rows) !== JSON.stringify(oldPlace.rows), JSON.stringify(newPlace));
+  check(
+    'the mark names the place in full: repository, side and commit, file and lines',
+    /From [0-9a-f]{7}/.test(oldPlace.identity) && /To [0-9a-f]{7}/.test(newPlace.identity) && /line/.test(newPlace.identity) && (base7.length < 2 || (oldPlace.identity.includes(base7[0]) && newPlace.identity.includes(base7[1]))) && oldPlace.identity.includes('dspatch-threads-project-'),
+    JSON.stringify({ old: oldPlace.identity, new: newPlace.identity, base7 }),
+  );
+  check('the shared pane is headed Before → After, and no pane is called "old version"', /Before → After/.test(newPlace.heading) && (await marksElsewhere()).oldVersion === false, newPlace.heading);
+  await w_shot(wc, '21-shared-pane-new');
+  for (const [view, word] of [['before', 'Before'], ['after', 'After'], ['both', 'Before → After']]) {
+    await osClickAt(wc, `[data-ev="code-view-${view}"]`);
+    await delay(500);
+    const now = await activeState();
+    check(`the view ${word} heads the pane "${word}"`, now.heading.trim() === word, now.heading);
+    if (view === 'before') await w_shot(wc, '22-shared-pane-before');
+  }
+  await choose(0);
+  await w_shot(wc, '23-shared-pane-old');
+
+  stage = 'focus: only the active place is marked, over time';
+  const sampleMarks = async (label, shotName = null) => {
+    const frames = [];
+    const started = Date.now();
+    for (const at of [0, 150, 400, 800, 1300, 2100]) {
+      while (Date.now() - started < at) await delay(20);
+      frames.push({ at, ...(await marksElsewhere()), arriving: await walk.ev(`document.querySelectorAll('section.rv-pane-active .rv-arrive').length`), bg: await walk.ev(`(()=>{const r=document.querySelector('section.rv-pane-active [data-focus-active="1"]');return r?getComputedStyle(r).backgroundColor:''})()`) });
+      // The display while the flash is on, between two samples (the window is already in front).
+      if (at === 0 && shotName !== null) frames.at(-1).shot = path.basename((await shotWindow(await windowById(walkWindow.id), shotName)).file);
+    }
+    check(`${label}: exactly one pane carries the active mark at every moment`, frames.every((f) => f.activePanes === 1 && f.strongInactive === 0 && f.arriveOutside === 0), JSON.stringify(frames));
+    check(`${label}: the arrival flash is in the active pane only, and settles`, frames.some((f) => f.arriving > 0) && frames.at(-1).arriving === 0 && frames[0].bg !== frames.at(-1).bg, JSON.stringify(frames.map((f) => [f.at, f.arriving, f.bg])));
+    return frames;
+  };
+  await activate(walkWindow.id);
+  await osClickAt(wc, `.rv-strip-dot[data-station="1"]`);
+  await sampleMarks('moving from Old to New');
+  const lastStation = stationCount - 1;
+  await activate(walkWindow.id);
+  await osClickAt(wc, `.rv-strip-dot[data-station="${String(lastStation)}"]`);
+  const returnFrames = await sampleMarks('the same code again at the end of the walk', '24-return-arriving');
+  const shotA = { file: returnFrames[0].shot ?? '24-return-arriving.png' };
+  const back = await activeState();
+  const firstPaneShown = await walk.ev(`JSON.stringify((()=>{const p=document.querySelector('section.rv-pane[data-pane-index="${String(oldPlace.pane)}"]');return p?{rendered:true,strong:p.querySelectorAll(':is(.rv-old,.rv-new,.rv-neutral-focus,.rv-focus-active)').length,focusRows:p.querySelectorAll('[data-focus="1"]').length}:{rendered:false}})())`).then((t) => JSON.parse(t));
+  check('the return to the same code is a pane of its own, further on', back.pane !== oldPlace.pane && back.pane > newPlace.pane, JSON.stringify({ back, first: oldPlace.pane }));
+  check('the first occurrence, now inactive, carries no active mark', firstPaneShown.rendered === false || firstPaneShown.strong === 0, JSON.stringify(firstPaneShown));
+  note('the first occurrence while the return is active', JSON.stringify(firstPaneShown));
+  await delay(1500);
+  await w_shot(wc, '25-return-settled');
+  note('two frames of the same activation, 0 s and 2 s', `${path.basename(shotA.file)}, 25-return-settled.png`);
+
+  stage = 'Next, Previous, direct choice and panning keep the mark and the explanation together';
+  const together = async (how) => {
+    const a = await activeState();
+    const s = await stepShown();
+    check(`${how}: the marked place is the step shown`, a.identity.includes(s.step), JSON.stringify({ identity: a.identity, step: s }));
+  };
+  await choose(2);
+  await together('direct choice');
+  await osClickAt(wc, '.rv-nav-next');
+  await delay(900);
+  await together('Next');
+  await osClickAt(wc, '.rv-nav-previous');
+  await delay(900);
+  await together('Previous');
+  for (let round = 0; round < 8; round += 1) await pan(300);
+  const panStart = await activeState();
+  await together('panned to the start');
+  for (let round = 0; round < 8; round += 1) await pan(-300);
+  const panEnd = await activeState();
+  await together('panned to the end');
+  check('panning moved the active place from the start of the map to its end', panStart.pane === 0 && panEnd.pane > panStart.pane, JSON.stringify({ start: panStart.identity, end: panEnd.identity }));
+
+  stage = 'a thread chosen in Step shows its code';
+  await choose(0);
+  await clickInPanel('right-tab-step');
+  let anchored = null;
+  for (let index = 0; index < stationCount && anchored === null; index += 1) {
+    await choose(index);
+    anchored = await read(pcw, `(()=>{const c=[...document.querySelectorAll('[data-ev="walk-threads-here"] [data-ev="review-thread"]')].find((e)=>e.querySelector('[data-ev="thread-place"]')||e.querySelector('[data-ev="thread-toggle"]'));return c?c.dataset.threadId:null})()`);
+    if (anchored !== null && (await read(pcw, `document.querySelector('[data-thread-id="${anchored}"] [data-ev="thread-place"]')===null`)) === true) {
+      await osClickAt(pcw, `[data-ev="walk-threads-here"] [data-thread-id="${anchored}"] [data-ev="thread-toggle"]`);
+    }
+    if (anchored !== null && (await read(pcw, `document.querySelector('[data-thread-id="${anchored}"] [data-ev="thread-place"]')===null`)) === true) anchored = null;
+  }
+  if (anchored !== null) {
+    const placeText = await read(pcw, `document.querySelector('[data-thread-id="${anchored}"] [data-ev="thread-place"]').textContent`);
+    await osClickAt(pcw, `[data-thread-id="${anchored}"] [data-ev="thread-place"]`);
+    const awayRow = `[...document.querySelectorAll('[data-focus="1"][data-sel-line]')].find((r)=>r.closest('section.rv-pane')===null && r.offsetParent!==null)`;
+    await walk.until('the thread\'s code shown', `${awayRow}!==undefined`, 15_000);
+    const shown = JSON.parse(await walk.ev(`JSON.stringify((()=>{const r=${awayRow};return {line:Number(r.dataset.selLine),side:r.dataset.selSide,path:r.dataset.selPath}})())`));
+    const start = /lines? (\d+)/.exec(placeText)?.[1];
+    const side = /\((From|To)\)/.exec(placeText)?.[1];
+    check('choosing a thread\'s place in Step shows that code in the walk window, its lines marked', shown.line === Number(start) && (side === undefined || shown.side === (side === 'From' ? 'base' : 'target')), JSON.stringify({ placeText, shown }));
+    await w_shot(wc, '26-step-thread-code');
+  } else {
+    check('a thread in Step has a place to show', false, 'none found');
+  }
+  const placeless = await read(pcw, `[...document.querySelectorAll('[data-ev="walk-threads-here"] [data-ev="review-thread"]')].find((c)=>c.querySelector('[data-ev="thread-place"]')===null)?.dataset.threadId ?? null`);
+  if (placeless !== null) {
+    if ((await read(pcw, `document.querySelector('[data-thread-id="${placeless}"] .rv-thread-body')===null`)) === true) {
+      await osClickAt(pcw, `[data-ev="walk-threads-here"] [data-thread-id="${placeless}"] [data-ev="thread-toggle"]`);
+    }
+    const said = await read(pcw, `document.querySelector('[data-thread-id="${placeless}"] .rv-thread-body')?.textContent ?? ''`);
+    check('a thread in Step whose place is missing says so, with nothing marked for it', /not found at that commit|no line was named|Nothing is marked/.test(said), said.slice(0, 200));
+  } else {
+    note('no thread without a place at the places of this walk', '');
+  }
+  if ((await walk.ev(`document.querySelector('[data-ev="away-back"]')!==null`)) === true) {
+    await osClickAt(wc, '[data-ev="away-back"]');
+    await walk.until('back in the walk', `document.querySelector('section.rv-pane-active')!==null`, 15_000);
+  }
+
+  stage = 'Ask and Explain this from the step\'s explanation (docked)';
+  await choose(0);
+  await clickInPanel('right-tab-discussion');
+  await clearComposer(pcw);
+  await osType('My unsent thought');
+  await clickInPanel('right-tab-step');
+  const turnsBeforeAsk = await turnCount(pcw);
+  const picked = await selectText(pcw, '.rv-step-panel .rv-explanation p');
+  const offer = JSON.parse(await read(pcw, `JSON.stringify({offers:document.querySelectorAll('[data-ev="walk-quote-offer"]').length,threadOffers:document.querySelectorAll('[data-ev="thread-ask-selection"]').length,explain:document.querySelector('[data-ev="walk-explain-this"]')!==null,ask:document.querySelector('[data-ev="walk-ask-about-this"]')!==null})`));
+  check('selecting the step\'s explanation offers both Explain this and Ask, in one offer', picked.length > 10 && offer.offers === 1 && offer.threadOffers === 0 && offer.explain && offer.ask, JSON.stringify({ picked: picked.slice(0, 60), offer }));
+  await osClickAt(pcw, '[data-ev="walk-ask-about-this"]');
+  await poll('the question field with the selection', async () => (await read(pcw, `document.querySelector('[data-ev="discussion-quote"]')!==null`)) === true, 10_000);
+  const chip = await read(pcw, `document.querySelector('[data-ev="discussion-quote"]').textContent`);
+  check('Ask puts the selection in the question field as visible context, from the explanation of the step', /From the explanation of step [WR]\d+\.\d+/.test(chip) && chip.includes(picked.trim().slice(0, 20)), chip);
+  check('Ask keeps the unsent text and sends nothing', (await composerValue(pcw))?.includes('My unsent thought') === true && (await turnCount(pcw)) === turnsBeforeAsk);
+  await w_shot(pcw, '27-ask-from-explanation');
+  await osClickAt(pcw, '[data-ev="discussion-composer"]');
+  await osKey('End');
+  await osType(' — what does this mean here?');
+  await osKey('Return');
+  await poll('the question sent', async () => (await turnCount(pcw)) > turnsBeforeAsk, 20_000);
+  const sentChip = await read(pcw, `[...document.querySelectorAll('[data-ev="discussion-sent-quote"]')].at(-1)?.textContent ?? ''`);
+  check('the sent question keeps where its quote is from', /From the explanation of step/.test(sentChip), sentChip);
+  await poll('its answer', async () => (await lastAnswerStatus(pcw)) === 'done', 90_000);
+  check('the answer is about the selected text', /You selected this text, not code/.test(await read(pcw, `[...document.querySelectorAll('.rv-discussion-answer')].at(-1).textContent`)));
+
+  stage = 'Ask from an answer, and Explain this from the explanation (docked)';
+  await read(pcw, `(()=>{document.querySelectorAll('[data-trial-last]').forEach((e)=>e.removeAttribute('data-trial-last'));[...document.querySelectorAll('.rv-discussion-answer')].at(-1)?.setAttribute('data-trial-last','1');return true})()`);
+  const answerPicked = await selectText(pcw, '[data-trial-last="1"] [data-ev="discussion-answer-body"] p');
+  const answerOffer = JSON.parse(await read(pcw, `JSON.stringify({offers:document.querySelectorAll('[data-ev="walk-quote-offer"]').length,explain:document.querySelector('[data-ev="walk-explain-this"]')!==null,ask:document.querySelector('[data-ev="walk-ask-about-this"]')!==null})`));
+  check('selecting an answer in Discussion offers Explain this and Ask', answerPicked.length > 10 && answerOffer.offers === 1 && answerOffer.explain && answerOffer.ask, JSON.stringify(answerOffer));
+  await osClickAt(pcw, '[data-ev="walk-ask-about-this"]');
+  await poll('the answer quoted', async () => (await read(pcw, `document.querySelector('[data-ev="discussion-quote"]')?.textContent ?? ''`)).includes('From the answer to'), 10_000);
+  check('Ask from an answer names the question it answered', true);
+  await osClickAt(pcw, '[data-ev="discussion-quote-clear"]');
+  await clickInPanel('right-tab-step');
+  const explainedBefore = await read(pcw, `document.querySelectorAll('[data-ev="step-deepening"]').length`);
+  const turnsBeforeExplain = await turnCount(pcw);
+  await selectText(pcw, '.rv-step-panel .rv-explanation p');
+  await osClickAt(pcw, '[data-ev="walk-explain-this"]');
+  // Explain this is asked at once; the panel may show the discussion, where it goes first.
+  await poll('Explain this asked', async () => (await turnCount(pcw)) > turnsBeforeExplain || ((await read(pcw, `document.querySelectorAll('[data-ev="step-deepening"]').length`)) ?? 0) > explainedBefore, 20_000);
+  check('Explain this from the explanation is asked at once', true);
+  check('the docked panel is still drawn after Explain this showed it again', (await panelView())?.view.visible === true, JSON.stringify((await panelView())?.view ?? null));
+  if ((await read(pcw, `document.querySelector('[data-ev="discussion-composer"]')?.offsetParent!=null`)) !== true) await clickInPanel('right-tab-discussion');
+  await delay(300);
+  const explainScroll = JSON.parse(await read(pcw, DISCUSSION_SCROLLER));
+  check('the Explain this question is in view at the end of the discussion', (await turnCount(pcw)) > turnsBeforeExplain && explainScroll.gap <= 64, JSON.stringify(explainScroll));
+  await poll('the explanation done', async () => (await lastAnswerStatus(pcw)) === 'done', 90_000);
+
+  stage = 'a selection in a thread is asked in that thread';
+  await clickInPanel('right-tab-step');
+  const inThread = await read(pcw, `document.querySelector('[data-ev="walk-threads-here"] [data-ev="review-thread"] .rv-thread-body p')?.closest('[data-thread-id]')?.dataset.threadId ?? null`);
+  if (inThread !== null) {
+    const turnsBeforeThread = await turnCount(pcw);
+    await selectText(pcw, `[data-thread-id="${inThread}"] .rv-thread-section p`);
+    const offers = JSON.parse(await read(pcw, `JSON.stringify({walk:document.querySelectorAll('[data-ev="walk-quote-offer"]').length,thread:document.querySelectorAll('[data-ev="thread-ask-selection"]').length})`));
+    check('a selection in a thread gets the thread\'s offer only', offers.walk === 0 && offers.thread === 1, JSON.stringify(offers));
+    await osClickAt(pcw, `[data-thread-id="${inThread}"] [data-ev="thread-ask-selection"]`);
+    await osClickAt(pcw, `[data-thread-id="${inThread}"] [data-ev="thread-comment-field"]`);
+    await osType('Why does this matter?');
+    await osKey('ctrl+Return');
+    await poll('the answer in the thread', async () => ((await read(pcw, `document.querySelectorAll('[data-thread-id="${inThread}"] [data-ev="thread-exchange"] .rv-answer').length`)) ?? 0) >= 1, 90_000);
+    check('the question and its answer stay in that thread, and the discussion shows one line for it', (await turnCount(pcw)) === turnsBeforeThread || (await read(pcw, `document.querySelectorAll('[data-ev="discussion-in-thread"]').length`)) >= 1);
+  } else {
+    note('no open thread body at the shown place', '');
+  }
+
+  stage = 'Worth checking in the same decision flow';
+  if ((await walk.ev(`document.querySelector('[data-ev="walk-attention"] li[data-thread-id]')===null && document.querySelector('[data-ev="walk-find-checks"]')!==null`)) === true) {
+    await activate(walkWindow.id);
+    await osClickAt(wc, '[data-ev="walk-find-checks"]');
+    await walk.until('the agent choice for the points', `document.querySelector('[data-ev="walk-checks-agent-start"]')!==null`, 15_000);
+    await osClickAt(wc, '[data-ev="walk-checks-agent-start"]');
+    await walk.until('the points worth checking', `document.querySelector('[data-ev="walk-attention"] li[data-thread-id]')!==null`, 120_000);
+  }
+  const diffThreadIds = Object.keys(await statusesIn((await windowById(diffWindow.id)).contentsId));
+  const pointsHere = JSON.parse(await walk.ev(`JSON.stringify([...document.querySelectorAll('[data-ev="walk-attention"] li[data-thread-id]')].map((li)=>({id:li.dataset.threadId,status:li.dataset.threadStatus,check:li.querySelector('[data-ev^="check-C"]')?.dataset.ev??'',line:li.querySelector('[data-ev="check-thread-line"]')?.textContent??''})))`));
+  note('the points worth checking, as threads', JSON.stringify(pointsHere));
+  check('every point worth checking is a thread line with a status, listed once', pointsHere.length >= 2 && new Set(pointsHere.map((p) => p.id)).size === pointsHere.length && pointsHere.every((p) => p.status !== undefined && p.line !== ''), JSON.stringify(pointsHere));
+  check('a point that repeats a finding of the review is that finding\'s thread, not a second one', pointsHere.some((p) => diffThreadIds.includes(p.id)), JSON.stringify({ points: pointsHere.map((p) => p.id), diffThreadIds }));
+  const point = pointsHere.find((p) => p.status === 'open' && /Problem/i.test(p.line) && !diffThreadIds.includes(p.id)) ?? pointsHere.find((p) => p.status === 'open' && !diffThreadIds.includes(p.id)) ?? pointsHere.find((p) => p.status === 'open');
+  if (point !== undefined) {
+    await activate(walkWindow.id);
+    await osClickAt(wc, `[data-ev="${point.check}"]`);
+    // The point opens beside its code; its thread card is in the review's panel (docked here).
+    check('the docked panel is still drawn after a point was opened', (await panelView())?.view.visible === true, JSON.stringify((await panelView())?.view ?? null));
+    await clickInPanel('right-tab-step');
+    await poll('the point\'s thread card', async () => (await read(pcw, `document.querySelector('[data-ev="check-thread"] [data-ev="review-thread"][data-thread-id="${point.id}"]')!==null`)) === true, 15_000);
+    if ((await read(pcw, `document.querySelector('[data-ev="check-thread"] [data-ev="review-thread"] .rv-thread-body')===null`)) === true) {
+      await osClickAt(pcw, '[data-ev="check-thread"] [data-ev="review-thread"] [data-ev="thread-toggle"]');
+    }
+    const card = JSON.parse(await read(pcw, `JSON.stringify((()=>{const c=document.querySelector('[data-ev="check-thread"] [data-ev="review-thread"]');return {kind:c.dataset.threadKind,text:c.textContent}})())`));
+    check('an opened point shows its thread with kind, recommendation, rationale and next step', /Recommendation/.test(card.text) && /Next step|next step/.test(card.text) && /Worth checking/.test(card.text) && ['problem', 'question', 'gap'].includes(card.kind), JSON.stringify({ kind: card.kind, text: card.text.slice(0, 300) }));
+    await w_shot(wc, '30-worth-checking-thread');
+    const buttons = await read(pcw, `[...document.querySelectorAll('[data-ev="check-thread"] button')].map((b)=>b.dataset.ev+':'+b.disabled).join(' ')`);
+    note('the point\'s thread buttons', buttons);
+    const acceptAt = await pointAt(pcw, '[data-ev="check-thread"] [data-ev="thread-accept"]');
+    note('Accept is at', JSON.stringify(acceptAt));
+    await w_shot(pcw, '30b-before-accept');
+    await activate(acceptAt.windowId);
+    await osClick(acceptAt.physical);
+    await w_shot(pcw, '30c-after-accept');
+    const agreed = await poll('Action agreed on the card', async () => (await read(pcw, `document.querySelector('[data-ev="check-thread"] [data-ev="review-thread"]')?.dataset.threadStatus`)) === 'action-agreed', 15_000).catch(() => false);
+    if (agreed !== true) {
+      note('the list after Accept', await walk.ev(`document.querySelector('[data-ev="walk-attention"] li[data-thread-id="${point.id}"]')?.dataset.threadStatus ?? 'none'`));
+      note('after Accept', await read(pcw, `JSON.stringify({status:document.querySelector('[data-ev="check-thread"] [data-ev="review-thread"]')?.dataset.threadStatus,error:[...document.querySelectorAll('[data-ev="check-thread"] .rv-error')].map((e)=>e.textContent),active:document.activeElement?.dataset?.ev??document.activeElement?.tagName})`));
+      throw new Error('Accept did not record Action agreed');
+    }
+    await walk.until('Action agreed in the list', `document.querySelector('[data-ev="walk-attention"] li[data-thread-id="${point.id}"]')?.dataset.threadStatus==='action-agreed'`, 15_000);
+    check('accepting the point\'s recommendation reads Action agreed, still remaining, and starts nothing', (await walk.ev(`document.querySelectorAll('.rv-job-running, [data-state="running"]').length`)) === 0);
+    if ((await diff.ev(`${q('pair-remaining')}===null`)) === true) await diff.ev(`${q('pair-files')}?.click()`);
+    await diff.until('what remains', `${q('pair-remaining')}!==null`, 15_000);
+    if ((await diff.ev(`${q('pair-threads')}===null`)) === true) await diff.ev(`${q('pair-remaining')}.click()`);
+    const inDiff = await diff.until('the same thread in the diff window', `document.querySelector('[data-ev="pair-threads"] [data-thread-id="${point.id}"][data-thread-status="action-agreed"]')!==null`, 20_000).catch(() => false);
+    check('the point\'s thread is the same thread in the diff window, with its decision', inDiff === true, point.id);
+  } else {
+    check('there is an open point worth checking to decide', false, JSON.stringify(pointsHere));
+  }
+
+  stage = 'context repositories in a code walk';
+  await clickInPanel('right-tab-step');
+  let contextPane = null;
+  // Out of the point's own tour, and into each step of each walk in turn.
+  if ((await read(pcw, `document.querySelector('[data-ev="check-back"]')!==null`)) === true) await osClickAt(pcw, '[data-ev="check-back"]');
+  const stepIds = JSON.parse(await walk.ev(`JSON.stringify([...document.querySelectorAll('[data-ev^="walk-head-"]')].map((h)=>h.dataset.ev.slice(10)))`));
+  for (const walkId of stepIds) {
+    if (contextPane !== null) break;
+    if ((await walk.ev(`document.querySelector('[data-ev="walk-head-${walkId}"]').getAttribute('aria-expanded')`)) !== 'true') await osClickAt(wc, `[data-ev="walk-head-${walkId}"]`);
+    const steps = JSON.parse(await walk.ev(`JSON.stringify([...document.querySelectorAll('[data-ev^="walk-step-${walkId}."]')].map((b)=>b.dataset.ev))`));
+    for (const step of steps) {
+      await osClickAt(wc, `[data-ev="${step}"]`);
+      await delay(800);
+      if ((await read(pcw, `document.querySelector('[data-ev="walk-context-pane"]')!==null`)) === true) {
+        contextPane = {};
+        break;
+      }
+    }
+  }
+  // Read below, with what the pane says.
+  contextPane = null;
+  for (let move = 0; move < 1 && contextPane === null; move += 1) {
+    contextPane = JSON.parse((await read(pcw, `JSON.stringify((()=>{const p=document.querySelector('[data-ev="walk-context-pane"]');return p?{repository:p.dataset.repository,path:p.dataset.path,commit:p.dataset.commit,established:p.dataset.established,how:p.dataset.how,badge:p.querySelector('[data-ev="walk-context-badge"]')?.textContent??'',relation:p.querySelector('[data-ev="walk-context-relation"]')?.textContent??'',code:p.querySelector('[data-ev="walk-context-code"]')?.textContent??''}:null})())`)) ?? 'null');
+    if (contextPane === null) {
+      await osClickAt(wc, '.rv-nav-next');
+      await delay(700);
+    }
+  }
+  if (contextPane !== null) {
+    await delay(1200);
+    contextPane = JSON.parse(await read(pcw, `JSON.stringify((()=>{const p=document.querySelector('[data-ev="walk-context-pane"]');return {repository:p.dataset.repository,path:p.dataset.path,commit:p.dataset.commit,established:p.dataset.established,how:p.dataset.how,badge:p.querySelector('[data-ev="walk-context-badge"]')?.textContent??'',where:p.querySelector('[data-ev="walk-context-where"]')?.textContent??'',relation:p.querySelector('[data-ev="walk-context-relation"]')?.textContent??'',code:p.querySelector('[data-ev="walk-context-code"]')?.textContent??''}})())`));
+    const libHead = run('git', ['-C', library, 'rev-parse', 'HEAD']).trim();
+    check('a walk step shows the library\'s code as a place of its own, marked Context, with repository, file and commit', /Context/.test(contextPane.badge) && contextPane.repository === 'count-lib' && contextPane.path === 'src/format.js' && contextPane.commit === libHead && /formatCount/.test(contextPane.code), JSON.stringify(contextPane));
+    check('read at HEAD with no declared version, the relation to the reviewed build is said to be not established', contextPane.how === 'head' && contextPane.established !== 'established' && /not established/i.test(contextPane.relation), JSON.stringify(contextPane));
+    check('the context place adds nothing to the walk\'s coverage or marks', (await walk.ev(`document.querySelectorAll('section.rv-pane [data-sel-path^="libs/"], section.rv-pane [data-sel-path="src/format.js"]').length`)) === 0);
+    await w_shot(pcw, '31-walk-context-place');
+  } else {
+    check('a walk step shows the library\'s code as context', false, 'no context pane found');
+  }
+
+  stage = 'a context citation opened from an answer';
+  await clickInPanel('right-tab-discussion');
+  {
+    const before = await turnCount(pcw);
+    await clearComposer(pcw);
+    await osType('Where is `formatCount` defined?');
+    await osKey('Return');
+    await poll('the question', async () => (await turnCount(pcw)) > before, 20_000);
+    await poll('its answer', async () => (await lastAnswerStatus(pcw)) === 'done', 90_000);
+    // The latest answer, marked for the selectors below (`:last-of-type` would find each turn's last).
+    await read(pcw, `(()=>{document.querySelectorAll('[data-trial-last]').forEach((e)=>e.removeAttribute('data-trial-last'));[...document.querySelectorAll('.rv-discussion-answer')].at(-1)?.setAttribute('data-trial-last','1');return true})()`);
+    const last = '[data-trial-last="1"]';
+    if ((await read(pcw, `document.querySelector('${last} [data-ev="answer-refs"]')?.hidden === true`)) === true && (await read(pcw, `document.querySelector('${last} [data-ev="answer-show-code"]')!==null`)) === true) {
+      await osClickAt(pcw, `${last} [data-ev="answer-show-code"]`);
+    }
+    const hasRef = (await read(pcw, `document.querySelector('${last} [data-ev="answer-context-ref"]')!==null`)) === true;
+    if (hasRef) {
+      await osClickAt(pcw, `${last} [data-ev="answer-context-ref"]`);
+      const opened = await poll('the context code', async () => (await read(pcw, `document.querySelector('${last} [data-ev="answer-context-view"] .rv-context-code')!==null`)) === true, 15_000).catch(() => false);
+      if (opened !== true) {
+        note('the citation instead', await read(pcw, `JSON.stringify({expanded:document.querySelector('${last} [data-ev="answer-context-ref"]')?.getAttribute('aria-expanded'),view:document.querySelector('${last} [data-ev="answer-context-view"]')?.textContent??null,refsHidden:document.querySelector('${last} [data-ev="answer-refs"]')?.hidden??null,answers:document.querySelectorAll('[data-ev="answer-context-ref"]').length})`));
+      }
+      const view = await read(pcw, `document.querySelector('${last} [data-ev="answer-context-view"]').textContent + ' || ' + document.querySelector('${last} [data-ev="answer-context-ref"]').parentElement.textContent`);
+      check('a context citation in an answer opens the library\'s lines at the recorded commit, saying the version is not established', /formatCount/.test(view) && /not established/i.test(view) && /count-lib/.test(view), view.slice(0, 400));
+      await w_shot(pcw, '32-answer-context-citation');
+    } else {
+      check('the answer cites the library as context', false, await read(pcw, `document.querySelector('${last}').textContent.slice(0,300)`));
+    }
+  }
+
+  stage = 'the panel in a window of its own';
+  await clickInPanel('panel-own-window');
+  const own = await poll('the panel standalone', async () => {
+    const panel = await panelView();
+    return panel !== null && !panel.docked ? panel : false;
+  }, 30_000);
+  const ps = own.view.contentsId;
+  await client.main.size(own.frame.id, 760, 820).catch(() => undefined);
+  await delay(800);
+  await clickInPanel('right-tab-discussion');
+  await clearComposer(ps);
+  await osType('Standalone draft');
+  await clickInPanel('right-tab-step');
+  const standalonePicked = await selectText(ps, '.rv-step-panel .rv-explanation p');
+  const standaloneOffer = JSON.parse(await read(ps, `JSON.stringify({offers:document.querySelectorAll('[data-ev="walk-quote-offer"]').length,explain:document.querySelector('[data-ev="walk-explain-this"]')!==null,ask:document.querySelector('[data-ev="walk-ask-about-this"]')!==null})`));
+  check('standalone: the explanation offers Explain this and Ask', standalonePicked.length > 10 && standaloneOffer.offers === 1 && standaloneOffer.explain && standaloneOffer.ask, JSON.stringify(standaloneOffer));
+  await osClickAt(ps, '[data-ev="walk-ask-about-this"]');
+  await poll('standalone: the selection quoted', async () => (await read(ps, `document.querySelector('[data-ev="discussion-quote"]')?.textContent ?? ''`)).includes('From the explanation of step'), 10_000);
+  check('standalone: Ask keeps the draft and quotes the explanation', (await composerValue(ps))?.includes('Standalone draft') === true);
+  await w_shot(ps, '28-standalone-ask');
+  await osClickAt(ps, '[data-ev="discussion-quote-clear"]');
+  await streamingScroll(ps, 'standalone', () => walk.ev(`JSON.stringify([...document.querySelectorAll('*')].filter((e) => e.scrollTop > 0).map((e) => e.scrollTop))`));
+  for (const [item, name] of [['dspatch-zoom-in', 'plus 1'], ['dspatch-zoom-out', '0'], ['dspatch-zoom-out', 'minus 1']]) {
+    await client.main.menu(item, own.frame.id);
+    await delay(700);
+    const fits = await read(ps, `(()=>{const c=document.querySelector('[data-ev="discussion-composer"]');if(!c)return false;const b=c.getBoundingClientRect();return b.width>150 && b.right<=innerWidth+1 && b.bottom<=innerHeight+1})()`);
+    check(`standalone at zoom ${name}: the question field fits the window`, fits === true);
+    await w_shot(ps, `29-standalone-zoom-${name.replace(' ', '')}`);
+  }
+  await client.main.menu('dspatch-zoom-reset', own.frame.id);
   await quitClient();
 }
 

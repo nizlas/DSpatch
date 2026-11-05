@@ -12,7 +12,8 @@ import type {
   UsageReading,
 } from '../adapter/types';
 import type { AgentAdapter } from '../adapter/agent-adapter';
-import { simulatedReviewTask } from './presentation-review-tasks';
+import { TASK_HEADER } from '../shared/review-agent';
+import { simulatedReviewTask, streamMs } from './presentation-review-tasks';
 import type { AuthStatusReading, ChatAdapter } from './chat-service';
 
 /** SIMULATED: what `[[tools]]` reports for a chat turn. */
@@ -586,7 +587,10 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       ? Math.max(this.deltaMs, 1_200)
       : prompt.includes('[[slow]]')
         ? Math.max(this.deltaMs, 300)
-        : this.deltaMs;
+        : // DSP-175: review questions streamed at a pace a window trial can scroll against.
+          prompt.startsWith(TASK_HEADER) && streamMs() > 0
+          ? Math.max(this.deltaMs, streamMs())
+          : this.deltaMs;
     state.steerMode = prompt.includes('[[steer-late]]')
       ? 'late'
       : prompt.includes('[[steer-declined]]')

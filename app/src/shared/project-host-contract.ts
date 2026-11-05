@@ -196,7 +196,7 @@ export type ProjectHostMethods = ReviewMethods & {
   }>;
   readonly 'reviewPair.direction': (repository: unknown, first: unknown, second: unknown) => PairAnswer<PairDirection>;
   readonly 'reviewPair.open': (request: unknown) => PairAnswer<OpenPair>;
-  readonly 'reviewPair.openForWalk': (pair: RevisionPairIdentity) => PairAnswer<OpenPair>;
+  readonly 'reviewPair.openForWalk': (pair: RevisionPairIdentity, definitionPath?: string) => PairAnswer<OpenPair>;
   readonly 'reviewPair.readFile': (key: unknown, side: unknown, path: unknown) => PairAnswer<{ readonly text: string | null; readonly binary: boolean }>;
   readonly 'reviewPair.readContextFile': (key: unknown, repository: unknown, path: unknown, commit: unknown) => PairAnswer<ContextFileView>;
   readonly 'reviewPair.state': (key: unknown) => PairAnswer<PairRecord>;

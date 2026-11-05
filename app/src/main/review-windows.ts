@@ -1194,6 +1194,9 @@ export class ReviewWindows {
     const target = wanted === 'window' ? null : this.codeWindow(key, wanted);
     const place: PanelPlace = target === null ? 'window' : wanted;
     const host = place === 'window' ? null : target;
+    // Shown again where it already is (Explain this, a point opened, Ask): the window's room is
+    // where it was, and that window will not say so again, so the room it said is kept (DSP-175).
+    const sameHost = host !== null && panel.host === host;
     if (panel.host !== null && panel.host !== host && !panel.host.window.isDestroyed()) {
       panel.host.window.contentView.removeChildView(panel.view);
     }
@@ -1222,7 +1225,9 @@ export class ReviewWindows {
       }
       host.window.contentView.addChildView(panel.view);
       // Until the window says where its room is, the panel is not drawn over its code.
-      panel.slot = null;
+      if (!sameHost) {
+        panel.slot = null;
+      }
     }
     this.layoutPanel(panel);
     this.tellPanelState(panel);

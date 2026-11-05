@@ -34,6 +34,9 @@
  *   to its definition, and answers with both as references.
  * - An explanation of selected code reads each selected part at its side and answers only
  *   if the selected text is there; it names each part's kind and the definition it calls.
+ * - DSP-175: when such changed lines instead call a function imported from a package (not a
+ *   relative path) that a context repository the host wrote (`context/<name>/`) defines,
+ *   the step gets a context place there instead: `repository`, path and lines, no side.
  * - A walk preparation also proposes points worth checking: one linked to the first code
  *   walk's first step, and one with its own tour for a changed file no walk covers.
  * - A question in the review discussion that can read the code (30 October 2026) takes the
@@ -248,6 +251,46 @@ function followCall(reader: Reader, side: 'base' | 'target', filePath: string, f
   return null;
 }
 
+/**
+ * DSP-175: the definition of a function a line calls, when the file imports it from a package
+ * (not a relative path) and a context repository of the workspace defines it: searched for in
+ * each context repository in name order, its files in path order, so the answer is the same
+ * every time.
+ */
+function followCallIntoContext(
+  reader: Reader,
+  fileLines: readonly string[],
+  line: string,
+): { readonly repository: string; readonly name: string; readonly path: string; readonly start: number; readonly end: number } | null {
+  for (const match of line.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const name = match[1] ?? '';
+    const imported = fileLines
+      .map((entry) => /import\s*\{([^}]*)\}\s*from\s*['"]([^'"./][^'"]*)['"]/.exec(entry))
+      .find((found) => found !== null && (found[1] ?? '').split(',').map((part) => part.trim().split(/\s+as\s+/)[0]).includes(name));
+    if (imported === undefined || imported === null) {
+      continue;
+    }
+    const pattern = new RegExp(`\\b(function\\s+${name}\\b|const\\s+${name}\\s*=)`);
+    for (const repository of reader.contextNames()) {
+      reader.tools.push({ name: 'Grep', subject: `function ${name} in ${path.join(reader.folderPath(), 'context', repository)}`, ok: true });
+      for (const filePath of reader.contextFiles(repository).sort()) {
+        const scanned = reader.scanContext(repository, filePath);
+        const at = scanned?.findIndex((entry) => pattern.test(entry)) ?? -1;
+        if (scanned === null || at < 0) {
+          continue;
+        }
+        const lines = reader.readContext(repository, filePath) ?? scanned;
+        let end = at;
+        while (end < lines.length - 1 && end - at < 30 && !/^\}/.test(lines[end] ?? '')) {
+          end += 1;
+        }
+        return { repository, name, path: filePath, start: at + 1, end: end + 1 };
+      }
+    }
+  }
+  return null;
+}
+
 /** Markdown and text, where a reading fits rather than a code walk. */
 function isProse(filePath: string): boolean {
   return /\.(md|markdown|txt|rst|adoc)$/i.test(filePath);
@@ -347,10 +390,14 @@ function prepareWalks(prompt: string, reader: Reader): string {
         title: `What changes in ${base(filePath)}`,
         question: `What does the change do to ${filePath}, and why?`,
         purpose: `You will see each change in ${base(filePath)} and what it calls. SIMULATED: written by the presentation adapter, not by a model.`,
-        steps: ranges.map((range, index) => {
+        // DSPATCH_REVIEW_SIM=threads (DSP-175): in line order, a change's old and new lines
+        // one after the other, as an agent explains a change from both sides.
+        steps: (process.env['DSPATCH_REVIEW_SIM'] === 'threads' ? [...ranges].sort((a, b) => a.start - b.start || (a.side === 'base' ? -1 : 1)) : ranges).map((range, index) => {
           const lines = linesOf(range.side);
           const changedText = (lines ?? []).slice(range.start - 1, range.end).join('\n');
           const definition = lines === null ? null : followCall(reader, range.side, filePath, lines, changedText);
+          // DSP-175: a call into a package another repository of the workspace defines.
+          const inContext = definition !== null || lines === null ? null : followCallIntoContext(reader, lines, changedText);
           const places: unknown[] = [
             { label: `${base(filePath)} lines ${String(range.start)}–${String(range.end)}`, path: filePath, side: range.side, start: range.start, end: range.end },
           ];
@@ -365,11 +412,25 @@ function prepareWalks(prompt: string, reader: Reader): string {
               from: { label: `The call of ${definition.name}`, path: filePath, side: range.side, start: range.start, end: range.end },
             });
           }
+          if (inContext !== null) {
+            places.push({
+              label: `Where ${inContext.name} is defined, in ${inContext.repository} (context)`,
+              repository: inContext.repository,
+              path: inContext.path,
+              start: inContext.start,
+              end: inContext.end,
+              anchor: inContext.name,
+              note: `SIMULATED: ${inContext.repository} is another repository of the workspace, read as context at the commit the analysis recorded. It is not under review.`,
+            });
+          }
           return {
             title: `${range.side === 'base' ? 'Removed' : 'Changed'} lines ${String(range.start)}–${String(range.end)}`,
             summary: `${range.side === 'base' ? 'The From version had' : 'The To version has'} these lines in ${base(filePath)}.`,
             body:
               `**What happens:** ${range.side === 'base' ? 'these lines were removed' : 'these lines were added or changed'} in \`${filePath}\`.\n\n` +
+              (inContext === null
+                ? ''
+                : `**What it depends on:** \`${inContext.name}\`, defined in \`${inContext.repository}\` (another repository of the workspace, read as context) in \`${inContext.path}\` lines ${String(inContext.start)}–${String(inContext.end)}.\n\n`) +
               (definition === null
                 ? ''
                 : `**What it depends on:** \`${definition.name}\`, defined in \`${definition.path}\` lines ${String(definition.start)}–${String(definition.end)}, which this change does not touch.` +
@@ -383,6 +444,20 @@ function prepareWalks(prompt: string, reader: Reader): string {
       },
     ];
   });
+  // DSPATCH_REVIEW_SIM=threads (DSP-175): the first walk ends by coming back to its first
+  // change, after the others, so the same code is in two separate panes of the map.
+  if (process.env['DSPATCH_REVIEW_SIM'] === 'threads') {
+    const walk = walks.find((entry) => entry.kind === 'walk' && entry.steps.length >= 3) as { steps: { places: unknown[] }[] } | undefined;
+    const firstPlace = walk?.steps[0]?.places[0];
+    if (walk !== undefined && firstPlace !== undefined) {
+      walk.steps.push({
+        title: 'Back to the first change',
+        summary: 'The first change again, now that the rest has been read.',
+        body: '**What happens:** the walk returns to where it began. SIMULATED: a later return to the same code, in a pane of its own.',
+        places: [{ ...(firstPlace as Record<string, unknown>), label: 'The first change, again' }],
+      } as never);
+    }
+  }
   const readings = walks.filter((walk) => walk.kind === 'reading').length;
   const answer = {
     summary: `SIMULATED: ${String(walks.length - readings)} code walk(s) and ${String(readings)} reading(s) over ${String(kept.length)} of ${String(paths.length)} changed file(s).`,
@@ -639,6 +714,14 @@ function worthChecking(prompt: string): string {
       reasoning: 'SIMULATED reasoning: the changed lines depend on code outside the change. A real agent explains why that is worth checking.',
       places: first.places.map((place) => ({ label: `${base(place.path)} lines ${String(place.start)}–${String(place.end)}`, ...place })),
       step: first.id,
+      evidence: `SIMULATED: read the step's places in ${base(last?.path ?? '')} at To.`,
+      recommendation: {
+        kind: 'investigate',
+        action: 'SIMULATED: look at every caller of the changed function.',
+        rationale: 'SIMULATED: the change alters what callers receive.',
+        uncertainty: 'SIMULATED: whether a caller already guards against it was not established.',
+        nextStep: 'SIMULATED: search the To revision for the callers.',
+      },
     });
   }
   const shown = new Set(steps.flatMap((step) => step.places.map((place) => place.path)));
@@ -651,6 +734,31 @@ function worthChecking(prompt: string): string {
       detail: 'SIMULATED: no step shows it, so it has its own tour.',
       reasoning: `SIMULATED reasoning: \`${range.path}\` changes, and no walk goes through it.`,
       places: [{ label: `${base(range.path)} lines ${String(range.start)}–${String(range.end)}`, path: range.path, side: range.side, start: range.start, end: range.end }],
+      evidence: 'SIMULATED: the walks given in the prompt list no place in that file.',
+      recommendation: { kind: 'test', action: 'SIMULATED: add or run a test over the file no walk shows.', rationale: 'SIMULATED: nothing in the walks covers it.', uncertainty: '', nextStep: 'SIMULATED: run the tests that import it.' },
+    });
+  }
+  // DSPATCH_REVIEW_SIM=threads (DSP-175): a finding that says the same as the delegated review's
+  // keep-the-code question, so it joins that thread instead of making a second one, and a finding
+  // point of its own whose recommendation is a change.
+  const target = changed.find((entry) => entry.side === 'target');
+  if (process.env['DSPATCH_REVIEW_SIM'] === 'threads' && target !== undefined) {
+    checks.push({
+      kind: 'finding',
+      title: 'SIMULATED: is the greeting meant to end with an exclamation mark?',
+      reasoning: 'SIMULATED reasoning: the same point a delegated review raises.',
+      places: [{ label: `${base(target.path)} line ${String(target.start)}`, path: target.path, side: 'target', start: target.start, end: target.start }],
+      evidence: `SIMULATED: read ${target.path} line ${String(target.start)}.`,
+      recommendation: { kind: 'keep', action: 'SIMULATED: keep the code as it is.', rationale: 'SIMULATED: the punctuation is intended.', uncertainty: '', nextStep: '' },
+    });
+    checks.push({
+      kind: 'finding',
+      title: 'SIMULATED: the changed line is not covered by a test',
+      detail: 'SIMULATED: a finding point with a recommended change.',
+      reasoning: 'SIMULATED reasoning: no test in the To revision reads this line.',
+      places: [{ label: `${base(target.path)} lines ${String(target.start)}–${String(target.end)}`, path: target.path, side: 'target', start: target.start, end: target.end }],
+      evidence: 'SIMULATED: searched the test folder at To for the function name.',
+      recommendation: { kind: 'change', action: 'SIMULATED: add a test that exercises the changed line.', rationale: 'SIMULATED: a regression would go unnoticed.', uncertainty: '', nextStep: 'SIMULATED: write one test case.' },
     });
   }
   return fence({ checks });
@@ -933,5 +1041,19 @@ export function simulatedReviewTask(prompt: string, folder: string, asked: strin
   } else if (task === 'review-question') {
     answer = reviewQuestion(prompt, reader, asked);
   }
+  // DSPATCH_REVIEW_SIM_STREAM_MS (DSP-175): an answer to a question long enough to stream
+  // for several seconds at that pace, so a trial can scroll away while it still arrives.
+  if (answer !== null && streamMs() > 0 && (task === 'review-question' || task === 'explain-selection' || task === 'step-question')) {
+    const filler = Array.from(
+      { length: 16 },
+      (_, index) => `SIMULATED streamed paragraph ${String(index + 1)} of 16: a real agent would go on explaining here, one sentence after another, while the reader decides whether to follow.`,
+    ).join('\n\n');
+    answer = answer.replace('\n\n', `\n\n${filler}\n\n`);
+  }
   return answer === null ? null : { answer, tools: reader.tools };
+}
+
+/** How slowly the simulated answers to review questions stream, per 40 characters; 0 when not set. */
+export function streamMs(): number {
+  return Math.max(0, Number(process.env['DSPATCH_REVIEW_SIM_STREAM_MS'] ?? '0') || 0);
 }

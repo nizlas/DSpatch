@@ -509,6 +509,41 @@ export interface ThreadRecord {
   readonly events: readonly ThreadEvent[];
 }
 
+/**
+ * One point worth checking as the host read it from a walk definition or its checks file
+ * (DSP-175), so the point is a review thread like a finding. Its text is the agent's as
+ * written; its places are those DSpatch checked when the point was written.
+ */
+export interface StoredCheck {
+  /** Its id in the definition (`C1` …), for finding the point in the walk window. */
+  readonly checkId: string;
+  readonly kind: 'question' | 'uncertainty' | 'finding';
+  readonly title: string;
+  readonly detail: string;
+  readonly reasoning: string;
+  readonly places: readonly LineRange[];
+  /** What it rests on; absent on a point written before recommendations were asked for. */
+  readonly evidence?: string;
+  /** Absent on an older point: none is made up. */
+  readonly recommendation?: Recommendation;
+  /**
+   * No longer in its definition (the points were asked for again) but kept because the
+   * person already commented on or decided about it. It is shown as a thread, not in the walk.
+   */
+  readonly retired?: boolean;
+}
+
+/** The points worth checking of one walk definition, as last read by the host. */
+export interface CheckSource {
+  readonly definitionPath: string;
+  /** The job that wrote them, when one recorded here did. */
+  readonly jobId: string | null;
+  /** Who prepared them, as threads name a reviewer: "Claude · model"; `''` when unknown. */
+  readonly reviewer: string;
+  readonly at: string;
+  readonly checks: readonly StoredCheck[];
+}
+
 /** What a delegated review reported, after DSpatch checked it against the scope. */
 export interface DelegationResult {
   readonly assessment: string;
@@ -862,6 +897,12 @@ export interface PairRecord {
    * finding is never copied with a status of its own.
    */
   readonly threads: readonly ThreadRecord[];
+  /**
+   * The points worth checking of the walks over this pair (DSP-175), read by the host from
+   * the definitions so they are threads with the findings. Absent or empty in a record
+   * written before; a walk opened again adopts its points then.
+   */
+  readonly checkSources?: readonly CheckSource[];
   readonly savedAt: string;
 }
 
@@ -878,6 +919,7 @@ export function emptyRecord(pair: RevisionPairIdentity): PairRecord {
     walkDefinition: null,
     endedAt: null,
     threads: [],
+    checkSources: [],
     savedAt: new Date(0).toISOString(),
   };
 }
@@ -1253,8 +1295,106 @@ export function adoptPairRecord(raw: unknown, pair: RevisionPairIdentity): PairR
     walkDefinition: typeof raw['walkDefinition'] === 'string' && raw['walkDefinition'] !== '' ? raw['walkDefinition'] : null,
     endedAt: typeof raw['endedAt'] === 'string' && raw['endedAt'] !== '' ? raw['endedAt'] : null,
     threads: threadRecordsFrom(raw['threads']),
+    checkSources: checkSourcesFrom(raw['checkSources']),
     savedAt: typeof raw['savedAt'] === 'string' ? raw['savedAt'] : empty.savedAt,
   };
+}
+
+const CHECK_POINT_KINDS: readonly StoredCheck['kind'][] = ['question', 'uncertainty', 'finding'];
+
+/** A stored point, or `null` for one with no title or no known kind. */
+function storedCheckFrom(raw: unknown): StoredCheck | null {
+  if (!isRecordObject(raw) || typeof raw['title'] !== 'string' || raw['title'].trim() === '' || !CHECK_POINT_KINDS.includes(raw['kind'] as StoredCheck['kind'])) {
+    return null;
+  }
+  const text = (name: string): string => (typeof raw[name] === 'string' ? (raw[name] as string) : '');
+  return {
+    checkId: text('checkId'),
+    kind: raw['kind'] as StoredCheck['kind'],
+    title: text('title'),
+    detail: text('detail'),
+    reasoning: text('reasoning'),
+    places: rangesFrom(raw['places']),
+    ...(typeof raw['evidence'] === 'string' && raw['evidence'].trim() !== '' ? { evidence: raw['evidence'] } : {}),
+    ...optionalRecommendation(raw['recommendation']),
+    ...(raw['retired'] === true ? { retired: true } : {}),
+  };
+}
+
+function checkSourcesFrom(raw: unknown): CheckSource[] {
+  const out: CheckSource[] = [];
+  for (const entry of Array.isArray(raw) ? raw : []) {
+    if (!isRecordObject(entry) || typeof entry['definitionPath'] !== 'string' || entry['definitionPath'] === '') {
+      continue;
+    }
+    const checks: StoredCheck[] = [];
+    for (const check of Array.isArray(entry['checks']) ? entry['checks'] : []) {
+      const read = storedCheckFrom(check);
+      if (read !== null) {
+        checks.push(read);
+      }
+    }
+    out.push({
+      definitionPath: entry['definitionPath'],
+      jobId: typeof entry['jobId'] === 'string' && entry['jobId'] !== '' ? entry['jobId'] : null,
+      reviewer: typeof entry['reviewer'] === 'string' ? entry['reviewer'] : '',
+      at: typeof entry['at'] === 'string' ? entry['at'] : '',
+      checks,
+    });
+  }
+  return out;
+}
+
+/** One language of a definition text: English, else Swedish, else a plain string. */
+function definitionText(raw: unknown): string {
+  if (typeof raw === 'string') {
+    return raw.trim();
+  }
+  if (!isRecordObject(raw)) {
+    return '';
+  }
+  const en = typeof raw['en'] === 'string' ? raw['en'].trim() : '';
+  const sv = typeof raw['sv'] === 'string' ? raw['sv'].trim() : '';
+  return en || sv;
+}
+
+/**
+ * The points worth checking of a walk definition's `checks` array, as written to a definition
+ * or its checks file (`dspatch-review/2`, `dspatch-checks/1`). A place is kept when it names a
+ * side, a relative path and 1-based lines; `isSafePath` says which paths the host accepts.
+ * Text is read in English, else Swedish. Nothing is made up for a point that has none.
+ */
+export function storedChecksFromDefinition(raw: unknown, isSafePath: (filePath: string) => boolean): StoredCheck[] {
+  const out: StoredCheck[] = [];
+  for (const entry of Array.isArray(raw) ? raw : []) {
+    if (!isRecordObject(entry)) {
+      continue;
+    }
+    const title = definitionText(entry['title']);
+    const kind = entry['kind'];
+    if (title === '' || !CHECK_POINT_KINDS.includes(kind as StoredCheck['kind'])) {
+      continue;
+    }
+    const places: LineRange[] = [];
+    for (const place of Array.isArray(entry['places']) ? entry['places'] : []) {
+      const range = isRecordObject(place) ? rangeFrom({ ...place, kind: 'lines' }) : null;
+      if (range !== null && isSafePath(range.path) && !places.some((known) => known.side === range.side && known.path === range.path && known.start === range.start && known.end === range.end)) {
+        places.push(range);
+      }
+    }
+    const evidence = definitionText(entry['evidence']);
+    out.push({
+      checkId: typeof entry['id'] === 'string' ? entry['id'] : '',
+      kind: kind as StoredCheck['kind'],
+      title,
+      detail: definitionText(entry['detail']),
+      reasoning: definitionText(entry['reasoning']),
+      places,
+      ...(evidence === '' ? {} : { evidence }),
+      ...optionalRecommendation(entry['recommendation']),
+    });
+  }
+  return out;
 }
 
 const THREAD_EVENT_KINDS: readonly ThreadEventKind[] = ['comment', 'accept', 'keep-open', 'resolve', 'dismiss', 'reopen'];
