@@ -4,10 +4,10 @@ title: >-
   Release 0.1.8 for Linux: review threads and recommendations, Ask and following
   answers, the workspace as read context, and presentation profiles (DSP-175,
   DSP-176)
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-06 01:00'
-updated_date: '2026-11-06 01:00'
+updated_date: '2026-11-06 01:20'
 labels:
   - release
 dependencies:
@@ -24,9 +24,9 @@ Niclas's assignment of 6 November 2026: push main and publish a Linux release, 0
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 main pushed with DSP-175 and DSP-176; version 0.1.8 committed with user-facing notes that state the known limits
-- [ ] #2 The .deb, host package, manifest and SHA256SUMS name one release commit; the packaged trials, the upgrade from 0.1.7 and the release checks pass, with limits stated
-- [ ] #3 v0.1.8 published; published files checked against SHA256SUMS and the manifest; the installed smoke test run against the published release
+- [x] #1 main pushed with DSP-175 and DSP-176; version 0.1.8 committed with user-facing notes that state the known limits
+- [x] #2 The .deb, host package, manifest and SHA256SUMS name one release commit; the packaged trials, the upgrade from 0.1.7 and the release checks pass, with limits stated
+- [x] #3 v0.1.8 published; published files checked against SHA256SUMS and the manifest; the installed smoke test run against the published release
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -39,4 +39,8 @@ Local package of f6104c1: dspatch_0.1.8_amd64.deb (sha256 0953b2a9…), dspatch-
 Upgrade from 0.1.7 (container, `upgrade.mjs --from v0.1.7 --to` the local .deb): 27/27. The trial now also makes a review with a delegated result and saves zoom levels in 0.1.7 and checks both after the upgrade. **Finding:** 0.1.8 changes the host contract (DSP-175's host methods), so the 0.1.8 client cannot use the 0.1.7 host: it asks before any window, "Another DSpatch host is running here", and *Stop it and continue* ends the older host and starts this one's. That is the existing designed path for an incompatible host; *Restart host* in the window applies to updates with the same contract (0.1.6 → 0.1.7). The trial now handles both ways (answering the question with xdotool; the Dockerfile installs xdotool, and locally it is brought in with UPGRADE_TRIAL_XDOTOOL_ROOT). The release notes say so.
 
 `release.mjs --stage`: 5 checks passed (the .deb against SHA256SUMS, installs, no Node, Connect installs the carried host with github.com unreachable, nothing asked of GitHub), then stopped at its restart of the client with a stand-in github.com, as for 0.1.7; timed out after 25 min; its containers removed. Covered after publication by `release.mjs --published`.
+
+Published (6 November 2026): v0.1.8 at 90ded32 (tag v0.1.8, annotated), https://github.com/nizlas/DSpatch/releases/tag/v0.1.8, built and published by the package workflow (run 42130790109): dspatch_0.1.8_amd64.deb (sha256 1d57f5461e0ba51e6efe956f41229b4d3f925369f71512cfcaa6bdd63e1b0db8), dspatch-host-0.1.8-90ded32c33fc-linux-x64.tar.gz, host-manifest.json, SHA256SUMS. Downloaded and checked: SHA256SUMS holds for all three; the client's and the host archive's build-identity.json name 90ded32c33fce19113ade10c58b6b8541396f3b2 with no changed files; the manifest in the client is identical to the published one and its package hash matches. After publication: `release.mjs --published` 14/14; `upgrade.mjs --from v0.1.7` to the published .deb 27/27; with the published client under Xvfb, the profile trial 59/59 and the dock trial 54/54.
+
+Not established: a real provider (the profiles' teaching quality is Niclas's to judge); a physical mouse or keyboard; a real desktop session; Windows. DSP-175 and DSP-176 stay in Review for Niclas's acceptance.
 <!-- SECTION:NOTES:END -->
