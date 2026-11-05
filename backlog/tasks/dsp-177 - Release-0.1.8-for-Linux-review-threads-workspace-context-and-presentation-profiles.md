@@ -32,5 +32,11 @@ Niclas's assignment of 6 November 2026: push main and publish a Linux release, 0
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-6 November 2026: main = origin/main at ab07ca4 (DSP-176; DSP-175's completion 6a75dfe before it); no upstream commits to integrate. Current focus: the version commit and notes.
+6 November 2026: main = origin/main at ab07ca4 (DSP-176; DSP-175's completion 6a75dfe before it); no upstream commits to integrate. Version commit f6104c1 pushed. linux-verify at f6104c1 green (run 42123823468): fast 1582 (6 skipped), host 144 (3 skipped), review 257, chat 362 (7 skipped), presentation 311, provider 170, loop 674, live 116 (6 skipped), zoom trial 78, dock trial 54, governor 27.
+
+Local package of f6104c1: dspatch_0.1.8_amd64.deb (sha256 0953b2a9…), dspatch-host-0.1.8-f6104c13597b-linux-x64.tar.gz (b574c894…), host-manifest.json; client, host and manifest name f6104c13597b, build identity clean. With `DSPATCH_TRIAL_CLIENT` at the unpacked client, own Xvfb: profile trial 59/59, thread trial all passed, dock trial 54/54.
+
+Upgrade from 0.1.7 (container, `upgrade.mjs --from v0.1.7 --to` the local .deb): 27/27. The trial now also makes a review with a delegated result and saves zoom levels in 0.1.7 and checks both after the upgrade. **Finding:** 0.1.8 changes the host contract (DSP-175's host methods), so the 0.1.8 client cannot use the 0.1.7 host: it asks before any window, "Another DSpatch host is running here", and *Stop it and continue* ends the older host and starts this one's. That is the existing designed path for an incompatible host; *Restart host* in the window applies to updates with the same contract (0.1.6 → 0.1.7). The trial now handles both ways (answering the question with xdotool; the Dockerfile installs xdotool, and locally it is brought in with UPGRADE_TRIAL_XDOTOOL_ROOT). The release notes say so.
+
+`release.mjs --stage`: 5 checks passed (the .deb against SHA256SUMS, installs, no Node, Connect installs the carried host with github.com unreachable, nothing asked of GitHub), then stopped at its restart of the client with a stand-in github.com, as for 0.1.7; timed out after 25 min; its containers removed. Covered after publication by `release.mjs --published`.
 <!-- SECTION:NOTES:END -->

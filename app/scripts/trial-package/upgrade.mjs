@@ -38,6 +38,10 @@ const USER = 'tester';
 const data = `/home/${USER}/.config/DSpatch`;
 const project = `/home/${USER}/proj`;
 const marker = 'UPGRADE-TRIAL-MARK';
+const xdotoolRoot = process.env.UPGRADE_TRIAL_XDOTOOL_ROOT ?? '';
+const xdo = (args) =>
+  inside(USER, `${xdotoolRoot === '' ? '' : 'LD_LIBRARY_PATH=/opt/xtools/lib/x86_64-linux-gnu '}DISPLAY=${DISPLAY} ${xdotoolRoot === '' ? 'xdotool' : '/opt/xtools/bin/xdotool'} ${args}`, true);
+const STOP_DIALOG = 'Another DSpatch host is running here';
 const simulated = {
   DSPATCH_TRIAL_HOST_RUN: 'review-flow',
   DSPATCH_PRESENTATION_MODELS: 'copilot',
@@ -97,12 +101,12 @@ class Win {
     this.ws?.close();
     this.ws = undefined;
   }
-  async attach() {
+  async attach(matches = (url) => !url.includes('window=')) {
     this.close();
     await poll(`${this.label} window`, async () => {
       try {
         const response = await fetch(`http://127.0.0.1:${String(this.port)}/json/list`, { signal: AbortSignal.timeout(1500) });
-        const target = (await response.json()).find((entry) => entry.type === 'page' && entry.url !== '' && !entry.url.includes('window='));
+        const target = (await response.json()).find((entry) => entry.type === 'page' && entry.url !== '' && matches(entry.url));
         if (!target) return false;
         const socket = new WebSocket(target.webSocketDebuggerUrl);
         await new Promise((resolve, reject) => {
@@ -123,7 +127,7 @@ class Win {
         return false;
       }
     }, 60_000);
-    await this.until('bridge ready', 'Boolean(window.dspatch)');
+    await this.until('bridge ready', 'Boolean(window.dspatch) || Boolean(window.dspatchReviewPair)');
   }
   cmd(method, params = {}) {
     return new Promise((resolve, reject) => {
@@ -198,6 +202,42 @@ function belongings() {
 }
 const same = (before, after) => JSON.stringify(before) === JSON.stringify(after);
 
+// DSP-177: the person's review and zoom, made by the previous release and kept by this one.
+/** The window's zoom as the page sees it: Electron's zoom factor shows as the device pixel ratio. */
+const zoomOf = (win) => win.ev('window.devicePixelRatio');
+/** The review of the project's last two commits, opened from the chat's Review in its own window. */
+async function openReview(win, port, label) {
+  await win.click('open-review');
+  const review = new Win(port, label);
+  await review.attach((url) => url.includes('view=diff'));
+  await review.until('the reviews, the repositories, the log or the review', `${q('pair-ongoing-open-0')}!==null || ${q('pair-repo-0')}!==null || ${q('pair-commit-1')}!==null || ${q('pair-discussion')}!==null`, 60_000);
+  if ((await review.ev(`${q('pair-ongoing-open-0')}!==null`)) === true) {
+    await review.click('pair-ongoing-open-0');
+  } else if ((await review.ev(`${q('pair-discussion')}===null`)) === true) {
+    if ((await review.ev(`${q('pair-repo-0')}!==null`)) === true) await review.click('pair-repo-0');
+    await review.until('the log', `${q('pair-commit-1')}!==null`);
+    const chosen = (count) => `document.querySelectorAll('.rv-pair-commit[aria-pressed=true]').length === ${String(count)}`;
+    await review.click('pair-commit-1');
+    await review.until('From chosen', chosen(1));
+    await review.click('pair-commit-0');
+    await review.until('both chosen', chosen(2));
+    await review.click('pair-open');
+    if ((await review.until('the review of the pair', `${q('pair-discussion')}!==null`, 15_000).catch(() => false)) !== true) {
+      await review.ev(`${q('pair-open')}?.click()`);
+    }
+  }
+  const opened = await review.until('the review of the pair', `${q('pair-discussion')}!==null`, 60_000).catch(() => false);
+  if (opened === false) {
+    await review.shot(`${label.replace(/\W+/g, '-')}-not-opened`).catch(() => undefined);
+    throw new Error(`the review did not open: ${String(await review.ev(`[...document.querySelectorAll('[data-ev]')].map((e)=>e.dataset.ev).slice(0,40).join(' ') + ' | ' + document.body.innerText.slice(0,400)`).catch(() => ''))}`);
+  }
+  if ((await review.ev(`${q('pair-summary')}===null && ${q('pair-files')}!==null`)) === true) await review.click('pair-files');
+  return review;
+}
+const reviewLine = (review) => review.ev(`JSON.stringify({summary:${q('pair-summary')}?.textContent ?? '',result:document.querySelector('[data-ev="agent-review"]')?.innerText.replace(/\\s+/g,' ').match(/\\d+\\/\\d+ changed lines[^.]*|approved[^.]*/)?.[0] ?? ''})`);
+/** The review records on disk: the pair records and their discussions. */
+const reviewFiles = () => inside(USER, `find ${data}/reviews -maxdepth 2 \\( -path '*/pairs/*.json' -o -name '*.discussion.json' \\) -type f | sort`, true).split('\n').filter(Boolean);
+
 async function main() {
   stage = 'preflight';
   fs.mkdirSync(path.join(evidence, 'previous'), { recursive: true });
@@ -214,13 +254,17 @@ async function main() {
   docker('run', '-d', '--init', '--pull=never', '--name', NAME, '--hostname', 'upgrade-trial', '--network', 'host', '--shm-size=512m', '--cap-add', 'SYS_ADMIN', '--security-opt', 'seccomp=unconfined', '--security-opt', 'apparmor=unconfined', 'dspatch-trial', 'sleep', 'infinity');
   owned = true;
   docker('exec', '-d', NAME, 'Xvfb', DISPLAY, '-screen', '0', '1280x900x24');
+  // xdotool, for answering a question the client asks before any window (DSP-177): the image's
+  // own (the Dockerfile installs it), or one brought in from UPGRADE_TRIAL_XDOTOOL_ROOT (a /usr
+  // tree of the same Ubuntu release) when the image predates that.
+  if (xdotoolRoot !== '') docker('cp', xdotoolRoot, `${NAME}:/opt/xtools`);
   await poll('Xvfb', () => inside(USER, `if test -S /tmp/.X11-unix/X${DISPLAY.slice(1)}; then echo ready; fi`));
 
   stage = `the previous release, ${previousTag}`;
   docker('cp', previousDeb, `${NAME}:/tmp/previous.deb`);
   inside('root', 'dpkg -i /tmp/previous.deb');
   check('the previous release installs', installed() === `${previousTag.replace(/^v/, '')} install ok installed`, installed());
-  inside(USER, `mkdir -p ${project}/.dspatch/loops ${project}/docs; cd ${project}; git init -q; echo fixture > README.md; git add .; git -c user.name=Trial -c user.email=trial@example.invalid commit -qm fixture`);
+  inside(USER, `mkdir -p ${project}/.dspatch/loops ${project}/docs; cd ${project}; git init -q; echo fixture > README.md; mkdir -p src; printf 'export function greet(name) {\\n  return name;\\n}\\n' > src/app.js; git add .; git -c user.name=Trial -c user.email=trial@example.invalid commit -qm fixture; printf 'export function greet(name) {\\n  return \"Hello, \" + name;\\n}\\n' > src/app.js; git -c user.name=Trial -c user.email=trial@example.invalid commit -qam greeting`);
   // The person's own loop: the runnable development loop under another id, with its graph and
   // roles in the project, as a loop a person keeps in their project is.
   docker('cp', path.join(repoRoot, 'docs', 'loop'), `${NAME}:${project}/docs/loop`);
@@ -243,9 +287,31 @@ async function main() {
   await first.ev(`window.dspatch.sendPrompt(${JSON.stringify(`${marker}: a turn before the upgrade`)})`);
   await first.until('the turn ran and ended', `document.body.innerText.includes(${JSON.stringify(marker)}) && ${q('turn-activity')}===null`, 120_000);
   await first.shot('01-previous-release-turn');
+  // A review with the agent's delegated result, made by the previous release.
+  const firstReview = await openReview(first, 9391, 'previous review');
+  await firstReview.click('pair-delegate-all');
+  await firstReview.click('pair-delegate-all-agent-start');
+  await firstReview.until('the delegated review result', `document.querySelector('[data-ev="agent-review"]')!==null && /approved/i.test(document.querySelector('[data-ev="agent-review"]').innerText)`, 120_000);
+  const reviewBefore = JSON.parse(await reviewLine(firstReview));
+  const reviewFilesBefore = reviewFiles();
+  check('a review with a delegated result is on disk from the previous release', reviewBefore.result !== '' && reviewFilesBefore.length >= 1, JSON.stringify({ reviewBefore, reviewFilesBefore }));
+  await firstReview.shot('01b-previous-release-review');
+  firstReview.close();
   const previousHost = running();
   check('the previous release runs a standalone host', previousHost.appVersion === previousTag.replace(/^v/, '') && Number.isInteger(previousHost.pid), JSON.stringify(previousHost));
   await quit(first);
+  // The person's zoom, in the previous release's own file (its keys and wheel cannot be driven
+  // from a page here): the chat two steps in, the diff one. The previous release, started again,
+  // must show it before anything is upgraded.
+  inside(USER, `printf '%s' '{"version":1,"levels":{"main":2,"review-diff":1}}' > ${data}/window-zoom.json`);
+  const zoomed = new Win(9394, 'previous again');
+  launch(zoomed.port);
+  await zoomed.attach();
+  await zoomed.until('the start page', `${q('remote-session')}!==null`);
+  const zoomBefore = await zoomOf(zoomed);
+  check('the previous release opens its window at the saved zoom', Math.abs(zoomBefore - 1.44) < 0.01, String(zoomBefore));
+  await quit(zoomed);
+  const zoomFile = inside(USER, `cat ${data}/window-zoom.json`);
   const before = belongings();
   check('a conversation with the turn, the agent choice, the project and the own loop are on disk', before.conversations.length === 1 && before.conversations[0].marked && before.agent === 'copilot' && before.folders.length === 1 && before.ownLoop !== '', JSON.stringify(before));
   check('the closed window left the previous host running', inside(USER, `if kill -0 ${String(previousHost.pid)}; then echo alive; fi`) === 'alive');
@@ -263,18 +329,42 @@ async function main() {
   stage = 'the new client meets the previous host';
   const second = new Win(9392, 'upgraded');
   launch(second.port);
-  await second.attach();
-  await second.until('the start page', `${q('remote-session')}!==null`);
-  const line = await second.until('the host line', `${q('host-link')}?.textContent ?? false`, 30_000);
-  note('what the host line says of the previous host', line.replace(/\s+/g, ' ').trim());
-  await second.shot('02-new-client-previous-host');
-  const attached = running();
-  check('the new client attached to the previous host rather than starting another', attached.pid === previousHost.pid, JSON.stringify(attached));
-  await second.openProject();
-  await second.until('the earlier conversation through the previous host', `document.body.innerText.includes(${JSON.stringify(marker)})`);
-  check('the earlier conversation is shown through the previous host', true);
-  // End host: the explicit action that ends an idle host; the window then starts this build's.
-  await second.click('host-link-leave');
+  // Two ways to meet the previous host. When the two builds can work together (the same host
+  // contract), the window opens on the previous host and offers Restart host. When this release
+  // changed the contract, as 0.1.8 did, this client cannot use that host: before any window it
+  // asks whether to stop it ("Another DSpatch host is running here"), Stop it and continue
+  // being the default. Either way the previous host must be found, and ended only by the person.
+  const met = await poll('the window, or the question before it', async () => {
+    if (xdo(`search --name '${STOP_DIALOG}'`).trim() !== '') return 'question';
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${String(second.port)}/json/list`, { signal: AbortSignal.timeout(1500) })).json();
+      return list.some((entry) => entry.type === 'page' && entry.url !== '' && !entry.url.includes('window=')) ? 'window' : false;
+    } catch {
+      return false;
+    }
+  }, 60_000);
+  note('how the new client met the previous host', met);
+  if (met === 'question') {
+    check('the new client finds the previous host still running and asks before stopping it', inside(USER, `if kill -0 ${String(previousHost.pid)}; then echo alive; fi`) === 'alive');
+    // The person's answer: the default button, Stop it and continue.
+    xdo(`search --name '${STOP_DIALOG}' windowfocus --sync key --clearmodifiers Return`);
+    await second.attach();
+    await second.until('the start page', `${q('remote-session')}!==null`);
+  } else {
+    await second.attach();
+    await second.until('the start page', `${q('remote-session')}!==null`);
+    const line = await second.until('the host line', `${q('host-link')}?.textContent ?? false`, 30_000);
+    note('what the host line says of the previous host', line.replace(/\s+/g, ' ').trim());
+    check('the new client says the previous host needs a restart, with Restart host', /Restart needed to finish updating/.test(line) && (await second.ev(`${q('host-link-leave')}?.textContent ?? ''`)).includes('Restart host'), line.replace(/\s+/g, ' ').trim());
+    await second.shot('02-new-client-previous-host');
+    const attached = running();
+    check('the new client attached to the previous host rather than starting another', attached.pid === previousHost.pid, JSON.stringify(attached));
+    await second.openProject();
+    await second.until('the earlier conversation through the previous host', `document.body.innerText.includes(${JSON.stringify(marker)})`);
+    check('the earlier conversation is shown through the previous host', true);
+    // Restart host: the explicit action that ends the idle older host; the window then starts this build's.
+    await second.click('host-link-leave');
+  }
   await poll('a host of this release', () => {
     try {
       const now = running();
@@ -284,7 +374,10 @@ async function main() {
     }
   }, 60_000);
   const replaced = running();
-  check('End host ended the previous host and this release\'s host took its place', replaced.appVersion === version && inside(USER, `if kill -0 ${String(previousHost.pid)} 2>/dev/null; then echo alive; else echo gone; fi`) === 'gone', JSON.stringify(replaced));
+  check('the previous host was ended and this release\'s host took its place', replaced.appVersion === version && inside(USER, `if kill -0 ${String(previousHost.pid)} 2>/dev/null; then echo alive; else echo gone; fi`) === 'gone', JSON.stringify(replaced));
+  const lineNow = await second.until('the host line now', `${q('host-link')}?.textContent ?? false`, 30_000);
+  check('the window then says it is on this computer, with no restart pending', /On this computer/.test(lineNow) && !/Restart needed/.test(lineNow), lineNow.replace(/\s+/g, ' ').trim());
+  await second.shot('02-new-client-on-this-release');
   await second.until('the chat again', `${q('prompt')}!==null || ${q('open-project-0')}!==null`, 60_000);
   if ((await second.ev(`${q('prompt')}===null`)) === true) await second.openProject();
   await second.until('the earlier conversation through this release\'s host', `document.body.innerText.includes(${JSON.stringify(marker)})`, 60_000);
@@ -292,6 +385,14 @@ async function main() {
   const loopsAfter = await second.loops();
   check("the person's own loop is offered by this release", loopsAfter.some((row) => row.id === 'trial-own-loop' && row.usable), JSON.stringify(loopsAfter));
   const after = belongings();
+  check('the window\'s zoom is as the previous release left it', Math.abs((await zoomOf(second)) - zoomBefore) < 0.01, JSON.stringify({ zoomBefore, now: await zoomOf(second) }));
+  const secondReview = await openReview(second, 9392, 'upgraded review');
+  check('the review window opens at its saved zoom, and the zoom file is as it was', Math.abs((await zoomOf(secondReview)) - 1.2) < 0.01 && inside(USER, `cat ${data}/window-zoom.json`) === zoomFile, JSON.stringify({ review: await zoomOf(secondReview), file: inside(USER, `cat ${data}/window-zoom.json`) }));
+  await secondReview.until('the delegated result', `document.querySelector('[data-ev="agent-review"]')!==null`, 60_000);
+  const reviewAfter = JSON.parse(await reviewLine(secondReview));
+  check('the review and its delegated result are as the previous release left them', reviewAfter.summary === reviewBefore.summary && reviewAfter.result !== '' && reviewFilesBefore.every((file) => reviewFiles().includes(file)), JSON.stringify({ reviewBefore, reviewAfter }));
+  await secondReview.shot('03b-upgraded-review');
+  secondReview.close();
   check('the conversation, the agent choice, the project and the own loop are as they were', same(before.conversations, after.conversations) && after.agent === before.agent && same(before.folders, after.folders) && after.ownLoop === before.ownLoop, JSON.stringify({ before, after }));
   await quit(second);
 
