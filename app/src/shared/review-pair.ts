@@ -443,6 +443,70 @@ export interface AgentFinding {
   readonly title?: string;
   /** Longer reasoning, shown on request (DSP-158). Absent on older results. */
   readonly details?: string;
+  /** What the observation rests on: the code read, a test, a document (DSP-175). Absent on older results. */
+  readonly evidence?: string;
+  /** What the agent recommends doing about it (DSP-175). Absent on older results: none is made up. */
+  readonly recommendation?: Recommendation;
+  /**
+   * The place the agent named when DSpatch could not find it at that commit (DSP-175): kept
+   * so the thread can say where it was said to be, and never marked in the code.
+   */
+  readonly missing?: { readonly range: LineRange; readonly reason: string };
+  /**
+   * Where it shows in another repository of the workspace, read as context and checked at
+   * its recorded commit (DSP-175). Never reviewed, approved or covered.
+   */
+  readonly contextLocation?: ContextRange;
+}
+
+/**
+ * What the agent recommends for a finding, a question or a verification gap (DSP-175).
+ * Accepting it records agreement only: it starts no change, command or other action.
+ * `keep` is the explicit "no change is needed", which an accept may close with its reason.
+ */
+export type RecommendationKind = 'change' | 'test' | 'measure' | 'ask-author' | 'investigate' | 'keep';
+
+export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = ['change', 'test', 'measure', 'ask-author', 'investigate', 'keep'];
+
+export interface Recommendation {
+  readonly kind: RecommendationKind;
+  /** The recommended action in a sentence. */
+  readonly action: string;
+  /** Why, briefly. */
+  readonly rationale: string;
+  /** What is still uncertain; `''` when nothing is said. */
+  readonly uncertainty: string;
+  /** A concrete next step when more investigation is needed; `''` otherwise. */
+  readonly nextStep: string;
+}
+
+/**
+ * Something the agent could not establish (DSP-175): a verification gap, not a defect. It
+ * belongs to the finding with the title `finding` when the agent tied it to one.
+ */
+export interface AgentGap {
+  readonly text: string;
+  readonly evidence?: string;
+  readonly finding?: string;
+  readonly location: LineRange | null;
+  readonly recommendation?: Recommendation;
+}
+
+/** What a person did in a review thread (DSP-175). Kept in order; nothing is rewritten. */
+export type ThreadEventKind = 'comment' | 'accept' | 'keep-open' | 'resolve' | 'dismiss' | 'reopen';
+
+export interface ThreadEvent {
+  readonly id: string;
+  readonly kind: ThreadEventKind;
+  readonly at: string;
+  /** The person's words; required for a dismissal, optional otherwise. */
+  readonly text: string;
+}
+
+/** The person's side of one thread, under the thread's identity. */
+export interface ThreadRecord {
+  readonly threadId: string;
+  readonly events: readonly ThreadEvent[];
 }
 
 /** What a delegated review reported, after DSpatch checked it against the scope. */
@@ -460,6 +524,11 @@ export interface DelegationResult {
   readonly approved: readonly LineRange[];
   readonly findings: readonly AgentFinding[];
   readonly uncertainties: readonly string[];
+  /**
+   * The same things not established, with what they rest on and a recommendation (DSP-175).
+   * Absent on older results, whose `uncertainties` are then the gaps.
+   */
+  readonly gaps?: readonly AgentGap[];
   /** The agent said the material was not enough to judge; nothing is approved then. */
   readonly insufficient: boolean;
   /** What DSpatch changed in the agent's answer before recording it, in plain words. */
@@ -594,6 +663,61 @@ export interface AnswerReference {
   readonly range: LineRange;
 }
 
+/**
+ * A place in another repository of the review's workspace, read as context at the commit
+ * DSpatch recorded for it (DSP-175). Context is not under review: such a place is never
+ * reviewed, approved or covered, so it is kept apart from {@link LineRange}, and it opens
+ * from Git at `commit` (`readContextFile`), never from a working copy.
+ */
+export interface ContextRange {
+  readonly kind: 'context';
+  /** The context repository's name in this review: its folder under `context/`. */
+  readonly repository: string;
+  /** The full commit the place was read and checked at. */
+  readonly commit: string;
+  readonly path: string;
+  readonly start: number;
+  readonly end: number;
+}
+
+/** A context place an answer rests on, checked at its recorded commit (DSP-175). */
+export interface ContextReference {
+  readonly label: string;
+  readonly range: ContextRange;
+}
+
+/** A stored context place, or `null`. */
+export function contextRangeFrom(raw: unknown): ContextRange | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return null;
+  }
+  const value = raw as Record<string, unknown>;
+  const { repository, commit, path: filePath, start, end } = value;
+  if (value['kind'] !== 'context' || typeof repository !== 'string' || repository === '' || !isFullHash(commit) || typeof filePath !== 'string' || filePath === '') {
+    return null;
+  }
+  if (!Number.isInteger(start) || !Number.isInteger(end) || (start as number) < 1 || (end as number) < (start as number)) {
+    return null;
+  }
+  return { kind: 'context', repository, commit, path: filePath, start: start as number, end: end as number };
+}
+
+/** What `readContextFile` answers: a file of a context repository at its recorded commit (DSP-175). */
+export interface ContextFileView {
+  readonly repository: string;
+  readonly commit: string;
+  readonly path: string;
+  /** `null` for a binary file. */
+  readonly text: string | null;
+  readonly binary: boolean;
+  /** How the commit was chosen: a submodule pin, a declared version, a path dependency, or HEAD. */
+  readonly how: 'submodule' | 'dependency' | 'path-dependency' | 'head';
+  /** Whether that commit is established as what the reviewed build uses. */
+  readonly established: boolean;
+  /** The plain sentence on how it was chosen, as the agent was told it. */
+  readonly note: string;
+}
+
 /** The answer to a step question, after DSpatch checked its references. */
 export interface StepAnswer {
   /** Markdown: the explanation, written to the plan's rules. */
@@ -602,6 +726,11 @@ export interface StepAnswer {
   readonly details?: string;
   /** References that exist at their commit. */
   readonly references: readonly AnswerReference[];
+  /**
+   * Places in other repositories of the workspace, read as context and checked at their
+   * recorded commit (DSP-175). Never reviewed, approved or covered. Absent when there are none.
+   */
+  readonly contextReferences?: readonly ContextReference[];
   /** The agent could not establish an answer from the code it could read. */
   readonly insufficient: boolean;
   /** What DSpatch left out of the answer, in plain words. */
@@ -727,6 +856,12 @@ export interface PairRecord {
    * approves nothing and deletes nothing; opening the pair again makes it ongoing again.
    */
   readonly endedAt: string | null;
+  /**
+   * What the person did in the review's threads (DSP-175): comments and decisions, under
+   * each thread's identity. The threads themselves are read from the jobs' results, so a
+   * finding is never copied with a status of its own.
+   */
+  readonly threads: readonly ThreadRecord[];
   readonly savedAt: string;
 }
 
@@ -742,6 +877,7 @@ export function emptyRecord(pair: RevisionPairIdentity): PairRecord {
     position: START_POSITION,
     walkDefinition: null,
     endedAt: null,
+    threads: [],
     savedAt: new Date(0).toISOString(),
   };
 }
@@ -830,6 +966,13 @@ function answerFrom(raw: unknown): StepAnswer | null {
       const range = rangeFrom(entry['range']);
       return range === null ? [] : [{ label: typeof entry['label'] === 'string' ? entry['label'] : '', range }];
     }),
+    ...((): Partial<StepAnswer> => {
+      const context = (Array.isArray(raw['contextReferences']) ? raw['contextReferences'] : []).filter(isRecordObject).flatMap((entry) => {
+        const range = contextRangeFrom(entry['range']);
+        return range === null ? [] : [{ label: typeof entry['label'] === 'string' ? entry['label'] : '', range }];
+      });
+      return context.length === 0 ? {} : { contextReferences: context };
+    })(),
     insufficient: raw['insufficient'] === true,
     adjustments: stringsFrom(raw['adjustments']),
   };
@@ -924,8 +1067,36 @@ export function jobFrom(raw: unknown): AgentJob | null {
             location: rangeFrom(finding['location']),
             ...(typeof finding['title'] === 'string' && finding['title'] !== '' ? { title: finding['title'] } : {}),
             ...(typeof finding['details'] === 'string' && finding['details'] !== '' ? { details: finding['details'] } : {}),
+            ...(typeof finding['evidence'] === 'string' && finding['evidence'] !== '' ? { evidence: finding['evidence'] } : {}),
+            ...optionalRecommendation(finding['recommendation']),
+            ...((): Partial<AgentFinding> => {
+              const missing = finding['missing'];
+              const range = isRecordObject(missing) ? rangeFrom(missing['range']) : null;
+              return range === null || !isRecordObject(missing) ? {} : { missing: { range, reason: typeof missing['reason'] === 'string' ? missing['reason'] : '' } };
+            })(),
+            ...((): Partial<AgentFinding> => {
+              const context = contextRangeFrom(finding['contextLocation']);
+              return context === null ? {} : { contextLocation: context };
+            })(),
           })),
         uncertainties: stringsFrom(resultRaw['uncertainties']),
+        ...(Array.isArray(resultRaw['gaps'])
+          ? {
+              gaps: resultRaw['gaps'].filter(isRecordObject).flatMap((gap): AgentGap[] =>
+                typeof gap['text'] === 'string' && gap['text'].trim() !== ''
+                  ? [
+                      {
+                        text: gap['text'],
+                        location: rangeFrom(gap['location']),
+                        ...(typeof gap['evidence'] === 'string' && gap['evidence'] !== '' ? { evidence: gap['evidence'] } : {}),
+                        ...(typeof gap['finding'] === 'string' && gap['finding'] !== '' ? { finding: gap['finding'] } : {}),
+                        ...optionalRecommendation(gap['recommendation']),
+                      },
+                    ]
+                  : [],
+              ),
+            }
+          : {}),
         insufficient: resultRaw['insufficient'] === true,
         adjustments: stringsFrom(resultRaw['adjustments']),
       }
@@ -1081,8 +1252,71 @@ export function adoptPairRecord(raw: unknown, pair: RevisionPairIdentity): PairR
     position: positionFrom(raw['position']),
     walkDefinition: typeof raw['walkDefinition'] === 'string' && raw['walkDefinition'] !== '' ? raw['walkDefinition'] : null,
     endedAt: typeof raw['endedAt'] === 'string' && raw['endedAt'] !== '' ? raw['endedAt'] : null,
+    threads: threadRecordsFrom(raw['threads']),
     savedAt: typeof raw['savedAt'] === 'string' ? raw['savedAt'] : empty.savedAt,
   };
+}
+
+const THREAD_EVENT_KINDS: readonly ThreadEventKind[] = ['comment', 'accept', 'keep-open', 'resolve', 'dismiss', 'reopen'];
+
+/** What a window asks of a thread: one event, with the person's words. */
+export interface ThreadActionRequest {
+  readonly threadId: string;
+  readonly kind: ThreadEventKind;
+  readonly text: string;
+}
+
+/** A thread request as a window sent it, or why it is refused. */
+export function threadActionFrom(raw: unknown): ThreadActionRequest | { readonly error: string } {
+  if (!isRecordObject(raw) || typeof raw['threadId'] !== 'string' || raw['threadId'] === '' || !THREAD_EVENT_KINDS.includes(raw['kind'] as ThreadEventKind)) {
+    return { error: 'That names no thread action.' };
+  }
+  const text = typeof raw['text'] === 'string' ? raw['text'].trim().slice(0, 20_000) : '';
+  const kind = raw['kind'] as ThreadEventKind;
+  if (kind === 'dismiss' && text === '') {
+    return { error: 'Dismissing a thread needs a comment saying why.' };
+  }
+  if (kind === 'comment' && text === '') {
+    return { error: 'An empty comment is not kept.' };
+  }
+  return { threadId: raw['threadId'], kind, text };
+}
+
+/** A recommendation as stored or as the agent wrote it; `null` when it says no action. */
+export function recommendationFrom(raw: unknown): Recommendation | null {
+  if (!isRecordObject(raw)) {
+    return null;
+  }
+  const text = (name: string): string => (typeof raw[name] === 'string' ? (raw[name] as string).trim() : '');
+  const action = text('action');
+  if (action === '') {
+    return null;
+  }
+  const kind = RECOMMENDATION_KINDS.includes(raw['kind'] as RecommendationKind) ? (raw['kind'] as RecommendationKind) : 'investigate';
+  return { kind, action, rationale: text('rationale'), uncertainty: text('uncertainty'), nextStep: text('nextStep') };
+}
+
+function optionalRecommendation(raw: unknown): { readonly recommendation?: Recommendation } {
+  const recommendation = recommendationFrom(raw);
+  return recommendation === null ? {} : { recommendation };
+}
+
+function threadRecordsFrom(raw: unknown): ThreadRecord[] {
+  const out: ThreadRecord[] = [];
+  for (const entry of Array.isArray(raw) ? raw : []) {
+    if (!isRecordObject(entry) || typeof entry['threadId'] !== 'string' || entry['threadId'] === '') {
+      continue;
+    }
+    const events: ThreadEvent[] = [];
+    for (const event of Array.isArray(entry['events']) ? entry['events'] : []) {
+      if (!isRecordObject(event) || typeof event['id'] !== 'string' || !THREAD_EVENT_KINDS.includes(event['kind'] as ThreadEventKind)) {
+        continue;
+      }
+      events.push({ id: event['id'], kind: event['kind'] as ThreadEventKind, at: typeof event['at'] === 'string' ? event['at'] : '', text: typeof event['text'] === 'string' ? event['text'] : '' });
+    }
+    out.push({ threadId: entry['threadId'], events });
+  }
+  return out;
 }
 
 function rangeHolds(range: LineRange, line: Pick<ChangedLine, 'side' | 'path' | 'line'>): boolean {
@@ -1531,6 +1765,8 @@ export interface DiffLocation {
   readonly side: LineSide;
   readonly path: string;
   readonly line: number;
+  /** DSP-175: the review thread to choose there, when a thread was shown in the diff. */
+  readonly threadId?: string;
 }
 
 /**
@@ -1574,6 +1810,7 @@ export const REVIEW_PAIR_CHANNELS = {
   open: 'dspatch:review-pair-open',
   forWalk: 'dspatch:review-pair-for-walk',
   readFile: 'dspatch:review-pair-read-file',
+  readContextFile: 'dspatch:review-pair-read-context-file',
   state: 'dspatch:review-pair-state',
   mark: 'dspatch:review-pair-mark',
   savePosition: 'dspatch:review-pair-save-position',
@@ -1586,6 +1823,7 @@ export const REVIEW_PAIR_CHANNELS = {
   agents: 'dspatch:review-pair-agents',
   startJob: 'dspatch:review-pair-start-job',
   cancelJob: 'dspatch:review-pair-cancel-job',
+  thread: 'dspatch:review-pair-thread',
 } as const;
 
 /** A pair's record changed; sent to every review window over that pair. */
@@ -1614,6 +1852,12 @@ export interface ReviewPairBridge {
   /** In a walk window: the pair the walk is over, opened so decisions share its record. */
   forWalk(): Promise<PairAnswer<OpenPair>>;
   readFile(key: string, side: LineSide, path: string): Promise<PairAnswer<{ readonly text: string | null; readonly binary: boolean }>>;
+  /**
+   * DSP-175: a file of another repository of the review's workspace, at the commit recorded
+   * when it was given to an agent as context. Only a repository and commit this review gave
+   * as context; read from Git, never from a working copy. Reading it reviews nothing.
+   */
+  readContextFile(key: string, repository: string, path: string, commit: string): Promise<PairAnswer<ContextFileView>>;
   state(key: string): Promise<PairAnswer<PairRecord>>;
   mark(key: string, request: MarkRequestInput): Promise<PairAnswer<PairRecord>>;
   savePosition(key: string, position: PairPosition): Promise<PairAnswer<{ readonly saved: true }>>;
@@ -1634,6 +1878,11 @@ export interface ReviewPairBridge {
   agents(key: string): Promise<PairAnswer<ReviewAgents>>;
   startJob(key: string, request: AgentJobRequestInput): Promise<PairAnswer<AgentJob>>;
   cancelJob(key: string, jobId: string): Promise<PairAnswer<{ readonly note: string }>>;
+  /**
+   * DSP-175: a person's comment or decision in a review thread. It records what the person
+   * did; it never runs anything, never approves lines and never changes an agent's result.
+   */
+  thread(key: string, request: ThreadActionRequest): Promise<PairAnswer<PairRecord>>;
   onChanged(listener: (event: PairChangedEvent) => void): () => void;
   onNavigate(listener: (location: DiffLocation) => void): () => void;
 }

@@ -31,6 +31,12 @@
  *
  * Files are written read-only. That is a guard against accidents, not containment: what
  * keeps the agent to reading is its provider's permission policy (ANALYSIS_PERMISSIONS).
+ *
+ * **The workspace's other repositories (DSP-175).** When the review has context
+ * repositories, each is written the same way, from Git's object store at the commit
+ * `resolveContextVersion` chose, under `context/<name>/` in the same folder. Uncommitted,
+ * untracked and ignored files are never there; whether the working copy differs is
+ * recorded as counts. A repository that cannot be written is named, not replaced.
  */
 
 import { spawn, execFile } from 'node:child_process';
@@ -38,9 +44,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { RevisionPairIdentity } from '../shared/review-pair';
+import { CONTEXT_REPOSITORIES_MAX, resolveContextVersion, workingCopyState, type ContextRepository, type ContextSnapshot } from './context-repositories';
 
 /** The folders of one side, as the agent's prompt names them. */
 export const SIDE_FOLDERS = { base: 'base', target: 'target' } as const;
+
+/** The folder of the workspace's other repositories, beside the sides (DSP-175). */
+export const CONTEXT_FOLDER = 'context';
 
 /** Bytes written per side at most; beyond it files are left out (changed files first, always). */
 export const SNAPSHOT_BYTES_PER_SIDE = 1024 * 1024 * 1024;
@@ -67,10 +77,14 @@ export interface SnapshotManifest {
   readonly createdAt: string;
   readonly base: SnapshotSide;
   readonly target: SnapshotSide;
+  /** The workspace's other repositories written as context (DSP-175), each at its commit. */
+  readonly context: readonly ContextSnapshot[];
+  /** Context repositories that could not be written, and why. */
+  readonly contextUnavailable: readonly { readonly name: string; readonly reason: string }[];
 }
 
 export interface RevisionSnapshot {
-  /** The folder the agent works in; it holds `base/` and `target/`. */
+  /** The folder the agent works in; it holds `base/`, `target/` and, with context, `context/`. */
   readonly folder: string;
   readonly manifest: SnapshotManifest;
 }
@@ -345,7 +359,14 @@ export class RevisionSnapshots {
    * The pair's snapshot for `holder`, written if no job holds one. `changed` are the
    * repository paths the diff names at each side, which the size bound never leaves out.
    */
-  acquire(key: string, pair: RevisionPairIdentity, changed: { readonly base: ReadonlySet<string>; readonly target: ReadonlySet<string> }, holder: string): Promise<RevisionSnapshot> {
+  acquire(
+    key: string,
+    pair: RevisionPairIdentity,
+    changed: { readonly base: ReadonlySet<string>; readonly target: ReadonlySet<string> },
+    holder: string,
+    /** The workspace's other repositories, written as context; while the snapshot is shared, its first writer's list holds. */
+    context: readonly ContextRepository[] = [],
+  ): Promise<RevisionSnapshot> {
     const existing = this.entries.get(key);
     if (existing !== undefined) {
       existing.holders.add(holder);
@@ -360,12 +381,30 @@ export class RevisionSnapshots {
       const started = Date.now();
       const base = await writeSide(pair.repository, pair.base, path.join(folder, SIDE_FOLDERS.base), changed.base);
       const target = await writeSide(pair.repository, pair.target, path.join(folder, SIDE_FOLDERS.target), changed.target);
+      const written: ContextSnapshot[] = [];
+      const contextUnavailable: { name: string; reason: string }[] = [];
+      for (const [index, repository] of context.entries()) {
+        if (index >= CONTEXT_REPOSITORIES_MAX) {
+          contextUnavailable.push({ name: repository.name, reason: `more than ${String(CONTEXT_REPOSITORIES_MAX)} repositories are not given as context` });
+          continue;
+        }
+        try {
+          const resolution = await resolveContextVersion(pair.repository, pair.target, repository.path);
+          const side = await writeSide(repository.path, resolution.commit, path.join(folder, CONTEXT_FOLDER, repository.name), new Set());
+          const workingCopy = await workingCopyState(repository.path);
+          written.push({ name: repository.name, repository: repository.path, ...resolution, workingCopy, files: side.files, skippedCount: side.skipped.length });
+        } catch (error) {
+          contextUnavailable.push({ name: repository.name, reason: error instanceof Error ? error.message : String(error) });
+        }
+      }
       this.options.log(
         `revisions: ${key.slice(0, 12)} written in ${String(Date.now() - started)} ms ` +
           `(base ${pair.base.slice(0, 7)}: ${String(base.files)} files, ${String(base.skipped.length)} left out; ` +
-          `target ${pair.target.slice(0, 7)}: ${String(target.files)} files, ${String(target.skipped.length)} left out)`,
+          `target ${pair.target.slice(0, 7)}: ${String(target.files)} files, ${String(target.skipped.length)} left out` +
+          `${written.map((entry) => `; context ${entry.name} ${entry.commit.slice(0, 7)} (${entry.how}): ${String(entry.files)} files`).join('')}` +
+          `${contextUnavailable.map((entry) => `; context ${entry.name} not written`).join('')})`,
       );
-      return { folder, manifest: { repository: pair.repository, createdAt: new Date().toISOString(), base, target } };
+      return { folder, manifest: { repository: pair.repository, createdAt: new Date().toISOString(), base, target, context: written, contextUnavailable } };
     })();
     const entry: Entry = { snapshot, holders: new Set([holder]) };
     this.entries.set(key, entry);

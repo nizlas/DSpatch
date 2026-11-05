@@ -1248,6 +1248,9 @@ export class ReviewDiscussionService {
         answer.adjustments = [checked.error];
       } else {
         answer.references = checked.references;
+        if ((checked.contextReferences?.length ?? 0) > 0) {
+          answer.contextReferences = checked.contextReferences;
+        }
         answer.insufficient = checked.insufficient || undefined;
         answer.adjustments = [
           ...(split.block === null ? ['The answer named no code it rests on in a form DSpatch could check.'] : []),

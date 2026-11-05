@@ -31,6 +31,7 @@ import {
   parseLog,
   reviewTotalsOf,
   scopeFrom,
+  threadActionFrom,
   type LineRange,
   type LineSide,
   type LogCommit,
@@ -47,6 +48,7 @@ import {
   type RevisionPairIdentity,
 } from '../shared/review-pair';
 import { ORIENTATION_DIFF_CHARS, type AnalysisMaterial, type WalkStepOutline } from '../shared/review-agent';
+import { reviewThreadsOf, threadActionProblem } from '../shared/review-threads';
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -444,6 +446,37 @@ export class ReviewPairs {
     const record = this.readRecord(opened.key, opened.pair);
     const marks: PairMark[] = request.scopes.map((scope) => ({ id: randomUUID(), op: request.op, scope, reason: request.reason, at }));
     return this.write(opened.key, { ...record, marks: [...record.marks, ...marks] }, true);
+  }
+
+  /**
+   * A person's comment or decision in a review thread (DSP-175), kept under the thread's
+   * identity and sent to every window of the review. The thread must exist in this
+   * review's results. Nothing runs, no line is approved and no agent result changes.
+   */
+  thread(key: unknown, raw: unknown): PairAnswer<PairRecord> {
+    const opened = this.openOf(key);
+    if (opened === null) {
+      return { error: 'That review is not open.' };
+    }
+    const request = threadActionFrom(raw);
+    if ('error' in request) {
+      return request;
+    }
+    const record = this.readRecord(opened.key, opened.pair);
+    const thread = reviewThreadsOf(record).find((entry) => entry.id === request.threadId);
+    if (thread === undefined) {
+      return { error: 'That thread is not in this review.' };
+    }
+    const problem = threadActionProblem(thread, request.kind);
+    if (problem !== null) {
+      return { error: problem };
+    }
+    const event = { id: randomUUID(), kind: request.kind, at: new Date().toISOString(), text: request.text };
+    const known = record.threads.some((entry) => entry.threadId === request.threadId);
+    const threads = known
+      ? record.threads.map((entry) => (entry.threadId === request.threadId ? { ...entry, events: [...entry.events, event] } : entry))
+      : [...record.threads, { threadId: request.threadId, events: [event] }];
+    return this.write(opened.key, { ...record, threads }, true);
   }
 
   /** Where the diff window is. Not news to anyone else, so no other window is told. */

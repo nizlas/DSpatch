@@ -174,6 +174,7 @@ import { earlierDiscussion, pairEnvelopeSource } from './review-pair-discussion'
 import { definitionFrom } from '../shared/review-agent';
 import { ReviewAgentJobs } from './review-agent-jobs';
 import { RevisionSnapshots } from './revision-snapshots';
+import { ReviewContexts } from './context-repositories';
 import { ResourceGovernor, ResourceSampler, availableCpus, governorConfig } from '../main/resource-governor';
 import { GovernedRunControl } from '../main/resource-governor-control';
 import { REVIEW_PAIR_CHANGED } from '../shared/review-pair';
@@ -3837,6 +3838,8 @@ let reviewDiscussions: ReviewDiscussions | null = null;
 let reviewPairs: ReviewPairs | null = null;
 /** Walk preparation and delegated review over a revision pair (DSP-152). */
 let reviewAgentJobs: ReviewAgentJobs | null = null;
+/** DSP-175: the workspace's other repositories given to a review as read context. */
+let reviewContexts: ReviewContexts | null = null;
 
 function requireReviewAgentJobs(): ReviewAgentJobs {
   if (reviewAgentJobs === null) {
@@ -3955,9 +3958,19 @@ function pairDiscussionIdentity(identity: DiscussionIdentity): DiscussionIdentit
 
 /** Where a window's question gets its context: a walk's review, or the diff's revision pair. */
 function envelopeSourceOf(target: DiscussionTarget): EnvelopeSource {
-  return target.identity.definitionPath === ''
-    ? pairEnvelopeSource(requireReviewPairs(), pairDiscussionIdentity(target.identity).key)
-    : envelopeSourceFor(target.sessionId);
+  const pair = pairEnvelopeSource(requireReviewPairs(), pairDiscussionIdentity(target.identity).key);
+  if (target.identity.definitionPath === '') {
+    return pair;
+  }
+  // DSP-175: a question in a review thread is about the pair's own record, whichever window
+  // asks it, so it gets its context from the pair as a question from the diff does.
+  const walk = envelopeSourceFor(target.sessionId);
+  return {
+    envelopeFor: (request) => {
+      const subject = typeof request === 'object' && request !== null ? (request as { subject?: { kind?: unknown } }).subject : undefined;
+      return subject?.kind === 'thread' ? pair.envelopeFor(request) : walk.envelopeFor(request);
+    },
+  };
 }
 
 function discussionOf(target: DiscussionTarget): ReviewDiscussionService {
@@ -4012,6 +4025,11 @@ function registerReviewMethods(): void {
   handle('reviewPair.readFile', (_event, key: unknown, side: unknown, filePath: unknown) =>
     requireReviewPairs().readFile(key, side, filePath),
   );
+  // DSP-175: a context repository's file, only at a commit this review gave as context.
+  handle('reviewPair.readContextFile', async (_event, key: unknown, repository: unknown, filePath: unknown, commit: unknown) => {
+    const opened = typeof key === 'string' ? requireReviewPairs().opened(key) : null;
+    return reviewContexts === null ? { error: 'Review is not ready.' } : reviewContexts.readFile(key, opened?.pair ?? null, repository, filePath, commit);
+  });
   handle('reviewPair.state', (_event, key: unknown) => requireReviewPairs().state(key));
   handle('reviewPair.mark', (_event, key: unknown, request: unknown) => requireReviewPairs().mark(key, request));
   handle('reviewPair.savePosition', (_event, key: unknown, position: unknown) =>
@@ -4067,6 +4085,7 @@ function registerReviewMethods(): void {
     }
     return requireReviewAgentJobs().request(key, request);
   });
+  handle('reviewPair.thread', (_event, key: unknown, request: unknown) => requireReviewPairs().thread(key, request));
   handle('reviewPair.cancelJob', (_event, key: unknown, jobId: unknown) => requireReviewAgentJobs().cancel(key, jobId));
 
   handle('discussion.load', (_event, target: DiscussionTarget, request: unknown) =>
@@ -4563,7 +4582,20 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
     },
   });
   revisionSnapshots.sweep();
+  // DSP-175: other repositories explicitly added to the open workspace are read context for
+  // a review of one of its repositories; only those found under the workspace's own folders.
+  reviewContexts = new ReviewContexts({
+    recordsDir: path.join(userDataDir(), 'reviews', 'context'),
+    workspace: async () => {
+      const folders = openWorkspaceFolders();
+      return folders.length === 0 ? null : { folders, repositories: await requireReviewPairs().repositories(folders) };
+    },
+    log: (message) => {
+      log(`[review] ${message}`);
+    },
+  });
   reviewAgentJobs = new ReviewAgentJobs({
+    contexts: reviewContexts,
     recordsDir: path.join(userDataDir(), 'reviews'),
     // The shared factory, for the analysis purpose only; the jobs check the policy themselves.
     createAdapter: (provider) => {

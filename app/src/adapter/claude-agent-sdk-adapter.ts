@@ -264,7 +264,7 @@ export const ANALYSIS_TOOLS: readonly string[] = Object.freeze(['Read', 'Glob', 
 /** Why the analysis hook refused a tool call (DSP-152). Sent to the model as the deny reason. */
 export const ANALYSIS_DENY_REASON =
   'This is read-only analysis of two revisions: only Read, Glob and Grep inside your working ' +
-  'folder (base/ and target/) may be used, and this call was not run. Paths must stay inside ' +
+  'folder (base/, target/ and any context/) may be used, and this call was not run. Paths must stay inside ' +
   'that folder.';
 
 /**

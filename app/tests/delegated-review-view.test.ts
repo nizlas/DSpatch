@@ -26,14 +26,14 @@ describe('what was approved', () => {
   it('calls a part whole only when every changed line in it is approved', () => {
     const view = delegatedReviewView(result({ approved: [range(10, 19)] }), scope, files);
     assert.equal(view.standing, 'whole');
-    assert.equal(view.approvedLine, 'Whole part approved: all 10 changed lines.');
+    assert.equal(view.approvedLine, '10/10 changed lines reviewed and approved by the agent.');
     assert.equal(view.attentionLine, 'Nothing else was reported as needing attention.');
   });
 
   it('keeps a partial approval apart, with what remains, whatever the agent says', () => {
     const view = delegatedReviewView(result({ approved: [range(10, 13)], summary: 'Everything is approved.', findings: [problem('Broken.', range(14, 14))], uncertainties: ['Unknown caller.'] }), scope, files);
     assert.equal(view.standing, 'partial');
-    assert.equal(view.approvedLine, 'Partly approved: 4 of 10 changed lines.');
+    assert.equal(view.approvedLine, '4/10 changed lines reviewed and approved by the agent.');
     assert.equal(view.attentionLine, 'Needs attention: 6 changed lines not approved, 1 problem, 1 thing not established.');
     assert.deepEqual(view.notApproved?.map((entry) => [entry.start, entry.end]), [[14, 19]]);
     assert.equal(view.agentSummary, 'Everything is approved.', 'shown as its words, under the statement');

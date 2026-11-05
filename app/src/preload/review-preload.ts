@@ -105,6 +105,8 @@ const pairBridge: ReviewPairBridge = {
   forWalk: () => ipcRenderer.invoke('dspatch:review-pair-for-walk') as ReturnType<ReviewPairBridge['forWalk']>,
   readFile: (key, side, filePath) =>
     ipcRenderer.invoke('dspatch:review-pair-read-file', key, side, filePath) as ReturnType<ReviewPairBridge['readFile']>,
+  readContextFile: (key, repository, filePath, commit) =>
+    ipcRenderer.invoke('dspatch:review-pair-read-context-file', key, repository, filePath, commit) as ReturnType<ReviewPairBridge['readContextFile']>,
   state: (key) => ipcRenderer.invoke('dspatch:review-pair-state', key) as ReturnType<ReviewPairBridge['state']>,
   mark: (key, request) => ipcRenderer.invoke('dspatch:review-pair-mark', key, request) as ReturnType<ReviewPairBridge['mark']>,
   savePosition: (key, position) =>
@@ -120,6 +122,7 @@ const pairBridge: ReviewPairBridge = {
   agents: (key) => ipcRenderer.invoke('dspatch:review-pair-agents', key) as ReturnType<ReviewPairBridge['agents']>,
   startJob: (key, request) =>
     ipcRenderer.invoke('dspatch:review-pair-start-job', key, request) as ReturnType<ReviewPairBridge['startJob']>,
+  thread: (key, request) => ipcRenderer.invoke('dspatch:review-pair-thread', key, request) as ReturnType<ReviewPairBridge['thread']>,
   cancelJob: (key, jobId) =>
     ipcRenderer.invoke('dspatch:review-pair-cancel-job', key, jobId) as ReturnType<ReviewPairBridge['cancelJob']>,
   onChanged: (listener) => {

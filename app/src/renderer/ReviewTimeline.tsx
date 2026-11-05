@@ -3,6 +3,8 @@ import type { CSSProperties, JSX } from 'react';
 
 import { Inline, LineGutter, TokensView, fileName, lineDigits, rangeText, rowsOf, useRows, type Files } from './review-code';
 import { pick, type ReviewWords } from './review-i18n';
+import { activationLine } from './walk-activation';
+import { paneOfStation, panesOf, shownStation } from './walk-panes';
 import {
   isProsePath,
   type CodeLevel,
@@ -18,9 +20,12 @@ import {
 /**
  * The walk as a map of code places (third user observation, 24 October 2026).
  *
- * Every place of a walk is a station, and every station has a pane of its own, in
- * walk order from left to right: two places in the same file stand side by side with
+ * Every place of a walk is a station, and the stations stand in panes in walk order
+ * from left to right: two places in different parts of a file stand side by side with
  * their own focus, and a return to an earlier file opens a new pane further right.
+ * Neighbouring places on the old and the new side of the same change share one pane
+ * (DSP-175, see walk-panes.ts): the pane presents one of them at a time, and choosing
+ * the other moves the focus mark and the explanation within it.
  * The panes keep their identity, order, width and local scroll position; only what
  * is far off screen is left unrendered.
  *
@@ -33,8 +38,9 @@ import {
  * A pane draws only the rows near its visible part, at fixed row heights, so a whole
  * file stays scrollable without every row being drawn again as the map moves.
  *
- * Before/After is each pane's own choice of revision side and has nothing to do with
- * the map's direction.
+ * Before/After is the window's choice of what a diff pane draws — only the From rows,
+ * only the To rows, or the comparison — and its heading says which; it has nothing to
+ * do with the map's direction.
  */
 
 export interface Station {
@@ -282,6 +288,7 @@ function callPaneOf(stations: readonly Station[], station: Station | undefined):
 }
 
 const NO_CALLS: readonly CodeLocation[] = [];
+const NO_STATIONS: readonly Station[] = [];
 
 export function WalkTimeline({
   walk,
@@ -345,6 +352,18 @@ export function WalkTimeline({
     };
   }, []);
 
+  // The panes: neighbouring places on both sides of one change share one (walk-panes.ts).
+  // Widths, room, scroll positions, arrivals and the map's layout are all per pane.
+  const changedFiles = useMemo(() => new Map(diffFiles.map((file) => [file.path, file])), [diffFiles]);
+  const panes = useMemo(
+    () => panesOf(stations.map((station) => station.place.focus), (path) => changedFiles.get(path) ?? null),
+    [stations, changedFiles],
+  );
+  const paneOf = useMemo(() => paneOfStation(panes), [panes]);
+  const paneAt = (station: number): number => paneOf[station] ?? -1;
+  const activePane = paneAt(active);
+  const paneMembers = useMemo(() => panes.map((pane) => pane.stations.flatMap((index) => stations[index] ?? [])), [panes, stations]);
+
   // Pane widths: a shared default until the reader changes one. Half the viewport
   // shows two panes side by side; a wide window still gets readable panes.
   const defaultWidth = Math.max(MIN_PANE_WIDTH, Math.min(900, Math.floor((viewWidth - PANE_GAP) / 2)));
@@ -363,17 +382,17 @@ export function WalkTimeline({
     // becomes a narrow column of a few words a row (Niclas's trial, 29 October 2026). Whether
     // lines wrap never sets a width (30 October 2026): Wrap lines breaks lines within the
     // width each pane already has, so the panes, the dividers and the map stay where they are.
-    for (const station of stations) {
-      if (isProsePath(station.place.focus.path)) {
-        map.set(station.index, Math.max(defaultWidth, viewWidth));
+    for (const pane of panes) {
+      if (isProsePath(pane.path)) {
+        map.set(pane.index, Math.max(defaultWidth, viewWidth));
       }
     }
     for (const [index, width] of widths) {
       map.set(index, width);
     }
     return map;
-  }, [autoWidths, widths, defaultWidth, roomCap, stations, viewWidth]);
-  const layout = useMemo(() => layoutOf(stations.length, effectiveWidths, defaultWidth), [stations.length, effectiveWidths, defaultWidth]);
+  }, [autoWidths, widths, defaultWidth, roomCap, panes, viewWidth]);
+  const layout = useMemo(() => layoutOf(panes.length, effectiveWidths, defaultWidth), [panes.length, effectiveWidths, defaultWidth]);
   /** Asks for room for a pane's change; true when the pane will get wider. */
   const roomFor = useCallback(
     (index: number, wanted: number): boolean => {
@@ -411,7 +430,7 @@ export function WalkTimeline({
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const lastDirection = useRef<'forward' | 'backward'>(entry);
-  const activeAutoWidth = autoWidths.get(active);
+  const activeAutoWidth = autoWidths.get(activePane);
   // Each arrival by navigation is numbered; the pane it reaches makes room for its
   // change and places it in view once per number. The station the map opens on is
   // arrival 0. Panning activates panes without arriving anywhere.
@@ -423,7 +442,8 @@ export function WalkTimeline({
   // arriving at the place by navigation, or asking for its source — never by panning.
   const sourceSignalFor = (index: number): { pane: number | null; ref: CodeLocation | null } => {
     const station = stations[index];
-    const pane = callPaneOf(stations, station);
+    const callStation = callPaneOf(stations, station);
+    const pane = callStation === null ? null : paneAt(callStation);
     return { pane, ref: pane === null || station?.place.from == null ? null : station.place.from.ref };
   };
   const [source, setSource] = useState(() => ({ ...sourceSignalFor(active), seq: 0 }));
@@ -441,7 +461,7 @@ export function WalkTimeline({
     if (chosen) {
       panActivated.current = null;
       if (!moved) {
-        lastDirection.current = (layoutRef.current.lefts[active] ?? 0) < mapXRef.current ? 'backward' : 'forward';
+        lastDirection.current = (layoutRef.current.lefts[paneAt(active)] ?? 0) < mapXRef.current ? 'backward' : 'forward';
       }
     }
     if (moved || chosen) {
@@ -457,7 +477,7 @@ export function WalkTimeline({
       } else {
         // Panning takes over: an arrival not yet placed is dropped, never placed later.
         const pending = arrivalRef.current;
-        handledArrivals.current.set(pending.index, pending.seq);
+        handledArrivals.current.set(paneAt(pending.index), pending.seq);
       }
     }
     if (panActivated.current === active) {
@@ -471,8 +491,8 @@ export function WalkTimeline({
     if (viewWidth === 0) {
       return;
     }
-    const left = layoutRef.current.lefts[active] ?? 0;
-    const width = layoutRef.current.widths[active] ?? defaultWidth;
+    const left = layoutRef.current.lefts[paneAt(active)] ?? 0;
+    const width = layoutRef.current.widths[paneAt(active)] ?? defaultWidth;
     const target = lastDirection.current === 'forward' ? left + width - viewWidth : left;
     setMapX(Math.min(Math.max(0, target), Math.max(0, layoutRef.current.total - viewWidth)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -483,19 +503,25 @@ export function WalkTimeline({
   // vertically in its pane — once at least FOCUS_IN_VIEW of it is. Between places about
   // equally in view, the one whose focus is nearer the map's centre (see FOCUS_NEARER).
   // After a switch the map must travel SWITCH_TRAVEL more while that place is active.
+  // Panes are measured, each by the focus of the place it presents; a pane that wins
+  // makes that place active (shownStation: the first place of a pane further on, the
+  // last of one before), and the active pane never competes with itself.
   const settleActive = useCallback(
     (x: number, direction: number) => {
       const element = viewport.current;
       if (element === null) {
         return;
       }
-      if (lastSwitch.current !== null && lastSwitch.current.index === active && Math.abs(x - lastSwitch.current.x) < SWITCH_TRAVEL) {
+      const maxX = Math.max(0, layoutRef.current.total - element.clientWidth);
+      // At either end the map can travel no further, so a switch there needs no more travel.
+      const atEnd = x <= 0 || x >= maxX;
+      if (!atEnd && lastSwitch.current !== null && lastSwitch.current.index === active && Math.abs(x - lastSwitch.current.x) < SWITCH_TRAVEL) {
         return;
       }
       // The DOM still shows the map at the rendered position; x is where it is going.
       const shift = x - mapXRef.current;
       const view = element.getBoundingClientRect();
-      const middle = (view.left + view.right) / 2;
+      const middle = activationLine(x, maxX, view.left, view.width);
       const seen = new Map<number, { amount: number; off: number; paneOff: number }>();
       for (const pane of element.querySelectorAll<HTMLElement>('[data-pane-index]')) {
         const scroller = pane.querySelector<HTMLElement>('.rv-pane-lines');
@@ -539,15 +565,16 @@ export function WalkTimeline({
       // the view — and nearer the centre than the active pane itself, which the reader may
       // have scrolled away from its focus — or about as much in view and nearer the
       // centre. The most visible one wins; on a tie, the most central.
-      const current = seen.get(active) ?? { amount: 0, off: Infinity, paneOff: Infinity };
-      let best = active;
+      const activePaneIndex = paneOf[active] ?? -1;
+      const current = seen.get(activePaneIndex) ?? { amount: 0, off: Infinity, paneOff: Infinity };
+      let best = activePaneIndex;
       let bestSeen = { amount: -1, off: Infinity, paneOff: Infinity };
       for (const [index, candidate] of seen) {
-        if (index === active || candidate.amount < FOCUS_IN_VIEW) {
+        if (index === activePaneIndex || candidate.amount < FOCUS_IN_VIEW) {
           continue;
         }
         const clearer = current.amount < FOCUS_IN_VIEW && candidate.amount > current.amount + FOCUS_TIE && candidate.off < current.paneOff;
-        const ahead = direction !== 0 && Math.sign(index - active) === Math.sign(direction);
+        const ahead = direction !== 0 && Math.sign(index - activePaneIndex) === Math.sign(direction);
         const nearer = candidate.amount >= current.amount - FOCUS_TIE && candidate.off <= current.off - (ahead ? 0 : FOCUS_NEARER);
         if (!clearer && !nearer) {
           continue;
@@ -558,13 +585,15 @@ export function WalkTimeline({
           bestSeen = candidate;
         }
       }
-      if (best !== active) {
-        lastSwitch.current = { x, index: best };
-        panActivated.current = best;
-        onActivate(best);
+      const bestPane = panes[best];
+      if (best !== activePaneIndex && bestPane !== undefined) {
+        const station = shownStation(bestPane, active);
+        lastSwitch.current = { x, index: station };
+        panActivated.current = station;
+        onActivate(station);
       }
     },
-    [active, onActivate],
+    [active, onActivate, panes, paneOf],
   );
 
   // Stepping in time: Shift+wheel or Alt+arrow keys (in the view). Each step is one station.
@@ -647,11 +676,13 @@ export function WalkTimeline({
 
   // Links: a dashed arrow from the call in the pane it leads from to the active focus.
   const activeStation = stations[active];
-  const fromPane = useMemo(() => fromPaneOf(stations, activeStation), [stations, activeStation]);
+  const fromStation = useMemo(() => fromPaneOf(stations, activeStation), [stations, activeStation]);
+  const fromPane = fromStation === null ? null : (paneOf[fromStation] ?? null);
   // The active place's call is marked where it is shown. The rows around a call are
   // unfolded for the latest navigation and stay so until the next one: panning neither
   // folds nor unfolds rows in any pane.
-  const callPane = useMemo(() => callPaneOf(stations, activeStation), [stations, activeStation]);
+  const callStation = useMemo(() => callPaneOf(stations, activeStation), [stations, activeStation]);
+  const callPane = callStation === null ? null : (paneOf[callStation] ?? null);
   const sourceCalls = useMemo((): readonly CodeLocation[] => (source.ref === null ? NO_CALLS : [source.ref]), [source.ref]);
   // Where the active place's source is, for the reference in its header: a pane of the
   // walk (on screen or not), or nowhere in the walk.
@@ -675,7 +706,7 @@ export function WalkTimeline({
       return;
     }
     const left = layout.lefts[fromPane] ?? 0;
-    const activeRight = (layout.lefts[active] ?? 0) + (layout.widths[active] ?? defaultWidth);
+    const activeRight = (layout.lefts[activePane] ?? 0) + (layout.widths[activePane] ?? defaultWidth);
     const target = activeRight - left <= viewWidth ? activeRight - viewWidth : left - PANE_GAP;
     setMapX(clampX(Math.min(left, target)));
     setSource((current) => ({ ...sourceSignalFor(active), seq: current.seq + 1 }));
@@ -683,8 +714,8 @@ export function WalkTimeline({
   };
   // And back from the source to the place it leads to.
   const returnToPlace = (): void => {
-    const left = layout.lefts[active] ?? 0;
-    const width = layout.widths[active] ?? defaultWidth;
+    const left = layout.lefts[activePane] ?? 0;
+    const width = layout.widths[activePane] ?? defaultWidth;
     setMapX(clampX(left + width - viewWidth));
   };
   const [arrow, setArrow] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
@@ -697,7 +728,7 @@ export function WalkTimeline({
     }
     const box = element.getBoundingClientRect();
     const sourcePane = element.querySelector(`[data-pane-index="${String(fromPane)}"]`);
-    const targetPane = element.querySelector(`[data-pane-index="${String(active)}"]`);
+    const targetPane = element.querySelector(`[data-pane-index="${String(activePane)}"]`);
     const source = sourcePane?.querySelector(`[data-line="${String(from.ref.start)}"]`) ?? null;
     const target = targetPane?.querySelector('[data-active-focus="1"]') ?? null;
     if (sourcePane === null || sourcePane === undefined || targetPane === null || targetPane === undefined || source === null || target === null) {
@@ -719,7 +750,7 @@ export function WalkTimeline({
     const x2 = targetBox.left - box.left + 92;
     // Measured every frame for a while after the map moves: a new arrow only when it moved.
     setArrow((current) => (current !== null && current.x1 === x1 && current.y1 === y1 && current.x2 === x2 && current.y2 === y2 ? current : { x1, y1, x2, y2 }));
-  }, [activeStation, fromPane, active]);
+  }, [activeStation, fromPane, activePane]);
   useEffect(() => {
     let frame = 0;
     const started = performance.now();
@@ -744,8 +775,6 @@ export function WalkTimeline({
     paneHandlers.current.set(index, box);
     return box;
   };
-  const changedFiles = useMemo(() => new Map(diffFiles.map((file) => [file.path, file])), [diffFiles]);
-
   const renderFrom = mapX - viewWidth;
   const renderTo = mapX + viewWidth * 2;
 
@@ -847,58 +876,73 @@ export function WalkTimeline({
           className={`rv-timeline-track${ready && !panning ? '' : ' rv-no-motion'} rv-enter-${entry}`}
           style={{ transform: `translateX(${String(-mapX)}px)`, width: `${String(layout.total)}px` }}
         >
-          {stations.map((station) => {
-            const left = layout.lefts[station.index] ?? 0;
-            const width = layout.widths[station.index] ?? defaultWidth;
+          {panes.map((pane) => {
+            const station = stations[shownStation(pane, active)];
+            if (station === undefined) {
+              return null;
+            }
+            const left = layout.lefts[pane.index] ?? 0;
+            const width = layout.widths[pane.index] ?? defaultWidth;
             const rendered = left + width >= renderFrom && left <= renderTo;
-            const isActive = station.index === active;
-            const path = station.place.focus.path;
+            const isActive = pane.index === activePane;
+            const path = pane.path;
+            const diffFile = changedFiles.get(path) ?? null;
             return (
               <div
-                key={station.index}
+                key={pane.index}
                 className={`rv-pane-slot${isActive ? ' rv-pane-slot-active' : ''}`}
                 style={{ left: `${String(left)}px`, width: `${String(width)}px` }}
               >
                 {rendered ? (
                   <TimelinePane
                     station={station}
+                    paneIndex={pane.index}
+                    paneStations={paneMembers[pane.index] ?? NO_STATIONS}
                     isActive={isActive}
                     direction={direction}
                     fromRow={isActive ? (activeStation?.place.from ?? null) : null}
-                    fromHere={callPane === station.index && activeStation !== undefined && activeStation.place.from !== null ? activeStation.place.from.ref : null}
-                    calls={source.pane === station.index ? sourceCalls : NO_CALLS}
+                    fromHere={callPane === pane.index && activeStation !== undefined && activeStation.place.from !== null ? activeStation.place.from.ref : null}
+                    calls={source.pane === pane.index ? sourceCalls : NO_CALLS}
                     sourceLink={
                       isActive && activeStation?.place.from != null
                         ? fromPane === null
                           ? { kind: 'open' }
-                          : { kind: paneOnScreen(fromPane) ? 'shown' : 'reveal', name: placeName(fromPane) }
+                          : { kind: paneOnScreen(fromPane) ? 'shown' : 'reveal', name: placeName(fromStation ?? active) }
                         : null
                     }
-                    sourceFor={fromPane === station.index && !paneOnScreen(active) ? { name: placeName(active) } : null}
-                    diffFile={changedFiles.get(path) ?? null}
+                    sourceFor={fromPane === pane.index && fromPane !== activePane && !paneOnScreen(activePane) ? { name: placeName(active) } : null}
+                    diffFile={diffFile}
                     files={files}
                     level={level}
                     view={view}
                     wrap={isProsePath(path) ? wrapProse : wrapCode}
-                    sameFile={stations.filter((other) => other.key === station.key && other.index !== station.index)}
+                    // The walk's other places in this file — in this pane or another — show faintly.
+                    // In a diff every row has both line numbers; a file shown at one side only
+                    // has that side's.
+                    sameFile={stations.filter(
+                      (other) =>
+                        other.index !== station.index &&
+                        other.place.focus.path === path &&
+                        (diffFile !== null || other.place.focus.side === station.place.focus.side),
+                    )}
                     selection={selection}
                     words={words}
                     lang={lang}
-                    savedScroll={scrollTops.current.get(station.index)}
-                    userSized={widths.has(station.index)}
+                    savedScroll={scrollTops.current.get(pane.index)}
+                    userSized={widths.has(pane.index)}
                     width={width}
-                    arrival={arrival.index === station.index ? arrival.seq : -1}
-                    arrivalHandled={handledArrivals.current.get(station.index) ?? -1}
-                    callArrival={source.pane === station.index && station.index !== active ? source.seq : -1}
-                    reveal={reveal.pane === station.index ? reveal.seq : -1}
-                    revealHandled={handledReveals.current.get(station.index) ?? -1}
-                    handlers={handlersFor(station.index, {
+                    arrival={paneAt(arrival.index) === pane.index ? arrival.seq : -1}
+                    arrivalHandled={handledArrivals.current.get(pane.index) ?? -1}
+                    callArrival={source.pane === pane.index && pane.index !== activePane ? source.seq : -1}
+                    reveal={reveal.pane === pane.index ? reveal.seq : -1}
+                    revealHandled={handledReveals.current.get(pane.index) ?? -1}
+                    handlers={handlersFor(pane.index, {
                       select: onSelect,
                       scrolled: measure,
-                      scrollTop: (top, left) => scrollTops.current.set(station.index, { top, left }),
-                      room: (wanted) => roomFor(station.index, wanted),
-                      arrivalHandled: (seq) => handledArrivals.current.set(station.index, seq),
-                      revealHandled: (seq) => handledReveals.current.set(station.index, seq),
+                      scrollTop: (top, left) => scrollTops.current.set(pane.index, { top, left }),
+                      room: (wanted) => roomFor(pane.index, wanted),
+                      arrivalHandled: (seq) => handledArrivals.current.set(pane.index, seq),
+                      revealHandled: (seq) => handledReveals.current.set(pane.index, seq),
                       sourceLink: () => {
                         const from = activeStation?.place.from;
                         if (from === null || from === undefined) {
@@ -920,7 +964,7 @@ export function WalkTimeline({
                 )}
                 <div
                   className="rv-pane-resize"
-                  data-resize-index={station.index}
+                  data-resize-index={pane.index}
                   title={words.timeline.resize}
                   role="separator"
                   aria-orientation="vertical"
@@ -945,7 +989,8 @@ export function WalkTimeline({
       </div>
       <div className="rv-timeline-strip" aria-label={words.timeline.label}>
         {stations.map((station) => {
-          const changesFile = station.index > 0 && stations[station.index - 1]?.key !== station.key;
+          // A new file starts here; the two sides of one change share a pane and are not marked apart.
+          const changesFile = station.index > 0 && stations[station.index - 1]?.place.focus.path !== station.place.focus.path;
           return (
             <button
               key={station.index}
@@ -967,6 +1012,8 @@ export function WalkTimeline({
 
 function TimelinePaneView({
   station,
+  paneIndex,
+  paneStations,
   isActive,
   direction,
   fromRow,
@@ -994,7 +1041,12 @@ function TimelinePaneView({
   handlers,
 }: {
   readonly selection: CodeLocation | null;
+  /** The place the pane presents: its focus is marked, its unit and context fold. */
   readonly station: Station;
+  /** The pane's place on the map. */
+  readonly paneIndex: number;
+  /** Every place the pane shows, in walk order: the two sides of one change share a pane. */
+  readonly paneStations: readonly Station[];
   readonly isActive: boolean;
   readonly direction: 'forward' | 'backward';
   readonly fromRow: Place['from'];
@@ -1092,13 +1144,16 @@ function TimelinePaneView({
   // The place's function or other unit, as rows: the first thing a fold opens.
   const unitSet = useMemo(() => new Set(unitRefs(station.place).flatMap((ref) => rowsOf(rows, ref).indexes)), [rows, station.place]);
 
-  // Visible rows: this station at the chosen level, the latest navigation's call when
-  // it is shown here, and anything opened by hand. The rest folds into gaps.
+  // Visible rows: every place of the pane at the chosen level — so choosing another of
+  // them moves the focus without folding or unfolding anything — the latest navigation's
+  // call when it is shown here, and anything opened by hand. The rest folds into gaps.
   const visible = useMemo(() => {
     const keep = rows.map(() => false);
-    const range = stationRange(rows, station.place, level, shownFocus.indexes);
-    if (range !== null) {
-      keep.fill(true, range[0], range[1] + 1);
+    for (const member of paneStations) {
+      const range = stationRange(rows, member.place, level, rowsOf(rows, member.place.focus).indexes);
+      if (range !== null) {
+        keep.fill(true, range[0], range[1] + 1);
+      }
     }
     for (const index of callRows) {
       keep.fill(true, Math.max(0, index - GAP_CONTEXT), Math.min(rows.length, index + GAP_CONTEXT + 1));
@@ -1107,24 +1162,26 @@ function TimelinePaneView({
       keep.fill(true, from, to + 1);
     }
     return keep;
-  }, [rows, station.place, level, shownFocus, callRows, opened]);
+  }, [rows, paneStations, level, callRows, opened]);
 
-  // Arriving: the focus flashes briefly when the walk reaches this pane.
+  // Arriving: the focus flashes briefly when the walk reaches this pane, or another of
+  // its places.
   const [arriving, setArriving] = useState(false);
-  const wasActive = useRef(isActive);
+  const wasActive = useRef<number | null>(isActive ? station.index : null);
   useEffect(() => {
-    if (isActive && !wasActive.current && !reducedMotion()) {
+    const now = isActive ? station.index : null;
+    if (now !== null && wasActive.current !== now && !reducedMotion()) {
       setArriving(true);
       const settle = window.setTimeout(() => setArriving(false), 1600);
-      wasActive.current = isActive;
+      wasActive.current = now;
       return () => {
         window.clearTimeout(settle);
         setArriving(false);
       };
     }
-    wasActive.current = isActive;
+    wasActive.current = now;
     return undefined;
-  }, [isActive]);
+  }, [isActive, station.index]);
 
   // Scroll to the change itself — its first changed row — or, in the pane the active
   // place's call is in, to the call: on first view and when the level or Before/After
@@ -1359,7 +1416,15 @@ function TimelinePaneView({
   const localDrag = useRef<{ id: number; x: number; y: number; left: number; top: number } | null>(null);
 
   const changed = shownFocus.changed;
-  const effectiveView: CodeView = changed ? view : 'both';
+  // Before and After apply to a pane where any of its places is a change; the view stays
+  // the same as its places are chosen in turn.
+  const paneChanged = useMemo(() => paneStations.some((member) => rowsOf(rows, member.place.focus).changed), [paneStations, rows]);
+  const effectiveView: CodeView = changed || paneChanged ? view : 'both';
+  // The heading says what is drawn: in a diff the window's view — only the From rows
+  // (Before), only the To rows (After), or the comparison — and for a file the change
+  // does not touch, the one revision it is read at.
+  const inDiff = diffFile !== null && !diffFile.binary;
+  const shownWord = diffFile?.binary === true ? '' : inDiff ? words.view[effectiveView] : side === 'base' ? words.view.shownFrom : words.view.shownTo;
 
   // What the pane shows, top to bottom — rows, folds and a note where one side has no
   // code — with where each item starts. Cheap descriptions; only what is near the
@@ -1619,7 +1684,7 @@ function TimelinePaneView({
     <section
       className={`rv-pane ${isActive ? 'rv-pane-active' : 'rv-pane-inactive'} rv-pane-${direction}`}
       data-pane-key={station.key}
-      data-pane-index={station.index}
+      data-pane-index={paneIndex}
       aria-current={isActive ? 'location' : undefined}
     >
       <header className="rv-pane-head">
@@ -1627,7 +1692,9 @@ function TimelinePaneView({
         <span className="rv-path" title={path}>
           {fileName(path)}
         </span>
-        <span className="rv-sub">{side === 'base' ? words.side.base : ''}</span>
+        <span className="rv-sub rv-pane-shown" title={inDiff ? undefined : words.side[side]}>
+          {shownWord}
+        </span>
         {content !== null && content.error === null && !changed && <span className="rv-unchanged-tag">{words.view.unchangedHere}</span>}
         {isActive && fromRow !== null && (
           <span className="rv-pane-from">

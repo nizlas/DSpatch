@@ -148,3 +148,33 @@ export function scrollTopAfterResize(input: {
 export function shouldOfferReturnToLatest(metrics: ScrollMetrics): boolean {
   return !isFollowingLatest(metrics);
 }
+
+/**
+ * What the review discussion's latest part looks like (DSP-175): how many questions, which
+ * was last, and the content of the latest question's answers (text and status). Older
+ * messages changing do not change it, so they never move the reader.
+ */
+export interface LatestSignature {
+  readonly questions: number;
+  readonly lastQuestionId: string | null;
+  readonly latestContent: string;
+}
+
+/**
+ * Why the review discussion changed, from its latest part before and after, or `null` when
+ * nothing that matters for scrolling did: a new question at the end is one the person sent
+ * (typed, or Explain this from any window of the review), the first reading is a new
+ * conversation, and the latest answer growing or changing status is content.
+ */
+export function discussionScrollReason(before: LatestSignature | null, after: LatestSignature): ScrollReason | null {
+  if (before === null) {
+    return 'conversation-replaced';
+  }
+  if (after.lastQuestionId !== before.lastQuestionId && after.questions > before.questions) {
+    return 'sent';
+  }
+  if (after.lastQuestionId !== before.lastQuestionId) {
+    return 'conversation-replaced';
+  }
+  return after.latestContent !== before.latestContent ? 'content' : null;
+}

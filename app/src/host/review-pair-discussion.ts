@@ -26,7 +26,9 @@ import {
   type EnvelopeOutcome,
   type EnvelopeRange,
   type EnvelopeRangeRole,
+  type EnvelopeThread,
 } from '../shared/review-discussion';
+import { KIND_WORDS, RECOMMENDATION_WORDS, STATUS_WORDS, reviewThreadsOf, type ReviewThread } from '../shared/review-threads';
 import { checkedQuote, envelopeRange, type RevisionReader } from '../shared/review-envelope-read';
 import type { CodeLocation, FileChangeStatus, Lang, RevisionSide } from '../shared/review-model';
 import { segmentWords, shownPath, type AgentJob, type OpenPair, type PairFile, type RevisionPairIdentity } from '../shared/review-pair';
@@ -65,6 +67,27 @@ function identityOf(open: OpenPair): ContextEnvelope['identity'] {
   };
 }
 
+/** A thread as a question in it is sent with: what the person sees in it, as it stands. */
+export function envelopeThreadOf(thread: ReviewThread): EnvelopeThread {
+  const recommendation = thread.recommendation;
+  return {
+    id: thread.id,
+    kind: KIND_WORDS[thread.kind],
+    status: STATUS_WORDS[thread.status],
+    title: thread.title,
+    explanation: [thread.explanation, thread.details].filter((entry) => entry.trim() !== '').join('\n\n'),
+    evidence: thread.evidence,
+    recommendation:
+      recommendation === null
+        ? ''
+        : [`${RECOMMENDATION_WORDS[recommendation.kind]}: ${recommendation.action}`, recommendation.rationale && `Why: ${recommendation.rationale}`, recommendation.uncertainty && `Uncertain: ${recommendation.uncertainty}`, recommendation.nextStep && `Next step: ${recommendation.nextStep}`]
+            .filter((entry) => entry !== '')
+            .join('\n'),
+    gaps: thread.gaps.map((gap) => gap.text),
+    comments: thread.events.filter((event) => event.text.trim() !== '').map((event) => (event.kind === 'comment' ? event.text : `${event.kind}: ${event.text}`)),
+  };
+}
+
 /**
  * What a question from the diff window is sent with: the code location asked about, or the
  * change as a whole, the selection checked against Git, and ranges read at the two commits.
@@ -88,6 +111,7 @@ export function pairEnvelopeSource(pairs: ReviewPairs, key: string): EnvelopeSou
       const ranges: { role: EnvelopeRangeRole; location: CodeLocation }[] = [];
       let subject: DiscussionSubject;
       let overview: ContextEnvelope['overview'] = null;
+      let thread: EnvelopeThread | null = null;
       if (subjectRaw['kind'] === 'away') {
         const location = locationOf(subjectRaw['location']);
         if (location === null) {
@@ -98,6 +122,18 @@ export function pairEnvelopeSource(pairs: ReviewPairs, key: string): EnvelopeSou
       } else if (subjectRaw['kind'] === 'review') {
         subject = { kind: 'review' };
         overview = { summary: '', walkTitles: [], changedFiles: open.files.map((file) => ({ path: shownPath(file), status: changeStatus(file) })) };
+      } else if (subjectRaw['kind'] === 'thread' && typeof subjectRaw['threadId'] === 'string') {
+        // DSP-175: a question in a review thread goes with the thread as it stands and the
+        // code at its checked places; the answer is kept in that thread.
+        const found = reviewThreadsOf(pairs.storedRecord(open.pair)).find((entry) => entry.id === subjectRaw['threadId']);
+        if (found === undefined) {
+          return { kind: 'refused', error: 'That thread is not in this review, so nothing was sent.' };
+        }
+        subject = { kind: 'thread', threadId: found.id };
+        thread = envelopeThreadOf(found);
+        for (const anchor of found.anchors.slice(0, 4)) {
+          ranges.push({ role: 'location', location: { side: anchor.side, path: anchor.path, start: anchor.start, end: anchor.end } });
+        }
       } else {
         return { kind: 'refused', error: 'A question from the diff is about a code location or the change as a whole.' };
       }
@@ -125,6 +161,7 @@ export function pairEnvelopeSource(pairs: ReviewPairs, key: string): EnvelopeSou
           overview,
           ranges: read_,
           quote,
+          ...(thread === null ? {} : { thread }),
           notes: [],
           providerContext: PROVIDER_ADDED_CONTEXT_LINE,
           builtAt: new Date().toISOString(),

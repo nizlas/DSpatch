@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { createContext, useContext } from 'react';
 import type { JSX, ReactNode } from 'react';
 
-import { splitCodeAnswer, splitDetails, type DiscussionMessage } from '../shared/review-discussion';
+import { splitCodeAnswer, splitDetails, type CheckedContextReference, type DiscussionMessage } from '../shared/review-discussion';
+import type { ContextFileView } from '../shared/review-pair';
 import type { CodeLocation } from '../shared/review-model';
 import { Markdown } from './Markdown';
 
@@ -98,6 +99,79 @@ export function PendingLine({ questionId, pending }: { readonly questionId: stri
   return pending ? <p className="rv-sub">…</p> : null;
 }
 
+/** The revision pair the window is over, for opening context citations (DSP-175). */
+export const PairKeyContext = createContext<string | null>(null);
+
+/**
+ * A place in another repository of the workspace an answer rests on (DSP-175): opened in place
+ * from the review, read at the commit recorded for it, never the working copy. It says how
+ * that commit was chosen and whether it is established as what the reviewed build uses.
+ * Context is never reviewed or approved.
+ */
+function ContextCitation({ reference }: { readonly reference: CheckedContextReference }): JSX.Element {
+  const pairKey = useContext(PairKeyContext);
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<ContextFileView | { readonly error: string } | null>(null);
+  const range = reference.range;
+  const where = range.start === range.end ? `line ${String(range.start)}` : `lines ${String(range.start)}–${String(range.end)}`;
+  const toggle = (): void => {
+    setOpen(!open);
+    if (!open && view === null) {
+      const bridge = window.dspatchReviewPair;
+      if (bridge === undefined || pairKey === null) {
+        setView({ error: 'This window cannot open places in other repositories.' });
+        return;
+      }
+      void bridge
+        .readContextFile(pairKey, range.repository, range.path, range.commit)
+        .then((answer) => setView(answer))
+        .catch((error: unknown) => setView({ error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+  const lines = view !== null && !('error' in view) && view.text !== null ? view.text.split('\n') : [];
+  const from = Math.max(1, range.start - 4);
+  const to = Math.min(lines.length, range.end + 4);
+  return (
+    <li>
+      <button type="button" className="rv-pair-link" data-ev="answer-context-ref" aria-expanded={open} onClick={toggle}>
+        {reference.label}
+      </button>{' '}
+      <span className="rv-sub">
+        {range.repository}/{range.path} {where} @ {range.commit.slice(0, 10)} · another repository, read as context, not under review
+      </span>
+      {open && view !== null && (
+        <div className="rv-context-view" data-ev="answer-context-view">
+          {'error' in view ? (
+            <p className="rv-error">{view.error}</p>
+          ) : (
+            <>
+              <p className="rv-sub">
+                {view.note} {view.established ? '' : 'Which version the reviewed build uses is not established; this is what the workspace has at that commit.'}
+              </p>
+              {view.text === null ? (
+                <p className="rv-sub">A binary file.</p>
+              ) : (
+                <pre className="rv-context-code">
+                  {lines.slice(from - 1, to).map((text, index) => {
+                    const number = from + index;
+                    const marked = number >= range.start && number <= range.end;
+                    return (
+                      <span key={number} className={marked ? 'rv-context-line rv-context-line-marked' : 'rv-context-line'}>
+                        <span className="rv-context-number">{number}</span> {text}
+                        {'\n'}
+                      </span>
+                    );
+                  })}
+                </pre>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
 export function DiscussionAnswer({
   answer,
   onShow,
@@ -111,6 +185,7 @@ export function DiscussionAnswer({
   const parts = splitDetails(splitCodeAnswer(answer.text).shown);
   const shown = parts.short;
   const references = answer.references ?? [];
+  const contextReferences = answer.contextReferences ?? [];
   const where = (start: number, end: number): string => (start === end ? `line ${String(start)}` : `lines ${String(start)}–${String(end)}`);
   return (
     <div className="rv-answer" data-ev="discussion-answer-body" data-quote-source="answer">
@@ -130,8 +205,11 @@ export function DiscussionAnswer({
             ) : undefined
           }
           rests={
-            references.length === 0 ? undefined : (
+            references.length === 0 && contextReferences.length === 0 ? undefined : (
               <ul>
+                {contextReferences.map((reference, index) => (
+                  <ContextCitation key={`context-${String(index)}`} reference={reference} />
+                ))}
                 {references.map((reference, index) => (
                   <li key={index}>
                     <button

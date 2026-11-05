@@ -39,6 +39,16 @@ export interface CheckedReference {
 }
 
 /**
+ * A place in another repository of the workspace an answer rests on, checked at the commit
+ * recorded for it (DSP-175): the shape of `ContextReference` in `review-pair.ts`. Context is
+ * never reviewed, approved or covered; it opens with `readContextFile`.
+ */
+export interface CheckedContextReference {
+  readonly label: string;
+  readonly range: { readonly kind: 'context'; readonly repository: string; readonly commit: string; readonly path: string; readonly start: number; readonly end: number };
+}
+
+/**
  * The instruction when the agent can read the two revisions (Niclas's decision of 30 October
  * 2026): a question in the discussion may need code the envelope does not hold, and the
  * agent looks it up with the read-only analysis access rather than guessing. Sent first
@@ -143,7 +153,23 @@ export type DiscussionSubject =
   /** `checkId`: asked from a point worth checking that is shown at this step (its reasoning goes along). */
   | { readonly kind: 'point'; readonly walkId: string; readonly stepId: string; readonly placeIndex: number; readonly checkId?: string }
   | { readonly kind: 'away'; readonly location: CodeLocation }
-  | { readonly kind: 'review' };
+  | { readonly kind: 'review' }
+  /** DSP-175: asked in a review thread; its question and answer stay in that thread. */
+  | { readonly kind: 'thread'; readonly threadId: string };
+
+/** The thread a question was asked in, as it stood when it was sent (DSP-175). */
+export interface EnvelopeThread {
+  readonly id: string;
+  readonly kind: string;
+  readonly status: string;
+  readonly title: string;
+  readonly explanation: string;
+  readonly evidence: string;
+  readonly recommendation: string;
+  readonly gaps: readonly string[];
+  /** The person's comments in it, oldest first. */
+  readonly comments: readonly string[];
+}
 
 /**
  * One run of selected code in the walk window, as the window read it: a side, a path, the
@@ -166,7 +192,7 @@ export interface QuoteSegment {
  */
 export type SelectionQuote =
   | { readonly kind: 'code'; readonly text: string; readonly segments: readonly QuoteSegment[] }
-  | { readonly kind: 'text'; readonly text: string; readonly source: 'explanation' | 'answer'; readonly context: string };
+  | { readonly kind: 'text'; readonly text: string; readonly source: 'explanation' | 'answer' | 'thread'; readonly context: string };
 
 /** Bounds on a quote: longer is refused, not cut silently. */
 export const QUOTE_LIMITS = { characters: 20_000, segments: 40, contextChars: 1_500 } as const;
@@ -186,7 +212,7 @@ export function quoteFrom(raw: unknown): SelectionQuote | null {
     return null;
   }
   if (value['kind'] === 'text') {
-    return { kind: 'text', text, source: value['source'] === 'answer' ? 'answer' : 'explanation', context: typeof value['context'] === 'string' ? value['context'].slice(0, QUOTE_LIMITS.contextChars) : '' };
+    return { kind: 'text', text, source: value['source'] === 'answer' ? 'answer' : value['source'] === 'thread' ? 'thread' : 'explanation', context: typeof value['context'] === 'string' ? value['context'].slice(0, QUOTE_LIMITS.contextChars) : '' };
   }
   const segments = value['segments'];
   if (value['kind'] !== 'code' || !Array.isArray(segments) || segments.length === 0 || segments.length > QUOTE_LIMITS.segments) {
@@ -284,7 +310,7 @@ export interface EnvelopeNote {
 /** A selected quote as sent: code checked against its commit (with the commit named), or text as it was. */
 export type EnvelopeQuote =
   | { readonly kind: 'code'; readonly segments: readonly (QuoteSegment & { readonly sha: string; readonly text: string })[] }
-  | { readonly kind: 'text'; readonly text: string; readonly source: 'explanation' | 'answer'; readonly context: string };
+  | { readonly kind: 'text'; readonly text: string; readonly source: 'explanation' | 'answer' | 'thread'; readonly context: string };
 
 export interface EnvelopeIdentity {
   readonly title: string;
@@ -313,6 +339,8 @@ export interface ContextEnvelope {
   readonly ranges: readonly EnvelopeRange[];
   /** What the person selected to ask about; the rest of the envelope is background to it. */
   readonly quote?: EnvelopeQuote | null;
+  /** Thread subjects only (DSP-175). */
+  readonly thread?: EnvelopeThread | null;
   readonly notes: readonly EnvelopeNote[];
   /** {@link PROVIDER_ADDED_CONTEXT_LINE}: what the provider adds is not visible to DSpatch. */
   readonly providerContext: string;
@@ -415,6 +443,9 @@ function placeLine(envelope: ContextEnvelope): string {
   if (subject.kind === 'away') {
     return `${locationText(envelope, subject.location)}${selectionText(envelope, subject.location)}`;
   }
+  if (subject.kind === 'thread') {
+    return `the review thread “${envelope.thread?.title ?? subject.threadId}”${selectionText(envelope, null)}`;
+  }
   return `the review as a whole${selectionText(envelope, null)}`;
 }
 
@@ -455,7 +486,7 @@ function quoteSection(quote: EnvelopeQuote): string {
     const fence = fenceFor(quote.text);
     lines.push(
       '',
-      `Selected text from ${quote.source === 'answer' ? 'an earlier answer in this discussion' : 'the explanation of the step'} (not code; it has no place in the code):`,
+      `Selected text from ${quote.source === 'answer' ? 'an earlier answer in this discussion' : quote.source === 'thread' ? 'the review thread' : 'the explanation of the step'} (not code; it has no place in the code):`,
       fence,
       quote.text,
       fence,
@@ -557,6 +588,29 @@ export function buildEnvelopePrompt(
   const quote = envelope.quote ?? null;
   if (quote !== null) {
     parts.push(quoteSection(quote));
+  }
+
+  const thread = envelope.thread ?? null;
+  if (thread !== null) {
+    const lines = [
+      '## The review thread asked in',
+      'The person asks inside this thread from a delegated review. Answer about it; your answer is kept in the thread. Its status is the person\'s decision; do not change it or act on it.',
+      `${thread.kind}: ${thread.title} (status: ${thread.status})`,
+    ];
+    if (thread.explanation.trim() !== '') {
+      lines.push('', 'What was observed:', clip(thread.explanation.trim(), ENVELOPE_LIMITS.explanationChars));
+    }
+    if (thread.evidence.trim() !== '') {
+      lines.push('', 'What it rests on:', clip(thread.evidence.trim(), ENVELOPE_LIMITS.explanationChars));
+    }
+    lines.push('', 'Recommendation:', thread.recommendation.trim() === '' ? 'none was recorded' : clip(thread.recommendation.trim(), ENVELOPE_LIMITS.explanationChars));
+    for (const gap of thread.gaps) {
+      lines.push(`- Not established: ${clip(gap.trim(), 600)}`);
+    }
+    for (const comment of thread.comments) {
+      lines.push(`- The person commented: ${clip(comment.trim(), 600)}`);
+    }
+    parts.push(lines.join('\n'));
   }
 
   const explanation = envelope.explanation;
@@ -718,6 +772,8 @@ export interface DiscussionMessage {
   readonly codeAccess?: boolean;
   /** For an answer with code access: the references DSpatch checked against their commits. */
   readonly references?: readonly CheckedReference[];
+  /** DSP-175: places in other repositories of the workspace, read as context and checked at their recorded commit. */
+  readonly contextReferences?: readonly CheckedContextReference[];
   /** For an answer with code access: the agent said the code it could read does not settle it. */
   readonly insufficient?: boolean;
   /** For an answer with code access: what DSpatch left out of it, in plain words. */
@@ -938,6 +994,22 @@ function adoptAttempts(value: unknown): StoredAttempt[] {
 }
 
 /** A stored reference: written by the service after its check, read back for display only. */
+function isStoredContextReference(value: unknown): value is CheckedContextReference {
+  if (!isRecord(value) || typeof value['label'] !== 'string' || !isRecord(value['range'])) {
+    return false;
+  }
+  const range = value['range'];
+  return (
+    range['kind'] === 'context' &&
+    typeof range['repository'] === 'string' &&
+    typeof range['commit'] === 'string' &&
+    /^[0-9a-f]{40}$/.test(range['commit']) &&
+    typeof range['path'] === 'string' &&
+    Number.isInteger(range['start']) &&
+    Number.isInteger(range['end'])
+  );
+}
+
 function isStoredReference(value: unknown): value is CheckedReference {
   if (!isRecord(value) || typeof value['label'] !== 'string' || !isRecord(value['range'])) {
     return false;
@@ -1020,6 +1092,12 @@ function adoptMessages(value: unknown): DiscussionMessage[] {
     }
     if (Array.isArray(entry['references'])) {
       message.references = entry['references'].filter(isStoredReference);
+    }
+    if (Array.isArray(entry['contextReferences'])) {
+      const context = entry['contextReferences'].filter(isStoredContextReference);
+      if (context.length > 0) {
+        message.contextReferences = context;
+      }
     }
     if (entry['insufficient'] === true) {
       message.insufficient = true;

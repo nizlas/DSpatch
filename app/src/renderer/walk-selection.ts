@@ -90,7 +90,7 @@ function textQuote(range: Range): SelectionQuote | null {
   return {
     kind: 'text',
     text,
-    source: source.dataset['quoteSource'] === 'answer' ? 'answer' : 'explanation',
+    source: source.dataset['quoteSource'] === 'answer' ? 'answer' : source.dataset['quoteSource'] === 'thread' ? 'thread' : 'explanation',
     context: (source.innerText || source.textContent || '').replace(/\s+\n/g, '\n').trim().slice(0, 1_500),
   };
 }

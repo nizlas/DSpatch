@@ -90,7 +90,7 @@ function clipped(text: string, limit: number): string {
 }
 
 /** A heading and the explanation under it, for a finding with a heading or an older one without. */
-function headed(finding: AgentFinding): { readonly title: string; readonly explanation: string } {
+export function headed(finding: AgentFinding): { readonly title: string; readonly explanation: string } {
   const text = finding.text.trim();
   if (finding.title !== undefined) {
     return { title: tidy(finding.title), explanation: tidy(finding.title) === tidy(text) ? '' : text };
@@ -104,7 +104,7 @@ function headed(finding: AgentFinding): { readonly title: string; readonly expla
 }
 
 /** Two findings are the same when they differ only in case, spacing or a number such as a line. */
-function sameKey(text: string): string {
+export function sameKey(text: string): string {
   return text.toLowerCase().replace(/\d+/g, '#').replace(/[^\p{L}\p{N}#]+/gu, ' ').trim();
 }
 
@@ -183,11 +183,11 @@ export function delegatedReviewView(result: DelegationResult, scope: DelegationS
       ? 'Nothing approved: the agent could not judge this part from the code it could read.'
       : standing === 'none'
         ? 'Nothing approved in this part.'
-        : standing === 'whole'
-          ? `Whole part approved: all ${lines(approved)}.`
-          : known === null
-            ? `Partly approved: ${lines(approved)}. Whether that is all of this part is not known here.`
-            : `Partly approved: ${String(approved)} of ${lines(known.total)}.`;
+        : known === null
+          ? `${lines(approved)} reviewed and approved by the agent. Whether that is all of this part is not known here.`
+          : // DSP-175: the coverage as a count, never a dominant "whole part approved" that
+            // reads as if nothing remained; what remains is said apart from it.
+            `${String(approved)}/${lines(known.total)} reviewed and approved by the agent.`;
   const count = (severity: AgentFinding['severity']): number => findings.filter((finding) => finding.severity === severity).length;
   const attention = [
     ...(remaining > 0 ? [`${lines(remaining)} not approved`] : []),
@@ -200,7 +200,7 @@ export function delegatedReviewView(result: DelegationResult, scope: DelegationS
   const agentSummary = result.summary?.trim() || fromAssessment;
   return {
     standing,
-    standingWords: standing === 'whole' ? 'whole part approved' : standing === 'partial' ? 'partly approved' : standing === 'none' ? 'nothing approved' : 'not enough to judge',
+    standingWords: standing === 'whole' ? 'all lines approved' : standing === 'partial' ? 'partly approved' : standing === 'none' ? 'nothing approved' : 'not enough to judge',
     approvedLine,
     attentionLine: attention.length === 0 ? 'Nothing else was reported as needing attention.' : `Needs attention: ${attention.join(', ')}.`,
     agentSummary,

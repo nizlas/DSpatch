@@ -3709,3 +3709,293 @@
   margin: 0.3rem 0;
   line-height: 1.45;
 }
+
+/*
+ * DSP-175: review threads. Open threads are a muted amber: a dark, warm background and a
+ * matte yellow-orange accent. Status is always in words and a mark beside the colour.
+ * Closed threads are dimmed. The code a thread rests on carries a mark in the margin of
+ * its cell (and an outline when the thread is chosen), never a background, so the diff's
+ * red and green stay readable.
+ */
+:root {
+  --rv-amber: #c8933f;
+  --rv-amber-soft: color-mix(in srgb, var(--rv-amber) 55%, var(--bg));
+  --rv-amber-bg: color-mix(in srgb, #3a2a12 70%, var(--bg));
+  --rv-amber-line: color-mix(in srgb, var(--rv-amber) 38%, var(--bg));
+}
+
+.rv-thread {
+  background: var(--rv-amber-bg);
+  border: 1px solid var(--rv-amber-line);
+  border-left: 3px solid var(--rv-amber-soft);
+  border-radius: 6px;
+  margin: 0.35rem 0;
+  font-family: var(--font, inherit);
+  white-space: normal;
+}
+
+.rv-thread-resolved,
+.rv-thread-dismissed {
+  background: var(--panel);
+  border-color: var(--line);
+  border-left-color: var(--muted);
+  opacity: 0.78;
+}
+
+.rv-thread-action-agreed {
+  border-left-style: double;
+  border-left-width: 4px;
+}
+
+.rv-thread-selected {
+  border-color: var(--rv-amber);
+  box-shadow: 0 0 0 1px var(--rv-amber);
+}
+
+.rv-thread-head,
+.rv-thread-index-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.35rem 0.6rem;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rv-thread-head:focus-visible,
+.rv-thread-index-line:focus-visible {
+  outline: 2px solid var(--rv-amber);
+  outline-offset: -2px;
+}
+
+.rv-thread-status {
+  flex: none;
+  font-size: 0.82em;
+  color: var(--rv-amber);
+  white-space: nowrap;
+}
+
+.rv-thread-status-resolved,
+.rv-thread-status-dismissed {
+  color: var(--muted);
+}
+
+.rv-thread-kind {
+  flex: none;
+  font-size: 0.82em;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.rv-thread-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.rv-thread-replies {
+  flex: none;
+  font-size: 0.82em;
+  color: var(--muted);
+}
+
+.rv-thread-body {
+  padding: 0 0.75rem 0.65rem;
+  line-height: 1.5;
+  max-width: 72rem;
+}
+
+.rv-thread-body h5 {
+  margin: 0.55rem 0 0.15rem;
+  font-size: 0.8em;
+  color: var(--rv-amber);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.rv-thread-body p {
+  margin: 0.2rem 0;
+}
+
+.rv-thread-places {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.9rem;
+}
+
+.rv-thread-missing {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.rv-thread-rec {
+  border-left: 2px solid var(--rv-amber-line);
+  padding-left: 0.6rem;
+}
+
+.rv-thread-history {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  border-top: 1px solid var(--rv-amber-line);
+}
+
+.rv-thread-history > li {
+  padding: 0.35rem 0;
+}
+
+.rv-thread-history > li + li {
+  border-top: 1px dashed var(--line);
+}
+
+.rv-thread-end {
+  padding: 0 !important;
+  border: none !important;
+}
+
+.rv-thread-reply {
+  margin-top: 0.5rem;
+}
+
+.rv-thread-field {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--rv-amber-line);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
+.rv-thread-quote {
+  border-left: 2px solid var(--rv-amber);
+  padding-left: 0.5rem;
+  font-size: 0.9em;
+}
+
+.rv-thread-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.8rem;
+  margin-top: 0.4rem;
+}
+
+.rv-thread-primary {
+  border-color: var(--rv-amber);
+  color: var(--text);
+  background: color-mix(in srgb, var(--rv-amber) 22%, var(--bg));
+}
+
+.rv-thread-error {
+  color: var(--no);
+}
+
+.rv-thread-index ul {
+  list-style: none;
+  margin: 0.3rem 0;
+  padding: 0;
+}
+
+.rv-thread-index-row {
+  border-left: 3px solid var(--rv-amber-soft);
+  margin: 0.15rem 0;
+  background: var(--rv-amber-bg);
+}
+
+.rv-thread-index-row.rv-thread-resolved,
+.rv-thread-index-row.rv-thread-dismissed {
+  border-left-color: var(--muted);
+  background: none;
+  opacity: 0.78;
+}
+
+.rv-thread-remaining {
+  margin-left: 0.8rem;
+  color: var(--rv-amber);
+  font-weight: normal;
+  font-size: 0.85em;
+}
+
+.rv-pair-findings {
+  color: var(--rv-amber);
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+/* In the diff: the card row spans the table, in the page's font, without the code's background. */
+.rv-pair-table tr.rv-thread-row > td {
+  padding: 0.15rem 0.6rem 0.4rem 2.5rem;
+  background: var(--bg);
+  font-family: var(--font, system-ui, sans-serif);
+  white-space: normal;
+}
+
+/* The lines a thread rests on: a mark in the cell's left margin, an outline when chosen. */
+.rv-pair-table td.rv-thread-anchor {
+  box-shadow: inset 3px 0 0 var(--rv-amber-soft);
+}
+
+.rv-pair-table td.rv-thread-anchor-selected {
+  box-shadow: inset 3px 0 0 var(--rv-amber), inset 0 0 0 1px var(--rv-amber);
+}
+
+.rv-thread-file-level,
+.rv-thread-review-level,
+.rv-thread-overview,
+.rv-threads-here {
+  margin: 0.4rem 0;
+}
+
+/* The discussion: back to the latest answer after scrolling up to read. */
+.rv-new-response {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 0.2rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--text);
+  font-size: 0.85em;
+  cursor: pointer;
+  opacity: 0.92;
+}
+
+.rv-discussion-in-thread {
+  font-style: italic;
+}
+
+/* DSP-175: a place in another repository of the workspace, opened in place under its answer. */
+.rv-context-view {
+  margin: 0.3rem 0 0.5rem;
+  border-left: 2px solid var(--line);
+  padding-left: 0.6rem;
+}
+
+.rv-context-code {
+  overflow-x: auto;
+  margin: 0.3rem 0;
+  font-size: 0.88em;
+}
+
+.rv-context-number {
+  display: inline-block;
+  min-width: 3ch;
+  color: var(--muted);
+  text-align: right;
+}
+
+.rv-context-line-marked {
+  background: color-mix(in srgb, var(--rv-ref, #4aa3df) 22%, var(--bg));
+}

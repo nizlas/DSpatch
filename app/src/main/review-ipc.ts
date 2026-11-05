@@ -101,7 +101,12 @@ function locationFrom(raw: unknown): DiffLocation | null {
   return (value['side'] === 'base' || value['side'] === 'target') &&
     typeof value['path'] === 'string' &&
     Number.isInteger(value['line'])
-    ? { side: value['side'], path: value['path'], line: value['line'] as number }
+    ? {
+        side: value['side'],
+        path: value['path'],
+        line: value['line'] as number,
+        ...(typeof value['threadId'] === 'string' && value['threadId'] !== '' && value['threadId'].length <= 200 ? { threadId: value['threadId'] } : {}),
+      }
     : null;
 }
 
@@ -244,6 +249,10 @@ export function registerReviewIpc(
   });
   ipcMain.handle(REVIEW_PAIR_CHANNELS.readFile, async (event, key: unknown, side: unknown, filePath: unknown) =>
     pairs.call('reviewPair.readFile', keyOf(entryOf(event), key), side, filePath),
+  );
+  // DSP-175: a file of a context repository, at a commit this review gave as context.
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.readContextFile, async (event, key: unknown, repository: unknown, filePath: unknown, commit: unknown) =>
+    pairs.call('reviewPair.readContextFile', keyOf(entryOf(event), key), repository, filePath, commit),
   );
   ipcMain.handle(REVIEW_PAIR_CHANNELS.state, async (event, key: unknown) => pairs.call('reviewPair.state', keyOf(entryOf(event), key)));
   ipcMain.handle(REVIEW_PAIR_CHANNELS.mark, async (event, key: unknown, request: unknown) =>
@@ -404,6 +413,9 @@ export function registerReviewIpc(
       throw error;
     }
   });
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.thread, async (event, key: unknown, request: unknown) =>
+    pairs.call('reviewPair.thread', keyOf(entryOf(event), key), request),
+  );
   ipcMain.handle(REVIEW_PAIR_CHANNELS.cancelJob, async (event, key: unknown, jobId: unknown) =>
     pairs.call('reviewPair.cancelJob', keyOf(entryOf(event), key), jobId),
   );

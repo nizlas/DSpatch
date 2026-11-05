@@ -50,6 +50,9 @@ import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuot
 import { quoteRanges, readQuote } from './walk-selection';
 import { isPairError, type AgentJob, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
+import { reviewThreadsOf, type ReviewThread } from '../shared/review-threads';
+import { PairKeyContext } from './DiscussionAnswer';
+import { ThreadCard, ThreadContext, exchangesByThread, type ThreadActions } from './ReviewThreads';
 
 declare global {
   interface Window {
@@ -616,6 +619,66 @@ function OpenReview({
    * one question: it changes nothing else about the review.
    */
   const [discussionMessages, setDiscussionMessages] = useState<readonly DiscussionMessage[]>([]);
+  // DSP-175: the review's threads, from the pair record every window of the review shares.
+  const threads = useMemo(() => (pair === null ? [] : reviewThreadsOf(pair.record)), [pair]);
+  const threadExchanges = useMemo(() => exchangesByThread(discussionMessages), [discussionMessages]);
+  const [selectedThread, setSelectedThread] = useState<string | null>(null);
+  const showThreadInDiff = useCallback(
+    (thread: ReviewThread, range: LineRange | null): void => {
+      if (pairBridge === undefined) {
+        return;
+      }
+      setSelectedThread(thread.id);
+      const at = range ?? thread.anchors[0] ?? null;
+      const location = at !== null ? { side: at.side, path: at.path, line: at.start } : thread.file !== null ? { side: thread.file.side, path: thread.file.path, line: 1 } : { side: 'target' as const, path: '', line: 1 };
+      void pairBridge.showInDiff({ ...location, threadId: thread.id }).then((answer) => setDiffNote(answer.ok ? '' : answer.note));
+    },
+    [pairBridge],
+  );
+  const threadActions: ThreadActions = useMemo(
+    () => ({
+      selectedId: selectedThread,
+      select: (thread) => showThreadInDiff(thread, null),
+      show: (range) => {
+        const thread = threads.find((entry) => entry.anchors.includes(range));
+        if (thread !== undefined) {
+          showThreadInDiff(thread, range);
+        }
+      },
+      act: async (thread, kind, text) => {
+        if (pairBridge === undefined || pair === null) {
+          return 'This walk is not tied to a revision pair, so its threads cannot be changed here.';
+        }
+        try {
+          const answer = await pairBridge.thread(pair.key, { threadId: thread.id, kind, text });
+          if (isPairError(answer)) {
+            return answer.error;
+          }
+          setPair((current) => (current === null ? current : { ...current, record: answer }));
+          return null;
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      },
+      ask: async (thread, question, quoted) => {
+        const discussion = window.dspatchReviewDiscussion;
+        if (discussion === undefined) {
+          return 'The review discussion is not available in this window.';
+        }
+        try {
+          const outcome = await discussion.send({ question, subject: { kind: 'thread', threadId: thread.id }, selection: null, quote: quoted, language: lang });
+          return outcome.kind === 'sent' ? null : outcome.error;
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      },
+      exchanges: (threadId) => threadExchanges.get(threadId) ?? [],
+      openLocation: (location) => goAway(location),
+    }),
+    // goAway is stable over a window's life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedThread, showThreadInDiff, threads, pairBridge, pair, threadExchanges, lang],
+  );
   const [discussionActivity, setDiscussionActivity] = useState<{ readonly questionId: string; readonly text: string } | null>(null);
   const [deepenError, setDeepenError] = useState<string | null>(null);
   /*
@@ -744,6 +807,13 @@ function OpenReview({
   const stations = useMemo(() => (current === null ? [] : stationsOf(current.walk)), [current?.walk]);
   const activeStation = current === null ? -1 : stations.findIndex((entry) => entry.stepId === current.step.id && entry.placeIndex === placeIndex);
   const focus: CodeLocation | null = away ?? (place === null ? null : asLocation(place.focus));
+  const threadsHere = useMemo(
+    () =>
+      focus === null
+        ? []
+        : threads.filter((thread) => thread.anchors.some((anchor) => anchor.side === focus.side && anchor.path === focus.path && anchor.start <= focus.end && anchor.end >= focus.start)),
+    [threads, focus?.side, focus?.path, focus?.start, focus?.end],
+  );
   const contexts: readonly CodeLocation[] = away === null && place !== null ? place.context.map(asLocation) : [];
 
   // Opening a place records that it was opened — and only that.
@@ -1284,6 +1354,14 @@ function OpenReview({
   const takeSelection = useCallback(
     (menuAt: { readonly x: number; readonly y: number } | null): SelectionQuote | null => {
       const root = viewRoot.current;
+      // Text selected in a review thread is asked about in that thread (DSP-175), with its own
+      // offer there; the walk's offer would be a second menu for the same selection.
+      const anchorNode = root?.ownerDocument.getSelection()?.anchorNode ?? null;
+      const anchorElement = anchorNode instanceof Element ? anchorNode : (anchorNode?.parentElement ?? null);
+      if (anchorElement?.closest('[data-quote-source="thread"]') != null) {
+        setQuoteOffer(null);
+        return null;
+      }
       const found = root === null ? null : readQuote(root);
       if (found === null) {
         if (menuAt === null && (root?.ownerDocument.getSelection()?.isCollapsed ?? true)) {
@@ -1538,12 +1616,22 @@ function OpenReview({
                   {diffNote !== '' && <span className="rv-sub">{diffNote}</span>}
                 </div>
               )}
+              {focus !== null && threadsHere.length > 0 && (
+                // DSP-175: the review's threads at the place shown, the same threads the diff shows.
+                <div className="rv-threads-here" data-ev="walk-threads-here">
+                  {threadsHere.map((thread) => (
+                    <ThreadCard key={thread.id} thread={thread} />
+                  ))}
+                </div>
+              )}
               {pair !== null && pairBridge !== undefined && current !== null && away === null && walkScope !== null && (
                 <div className="rv-walk-delegate">
                   {walkJob !== null && (!delegatingWalk || isRunning(walkJob)) && (
                     <AgentReviewResult
                       job={walkJob}
                       files={pair.files}
+                      threads={threads.filter((thread) => thread.jobId === walkJob.id)}
+                      expandThreads
                       onStop={() => void pairBridge.cancelJob(pair.key, walkJob.id)}
                       onShow={(range) => {
                         void pairBridge
@@ -1698,11 +1786,13 @@ function OpenReview({
           >
             Explain this
           </button>
-          {quoteOffer.menu && (
+          {/* DSP-175: Ask beside Explain this, as in the diff: the question opens with the selection quoted, and nothing is sent. */}
+          {(
             <button
               type="button"
-              role="menuitem"
+              role={quoteOffer.menu ? 'menuitem' : undefined}
               data-ev="walk-ask-about-this"
+              title="Write your own question about exactly what is selected; nothing is sent until you send it"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
                 setQuoteOffer(null);
@@ -1714,7 +1804,7 @@ function OpenReview({
                 }
               }}
             >
-              Ask about this…
+              {quoteOffer.menu ? 'Ask about this…' : 'Ask…'}
             </button>
           )}
         </div>
@@ -1740,6 +1830,8 @@ function OpenReview({
   };
   if (PANEL_MODE) {
     return (
+      <PairKeyContext.Provider value={pair?.key ?? null}>
+      <ThreadContext.Provider value={threadActions}>
       <DiscussionActivity.Provider value={discussionActivity}>
         <div className="rv rv-panel-only" ref={viewRoot} {...rootHandlers}>
           {quoteOfferView}
@@ -1747,10 +1839,14 @@ function OpenReview({
           {createPortal(rightPanel, panelHost)}
         </div>
       </DiscussionActivity.Provider>
+      </ThreadContext.Provider>
+      </PairKeyContext.Provider>
     );
   }
 
   return (
+    <PairKeyContext.Provider value={pair?.key ?? null}>
+      <ThreadContext.Provider value={threadActions}>
     <DiscussionActivity.Provider value={discussionActivity}>
     <div className="rv" ref={viewRoot} {...rootHandlers}    >
       {quoteOfferView}
@@ -2037,6 +2133,8 @@ function OpenReview({
       </div>
     </div>
     </DiscussionActivity.Provider>
+    </ThreadContext.Provider>
+      </PairKeyContext.Provider>
   );
 }
 

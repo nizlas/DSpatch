@@ -12,11 +12,10 @@
  * controls, no explanations in the ordinary flow.
  */
 
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react';
 
-import { delegatedReviewView, type FindingGroup } from '../shared/delegated-review-view';
-import { ShortThenMore } from './DiscussionAnswer';
+import { delegatedReviewView } from '../shared/delegated-review-view';
 import { highlightLines, type Token } from '../shared/review-model';
 import {
   changedLinesOf,
@@ -50,7 +49,6 @@ import {
   type FileReviewFacts,
   type OngoingReview,
   type LineRanges,
-  type AgentFinding,
   type LineRange,
   type LineSide,
   type LineStatus,
@@ -69,6 +67,9 @@ import type { SelectionQuote } from '../shared/review-discussion';
 import type { PanelState } from '../shared/review-pair';
 import { rangeInCell } from './walk-selection';
 import { changedRangesOf } from '../shared/review-agent';
+import { isRemaining, remainingInFile, remainingLine, reviewThreadsOf, threadCountsOf, type ReviewThread } from '../shared/review-threads';
+import { PairKeyContext } from './DiscussionAnswer';
+import { ThreadCard, ThreadContext, ThreadIndex, exchangesByThread, useDiscussionMessages, type ThreadActions } from './ReviewThreads';
 
 declare global {
   interface Window {
@@ -799,6 +800,64 @@ function DiffReview({
     }
   };
 
+  // DSP-175: the review's threads, read from the record every window shares, and the
+  // questions asked in them from the review's one discussion.
+  const threads = useMemo(() => reviewThreadsOf(record), [record]);
+  const messages = useDiscussionMessages();
+  const exchanges = useMemo(() => exchangesByThread(messages), [messages]);
+  const [selectedThread, setSelectedThread] = useState<string | null>(initialAt?.threadId ?? null);
+  const selectThread = useCallback(
+    (thread: ReviewThread): void => {
+      setSelectedThread(thread.id);
+      const first = thread.anchors[0];
+      if (first !== undefined) {
+        showRange(first);
+        return;
+      }
+      const at = thread.file;
+      const file = at === null ? undefined : open.files.find((candidate) => (at.side === 'base' ? candidate.oldPath : candidate.newPath) === at.path);
+      openFile(file?.key ?? null);
+    },
+    // showRange and openFile read only state setters and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [open.files],
+  );
+  const threadActions: ThreadActions = useMemo(
+    () => ({
+      selectedId: selectedThread,
+      select: selectThread,
+      show: showRange,
+      act: async (thread, kind, text) => {
+        try {
+          const answer = await bridge.thread(open.key, { threadId: thread.id, kind, text });
+          if (isPairError(answer)) {
+            return answer.error;
+          }
+          setRecord(answer);
+          return null;
+        } catch (error) {
+          return requestFailure(error);
+        }
+      },
+      ask: async (thread, question, quoted) => {
+        const discussion = window.dspatchReviewDiscussion;
+        if (discussion === undefined) {
+          return 'The review discussion is not available in this window.';
+        }
+        try {
+          const outcome = await discussion.send({ question, subject: { kind: 'thread', threadId: thread.id }, selection: null, quote: quoted, language: 'en' });
+          return outcome.kind === 'sent' ? null : outcome.error;
+        } catch (error) {
+          return requestFailure(error);
+        }
+      },
+      exchanges: (threadId) => exchanges.get(threadId) ?? [],
+      openLocation: (location) => showRange({ kind: 'lines', ...location }),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedThread, selectThread, exchanges, bridge, open.key],
+  );
+
   // What another window marked reaches this one through the host.
   useEffect(
     () =>
@@ -814,7 +873,14 @@ function DiffReview({
   useEffect(
     () =>
       bridge.onNavigate((location) => {
+        if (location.threadId !== undefined) {
+          setSelectedThread(location.threadId);
+        }
         const file = open.files.find((candidate) => fileLocationMatch(candidate, location));
+        if (file === undefined && location.threadId !== undefined) {
+          // A thread over the review as a whole is read in Files changed.
+          openFile(null);
+        }
         if (file !== undefined) {
           openFile(file.key);
           setTarget((before) => ({ location, nonce: (before?.nonce ?? 0) + 1 }));
@@ -1244,6 +1310,8 @@ function DiffReview({
 
   const noWalks = walkCount === null || walkCount === 0;
   return (
+    <PairKeyContext.Provider value={open.key}>
+    <ThreadContext.Provider value={threadActions}>
     <div className="rv-pair-review">
       <header className="rv-pair-head rv-pair-review-head">
         <h1>
@@ -1326,6 +1394,7 @@ function DiffReview({
               record={record}
               totals={totals}
               jobs={record.jobs}
+              threads={threads}
               onOpen={(file) => openFile(file.key)}
               onDelegate={(choice) =>
                 startJob({ kind: 'review', ...choice, scope: { kind: 'file', label: 'the whole change', ranges: changedRangesOf(open.files) } })
@@ -1372,6 +1441,7 @@ function DiffReview({
               allFiles={open.files}
               onShowElsewhere={showRange}
               record={record}
+              threads={threads}
               layout={layout}
               target={target !== null && fileLocationMatch(current, target.location) ? target : null}
               progress={progress.get(current.key) as FileProgress}
@@ -1399,6 +1469,8 @@ function DiffReview({
         {dockedHere && <div className="rv-pair-room" ref={roomRef} data-ev="panel-room" />}
       </div>
     </div>
+    </ThreadContext.Provider>
+    </PairKeyContext.Provider>
   );
 }
 
@@ -1580,37 +1652,7 @@ export function rangeWords(range: LineRange): string {
   return `${range.path} ${range.side === 'base' ? 'removed ' : ''}line${range.start === range.end ? '' : 's'} ${String(range.start)}${range.start === range.end ? '' : `–${String(range.end)}`}`;
 }
 
-const SEVERITY_WORD: Record<AgentFinding['severity'], string> = { problem: 'Problem', question: 'Question', note: 'Note' };
-
 /** One finding: its heading and short explanation; longer reasoning and its code on request. */
-function FindingItem({ finding, onShow }: { readonly finding: FindingGroup; readonly onShow: (range: LineRange) => void }): JSX.Element {
-  return (
-    <li className={`rv-agent-finding rv-agent-finding-${finding.severity}`} data-ev="agent-finding">
-      <h4>
-        <span className="rv-agent-finding-kind">{SEVERITY_WORD[finding.severity]}</span> {finding.title}
-        {finding.places.length > 1 && <span className="rv-pair-muted"> · {finding.places.length} places</span>}
-      </h4>
-      <ShortThenMore
-        short={finding.explanation}
-        details={finding.details}
-        rests={
-          finding.places.length === 0 ? undefined : (
-            <ul>
-              {finding.places.map((place, index) => (
-                <li key={index}>
-                  <button type="button" className="rv-pair-link" data-ev="agent-finding-place" onClick={() => onShow(place)}>
-                    {rangeWords(place)}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )
-        }
-      />
-    </li>
-  );
-}
-
 function RangeLinks({ ranges, onShow }: { readonly ranges: readonly LineRange[]; readonly onShow: (range: LineRange) => void }): JSX.Element {
   return (
     <ul>
@@ -1634,6 +1676,8 @@ function RangeLinks({ ranges, onShow }: { readonly ranges: readonly LineRange[];
 export function AgentReviewResult({
   job,
   files,
+  threads,
+  expandThreads = false,
   open = true,
   onStop,
   onShow,
@@ -1641,6 +1685,13 @@ export function AgentReviewResult({
   readonly job: AgentJob;
   /** The change's files, to tell a whole part from a partial one; `null` while not known. */
   readonly files: readonly PairFile[] | null;
+  /**
+   * This review's threads (DSP-175), listed here one line each; each is read in full at its
+   * code, so a finding or gap is presented once, with its status.
+   */
+  readonly threads: readonly ReviewThread[];
+  /** In a window without the diff, a thread's line opens it in place. */
+  readonly expandThreads?: boolean;
   readonly open?: boolean;
   readonly onStop: () => void;
   readonly onShow: (range: LineRange) => void;
@@ -1662,27 +1713,19 @@ export function AgentReviewResult({
       ) : (
         <div className="rv-agent-review-body">
           <div className={`rv-agent-verdict rv-agent-verdict-${view.standing}`} data-ev="agent-review-summary">
-            <p className="rv-agent-verdict-line">{view.approvedLine}</p>
-            <p>{view.attentionLine}</p>
+            <p className="rv-agent-verdict-line" data-ev="agent-review-coverage">{view.approvedLine}</p>
+            {/* DSP-175: what remains, apart from coverage: open threads and lines not approved. */}
+            <p data-ev="agent-review-remaining">
+              {[
+                ...(view.notApproved !== null && view.notApproved.length > 0
+                  ? [((count: number) => `${String(count)} changed ${count === 1 ? 'line' : 'lines'} not approved`)(view.notApproved.reduce((total, range) => total + range.end - range.start + 1, 0))]
+                  : []),
+                ...(remainingLine(threadCountsOf(threads)) === '' ? [] : [remainingLine(threadCountsOf(threads))]),
+              ].join(' · ') || 'Nothing open from this review.'}
+            </p>
             {view.agentSummary !== '' && <p className="rv-pair-muted">The agent says: {view.agentSummary}</p>}
           </div>
-          {view.findings.length > 0 && (
-            <ul className="rv-agent-findings">
-              {view.findings.map((finding, index) => (
-                <FindingItem key={index} finding={finding} onShow={onShow} />
-              ))}
-            </ul>
-          )}
-          {view.uncertainties.length > 0 && (
-            <div className="rv-agent-uncertain" data-ev="agent-review-uncertain">
-              <span className="rv-pair-muted">Not established:</span>
-              <ul>
-                {view.uncertainties.map((entry, index) => (
-                  <li key={index}>{entry}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {threads.length > 0 && <ThreadIndex threads={threads} expand={expandThreads} />}
           <details className="rv-agent-adjustments" data-ev="agent-review-basis">
             <summary>Reasoning and what it covers</summary>
             {view.reasoning !== '' && <p className="rv-agent-reasoning">{view.reasoning}</p>}
@@ -1754,6 +1797,7 @@ function FilesChanged({
   record,
   totals,
   jobs,
+  threads,
   onOpen,
   onDelegate,
   onStop,
@@ -1765,6 +1809,7 @@ function FilesChanged({
   readonly record: PairRecord;
   readonly totals: { readonly total: number; readonly handled: number; readonly done: number };
   readonly jobs: readonly AgentJob[];
+  readonly threads: readonly ReviewThread[];
   readonly onOpen: (file: PairFile) => void;
   readonly onDelegate: (choice: AgentChoice) => Promise<boolean>;
   readonly onStop: (job: AgentJob) => void;
@@ -1772,6 +1817,11 @@ function FilesChanged({
 }): JSX.Element {
   const [delegating, setDelegating] = useState(false);
   const facts = useMemo(() => new Map(files.map((file) => [file.key, fileReviewFactsOf(file, record)])), [files, record]);
+  const actions = useContext(ThreadContext);
+  const [showThreads, setShowThreads] = useState(false);
+  const remaining = remainingLine(threadCountsOf(threads));
+  // Threads with no place in one file of the change are read here, over the review.
+  const reviewLevel = threads.filter((thread) => thread.level === 'review' || (thread.file !== null && !files.some((file) => (thread.file?.side === 'base' ? file.oldPath : file.newPath) === thread.file?.path)));
   if (files.length === 0) {
     return <p className="rv-pair-message">The two commits have the same content: there is nothing to review.</p>;
   }
@@ -1783,6 +1833,12 @@ function FilesChanged({
         <span className="rv-pair-summary" data-ev="pair-summary">
           {totals.done} of {files.length} files done · {totals.handled} of {totals.total} changed lines handled
         </span>
+        {remaining !== '' && (
+          // DSP-175: what remains is said apart from coverage, and opens the threads themselves.
+          <button type="button" className="rv-pair-link rv-thread-remaining" data-ev="pair-remaining" aria-expanded={showThreads} onClick={() => setShowThreads(!showThreads)}>
+            {remaining}
+          </button>
+        )}
         {!delegating && (
           <button type="button" className="rv-pair-link" data-ev="pair-delegate-all" onClick={() => setDelegating(true)}>
             Delegate the whole review…
@@ -1810,7 +1866,21 @@ function FilesChanged({
           />
         </div>
       )}
-      {whole !== null && (!delegating || isRunning(whole)) && <AgentReviewResult job={whole} files={files} onStop={() => onStop(whole)} onShow={onShow} />}
+      {showThreads && (
+        <div className="rv-thread-overview" data-ev="pair-threads">
+          <ThreadIndex threads={threads.filter((thread) => thread.kind !== 'note')} />
+        </div>
+      )}
+      {whole !== null && (!delegating || isRunning(whole)) && (
+        <AgentReviewResult job={whole} files={files} threads={threads.filter((thread) => thread.jobId === whole.id)} onStop={() => onStop(whole)} onShow={onShow} />
+      )}
+      {reviewLevel.length > 0 && (
+        <div className="rv-thread-review-level" data-ev="pair-review-threads">
+          {reviewLevel.map((thread) => (
+            <ThreadCard key={thread.id} thread={thread} />
+          ))}
+        </div>
+      )}
       <div className="rv-pair-filelist" role="list">
         <div className="rv-pair-filerow rv-pair-filehead" aria-hidden="true">
           <span>File</span>
@@ -1822,6 +1892,7 @@ function FilesChanged({
         {files.map((file, index) => {
           const entry = progress.get(file.key) as FileProgress;
           const fileFacts = facts.get(file.key) ?? { agents: [], findings: 0 };
+          const open = remainingInFile(threads, file);
           const by = handledBy(entry, fileFacts);
           const running = jobs.some((job) => job.kind === 'review' && isRunning(job) && touchesFile(job, file));
           return (
@@ -1853,9 +1924,22 @@ function FilesChanged({
                 <span className="rv-pair-by" data-ev="pair-file-by">
                   {by}
                   {running && <span className="rv-pair-muted"> · agent reviewing…</span>}
-                  {fileFacts.findings > 0 && (
-                    <span className="rv-pair-findings" data-ev="pair-file-findings">
-                      {fileFacts.findings} open {fileFacts.findings === 1 ? 'finding' : 'findings'}
+                  {open.length > 0 && (
+                    // Opens the file at its first open thread (DSP-175); the row itself opens the file.
+                    <span
+                      className="rv-pair-findings"
+                      data-ev="pair-file-findings"
+                      role="link"
+                      title="Show the open threads"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const first = open[0];
+                        if (first !== undefined) {
+                          actions?.select(first);
+                        }
+                      }}
+                    >
+                      {open.length} open {open.length === 1 ? 'finding' : 'findings'}
                     </span>
                   )}
                 </span>
@@ -2291,6 +2375,7 @@ function FileDiff({
   allFiles,
   onShowElsewhere,
   record,
+  threads,
   layout,
   target: targetProp,
   progress,
@@ -2337,6 +2422,8 @@ function FileDiff({
   /** A place a review result points at, in another file of the change. */
   readonly onShowElsewhere: (range: LineRange) => void;
   readonly record: PairRecord;
+  /** The review's threads (DSP-175); this file draws those anchored in it. */
+  readonly threads: readonly ReviewThread[];
   readonly layout: 'split' | 'unified';
   readonly target: { readonly location: DiffLocation; readonly nonce: number } | null;
   readonly progress: FileProgress;
@@ -2465,6 +2552,86 @@ function FileDiff({
     () => (text === null || text.binary ? [] : splitRowsOf(file, baseLength, targetLength, expansion)),
     [file, text, baseLength, targetLength, expansion],
   );
+
+  // DSP-175: threads at their code. A thread's card is drawn under the last line of its
+  // first place in this file; its lines carry a margin mark that leaves the diff's red and
+  // green readable, outlined when it is the chosen thread. A place in folded code is listed
+  // above the diff until it is opened; a place that was not found marks nothing.
+  const threadActions = useContext(ThreadContext);
+  const selectedThreadId = threadActions?.selectedId ?? null;
+  const pathAt = useCallback((side: LineSide): string | null => (side === 'base' ? file.oldPath : file.newPath), [file]);
+  const anchoredHere = useMemo(() => threads.filter((thread) => thread.anchors.some((anchor) => anchor.path === pathAt(anchor.side))), [threads, pathAt]);
+  const fileLevelThreads = useMemo(
+    () => threads.filter((thread) => thread.level === 'file' && thread.file !== null && thread.file.path === pathAt(thread.file.side)),
+    [threads, pathAt],
+  );
+  const cardsAt = useMemo(() => {
+    const out = new Map<string, ReviewThread[]>();
+    for (const thread of anchoredHere) {
+      const anchor = thread.anchors.find((entry) => entry.path === pathAt(entry.side));
+      if (anchor !== undefined) {
+        const key = `${anchor.side}:${String(anchor.end)}`;
+        out.set(key, [...(out.get(key) ?? []), thread]);
+      }
+    }
+    return out;
+  }, [anchoredHere, pathAt]);
+  const shownLines = useMemo(() => {
+    const keys = new Set<string>();
+    if (layout === 'split') {
+      for (const row of split) {
+        if (row.kind !== 'gap') {
+          if (row.base !== null) keys.add(`base:${String(row.base)}`);
+          if (row.target !== null) keys.add(`target:${String(row.target)}`);
+        }
+      }
+    } else {
+      for (const row of unified) {
+        if (row.kind !== 'gap') {
+          if (row.kind !== 'added' && row.base !== null) keys.add(`base:${String(row.base)}`);
+          if (row.kind !== 'deleted' && row.target !== null) keys.add(`target:${String(row.target)}`);
+        }
+      }
+    }
+    return keys;
+  }, [layout, split, unified]);
+  const foldedThreads = useMemo(
+    () => [...cardsAt.entries()].filter(([key]) => !shownLines.has(key)).flatMap(([, list]) => list),
+    [cardsAt, shownLines],
+  );
+  const threadMark = (side: LineSide, line: number | null): string => {
+    if (line === null) {
+      return '';
+    }
+    let mark = '';
+    for (const thread of anchoredHere) {
+      for (const anchor of thread.anchors) {
+        if (anchor.side === side && anchor.path === pathAt(side) && line >= anchor.start && line <= anchor.end) {
+          if (thread.id === selectedThreadId) {
+            return 'rv-thread-anchor rv-thread-anchor-selected';
+          }
+          if (isRemaining(thread)) {
+            mark = 'rv-thread-anchor';
+          }
+        }
+      }
+    }
+    return mark;
+  };
+  const threadRow = (keys: readonly string[], columns: number): JSX.Element | null => {
+    const here = keys.flatMap((key) => cardsAt.get(key) ?? []);
+    return here.length === 0 ? null : (
+      <tr className="rv-thread-row" data-ev="pair-thread-row">
+        <td colSpan={columns}>
+          <div className="rv-thread-slot">
+            {here.map((thread) => (
+              <ThreadCard key={thread.id} thread={thread} inline />
+            ))}
+          </div>
+        </td>
+      </tr>
+    );
+  };
 
   /*
    * Opening code above what is read keeps what is read where it is (30 October 2026): the
@@ -2922,6 +3089,7 @@ function FileDiff({
               key={job.id}
               job={job}
               files={allFiles}
+              threads={threads.filter((thread) => thread.jobId === job.id)}
               open={index === 0}
               onStop={() => onStop(job)}
               onShow={(range) => {
@@ -2933,6 +3101,18 @@ function FileDiff({
               }}
             />
           ))}
+        </div>
+      )}
+      {(fileLevelThreads.length > 0 || foldedThreads.length > 0) && (
+        <div className="rv-thread-file-level" data-ev="pair-file-threads">
+          {/* One line each, so the diff keeps its room; a line opens its thread in place. */}
+          <ThreadIndex threads={fileLevelThreads} expand />
+          {foldedThreads.length > 0 && (
+            <>
+              <p className="rv-sub">In code that is folded now; choosing one opens it:</p>
+              <ThreadIndex threads={foldedThreads} />
+            </>
+          )}
         </div>
       )}
       <div className="rv-pair-diff-row">
@@ -2978,7 +3158,8 @@ function FileDiff({
                 row.kind === 'gap' && row.gap !== undefined ? (
                   gapRow(row.gap, 8)
                 ) : (
-                  <tr key={`${row.kind}-${String(row.base)}-${String(row.target)}`} className={row.kind === 'change' ? 'rv-pair-row-change' : 'rv-pair-row-context'}>
+                  <Fragment key={`${row.kind}-${String(row.base)}-${String(row.target)}`}>
+                  <tr className={row.kind === 'change' ? 'rv-pair-row-change' : 'rv-pair-row-context'}>
                     {strip('base', row.base, row.kind === 'change')}
                     {number('base', row.base, row.kind === 'change')}
                     {sign(row.kind !== 'change' ? 'none' : row.base === null ? 'empty' : 'old')}
@@ -2990,6 +3171,7 @@ function FileDiff({
                         row.kind === 'change' && row.base === null ? 'rv-pair-empty' : '',
                         isTarget('base', row.base) ? 'rv-pair-target' : '',
                         selectedOnRow('base', row.base) ? 'rv-pair-selected' : '',
+                        threadMark('base', row.base),
                       ].join(' ')}
                       data-code-side="base"
                       data-code-line={row.base ?? undefined}
@@ -3007,6 +3189,7 @@ function FileDiff({
                         row.kind === 'change' && row.target === null ? 'rv-pair-empty' : '',
                         isTarget('target', row.target) ? 'rv-pair-target' : '',
                         selectedOnRow('target', row.target) ? 'rv-pair-selected' : '',
+                        threadMark('target', row.target),
                       ].join(' ')}
                       data-code-side="target"
                       data-code-line={row.target ?? undefined}
@@ -3014,6 +3197,8 @@ function FileDiff({
                       {codeView('target', row.target, row.kind === 'change')}
                     </td>
                   </tr>
+                  {threadRow([...(row.base === null ? [] : [`base:${String(row.base)}`]), ...(row.target === null ? [] : [`target:${String(row.target)}`])], 8)}
+                  </Fragment>
                 ),
               )}
             </tbody>
@@ -3054,6 +3239,7 @@ function FileDiff({
                           changedRow && wholeLine(side, line) ? 'rv-pair-whole' : '',
                           isTarget(side, line) ? 'rv-pair-target' : '',
                           selectedOnRow(side, line) ? 'rv-pair-selected' : '',
+                          threadMark(side, line) || (row.kind === 'context' ? threadMark('base', row.base) : ''),
                         ].join(' ')}
                         data-code-side={side}
                         data-code-line={line ?? undefined}
@@ -3063,6 +3249,12 @@ function FileDiff({
                         {codeView(side, line, changedRow)}
                       </td>
                     </tr>
+                    {threadRow(
+                      row.kind === 'context'
+                        ? [`target:${String(row.target)}`, `base:${String(row.base)}`]
+                        : [`${side}:${String(line)}`],
+                      5,
+                    )}
                   </Fragment>
                 );
               })}

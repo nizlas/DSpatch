@@ -117,6 +117,9 @@ export interface ReviewWords {
     readonly before: string;
     readonly after: string;
     readonly both: string;
+    /** A walk pane of a file the change does not touch: the one revision it shows. */
+    readonly shownFrom: string;
+    readonly shownTo: string;
     readonly focus: string;
     readonly wholeFile: string;
     readonly highlightWalk: string;
@@ -370,6 +373,8 @@ const sv: ReviewWords = {
     before: 'Före',
     after: 'Efter',
     both: 'Före → Efter',
+    shownFrom: 'Från',
+    shownTo: 'Till',
     focus: 'Fokus',
     wholeFile: 'Hela filen',
     highlightWalk: 'Markera hela walken',
@@ -644,6 +649,8 @@ const en: ReviewWords = {
     before: 'Before',
     after: 'After',
     both: 'Before → After',
+    shownFrom: 'From',
+    shownTo: 'To',
     focus: 'Focus',
     wholeFile: 'Whole file',
     highlightWalk: 'Highlight entire walk',

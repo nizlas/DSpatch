@@ -17,10 +17,14 @@ import {
   lineKey,
   rangesOf,
   shownPath,
+  recommendationFrom,
   type AgentFinding,
+  type AgentGap,
   type AgentMaterial,
   type AnswerReference,
   type ChangedLine,
+  type ContextRange,
+  type ContextReference,
   type CodeSelection,
   type ExplainFollowUp,
   type SelectedCodeKind,
@@ -58,6 +62,68 @@ export interface AnalysisMaterial {
   readonly diff: string;
   /** Files whose diff is not in `diff` for size; their text is in the folder like every other. */
   readonly diffLeftOut: readonly string[];
+  /**
+   * The workspace's other repositories, written beside the revisions as read-only context
+   * (DSP-175). Absent or empty when there are none. Only described; nothing of them is sent.
+   */
+  readonly context?: readonly ContextMaterial[];
+  /** Context repositories that could not be written, and why. */
+  readonly contextUnavailable?: readonly { readonly name: string; readonly reason: string }[];
+}
+
+/**
+ * Another repository of the workspace as the agent can read it (DSP-175): its folder name,
+ * the commit written and how that commit was chosen, and whether the working copy differs.
+ */
+export interface ContextMaterial {
+  readonly name: string;
+  readonly commit: string;
+  readonly how: 'submodule' | 'dependency' | 'path-dependency' | 'head';
+  /** Whether the commit is established as what the reviewed build uses. */
+  readonly established: boolean;
+  readonly note: string;
+  /** Counts only: the working copy's content is never read. */
+  readonly workingCopy: { readonly head: string | null; readonly changed: number; readonly untracked: number };
+  readonly files: number;
+  readonly skippedCount: number;
+}
+
+/**
+ * Reads a context repository's file at the commit recorded for it, for checking a context
+ * reference: `null` for a repository that is not context here; `lines: null` when the file
+ * does not exist there or is not text.
+ */
+export interface ContextReader {
+  readonly names: ReadonlySet<string>;
+  readonly read: (repository: string, path: string) => Promise<{ readonly commit: string; readonly lines: readonly string[] | null } | null>;
+}
+
+/** What the agent is told about the workspace's other repositories, or nothing when there are none. */
+function contextSection(material: AnalysisMaterial): string[] {
+  const context = material.context ?? [];
+  const unavailable = material.contextUnavailable ?? [];
+  if (context.length === 0 && unavailable.length === 0) {
+    return [];
+  }
+  const short = (commit: string | null): string => (commit === null ? 'none' : commit.slice(0, 12));
+  return [
+    '',
+    '## Other repositories of the workspace (read-only context)',
+    'The person\'s workspace also holds the repositories below. They are not under review. Read them with the same tools under `context/<name>/` only when the question or the change needs code from them, for example a library function a changed line calls; nothing of them is in this prompt. Each was written from its repository\'s commits at the commit named; nothing comes from a working copy.',
+    ...context.map((entry) => {
+      const differs = entry.workingCopy.changed > 0 || entry.workingCopy.untracked > 0 || entry.workingCopy.head !== entry.commit;
+      return (
+        `- \`context/${entry.name}/\`: repository ${entry.name} at commit ${entry.commit}. ${entry.note}` +
+        (differs
+          ? ` Its working copy differs from this commit (checked out: ${short(entry.workingCopy.head)}; ${String(entry.workingCopy.changed)} changed and ${String(entry.workingCopy.untracked)} untracked file(s)); those are not here.`
+          : '') +
+        (entry.skippedCount > 0 ? ` ${String(entry.skippedCount)} of its files could not be written.` : '')
+      );
+    }),
+    ...unavailable.map((entry) => `- ${entry.name} could not be given as context: ${entry.reason}`),
+    'Where the version the reviewed build uses is not established, keep apart what this context code shows and what holds for the reviewed build, and say which you mean.',
+    'To point at context code, name its repository instead of a side: {"label": "What this place shows", "repository": "<name>", "path": "src/file.ts", "start": 3, "end": 9}, with the path inside that repository and 1-based lines at the commit named. DSpatch checks it at that commit. Context is never reviewed, approved or covered: approved and reviewed lines, walk places and points worth checking stay in base/ and target/; an answer\'s references and a finding may point at context code this way.',
+  ];
 }
 
 /** The size of the opening diff; beyond it a file's diff is named, not shown. */
@@ -87,6 +153,7 @@ function folderSection(material: AnalysisMaterial, folder: AgentMaterial): strin
       'If one of them matters for what you are asked, say so; do not assume what it contains.',
     );
   }
+  lines.push(...contextSection(material));
   return lines.join('\n');
 }
 
@@ -373,7 +440,9 @@ export function reviewInstruction(scope: DelegationScope, language: 'sv' | 'en')
     'Judge the lines in their context: read what they call and what calls them, the types and data they use, and the tests that cover them, at both revisions where behaviour changed. A finding may point at unchanged code when that is where the problem shows.',
     'Report what you reviewed, your assessment and what it rests on, every problem you found, and what remains uncertain. Name anything you needed but could not read.',
     'If what you could read is not enough to judge the scope, say so with "insufficient": true and approve nothing.',
-    'Approval means the reviewed lines are acceptable as far as you can tell from the code you read; it is not a guarantee of correctness, and you have run nothing. Do not propose fixes as changes; describe problems.',
+    'Approval means the reviewed lines are acceptable as far as you can tell from the code you read; it is not a guarantee of correctness, and you have run nothing. Do not write fixes; describe problems.',
+    'For every finding, question and gap, say what you observed and what it rests on (the code you read, a test, a document), and recommend what to do about it: a code change, a test, a measurement, a question to the author, further investigation, or keeping the code as it is with the reason. Recommend a code change only when what you read shows one is needed; when the evidence is missing, recommend the test, measurement or investigation that would settle it, with a concrete next step. Give a short rationale and what remains uncertain. The person decides; accepting your recommendation starts nothing.',
+    'A gap is something you could not establish (not a defect). When it belongs to one of your findings, name that finding\'s title in "finding".',
     '',
     '## The scope (machine-readable)',
     '```json',
@@ -395,20 +464,39 @@ export function reviewInstruction(scope: DelegationScope, language: 'sv' | 'en')
             title: 'A short heading',
             text: 'What is wrong and what it leads to, in one or two sentences',
             details: 'Longer reasoning, only when it is needed',
+            evidence: 'What the observation rests on: the code you read, a test, a document',
+            recommendation: {
+              kind: 'change',
+              action: 'The recommended action in one sentence',
+              rationale: 'Why, briefly',
+              uncertainty: 'What is still uncertain, or an empty string',
+              nextStep: 'A concrete next step when more investigation is needed, or an empty string',
+            },
             path: 'src/file.ts',
             side: 'target',
             start: 13,
             end: 13,
           },
         ],
-        uncertainties: ['What you could not establish from the code you read'],
+        gaps: [
+          {
+            text: 'What you could not establish from the code you read',
+            evidence: 'What you looked at',
+            finding: 'The title of the finding it belongs to, or omit',
+            recommendation: { kind: 'test', action: 'How it could be established', rationale: 'Why', uncertainty: '', nextStep: 'The first concrete step' },
+            path: 'src/file.ts',
+            side: 'target',
+            start: 20,
+            end: 24,
+          },
+        ],
         insufficient: false,
       },
       null,
       2,
     ),
     '```',
-    'severity is "problem", "question" or "note". A line with a problem is not approved. Do not narrate your investigation; give the judgement and what it rests on.',
+    'severity is "problem", "question" or "note". recommendation.kind is "change", "test", "measure", "ask-author", "investigate" or "keep" (keep the code as it is; say why in the rationale). A gap\'s place is optional. A line with a problem is not approved. Do not narrate your investigation; give the judgement and what it rests on.',
     'The same problem in several places is one finding per place, each with the same title.',
   ].join('\n');
 }
@@ -721,7 +809,8 @@ function text(value: unknown): string {
 }
 
 function rangeOf(raw: unknown): LineRange | null {
-  if (!isObject(raw)) {
+  // A place that names a repository is context (DSP-175): never a place in the reviewed revisions.
+  if (!isObject(raw) || isContextEntry(raw)) {
     return null;
   }
   const side = raw['side'];
@@ -1183,10 +1272,37 @@ export function readReviewAnswer(raw: unknown, scope: DelegationScope, files: re
     severity: finding['severity'] === 'problem' ? 'problem' : finding['severity'] === 'question' ? 'question' : 'note',
     text: text(finding['text']) || text(finding['title']),
     location: rangeOf(finding),
+    ...pendingContextLocation(finding),
     ...(text(finding['title']) === '' ? {} : { title: text(finding['title']) }),
     ...(text(finding['details']) === '' ? {} : { details: text(finding['details']) }),
+    ...(text(finding['evidence']) === '' ? {} : { evidence: text(finding['evidence']) }),
+    ...((): Partial<AgentFinding> => {
+      const recommendation = recommendationFrom(finding['recommendation']);
+      return recommendation === null ? {} : { recommendation };
+    })(),
   })).filter((finding) => finding.text !== '');
-  const uncertainties = (Array.isArray(raw['uncertainties']) ? raw['uncertainties'] : []).map(text).filter((entry) => entry !== '');
+  // DSP-175: gaps with what they rest on and a recommendation. An answer of the older form,
+  // with plain `uncertainties`, is read as before and its sentences are the gaps.
+  const gaps: AgentGap[] = (Array.isArray(raw['gaps']) ? raw['gaps'] : []).filter(isObject).flatMap((gap): AgentGap[] => {
+    const said = text(gap['text']);
+    if (said === '') {
+      return [];
+    }
+    const recommendation = recommendationFrom(gap['recommendation']);
+    return [
+      {
+        text: said,
+        location: rangeOf(gap),
+        ...(text(gap['evidence']) === '' ? {} : { evidence: text(gap['evidence']) }),
+        ...(text(gap['finding']) === '' ? {} : { finding: text(gap['finding']) }),
+        ...(recommendation === null ? {} : { recommendation }),
+      },
+    ];
+  });
+  const uncertainties = [
+    ...(Array.isArray(raw['uncertainties']) ? raw['uncertainties'] : []).map(text).filter((entry) => entry !== ''),
+    ...gaps.map((gap) => gap.text),
+  ];
   const assessment = text(raw['assessment']);
   let insufficient = raw['insufficient'] === true;
   if (!insufficient && reviewed.length === 0) {
@@ -1220,6 +1336,7 @@ export function readReviewAnswer(raw: unknown, scope: DelegationScope, files: re
     approved: rangesOf(approvedLines),
     findings,
     uncertainties,
+    ...(gaps.length > 0 || Array.isArray(raw['gaps']) ? { gaps: [...gaps, ...uncertainties.filter((entry) => !gaps.some((gap) => gap.text === entry)).map((entry) => ({ text: entry, location: null }))] } : {}),
     insufficient,
     adjustments,
   };
@@ -1231,14 +1348,24 @@ export function readReviewAnswer(raw: unknown, scope: DelegationScope, files: re
  * The answer to a step question, with every reference checked against its commit: one that
  * does not exist there is left out and named in `adjustments`, never shown as a link.
  */
-export async function readStepAnswer(raw: unknown, read: LineReader): Promise<StepAnswer | { readonly error: string }> {
+export async function readStepAnswer(raw: unknown, read: LineReader, context: ContextReader | null = null): Promise<StepAnswer | { readonly error: string }> {
   if (!isObject(raw)) {
     return { error: 'The agent did not answer with one JSON object.' };
   }
   const answer = text(raw['answer']);
   const adjustments: string[] = [];
   const references: AnswerReference[] = [];
+  const contextReferences: ContextReference[] = [];
   for (const entry of Array.isArray(raw['references']) ? raw['references'] : []) {
+    if (isObject(entry) && isContextEntry(entry)) {
+      const checked = await checkedContextRange(entry, context);
+      if ('problem' in checked) {
+        adjustments.push(`A context reference was left out: ${checked.problem}`);
+      } else {
+        contextReferences.push({ label: text(entry['label']) || `${checked.repository}/${checked.path}:${String(checked.start)}`, range: checked });
+      }
+      continue;
+    }
     const range = rangeOf(entry);
     if (range === null || !isObject(entry)) {
       adjustments.push('A reference that did not name a path, a side and lines was left out.');
@@ -1257,7 +1384,7 @@ export async function readStepAnswer(raw: unknown, read: LineReader): Promise<St
     adjustments.push('The answer had no text.');
   }
   const details = text(raw['details']);
-  return { answer, ...(details === '' ? {} : { details }), references, insufficient, adjustments };
+  return { answer, ...(details === '' ? {} : { details }), references, ...(contextReferences.length === 0 ? {} : { contextReferences }), insufficient, adjustments };
 }
 
 /**
@@ -1276,9 +1403,113 @@ export async function withCheckedFindings(result: DelegationResult, read: LineRe
     if (problem === null) {
       findings.push(finding);
     } else {
-      findings.push({ ...finding, location: null });
+      // DSP-175: the named place is kept as missing, so the thread can say where it was said
+      // to be; it is never marked in the code.
+      findings.push({ ...finding, location: null, missing: { range: finding.location, reason: problem } });
       adjustments.push(`A finding's place was removed: ${problem}`);
     }
   }
+  if (result.gaps === undefined) {
+    return { ...result, findings, adjustments };
+  }
+  const gaps: AgentGap[] = [];
+  for (const gap of result.gaps) {
+    const problem = gap.location === null ? null : await placeProblem({ label: '', range: gap.location, anchor: null, note: '' }, read);
+    if (problem === null) {
+      gaps.push(gap);
+    } else {
+      gaps.push({ ...gap, location: null });
+      adjustments.push(`A gap's place was removed: ${problem}`);
+    }
+  }
+  return { ...result, findings, gaps, adjustments };
+}
+
+// --- Context from the workspace's other repositories (DSP-175) ------------------------------
+
+/** An entry that names a repository: a place in context, never in the reviewed revisions. */
+function isContextEntry(raw: Record<string, unknown>): boolean {
+  return typeof raw['repository'] === 'string' && raw['repository'].trim() !== '';
+}
+
+/**
+ * A context place as the agent wrote it, checked at the commit recorded for its repository:
+ * the place with that commit, or why it was left out.
+ */
+async function checkedContextRange(raw: Record<string, unknown>, context: ContextReader | null): Promise<ContextRange | { readonly problem: string }> {
+  const repository = text(raw['repository']);
+  const filePath = typeof raw['path'] === 'string' ? raw['path'] : '';
+  const start = raw['start'];
+  const end = raw['end'] ?? raw['start'];
+  if (filePath === '' || !Number.isInteger(start) || !Number.isInteger(end) || (start as number) < 1 || (end as number) < (start as number)) {
+    return { problem: `a place in ${repository} did not name a path and lines.` };
+  }
+  const at = `${repository}: ${filePath} lines ${String(start)}–${String(end)}`;
+  const found = context === null ? null : await context.read(repository, filePath);
+  if (found === null) {
+    return { problem: `${at}: ${repository} is not a context repository of this review.` };
+  }
+  if (found.lines === null) {
+    return { problem: `${at}: the file does not exist at ${found.commit.slice(0, 7)}.` };
+  }
+  if ((end as number) > found.lines.length) {
+    return { problem: `${at}: the file has ${String(found.lines.length)} lines at ${found.commit.slice(0, 7)}.` };
+  }
+  return { kind: 'context', repository, commit: found.commit, path: filePath, start: start as number, end: end as number };
+}
+
+/**
+ * A finding's context place as the agent wrote it, before it is checked: its commit is
+ * empty until {@link withCheckedContext} fills it in or leaves the place out.
+ */
+function pendingContextLocation(raw: Record<string, unknown>): { readonly contextLocation?: ContextRange } {
+  if (!isContextEntry(raw)) {
+    return {};
+  }
+  const start = raw['start'];
+  const end = raw['end'] ?? raw['start'];
+  return {
+    contextLocation: {
+      kind: 'context',
+      repository: text(raw['repository']),
+      commit: '',
+      path: typeof raw['path'] === 'string' ? raw['path'] : '',
+      start: Number.isInteger(start) ? (start as number) : 0,
+      end: Number.isInteger(end) ? (end as number) : 0,
+    },
+  };
+}
+
+/**
+ * A delegated review's context places checked at their recorded commits (DSP-175): a
+ * finding's context place that does not exist there is removed and named in `adjustments`;
+ * reviewed or approved lines the answer put in a context repository are named as left out.
+ * Context never adds to `reviewed` or `approved`: {@link readReviewAnswer} reads those from
+ * the reviewed revisions only.
+ */
+export async function withCheckedContext(result: DelegationResult, raw: unknown, context: ContextReader | null): Promise<DelegationResult> {
+  const adjustments = [...result.adjustments];
+  const findings: AgentFinding[] = [];
+  for (const finding of result.findings) {
+    if (finding.contextLocation === undefined) {
+      findings.push(finding);
+      continue;
+    }
+    const { contextLocation, ...rest } = finding;
+    const checked = await checkedContextRange({ ...contextLocation }, context);
+    if ('problem' in checked) {
+      findings.push(rest);
+      adjustments.push(`A finding's context place was removed: ${checked.problem}`);
+    } else {
+      findings.push({ ...rest, contextLocation: checked });
+    }
+  }
+  const named = isObject(raw)
+    ? (['reviewed', 'approved'] as const).filter((key) => (Array.isArray(raw[key]) ? raw[key] : []).some((entry: unknown) => isObject(entry) && isContextEntry(entry)))
+    : [];
+  if (named.length > 0) {
+    adjustments.push(`Lines in context repositories were named as ${named.join(' and ')}; context is never reviewed or approved, so they were left out.`);
+  }
   return { ...result, findings, adjustments };
 }
+

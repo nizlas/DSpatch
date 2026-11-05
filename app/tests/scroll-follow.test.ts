@@ -142,3 +142,29 @@ test('the scroller is never asked to go above its own top', () => {
     0,
   );
 });
+
+// DSP-175: the review discussion's own reasons, from its latest part.
+import { discussionScrollReason } from '../src/renderer/scroll-follow';
+
+const at = (questions: number, last: string | null, content: string) => ({ questions, lastQuestionId: last, latestContent: content });
+
+test('the review discussion: a new question at the end is the person sending, and goes to it wherever they were', () => {
+  const reason = discussionScrollReason(at(2, 'q2', 'done:answer'), at(3, 'q3', ''));
+  assert.equal(reason, 'sent');
+  assert.equal(decideScroll({ reason: reason!, followingLatest: false }), 'scroll-to-latest');
+});
+
+test('the review discussion: the latest answer streaming follows only a reader at the bottom', () => {
+  const reason = discussionScrollReason(at(3, 'q3', 'streaming:Par'), at(3, 'q3', 'streaming:Part'));
+  assert.equal(reason, 'content');
+  assert.equal(decideScroll({ reason: reason!, followingLatest: true }), 'scroll-to-latest');
+  assert.equal(decideScroll({ reason: reason!, followingLatest: false }), 'hold-position', 'a reader who scrolled up stays');
+});
+
+test('the review discussion: an older message changing, or a re-render, does not move anyone', () => {
+  assert.equal(discussionScrollReason(at(3, 'q3', 'done:x'), at(3, 'q3', 'done:x')), null);
+});
+
+test('the review discussion: its first reading goes to the latest', () => {
+  assert.equal(discussionScrollReason(null, at(4, 'q4', 'done:x')), 'conversation-replaced');
+});

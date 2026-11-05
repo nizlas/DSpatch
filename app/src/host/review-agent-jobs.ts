@@ -59,10 +59,12 @@ import {
   walkPlaceProblems,
   walksPrompt,
   withCheckedChecks,
+  withCheckedContext,
   withCheckedFindings,
   withCheckedStandaloneChecks,
   withoutInvalidPlaces,
   type AnalysisMaterial,
+  type ContextReader,
   type ExplainTurn,
   type ProposedWalks,
 } from '../shared/review-agent';
@@ -90,6 +92,7 @@ import type { HeldRevisions } from '../main/review-discussion-service';
 import type { RevisionPairIdentity } from '../shared/review-pair';
 import type { ReviewPairs } from './review-pairs';
 import type { RevisionSnapshots, SnapshotManifest } from './revision-snapshots';
+import { contextReaderOf, type ContextRepository, type ContextSnapshot } from './context-repositories';
 
 export type AgentProvider = 'cursor' | 'claude' | 'copilot';
 
@@ -155,6 +158,14 @@ export interface ReviewAgentJobsOptions {
   readonly log: (message: string) => void;
   /** Test override for how long a cancelled run is given to report its end. */
   readonly cancelConfirmMs?: number;
+  /**
+   * DSP-175: the workspace's other repositories a review may read as context, and the record
+   * of what was given. Without it, no context is given.
+   */
+  readonly contexts?: {
+    current(key: string, pair: RevisionPairIdentity): Promise<readonly ContextRepository[]>;
+    given(key: string, pair: RevisionPairIdentity, holder: string, context: readonly ContextSnapshot[]): void;
+  };
 }
 
 interface Live {
@@ -168,6 +179,8 @@ interface Live {
   cancelRequested: boolean;
   /** The revision folder, once written: what tool subjects are shown relative to. */
   folder: string | null;
+  /** The context repositories written with it, read at their recorded commits (DSP-175). */
+  context: ContextReader | null;
   readonly reads: Set<string>;
   readonly searches: string[];
   refused: number;
@@ -212,6 +225,18 @@ function materialOf(manifest: SnapshotManifest): AgentMaterial {
     files: manifest.base.files + manifest.target.files,
     skipped: skipped.slice(0, SKIPPED_NAMED),
     skippedCount: skipped.length,
+  };
+}
+
+/** The material with the context repositories the snapshot holds (DSP-175): described, not sent. */
+function withContext(material: AnalysisMaterial, manifest: SnapshotManifest): AnalysisMaterial {
+  if (manifest.context.length === 0 && manifest.contextUnavailable.length === 0) {
+    return material;
+  }
+  return {
+    ...material,
+    context: manifest.context.map(({ repository: _repository, ...entry }) => entry),
+    contextUnavailable: manifest.contextUnavailable,
   };
 }
 
@@ -551,6 +576,7 @@ export class ReviewAgentJobs {
       cancelRequested: false,
       finished: null,
       folder: null,
+      context: null,
       reads: new Set(),
       searches: [],
       refused: 0,
@@ -739,12 +765,14 @@ export class ReviewAgentJobs {
     if (isPairError(material)) {
       throw new Error(material.error);
     }
-    const snapshot = await this.options.snapshots.acquire(key, opened.pair, changedPaths(material), holder);
+    const snapshot = await this.options.snapshots.acquire(key, opened.pair, changedPaths(material), holder, await this.contextFor(key, opened.pair));
+    this.options.contexts?.given(key, opened.pair, holder, snapshot.manifest.context);
+    const context = contextReaderOf(snapshot.manifest.context);
     let released = false;
     return {
       folder: snapshot.folder,
-      section: discussionFolderSection(material, materialOf(snapshot.manifest)),
-      check: (raw) => readStepAnswer(raw, (side, filePath) => this.options.pairs.linesAt(key, side, filePath)),
+      section: discussionFolderSection(withContext(material, snapshot.manifest), materialOf(snapshot.manifest)),
+      check: (raw) => readStepAnswer(raw, (side, filePath) => this.options.pairs.linesAt(key, side, filePath), context),
       release: () => {
         if (!released) {
           released = true;
@@ -752,6 +780,19 @@ export class ReviewAgentJobs {
         }
       },
     };
+  }
+
+  /** The context repositories to write for a review now; none when they cannot be listed. */
+  private async contextFor(key: string, pair: RevisionPairIdentity): Promise<readonly ContextRepository[]> {
+    if (this.options.contexts === undefined) {
+      return [];
+    }
+    try {
+      return await this.options.contexts.current(key, pair);
+    } catch (error) {
+      this.options.log(`context for review ${key.slice(0, 12)} not given: ${describe(error)}`);
+      return [];
+    }
   }
 
   private async closeSession(live: Live): Promise<void> {
@@ -896,20 +937,25 @@ export class ReviewAgentJobs {
   private async run(live: Live, job: AgentJob): Promise<void> {
     let held = false;
     try {
-      const material = await this.options.pairs.material(live.key);
+      const plain = await this.options.pairs.material(live.key);
       const opened = this.options.pairs.opened(live.key);
-      if (isPairError(material) || opened === null) {
-        this.finish(live, 'failed', isPairError(material) ? material.error : 'That review is not open.');
+      if (isPairError(plain) || opened === null) {
+        this.finish(live, 'failed', isPairError(plain) ? plain.error : 'That review is not open.');
         return;
       }
+      let material: AnalysisMaterial = plain;
       const language = await this.options.language();
       // The two commits as files the agent reads, held until the session is closed.
       held = true;
       let folder: AgentMaterial;
       try {
-        const snapshot = await this.options.snapshots.acquire(live.key, opened.pair, changedPaths(material), live.jobId);
+        const snapshot = await this.options.snapshots.acquire(live.key, opened.pair, changedPaths(material), live.jobId, await this.contextFor(live.key, opened.pair));
         live.folder = snapshot.folder;
         folder = materialOf(snapshot.manifest);
+        // DSP-175: the workspace's other repositories, described to the agent and recorded.
+        material = withContext(material, snapshot.manifest);
+        live.context = contextReaderOf(snapshot.manifest.context);
+        this.options.contexts?.given(live.key, opened.pair, live.jobId, snapshot.manifest.context);
       } catch (error) {
         this.finish(live, 'failed', 'The two revisions could not be prepared for the agent to read, so nothing was sent. Nothing was approved.', { detail: describe(error) });
         return;
@@ -1020,7 +1066,7 @@ export class ReviewAgentJobs {
     if (this.endedEarly(live, reply)) {
       return;
     }
-    const answer = await readStepAnswer(answerJson(reply.text), this.reader(live));
+    const answer = await readStepAnswer(answerJson(reply.text), this.reader(live), live.context);
     if ('error' in answer) {
       this.finish(live, 'failed', `${answer.error} Nothing was changed.`);
       return;
@@ -1033,7 +1079,10 @@ export class ReviewAgentJobs {
     this.finish(
       live,
       'done',
-      (answer.insufficient ? 'The agent could not settle the question from the code it read.' : `Answered, pointing at ${String(answer.references.length)} place(s) in the code.`) +
+      (answer.insufficient
+        ? 'The agent could not settle the question from the code it read.'
+        : `Answered, pointing at ${String(answer.references.length)} place(s) in the code` +
+          ((answer.contextReferences?.length ?? 0) > 0 ? ` and ${String(answer.contextReferences?.length ?? 0)} in other repositories of the workspace, read as context.` : '.')) +
         (left > 0 ? ` DSpatch left out ${String(left)} thing(s) it could not check.` : ''),
       { answer },
     );
@@ -1151,7 +1200,8 @@ export class ReviewAgentJobs {
       this.finish(live, 'failed', `${read.error} Nothing was approved.`);
       return;
     }
-    let result = await withCheckedFindings(read, this.reader(live));
+    // DSP-175: a finding may point at context code, checked at its recorded commit; context adds nothing to what is approved.
+    let result = await withCheckedContext(await withCheckedFindings(read, this.reader(live)), answerJson(answer.text), live.context);
     // A file the agent could not read is not approved, whatever the answer says. When more
     // files were left out than are named, none can be told apart, so nothing is approved.
     const unreadable = new Set(folder.skipped.map((entry) => `${entry.side}:${entry.path}`));

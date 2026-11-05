@@ -31,6 +31,7 @@ import type {
 import type { ReviewHostApi } from './review-host-contract';
 import type {
   AgentJob,
+  ContextFileView,
   ReviewAgents,
   LogCommit,
   OpenPair,
@@ -197,6 +198,7 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'reviewPair.open': (request: unknown) => PairAnswer<OpenPair>;
   readonly 'reviewPair.openForWalk': (pair: RevisionPairIdentity) => PairAnswer<OpenPair>;
   readonly 'reviewPair.readFile': (key: unknown, side: unknown, path: unknown) => PairAnswer<{ readonly text: string | null; readonly binary: boolean }>;
+  readonly 'reviewPair.readContextFile': (key: unknown, repository: unknown, path: unknown, commit: unknown) => PairAnswer<ContextFileView>;
   readonly 'reviewPair.state': (key: unknown) => PairAnswer<PairRecord>;
   readonly 'reviewPair.mark': (key: unknown, request: unknown) => PairAnswer<PairRecord>;
   readonly 'reviewPair.savePosition': (key: unknown, position: unknown) => PairAnswer<{ readonly saved: true }>;
@@ -208,6 +210,7 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'reviewPair.agents': (key: unknown, opener: unknown) => PairAnswer<ReviewAgents>;
   readonly 'reviewPair.startJob': (key: unknown, request: unknown) => PairAnswer<AgentJob>;
   readonly 'reviewPair.cancelJob': (key: unknown, jobId: unknown) => PairAnswer<{ readonly note: string }>;
+  readonly 'reviewPair.thread': (key: unknown, request: unknown) => PairAnswer<PairRecord>;
   readonly 'discussion.load': (target: DiscussionTarget, request: unknown) => DiscussionLoadOutcome;
   readonly 'discussion.send': (target: DiscussionTarget, input: unknown) => DiscussionSendOutcome;
   readonly 'discussion.cancel': (target: DiscussionTarget) => DiscussionCancelOutcome;
@@ -359,6 +362,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'reviewPair.open': true,
   'reviewPair.openForWalk': true,
   'reviewPair.readFile': true,
+  'reviewPair.readContextFile': true,
   'reviewPair.state': true,
   'reviewPair.mark': true,
   'reviewPair.savePosition': true,
@@ -370,6 +374,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'reviewPair.agents': true,
   'reviewPair.startJob': true,
   'reviewPair.cancelJob': true,
+  'reviewPair.thread': true,
   'review.exampleDefinition': true,
   'discussion.load': true,
   'discussion.send': true,

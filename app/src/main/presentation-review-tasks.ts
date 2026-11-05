@@ -41,7 +41,11 @@
  *   for its definition (`struct`, `class`, `interface`, `type`, `enum`, `function`), reads
  *   the file it is in and one use of it, and answers with what it found at each side,
  *   as references. Asked to compare, it answers with a table. When the name is defined at
- *   neither side, it says so, with no reference. It says how many questions came before it
+ *   neither side, it looks in the other repositories of the workspace the host wrote as
+ *   context (`context/<name>/`, DSP-175) and, when one defines it, answers with a context
+ *   reference (`repository`, no side), saying at which commit it read it and, from the
+ *   prompt, whether that is the version the reviewed build uses. Else it says so, with no
+ *   reference. It says how many questions came before it
  *   in the same session, as a session that remembers them would.
  */
 
@@ -99,6 +103,9 @@ function base(filePath: string): string {
   return filePath.split('/').at(-1) ?? filePath;
 }
 
+/** A side of the revisions, or a context repository's folder (DSP-175). */
+type ReaderSide = 'base' | 'target' | `context/${string}`;
+
 /** The simulated agent's reading, confined to its folder and recorded as tool calls. */
 class Reader {
   readonly tools: SimulatedToolCall[] = [];
@@ -109,8 +116,12 @@ class Reader {
     this.folder = folder;
   }
 
+  folderPath(): string {
+    return this.folder;
+  }
+
   /** A file's lines at one side, or `null` when it is not in the folder. */
-  read(side: 'base' | 'target', repoPath: string): string[] | null {
+  read(side: ReaderSide, repoPath: string): string[] | null {
     const file = path.resolve(this.folder, side, ...repoPath.split('/'));
     if (!file.startsWith(path.resolve(this.folder) + path.sep)) {
       return null;
@@ -135,7 +146,7 @@ class Reader {
   }
 
   /** The repository paths of every file at one side, as a search would go through them. */
-  files(side: 'base' | 'target'): string[] {
+  files(side: ReaderSide): string[] {
     const root = path.join(this.folder, side);
     const found: string[] = [];
     const walk = (folder: string): void => {
@@ -158,8 +169,34 @@ class Reader {
     return found;
   }
 
+  /** The context repositories in the folder (DSP-175), by name. */
+  contextNames(): string[] {
+    try {
+      return fs
+        .readdirSync(path.join(this.folder, 'context'), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  /** A context repository's files as a search goes through them, and one read, confined to it. */
+  contextFiles(name: string): string[] {
+    return this.files(`context/${name}`);
+  }
+
+  readContext(name: string, repoPath: string): string[] | null {
+    return this.read(`context/${name}`, repoPath);
+  }
+
+  scanContext(name: string, repoPath: string): string[] | null {
+    return this.scan(`context/${name}`, repoPath);
+  }
+
   /** A text file's lines without recording a read: what a search tool scans. */
-  scan(side: 'base' | 'target', repoPath: string): string[] | null {
+  scan(side: ReaderSide, repoPath: string): string[] | null {
     try {
       return fs.readFileSync(path.join(this.folder, side, ...repoPath.split('/')), 'utf8').split('\n').map((line) => line.replace(/\r$/, ''));
     } catch {
@@ -402,7 +439,7 @@ function delegatedReview(prompt: string, reader: Reader): string {
       insufficient: true,
     });
   }
-  const findings: { severity: string; title?: string; text: string; details?: string; path: string; side: string; start: number; end: number }[] = [];
+  const findings: { severity: string; title?: string; text: string; details?: string; evidence?: string; recommendation?: Record<string, string>; path: string; side: string; start: number; end: number }[] = [];
   const approved: SimRange[] = [];
   for (const range of reviewed) {
     const lines = reader.read(range.side, range.path) ?? [];
@@ -419,12 +456,36 @@ function delegatedReview(prompt: string, reader: Reader): string {
                 title: `SIMULATED: the result of ${definition.name} is used unchecked`,
                 text: `SIMULATED: \`${definition.name}\` can return null, and this line uses its result without a check, so it can fail at run time.`,
                 details: `SIMULATED: the definition is in ${definition.path}, line ${String(definition.start)}.`,
+                evidence: `SIMULATED: read ${range.path} line ${String(line)} and the definition in ${definition.path}.`,
+                recommendation: {
+                  kind: 'change',
+                  action: `SIMULATED: check the result of ${definition.name} for null before using it.`,
+                  rationale: 'SIMULATED: the definition shows a null return on a reachable path.',
+                  uncertainty: 'SIMULATED: callers may already guard against it; none was found.',
+                  nextStep: '',
+                },
                 path: range.path,
                 side: range.side,
                 start: line,
                 end: line,
               }
-            : { severity: 'problem', title: 'SIMULATED: added2 is unused', text: 'SIMULATED: `added2` is exported but nothing uses it, so it is code nobody exercises.', path: range.path, side: range.side, start: line, end: line },
+            : {
+                severity: 'problem',
+                title: 'SIMULATED: added2 is unused',
+                text: 'SIMULATED: `added2` is exported but nothing uses it, so it is code nobody exercises.',
+                evidence: 'SIMULATED: searched the To revision for added2; only its definition matched.',
+                recommendation: {
+                  kind: 'investigate',
+                  action: 'SIMULATED: find out whether another repository imports added2 before removing it.',
+                  rationale: 'SIMULATED: an export can be used outside this repository.',
+                  uncertainty: 'SIMULATED: other repositories were not searched.',
+                  nextStep: 'SIMULATED: search the workspace for "added2".',
+                },
+                path: range.path,
+                side: range.side,
+                start: line,
+                end: line,
+              },
         );
         if (unchecked && definition !== null) {
           findings.push({
@@ -455,13 +516,58 @@ function delegatedReview(prompt: string, reader: Reader): string {
     findings.push({ ...question, ...at, start: first.end, end: first.end });
     findings.push({ severity: 'note', title: 'SIMULATED: the naming differs from its neighbours', text: 'SIMULATED: nothing breaks, but the next reader has to look twice.', ...at, start: first.start, end: first.start });
   }
+  // DSPATCH_REVIEW_SIM=threads (DSP-175): what review threads must hold, deterministically: a
+  // question on a removed (From) line, a place that does not exist at its commit, a question
+  // whose recommendation is to keep the code, and gaps tied to a finding and of their own.
+  const gaps: Record<string, unknown>[] = [];
+  if (process.env['DSPATCH_REVIEW_SIM'] === 'threads' && first !== undefined) {
+    const removed = changed.find((span) => span.side === 'base' && scope.some((range) => range.path === span.path));
+    if (removed !== undefined) {
+      findings.push({
+        severity: 'question',
+        title: 'SIMULATED: why was this line removed?',
+        text: 'SIMULATED: the removed line handled a case that nothing in the To revision handles.',
+        evidence: `SIMULATED: read ${removed.path} line ${String(removed.start)} at From and the whole file at To.`,
+        recommendation: { kind: 'ask-author', action: 'SIMULATED: ask the author whether the case is handled elsewhere.', rationale: 'SIMULATED: the change gives no reason.', uncertainty: '', nextStep: '' },
+        path: removed.path,
+        side: 'base',
+        start: removed.start,
+        end: removed.start,
+      });
+    }
+    findings.push({
+      severity: 'problem',
+      title: 'SIMULATED: a place that is not there',
+      text: 'SIMULATED: this finding names a line the file does not have, to show an anchor that cannot be found.',
+      path: first.path,
+      side: first.side,
+      start: 9999,
+      end: 9999,
+    });
+    findings.push({
+      severity: 'question',
+      title: 'SIMULATED: is the greeting meant to end with an exclamation mark?',
+      text: 'SIMULATED: the punctuation changed in the greeting.',
+      evidence: `SIMULATED: read ${first.path} line ${String(first.start)}.`,
+      recommendation: { kind: 'keep', action: 'SIMULATED: keep the code as it is.', rationale: 'SIMULATED: the commit message says the punctuation is intended.', uncertainty: '', nextStep: '' },
+      ...{ path: first.path, side: first.side },
+      start: first.start,
+      end: first.start,
+    });
+    if (findings[0] !== undefined && findings[0].title !== undefined) {
+      gaps.push({ text: 'SIMULATED: whether any caller depends on the old behaviour was not established.', finding: findings[0].title, recommendation: { kind: 'test', action: 'SIMULATED: add a test over the callers.', rationale: 'SIMULATED: no test covers them.', nextStep: 'SIMULATED: list the callers with a search.' } });
+    }
+    gaps.push({ text: 'SIMULATED: how the module behaves under load was not established.', evidence: 'SIMULATED: no benchmark is in the repository.', recommendation: { kind: 'measure', action: 'SIMULATED: measure the call under load.', rationale: 'SIMULATED: nothing in the code says.', nextStep: 'SIMULATED: time 10 000 calls.' } });
+  }
   return fence({
     summary: findings.length > 0 ? 'SIMULATED: the lines without a problem are approved; the lines with one are not.' : 'SIMULATED: every delegated line is approved.',
     assessment: `SIMULATED: reviewed ${String(reviewed.length)} changed range(s) in the delegated part, reading them and what they call in the revision folder.`,
     reviewed,
     approved,
     findings,
-    uncertainties: findings.length > 0 ? ['No test was run; whether a caller already guards against null was not established.'] : [],
+    ...(gaps.length > 0
+      ? { gaps }
+      : { uncertainties: findings.length > 0 ? ['No test was run; whether a caller already guards against null was not established.'] : [] }),
     insufficient: false,
   });
 }
@@ -640,6 +746,42 @@ function definitionAt(reader: Reader, side: 'base' | 'target', name: string): Fo
   return null;
 }
 
+/**
+ * A definition of `name` in a context repository of the workspace (DSP-175): searched for
+ * in each, read, and cited with its repository. The commit and how it was chosen are taken
+ * from what the prompt says of that repository, so the answer says what was read.
+ */
+function contextDefinition(reader: Reader, name: string, prompt: string): { readonly text: string; readonly reference: unknown } | null {
+  const pattern = new RegExp(`\\b(?:struct|class|interface|type|enum|function)\\s+${name}\\b`);
+  for (const repository of reader.contextNames()) {
+    reader.tools.push({ name: 'Grep', subject: `(struct|class|interface|type|enum|function) ${name} in ${path.join(reader.folderPath(), 'context', repository)}`, ok: true });
+    for (const filePath of reader.contextFiles(repository)) {
+      const scanned = reader.scanContext(repository, filePath);
+      const at = scanned?.findIndex((line) => pattern.test(line)) ?? -1;
+      if (scanned === null || at < 0) {
+        continue;
+      }
+      const lines = reader.readContext(repository, filePath) ?? scanned;
+      let end = at;
+      while (end < lines.length - 1 && end - at < 40 && !/^\}/.test(lines[end] ?? '')) {
+        end += 1;
+      }
+      const said = new RegExp(`\`context/${repository}/\`: repository ${repository} at commit ([0-9a-f]{40})\\. ([^\\n]*)`).exec(prompt);
+      const commit = said?.[1] ?? '';
+      const note = said?.[2] ?? '';
+      const established = !/not established|path dependency/i.test(note);
+      const text = [
+        `\`${name}\` is not defined in the reviewed revisions. It is defined in \`${repository}\`, another repository of the workspace read as context at ${commit.slice(0, 7)}: \`${filePath}\` lines ${String(at + 1)}–${String(end + 1)}. That repository is not under review.`,
+        established
+          ? `That commit is the version the reviewed To commit uses: ${note}`
+          : `Which version the reviewed build uses is not established (${note}), so this shows ${repository} at that commit, not necessarily what the reviewed build runs.`,
+      ].join('\n\n');
+      return { text, reference: { label: `${name}, defined in ${repository} (context)`, repository, path: filePath, start: at + 1, end: end + 1 } };
+    }
+  }
+  return null;
+}
+
 /** A question in the review discussion, answered by searching and reading both revisions. */
 function reviewQuestion(prompt: string, reader: Reader, asked: string[]): string {
   const question = /## Question\n([\s\S]*?)(?:\n\n## |\n*$)/.exec(prompt)?.[1]?.trim() ?? '';
@@ -709,6 +851,10 @@ function reviewQuestion(prompt: string, reader: Reader, asked: string[]): string
   const fromDefinition = definitionAt(reader, 'base', name);
   const toDefinition = definitionAt(reader, 'target', name);
   if (fromDefinition === null && toDefinition === null) {
+    const inContext = contextDefinition(reader, name, prompt);
+    if (inContext !== null) {
+      return `SIMULATED answer about \`${name}\`.\n\n${session}\n\n${inContext.text}${refs([inContext.reference], false)}`;
+    }
     return (
       `SIMULATED: I could not find a definition of \`${name}\` in either revision. I searched both From (\`base/\`) and To (\`target/\`) for a struct, class, interface, type, enum or function of that name.\n\n` +
       `What it is cannot be said from the code I could read, so I do not describe it.\n\n${session}${refs([], true)}`

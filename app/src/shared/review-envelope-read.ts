@@ -34,7 +34,7 @@ export async function checkedQuote(raw: unknown, read: RevisionReader, shaOf: (s
     return { error: text.trim() === '' ? 'The selection is empty; nothing was sent.' : 'The selection is too long to ask about; select less. Nothing was sent.' };
   }
   if (value['kind'] === 'text') {
-    const source = value['source'] === 'answer' ? 'answer' : 'explanation';
+    const source = value['source'] === 'answer' ? 'answer' : value['source'] === 'thread' ? 'thread' : 'explanation';
     const context = typeof value['context'] === 'string' ? value['context'].slice(0, QUOTE_LIMITS.contextChars) : '';
     return { kind: 'text', text, source, context };
   }

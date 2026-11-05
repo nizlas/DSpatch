@@ -224,7 +224,7 @@ export const COPILOT_ANALYSIS_POLICY: CopilotToolPolicy = Object.freeze({
 export const COPILOT_REVIEW_DENY_REASON = 'This is a text-only review discussion: no tool may be used, and this call was not run. Answer in text.';
 
 export const COPILOT_ANALYSIS_DENY_REASON =
-  'This is read-only analysis of two revisions: only view, glob and grep inside your working folder (base/ and target/) may be used, and this call was not run. Paths must stay inside that folder.';
+  'This is read-only analysis of two revisions: only view, glob and grep inside your working folder (base/, target/ and any context/) may be used, and this call was not run. Paths must stay inside that folder.';
 
 export const COPILOT_POLICY_DENY_REASON = 'DSpatch does not allow this for this session, and it was not run.';
 

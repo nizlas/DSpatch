@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 import { ActivityLine, DiscussionAnswer } from './DiscussionAnswer';
 import { ModelSelect, type ModelApi } from './StartPage';
 import { firstSentence } from './plain-error';
+import { FOLLOW_THRESHOLD_PX, decideScroll, discussionScrollReason, followAfterScrollEvent, type LatestSignature } from './scroll-follow';
 import type { DiscussionWords } from './review-i18n';
 import {
   PROVIDER_ADDED_CONTEXT_LINE,
@@ -510,6 +511,7 @@ export function ReviewDiscussion({
     [bundle, onGoToPoint, onGoToLocation],
   );
 
+  // A question asked in a review thread stays in that thread (DSP-175); here it is one line.
   const questions = messages.filter((message) => message.role === 'question');
   const answersOf = (id: string): readonly DiscussionMessage[] => messages.filter((message) => message.role === 'answer' && message.questionId === id);
   const turn = status?.turn ?? null;
@@ -608,10 +610,87 @@ export function ReviewDiscussion({
     };
   }, []);
 
+  /*
+   * DSP-175: following the latest. The panel's own scroller is moved, never the window: a
+   * new question (typed here, or Explain this from any window of the review) goes to it and
+   * the answer's place; an answer arriving is followed only while the reader is at the
+   * bottom. A reader who scrolls up stays where they are and is offered *New response ↓*.
+   * Ordinary re-renders and changes to older messages move nothing.
+   */
   const threadEnd = useRef<HTMLDivElement | null>(null);
+  const scroller = useRef<HTMLElement | null>(null);
+  const following = useRef(true);
+  const applied = useRef<number | null>(null);
+  const [newBelow, setNewBelow] = useState(false);
+  const scrollerOf = useCallback((): HTMLElement | null => {
+    if (scroller.current?.isConnected === true) {
+      return scroller.current;
+    }
+    let element = own.current?.parentElement ?? null;
+    while (element !== null) {
+      const overflow = getComputedStyle(element).overflowY;
+      if ((overflow === 'auto' || overflow === 'scroll') && element.scrollHeight >= element.clientHeight) {
+        scroller.current = element;
+        return element;
+      }
+      element = element.parentElement;
+    }
+    return null;
+  }, []);
+  const toLatest = useCallback((): void => {
+    const element = scrollerOf();
+    if (element === null) {
+      return;
+    }
+    element.scrollTop = element.scrollHeight;
+    applied.current = element.scrollTop;
+    following.current = true;
+    setNewBelow(false);
+  }, [scrollerOf]);
   useEffect(() => {
-    threadEnd.current?.scrollIntoView({ block: 'end' });
-  }, [questions.length]);
+    const element = scrollerOf();
+    if (element === null) {
+      return undefined;
+    }
+    const onScroll = (): void => {
+      following.current = followAfterScrollEvent({
+        metrics: { scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight },
+        appliedScrollTop: applied.current,
+        threshold: FOLLOW_THRESHOLD_PX,
+      });
+      if (following.current) {
+        setNewBelow(false);
+      }
+    };
+    element.addEventListener('scroll', onScroll, { passive: true });
+    return () => element.removeEventListener('scroll', onScroll);
+  }, [scrollerOf, shown]);
+  const shownQuestions = questions.filter((question) => question.envelope?.subject.kind !== 'thread');
+  const lastQuestion = shownQuestions.at(-1) ?? null;
+  const signature: LatestSignature = {
+    questions: shownQuestions.length,
+    lastQuestionId: lastQuestion?.id ?? null,
+    latestContent: lastQuestion === null ? '' : answersOf(lastQuestion.id).map((answer) => `${answer.status}:${answer.text}`).join('|') + (turn?.questionId === lastQuestion.id ? `:${turn.activity ?? ''}` : ''),
+  };
+  const before = useRef<LatestSignature | null>(null);
+  useLayoutEffect(() => {
+    const reason = discussionScrollReason(before.current, signature);
+    before.current = signature;
+    if (reason === null) {
+      return;
+    }
+    if (decideScroll({ reason, followingLatest: following.current }) === 'scroll-to-latest') {
+      toLatest();
+    } else if (reason === 'content') {
+      setNewBelow(true);
+    }
+  });
+  // Shown again (another tab, or the panel moved): a reader who was following still is.
+  useLayoutEffect(() => {
+    if (shown && following.current) {
+      toLatest();
+    }
+  }, [shown, toLatest]);
 
   let statusLine: JSX.Element | null = null;
   if (status?.readOnly != null) {
@@ -648,7 +727,12 @@ export function ReviewDiscussion({
     }}>
       <div className="rv-discussion-thread" data-ev="discussion-thread">
         {questions.length === 0 && <p className="rv-sub">{words.empty}</p>}
-        {questions.map((question, index) => (
+        {questions.map((question, index) =>
+          question.envelope?.subject.kind === 'thread' ? (
+            <p key={question.id} className="rv-sub rv-discussion-in-thread" data-ev="discussion-in-thread">
+              Asked in the review thread “{question.envelope.thread?.title ?? ''}”; the question and its answer are kept there.
+            </p>
+          ) : (
           <article key={question.id} className="rv-discussion-turn" data-ev={`discussion-q-${String(index)}`}>
             {/*
               What was asked, and what it was about when something was selected (Niclas's trial,
@@ -684,11 +768,18 @@ export function ReviewDiscussion({
               <ActivityLine text={turn.stopping ? words.stopping : (turn.activity ?? words.answering)} testId="discussion-activity" />
             )}
           </article>
-        ))}
+          ),
+        )}
         {goneNote && <p className="rv-sub">{words.pointGone}</p>}
         <div ref={threadEnd} />
       </div>
       <div className="rv-discussion-composer-area">
+        {/* Above the question field, which stays at the bottom of the panel, so nothing covers it. */}
+        {newBelow && (
+          <button type="button" className="rv-new-response" data-ev="discussion-new-response" onClick={toLatest}>
+            New response ↓
+          </button>
+        )}
         {statusLine !== null && (
           <div className="rv-discussion-status" role="status" data-ev="discussion-status">
             {statusLine}
@@ -761,7 +852,7 @@ export function ReviewDiscussion({
         {request.quote != null && (
           <div className="rv-quote-chip" data-ev="discussion-quote" title={request.quote.text}>
             <span className="rv-quote-chip-text">
-              {request.quote.kind === 'code' ? quoteWhere(request.quote) : request.quote.source === 'answer' ? 'From an answer' : 'From the explanation'}: “{request.quote.text.replace(/\s+/g, ' ').slice(0, 80)}
+              {request.quote.kind === 'code' ? quoteWhere(request.quote) : request.quote.source === 'answer' ? 'From an answer' : request.quote.source === 'thread' ? 'From a review thread' : 'From the explanation'}: “{request.quote.text.replace(/\s+/g, ' ').slice(0, 80)}
               {request.quote.text.length > 80 ? '…' : ''}”
             </span>
             {onClearQuote !== undefined && (
