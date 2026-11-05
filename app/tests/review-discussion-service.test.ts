@@ -702,8 +702,11 @@ test('Explain more simply asks about that answer with its own question\'s contex
     const simpler = await service.send({ question: 'Explain more simply the answer to: “Why 20?”', subject: AWAY, selection: null, simplify: { answerId: answer?.id ?? '' } }, s.review);
     assert.equal(simpler.kind, 'sent');
     const prompt = adapter.sent[1] ?? '';
-    assert.match(prompt, /## The answer to explain more simply\n- Explain the answer below again, more simply/);
-    assert.match(prompt, /The person asked: Why 20\?\n\nThe answer was:\nBecause the target says so\./);
+    assert.match(prompt, /## The answer to explain more simply\nThe person asked: Why 20\?\n/);
+    assert.match(prompt, /### Shown 1: The answer to explain more simply\nBecause the target says so\./);
+    // DSP-176: the rules of Explain more simply, first attempt, with what was shown.
+    assert.match(prompt, /## Explaining more simply \(attempt 1\)\n- Explain the same thing more simply/);
+    assert.ok(!prompt.includes('They did not make it clear enough'), 'a first press does not ask for another way in');
     assert.match(prompt, /## Subject\nWalk 1 › b changes › /);
     assert.ok(!prompt.includes('src/untouched.ts'), 'what the window shows now is not the context');
     const asked = storedMessages(s).filter((message) => message.role === 'question').at(-1);
@@ -767,6 +770,102 @@ test('history brought into a discussion does not take its agent away: the last o
     assert.equal(withAgent.attach(1, s.identity, () => undefined, 'cursor').status().agent.provider, 'claude');
     const without = s.discussions(undefined, () => [before]);
     assert.equal(without.attach(1, s.identity, () => undefined, 'cursor').status().agent.provider, 'cursor');
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});
+
+// DSP-176: presentation profiles go through this discussion like any deepening. SIMULATED: a scripted adapter.
+test('a step presented in a profile, Explain more simply on it twice, and a follow-up carry the profile and what was shown', async () => {
+  const s = await setup();
+  try {
+    const service = s.discussions().attach(1, s.identity, () => undefined, 'cursor');
+    const adapter = (): NonNullable<(typeof s.adapters)[number]> => {
+      const found = s.adapters[0];
+      assert.ok(found !== undefined);
+      return found;
+    };
+    const answerOf = (questionId: string): DiscussionMessage | undefined => storedMessages(s).find((message) => message.role === 'answer' && message.questionId === questionId);
+    const lastQuestion = (): DiscussionMessage | undefined => storedMessages(s).filter((message) => message.role === 'question').at(-1);
+
+    // Original asks as before: no presentation section in a Tell me more.
+    assert.equal((await service.send({ question: 'Tell me more about this step.', subject: POINT, selection: null, deepen: { action: 'more', basis: 'h1' } }, s.review)).kind, 'sent');
+    assert.ok(!(adapter().sent[0] ?? '').includes('## How to present') && !(adapter().sent[0] ?? '').includes('## The explanation this question follows'));
+    adapter().finish();
+
+    // Essens: the step presented again, in the profile, from this version of the step.
+    assert.equal((await service.send({ question: 'Explain this step in the Essens profile.', subject: POINT, selection: null, deepen: { action: 'present', profile: 'essens', basis: 'h1' }, presentation: { profile: 'essens' } }, s.review)).kind, 'sent');
+    assert.match(adapter().sent[1] ?? '', /## How to present \(Essens\)\n.*\n\n- Answer three things/);
+    const present = lastQuestion();
+    assert.deepEqual(present?.deepen, { action: 'present', profile: 'essens', basis: 'h1' });
+    assert.deepEqual(present?.presentation, { profile: 'essens' });
+    adapter().delta('What changes: the greeting. Why: the caller wants it.');
+    adapter().finish();
+    const alternative = answerOf(present?.id ?? '');
+    assert.equal(alternative?.status, 'done');
+
+    // Explain more simply on it: attempt 1 builds on the alternative.
+    await service.send({ question: 'Explain this step more simply.', subject: POINT, selection: null, deepen: { action: 'simpler', profile: 'essens', basis: 'h1' }, presentation: { profile: 'essens', shown: [alternative?.id ?? '', 'q-unknown'] } }, s.review);
+    const first = adapter().sent[2] ?? '';
+    assert.match(first, /## Explaining more simply \(attempt 1\)/);
+    assert.match(first, /### Shown 1: The Essens explanation of the step\nWhat changes: the greeting/);
+    assert.match(first, /The person reads in the Essens profile/);
+    assert.deepEqual(lastQuestion()?.presentation, { profile: 'essens', shown: [alternative?.id] }, 'an id that is no finished answer is left out');
+    const simplerQuestion = lastQuestion();
+    adapter().delta('It decides the greeting.');
+    adapter().finish();
+    const simpler = answerOf(simplerQuestion?.id ?? '');
+
+    // Pressed again: attempt 2, both shown, and another way in asked for.
+    await service.send({ question: 'Explain this step more simply.', subject: POINT, selection: null, deepen: { action: 'simpler', profile: 'essens', basis: 'h1' }, presentation: { profile: 'essens', shown: [alternative?.id ?? '', simpler?.id ?? ''] } }, s.review);
+    const again = adapter().sent[3] ?? '';
+    assert.match(again, /## Explaining more simply \(attempt 2\)/);
+    assert.match(again, /They did not make it clear enough/);
+    assert.match(again, /ask(?:ing)? which concept or connection is unclear/);
+    assert.match(again, /### Shown 2: Explain more simply\nIt decides the greeting\./);
+    adapter().delta('Give it Ada and you get Hello, Ada!');
+    adapter().finish();
+    const simplerAgain = answerOf(lastQuestion()?.id ?? '');
+
+    // A follow-up typed in the discussion: at the same level, following the last explanation shown.
+    await service.send({ question: 'How does it choose between the two?', subject: POINT, selection: null, presentation: { profile: 'essens', shown: [alternative?.id ?? '', simpler?.id ?? '', simplerAgain?.id ?? ''] } }, s.review);
+    const follow = adapter().sent[4] ?? '';
+    assert.match(follow, /## The explanation this question follows\n- The question follows the explanation below/);
+    assert.match(follow, /They asked for it more simply 2 time\(s\)/);
+    assert.match(follow, /### Explain more simply\nGive it Ada and you get Hello, Ada!/);
+    assert.equal(lastQuestion()?.deepen, undefined);
+    adapter().finish();
+
+    // Nothing earlier was rewritten.
+    assert.equal(answerOf(present?.id ?? '')?.text, 'What changes: the greeting. Why: the caller wants it.');
+
+    // A present request without a profile or a version of the step is not a presentation.
+    await service.send({ question: 'Explain this step.', subject: POINT, selection: null, deepen: { action: 'present', profile: 'original', basis: 'h1' } }, s.review);
+    assert.equal(lastQuestion()?.deepen, undefined);
+    assert.ok(!(adapter().sent[5] ?? '').includes('## How to present'));
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('Explain more simply on an answer, twice, builds on the chain it simplifies', async () => {
+  const s = await setup();
+  try {
+    const service = s.discussions().attach(1, s.identity, () => undefined, 'cursor');
+    const adapter = s.adapters;
+    await service.send({ question: 'Why 20?', subject: POINT, selection: null }, s.review);
+    adapter[0]?.delta('Because the target says so.');
+    adapter[0]?.finish();
+    const first = storedMessages(s).find((message) => message.role === 'answer');
+    await service.send({ question: 'Simpler', subject: POINT, selection: null, simplify: { answerId: first?.id ?? '' } }, s.review);
+    adapter[0]?.delta('The target decides.');
+    adapter[0]?.finish();
+    const second = storedMessages(s).filter((message) => message.role === 'answer').at(-1);
+    await service.send({ question: 'Simpler still', subject: POINT, selection: null, simplify: { answerId: second?.id ?? '' } }, s.review);
+    const prompt = adapter[0]?.sent[2] ?? '';
+    assert.match(prompt, /## Explaining more simply \(attempt 2\)/);
+    assert.match(prompt, /### Shown 1: The answer to “Why 20\?”\nBecause the target says so\./);
+    assert.match(prompt, /### Shown 2: The answer to explain more simply\nThe target decides\./);
   } finally {
     fs.rmSync(s.fixture.root, { recursive: true, force: true });
   }

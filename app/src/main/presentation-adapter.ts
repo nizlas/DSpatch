@@ -13,7 +13,7 @@ import type {
 } from '../adapter/types';
 import type { AgentAdapter } from '../adapter/agent-adapter';
 import { TASK_HEADER } from '../shared/review-agent';
-import { simulatedReviewTask, streamMs } from './presentation-review-tasks';
+import { failsPresentation, presentMs, simulatedReviewTask, streamMs } from './presentation-review-tasks';
 import type { AuthStatusReading, ChatAdapter } from './chat-service';
 
 /** SIMULATED: what `[[tools]]` reports for a chat turn. */
@@ -588,9 +588,12 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
       : prompt.includes('[[slow]]')
         ? Math.max(this.deltaMs, 300)
         : // DSP-175: review questions streamed at a pace a window trial can scroll against.
-          prompt.startsWith(TASK_HEADER) && streamMs() > 0
-          ? Math.max(this.deltaMs, streamMs())
-          : this.deltaMs;
+          // DSP-176: a step presented in a profile, slow enough to move on while it is written.
+          prompt.includes('## How to present (') && presentMs() > 0
+          ? Math.max(this.deltaMs, presentMs())
+          : prompt.startsWith(TASK_HEADER) && streamMs() > 0
+            ? Math.max(this.deltaMs, streamMs())
+            : this.deltaMs;
     state.steerMode = prompt.includes('[[steer-late]]')
       ? 'late'
       : prompt.includes('[[steer-declined]]')
@@ -699,7 +702,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
 
     const reply = (): void => {
       // `[[fail]]`, SIMULATED: the turn ends as a provider's error does, after its tools.
-      if (prompt.includes('[[fail]]')) {
+      if (prompt.includes('[[fail]]') || failsPresentation(prompt)) {
         const timer = setTimeout(() => {
           state.timers.delete(timer);
           state.activeRun = null;

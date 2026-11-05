@@ -1,0 +1,117 @@
+/**
+ * DSP-176: the presentation profile the person reads in, and what the discussion holds for it.
+ *
+ * The choice is the person's, per computer: kept in the windows' own storage, so the walk
+ * window and the review's panel (docked or in its own window) show the same, and changing it
+ * in one changes it in the other. Original is the default.
+ *
+ * The explanations themselves are in the review's discussion record: an alternative is the
+ * answer to a `present` deepening of one step, asked in one profile from one version of the
+ * step (its content hash). What is shown is chosen from that record, so an answer that arrives
+ * late, after the person moved on, is kept and shown only where it belongs.
+ */
+import { useCallback, useEffect, useState } from 'react';
+
+import { isProfile, type PresentationProfile } from '../shared/presentation-profiles';
+import type { DiscussionMessage } from '../shared/review-discussion';
+
+const STORAGE_KEY = 'dspatch.review.presentationProfile';
+
+function stored(): PresentationProfile {
+  try {
+    const value = window.localStorage.getItem(STORAGE_KEY);
+    return isProfile(value) ? value : 'original';
+  } catch {
+    return 'original';
+  }
+}
+
+/** The chosen profile, shared by the review's windows through their storage. */
+export function usePresentationProfile(): readonly [PresentationProfile, (profile: PresentationProfile) => void] {
+  const [profile, setState] = useState<PresentationProfile>(stored);
+  useEffect(() => {
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key === STORAGE_KEY) {
+        setState(stored());
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  const choose = useCallback((next: PresentationProfile) => {
+    setState(next);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, next);
+    } catch {
+      // Not kept past this window; the choice still holds here.
+    }
+  }, []);
+  return [profile, choose] as const;
+}
+
+export interface Exchange {
+  readonly question: DiscussionMessage;
+  readonly answer: DiscussionMessage | null;
+}
+
+function answerOf(messages: readonly DiscussionMessage[], question: DiscussionMessage): DiscussionMessage | null {
+  return messages.find((message) => message.role === 'answer' && message.questionId === question.id) ?? null;
+}
+
+/** A question asked from this step's own actions (not from a point worth checking). */
+function atStep(message: DiscussionMessage, stepId: string): boolean {
+  const subject = message.envelope?.subject;
+  return message.role === 'question' && message.deepen !== undefined && subject?.kind === 'point' && subject.stepId === stepId && subject.checkId === undefined;
+}
+
+/** The profile a deepening was asked in; one asked before profiles is Original's. */
+export function profileOf(question: DiscussionMessage): PresentationProfile {
+  return question.deepen?.profile ?? question.presentation?.profile ?? 'original';
+}
+
+/**
+ * The alternative explanation of a step in a profile, from this version of the step: the
+ * latest asked, with its answer. A finished one is preferred to a later attempt that failed,
+ * so a failed retry never hides what was there.
+ */
+export function alternativeFor(messages: readonly DiscussionMessage[], stepId: string, basis: string, profile: PresentationProfile): { readonly done: Exchange | null; readonly latest: Exchange | null } {
+  if (profile === 'original') {
+    return { done: null, latest: null };
+  }
+  const asked = messages
+    .filter((message) => atStep(message, stepId) && message.deepen?.action === 'present' && message.deepen.profile === profile && message.deepen.basis === basis)
+    .map((question) => ({ question, answer: answerOf(messages, question) }));
+  const done = [...asked].reverse().find((entry) => entry.answer?.status === 'done' && entry.answer.text.trim() !== '') ?? null;
+  return { done, latest: asked.at(-1) ?? null };
+}
+
+/**
+ * The step's deepenings that belong to the explanation shown: asked in this profile, from this
+ * version of the step (or, in Original, from before versions were recorded). The alternative
+ * itself is shown as the explanation, not among them.
+ */
+export function deepeningsOf(messages: readonly DiscussionMessage[], stepId: string, basis: string, profile: PresentationProfile): readonly Exchange[] {
+  return messages
+    .filter(
+      (message) =>
+        atStep(message, stepId) &&
+        message.deepen?.action !== 'present' &&
+        profileOf(message) === profile &&
+        (message.deepen?.basis === undefined ? profile === 'original' : message.deepen.basis === basis),
+    )
+    .map((question) => ({ question, answer: answerOf(messages, question) }));
+}
+
+/**
+ * The finished answers the person has seen at this step in this profile, oldest first: the
+ * alternative, then each deepening's answer. What Explain more simply builds on, and what a
+ * follow-up question follows (the last of them).
+ */
+export function shownChain(messages: readonly DiscussionMessage[], stepId: string, basis: string, profile: PresentationProfile): readonly string[] {
+  const alternative = alternativeFor(messages, stepId, basis, profile).done?.answer?.id;
+  const deepened = deepeningsOf(messages, stepId, basis, profile)
+    .filter((entry) => entry.answer?.status === 'done')
+    .map((entry) => entry.answer?.id ?? '')
+    .filter((id) => id !== '');
+  return [...(alternative === undefined ? [] : [alternative]), ...deepened].slice(-6);
+}

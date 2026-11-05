@@ -377,8 +377,12 @@ test('every question is told to answer short first, and a simpler explanation ca
   const simpler = buildEnvelopePrompt(envelope(), 'Explain more simply', null, null, { question: 'What is it?', answer: 'It is the cache.' });
   const section = simpler.indexOf('## The answer to explain more simply');
   assert.ok(section > 0 && section < simpler.indexOf('## Question'));
-  assert.match(simpler, /Keep every fact as it is\. Keep the class, method and file names/);
-  assert.match(simpler, /The person asked: What is it\?\n\nThe answer was:\nIt is the cache\./);
+  // DSP-176: the rules of Explain more simply, and the answer quoted once as what was shown.
+  assert.match(simpler, /## Explaining more simply \(attempt 1\)\n- Explain the same thing more simply/);
+  assert.match(simpler, /Keep the important reservations and uncertainties/);
+  assert.match(simpler, /The person asked: What is it\?/);
+  assert.match(simpler, /### Shown 1: The answer to explain more simply\nIt is the cache\./);
+  assert.equal(simpler.split('It is the cache.').length, 2, 'the answer is quoted once');
 });
 
 // DSP-175 completion: a passage selected in an answer or a step keeps where it is from.

@@ -1,4 +1,5 @@
 import type { AttemptKind, AttemptState, AttemptStep, ModelListing, StoredAttempt } from './bridge';
+import { presentationFrom, presentationPromptSection, type PresentationProfile, type PresentationRequest, type PresentationSection } from './presentation-profiles';
 import { TASK_HEADER } from './review-task';
 import type { CodeLocation, EvidenceLabel, FileChangeStatus, Lang, ReviewNote, RevisionSide } from './review-model';
 
@@ -594,14 +595,15 @@ export interface CodeAccessSection {
 export interface SimplifySection {
   readonly question: string;
   readonly answer: string;
+  /**
+   * DSP-176: the explanations this chain of Explain more simply showed before the answer, oldest
+   * first, and the profile the person reads in. Absent on the first press in Original.
+   */
+  readonly earlier?: readonly { readonly label: string; readonly text: string }[];
+  readonly profile?: PresentationProfile;
 }
 
-/** What DSpatch says about explaining an earlier answer more simply. Shown in the Context. */
-export const SIMPLIFY_RULES = [
-  'Explain the answer below again, more simply, for the same person: give the background it assumed, make the cause and effect plain, and use a concrete example when it helps.',
-  'Keep every fact as it is. Keep the class, method and file names and the established terms; explain them rather than replacing them with vague words.',
-  'Read the code again when you need to; do not make up what you have not read.',
-] as const;
+/** The rules of Explain more simply are in `presentation-profiles.ts` (DSP-176), with the profiles'. */
 
 export function buildEnvelopePrompt(
   envelope: ContextEnvelope,
@@ -609,6 +611,7 @@ export function buildEnvelopePrompt(
   recap: string | null,
   code: CodeAccessSection | null = null,
   simplify: SimplifySection | null = null,
+  presentation: PresentationSection | null = null,
 ): string {
   const parts: string[] = [];
   const identity = envelope.identity;
@@ -746,17 +749,20 @@ export function buildEnvelopePrompt(
     parts.push(`## Earlier in this discussion\n${clip(recap.trim(), ENVELOPE_LIMITS.recapChars)}`);
   }
   if (simplify !== null) {
-    parts.push(
-      [
-        '## The answer to explain more simply',
-        ...SIMPLIFY_RULES.map((rule) => `- ${rule}`),
-        '',
-        `The person asked: ${clip(simplify.question.trim(), ENVELOPE_LIMITS.questionChars)}`,
-        '',
-        'The answer was:',
-        clip(simplify.answer.trim(), ENVELOPE_LIMITS.recapChars),
-      ].join('\n'),
-    );
+    // DSP-176: the rules of Explain more simply, and the explanations this chain showed before.
+    const shown = [...(simplify.earlier ?? []), { label: 'The answer to explain more simply', text: simplify.answer }];
+    // The answer itself is the last of the explanations shown, quoted once, below the rules.
+    parts.push(['## The answer to explain more simply', `The person asked: ${clip(simplify.question.trim(), ENVELOPE_LIMITS.questionChars)}`].join('\n'));
+    const rules = presentationPromptSection({ profile: simplify.profile ?? 'original', mode: 'simpler', shown });
+    if (rules !== null) {
+      parts.push(rules);
+    }
+  }
+  if (presentation !== null) {
+    const section = presentationPromptSection(presentation);
+    if (section !== null) {
+      parts.push(section);
+    }
   }
   parts.push(`## Question\n${clip(question.trim(), ENVELOPE_LIMITS.questionChars)}`);
   parts.push(['## How to answer', ...[...ANSWER_SHAPE_RULES, ...(code === null ? [] : CODE_ANSWER_RULES)].map((rule) => `- ${rule}`)].join('\n'));
@@ -831,12 +837,22 @@ export interface DiscussionMessage {
   readonly deepen?: DeepenRequest;
   /** For a question: it asks for this earlier answer to be explained more simply (30 October 2026). */
   readonly simplifies?: string;
+  /**
+   * DSP-176: for a question, the presentation profile it was asked in and the answers it built
+   * on (Explain more simply) or followed (a follow-up). Absent before profiles: Original.
+   */
+  readonly presentation?: PresentationRequest;
 }
 
 /** Which deepening a question is, and the selected text for Explain this. */
 export interface DeepenRequest {
-  readonly action: 'more' | 'simpler' | 'explain';
+  /** DSP-176: `present` asks for the step presented again in a profile, kept beside the prepared one. */
+  readonly action: 'more' | 'simpler' | 'explain' | 'present';
   readonly text?: string;
+  /** DSP-176: the profile it was asked in; absent before profiles, which is Original. */
+  readonly profile?: PresentationProfile;
+  /** DSP-176: the step's material it was asked from (its content hash), so a changed step does not reuse it. */
+  readonly basis?: string;
 }
 
 /** A deepening request from a window, or `null` when there is none or it is malformed. */
@@ -845,11 +861,21 @@ export function deepenFrom(raw: unknown): DeepenRequest | null {
     return null;
   }
   const action = raw['action'];
-  if (action !== 'more' && action !== 'simpler' && action !== 'explain') {
+  if (action !== 'more' && action !== 'simpler' && action !== 'explain' && action !== 'present') {
     return null;
   }
   const text = typeof raw['text'] === 'string' ? raw['text'].slice(0, 2000) : undefined;
-  return text === undefined || text.trim() === '' ? { action } : { action, text };
+  const profile = raw['profile'] === 'original' || raw['profile'] === 'essens' || raw['profile'] === 'pedagog' ? raw['profile'] : undefined;
+  const basis = typeof raw['basis'] === 'string' && /^[\w.:-]{1,128}$/.test(raw['basis']) ? raw['basis'] : undefined;
+  if (action === 'present' && (profile === undefined || profile === 'original' || basis === undefined)) {
+    return null;
+  }
+  return {
+    action,
+    ...(text === undefined || text.trim() === '' ? {} : { text }),
+    ...(profile === undefined ? {} : { profile }),
+    ...(basis === undefined ? {} : { basis }),
+  };
 }
 
 /**
@@ -1130,6 +1156,10 @@ function adoptMessages(value: unknown): DiscussionMessage[] {
     if (typeof entry['simplifies'] === 'string') {
       message.simplifies = entry['simplifies'];
     }
+    const presentation = presentationFrom(entry['presentation']);
+    if (presentation !== null) {
+      message.presentation = presentation;
+    }
     if (entry['codeAccess'] === true) {
       message.codeAccess = true;
     }
@@ -1345,6 +1375,11 @@ export interface DiscussionSendInput {
    * envelope the answer's own question was sent with, not with what the window shows now.
    */
   readonly simplify?: { readonly answerId: string };
+  /**
+   * DSP-176: the profile the person reads in, and the answers already shown in this chain
+   * (oldest first): what Explain more simply builds on, or what a follow-up follows.
+   */
+  readonly presentation?: PresentationRequest;
 }
 
 export type DiscussionSendOutcome =

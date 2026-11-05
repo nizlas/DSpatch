@@ -22,6 +22,7 @@ import {
   type SelectionQuote,
 } from '../shared/review-discussion';
 import { stepsWalks, type CodeLocation, type Lang, type ReviewBundle } from '../shared/review-model';
+import type { PresentationRequest } from '../shared/presentation-profiles';
 
 /*
  * The discussion about the code under review (DSP-127), in the review window's right
@@ -219,7 +220,13 @@ export function ReviewDiscussion({
   onActivity,
   onSharedQuote,
   onShow,
+  presentation,
 }: {
+  /**
+   * DSP-176: the profile the person reads in and the explanation a question here follows, as
+   * the walk shows it now; absent where there is no walk step (the diff), which asks as before.
+   */
+  readonly presentation?: () => PresentationRequest | null;
   /** The walk the window shows; `null` in the diff window, which has none (30 October 2026). */
   readonly bundle: ReviewBundle | null;
   readonly request: DiscussionRequest;
@@ -375,7 +382,8 @@ export function ReviewDiscussion({
         // The position and notes the envelope reads come from the saved record.
         await flush();
         // The selection goes along with the question, exactly as it is shown above the field.
-        const outcome = await bridge.send({ question, subject: request.subject, selection: request.selection, language: lang, quote: request.quote ?? null });
+        const following = presentation?.() ?? null;
+        const outcome = await bridge.send({ question, subject: request.subject, selection: request.selection, language: lang, quote: request.quote ?? null, ...(following === null ? {} : { presentation: following }) });
         if (outcome.kind === 'sent') {
           setText('');
           void bridge.saveDraft('');
@@ -392,7 +400,7 @@ export function ReviewDiscussion({
         sending.current = false;
       }
     },
-    [bridge, text, flush, request, lang, status],
+    [bridge, text, flush, request, lang, status, presentation],
   );
 
   /** DSP-132: choose the agent. Builds nothing; the next question starts its session. */
@@ -626,6 +634,12 @@ export function ReviewDiscussion({
   const threadEnd = useRef<HTMLDivElement | null>(null);
   const scroller = useRef<HTMLElement | null>(null);
   const following = useRef(true);
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  // Where the reader was, and whether at the latest, as last drawn while shown: kept while
+  // another tab uses the scroller (DSP-176).
+  const readerTop = useRef<number | null>(null);
+  const readerAtLatest = useRef(true);
   const applied = useRef<number | null>(null);
   const [newBelow, setNewBelow] = useState(false);
   const scrollerOf = useCallback((): HTMLElement | null => {
@@ -659,6 +673,12 @@ export function ReviewDiscussion({
       return undefined;
     }
     const onScroll = (): void => {
+      // Hidden (the Step tab shows), the scroller is the step's: its scrolling, or the jump to
+      // the top when the discussion is hidden, says nothing about the reader of the discussion,
+      // who comes back to it following as before (DSP-176).
+      if (!shownRef.current) {
+        return;
+      }
       following.current = followAfterScrollEvent({
         metrics: { scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight },
         appliedScrollTop: applied.current,
@@ -693,10 +713,35 @@ export function ReviewDiscussion({
   });
   // Shown again (another tab, or the panel moved): a reader who was following still is.
   useLayoutEffect(() => {
-    if (shown && following.current) {
+    if (shown && (following.current || readerAtLatest.current)) {
       toLatest();
+      // The answers are laid out again once shown; the latest is where they end up.
+      const frame = requestAnimationFrame(() => {
+        if (following.current) {
+          toLatest();
+        }
+      });
+      return () => cancelAnimationFrame(frame);
+    } else if (shown && readerTop.current !== null) {
+      // A reader who had scrolled up comes back to where they were reading.
+      const element = scrollerOf();
+      if (element !== null) {
+        element.scrollTop = readerTop.current;
+        applied.current = element.scrollTop;
+      }
     }
-  }, [shown, toLatest]);
+  }, [shown, toLatest, scrollerOf]);
+  // After every drawing while shown: where the reader is now, for coming back from another tab.
+  useLayoutEffect(() => {
+    if (!shown) {
+      return;
+    }
+    const element = scrollerOf();
+    if (element !== null) {
+      readerTop.current = element.scrollTop;
+      readerAtLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight <= FOLLOW_THRESHOLD_PX;
+    }
+  });
 
   let statusLine: JSX.Element | null = null;
   if (status?.readOnly != null) {

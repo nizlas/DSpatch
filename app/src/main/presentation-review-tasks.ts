@@ -891,8 +891,93 @@ function contextDefinition(reader: Reader, name: string, prompt: string): { read
 }
 
 /** A question in the review discussion, answered by searching and reading both revisions. */
+/**
+ * DSP-176, SIMULATED: answers shaped by the prompt's presentation sections, so a window trial
+ * can tell the profiles, Explain more simply and follow-ups apart and see what each was given.
+ * They show the data flow, never a real model's teaching.
+ */
+function presentationAnswer(prompt: string, question: string): string | null {
+  const step = /^Step: (.*)$/m.exec(prompt)?.[1]?.trim() ?? 'this step';
+  const focus = /^### focus · (.+?) lines (\d+)(?:–(\d+))? · (base|target) @/m.exec(prompt);
+  const references =
+    focus === null ? [] : [{ label: `The code of ${step}`, path: focus[1] ?? '', side: focus[4] === 'base' ? 'base' : 'target', start: Number(focus[2] ?? '1'), end: Number(focus[3] ?? focus[2] ?? '1') }];
+  const refs = `\n\n\`\`\`dspatch-references\n${JSON.stringify({ references, insufficient: false })}\n\`\`\``;
+  const where = focus === null ? 'the code of this step' : `\`${focus[1] ?? ''}\` lines ${focus[2] ?? ''}–${focus[3] ?? focus[2] ?? ''}`;
+  const present = /^## How to present \((Essens|Pedagog)\)$/m.exec(prompt)?.[1];
+  if (present === 'Essens') {
+    return [
+      `**What changes:** SIMULATED Essens for “${step}”: the lines in ${where} change what the function returns.`,
+      '**Why:** SIMULATED: so the caller gets the new behaviour; a real agent says why from the code.',
+      '**What to check:** SIMULATED: that every caller expects the new value, and the case the old code handled.',
+      DETAILS_MARKER,
+      `**Mechanism (Essens, Show more):** SIMULATED: step by step, what ${where} does with its input.`,
+      '**Special cases:** SIMULATED: the empty input and the boundary value.',
+      '**More references:** SIMULATED: the callers and the test that covers it.',
+    ].join('\n\n') + refs;
+  }
+  if (present === 'Pedagog') {
+    return [
+      `SIMULATED Pedagog for “${step}”: think of this code as a greeter at a door — it decides what to say to whoever arrives.`,
+      `For example: given the name “Ada”, the code in ${where} now answers “Hello, Ada!”.`,
+      DETAILS_MARKER,
+      '**In the same plain words (Pedagog, Show more):** SIMULATED: how the greeter decides, one case at a time, and what changed in that decision.',
+      '- SIMULATED: the case with no name.',
+      '- SIMULATED: the case with a name.',
+    ].join('\n\n') + refs;
+  }
+  const simpler = /^## Explaining more simply \(attempt (\d+)\)$/m.exec(prompt);
+  if (simpler !== null) {
+    const attempt = Number(simpler[1] ?? '1');
+    const profile = /^- The person reads in the (\w+) profile/m.exec(prompt)?.[1] ?? 'Original';
+    const shown = [...prompt.matchAll(/^### Shown \d+: (.*)$/gm)].map((match) => match[1] ?? '');
+    const basis = `Built on ${String(shown.length)} explanation(s) already shown: ${shown.map((label) => `“${label}”`).join(', ')}.`;
+    const angles = [
+      'SIMULATED simpler, attempt 1 (the effect first): this code decides the greeting.',
+      'SIMULATED simpler, attempt 2 (a concrete case instead): give it “Ada” and you get “Hello, Ada!”.',
+      'SIMULATED simpler, attempt 3: which part is unclear — the greeting itself, when it is chosen, or what the caller does with it?',
+    ];
+    return [angles[Math.min(attempt, 3) - 1] ?? angles[0], `${basis} Profile: ${profile}.`].join('\n\n') + refs;
+  }
+  if (/^## The explanation this question follows$/m.test(prompt)) {
+    const profile = /^- The person reads in the (\w+) profile/m.exec(prompt)?.[1] ?? 'Original';
+    const follows = /^## The explanation this question follows[\s\S]*?^### (.*)$/m.exec(prompt)?.[1] ?? '';
+    const simplerLevel = /asked for it more simply (\d+) time/.exec(prompt)?.[1];
+    return [
+      `SIMULATED follow-up at the ${profile} level, following “${follows}”${simplerLevel === undefined ? '' : ` after ${simplerLevel} simpler explanation(s)`}: ${question.slice(0, 120)}`,
+      'SIMULATED: it picks between the two cases by whether a name was given — same plain words, a little more detail.',
+    ].join('\n\n') + refs;
+  }
+  return null;
+}
+
+/** How slowly a step presented in a profile streams, per 40 characters; 0 when not set (DSP-176). */
+export function presentMs(): number {
+  return Math.max(0, Number(process.env['DSPATCH_REVIEW_SIM_PRESENT_MS'] ?? '0') || 0);
+}
+
+const presentationsFailed = new Set<string>();
+
+/**
+ * DSPATCH_REVIEW_SIM_FAIL_PRESENT_STEP=<text>: the first time a step whose title holds that text
+ * is presented in a profile, the turn fails as a provider error does; a retry succeeds (DSP-176).
+ */
+export function failsPresentation(prompt: string): boolean {
+  const marker = process.env['DSPATCH_REVIEW_SIM_FAIL_PRESENT_STEP'] ?? '';
+  const step = /^Step: (.*)$/m.exec(prompt)?.[1] ?? '';
+  if (marker === '' || !prompt.includes('## How to present (') || !step.includes(marker) || presentationsFailed.has(step)) {
+    return false;
+  }
+  presentationsFailed.add(step);
+  return true;
+}
+
 function reviewQuestion(prompt: string, reader: Reader, asked: string[]): string {
   const question = /## Question\n([\s\S]*?)(?:\n\n## |\n*$)/.exec(prompt)?.[1]?.trim() ?? '';
+  const presented = presentationAnswer(prompt, question);
+  if (presented !== null) {
+    asked.push(question);
+    return presented;
+  }
   // An earlier answer to explain more simply (30 October 2026): say which, from what was sent.
   const simpler = /## The answer to explain more simply\n[\s\S]*?\nThe person asked: ([^\n]*)\n\nThe answer was:\n([\s\S]*?)\n\n## Question/.exec(prompt);
   if (simpler !== null) {

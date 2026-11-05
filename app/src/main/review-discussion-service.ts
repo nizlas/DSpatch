@@ -15,6 +15,7 @@ import {
   emptyDiscussionRecord,
   recapFor,
   splitCodeAnswer,
+  splitDetails,
   subjectLine,
   type DiscussionAgentView,
   type DiscussionCancelOutcome,
@@ -32,10 +33,12 @@ import {
   type ContextEnvelope,
   type EnvelopeOutcome,
   type SimplifySection,
+  type DeepenRequest,
   type ReviewDiscussionEvent,
   type SelectionQuote,
   quoteFrom,
 } from '../shared/review-discussion';
+import { PROFILES, presentationFrom, type PresentationRequest, type PresentationSection } from '../shared/presentation-profiles';
 import { toolActivity, type StepAnswer } from '../shared/review-pair';
 import { AttemptLedger } from './attempt-ledger';
 // DSP-132: the only thing taken from the chat - its adapter interface, as a type. No route
@@ -214,6 +217,24 @@ export interface ReviewDiscussionServiceOptions {
 }
 
 type MutableMessage = { -readonly [K in keyof DiscussionMessage]: DiscussionMessage[K] };
+
+/** How an earlier explanation is named to the agent (DSP-176): by the action that asked for it. */
+function shownLabel(question: DiscussionMessage | null): string {
+  const deepen = question?.deepen;
+  if (deepen?.action === 'present') {
+    return `The ${PROFILES[deepen.profile ?? 'original'].name} explanation of the step`;
+  }
+  if (deepen?.action === 'simpler' || question?.simplifies !== undefined) {
+    return 'Explain more simply';
+  }
+  if (deepen?.action === 'more') {
+    return 'Tell me more';
+  }
+  if (deepen?.action === 'explain') {
+    return `Explain this: “${(deepen.text ?? '').slice(0, 80)}”`;
+  }
+  return `The answer to “${(question?.text ?? '').replace(/\s+/g, ' ').slice(0, 100)}”`;
+}
 
 interface Turn {
   readonly questionId: string;
@@ -785,7 +806,55 @@ export class ReviewDiscussionService {
     if (asked === null || asked.envelope === undefined) {
       return { error: 'The question that answer belongs to has no stored context to send again; nothing was sent.' };
     }
-    return { answerId, envelope: asked.envelope, section: { question: asked.text, answer: splitCodeAnswer(answer.text).shown } };
+    // DSP-176: what this chain of Explain more simply showed before, oldest first.
+    const earlier: { label: string; text: string }[] = [];
+    let link = asked.simplifies;
+    while (link !== undefined && earlier.length < 4) {
+      const before = this.message(link);
+      const beforeAsked = before?.questionId === undefined ? null : this.message(before.questionId);
+      if (before === null || before.status !== 'done') {
+        break;
+      }
+      earlier.unshift({ label: shownLabel(beforeAsked), text: splitCodeAnswer(before.text).shown });
+      link = beforeAsked?.simplifies;
+    }
+    const profile = asked.presentation?.profile;
+    return {
+      answerId,
+      envelope: asked.envelope,
+      section: { question: asked.text, answer: splitCodeAnswer(answer.text).shown, ...(earlier.length === 0 ? {} : { earlier }), ...(profile === undefined ? {} : { profile }) },
+    };
+  }
+
+  /**
+   * DSP-176: what a question asks of the presentation, with the answers it names resolved to
+   * the text the person saw. Only finished answers of this discussion are taken; others are left out.
+   */
+  private presentationOf(raw: unknown, deepen: DeepenRequest | null, envelope: ContextEnvelope): { readonly request: PresentationRequest; readonly section: PresentationSection } | null {
+    const request = presentationFrom(raw);
+    if (request === null) {
+      return null;
+    }
+    const shown: { label: string; text: string }[] = [];
+    const ids: string[] = [];
+    for (const id of request.shown ?? []) {
+      const answer = this.message(id);
+      if (answer === null || answer.role !== 'answer' || answer.status !== 'done') {
+        continue;
+      }
+      ids.push(id);
+      shown.push({ label: shownLabel(answer.questionId === undefined ? null : this.message(answer.questionId)), text: splitDetails(splitCodeAnswer(answer.text).shown).short });
+    }
+    const mode: PresentationSection['mode'] = deepen?.action === 'present' ? 'present' : deepen?.action === 'simpler' ? 'simpler' : 'follow';
+    // Explain more simply with nothing generated before: the step's prepared explanation is what was shown.
+    const explanation = envelope.explanation;
+    if (mode === 'simpler' && shown.length === 0 && explanation !== null) {
+      shown.push({ label: 'The prepared explanation of the step', text: [explanation.summary, explanation.body, explanation.why].filter((part) => part.trim() !== '').join('\n\n') });
+    }
+    return {
+      request: { profile: request.profile, ...(ids.length === 0 ? {} : { shown: ids }) },
+      section: { profile: request.profile, mode: mode === 'present' ? 'present' : mode, shown: mode === 'present' ? [] : shown },
+    };
   }
 
   /**
@@ -868,12 +937,15 @@ export class ReviewDiscussionService {
       // A new session has been told nothing: earlier questions and answers go in front, bounded and shown.
       // DSP-132: after a switch the person may have left it out.
       const recap = session.sends === 0 && this.switchNotice?.leftOut !== true ? recapFor(this.messages) : '';
+      const deepenAsked = simplified === null ? deepenFrom(raw.deepen) : null;
+      const presented = simplified === null ? this.presentationOf(raw.presentation, deepenAsked, envelope) : null;
       prompt = buildEnvelopePrompt(
         envelope,
         question,
         recap === '' ? null : recap,
         session.revisions === null ? null : { folder: session.revisions.section },
         simplified === null ? null : simplified.section,
+        presented === null ? null : presented.section,
       );
       const questionId = this.nextId('q');
       const attempt = this.ledger.open('agent-turn', `Review question: ${question.split('\n')[0]?.slice(0, 70) ?? ''}`);
@@ -898,6 +970,12 @@ export class ReviewDiscussionService {
           return deepen === null || simplified !== null ? {} : { deepen };
         })(),
         ...(simplified === null ? {} : { simplifies: simplified.answerId }),
+        // DSP-176: the profile, and what it built on; a simplification keeps its chain's profile.
+        ...(presented !== null
+          ? { presentation: presented.request }
+          : simplified !== null && simplified.section.profile !== undefined
+            ? { presentation: { profile: simplified.section.profile } }
+            : {}),
       };
       this.messages.push(message);
       this.switchNotice = null;

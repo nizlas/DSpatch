@@ -506,6 +506,15 @@ After trying 0.1.7 on real code, Niclas asked for a coherent set of review impro
 
 What DSP-175 implemented and verified, and what it left open, is recorded in its task.
 
+#### Presentation profiles for the review agent's explanations (Niclas's decision, 5 November 2026)
+
+To compare ways of explaining the same code on real reviews, the review's panel offers a choice of presentation profile (DSP-176): **Original** (the walk's prepared explanation and today's deepening, the default during the trial), **Essens** (what changes, why, and what the reader must understand or check; Show more gives mechanism, special cases and more references) and **Pedagog** (a simple mental model first, with a short concrete example when it helps; Show more adds detail in the same plain language). A profile changes presentation only: not how carefully the code is read, the facts, findings, recommendations, coverage or approval. Its instructions are collected in one readable place (`app/src/shared/presentation-profiles.ts`) and shown in the panel under *What it asks for*.
+
+- Choosing Essens or Pedagog asks, as an explicit act, for an alternative explanation of the current step only, through the review's own discussion like Tell me more; the prepared explanation stays shown meanwhile and one click away after. Nothing is sent on navigation: at another step the profile's explanation is offered with a button. An alternative is kept with the discussion, bound to the step, its content (a hash of the step) and the profile, and is shown again without a call, also after a restart; a late or failed answer is shown only where it belongs, and a failure can be tried again. Show more, Tell me more and Explain more simply belong to the profile's explanation.
+- **Explain more simply**, in every profile, reduces what the reader must hold at once, starts with what the code achieves, keeps caveats, adds no detail and is not longer than what it simplifies; pressed again it is given the explanations already shown and asked for another way in, and in the end for one short question about what is unclear rather than "it cannot be simpler".
+- **A follow-up** is asked at the level of the explanation it follows: the agent is told the profile, that explanation and how many times it was simplified. A question in a review thread stays in that thread.
+- Which profile to read in is the person's choice on the computer, shared by the review's windows; the walk's left side and navigation are unchanged.
+
 <a id="4-maestro-och-agentnätverket"></a>
 
 ## 4 Maestro and the agent network

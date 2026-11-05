@@ -4062,3 +4062,78 @@
 .rv-check-thread-card {
   margin: 0.4rem 0;
 }
+
+/* DSP-176: presentation profiles. The choice sits under the panel's tabs, quiet; the line above a
+   step's explanation says which explanation is shown and what is happening to the profile's. */
+.rv-profile-bar {
+  margin-top: -0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.6rem;
+  padding: 0.35rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.rv-profile-choice {
+  margin-left: 0.6rem;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+
+.rv-profile-choice select {
+  font: inherit;
+}
+
+.rv-profile-description {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.rv-profile-about {
+  flex-basis: 100%;
+  margin: 0.2rem 0 0;
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+}
+
+.rv-profile-line {
+  margin: 0.35rem 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.rv-profile-failed {
+  color: var(--text);
+}
+
+.rv-profile-spinner {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: 0.3rem;
+  border: 2px solid var(--line);
+  border-top-color: var(--rv-amber, #c8933f);
+  border-radius: 50%;
+  vertical-align: -0.1rem;
+  animation: rv-agent-spin 900ms linear infinite;
+}
+
+.rv-profile-explanation {
+  margin: 0.3rem 0 0.6rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rv-profile-spinner {
+    animation: none;
+  }
+}
