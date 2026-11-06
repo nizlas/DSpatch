@@ -222,10 +222,7 @@ export function registerReviewIpc(
     if (isPairError(opened)) {
       return { kind: 'failed', error: opened.error };
     }
-    const other = windows.claimPair(entry, opened.key, pairLabel(opened));
-    if (other === null) {
-      entry.pairIdentity = opened.pair;
-    }
+    const other = windows.claimPair(entry, opened.key, pairLabel(opened), opened.pair);
     if (other !== null) {
       return { kind: 'focused', note: 'This change is already open in another review window, which has been brought to the front.' };
     }

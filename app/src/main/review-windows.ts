@@ -4,6 +4,7 @@ import path from 'node:path';
 import { BrowserWindow, Menu, WebContentsView, app, dialog, screen, type MenuItemConstructorOptions, type Rectangle, type WebContents } from 'electron';
 
 import { zoomMenuItems } from './window-zoom';
+import type { WindowLayoutStore } from './window-layout';
 import type { ZoomCommand } from '../shared/window-zoom';
 
 import {
@@ -51,9 +52,11 @@ const CLOSE_FLUSH_TIMEOUT_MS = 3_000;
 const PANEL_SIZE = { width: 560, height: 820, minWidth: 360, minHeight: 420 } as const;
 
 /**
- * Where the review panel's own window opens: where it was left when that is still on a screen
- * (enough of it to take hold of), else its size centred on the main screen. The place is kept
- * in the review preferences under its earlier name, `explanationBounds`.
+ * Legacy fallback for the review panel's own window bounds: where it was left when that is still
+ * on a screen (enough of it to take hold of), else its size centred on the main screen.
+ *
+ * New installs use the client-local window layout store; this remains for upgrading from records
+ * that still have `explanationBounds` in host preferences.
  */
 export function panelBounds(saved: unknown, displays: readonly Rectangle[], primary: Rectangle): Partial<Rectangle> {
   const record = typeof saved === 'object' && saved !== null ? (saved as Record<string, unknown>) : {};
@@ -98,6 +101,8 @@ export interface ReviewWindowsOptions {
   readonly scriptedPick: (() => string | null) | null;
   /** DSP-167: each window's zoom; `null` only in a test that opens no window. */
   readonly zoom: WindowZoomApi | null;
+  /** Client-local geometry, maximized state and panel placement. */
+  readonly layout: WindowLayoutStore | null;
   readonly log: (message: string) => void;
 }
 
@@ -149,6 +154,8 @@ export interface ReviewWindowEntry {
   pairStart: PairWindowStart;
   /** A short label for the title of a diff window over a pair. */
   pairLabel: string | null;
+  /** The local layout identity this window currently writes to. */
+  layoutKey: string;
 }
 
 /** What the scripted scenario reads of a window, beside what its view reports. */
@@ -175,6 +182,28 @@ export function openFailureOf(error: ReviewHostError): ReviewOpenOutcome {
 /** Windows paths differ in case without differing; elsewhere case makes two files. */
 export function samePathHere(one: string, other: string): boolean {
   return process.platform === 'win32' ? one.toLowerCase() === other.toLowerCase() : one === other;
+}
+
+function reviewLayoutKey(identity: ReviewIdentity): string {
+  return `review-walk:${identity.key}`;
+}
+
+function pairLayoutKey(pair: RevisionPairIdentity): string {
+  return `review-pair:${pair.repository}:${pair.base}:${pair.target}`;
+}
+
+function chooserLayoutKey(view: 'walk' | 'diff', chooserKey: string | null): string {
+  return chooserKey === null ? `review-${view}:chooser` : `review-${view}:chooser:${chooserKey}`;
+}
+
+function panelLayoutKeyFrom(entry: ReviewWindowEntry): string {
+  if (entry.pairIdentity !== null) {
+    return pairLayoutKey(entry.pairIdentity);
+  }
+  if (entry.identity !== null) {
+    return pairLayoutKey({ repository: entry.identity.repository, base: entry.identity.base, target: entry.identity.target });
+  }
+  return entry.pairKey === null ? 'review-panel:unknown' : `review-panel:${entry.pairKey}`;
 }
 
 function titleFor(entry: Pick<ReviewWindowEntry, 'identity' | 'startFolder'> & { readonly view?: 'walk' | 'diff' | 'panel'; readonly pairLabel?: string | null }): string {
@@ -440,6 +469,10 @@ export class ReviewWindows {
         };
       }
       entry.identity = identity;
+      if (identity !== null) {
+        entry.layoutKey = reviewLayoutKey(identity);
+        this.options.layout?.rememberWindowSnapshot(entry.layoutKey, entry.window);
+      }
       entry.initial = outcome;
       if (!entry.window.isDestroyed()) {
         entry.window.setTitle(titleFor(entry));
@@ -494,7 +527,7 @@ export class ReviewWindows {
    * A diff window takes a pair. One diff window per pair, like one window per walk: a
    * second window over the same pair is the first one brought to the front.
    */
-  claimPair(entry: ReviewWindowEntry, key: string, label: string): ReviewWindowEntry | null {
+  claimPair(entry: ReviewWindowEntry, key: string, label: string, identity: RevisionPairIdentity): ReviewWindowEntry | null {
     const other = this.diffWindowFor(key);
     if (other !== null && other !== entry) {
       this.focus(other);
@@ -506,7 +539,10 @@ export class ReviewWindows {
       this.releasePanelFrom(entry);
     }
     entry.pairKey = key;
+    entry.pairIdentity = identity;
     entry.pairLabel = label;
+    entry.layoutKey = pairLayoutKey(identity);
+    this.options.layout?.rememberWindowSnapshot(entry.layoutKey, entry.window);
     if (left !== null && left !== key) {
       // The review it left may have no window now.
       this.panelAfterLeaving(left);
@@ -521,6 +557,10 @@ export class ReviewWindows {
   /** A walk window learned which pair it is over. */
   joinPair(entry: ReviewWindowEntry, key: string): void {
     entry.pairKey = key;
+    if (entry.view === 'walk' && entry.identity !== null) {
+      entry.layoutKey = reviewLayoutKey(entry.identity);
+      this.options.layout?.rememberWindowSnapshot(entry.layoutKey, entry.window);
+    }
     if (entry.view === 'walk') {
       this.panelOffersChanged(key);
     }
@@ -798,9 +838,23 @@ export class ReviewWindows {
     readonly view?: 'walk' | 'diff';
     readonly pairStart?: PairWindowStart;
   }): ReviewWindowEntry {
+    const layoutKey =
+      init.view === 'diff'
+        ? init.pairStart?.kind === 'pair'
+          ? pairLayoutKey(init.pairStart.pair)
+          : chooserLayoutKey('diff', null)
+        : init.identity !== null
+          ? reviewLayoutKey(init.identity)
+          : chooserLayoutKey('walk', init.chooserKey);
+    const placement = this.options.layout?.placementFor(
+      layoutKey,
+      { width: init.view === 'diff' ? 1460 : 1400, height: 920 },
+      { width: 720, height: 560 },
+      screen.getAllDisplays().map((display) => display.workArea),
+      screen.getPrimaryDisplay().workArea,
+    );
     const window = new BrowserWindow({
-      width: 1400,
-      height: 900,
+      ...(placement?.bounds ?? { width: 1400, height: 900 }),
       minWidth: 720,
       minHeight: 560,
       show: false,
@@ -832,9 +886,14 @@ export class ReviewWindows {
       showDiscussionOnLoad: null,
       pairStart: init.pairStart ?? { kind: 'choose' },
       pairLabel: null,
+      layoutKey,
     };
     this.entries.add(entry);
     this.options.zoom?.adopt(window, entry.view === 'diff' ? 'review-diff' : 'review-walk');
+    this.options.layout?.trackWindow(window, () => entry.layoutKey);
+    if (placement?.maximized === true) {
+      window.maximize();
+    }
 
     window.setMenu(this.viewMenu());
     // A review window opens no window of its own; the review's panel is made here.
@@ -917,6 +976,10 @@ export class ReviewWindows {
     return panel === undefined || panel.entry.contents.isDestroyed() ? null : panel.entry;
   }
 
+  private panelLayoutKey(panel: Panel): string {
+    return panelLayoutKeyFrom(panel.entry);
+  }
+
   /** Where the panel of a pair is now, as the panel and a code window of the pair are told. */
   private stateFor(panel: Panel, recipient: ReviewWindowEntry): PanelState {
     const key = panel.entry.pairKey ?? '';
@@ -983,7 +1046,7 @@ export class ReviewWindows {
       const panel = this.createPanel({ sessionId, initial: outcome, identity: opened.identity, pairKey, defaults });
       handedOver = true;
       panel.entry.showDiscussionOnLoad = show;
-      const preferred = await this.preferredPlace();
+      const preferred = await this.preferredPlace(panel);
       panel.visible = true;
       this.placePanel(panel, preferred);
       if (tab !== 'step') {
@@ -1006,7 +1069,6 @@ export class ReviewWindows {
     panel.visible = true;
     this.placePanel(panel, place);
     this.focusPanel(panel);
-    void this.savePlace(panel.place);
   }
 
   /** Hide the panel. Nothing running stops; the next show brings it back where it was. */
@@ -1033,6 +1095,10 @@ export class ReviewWindows {
     }
     const factor = host.window.webContents.getZoomFactor();
     panel.slot = rect === null ? null : { x: rect.x * factor, y: rect.y * factor, width: rect.width * factor, height: rect.height * factor };
+    const dockView = host.view === 'diff' || host.view === 'walk' ? host.view : null;
+    if (rect !== null && dockView !== null) {
+      this.options.layout?.rememberPanelDockedWidth(this.panelLayoutKey(panel), dockView, rect.width);
+    }
     this.layoutPanel(panel);
   }
 
@@ -1108,13 +1174,19 @@ export class ReviewWindows {
     readonly pairKey: string;
     readonly defaults: { readonly provider: 'cursor' | 'claude' | 'copilot' | null; readonly model: string };
   }): Panel {
+    const panelKey = init.identity === null ? `review-panel:${init.pairKey}` : pairLayoutKey({ repository: init.identity.repository, base: init.identity.base, target: init.identity.target });
+    const displays = screen.getAllDisplays().map((display) => display.workArea);
+    const primary = screen.getPrimaryDisplay().workArea;
     const preferences = this.cachedPreferences;
-    // Where it was last left, while that is on a screen.
-    const bounds = panelBounds(
-      preferences?.explanationBounds,
-      screen.getAllDisplays().map((display) => display.workArea),
-      screen.getPrimaryDisplay().workArea,
-    );
+    const localPlacement = this.options.layout?.placementFor(panelKey, { width: PANEL_SIZE.width, height: PANEL_SIZE.height }, { width: PANEL_SIZE.minWidth, height: PANEL_SIZE.minHeight }, displays, primary);
+    // Legacy fallback from host preferences, for upgrades to client-local geometry.
+    const bounds =
+      localPlacement?.bounds ??
+      panelBounds(
+        preferences?.explanationBounds,
+        displays,
+        primary,
+      );
     const frame = new BrowserWindow({
       ...bounds,
       minWidth: PANEL_SIZE.minWidth,
@@ -1131,7 +1203,11 @@ export class ReviewWindows {
     // The panel's own window has a remembered level of its own; its page starts there and
     // follows whichever window it is docked in (`placePanel`).
     this.options.zoom?.adopt(frame, 'review-panel');
+    this.options.layout?.trackWindow(frame, () => panelKey);
     this.options.zoom?.attach(view.webContents, frame);
+    if (localPlacement?.maximized === true) {
+      frame.maximize();
+    }
     const entry: ReviewWindowEntry = {
       window: frame,
       contents: view.webContents,
@@ -1150,6 +1226,7 @@ export class ReviewWindows {
       showDiscussionOnLoad: null,
       pairStart: { kind: 'choose' },
       pairLabel: null,
+      layoutKey: panelKey,
     };
     this.entries.add(entry);
     const panel: Panel = { entry, view, frame, place: 'window', visible: false, host: null, slot: null, closing: false };
@@ -1162,7 +1239,6 @@ export class ReviewWindows {
         return;
       }
       event.preventDefault();
-      this.saveBounds(frame);
       panel.visible = false;
       frame.hide();
       this.tellPanelState(panel);
@@ -1205,6 +1281,7 @@ export class ReviewWindows {
     }
     panel.place = place;
     panel.host = host;
+    this.options.layout?.rememberPanelPlace(this.panelLayoutKey(panel), place);
     // DSP-167: docked, the panel is zoomed with its code window; in its own window, with that.
     this.options.zoom?.attach(panel.view.webContents, host === null ? panel.frame : host.window);
     if (host === null) {
@@ -1226,7 +1303,15 @@ export class ReviewWindows {
       host.window.contentView.addChildView(panel.view);
       // Until the window says where its room is, the panel is not drawn over its code.
       if (!sameHost) {
-        panel.slot = null;
+        const dockView = host.view === 'diff' || host.view === 'walk' ? host.view : null;
+        const width = dockView === null ? null : this.options.layout?.panelDockedWidthFor(this.panelLayoutKey(panel), dockView);
+        if (width === null || width === undefined) {
+          panel.slot = null;
+        } else {
+          const area = host.window.getContentBounds();
+          const kept = Math.min(Math.max(width, 240), Math.max(240, area.width - 80));
+          panel.slot = { x: area.width - kept, y: 0, width: kept, height: area.height };
+        }
       }
     }
     this.layoutPanel(panel);
@@ -1318,39 +1403,17 @@ export class ReviewWindows {
   private cachedPreferences: { readonly explanationBounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }; readonly discussionPlace?: 'diff' | 'walk' } | null = null;
 
   /** Where the person last put the panel; its own window the first time, and when that window is gone. */
-  private async preferredPlace(): Promise<PanelPlace> {
+  private async preferredPlace(panel: Panel): Promise<PanelPlace> {
+    const fromLocal = this.options.layout?.panelPlaceFor(this.panelLayoutKey(panel));
+    if (fromLocal !== null && fromLocal !== undefined) {
+      return fromLocal;
+    }
     const answer = await this.options.host.getPreferences();
     if (isReviewHostError(answer)) {
       return 'window';
     }
     this.cachedPreferences = answer;
     return answer.discussionPlace ?? 'window';
-  }
-
-  private async savePlace(place: PanelPlace): Promise<void> {
-    const answer = await this.options.host.getPreferences();
-    if (isReviewHostError(answer)) {
-      return;
-    }
-    const { discussionPlace: _old, ...rest } = answer;
-    const next = place === 'window' ? rest : { ...rest, discussionPlace: place };
-    this.cachedPreferences = next;
-    await this.options.host.setPreferences({ preferences: next });
-  }
-
-  private saveBounds(frame: BrowserWindow): void {
-    if (frame.isDestroyed()) {
-      return;
-    }
-    const bounds = frame.getBounds();
-    void this.options.host.getPreferences().then((answer) => {
-      if (isReviewHostError(answer)) {
-        return;
-      }
-      const next = { ...answer, explanationBounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height } };
-      this.cachedPreferences = next;
-      return this.options.host.setPreferences({ preferences: next });
-    });
   }
 
   /** Ask the view to save what it holds and wait for the answer, within a bound. */

@@ -810,7 +810,7 @@ test('a step presented in a profile, Explain more simply on it twice, and a foll
       ).kind,
       'sent',
     );
-    assert.match(adapter().sent[1] ?? '', /## How to present \(Essens\)\n.*\n\n- Answer three things/);
+    assert.match(adapter().sent[1] ?? '', /## How to present \(Essens\)\n.*\nInstruction version: \d+\n\n- Answer three things/);
     const present = lastQuestion();
     assert.deepEqual(present?.deepen, { action: 'present', profile: 'essens', basis: 'h1' });
     assert.deepEqual(present?.presentation, { profile: 'essens', version: PRESENTATION_INSTRUCTION_VERSION });

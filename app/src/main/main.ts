@@ -3,6 +3,7 @@ import type { HostLinkState } from '../shared/host-link';
 import { remoteBuild } from '../shared/remote-build';
 import { EXPECT_USERDATA_ENV, profileRefusal } from './profile-guard';
 import { WINDOW_ZOOM_FILE, WindowZoom, WindowZoomStore, zoomMenuItems } from './window-zoom';
+import { WINDOW_LAYOUT_FILE, WindowLayoutStore } from './window-layout';
 import { WINDOW_ZOOM_LEVEL_CHANNEL } from '../shared/window-zoom';
 import { hostBuildDifference } from '../shared/remote-protocol';
 import { RemoteLink, probeHost, type RemoteEndpoint } from './remote-link';
@@ -16,7 +17,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { BrowserWindow, Menu, app, clipboard, desktopCapturer, dialog, ipcMain, shell, utilityProcess, webContents } from 'electron';
+import { BrowserWindow, Menu, app, clipboard, desktopCapturer, dialog, ipcMain, screen, shell, utilityProcess, webContents } from 'electron';
 
 import type {
   AddLoopInstructionOutcome,
@@ -1080,6 +1081,8 @@ let browseWindow: BrowserWindow | null = null;
 
 /** Each window's zoom (DSP-167); made once user data is known, before any window. */
 let windowZoom: WindowZoom | null = null;
+/** Each window's size and position, on this computer only. */
+let windowLayout: WindowLayoutStore | null = null;
 
 /** The host chooser, one at a time, in a window of its own. */
 function pickOnHost(options: Electron.OpenDialogOptions & { readonly saving?: boolean }): Promise<Electron.OpenDialogReturnValue> {
@@ -1087,9 +1090,16 @@ function pickOnHost(options: Electron.OpenDialogOptions & { readonly saving?: bo
     browseDone?.(null);
     const mode = options.saving === true ? 'save' : options.properties?.includes('openDirectory') === true ? 'folder' : 'file';
     const parent = liveMainWindow();
+    const area = screen.getPrimaryDisplay().workArea;
+    const placement = windowLayout?.placementFor(
+      'host-browse',
+      { width: 720, height: 620 },
+      { width: 560, height: 420 },
+      screen.getAllDisplays().map((display) => display.workArea),
+      area,
+    );
     const window = new BrowserWindow({
-      width: 620,
-      height: 520,
+      ...(placement?.bounds ?? { width: 620, height: 520 }),
       title: options.title ?? 'Choose on the host',
       backgroundColor: '#101317',
       ...(parent === null ? {} : { parent, modal: true }),
@@ -1097,6 +1107,10 @@ function pickOnHost(options: Electron.OpenDialogOptions & { readonly saving?: bo
     });
     window.removeMenu();
     windowZoom?.adopt(window, 'host-browse');
+    windowLayout?.trackWindow(window, () => 'host-browse');
+    if (placement?.maximized === true) {
+      window.maximize();
+    }
     browseWindow = window;
     let answered = false;
     const answer = (chosen: string | null): void => {
@@ -2642,9 +2656,16 @@ function installApplicationMenu(): void {
 }
 
 function createWindow(): BrowserWindow {
+  const area = screen.getPrimaryDisplay().workArea;
+  const placement = windowLayout?.placementFor(
+    'main',
+    { width: 1280, height: 920 },
+    { width: 720, height: 560 },
+    screen.getAllDisplays().map((display) => display.workArea),
+    area,
+  );
   const window = new BrowserWindow({
-    width: 1040,
-    height: 900,
+    ...(placement?.bounds ?? { width: 1280, height: 920 }),
     minWidth: 720,
     minHeight: 560,
     show: false,
@@ -2662,6 +2683,10 @@ function createWindow(): BrowserWindow {
   // process on request (`openLoopEditorWindow`), never by renderer script.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   windowZoom?.adopt(window, 'main');
+  windowLayout?.trackWindow(window, () => 'main');
+  if (placement?.maximized === true) {
+    window.maximize();
+  }
 
   // Held now, while the window is alive, because `closed` must not ask for it.
   // See the handler below: that question is what kept DSpatch running.
@@ -2774,9 +2799,16 @@ function openLoopEditorWindow(): LoopEditorWindowOutcome {
   }
 
   try {
+    const area = screen.getPrimaryDisplay().workArea;
+    const placement = windowLayout?.placementFor(
+      'editor',
+      { width: 1360, height: 920 },
+      { width: 720, height: 560 },
+      screen.getAllDisplays().map((display) => display.workArea),
+      area,
+    );
     const window = new BrowserWindow({
-      width: 1280,
-      height: 900,
+      ...(placement?.bounds ?? { width: 1280, height: 900 }),
       minWidth: 720,
       minHeight: 560,
       show: false,
@@ -2794,6 +2826,10 @@ function openLoopEditorWindow(): LoopEditorWindowOutcome {
 
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     windowZoom?.adopt(window, 'editor');
+    windowLayout?.trackWindow(window, () => 'editor');
+    if (placement?.maximized === true) {
+      window.maximize();
+    }
     // Held while the window is alive; `closed` must not ask a destroyed window for
     // it. Same rule and same reason as the chat window above (DSP-62).
     const contents = window.webContents;
@@ -5126,6 +5162,7 @@ function main(): void {
     // DSP-167: before any window, so the first one opens at its remembered size; the preload
     // of every page asks on this channel as its document starts.
     windowZoom = new WindowZoom(new WindowZoomStore(path.join(app.getPath('userData'), WINDOW_ZOOM_FILE), log), log);
+    windowLayout = new WindowLayoutStore(path.join(app.getPath('userData'), WINDOW_LAYOUT_FILE), log);
     ipcMain.on(WINDOW_ZOOM_LEVEL_CHANNEL, (event) => {
       event.returnValue = windowZoom?.levelForPage(event.sender.id) ?? 0;
     });
@@ -5202,6 +5239,7 @@ function main(): void {
       host: reviewHost,
       preloadPath: path.join(__dirname, '..', 'preload', 'review-preload.js'),
       zoom: windowZoom,
+      layout: windowLayout,
       load: (window, view) => {
         // `window=review` makes the renderer mount review alone (`renderer/main.tsx`);
         // `view=diff` (DSP-150) mounts the diff review of a chosen revision pair, and

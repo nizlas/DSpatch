@@ -666,8 +666,7 @@ function OpenReview({
    * one question: it changes nothing else about the review.
    */
   const [discussionMessages, setDiscussionMessages] = useState<readonly DiscussionMessage[]>([]);
-  // DSP-176: the profile the person reads in, shared by the review's windows; Original by default.
-  const [profile, setProfile] = usePresentationProfile();
+  const [profile, rememberLatestProfile] = usePresentationProfile(bundle.definitionPath, state.ui.presentationProfile ?? null);
   const [profileAbout, setProfileAbout] = useState(false);
   // A profile's alternative that could not be asked for (an answer still on its way, say), per step and profile.
   const [presentError, setPresentError] = useState<{ readonly key: string; readonly error: string } | null>(null);
@@ -1473,25 +1472,117 @@ function OpenReview({
     [current, discussionRequest, flush, lang, profile, discussionMessages],
   );
 
-  /**
-   * DSP-176: choosing a profile asks for the current step's alternative, if it has none yet in
-   * that profile, and nothing else: no other step, no background work. An explicit act, as every
-   * question here is; arriving at another step later offers it with a button instead.
-   */
-  const chooseProfile = useCallback(
-    (next: PresentationProfile) => {
-      setProfile(next);
-      if (next === 'original' || current === null) {
+  const autoPresentationArmed = useRef(false);
+  const autoPresentationInFlight = useRef(false);
+  const autoPresentationWanted = useRef<{ readonly stepId: string; readonly profile: PresentationProfile; readonly basis: string } | null>(null);
+  const autoPresentationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const requestPresentationFor = useCallback(
+    async (stepId: string, asProfile: PresentationProfile, basis: string): Promise<void> => {
+      if (asProfile === 'original') {
         return;
       }
-      const { done, latest } = alternativeFor(discussionMessages, current.step.id, stepContentHash(current.step), next);
-      const pending = latest !== null && latest.answer?.status !== 'done' && ['sending', 'sent'].includes(latest.question.status) && (latest.answer === null || latest.answer.status === 'streaming');
-      if (done === null && !pending) {
-        void deepen({ action: 'present', profile: next });
+      const discussion = window.dspatchReviewDiscussion;
+      const found = findStep(bundle, stepId);
+      if (discussion === undefined || found === null) {
+        return;
+      }
+      await flush();
+      const sent: DeepenRequest = { action: 'present', profile: asProfile, basis };
+      const outcome = await discussion.send({
+        question: deepenQuestion(sent, lang, false),
+        subject: { kind: 'point', walkId: found.walk.id, stepId: found.step.id, placeIndex: 0 },
+        selection: null,
+        language: lang,
+        deepen: sent,
+        presentation: { profile: asProfile, version: PRESENTATION_INSTRUCTION_VERSION },
+      });
+      if (outcome.kind !== 'sent') {
+        setPresentError({ key: `${stepId}:${asProfile}`, error: outcome.error });
+      } else {
+        setPresentError(null);
       }
     },
-    [current, deepen, discussionMessages, setProfile],
+    [bundle, flush, lang],
   );
+
+  const runWantedPresentation = useCallback(() => {
+    if (autoPresentationInFlight.current) {
+      return;
+    }
+    const next = autoPresentationWanted.current;
+    if (next === null) {
+      return;
+    }
+    autoPresentationWanted.current = null;
+    autoPresentationInFlight.current = true;
+    void requestPresentationFor(next.stepId, next.profile, next.basis).finally(() => {
+      autoPresentationInFlight.current = false;
+      if (autoPresentationWanted.current !== null) {
+        runWantedPresentation();
+      }
+    });
+  }, [requestPresentationFor]);
+
+  const lastAutoStep = useRef<string | null>(current?.step.id ?? null);
+  useEffect(() => {
+    const stepId = current?.step.id ?? null;
+    if (lastAutoStep.current === null) {
+      lastAutoStep.current = stepId;
+      return;
+    }
+    if (stepId !== null && stepId !== lastAutoStep.current) {
+      autoPresentationArmed.current = true;
+    }
+    lastAutoStep.current = stepId;
+  }, [current?.step.id]);
+
+  useEffect(() => {
+    if (autoPresentationTimer.current !== null) {
+      clearTimeout(autoPresentationTimer.current);
+      autoPresentationTimer.current = null;
+    }
+    if (!autoPresentationArmed.current || profile === 'original' || current === null || away !== null) {
+      return;
+    }
+    const basis = stepContentHash(current.step);
+    const { done, latest } = alternativeFor(discussionMessages, current.step.id, basis, profile);
+    const pending = latest !== null && latest.answer?.status !== 'done' && ['sending', 'sent'].includes(latest.question.status) && (latest.answer === null || latest.answer.status === 'streaming');
+    if (done !== null || pending) {
+      return;
+    }
+    const target = { stepId: current.step.id, profile, basis } as const;
+    autoPresentationTimer.current = setTimeout(() => {
+      autoPresentationWanted.current = target;
+      runWantedPresentation();
+    }, 500);
+    return () => {
+      if (autoPresentationTimer.current !== null) {
+        clearTimeout(autoPresentationTimer.current);
+        autoPresentationTimer.current = null;
+      }
+    };
+  }, [current, away, discussionMessages, profile, runWantedPresentation]);
+
+  const chooseProfile = useCallback(
+    (next: PresentationProfile) => {
+      rememberLatestProfile(next);
+      autoPresentationArmed.current = true;
+      update((value) => ({ ...value, ui: { ...value.ui, presentationProfile: next } }));
+      setPresentError(null);
+      if (next === 'original') {
+        autoPresentationWanted.current = null;
+      }
+    },
+    [rememberLatestProfile, update],
+  );
+
+  useEffect(() => {
+    if (state.ui.presentationProfile === profile) {
+      return;
+    }
+    update((value) => ({ ...value, ui: { ...value.ui, presentationProfile: profile } }));
+  }, [profile, state.ui.presentationProfile, update]);
 
   /**
    * DSP-176: what a question typed in the discussion follows: at a walk step, the profile and the

@@ -1,9 +1,9 @@
 /**
  * DSP-176: the presentation profile the person reads in, and what the discussion holds for it.
  *
- * The choice is the person's, per computer: kept in the windows' own storage, so the walk
- * window and the review's panel (docked or in its own window) show the same, and changing it
- * in one changes it in the other. Original is the default.
+ * The choice is the person's, per walk and per computer: kept in the windows' own storage so
+ * the walk window and its panel stay in sync. The last chosen profile is also kept as the
+ * default for newly opened walks.
  *
  * The explanations themselves are in the review's discussion record: an alternative is the
  * answer to a `present` deepening of one step, asked in one profile from one version of the
@@ -15,37 +15,47 @@ import { useCallback, useEffect, useState } from 'react';
 import { isProfile, type PresentationProfile } from '../shared/presentation-profiles';
 import type { DiscussionMessage } from '../shared/review-discussion';
 
-const STORAGE_KEY = 'dspatch.review.presentationProfile';
+const DEFAULT_STORAGE_KEY = 'dspatch.review.presentationProfile.default';
+const WALK_STORAGE_PREFIX = 'dspatch.review.presentationProfile.walk:';
 
-function stored(): PresentationProfile {
+function stored(key: string): PresentationProfile | null {
   try {
-    const value = window.localStorage.getItem(STORAGE_KEY);
-    return isProfile(value) ? value : 'original';
+    const value = window.localStorage.getItem(key);
+    return isProfile(value) ? value : null;
   } catch {
-    return 'original';
+    return null;
   }
 }
 
-/** The chosen profile, shared by the review's windows through their storage. */
-export function usePresentationProfile(): readonly [PresentationProfile, (profile: PresentationProfile) => void] {
-  const [profile, setState] = useState<PresentationProfile>(stored);
+function read(scope: string, fallback: PresentationProfile | null): PresentationProfile {
+  return stored(`${WALK_STORAGE_PREFIX}${scope}`) ?? fallback ?? stored(DEFAULT_STORAGE_KEY) ?? 'original';
+}
+
+/** The chosen profile of one walk, shared by windows through storage. */
+export function usePresentationProfile(scope: string, fallback: PresentationProfile | null): readonly [PresentationProfile, (profile: PresentationProfile) => void] {
+  const scopedKey = `${WALK_STORAGE_PREFIX}${scope}`;
+  const [profile, setState] = useState<PresentationProfile>(() => read(scope, fallback));
+  useEffect(() => {
+    setState(read(scope, fallback));
+  }, [scope, fallback]);
   useEffect(() => {
     const onStorage = (event: StorageEvent): void => {
-      if (event.key === STORAGE_KEY) {
-        setState(stored());
+      if (event.key === scopedKey || event.key === DEFAULT_STORAGE_KEY) {
+        setState(read(scope, fallback));
       }
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, []);
+  }, [scopedKey, scope, fallback]);
   const choose = useCallback((next: PresentationProfile) => {
     setState(next);
     try {
-      window.localStorage.setItem(STORAGE_KEY, next);
+      window.localStorage.setItem(DEFAULT_STORAGE_KEY, next);
+      window.localStorage.setItem(scopedKey, next);
     } catch {
       // Not kept past this window; the choice still holds here.
     }
-  }, []);
+  }, [scopedKey]);
   return [profile, choose] as const;
 }
 

@@ -225,6 +225,7 @@ export function profileInstructionText(profile: PresentationProfile): string {
   }
   return [
     `${definition.name}: ${definition.description}`,
+    `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`,
     '',
     'The first presentation:',
     ...definition.first.map((rule) => `- ${rule}`),

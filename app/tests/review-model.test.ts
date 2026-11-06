@@ -583,6 +583,13 @@ test('the view arrangement is kept in the record and opened marks of an older de
   assert.deepEqual(state.ui, { openWalks: [], highlightWalk: false });
   const stored = { ...state, ui: { openWalks: ['W2'], highlightWalk: true } };
   assert.deepEqual(adoptStoredState(JSON.parse(JSON.stringify(stored)), REVISIONS)?.ui, { openWalks: ['W2'], highlightWalk: true });
+  const withProfile = { ...state, ui: { openWalks: ['W2'], highlightWalk: true, presentationProfile: 'essens' } };
+  assert.equal(adoptStoredState(JSON.parse(JSON.stringify(withProfile)), REVISIONS)?.ui.presentationProfile, 'essens');
+  assert.equal(
+    adoptStoredState({ ...state, ui: { openWalks: ['W2'], highlightWalk: true, presentationProfile: 'invalid' } }, REVISIONS),
+    null,
+    'an unknown presentation profile is rejected',
+  );
   assert.equal(adoptStoredState({ ...state, ui: { openWalks: 'W2' } }, REVISIONS), null);
   const { ui: _ui, ...withoutUi } = state;
   assert.deepEqual(adoptStoredState(withoutUi, REVISIONS)?.ui, { openWalks: [], highlightWalk: false });
