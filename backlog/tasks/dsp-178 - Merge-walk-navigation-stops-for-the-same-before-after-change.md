@@ -3,7 +3,7 @@ id: DSP-178
 title: >-
   Merge walk navigation stops for the same before/after change instead of
   keeping separate Old/New place stops
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-06 09:40'
 updated_date: '2026-11-06 10:05'

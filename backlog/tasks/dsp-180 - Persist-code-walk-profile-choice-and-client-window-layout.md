@@ -3,7 +3,7 @@ id: DSP-180
 title: >-
   Persist code-walk profile choice per review and restore client window layout
   locally
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-06 13:55'
 updated_date: '2026-11-06 13:55'
@@ -59,4 +59,3 @@ Verification run:
 - ⚠️ `node scripts/profile-trial.mjs /tmp/...` failed in preflight because required Linux desktop tools (`xdotool`, ImageMagick `import`) are not installed in this runtime.
 - ⚠️ `npm run build` renderer step is blocked in this runtime by pre-existing root-owned files under `dist/renderer` and cannot be fully cleaned without elevated permissions.
 <!-- SECTION:NOTES:END -->
-

@@ -3,7 +3,7 @@ id: DSP-179
 title: >-
   Unify review profile typography in Step/Discussion and add explicit
   regeneration for profile alternatives
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-06 11:35'
 updated_date: '2026-11-06 11:35'
