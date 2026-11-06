@@ -309,6 +309,7 @@ export function WalkTimeline({
   onOpenLocation,
   navRequest,
   revision,
+  activeStopFoci,
 }: {
   /** The repository and the two commits, named in the active place's mark (DSP-175). */
   readonly revision?: FocusRevision;
@@ -333,6 +334,8 @@ export function WalkTimeline({
   readonly onOpenLocation: (location: CodeLocation) => void;
   /** Counts explicit choices of a step or place: each one shows the active place, also when it is already active. */
   readonly navRequest: number;
+  /** The active navigation stop's focus references in this step (one place or a merged From/To pair). */
+  readonly activeStopFoci: readonly CodeLocation[];
 }): JSX.Element {
   // The walk is the key of this view; its places are not marked as a whole any more (30 October 2026).
   void walk;
@@ -961,6 +964,7 @@ export function WalkTimeline({
                       },
                       sourceFor: returnToPlace,
                     })}
+                    activeStopFoci={activeStopFoci}
                   />
                 ) : (
                   <div className="rv-pane-placeholder">
@@ -1047,6 +1051,7 @@ function TimelinePaneView({
   sourceLink,
   sourceFor,
   handlers,
+  activeStopFoci,
 }: {
   readonly selection: CodeLocation | null;
   /** The place the pane presents: its focus is marked, its unit and context fold. */
@@ -1097,6 +1102,8 @@ function TimelinePaneView({
   readonly sourceFor: { readonly name: string } | null;
   /** What the pane calls back; a lasting box the map refills on every render. */
   readonly handlers: { readonly current: PaneHandlers };
+  /** The current navigation stop's focus references in this step. */
+  readonly activeStopFoci: readonly CodeLocation[];
 }): JSX.Element {
   const path = station.place.focus.path;
   const side = station.place.focus.side;
@@ -1126,6 +1133,16 @@ function TimelinePaneView({
     }
     return set;
   }, [rows, sameFile]);
+  const activeStopRows = useMemo(() => {
+    const set = new Set<number>();
+    activeStopFoci.forEach((focus) => {
+      if (focus.path === path) {
+        rowsOf(rows, focus).indexes.forEach((row) => set.add(row));
+      }
+    });
+    return set;
+  }, [activeStopFoci, rows, path]);
+  const activeStopSides = useMemo(() => new Set(activeStopFoci.map((focus) => focus.side)), [activeStopFoci]);
   // The active place's call is marked; the latest navigation's call stays unfolded.
   const fromSet = useMemo(() => (fromHere === null ? new Set<number>() : new Set(rowsOf(rows, fromHere).indexes)), [fromHere, rows]);
   const callRows = useMemo(() => {
@@ -1623,7 +1640,8 @@ function TimelinePaneView({
     // only its own side's lines: a place at From marks the old lines, one at To the new,
     // though the place's reference also takes in the other side of a replacement.
     const ownSide = side === 'target' ? row.targetLine !== null : row.baseLine !== null;
-    const activeHere = inShown && isActive && ownSide;
+    const mergedStopHere = isActive && activeStopSides.has('base') && activeStopSides.has('target') && effectiveView === 'both' && activeStopRows.has(index);
+    const activeHere = (inShown && isActive && ownSide) || mergedStopHere;
     if (activeHere) {
       classes.push(row.kind === 'deleted' ? 'rv-old' : row.kind === 'added' ? 'rv-new' : 'rv-neutral-focus', 'rv-focus-active');
       if (arriving) {

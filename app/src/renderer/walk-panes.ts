@@ -56,6 +56,13 @@ export interface WalkPane {
   readonly stations: readonly number[];
 }
 
+/** A station shape sufficient for pane and stop grouping. */
+export interface PaneStation {
+  readonly stepId: string;
+  readonly placeIndex: number;
+  readonly focus: PaneFocus;
+}
+
 /** The hunk's lines on one side, widened by the margin; a side with no lines is the gap after its start line. */
 function areaOf(hunk: PaneHunk, side: RevisionSide): readonly [number, number] {
   const start = side === 'base' ? hunk.baseStart : hunk.targetStart;
@@ -105,6 +112,91 @@ export function paneOfStation(panes: readonly WalkPane[]): number[] {
     for (const station of pane.stations) {
       out[station] = pane.index;
     }
+  }
+  return out;
+}
+
+export interface WalkStop {
+  /** Position in walk order, from 0. */
+  readonly index: number;
+  readonly stepId: string;
+  /** Consecutive stations represented by this stop, in walk order. */
+  readonly stations: readonly number[];
+  /** The place indexes of those stations within the step. */
+  readonly places: readonly number[];
+  /** The pane that this stop follows. */
+  readonly pane: number;
+  /** True when a From/To pair of one change is merged into one stop. */
+  readonly merged: boolean;
+}
+
+/**
+ * Navigation stops over a walk's stations, reusing pane grouping:
+ * adjacent stations in one step that share one pane and together carry both
+ * sides of the change become one stop; everything else stays separate.
+ */
+export function stopsOf(stations: readonly PaneStation[], paneOf: readonly number[]): WalkStop[] {
+  const out: WalkStop[] = [];
+  const push = (members: readonly number[]): void => {
+    if (members.length === 0) {
+      return;
+    }
+    const first = stations[members[0] ?? -1];
+    if (first === undefined) {
+      return;
+    }
+    const sides = new Set<RevisionSide>();
+    members.forEach((index) => {
+      const station = stations[index];
+      if (station !== undefined) {
+        sides.add(station.focus.side);
+      }
+    });
+    const merged = members.length > 1 && sides.has('base') && sides.has('target');
+    if (merged) {
+      out.push({
+        index: out.length,
+        stepId: first.stepId,
+        stations: [...members],
+        places: members.map((index) => stations[index]?.placeIndex ?? 0),
+        pane: paneOf[members[0] ?? -1] ?? -1,
+        merged: true,
+      });
+      return;
+    }
+    members.forEach((index) => {
+      const station = stations[index];
+      if (station === undefined) {
+        return;
+      }
+      out.push({
+        index: out.length,
+        stepId: station.stepId,
+        stations: [index],
+        places: [station.placeIndex],
+        pane: paneOf[index] ?? -1,
+        merged: false,
+      });
+    });
+  };
+  let start = 0;
+  while (start < stations.length) {
+    const head = stations[start];
+    if (head === undefined) {
+      start += 1;
+      continue;
+    }
+    const pane = paneOf[start] ?? -1;
+    let end = start + 1;
+    while (end < stations.length) {
+      const next = stations[end];
+      if (next === undefined || next.stepId !== head.stepId || (paneOf[end] ?? -1) !== pane) {
+        break;
+      }
+      end += 1;
+    }
+    push(Array.from({ length: end - start }, (_, at) => start + at));
+    start = end;
   }
   return out;
 }

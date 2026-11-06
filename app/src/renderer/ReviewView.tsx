@@ -10,6 +10,7 @@ import { AgentReviewResult, attemptLabel, isRunning, JobLine, JobNote, requestFa
 import { Inline, LineGutter, TokensView, asLocation, capitalise, fileName, lineDigits, rangeText, useFiles, useRows, type Files } from './review-code';
 import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
+import { paneOfStation, panesOf, stopsOf } from './walk-panes';
 import {
   stepsWalks,
   type CheckKind,
@@ -218,6 +219,41 @@ function hunkLocation(hunk: DiffHunk): CodeLocation {
   return hunk.targetCount > 0
     ? { path: hunk.path, side: 'target', start: hunk.targetStart, end: hunk.targetStart + hunk.targetCount - 1 }
     : { path: hunk.path, side: 'base', start: hunk.baseStart, end: hunk.baseStart + hunk.baseCount - 1 };
+}
+
+interface StepStop {
+  readonly index: number;
+  readonly placeIndexes: readonly number[];
+  readonly merged: boolean;
+}
+
+function placeIndexesFor(
+  stepId: string,
+  stations: ReadonlyArray<ReturnType<typeof stationsOf>[number]>,
+  stop: { readonly stations: readonly number[] },
+): number[] {
+  const indexes: number[] = [];
+  for (const stationIndex of stop.stations) {
+    const station = stations[stationIndex];
+    if (station?.stepId === stepId) {
+      indexes.push(station.placeIndex);
+    }
+  }
+  return indexes;
+}
+
+function stopLabel(step: WalkStep, stop: StepStop, lang: Lang): string {
+  if (stop.placeIndexes.length <= 1) {
+    return pick(step.places[stop.placeIndexes[0] ?? 0]?.label ?? { sv: '', en: '' }, lang);
+  }
+  const places = stop.placeIndexes.map((index) => step.places[index]).filter((place): place is Place => place !== undefined);
+  const path = fileName(places[0]?.focus.path ?? '');
+  const base = places.filter((place) => place.focus.side === 'base').map((place) => rangeText(place.focus)).join(', ');
+  const target = places.filter((place) => place.focus.side === 'target').map((place) => rangeText(place.focus)).join(', ');
+  const from = base === '' ? '' : `${lang === 'sv' ? 'Från' : 'From'} ${base}`;
+  const to = target === '' ? '' : `${lang === 'sv' ? 'Till' : 'To'} ${target}`;
+  const where = [from, to].filter((part) => part !== '').join(' → ');
+  return where === '' ? path : `${path} (${where})`;
 }
 
 function findStep(bundle: ReviewBundle, stepId: string | null): { walk: Walk; step: WalkStep; index: number } | null {
@@ -830,7 +866,31 @@ function OpenReview({
         )?.problem ?? null);
   const level: CodeLevel = state.ui.level ?? 'unit';
   const stations = useMemo(() => (current === null ? [] : stationsOf(current.walk)), [current?.walk]);
+  const walkStops = useMemo(() => {
+    const panes = panesOf(stations.map((station) => station.place.focus), (path) => changedFiles.get(path) ?? null);
+    const paneByStation = paneOfStation(panes);
+    return stopsOf(stations.map((station) => ({ stepId: station.stepId, placeIndex: station.placeIndex, focus: station.place.focus })), paneByStation);
+  }, [stations, changedFiles]);
+  const stepStops = useMemo(() => {
+    if (current === null) {
+      return [] as StepStop[];
+    }
+    return walkStops
+      .filter((stop) => stop.stepId === current.step.id)
+      .map((stop) => ({ index: stop.index, placeIndexes: placeIndexesFor(current.step.id, stations, stop), merged: stop.merged }))
+      .filter((stop) => stop.placeIndexes.length > 0);
+  }, [current?.step.id, walkStops, stations]);
+  const stopByPlace = useMemo(() => {
+    const map = new Map<number, number>();
+    stepStops.forEach((stop, index) => {
+      stop.placeIndexes.forEach((place) => map.set(place, index));
+    });
+    return map;
+  }, [stepStops]);
+  const activeStop = stepStops[stopByPlace.get(placeIndex) ?? 0] ?? null;
+  const activeStopIndex = activeStop === null ? 0 : (stopByPlace.get(placeIndex) ?? 0);
   const activeStation = current === null ? -1 : stations.findIndex((entry) => entry.stepId === current.step.id && entry.placeIndex === placeIndex);
+  const activeWalkStop = activeStation < 0 ? -1 : walkStops.findIndex((stop) => stop.stations.includes(activeStation));
   const focus: CodeLocation | null = away ?? (place === null ? null : asLocation(place.focus));
   const threadsHere = useMemo(
     () =>
@@ -1025,9 +1085,13 @@ function OpenReview({
       if (current === null || activeStation < 0) {
         return;
       }
-      const target = stations[activeStation + delta];
-      if (target !== undefined) {
-        goToStep(target.stepId, target.placeIndex);
+      const stopAt = walkStops.findIndex((stop) => stop.stations.includes(activeStation));
+      const targetStop = walkStops[stopAt + delta];
+      if (targetStop !== undefined) {
+        const station = stations[targetStop.stations[0] ?? -1];
+        if (station !== undefined) {
+          goToStep(station.stepId, station.placeIndex);
+        }
         return;
       }
       // A point's own tour is not one of the walks: its ends are its own.
@@ -1041,12 +1105,18 @@ function OpenReview({
         return;
       }
       const neighbourStations = stationsOf(neighbour);
-      const entry = delta > 0 ? neighbourStations[0] : neighbourStations[neighbourStations.length - 1];
+      const neighbourPanes = panesOf(neighbourStations.map((station) => station.place.focus), (path) => changedFiles.get(path) ?? null);
+      const neighbourStops = stopsOf(
+        neighbourStations.map((station) => ({ stepId: station.stepId, placeIndex: station.placeIndex, focus: station.place.focus })),
+        paneOfStation(neighbourPanes),
+      );
+      const boundary = delta > 0 ? neighbourStops[0] : neighbourStops[neighbourStops.length - 1];
+      const entry = boundary === undefined ? undefined : neighbourStations[boundary.stations[delta > 0 ? 0 : boundary.stations.length - 1] ?? -1];
       if (entry !== undefined) {
         goToStep(entry.stepId, entry.placeIndex);
       }
     },
-    [current, activeStation, stations, bundle, goToStep],
+    [current, activeStation, stations, walkStops, bundle, goToStep, changedFiles],
   );
 
   useEffect(() => {
@@ -1861,13 +1931,20 @@ function OpenReview({
                   walk={current.walk}
                   step={current.step}
                   index={current.index}
+                  stops={stepStops}
                   placeIndex={placeIndex}
+                  stopIndex={activeStopIndex}
                   referenceProblems={bundle.referenceProblems}
                   state={state}
                   words={words}
                   lang={lang}
                   onPlace={(index) => {
-                    goToStep(current.step.id, index);
+                    const stop = stepStops[index];
+                    const first = stop?.placeIndexes[0];
+                    if (first === undefined) {
+                      return;
+                    }
+                    goToStep(current.step.id, first);
                     setNavRequest((count) => count + 1);
                   }}
                   onOpenEvidence={goAway}
@@ -2161,12 +2238,12 @@ function OpenReview({
                 stations={stations}
                 active={activeStation}
                 stepId={current.step.id}
-                placeIndex={placeIndex}
-                placeCount={current.step.places.length}
+                placeIndex={activeStopIndex}
+                placeCount={stepStops.length}
                 place={place}
-                canBack={activeStation > 0 || bundle.definition.walks.indexOf(current.walk) > 0}
+                canBack={activeWalkStop > 0 || bundle.definition.walks.indexOf(current.walk) > 0}
                 canForward={
-                  activeStation < stations.length - 1 ||
+                  activeWalkStop >= 0 && activeWalkStop < walkStops.length - 1 ||
                   bundle.definition.walks.indexOf(current.walk) < bundle.definition.walks.length - 1
                 }
                 onMove={moveStation}
@@ -2209,6 +2286,12 @@ function OpenReview({
                 onOpenLocation={goAway}
                 navRequest={navRequest}
                 revision={focusRevision}
+                activeStopFoci={((): readonly CodeLocation[] => {
+                  if (activeStop === null) {
+                    return [];
+                  }
+                  return activeStop.placeIndexes.map((index) => current.step.places[index]?.focus).filter((focus): focus is Place['focus'] => focus !== undefined);
+                })()}
               />
             </div>
           )}
@@ -3284,7 +3367,9 @@ function StepPanel({
   walk,
   step,
   index,
+  stops,
   placeIndex,
+  stopIndex,
   referenceProblems,
   state,
   words,
@@ -3310,7 +3395,9 @@ function StepPanel({
   readonly walk: Walk;
   readonly step: WalkStep;
   readonly index: number;
+  readonly stops: readonly StepStop[];
   readonly placeIndex: number;
+  readonly stopIndex: number;
   readonly referenceProblems: ReviewBundle['referenceProblems'];
   readonly state: ReviewState;
   readonly words: ReviewWords;
@@ -3323,7 +3410,8 @@ function StepPanel({
   const [sources, setSources] = useState(false);
   const [introOpen, setIntroOpen] = useState(false);
   const panel = useRef<HTMLElement | null>(null);
-  const active = placeIndex;
+  const active = stopIndex;
+  const activePlace = step.places[placeIndex] ?? null;
   // DSP-176: the profile's alternative in place of the prepared text, unless the person asked for that.
   const alternative = presentation.profile !== 'original' && presentation.done !== null && !presentation.prepared ? presentation.done : null;
   const purpose = pick(walk.purpose, lang);
@@ -3375,12 +3463,12 @@ function StepPanel({
         </p>
       )}
 
-      {step.places.length > 1 && (
+      {stops.length > 1 && (
         <div className="rv-places">
           <div className="rv-section-title">{words.places}</div>
           <ol>
-            {step.places.map((entry, position) => (
-              <li key={entry.id}>
+            {stops.map((entry, position) => (
+              <li key={`${step.id}-stop-${String(position + 1)}`}>
                 <button
                   type="button"
                   className={position === active ? 'rv-place rv-place-on' : 'rv-place'}
@@ -3388,27 +3476,33 @@ function StepPanel({
                   onClick={() => onPlace(position)}
                 >
                   <span className="rv-place-number">{position + 1}</span>
-                  <Markdown text={pick(entry.label, lang)} />
-                  {/* Which side and lines the place marks (DSP-175): Old and New in one pane are told apart by more than their label. */}
+                  <Markdown text={stopLabel(step, entry, lang)} />
                   <span className="rv-sub rv-place-where" data-ev={`place-where-${String(position + 1)}`}>
-                    {entry.focus.side === 'base' ? words.view.shownFrom : words.view.shownTo} · {entry.focus.path.split('/').pop()}:{rangeText(entry.focus)}
+                    {entry.placeIndexes
+                      .map((place) => step.places[place])
+                      .filter((place): place is Place => place !== undefined)
+                      .map((place) => `${place.focus.side === 'base' ? words.view.shownFrom : words.view.shownTo} · ${place.focus.path.split('/').pop()}:${rangeText(place.focus)}`)
+                      .join(' · ')}
                   </span>
-                  {invalid.has(entry.focus.id) && <span className="rv-error"> ⚠</span>}
+                  {entry.placeIndexes
+                    .map((place) => step.places[place])
+                    .filter((place): place is Place => place !== undefined)
+                    .some((place) => invalid.has(place.focus.id)) && <span className="rv-error"> ⚠</span>}
                 </button>
               </li>
             ))}
           </ol>
-          {step.places[active]?.from !== null && step.places[active]?.from !== undefined && (
+          {activePlace?.from !== null && activePlace?.from !== undefined && (
             <div className="rv-place-from">
-              ← <Inline text={pick(step.places[active]?.from?.label ?? { sv: '', en: '' }, lang)} />
+              ← <Inline text={pick(activePlace.from?.label ?? { sv: '', en: '' }, lang)} />
             </div>
           )}
           <div className="rv-place-nav">
             <button type="button" disabled={active === 0} onClick={() => onPlace(active - 1)}>
               ↑ {words.previousPlace}
             </button>
-            <span className="rv-sub">{words.placeOf(active + 1, step.places.length)}</span>
-            <button type="button" disabled={active === step.places.length - 1} onClick={() => onPlace(active + 1)}>
+            <span className="rv-sub">{words.placeOf(active + 1, stops.length)}</span>
+            <button type="button" disabled={active === stops.length - 1} onClick={() => onPlace(active + 1)}>
               ↓ {words.nextPlace}
             </button>
           </div>
@@ -3416,9 +3510,9 @@ function StepPanel({
       )}
 
       {/* What the step says about the place in view: it changes with the place. */}
-      {step.places[active]?.focus.note !== undefined && (
+      {activePlace?.focus.note !== undefined && (
         <div className="rv-place-note" aria-live="polite">
-          <Markdown text={pick(step.places[active]?.focus.note ?? { sv: '', en: '' }, lang)} />
+          <Markdown text={pick(activePlace.focus.note ?? { sv: '', en: '' }, lang)} />
         </div>
       )}
 

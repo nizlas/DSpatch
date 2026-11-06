@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { panesOf, paneOfStation, shownStation, type PaneDiffFile, type PaneFocus } from '../src/renderer/walk-panes';
+import { paneOfStation, panesOf, shownStation, stopsOf, type PaneDiffFile, type PaneFocus } from '../src/renderer/walk-panes';
 
 // a.ts: lines 10–12 replaced by 10–14, and far below, line 200 removed.
 const a: PaneDiffFile = {
@@ -82,6 +82,45 @@ test('a pane presents the active station, else the one nearest it in walk order'
   // Entered travelling forward: its first station; travelling back: its last.
   assert.equal(shownStation(pane, 0), 2);
   assert.equal(shownStation(pane, 7), 4);
+});
+
+test('navigation stops merge only a same-step From/To pair that shares one pane', () => {
+  const foci = [at('a.ts', 'base', 10, 12), at('a.ts', 'target', 11, 14), at('a.ts', 'target', 200)];
+  const panes = panesOf(foci, fileOf);
+  const paneByStation = paneOfStation(panes);
+  const stations = foci.map((focus, index) => ({ stepId: 'W1.1', placeIndex: index, focus }));
+  const stops = stopsOf(stations, paneByStation);
+  assert.deepEqual(
+    stops.map((stop) => ({ stations: [...stop.stations], places: [...stop.places], merged: stop.merged })),
+    [
+      { stations: [0, 1], places: [0, 1], merged: true },
+      { stations: [2], places: [2], merged: false },
+    ],
+  );
+});
+
+test('navigation stops keep separate places in one pane when they are on one side only', () => {
+  const foci = [at('a.ts', 'target', 10), at('a.ts', 'target', 11)];
+  const panes = panesOf(foci, fileOf);
+  const paneByStation = paneOfStation(panes);
+  const stations = foci.map((focus, index) => ({ stepId: 'W1.1', placeIndex: index, focus }));
+  const stops = stopsOf(stations, paneByStation);
+  assert.deepEqual(
+    stops.map((stop) => ({ stations: [...stop.stations], merged: stop.merged })),
+    [
+      { stations: [0], merged: false },
+      { stations: [1], merged: false },
+    ],
+  );
+});
+
+test('navigation stops keep call and implementation separate across files', () => {
+  const foci = [at('a.ts', 'target', 11), at('b.ts', 'target', 5)];
+  const panes = panesOf(foci, fileOf);
+  const paneByStation = paneOfStation(panes);
+  const stations = foci.map((focus, index) => ({ stepId: 'W1.1', placeIndex: index, focus }));
+  const stops = stopsOf(stations, paneByStation);
+  assert.deepEqual(stops.map((stop) => [...stop.stations]), [[0], [1]]);
 });
 
 // DSP-175 completion: the active place's mark names it in full, not by file or line alone.
