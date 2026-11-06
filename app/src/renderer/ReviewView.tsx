@@ -48,7 +48,14 @@ import {
   type WalkStep,
 } from '../shared/review-model';
 import { stepContentHash } from '../shared/review-model';
-import { PRESENTATION_PROFILES, PROFILES, profileInstructionText, type PresentationProfile, type PresentationRequest } from '../shared/presentation-profiles';
+import {
+  PRESENTATION_INSTRUCTION_VERSION,
+  PRESENTATION_PROFILES,
+  PROFILES,
+  profileInstructionText,
+  type PresentationProfile,
+  type PresentationRequest,
+} from '../shared/presentation-profiles';
 import { alternativeFor, deepeningsOf, shownChain, usePresentationProfile, type Exchange } from './presentation-choice';
 import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuote } from '../shared/review-discussion';
 import { quoteRanges, readQuote } from './walk-selection';
@@ -1436,9 +1443,9 @@ function OpenReview({
       const presentation: PresentationRequest | null = fromPoint
         ? null
         : request.action === 'present'
-          ? { profile: asProfile }
+          ? { profile: asProfile, ...(asProfile === 'original' ? {} : { version: PRESENTATION_INSTRUCTION_VERSION }) }
           : request.action === 'simpler' || asProfile !== 'original' || afterSimpler
-            ? { profile: asProfile, ...(chain.length === 0 ? {} : { shown: chain }) }
+            ? { profile: asProfile, ...(chain.length === 0 ? {} : { shown: chain }), ...(asProfile === 'original' ? {} : { version: PRESENTATION_INSTRUCTION_VERSION }) }
             : null;
       const sent: DeepenRequest = fromPoint ? request : { ...request, ...(asProfile === 'original' ? {} : { profile: asProfile }), basis };
       // Explain this is about the selection, which goes along exactly; the rest is background.
@@ -1493,13 +1500,13 @@ function OpenReview({
    */
   const followUpPresentation = useCallback((): PresentationRequest | null => {
     if (current === null || away !== null || discussionRequest.subject.kind !== 'point') {
-      return profile === 'original' ? null : { profile };
+      return profile === 'original' ? null : { profile, version: PRESENTATION_INSTRUCTION_VERSION };
     }
     const chain = shownChain(discussionMessages, current.step.id, stepContentHash(current.step), profile);
     if (profile === 'original' && chain.length === 0) {
       return null;
     }
-    return { profile, ...(chain.length === 0 ? {} : { shown: chain }) };
+    return { profile, ...(chain.length === 0 ? {} : { shown: chain }), ...(profile === 'original' ? {} : { version: PRESENTATION_INSTRUCTION_VERSION }) };
   }, [current, away, discussionRequest.subject.kind, discussionMessages, profile]);
 
   /** Explain exactly this selection: the one just read, or the one kept. */
@@ -3177,12 +3184,14 @@ function ProfileLine({ presentation, stepId }: { readonly presentation: StepPres
     <div className={`rv-profile-line rv-profile-${state}`} data-ev="profile-status" data-state={state} data-profile={presentation.profile} data-step={stepId}>
       {state === 'pending' && (
         <span role="status">
-          <span className="rv-profile-spinner" aria-hidden="true" /> Writing the {name} explanation of this step… The prepared explanation is shown meanwhile.
+          <span className="rv-profile-spinner" aria-hidden="true" /> Writing the {name} explanation of this step…{' '}
+          {presentation.done !== null && !presentation.prepared ? `The current ${name} explanation stays shown meanwhile.` : 'The prepared explanation is shown meanwhile.'}
         </span>
       )}
       {state === 'failed' && (
         <span role="status">
-          The {name} explanation could not be written ({failure}). The prepared explanation is shown.{' '}
+          The {name} explanation could not be written ({failure}).{' '}
+          {presentation.done !== null && !presentation.prepared ? `The current ${name} explanation is still shown.` : 'The prepared explanation is shown.'}{' '}
           <button type="button" className="rv-link" data-ev="profile-retry" onClick={presentation.onPresent}>
             Try again
           </button>
@@ -3199,6 +3208,9 @@ function ProfileLine({ presentation, stepId }: { readonly presentation: StepPres
           <span className="rv-sub">{presentation.prepared ? 'The prepared explanation' : `${name} · from the same code`}</span>{' '}
           <button type="button" className="rv-link" data-ev="profile-toggle-prepared" onClick={() => presentation.onPrepared(!presentation.prepared)}>
             {presentation.prepared ? `Show the ${name} explanation` : 'Show the prepared explanation'}
+          </button>{' '}
+          <button type="button" className="rv-link" data-ev="profile-regenerate" onClick={presentation.onPresent}>
+            Regenerate this {name} explanation
           </button>
         </span>
       )}
@@ -3446,7 +3458,7 @@ function StepPanel({
       <ProfileLine presentation={presentation} stepId={step.id} />
       {alternative !== null && (
         <div
-          className="rv-profile-explanation"
+          className="rv-profile-explanation rv-explanation"
           data-ev="profile-explanation"
           data-profile={presentation.profile}
           data-step={step.id}

@@ -94,7 +94,7 @@ export const DETAILS_MARKER = '<!-- dspatch:details -->';
  */
 export const ANSWER_SHAPE_RULES = [
   'Answer the question first, in a short part that stands on its own: the concept and the details that matter most, enough to understand it without reading further. Any uncertainty that changes the answer belongs in this part.',
-  `When a fuller account would help (the mechanism step by step, edge cases, more context), put it after the short part, below a line holding only ${DETAILS_MARKER}. The person sees it when they ask for more. Leave the line out when the short part is enough, and do not pad either part.`,
+  `When a fuller account would help (the mechanism step by step, edge cases, more context), put it after the short part, below a line holding only ${DETAILS_MARKER}. The person sees it when they ask for more. That detailed part should add depth, not repeat the short part. Leave the line out when the short part is enough, and do not pad either part.`,
   'When the person explicitly asks for details or a full account, give them: the short part still answers first, and the details follow below the line.',
   'Keep established class names and terms. Use short paragraphs, bullets where they help, and bold sparingly.',
 ] as const;

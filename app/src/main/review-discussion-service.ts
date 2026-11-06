@@ -852,7 +852,7 @@ export class ReviewDiscussionService {
       shown.push({ label: 'The prepared explanation of the step', text: [explanation.summary, explanation.body, explanation.why].filter((part) => part.trim() !== '').join('\n\n') });
     }
     return {
-      request: { profile: request.profile, ...(ids.length === 0 ? {} : { shown: ids }) },
+      request: { profile: request.profile, ...(ids.length === 0 ? {} : { shown: ids }), ...(request.version === undefined ? {} : { version: request.version }) },
       section: { profile: request.profile, mode: mode === 'present' ? 'present' : mode, shown: mode === 'present' ? [] : shown },
     };
   }

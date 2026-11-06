@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  PRESENTATION_INSTRUCTION_VERSION,
   PRESENTATION_PROFILES,
   PROFILES,
   SIMPLER_AGAIN_RULES,
@@ -32,7 +33,8 @@ describe('the profiles', () => {
     assert.equal(presentationPromptSection({ profile: 'original', mode: 'follow', shown: [] }), null);
     const essens = presentationPromptSection({ profile: 'essens', mode: 'present', shown: [] }) ?? '';
     assert.match(essens, /^## How to present \(Essens\)/);
-    assert.match(essens, /What changes\? Why\? What does the reader need to understand or check here\?/);
+    assert.match(essens, new RegExp(`Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`));
+    assert.match(essens, /What changes\? Why does it matter\? What does the reader need to understand or check here\?/);
     assert.match(essens, /not what is said about the code/);
     const pedagog = presentationPromptSection({ profile: 'pedagog', mode: 'present', shown: [] }) ?? '';
     assert.match(pedagog, /simple mental model/);
@@ -62,12 +64,14 @@ describe('the profiles', () => {
     assert.match(profileInstructionText('original'), /Explain more simply follows these rules in every profile/);
     assert.match(profileInstructionText('essens'), /The first presentation:/);
     assert.match(profileInstructionText('pedagog'), /A follow-up question:/);
+    assert.match(profileInstructionText('essens'), new RegExp(`Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`));
   });
 
   it('a request names a known profile and only answer-like ids, a few of them', () => {
     assert.equal(presentationFrom({ profile: 'other' }), null);
     assert.deepEqual(presentationFrom({ profile: 'essens', shown: ['a-1', '../x', 7, 'a-2'] }), { profile: 'essens', shown: ['a-1', 'a-2'] });
     assert.equal(presentationFrom({ profile: 'pedagog', shown: Array.from({ length: 10 }, (_, i) => `a-${String(i)}`) })?.shown?.length, 6);
+    assert.deepEqual(presentationFrom({ profile: 'essens', version: PRESENTATION_INSTRUCTION_VERSION }), { profile: 'essens', version: PRESENTATION_INSTRUCTION_VERSION });
   });
 
   it('a present deepening needs a profile other than Original and the step version it was asked from', () => {

@@ -39,6 +39,7 @@ import {
   discussionWorkingFolder,
 } from '../src/main/review-discussion-service.ts';
 import { ReviewService } from '../src/main/review-service.ts';
+import { PRESENTATION_INSTRUCTION_VERSION } from '../src/shared/presentation-profiles.ts';
 import { REVIEW_DISCUSSION_CODE_INSTRUCTION, REVIEW_DISCUSSION_INSTRUCTION, type DiscussionIdentity, type DiscussionMessage, type ReviewDiscussionEvent } from '../src/shared/review-discussion.ts';
 import { WORKING_TREE_ONLY, makeReviewFixture, type ReviewFixture } from './support/review-fixture.ts';
 
@@ -794,11 +795,25 @@ test('a step presented in a profile, Explain more simply on it twice, and a foll
     adapter().finish();
 
     // Essens: the step presented again, in the profile, from this version of the step.
-    assert.equal((await service.send({ question: 'Explain this step in the Essens profile.', subject: POINT, selection: null, deepen: { action: 'present', profile: 'essens', basis: 'h1' }, presentation: { profile: 'essens' } }, s.review)).kind, 'sent');
+    assert.equal(
+      (
+        await service.send(
+          {
+            question: 'Explain this step in the Essens profile.',
+            subject: POINT,
+            selection: null,
+            deepen: { action: 'present', profile: 'essens', basis: 'h1' },
+            presentation: { profile: 'essens', version: PRESENTATION_INSTRUCTION_VERSION },
+          },
+          s.review,
+        )
+      ).kind,
+      'sent',
+    );
     assert.match(adapter().sent[1] ?? '', /## How to present \(Essens\)\n.*\n\n- Answer three things/);
     const present = lastQuestion();
     assert.deepEqual(present?.deepen, { action: 'present', profile: 'essens', basis: 'h1' });
-    assert.deepEqual(present?.presentation, { profile: 'essens' });
+    assert.deepEqual(present?.presentation, { profile: 'essens', version: PRESENTATION_INSTRUCTION_VERSION });
     adapter().delta('What changes: the greeting. Why: the caller wants it.');
     adapter().finish();
     const alternative = answerOf(present?.id ?? '');

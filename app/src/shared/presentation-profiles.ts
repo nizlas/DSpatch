@@ -20,6 +20,8 @@
 export type PresentationProfile = 'original' | 'essens' | 'pedagog';
 
 export const PRESENTATION_PROFILES: readonly PresentationProfile[] = ['original', 'essens', 'pedagog'];
+/** Raised when profile instructions change in meaning; stored on new alternatives. */
+export const PRESENTATION_INSTRUCTION_VERSION = 2;
 
 export interface ProfileDefinition {
   readonly id: PresentationProfile;
@@ -38,8 +40,9 @@ export const PRESENTATION_COMMON_RULES = [
   'This changes how the step is presented, not what is said about the code. Keep every fact, risk, uncertainty, finding and recommendation the prepared explanation and the code support; add none the code does not support, and do not change what is reviewed or approved.',
   'Read the code again when you need to; do not present what you have not read. Keep the class, method and file names; explain a term rather than replacing it with a vague word.',
   'Start with what the reader needs to understand the point of the step. Do not repeat the heading or the lead in the list that follows; one statement is made once.',
+  'Treat the first part as the concise explanation and Show more as real depth. Do not repeat the first part under Show more.',
   'Write short paragraphs and group what belongs together. Put a technical detail where it helps the reasoning, not as a list of everything you read.',
-  'Do not cut an important fact, risk or uncertainty to keep the text short; there is no word limit, only the rule that the first part is what a normal walk-through needs.',
+  'Do not cut an important fact, risk or uncertainty only to stay short. If that makes the first part slightly longer, keep the needed caveat.',
   'Then the line that starts Show more, as the answer format below says, and after it real depth that the first part does not have, not the first part again. Keep it easy to read too: paragraphs, short lists, and small code excerpts where they help.',
   'Name the code you rest on with references, as for any answer, so the person can open it.',
 ] as const;
@@ -57,9 +60,11 @@ export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> 
     name: 'Essens',
     description: 'What changes, why, and what you need to understand or check. Show more gives the mechanism, special cases and more references.',
     first: [
-      'Answer three things, in this order, each briefly: What changes? Why? What does the reader need to understand or check here?',
-      'Enough for a normal review of this step without being chatty: no background the reader does not need for the point, no restating of the code line by line.',
-      'Necessary details, important risks and uncertainties stay in the first part; they are not moved under Show more to make it shorter.',
+      'Answer three things, in this order, each briefly: What changes? Why does it matter? What does the reader need to understand or check here?',
+      'Use one short paragraph; only when needed, add 2–3 short bullet points. Do not add headings just to fill a template.',
+      'Target roughly 60–100 words for the first part, often less for simple steps. This is a budget, not a hard cap: keep necessary caveats.',
+      'Do not expand a step that is already short and clear in Original. Keep the same scale unless the step actually needs extra context.',
+      'Long call chains, constructor internals, wider background and edge-case catalogues usually belong under Show more.',
     ],
     more: ['Under Show more: the mechanism step by step, special cases and edge conditions, how it connects to the code around it, and further code references.'],
   },
@@ -116,6 +121,8 @@ export interface PresentationRequest {
    * more simply, what to build on; for a follow-up, the last is the one it follows.
    */
   readonly shown?: readonly string[];
+  /** The profile-instruction version used when this request was asked. */
+  readonly version?: number;
 }
 
 /** A presentation request from a window, or `null` when there is none or it is malformed. */
@@ -128,7 +135,8 @@ export function presentationFrom(raw: unknown): PresentationRequest | null {
     return null;
   }
   const shown = Array.isArray(value['shown']) ? value['shown'].filter((id): id is string => typeof id === 'string' && /^[\w.:-]{1,80}$/.test(id)).slice(-6) : [];
-  return { profile: value['profile'], ...(shown.length === 0 ? {} : { shown }) };
+  const version = typeof value['version'] === 'number' && Number.isInteger(value['version']) && value['version'] > 0 ? value['version'] : undefined;
+  return { profile: value['profile'], ...(shown.length === 0 ? {} : { shown }), ...(version === undefined ? {} : { version }) };
 }
 
 /** What the prompt's presentation section is built from, the texts resolved by the discussion. */
@@ -159,7 +167,12 @@ export function presentationPromptSection(section: PresentationSection): string 
     if (section.profile === 'original') {
       return null;
     }
-    lines.push(`## How to present (${profile.name})`, `Present this step again for a reader who chose ${profile.name}: ${profile.description}`, '');
+    lines.push(
+      `## How to present (${profile.name})`,
+      `Present this step again for a reader who chose ${profile.name}: ${profile.description}`,
+      `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`,
+      '',
+    );
     lines.push(...[...profile.first, ...PRESENTATION_COMMON_RULES, ...profile.more].map((rule) => `- ${rule}`));
     return lines.join('\n');
   }
@@ -202,6 +215,7 @@ export function profileInstructionText(profile: PresentationProfile): string {
   if (profile === 'original') {
     return [
       `${definition.name}: ${definition.description}`,
+      `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`,
       '',
       'Nothing is added to the prepared explanation or to the questions. Explain more simply follows these rules in every profile:',
       ...SIMPLER_RULES.map((rule) => `- ${rule}`),
