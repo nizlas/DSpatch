@@ -11,6 +11,19 @@ import { readHostManifest } from './host-packages';
 
 const extract = promisify(execFile);
 
+/**
+ * The tar that unpacks the bundled host (DSP-182). On Windows it is Windows' own, named by its
+ * path: the tar found first on PATH may be Git for Windows' GNU tar, which reads the colon of a
+ * drive letter as a remote host and fails on every Windows path.
+ */
+export function tarProgram(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): string {
+  if (platform !== 'win32') {
+    return 'tar';
+  }
+  const own = path.join(env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'tar.exe');
+  return fs.existsSync(own) ? own : 'tar';
+}
+
 export function runningLocalHost(dataDir: string): { readonly endpoint: RemoteEndpoint; readonly pid: number; readonly startedBy?: string } | null {
   const claim = heldClaim(dataDir);
   if (claim?.kind !== 'standalone') {
@@ -60,7 +73,7 @@ async function localProgram(options: LocalHostOptions): Promise<{ readonly runti
       fs.mkdirSync(installs, { recursive: true, mode: 0o700 });
       const stage = fs.mkdtempSync(path.join(installs, '.extract-'));
       try {
-        await extract('tar', ['-xzf', archive, '-C', stage], { timeout: 60_000, windowsHide: true });
+        await extract(tarProgram(), ['-xzf', archive, '-C', stage], { timeout: 60_000, windowsHide: true });
         const installed = JSON.parse(fs.readFileSync(path.join(stage, 'dspatch-host', 'manifest.json'), 'utf8')) as { hostId?: string };
         if (installed.hostId !== manifest.hostId) {
           throw new Error('The bundled host installation has a different identity.');

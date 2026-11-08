@@ -1,5 +1,7 @@
 # Build installers and host packages from one commit. Manual runs keep artifacts;
 # version tags publish the matching packages and checksums as a GitHub release.
+# DSP-182: the Windows installer is built on a Windows runner, on manual runs and on tags alike,
+# and published with the .deb, both host packages, the manifest and SHA256SUMS.
 name: package
 on:
   workflow_dispatch:
@@ -25,7 +27,6 @@ jobs:
       - run: npm run package:host -- --platform linux
         working-directory: app
       - run: node scripts/build-host-package.mjs --platform win32
-        if: github.event_name == 'workflow_dispatch'
         working-directory: app
       - run: npm run package:client -- --linux deb --x64
         working-directory: app
@@ -44,7 +45,6 @@ jobs:
             app/release/host/
             app/release/trial-standalone/
   windows-installer:
-    if: github.event_name == 'workflow_dispatch'
     needs: hosts-and-deb
     runs-on: windows-latest
     steps:
@@ -58,16 +58,94 @@ jobs:
         with:
           name: linux
           path: app/release
-      - run: npm run package:client -- --win nsis --x64 -c.win.signAndEditExecutable=true
+      - run: npm run package:client -- --win nsis --x64
         working-directory: app
       - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: app/release/*.exe
 
+  windows-install-trial:
+    # The installer tried on a Windows runner as a person uses it (app/scripts/install-trial.mjs):
+    # the wizard through UI Automation, first start with an isolated data folder and the simulated
+    # provider, an upgrade to a build one patch version up while client and host run, and the
+    # uninstall; then the zoom, dock and profile trials against the installed client. Manual runs
+    # only: what they show is recorded in the task and INSTALL.md before a tag is pushed.
+    if: github.event_name == 'workflow_dispatch'
+    needs: [hosts-and-deb, windows-installer]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+        working-directory: app
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: app/release/setup-a
+      - name: Build the upgrade installer, one patch version up, from the same commit
+        shell: pwsh
+        working-directory: app
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $parts = $pkg.version.Split('.')
+          $next = "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
+          npm version $next --no-git-tag-version --allow-same-version
+          if ($LASTEXITCODE -ne 0) { throw "npm version failed" }
+          npm run package:host -- --platform linux
+          if ($LASTEXITCODE -ne 0) { throw "linux host package failed" }
+          node scripts/build-host-package.mjs --platform win32
+          if ($LASTEXITCODE -ne 0) { throw "win32 host package failed" }
+          npm run package:client -- --win nsis --x64
+          if ($LASTEXITCODE -ne 0) { throw "upgrade installer failed" }
+          New-Item -ItemType Directory -Force release/setup-b | Out-Null
+          Move-Item "release/DSpatch Setup $next.exe" release/setup-b/
+          git checkout -- package.json package-lock.json
+      - name: The install trial in real windows
+        shell: pwsh
+        working-directory: app
+        run: |
+          $a = (Get-ChildItem release/setup-a -Filter 'DSpatch Setup *.exe' | Select-Object -First 1).FullName
+          $b = (Get-ChildItem release/setup-b -Filter 'DSpatch Setup *.exe' | Select-Object -First 1).FullName
+          node scripts/install-trial.mjs --setup $a --upgrade $b --out release/trial-install/ci
+      - name: Install the first setup silently for the window trials
+        shell: pwsh
+        working-directory: app
+        run: |
+          $a = (Get-ChildItem release/setup-a -Filter 'DSpatch Setup *.exe' | Select-Object -First 1).FullName
+          $dir = "$env:LOCALAPPDATA\Programs\DSpatch"
+          $p = Start-Process -FilePath $a -ArgumentList '/S', "/D=$dir" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "setup exit $($p.ExitCode)" }
+          if (-not (Test-Path "$dir\DSpatch.exe")) { throw 'no DSpatch.exe after the silent install' }
+          "DSPATCH_TRIAL_CLIENT=$dir\DSpatch.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: The zoom trial against the installed client
+        continue-on-error: true
+        working-directory: app
+        run: node scripts/zoom-trial.mjs release/trial-zoom/ci
+      - name: The dock trial against the installed client
+        continue-on-error: true
+        working-directory: app
+        run: node scripts/dock-trial.mjs release/trial-dock/ci
+      - name: The profile trial against the installed client
+        continue-on-error: true
+        working-directory: app
+        run: node scripts/profile-trial.mjs release/trial-profiles/ci
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: windows-trials
+          path: |
+            app/release/trial-install/ci
+            app/release/trial-zoom/ci
+            app/release/trial-dock/ci
+            app/release/trial-profiles/ci
+
   publish-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [hosts-and-deb]
+    needs: [hosts-and-deb, windows-installer]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -80,11 +158,15 @@ jobs:
         with:
           name: linux
           path: app/release
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: app/release
       - name: Validate release version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node -e 'const {version} = require("./app/package.json"); if (process.env.RELEASE_TAG !== `v${version}`) throw new Error("Tag and package version differ");'
-      - run: node scripts/stage-release.mjs --linux-only
+      - run: node scripts/stage-release.mjs
         working-directory: app
       - name: Publish installers, hosts and checksums
         env:

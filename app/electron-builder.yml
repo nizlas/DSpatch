@@ -1,7 +1,9 @@
 # Package the DSpatch client: a .deb for Ubuntu/Debian x64 and a per-user NSIS installer for
-# Windows x64 (DSP-153). Other platforms and architectures are not built or tried. Signing and
-# automatic updates are not part of this. `npm run package:client` is the way in; it gathers
-# build/bundled first. The host is packaged apart, by scripts/build-host-package.mjs.
+# Windows x64 (DSP-153, DSP-182). Other platforms and architectures are not built or tried.
+# Signing and automatic updates are not part of this. `npm run package:client` is the way in; it
+# gathers build/bundled first. The host is packaged apart, by scripts/build-host-package.mjs. The
+# Windows installer is built on Windows only (.github/workflows/package.yml): built on Linux it
+# carried the Linux Copilot runtime (DSP-153).
 #
 # A separate YAML file allows comments, including the packaging traps below,
 # which strict JSON in package.json could not carry.
@@ -91,11 +93,26 @@ win:
       arch:
         - x64
   icon: build/icon.png
-  # Off so the installer can be built on Linux without Wine. The executable then has Electron's
-  # icon and no version resource; a Windows build (.github/workflows/package.yml) turns this on.
-  signAndEditExecutable: false
+  # The executable gets DSpatch's icon and a version resource from package.json (built on Windows only).
+  signAndEditExecutable: true
 
+# Niclas's decisions for the first Windows installer (DSP-182, 8 November 2026), each said here
+# rather than left to a default. The pages and steps DSpatch adds are in build/installer.nsh.
 nsis:
-  # Per user: no administrator rights, installed under LocalAppData.
-  oneClick: true
+  # An assisted installer: the person sees the pages and may change the folder.
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  # Per user, without administrator rights, under %LOCALAPPDATA%\Programs\DSpatch by default. The
+  # install-mode page is never shown: build/installer.nsh fixes the mode to the current user.
   perMachine: false
+  # A Start menu entry always.
+  createStartMenuShortcut: true
+  # The desktop shortcut is a choice on the installer's own page, unchecked by default
+  # (build/installer.nsh); the template creates none and the uninstaller removes a kept one.
+  createDesktopShortcut: false
+  # The finish page offers to start DSpatch.
+  runAfterFinish: true
+  include: build/installer.nsh
+  # The uninstaller removes the program and its shortcuts and leaves %APPDATA%\DSpatch alone
+  # (conversations, reviews, provider support, settings): electron-builder deletes app data only
+  # from a one-click installer, and only when asked.

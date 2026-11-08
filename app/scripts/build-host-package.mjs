@@ -145,7 +145,13 @@ fs.writeFileSync(
 fs.mkdirSync(out, { recursive: true });
 const file = `dspatch-host-${hostId}-${platform}-${arch}.tar.gz`;
 const target = path.join(out, file);
-execFileSync('tar', ['--sort=name', '--owner=0', '--group=0', '--numeric-owner', '-czf', target, '-C', stage, 'dspatch-host']);
+// Reproducible archives on the Linux runner, where releases are built. On Windows (DSP-182) the tar
+// found first may be Git for Windows' GNU tar, which reads a drive letter's colon as a remote host
+// unless told otherwise, or Windows' own bsdtar, which knows none of the ordering options: a local
+// build then gets a plain archive, checked by its own SHA-256 like any other.
+const reproducible = ['--sort=name', '--owner=0', '--group=0', '--numeric-owner', '-czf', target, '-C', stage, 'dspatch-host'];
+const gnuTar = process.platform !== 'win32' || execFileSync('tar', ['--version'], { encoding: 'utf8' }).includes('GNU tar');
+execFileSync('tar', gnuTar ? (process.platform === 'win32' ? ['--force-local', ...reproducible] : reproducible) : ['-czf', target, '-C', stage, 'dspatch-host']);
 fs.rmSync(stage, { recursive: true, force: true });
 
 const sha256 = createHash('sha256').update(fs.readFileSync(target)).digest('hex');
