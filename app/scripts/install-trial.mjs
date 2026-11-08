@@ -387,7 +387,8 @@ async function main() {
     const keyboard = process.env.DSPATCH_TRIAL_KEYBOARD === '1' ? ['-Keyboard'] : [];
     const wizardResult = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(scriptDir, 'install-trial', 'wizard.ps1'), '-Setup', setup, '-InstallDir', installDir, '-Evidence', evidence, ...keyboard], { encoding: 'utf8', timeout: 600_000 });
     console.log(wizardResult.stdout.trim());
-    const wizardSteps = fs.existsSync(path.join(evidence, 'wizard.json')) ? JSON.parse(fs.readFileSync(path.join(evidence, 'wizard.json'), 'utf8')) : [];
+    // Windows PowerShell may write the file with a byte order mark, which JSON.parse refuses.
+    const wizardSteps = fs.existsSync(path.join(evidence, 'wizard.json')) ? JSON.parse(fs.readFileSync(path.join(evidence, 'wizard.json'), 'utf8').replace(/^\uFEFF/, '')) : [];
     for (const step of Array.isArray(wizardSteps) ? wizardSteps : [wizardSteps]) results.push({ stage, ...step });
     check('the wizard installed into the chosen folder without administrator rights', wizardResult.status === 0 && fs.existsSync(path.join(installDir, 'DSpatch.exe')), wizardResult.status === 0 ? installDir : wizardResult.stderr.slice(0, 600));
   }

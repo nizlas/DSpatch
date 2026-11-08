@@ -192,5 +192,6 @@ try {
     try { Stop-Process -Id $proc.Id -Force } catch { }
     $results.Add([pscustomobject]@{ what = 'the setup process was ended by the driver, the run having stopped before Finish'; ok = $false; detail = "pid $($proc.Id)" })
   }
-  $results | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Evidence 'wizard.json')
+  # Without a byte order mark: Set-Content -Encoding utf8 writes one in Windows PowerShell, and JSON.parse refuses it.
+  [IO.File]::WriteAllText((Join-Path $Evidence 'wizard.json'), ($results | ConvertTo-Json), (New-Object System.Text.UTF8Encoding $false))
 }
