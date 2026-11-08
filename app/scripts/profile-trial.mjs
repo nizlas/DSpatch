@@ -769,8 +769,8 @@ async function w_shot(contentsId, name) {
 
 // --- DSP-176: the discussion record, read from disk -------------------------------------------
 
-/** The review discussion's questions and answers as saved: what was asked, in which profile, and what was sent. */
-function discussionRecord() {
+/** The review discussion's record files under the profile. */
+function discussionFiles() {
   const found = [];
   const walk = (folder) => {
     for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
@@ -779,11 +779,40 @@ function discussionRecord() {
       else if (entry.name.endsWith('.discussion.json')) found.push(full);
     }
   };
-  walk(profile);
-  return found.flatMap((file) => JSON.parse(fs.readFileSync(file, 'utf8')).messages ?? []);
+  if (profile !== '' && fs.existsSync(profile)) walk(profile);
+  return found;
+}
+/** The review discussion's questions and answers as saved: what was asked, in which profile, and what was sent. */
+function discussionRecord() {
+  return discussionFiles().flatMap((file) => JSON.parse(fs.readFileSync(file, 'utf8')).messages ?? []);
 }
 const questions = () => discussionRecord().filter((message) => message.role === 'question');
 const presents = () => questions().filter((message) => message.deepen?.action === 'present');
+/** Presentations asked more than once for one step, profile and version of the step: a loop, or a retry. */
+function repeatedPresents() {
+  const counts = new Map();
+  for (const message of presents()) {
+    const key = `${message.envelope?.subject?.stepId ?? '?'}:${message.deepen?.profile ?? '?'}:${message.deepen?.basis ?? '?'}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts].filter(([, count]) => count > 1).map(([key, count]) => `${key} ×${String(count)}`);
+}
+/** The discussion records and the generated definitions, kept with the evidence: what was sent, and what was prepared. */
+function saveRecords() {
+  try {
+    for (const file of discussionFiles()) fs.copyFileSync(file, path.join(evidence, `record-${path.basename(file)}`));
+    const generated = path.join(profile, 'reviews', 'generated');
+    if (fs.existsSync(generated)) {
+      for (const folder of fs.readdirSync(generated)) {
+        for (const name of fs.readdirSync(path.join(generated, folder))) {
+          if (name.endsWith('.review.json')) fs.copyFileSync(path.join(generated, folder, name), path.join(evidence, `definition-${name}`));
+        }
+      }
+    }
+  } catch {
+    // Evidence only; the trial's result stands without it.
+  }
+}
 
 /** The stable id behind a profile's name in either language (DSP-181). */
 const PROFILE_IDS = { essentials: 'essens', essens: 'essens', standard: 'standard', teacher: 'pedagog', pedagog: 'pedagog' };
@@ -1000,6 +1029,9 @@ async function main() {
   now = await shown();
   check('the step then shows its Essentials explanation', now.state === 'done' && !now.prepared && /SIMULATED Essentials/.test(now.alt) && now.altStep === S1, JSON.stringify(now));
   check('no other step was asked for', presents().every((m) => m.envelope.subject.stepId === S1));
+  // The answer done, nothing may ask again: a second request for the same step, profile and version would be a loop.
+  await delay(3000);
+  check('no request is repeated for the same step, profile and version of the step', repeatedPresents().length === 0, JSON.stringify(repeatedPresents()));
   await w_shot(pc, '42-essentials');
   await osClickAt(pc, '[data-ev="profile-explanation"] [data-ev="answer-show-more"]');
   const more = await read(pc, `document.querySelector('[data-ev="profile-explanation"] [data-ev="answer-details"]')?.textContent ?? ''`);
@@ -1138,6 +1170,8 @@ async function main() {
   check('coverage, what remains and the findings are as before any profile', (await reviewState()) === reviewBefore, await reviewState());
 
   stage = 'after a restart, without a call';
+  // Over everything so far, only S4's deliberate failure and its Try again asked twice for one step and profile.
+  check('over the whole run, nothing was asked for twice but the step tried again after its failure', repeatedPresents().every((entry) => entry.startsWith(`${S4}:essens:`) && entry.endsWith('×2')), JSON.stringify(repeatedPresents()));
   // The window's language set to Swedish first: the names follow it when the panel next loads.
   check('Swedish chosen for the review window', (await chooseOption(wc, '[data-ev="review-language"]', 'sv', 'Sv')) === 'sv');
   await delay(800);
@@ -1247,9 +1281,11 @@ async function endHost() {
 fs.mkdirSync(evidence, { recursive: true });
 try {
   await main();
+  saveRecords();
 } catch (error) {
   results.push({ stage, what: 'the trial reached its end', ok: false, detail: error.stack ?? String(error) });
   console.error(`FAIL ${stage}: ${error.stack ?? error}`);
+  saveRecords();
   try {
     const windows = await client.main?.windows();
     fs.writeFileSync(path.join(evidence, 'windows-at-failure.json'), JSON.stringify(windows, null, 2));

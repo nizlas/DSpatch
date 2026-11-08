@@ -1340,6 +1340,15 @@ function OpenReview({
    * In the walk window: where it is goes to the panel, and what the panel asks is done here.
    */
   const panelBridge = window.dspatchReviewPanel;
+  /*
+   * Whether this page shows the review's panel itself (the panel page, or a walk window with no
+   * panel bridge, which keeps the panel in its own window). Only such a page hears the discussion
+   * and may ask for a step's explanation on its own: a walk window whose panel is a view of its
+   * own or another window's renders no discussion, so it must never ask (DSP-181: it asked again
+   * after every answer, blind to them).
+   */
+  const [panelHere, setPanelHere] = useState(!PANEL_MODE && panelBridge === undefined);
+  const showsPanel = PANEL_MODE || panelHere;
   // The way back from an open point: the walk window's, named here and in the panel.
   const pointBack = checkReturn === null ? null : checkReturn.away !== null ? words.backToCode : checkReturn.stepId === null ? null : words.backTo(checkReturn.stepId);
   const [followedBack, setFollowedBack] = useState<string | null>(null);
@@ -1477,7 +1486,7 @@ function OpenReview({
 
   const requestPresentationFor = useCallback(
     async (stepId: string, asProfile: PresentationProfile, basis: string): Promise<void> => {
-      if (!isPublicProfile(asProfile)) {
+      if (!isPublicProfile(asProfile) || !showsPanel) {
         return;
       }
       const discussion = window.dspatchReviewDiscussion;
@@ -1501,7 +1510,7 @@ function OpenReview({
         setPresentError(null);
       }
     },
-    [bundle, flush, lang],
+    [bundle, flush, lang, showsPanel],
   );
 
   const runWantedPresentation = useCallback(() => {
@@ -1540,7 +1549,8 @@ function OpenReview({
       clearTimeout(autoPresentationTimer.current);
       autoPresentationTimer.current = null;
     }
-    if (!autoPresentationArmed.current || current === null || away !== null) {
+    // Only the page that shows the panel asks: it is the one that hears the discussion's answers.
+    if (!showsPanel || !autoPresentationArmed.current || current === null || away !== null) {
       return;
     }
     const basis = stepContentHash(current.step);
@@ -1560,7 +1570,7 @@ function OpenReview({
         autoPresentationTimer.current = null;
       }
     };
-  }, [current, away, discussionMessages, profile, walkProfile, runWantedPresentation]);
+  }, [showsPanel, current, away, discussionMessages, profile, walkProfile, runWantedPresentation]);
 
   const chooseProfile = useCallback(
     (next: PublicProfile) => {
@@ -1749,7 +1759,6 @@ function OpenReview({
    * person has hidden stays hidden. A walk that belongs to no revision pair has no review
    * panel to show, and keeps the panel here in its own window.
    */
-  const [panelHere, setPanelHere] = useState(!PANEL_MODE && panelBridge === undefined);
   useEffect(() => {
     if (PANEL_MODE || panelBridge === undefined || noWalks) {
       return;
