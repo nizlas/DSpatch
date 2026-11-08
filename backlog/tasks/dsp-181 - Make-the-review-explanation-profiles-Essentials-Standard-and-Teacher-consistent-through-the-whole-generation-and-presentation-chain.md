@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-08 17:15'
-updated_date: '2026-11-08 19:32'
+updated_date: '2026-11-08 19:57'
 labels:
   - ux
   - review
@@ -129,4 +129,6 @@ What the trial proves and does not. The simulated provider answers from the prom
 Also on Linux (run 42511281489 on 1dacfeb, before the fixes): the tests, provider-tests, windows, dock and governor jobs all passed, the review group among them, so the one Windows failure in review-context.test.ts is the path separator alone. The same full workflow was started on da18c06 (run 42514889775) after the fixes.
 
 Full linux-verify on da18c06 (run 42514889775), after the fixes: tests, provider-tests, windows, dock, governor and profiles all passed; the profile trial green a second time.
+
+Integrated: main fast-forwarded to 1e06edc and pushed to origin/main on 8 November 2026 (origin/main 32030e3 → 1e06edc, no force; the temporary branch dsp-181-linux removed). Stays in Review: BACKLOG.md's Done needs the explicitly requested human assessment, and Niclas judges the profiles' pedagogical quality and real lengths on real code. The window trial verified the UI, the prompt each path sends, the data flow and the call behaviour with the simulated provider; it did not verify a real model's text, nor that separate generations with different profiles give identical walks.
 <!-- SECTION:NOTES:END -->
