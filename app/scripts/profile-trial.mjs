@@ -615,7 +615,9 @@ async function checkDocked(windowId, label, name, typed) {
 
 /** Where an element matched by a CSS selector is on the screen, in physical pixels. */
 async function pointAt(contentsId, selector, block = 'center') {
-  const inner = `(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;${block === null ? '' : `e.scrollIntoView({block:${JSON.stringify(block)}});`}const b=e.getBoundingClientRect();return {x:b.x+Math.min(b.width/2,40),y:b.y+b.height/2,w:b.width,h:b.height,top:b.y,left:b.x}})()`;
+  // Measured a frame after the scroll, and with what the page finds at the point: a click through the
+  // operating system lands on the element only when the page says the element is there (`hit`).
+  const inner = `(async()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;${block === null ? '' : `e.scrollIntoView({block:${JSON.stringify(block)}});`}await new Promise((r)=>requestAnimationFrame(()=>requestAnimationFrame(r)));const b=e.getBoundingClientRect();const x=b.x+Math.min(b.width/2,40),y=b.y+b.height/2;const at=document.elementFromPoint(x,y);return {x,y,w:b.width,h:b.height,top:b.y,left:b.x,hit:at!==null&&(at===e||e.contains(at))}})()`;
   const answer = JSON.parse(await client.main.ev(`(async () => {
     const { BrowserWindow, webContents } = process.mainModule.require('electron');
     const wc = webContents.fromId(${String(contentsId)});
@@ -632,7 +634,7 @@ async function pointAt(contentsId, selector, block = 'center') {
         if (view) { const b = view.getBounds(); origin = { x: content.x + b.x, y: content.y + b.y }; }
       }
       if (origin === null) continue;
-      return JSON.stringify({ windowId: w.id, physical: { x: Math.round(origin.x + box.x * f), y: Math.round(origin.y + box.y * f) }, inWindow: { x: Math.round((origin.x - content.x) + box.left * f), y: Math.round((origin.y - content.y) + box.top * f), width: Math.round(box.w * f), height: Math.round(box.h * f) } });
+      return JSON.stringify({ windowId: w.id, hit: box.hit === true, physical: { x: Math.round(origin.x + box.x * f), y: Math.round(origin.y + box.y * f) }, inWindow: { x: Math.round((origin.x - content.x) + box.left * f), y: Math.round((origin.y - content.y) + box.top * f), width: Math.round(box.w * f), height: Math.round(box.h * f) } });
     }
     return 'null';
   })()`));
@@ -640,7 +642,13 @@ async function pointAt(contentsId, selector, block = 'center') {
   return answer;
 }
 async function osClickAt(contentsId, selector) {
-  await osClick((await pointAt(contentsId, selector)).physical);
+  let at = await pointAt(contentsId, selector);
+  // The layout may still be settling after a change: measured again until the element is at its point.
+  for (let attempt = 0; attempt < 4 && !at.hit; attempt += 1) {
+    await delay(300);
+    at = await pointAt(contentsId, selector);
+  }
+  await osClick(at.physical);
 }
 const read = (contentsId, expression) => client.main.read(contentsId, expression);
 const statusesIn = (contentsId) => read(contentsId, `JSON.stringify(Object.fromEntries([...document.querySelectorAll('[data-thread-id][data-thread-status]')].map((e) => [e.dataset.threadId, e.dataset.threadStatus])))`).then((text) => JSON.parse(text ?? '{}'));
