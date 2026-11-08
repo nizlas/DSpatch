@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-08 20:01'
-updated_date: '2026-11-08 22:42'
+updated_date: '2026-11-08 23:03'
 labels:
   - release
   - windows
@@ -95,4 +95,6 @@ Release v0.1.10 (8 November 2026, on Niclas's instruction): origin/main moved b0
 Manual run 42530363131 on main (62a49b9): the wizard passed every page on the runner: setup window, folder page with no install-mode page, default folder, folder changed, Shortcuts page unchecked by default, Install (pressed with the keyboard after Invoke did nothing within 4 s), finish page with "Run DSpatch" checked by default, declined, Finish, exit code 0 (13-finish-page.png and 14-finish-declined.png in that run's windows-trials artifact). The trial then failed on its own reading of wizard.json, which Windows PowerShell had written with a byte order mark; fixed in 37cdb3d. Run 42531490168 on main carries that fix and is meant to show the first start, the upgrade with client and host running, Restart host, the uninstall and the dock, zoom and profile trials against the installed client; its result is recorded when known.
 
 Acceptance criteria at this point: 1, 6 and 8 met; 2 met except that Finish's start of DSpatch was offered and declined in every trial, not exercised, and that an installation on a machine with Bitdefender has no uninstaller file; 5's INSTALL.md part met, the uninstaller's own run pending the runner; 3, 4 and 7 pending the runner and Niclas's own sign-in by hand. Status Review: Niclas assesses the installer himself, and decides on the Bitdefender remedies above.
+
+Run 42531490168 on main (37cdb3d), the Windows runner, 8 November 2026: the wizard passed every page as before; the installation checks passed with the uninstaller present (no Bitdefender there); the installed client started and started its standalone host from the bundled win32 package under the trial's data folder (node.exe from host-installations, "project host ready"); the window then read "The host is another build" with Restart host instead of "On this computer", and the trial stopped there, as that check should. Cause, shown locally: the build identity (app/scripts/build-identity.mjs) hashed raw file bytes; the Windows runner checks out with CRLF and the Linux runner with LF, so the client built on Windows and the bundled host built on Linux from one commit carried different digests (ca2c1fdc and 14f8c517). With line endings normalised before hashing, a CRLF export, an LF copy of it and this CRLF checkout all give 14f8c5176827d4ed, the digest the published host packages already have. Fixed in e5866b9 on main; v0.1.10's Windows client shows the wrong line and a Restart host that brings the same host back, recorded as a known issue in its release notes on GitHub. The following manual run of the package workflow carries the fix and is meant to show the rest of the window trial: the line "On this computer", the upgrade with client and host running, Restart host, the uninstall and the dock, zoom and profile trials.
 <!-- SECTION:NOTES:END -->
