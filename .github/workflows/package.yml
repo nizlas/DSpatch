@@ -107,6 +107,9 @@ jobs:
       - name: The install trial in real windows
         shell: pwsh
         working-directory: app
+        env:
+          # The runner's desktop is nobody's: the wizard driver may press with the keyboard when needed.
+          DSPATCH_TRIAL_KEYBOARD: '1'
         run: |
           $a = (Get-ChildItem release/setup-a -Filter 'DSpatch Setup *.exe' | Select-Object -First 1).FullName
           $b = (Get-ChildItem release/setup-b -Filter 'DSpatch Setup *.exe' | Select-Object -First 1).FullName

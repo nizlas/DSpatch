@@ -1,6 +1,6 @@
 # Installing DSpatch and working on another machine
 
-*Status: releases publish the Debian package for Linux x64; see [what has been shown](#what-has-been-shown). No current release has a Windows installer, and from v0.1.4 none has a Windows host package: on Windows, DSpatch is run from the repository, and a Windows machine cannot be connected to over SSH from a released client.*
+*Status: releases publish the Debian package for Linux x64; see [what has been shown](#what-has-been-shown). From v0.1.10, published as a pre-release, they also carry the Windows installer and the Windows host package (DSP-182), tried as described under [Windows](#windows). Releases before it have neither: with them, DSpatch on Windows is run from the repository, and a Windows machine cannot be connected to over SSH.*
 
 ## For a person using DSpatch
 
@@ -10,7 +10,7 @@
 sudo apt install ./dspatch_VERSION_amd64.deb
 ```
 
-**Windows x64:** run `DSpatch-Setup-VERSION.exe`. It installs for your user and needs no administrator rights. The installer is not signed yet, so Windows warns about it.
+**Windows x64:** run `DSpatch-Setup-VERSION.exe`. It installs for your user and needs no administrator rights. The installer is not signed yet, so Windows warns about it; the pages, the warnings and what an upgrade and an uninstall do are under [Windows](#windows).
 
 Start DSpatch from the menu. To work on this computer, choose an agent and open a project. The Linux installer includes the standalone host and its own Node runtime. DSpatch finds a running host or starts one on authenticated loopback. Closing the window disconnects without stopping started work; reopening follows the same host and history. No login-time service is installed.
 
@@ -58,6 +58,22 @@ Enforce does not stop all of DSpatch's heavy work under RED. What remains:
 - Review jobs, the chat's own snapshots and other host work are not governed.
 - Commands a provider already runs with its own shell tool are not paused, slowed or ended, and can go on loading the machine. Set the mode with `DSPATCH_RESOURCE_GOVERNOR=off|observe|enforce` when the host starts, or with `{"mode": "enforce"}` in a file `resource-governor.json` in DSpatch's data folder; the environment wins. The same file can change the timings and thresholds (`sampleEveryMs`, `escalateAfterMs`, `recoverAfterMs`, `yellowPauseMs`, `maxWaitMs`, `thresholds.yellow.*`, `thresholds.red.*`, as named in `app/src/main/resource-governor.ts`). A value it does not understand is ignored and named in the host's log.
 
+<a id="windows"></a>
+
+## Windows
+
+**Installing.** `DSpatch-Setup-VERSION.exe` installs for your user alone and asks for no administrator rights. Its pages are the folder, `%LOCALAPPDATA%\Programs\DSpatch` unless you choose another; **Shortcuts**, where a Start menu entry is always made and a desktop shortcut only if you tick it; the installation; and a finish page that offers to start DSpatch. Afterwards Apps and features lists *DSpatch VERSION* with its uninstaller. For a script, `DSpatch-Setup-VERSION.exe /S /D=C:\path\DSpatch` installs silently into that folder (`/D=` last and unquoted, a path without spaces that contains "DSpatch").
+
+**The installer is not signed, and what Windows shows about that differs between machines**: the edition, the SmartScreen settings, the browser and the security products all have a say. On the one machine it has been tried on, Niclas's Windows 11 Home with Bitdefender (8 November 2026): a setup file that carries a browser's download mark opens with the attachment manager's **Open File - Security Warning** ("The publisher could not be verified"), where *Run* goes on and *Cancel* ends it. SmartScreen's **Windows protected your PC** page, answered with *More info* and *Run anyway*, is what Microsoft documents for an unrecognised application; it was not reached there, because the trial cancels the first dialog. Edge and Chrome may first hold the download itself as uncommon. On that machine Bitdefender's Advanced Threat Control reported `ATC.Malicious` for the uninstaller, `Uninstall DSpatch.exe`, the first time it ran silently (an NSIS uninstaller copies itself to the temp folder and runs from there, then asks PowerShell which DSpatch processes run from the folder), quarantined it, and from then on blocked every uninstaller the installer tried to write, of two different builds. In the wizard that shows as NSIS's dialog *Error opening file for writing: …\Uninstall DSpatch.exe* with *Abort*, *Retry* and *Ignore*: *Ignore* finishes the installation without an uninstaller, so Apps and features cannot remove it later and [removing by hand](#removing-by-hand) is the way; a silent install skips the file without a word. The program itself ran. Which of these a person meets is not known in advance. Signing is a later decision, recorded in DSP-182.
+
+**Upgrading.** Run the newer setup. It closes a DSpatch that is running from the folder it replaces (it asks, "DSpatch is running. Click OK to close it."; a silent install answers OK), runs the previous version's uninstaller with the data kept, and installs over. `%APPDATA%\DSpatch` is untouched: conversations, reviews, provider support, settings, window layout and zoom. The vendors' logins are outside DSpatch's folders. The host the closed window left running is the older build, so the next window reads *Restart needed to finish updating* and **Restart host** finishes the update, as described above.
+
+**Uninstalling.** Apps and features, or `Uninstall DSpatch.exe` in the program folder (`/S` for silent), removes the program folder, the Start menu entry, a desktop shortcut it made and the installer's two registry keys. It closes only what runs from the program folder, so a standalone host, which runs from the data folder, goes on. It leaves `%APPDATA%\DSpatch` and the logins where they are, so a later install finds them. To take the data away too, delete `%APPDATA%\DSpatch`, and `%LOCALAPPDATA%\dspatch-host` if an older host left it; the uninstaller does the first when run with `--delete-app-data` (electron-builder's option, read in its template, not tried).
+
+<a id="removing-by-hand"></a>
+
+**Removing by hand,** when the uninstaller is gone: end DSpatch, delete `%LOCALAPPDATA%\Programs\DSpatch` (or the folder you chose), delete `DSpatch.lnk` from `%APPDATA%\Microsoft\Windows\Start Menu\Programs` and from the desktop, and delete the installer's two keys under `HKEY_CURRENT_USER\Software`: `Microsoft\Windows\CurrentVersion\Uninstall\ae725ec0-0388-59e4-822d-e71b68d747c1`, which is the Apps and features entry, and `ae725ec0-0388-59e4-822d-e71b68d747c1`, which records the folder; the id is the one electron-builder derives from DSpatch's application id. The data folder is yours to keep or to delete as above.
+
 ## How it fits together
 
 - **Client.** Electron with the built app and its production dependencies. No `asar`: provider runtimes must be real files. `resources/bundled/` holds the loops, their graphs and roles, the pinned provider lists and `host-manifest.json`. It is read-only and replaced by an update; a person's own loops are in their projects and are not touched.
@@ -85,11 +101,11 @@ node scripts/build-host-package.mjs --platform win32
 npm run package:client -- --linux deb --x64
 ```
 
-The host packages come first, because the client carries their manifest. Everything lands in `app/release/`. Build from a clean commit: the manifest binds packages to it. A Windows installer needs Windows or Wine, and Windows dependencies: on Linux, build it from a copy of `app/` after `npm ci --os=win32 --cpu=x64 --ignore-scripts`, or it carries the Linux Copilot runtime; `.github/workflows/package.yml` builds everything from one commit by hand and publishes nothing.
+The host packages come first, because the client carries their manifest. Everything lands in `app/release/`. Build from a clean commit: the manifest binds packages to it. The Windows installer is built on Windows: `npm run package:host -- --platform win32`, then `npm run package:client -- --win nsis --x64`, from `app/` in PowerShell or cmd (Git for Windows' tar and Windows' own are both handled). Built on Linux it carries the Linux Copilot runtime. `.github/workflows/package.yml` builds everything from one commit, and publishes only from a tag.
 
 **A release.** Commit the version, build everything from that commit, run `node scripts/stage-release.mjs`, which gathers the files and `SHA256SUMS` into `release/stage-v<version>` and refuses anything else, and try it with `node scripts/trial-package/release.mjs --stage`. Publish that folder under the tag `v<version>`, with `--prerelease` for a test build. The client asks for exactly its own tag, never `latest`. Then `release.mjs --published` tries the real release.
 
-**Building on GitHub.** The `package` workflow keeps artifacts when started manually, including a Windows installer build. Pushing a `v*` tag builds the Linux standalone host package and the `.deb` from the tagged commit (the Windows host package and the Windows installer only on a manual run), checks the package version against the tag, stages those artifacts with `SHA256SUMS` using `stage-release.mjs --linux-only`, and publishes them with `docs/releases/<tag>.md` as release notes. Linux publication does not depend on the manual Windows installer job. Tags containing a hyphen are published as prereleases. Only the publication job receives write permission. Build success does not replace the packaged or manual trials above; release notes state outstanding verification.
+**Building on GitHub.** The `package` workflow builds the Linux host package, the `.deb`, the Windows host package and, on a Windows runner, the Windows installer from one commit, on manual runs and on `v*` tags alike. A manual run keeps them as artifacts and also tries the installer on a Windows runner (the `windows-install-trial` job: the wizard, the first start, an upgrade and the uninstall through `scripts/install-trial.mjs`, then the zoom, dock and profile trials against the installed client). A tag build checks the package version against the tag, stages everything with `SHA256SUMS` through `stage-release.mjs`, and publishes it with `docs/releases/<tag>.md` as release notes. Tags containing a hyphen are published as prereleases. Only the publication job receives write permission. Build success does not replace the packaged or manual trials; release notes state outstanding verification.
 
 The `linux-verify` workflow, started by hand, runs the Linux checks of a release candidate on the same runners: the fast, host, review, chat, presentation and provider test groups, and the zoom trial in real Xvfb windows (`node scripts/zoom-trial.mjs`). Started with `published`, it instead tries the published release of the checked-out version in clean containers (`release.mjs --published`) and an upgrade to it from the previous release (`node scripts/trial-package/upgrade.mjs --from v<previous>`), which installs that release, uses it, installs this one over it, meets the host the closed window left running, ends it, and checks that the conversation, the choices and a loop of the person's own are still there.
 
@@ -112,6 +128,8 @@ node scripts/trial-package/run.mjs
 ```
 
 The real .deb and host package on two clean Ubuntu containers without Node, a real sshd and a real window on Xvfb, with a SIMULATED provider on the host. Nothing of the machine it runs on is touched. Evidence lands in `app/release/trial/`.
+
+**The Windows install trial** (DSP-182) tries the real installer on Windows: `node scripts/install-trial.mjs --setup "release/DSpatch Setup VERSION.exe" --upgrade "<a newer setup>"`, with `--no-windows` when the desktop is in use. It refuses to run where DSpatch is installed or running, installs into `%LOCALAPPDATA%\Programs\DSpatch-trial` with a data folder of its own and the SIMULATED provider, drives the wizard through UI Automation, and records each step in `release/trial-install/<run>/results.json` with screenshots. The person's own `%APPDATA%\DSpatch` is checked unchanged at the end. A missing uninstaller, a security product's doing, is recorded as a finding and the installation removed by hand as the Windows section says.
 
 <a id="what-has-been-shown"></a>
 
@@ -143,9 +161,13 @@ Read on 1 November 2026. This is a record of sources, not legal advice, and the 
 
 The packaged trial's table is in [DSP-153](../backlog/tasks/dsp-153%20-%20Install-DSpatch-and-connect-to-another-machine-over-SSH.md). Agent runs use a simulated provider and containers; they do not show what a real provider does, nor how the .deb behaves under Ubuntu's AppArmor on a real desktop. What each release had run on Linux before and after publication is in its notes under `docs/releases/`.
 
-## Windows, to be tried on a Windows machine
+## Windows: what has been shown, and what remains
 
-1. Run the installer without administrator rights: Start menu entry, start, uninstall.
+Shown on 8 November 2026 by `scripts/install-trial.mjs` on Niclas's Windows 11 Home machine, with the trial's own install folder and data folder and his own data untouched. Silently (`--no-windows`): the per-user install without administrator rights into a chosen folder; the win32 Copilot runtime and the win32 host package inside it; the version resource; the Start menu entry and no desktop shortcut; the uninstall entry and the installer's key with the folder and `/currentuser`; an upgrade from 0.1.9 to a 0.1.10 build over it with the data folder byte for byte as before; removal by hand leaving the data; and Bitdefender blocking the uninstaller of both builds, as the [Windows](#windows) section says. In real windows: the attachment manager's warning for a copy carrying the download mark, the wizard's folder page with the default folder and a changed folder, the Shortcuts page unchecked by default, and after Install the file-write dialog for the uninstaller. On GitHub's Windows runner (Windows Server 2025, no Bitdefender), the `package` workflow's manual `windows-install-trial` job built the installer with both host packages and an upgrade one patch version up, showed the same warning for the downloaded copy and reached the same wizard pages; its later steps, the finish page, the first start, the host through upgrade and uninstall and the dock, zoom and profile trials against the installed client, had not completed in a run when v0.1.10 was tagged, because of defects in the trial's own driver. What each later run showed is recorded in DSP-182.
+
+Still to be tried by hand on a Windows machine:
+
+1. The wizard and the unsigned-installer warnings as they appear to you, from a real download; the Start menu entry; the start.
 2. Open a local project; check that the loops are offered and Copilot's runtime starts.
 3. Connect to a Linux machine with a key, then with a password: fingerprint question, status line, tunnel. Windows' `ssh` must support `SSH_ASKPASS` through a `.cmd`, and older versions lack `SSH_ASKPASS_REQUIRE`; this is the first thing to look at if no question appears.
 4. Cut the connection during a turn (stop `ssh.exe`): it comes back, and nothing is sent twice.

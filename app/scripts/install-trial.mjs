@@ -8,7 +8,9 @@
  *
  * With --no-windows nothing opens a window or sends input: the installer runs silently (/S), the
  * client is not started, and the steps that need the desktop are recorded as not run. For the
- * machine's own user that means a game or other work in the foreground is left alone.
+ * machine's own user that means a game or other work in the foreground is left alone. In real
+ * windows nothing is typed either, unless DSPATCH_TRIAL_KEYBOARD=1 lets the wizard driver press a
+ * button with Enter when UI Automation does not deliver the press (set on the CI runner).
  *
  * What it does, in order, each step checked and recorded in results.json:
  * 1. Refuses to run where DSpatch is installed or running for this user, snapshots %APPDATA%\DSpatch
@@ -380,7 +382,10 @@ async function main() {
     check('the setup installed silently into the chosen folder without administrator rights', installed.status === 0 && fs.existsSync(path.join(installDir, 'DSpatch.exe')), `exit ${String(installed.status)}`);
   } else {
     stage = 'the wizard';
-    const wizardResult = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(scriptDir, 'install-trial', 'wizard.ps1'), '-Setup', setup, '-InstallDir', installDir, '-Evidence', evidence], { encoding: 'utf8', timeout: 400_000 });
+    // DSPATCH_TRIAL_KEYBOARD=1 lets the driver press a button with the keyboard when UI Automation's Invoke is not
+    // delivered (the wizard brought to the front); without it nothing is typed, so a desktop in use is left alone.
+    const keyboard = process.env.DSPATCH_TRIAL_KEYBOARD === '1' ? ['-Keyboard'] : [];
+    const wizardResult = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(scriptDir, 'install-trial', 'wizard.ps1'), '-Setup', setup, '-InstallDir', installDir, '-Evidence', evidence, ...keyboard], { encoding: 'utf8', timeout: 600_000 });
     console.log(wizardResult.stdout.trim());
     const wizardSteps = fs.existsSync(path.join(evidence, 'wizard.json')) ? JSON.parse(fs.readFileSync(path.join(evidence, 'wizard.json'), 'utf8')) : [];
     for (const step of Array.isArray(wizardSteps) ? wizardSteps : [wizardSteps]) results.push({ stage, ...step });
