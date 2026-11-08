@@ -321,7 +321,72 @@ function lineWords(start: number, end: number): string {
   return start === end ? `line ${String(start)}` : `lines ${String(start)}–${String(end)}`;
 }
 
+/** A proposed step as the simulated provider writes it; `details` only with a profile (DSP-181). */
+interface SimStep {
+  readonly title: string;
+  readonly summary: string;
+  readonly body: string;
+  readonly details?: string;
+  readonly places: unknown[];
+}
+
+interface SimWalk {
+  readonly kind: 'walk' | 'reading';
+  readonly title: string;
+  readonly question: string;
+  readonly purpose: string;
+  readonly steps: SimStep[];
+}
+
+/**
+ * DSP-181, SIMULATED: a step's explanation in the profile the prompt asks for, over the same
+ * places and facts as the legacy text. The three profiles differ in selection and length; a
+ * real agent writes from the code. Nothing but "body" and "details" changes with the profile.
+ */
+function stepExplanation(
+  profile: string | null,
+  legacyBody: string,
+  filePath: string,
+  range: { readonly side: 'base' | 'target'; readonly start: number; readonly end: number },
+  definition: { readonly name: string; readonly path: string; readonly start: number; readonly end: number; readonly returnsNull: boolean } | null,
+): { readonly body: string; readonly details?: string } {
+  if (profile === null) {
+    return { body: legacyBody };
+  }
+  const where = `\`${filePath}\` lines ${String(range.start)}–${String(range.end)}`;
+  const change = range.side === 'base' ? 'were removed' : 'were added or changed';
+  const call = definition === null ? null : `\`${definition.name}\``;
+  const nullNote = definition?.returnsNull === true ? ` It can return \`null\`, and the caller decides what that means.` : '';
+  if (profile === 'Essentials') {
+    return {
+      body: `SIMULATED Essentials: the lines in ${where} ${change}${call === null ? '' : `, and they call ${call}`}.${nullNote}`,
+      details: `SIMULATED deepening (Essentials): what each of the lines in ${where} does, in order${call === null ? '' : `, and where ${call} is defined`}.`,
+    };
+  }
+  if (profile === 'Teacher') {
+    return {
+      body:
+        `SIMULATED Teacher. First the idea: a change to a file is read as a difference between two versions, From and To, and a walk follows what the changed lines do rather than listing them. ` +
+        `A call is where one function hands work to another; following it shows where a value comes from. ` +
+        `Think of reading a recipe step that says "make the sauce": the sauce has its own recipe elsewhere, and you turn to it to understand the step.\n\n` +
+        `Now the code: the lines in ${where} ${change}.${call === null ? '' : ` They call ${call}, which is defined in \`${definition?.path ?? ''}\` and is not touched by this change.`}${nullNote} ` +
+        `The consequence is that the behaviour at these lines now follows${call === null ? ' this code alone' : ` what ${call} returns`}.`,
+      details: `SIMULATED deepening (Teacher): in the same plain words, each line of ${where} and the case${call === null ? ' the change does not cover' : ` where ${call} gives nothing back`}.`,
+    };
+  }
+  return {
+    body:
+      `SIMULATED Standard: the lines in ${where} ${change}. ` +
+      (call === null ? 'Nothing else is reached from these lines, so their effect is local to this file. ' : `They call ${call}, defined in \`${definition?.path ?? ''}\` lines ${String(definition?.start ?? 0)}–${String(definition?.end ?? 0)}, which this change does not touch. `) +
+      `The value the lines work with comes from the caller of this code and is handed on unchanged.${nullNote} ` +
+      'A real agent explains the reason for the change from the code; this text only shows the shape of a Standard explanation.',
+    details: `SIMULATED deepening (Standard): the mechanism step by step in ${where}, the special case${call === null ? '' : ` of ${call} giving nothing back`}, and the test that covers it.`,
+  };
+}
+
 function prepareWalks(prompt: string, reader: Reader): string {
+  // DSP-181: the profile the step explanations are written in, when the person chose one before preparing.
+  const profile = /^## How to explain the steps \((Essentials|Standard|Teacher)\)$/m.exec(prompt)?.[1] ?? null;
   const changed = rangesAfter(prompt, '## Changed lines (machine-readable)');
   const byFile = new Map<string, SimRange[]>();
   for (const range of changed) {
@@ -334,7 +399,7 @@ function prepareWalks(prompt: string, reader: Reader): string {
     const folder = path.posix.dirname(filePath);
     dataFolders.set(folder, [...(dataFolders.get(folder) ?? []), filePath]);
   }
-  const walks = kept.flatMap((filePath) => {
+  const walks: SimWalk[] = kept.flatMap((filePath): SimWalk[] => {
     const ranges = byFile.get(filePath) ?? [];
     if (isData(filePath)) {
       const folder = path.posix.dirname(filePath);
@@ -423,10 +488,7 @@ function prepareWalks(prompt: string, reader: Reader): string {
               note: `SIMULATED: ${inContext.repository} is another repository of the workspace, read as context at the commit the analysis recorded. It is not under review.`,
             });
           }
-          return {
-            title: `${range.side === 'base' ? 'Removed' : 'Changed'} lines ${String(range.start)}–${String(range.end)}`,
-            summary: `${range.side === 'base' ? 'The From version had' : 'The To version has'} these lines in ${base(filePath)}.`,
-            body:
+          const legacyBody =
               `**What happens:** ${range.side === 'base' ? 'these lines were removed' : 'these lines were added or changed'} in \`${filePath}\`.\n\n` +
               (inContext === null
                 ? ''
@@ -437,7 +499,11 @@ function prepareWalks(prompt: string, reader: Reader): string {
                   (definition.returnsNull ? ' It can return `null`.' : '') +
                   '\n\n') +
               `**Why:** a simulated answer cannot say; a real agent explains the reason from the code.\n\n` +
-              `**Notice:** step ${String(index + 1)} of this file.`,
+              `**Notice:** step ${String(index + 1)} of this file.`;
+          return {
+            title: `${range.side === 'base' ? 'Removed' : 'Changed'} lines ${String(range.start)}–${String(range.end)}`,
+            summary: `${range.side === 'base' ? 'The From version had' : 'The To version has'} these lines in ${base(filePath)}.`,
+            ...stepExplanation(profile, legacyBody, filePath, range, definition),
             places,
           };
         }),

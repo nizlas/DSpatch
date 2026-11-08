@@ -91,6 +91,11 @@ export interface ProfileWords {
   readonly olderInstructions: (version: number) => string;
   /** The question a profile's alternative is asked with, as it reads in the discussion. */
   readonly presentQuestion: (name: string) => string;
+  /** DSP-181: the walk's own explanations were written in this profile. */
+  readonly preparedWith: (name: string) => string;
+  readonly walkOwnShown: string;
+  readonly showWalkOwn: string;
+  readonly walkOwn: (name: string) => string;
 }
 
 export interface ReviewWords {
@@ -370,6 +375,10 @@ const sv: ReviewWords = {
     regenerate: (name) => `Generera om förklaringen i ${name}`,
     olderInstructions: (version) => `Skriven med en äldre version av instruktionerna (${String(version)}).`,
     presentQuestion: (name) => `Förklara det här steget i profilen ${name}.`,
+    preparedWith: (name) => `${name} · skriven med walken`,
+    walkOwnShown: 'Walkens egen förklaring visas under tiden.',
+    showWalkOwn: 'Visa walkens egen förklaring',
+    walkOwn: (name) => `Walkens egen förklaring (${name})`,
   },
   discussion: {
     empty: 'Fråga om koden du tittar på. Inget skickas förrän du trycker Enter.',
@@ -672,6 +681,10 @@ const en: ReviewWords = {
     regenerate: (name) => `Regenerate the ${name} explanation`,
     olderInstructions: (version) => `Written with an earlier version of the instructions (${String(version)}).`,
     presentQuestion: (name) => `Explain this step in the ${name} profile.`,
+    preparedWith: (name) => `${name} · written with the walk`,
+    walkOwnShown: 'The walk\'s own explanation is shown meanwhile.',
+    showWalkOwn: 'Show the walk\'s own explanation',
+    walkOwn: (name) => `The walk\'s own explanation (${name})`,
   },
   discussion: {
     empty: 'Ask about the code you are looking at. Nothing is sent until you press Enter.',

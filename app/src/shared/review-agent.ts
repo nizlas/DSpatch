@@ -40,7 +40,7 @@ import {
   type StepQuestion,
 } from './review-pair';
 
-import { GROUNDING_RULES } from './presentation-profiles';
+import { GROUNDING_RULES, walkExplanationSection, type PresentationProfile, type PublicProfile } from './presentation-profiles';
 import { TASK_HEADER } from './review-task';
 
 export { TASK_HEADER };
@@ -261,8 +261,11 @@ export const FORM_RULES = [
   'Never invent a direction or a call chain to fit the walk form, and do not add steps only to touch every changed line. Changed lines no item covers are shown to the person as not covered; that is better than an empty step.',
 ] as const;
 
-/** Ask for code walks and readings over the pair. */
-export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, language: 'sv' | 'en'): string {
+/**
+ * Ask for code walks and readings over the pair. With a profile (DSP-181), the steps'
+ * explanations are written in it, so the walk reads in that profile with no further call.
+ */
+export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, language: 'sv' | 'en', profile: PublicProfile | null = null): string {
   return [
     `${TASK_HEADER} prepare-walks`,
     '',
@@ -284,6 +287,7 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
     '',
     `## How to write (language: ${language === 'sv' ? 'Swedish' : 'English'})`,
     ...WRITING_RULES.map((rule) => `- ${rule}`),
+    ...(profile === null ? [] : ['', walkExplanationSection(profile)]),
     '',
     '## Answer format',
     'When you have examined what you need, answer with one JSON object in a ```json fence and nothing else:',
@@ -304,6 +308,7 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
                 summary: 'One or two sentences: what happens here.',
                 body: 'The explanation in Markdown: what happens, why, what to notice in the code. Short paragraphs, bullets where they help.',
                 why: 'Optional: the consequence, if it needs saying apart from the body.',
+                details: 'Optional: the deepening the person opens with Show more, in Markdown. Empty when there is nothing to add.',
                 places: [
                   {
                     label: 'What this place is',
@@ -862,6 +867,8 @@ export interface ProposedStep {
   readonly summary: string;
   readonly body: string;
   readonly why: string;
+  /** DSP-181: the deepening behind Show more; `''` when the agent wrote none. */
+  readonly details: string;
   readonly places: readonly ProposedPlace[];
   /** DSP-175: places in context repositories, apart from `places`. Absent when there are none. */
   readonly contextPlaces?: readonly ProposedContextPlace[];
@@ -969,7 +976,7 @@ export function readWalksAnswer(raw: unknown): { readonly walks: ProposedWalks |
             : `${stepWhere} has only places in context repositories; a step also needs a place in base/ or target/.`,
         );
       }
-      steps.push({ title, summary: text(stepRaw['summary']), body, why: text(stepRaw['why']), places, ...(contextPlaces.length === 0 ? {} : { contextPlaces }) });
+      steps.push({ title, summary: text(stepRaw['summary']), body, why: text(stepRaw['why']), details: text(stepRaw['details']), places, ...(contextPlaces.length === 0 ? {} : { contextPlaces }) });
     });
     if (steps.length === 0) {
       problems.push(`${where} has no steps.`);
@@ -1231,6 +1238,8 @@ export function definitionFrom(
   pair: RevisionPairIdentity,
   heading: string,
   provenance: string,
+  /** DSP-181: the profile the step explanations were written in, and the instruction version. */
+  presentation: { readonly profile: PresentationProfile; readonly version: number } | null = null,
 ): Record<string, unknown> {
   return {
     format: 'dspatch-review/2',
@@ -1240,6 +1249,7 @@ export function definitionFrom(
     target: pair.target,
     teachingMode: 'Generated',
     provenance: lang2(provenance),
+    ...(presentation === null ? {} : { presentation: { profile: presentation.profile, version: presentation.version } }),
     // The summary first; the background only on request, so Show more appears only when
     // there is more (in Niclas's trial both fields held the same text).
     overviewSummary: lang2(walks.overview),
@@ -1271,6 +1281,7 @@ export function definitionFrom(
           summary: lang2(step.summary || step.title),
           body: lang2(step.body),
           ...(step.why === '' ? {} : { why: lang2(step.why) }),
+          ...(step.details === '' ? {} : { details: lang2(step.details) }),
           places: step.places.map((place, placeIndex) => ({
             id: `P${String(placeIndex + 1)}`,
             label: lang2(place.label),

@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-08 17:15'
-updated_date: '2026-11-08 17:47'
+updated_date: '2026-11-08 18:20'
 labels:
   - ux
   - review
@@ -48,6 +48,7 @@ Verification uses neutral, invented examples only: a trivial change, a normal ch
 - [x] #7 All profiles render the same Markdown with the same typography in Step and Discussion, docked and floating; zoom, selection and Ask, scroll following and window layout keep working
 - [x] #8 Saved profile choice, the ~500 ms navigation delay, latest-step-wins, late answers, cache and explicit retry are preserved; opening alone starts no model call; new instructions and results are versioned and older alternatives can be regenerated explicitly
 - [ ] #9 Tests with neutral examples (trivial, normal with default and fallback, complex across several places, Teacher explaining an unfamiliar tool) and window trials in an isolated profile with the simulated provider are run, with what they prove and do not prove stated
+- [x] #10 A profile chosen before the walks are prepared is written into every step's explanation by the ordinary walk generation, with its deepening behind Show more; opening and navigating that walk in its profile asks for nothing; the profile changes how the steps are explained and nothing else, so the overview, walk and step titles, places and coverage are the same whatever the profile
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -85,4 +86,16 @@ Verification, Windows: typecheck clean. Review group 266 of 267 passed: the one 
 Not run: the profile window trial (scripts/profile-trial.mjs). This machine has no Xvfb and running it here would use the real desktop; a Linux CI run needs a pushed branch, which this task excludes. The trial's expectations were updated to the new model and its navigation stages to DSP-180's generation on arrival (it had not run since DSP-180 either); the first run may need adjusting.
 
 Remaining limits: real-model quality and the actual lengths are unverified until Niclas reads real reviews; Standard as the default means a new walk asks for each visited step's explanation once it settles (the original explanation shows meanwhile), where Original asked for nothing; the Step tab's action labels (Tell me more, Explain more simply, Show more) stay English in the Swedish window as before, names, descriptions, the chooser and the status line follow the language; a saved Original choice now reads as Standard; thresholds such as the settle delay are DSP-180's.
+
+Correction and extension, 8 November 2026 (later the same day, Windows). The earlier limit "Standard as the default means a new walk asks for each visited step's explanation once it settles" described the alternative path only and is withdrawn: Niclas's requirement is that the profile is chosen before the walks are prepared and that such a walk is read in its profile with no further call.
+
+Where the profile is chosen before generation: in the review's panel, whose chooser (Explanations) now shows before any walk exists (it was hidden while there were none), and in the diff window's agent picker beside the agent and model when Prepare code walks is pressed (`AgentPicker` has an Explanations select; `PairReview` sends `presentation: { profile }` with the walks request). Both read and write the computer's last choice (the storage key the panel uses), so the panel's choice and the picker's are one.
+
+The path: `AgentJobRequestInput.presentation.profile` → the host validates it in `startChecked` and stores `presentation: { profile, version }` on the job → `walksPrompt(material, folder, language, profile)` adds one section, "How to explain the steps (<profile>)" (`walkExplanationSection`), with the grounding rules, the profile's manner, the length guideline and the rule for the step's `details` field, and says explicitly that it decides how the steps are explained and nothing else → `readWalksAnswer` reads each step's `details` → `definitionFrom` writes `presentation: { profile, version }` and the steps' `details` into the definition, and the provenance names the profile → `parseReviewDefinition` reads them (`ReviewDefinition.presentation`, `WalkStep.details`), and `stepContentHash` includes `details`.
+
+Reading without a call: the walk window takes the definition's profile as the walk's own (`walkProfile`); the chooser opens on it unless the person chose otherwise for this walk; `wantsAlternative(walkProfile, profile, done, pending)` is false for the walk's own profile, so navigation asks for nothing; the step's own text is shown with its deepening behind Show more, and the status line says "<Profile> · written with the walk" with an explicit Regenerate. Another profile asks for an alternative on arrival as DSP-180 decided. Tell me more, Explain more simply and a follow-up in the walk's own profile quote the prepared explanation as what was shown. Older walks have no profile: their prepared text is the legacy Original, and every public profile is an alternative, as before.
+
+What stays profile-free: the walk list, walk titles and purposes, step titles and summaries in the left column, the change's summary and background, the places and the coverage. Verified in `presentation-walks.test.ts` with the simulated provider: the same walks, titles, questions, purposes, steps, summaries and places for Essentials, Standard, Teacher and none, only `body` and `details` differ; the walk prompt with a profile equals the plain one once the section is removed (`review-agent-jobs.test.ts`); the definition round-trips the profile and the details, an unknown profile reads as none, the content hash sees the details, the job record keeps the profile; `wantsAlternative` by profile.
+
+Verification, Windows: typecheck clean; review group 273 of 274 passed (the same pre-existing review-context.test.ts path-separator failure); presentation group 317 passed. The profile trial's expectations were updated again (the walks prepared in Standard are read without a call); the trial is still not run.
 <!-- SECTION:NOTES:END -->

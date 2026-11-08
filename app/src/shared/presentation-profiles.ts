@@ -380,3 +380,35 @@ export function profileInstructionText(profile: PresentationProfile): string {
     ...bullets(FOLLOW_UP_RULES),
   ].join('\n');
 }
+
+// --- The walk generator -------------------------------------------------------------------------
+
+/** For the walk generator's JSON: what a step's `details` field holds. */
+export const WALK_DETAILS_RULE =
+  '"details" is the deepening the person opens with Show more, for a step with real depth to add: complementary mechanics, special cases, longer evidence, more code references, in the same manner as the explanation. Leave it empty when there is nothing to add, and do not repeat the explanation in it.';
+
+/**
+ * The walk generator's section when the person chose a profile before the walks are prepared
+ * (DSP-181): every step's explanation is written in that profile, so the walk opens and is read
+ * in it with no further call. It decides how the steps are explained and nothing else: which
+ * walks, readings, steps and places are produced, the titles, questions and purposes, and the
+ * change's own summary and background follow the rest of the prompt and stay concise.
+ */
+export function walkExplanationSection(profile: PublicProfile): string {
+  const definition = PROFILES[profile];
+  return [
+    `## How to explain the steps (${definition.promptName})`,
+    `The person reads the walks in the ${definition.promptName} profile. Write each step's "summary", "body", "why" and "details" for that reader. This section decides how the steps are explained, nothing else: which walks, readings, steps and places you produce, their titles, questions and purposes, and the change's own summary and background follow the sections above and stay concise, whatever the profile.`,
+    `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`,
+    '',
+    "Every step's explanation:",
+    ...bullets(GROUNDING_RULES),
+    '',
+    `${definition.promptName}:`,
+    ...bullets(definition.manner),
+    `- Length: ${definition.guideline}`,
+    ...bullets(LENGTH_GUIDELINE_RULES),
+    '',
+    `- ${WALK_DETAILS_RULE}`,
+  ].join('\n');
+}

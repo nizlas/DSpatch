@@ -63,6 +63,7 @@ import {
 } from '../shared/review-pair';
 import { TokensView } from './review-code';
 import { AgentPicker, type AgentChoice } from './AgentPicker';
+import { useDefaultProfile } from './presentation-choice';
 import type { SelectionQuote } from '../shared/review-discussion';
 import type { PanelState } from '../shared/review-pair';
 import { rangeInCell } from './walk-selection';
@@ -963,6 +964,8 @@ function DiffReview({
       .catch((error: unknown) => ({ ok: false, note: requestFailure(error) }))
       .then((answer) => setWalksNote(answer.ok ? '' : answer.note));
   };
+  // DSP-181: the profile a prepared walk's explanations are written in: the computer's last choice, kept with the review's panel.
+  const [explanationsIn, chooseExplanationsIn] = useDefaultProfile();
   const startJob = async (request: AgentJobRequestInput): Promise<boolean> => (await sendJob(request)) !== null;
   /** The one way this window starts agent work; a refusal or a failed request is said. */
   const sendJob = async (request: AgentJobRequestInput): Promise<AgentJob | null> => {
@@ -1363,9 +1366,12 @@ function DiffReview({
             action="Prepare code walks"
             busy={false}
             testId="pair-walks-agent"
+            explanations={{ profile: explanationsIn, onChoose: chooseExplanationsIn }}
             onCancel={() => setPreparing(false)}
             onStart={(choice) => {
-              void startJob({ kind: 'walks', ...choice }).then((ok) => {
+              // DSP-181: the step explanations are written in the chosen profile, so the walk
+              // opens and is read in it with no further call.
+              void startJob({ kind: 'walks', ...choice, presentation: { profile: explanationsIn } }).then((ok) => {
                 if (ok) {
                   setPreparing(false);
                 }

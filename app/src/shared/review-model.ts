@@ -134,6 +134,8 @@ export interface WalkStep {
   readonly body: LocalText;
   /** Why it matters. */
   readonly why: LocalText;
+  /** DSP-181: the deepening behind Show more, when the generator wrote one. Absent in older definitions. */
+  readonly details?: LocalText;
   readonly places: readonly Place[];
   readonly evidence: readonly StepEvidence[];
   readonly evidenceRefs: readonly CodeReference[];
@@ -228,6 +230,12 @@ export interface ReviewDefinition {
   readonly target: string;
   /** How the prepared text was written. Information, not a control. */
   readonly teachingMode: string;
+  /**
+   * DSP-181: the presentation profile the step explanations were written in, with the
+   * instruction version, when the walks were prepared in one. Absent in older definitions,
+   * whose prepared text is the legacy Original.
+   */
+  readonly presentation?: { readonly profile: PresentationProfile; readonly version: number };
   /** Where the material came from and its limits. */
   readonly provenance: LocalText;
   /** What the change as a whole is for: the sum of the walks. Markdown. */
@@ -443,6 +451,12 @@ export function parseReviewDefinition(raw: unknown): {
     }
   }
   const teachingMode = typeof raw['teachingMode'] === 'string' ? raw['teachingMode'] : '';
+  // DSP-181: the profile the explanations were written in; anything else is read as none.
+  const presentationRaw = raw['presentation'];
+  const presentation =
+    isRecord(presentationRaw) && isProfile(presentationRaw['profile']) && typeof presentationRaw['version'] === 'number' && Number.isInteger(presentationRaw['version'])
+      ? { profile: presentationRaw['profile'], version: presentationRaw['version'] }
+      : null;
   const provenance = text(raw, 'provenance', 'file', false);
   const overview = text(raw, 'overview', 'file', false);
   const overviewSummary = text(raw, 'overviewSummary', 'file', false);
@@ -585,6 +599,7 @@ export function parseReviewDefinition(raw: unknown): {
       base,
       target,
       teachingMode,
+      ...(presentation === null ? {} : { presentation }),
       provenance,
       overview,
       overviewSummary,
@@ -761,6 +776,10 @@ function parseStepV2(raw: Record<string, unknown>, stepId: string, where: string
     summary: text('summary'),
     body: text('body'),
     why: text('why', false),
+    ...((): { details?: LocalText } => {
+      const details = text('details', false);
+      return details.sv === '' && details.en === '' ? {} : { details };
+    })(),
     places,
     evidence: parseEvidence(raw['evidence'], `${stepId}.evidence`, problems, true),
     evidenceRefs,
@@ -1360,6 +1379,7 @@ export function stepContentHash(step: WalkStep): string {
       summary: step.summary,
       body: step.body,
       why: step.why,
+      ...(step.details === undefined ? {} : { details: step.details }),
       evidence: step.evidence,
       evidenceRefs: step.evidenceRefs,
       places: step.places.map((place) => ({

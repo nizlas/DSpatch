@@ -133,3 +133,38 @@ export function shownChain(messages: readonly DiscussionMessage[], stepId: strin
     .filter((id) => id !== '');
   return [...(alternative === undefined ? [] : [alternative]), ...deepened].slice(-6);
 }
+
+/**
+ * The computer's last chosen profile, which a newly prepared walk's explanations are written in
+ * (DSP-181), kept in sync between the review's windows through storage.
+ */
+export function useDefaultProfile(): readonly [PublicProfile, (profile: PublicProfile) => void] {
+  const [profile, setState] = useState<PublicProfile>(() => effectiveProfile(stored(DEFAULT_STORAGE_KEY)));
+  useEffect(() => {
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key === DEFAULT_STORAGE_KEY) {
+        setState(effectiveProfile(stored(DEFAULT_STORAGE_KEY)));
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  const choose = useCallback((next: PublicProfile) => {
+    setState(next);
+    try {
+      window.localStorage.setItem(DEFAULT_STORAGE_KEY, next);
+    } catch {
+      // Not kept past this window; the choice still holds here.
+    }
+  }, []);
+  return [profile, choose] as const;
+}
+
+/**
+ * Whether the step needs an alternative asked for in the profile the person reads in (DSP-181):
+ * not when the walk's own explanations are written in that profile, and not when one is there
+ * or on its way. Opening a walk in its own profile therefore asks for nothing.
+ */
+export function wantsAlternative(walkProfile: PresentationProfile | null, profile: PublicProfile, hasDone: boolean, pending: boolean): boolean {
+  return walkProfile !== profile && !hasDone && !pending;
+}

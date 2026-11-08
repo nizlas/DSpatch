@@ -57,7 +57,7 @@ import {
   type PresentationRequest,
   type PublicProfile,
 } from '../shared/presentation-profiles';
-import { alternativeFor, deepeningsOf, shownChain, usePresentationProfile, type Exchange } from './presentation-choice';
+import { alternativeFor, deepeningsOf, shownChain, usePresentationProfile, wantsAlternative, type Exchange } from './presentation-choice';
 import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuote } from '../shared/review-discussion';
 import { quoteRanges, readQuote } from './walk-selection';
 import { isPairError, type AgentJob, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
@@ -667,7 +667,10 @@ function OpenReview({
    * one question: it changes nothing else about the review.
    */
   const [discussionMessages, setDiscussionMessages] = useState<readonly DiscussionMessage[]>([]);
-  const [profile, rememberLatestProfile] = usePresentationProfile(bundle.definitionPath, state.ui.presentationProfile ?? null);
+  // DSP-181: the profile the walk's own explanations were written in, when it was prepared in one; a
+  // walk opens in it unless the person chose otherwise for this walk, and reads in it with no call.
+  const walkProfile = bundle.definition.presentation?.profile ?? null;
+  const [profile, rememberLatestProfile] = usePresentationProfile(bundle.definitionPath, state.ui.presentationProfile ?? walkProfile);
   const [profileAbout, setProfileAbout] = useState(false);
   // A profile's alternative that could not be asked for (an answer still on its way, say), per step and profile.
   const [presentError, setPresentError] = useState<{ readonly key: string; readonly error: string } | null>(null);
@@ -1542,7 +1545,7 @@ function OpenReview({
     const basis = stepContentHash(current.step);
     const { done, latest } = alternativeFor(discussionMessages, current.step.id, basis, profile);
     const pending = latest !== null && latest.answer?.status !== 'done' && ['sending', 'sent'].includes(latest.question.status) && (latest.answer === null || latest.answer.status === 'streaming');
-    if (done !== null || pending) {
+    if (!wantsAlternative(walkProfile, profile, done !== null, pending)) {
       return;
     }
     const target = { stepId: current.step.id, profile, basis } as const;
@@ -1556,7 +1559,7 @@ function OpenReview({
         autoPresentationTimer.current = null;
       }
     };
-  }, [current, away, discussionMessages, profile, runWantedPresentation]);
+  }, [current, away, discussionMessages, profile, walkProfile, runWantedPresentation]);
 
   const chooseProfile = useCallback(
     (next: PublicProfile) => {
@@ -1793,8 +1796,9 @@ function OpenReview({
                 {words.rightTabs[key]}
               </button>
             ))}
-            {!noWalks && (
-              // DSP-176: how the agent's explanations are presented; in the row that stays in view.
+            {/* DSP-176, DSP-181: how the agent's explanations are presented; in the row that stays in view, also
+                before any walk exists, so the profile the walks are prepared in can be chosen first. */}
+            {(
               <label className="rv-profile-choice" title={words.profiles.description[profile]}>
                 <span className="rv-sub">{words.profiles.label}</span>{' '}
                 <select data-ev="presentation-profile" value={profile} onChange={(event) => chooseProfile(isPublicProfile(event.currentTarget.value) ? event.currentTarget.value : profile)}>
@@ -1830,7 +1834,7 @@ function OpenReview({
               )}
             </span>
           </div>
-          {!noWalks && (
+          {(
             // DSP-176: how the agent's explanations are presented. A presentation choice only.
             <div className="rv-profile-bar" data-ev="presentation-profile-bar">
               <button type="button" className="rv-link rv-profile-about-toggle" data-ev="presentation-profile-about-toggle" aria-expanded={profileAbout} onClick={() => setProfileAbout(!profileAbout)}>
@@ -1995,6 +1999,7 @@ function OpenReview({
                     const alternative = alternativeFor(discussionMessages, current.step.id, stepContentHash(current.step), profile);
                     return {
                       profile,
+                      walkProfile,
                       ...alternative,
                       error: presentError?.key === key ? presentError.error : null,
                       prepared: showPrepared.has(key),
@@ -3232,6 +3237,8 @@ type Deepening = Exchange;
  */
 interface StepPresentation {
   readonly profile: PresentationProfile;
+  /** DSP-181: the profile the walk's own explanations were written in; `null` for an older walk (Original). */
+  readonly walkProfile: PresentationProfile | null;
   readonly done: Exchange | null;
   readonly latest: Exchange | null;
   readonly error: string | null;
@@ -3241,8 +3248,12 @@ interface StepPresentation {
   readonly onPrepared: (on: boolean) => void;
 }
 
-/** The state of a step's alternative in a profile, for its line above the explanation. */
-function presentationState(presentation: StepPresentation): 'none' | 'pending' | 'failed' | 'done' {
+/**
+ * The state of a step's alternative in a profile, for its line above the explanation. `own`
+ * (DSP-181): the walk's explanations were written in this profile, so the step's own text is
+ * the explanation and nothing is asked for.
+ */
+function presentationState(presentation: StepPresentation): 'none' | 'own' | 'pending' | 'failed' | 'done' {
   const latest = presentation.latest;
   const pending = latest !== null && (latest.answer === null ? ['sending', 'sent'].includes(latest.question.status) : latest.answer.status === 'streaming');
   if (pending) {
@@ -3251,10 +3262,11 @@ function presentationState(presentation: StepPresentation): 'none' | 'pending' |
   if (presentation.done !== null) {
     return 'done';
   }
+  const nothing = presentation.walkProfile === presentation.profile ? 'own' : 'none';
   if (presentation.error !== null || (latest !== null && latest.answer?.status !== 'done')) {
-    return latest === null && presentation.error === null ? 'none' : 'failed';
+    return latest === null && presentation.error === null ? nothing : 'failed';
   }
-  return 'none';
+  return nothing;
 }
 
 /**
@@ -3271,7 +3283,8 @@ function ProfileLine({ presentation, stepId, words }: { readonly presentation: S
   const failure = presentation.error ?? presentation.latest?.answer?.error ?? presentation.latest?.question.error ?? (presentation.latest?.answer?.status === 'cancelled' ? 'it was stopped' : 'no answer arrived');
   const version = presentation.done?.question.presentation?.version;
   const older = presentation.done !== null && version !== PRESENTATION_INSTRUCTION_VERSION;
-  const meanwhile = presentation.done !== null && !presentation.prepared ? words.profiles.staysShown(name) : words.profiles.originalShown;
+  const own = presentation.walkProfile === presentation.profile;
+  const meanwhile = presentation.done !== null && !presentation.prepared ? words.profiles.staysShown(name) : own ? words.profiles.walkOwnShown : words.profiles.originalShown;
   return (
     <div
       className={`rv-profile-line rv-profile-${state}`}
@@ -3299,16 +3312,24 @@ function ProfileLine({ presentation, stepId, words }: { readonly presentation: S
           {words.profiles.explainAs(name)}
         </button>
       )}
+      {state === 'own' && (
+        <span>
+          <span className="rv-sub">{words.profiles.preparedWith(name)}</span>{' '}
+          <button type="button" className="rv-link" data-ev="profile-regenerate" onClick={presentation.onPresent}>
+            {words.profiles.regenerate(name)}
+          </button>
+        </span>
+      )}
       {state === 'done' && (
         <span>
-          <span className="rv-sub">{presentation.prepared ? words.profiles.legacyName : words.profiles.fromSameCode(name)}</span>{' '}
+          <span className="rv-sub">{presentation.prepared ? (own ? words.profiles.walkOwn(name) : words.profiles.legacyName) : words.profiles.fromSameCode(name)}</span>{' '}
           {older && (
             <span className="rv-sub" data-ev="profile-older">
               {words.profiles.olderInstructions(version ?? 0)}{' '}
             </span>
           )}
           <button type="button" className="rv-link" data-ev="profile-toggle-prepared" onClick={() => presentation.onPrepared(!presentation.prepared)}>
-            {presentation.prepared ? words.profiles.showProfile(name) : words.profiles.showOriginal}
+            {presentation.prepared ? words.profiles.showProfile(name) : own ? words.profiles.showWalkOwn : words.profiles.showOriginal}
           </button>{' '}
           <button type="button" className="rv-link" data-ev="profile-regenerate" onClick={presentation.onPresent}>
             {words.profiles.regenerate(name)}
@@ -3631,7 +3652,12 @@ function StepPanel({
 
       {alternative === null && (
         <div className="rv-explanation rv-reading rv-prepared" data-ev="step-prepared-explanation" data-quote-source="explanation" data-quote-origin={`the explanation of step ${step.id} “${pick(step.title, lang)}”`}>
-          <Markdown text={pick(step.body, lang)} />
+          {/* DSP-181: a walk prepared in a profile may carry a deepening, read behind Show more as an answer's is. */}
+          {step.details !== undefined && pick(step.details, lang) !== '' ? (
+            <ShortThenMore short={pick(step.body, lang)} details={pick(step.details, lang)} />
+          ) : (
+            <Markdown text={pick(step.body, lang)} />
+          )}
         </div>
       )}
       {/* DSP-175: code from other repositories of the workspace, read as context; never covered. */}

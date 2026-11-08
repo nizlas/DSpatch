@@ -26,6 +26,8 @@
  * touch a job; reopening reads the record.
  */
 
+import { PRESENTATION_INSTRUCTION_VERSION, PROFILE_PROMPT_NAMES, isPublicProfile, type PublicProfile } from '../shared/presentation-profiles';
+
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -470,6 +472,10 @@ export class ReviewAgentJobs {
       return record;
     }
     this.reconcile(key);
+    // DSP-181, walks: the profile the step explanations are written in, when the window named one.
+    const presentationRaw = request['presentation'];
+    const asked = typeof presentationRaw === 'object' && presentationRaw !== null ? (presentationRaw as Record<string, unknown>)['profile'] : undefined;
+    const explanationsIn: PublicProfile | null = kind === 'walks' && isPublicProfile(asked) ? asked : null;
     let scope: DelegationScope | null = null;
     let question: StepQuestion | null = null;
     if (kind === 'explain' && prepared === null && (request['selection'] !== undefined || request['followUp'] !== undefined)) {
@@ -554,6 +560,7 @@ export class ReviewAgentJobs {
       result: null,
       definitionPath: checksOver,
       uncovered: [],
+      ...(explanationsIn === null ? {} : { presentation: { profile: explanationsIn, version: PRESENTATION_INSTRUCTION_VERSION } }),
       ...(question === null ? {} : { question }),
       ...(prepared === null ? {} : { selection: prepared.selection }),
       ...(prepared?.followUp == null ? {} : { followUp: prepared.followUp }),
@@ -980,7 +987,7 @@ export class ReviewAgentJobs {
         return;
       }
       if (job.kind === 'walks') {
-        await this.prepareWalks(live, job, walksPrompt(material, folder, language), folder);
+        await this.prepareWalks(live, job, walksPrompt(material, folder, language, isPublicProfile(job.presentation?.profile) ? job.presentation.profile : null), folder);
       } else if (job.kind === 'checks' && job.definitionPath !== null) {
         const outline = this.options.pairs.walksOf(live.key, job.definitionPath, language);
         if (isPairError(outline)) {
@@ -1136,10 +1143,11 @@ export class ReviewAgentJobs {
     const provenance =
       `Prepared by ${providerName(job.provider)} (${job.model}) on ${generatedAt.slice(0, 16).replace('T', ' ')} UTC. ` +
       'It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing.' +
+      (job.presentation === undefined ? '' : ` The step explanations are written in the ${PROFILE_PROMPT_NAMES[job.presentation.profile]} profile (instruction version ${String(job.presentation.version)}).`) +
       (invalid.size + checked.left > 0 ? ` ${String(invalid.size + checked.left)} place(s) that did not exist at their commit were left out.` : '') +
       (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) of the commits could not be given to the agent to read.` : '');
     fs.mkdirSync(path.dirname(definitionPath), { recursive: true });
-    fs.writeFileSync(definitionPath, `${JSON.stringify(definitionFrom(walks, opened?.pair ?? { repository: '', base: '', target: '' }, heading, provenance), null, 2)}\n`, 'utf8');
+    fs.writeFileSync(definitionPath, `${JSON.stringify(definitionFrom(walks, opened?.pair ?? { repository: '', base: '', target: '' }, heading, provenance, job.presentation ?? null), null, 2)}\n`, 'utf8');
     // DSP-175: points written with the walks are review threads too (an answer of the older form).
     this.options.pairs.adoptChecks(live.key, definitionPath, live.jobId);
     const uncoveredLines = uncovered.reduce((total, range) => total + range.end - range.start + 1, 0);

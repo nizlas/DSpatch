@@ -907,18 +907,18 @@ async function main() {
   const options = JSON.parse(await read(pc, `JSON.stringify([...document.querySelectorAll('[data-ev="presentation-profile"] option')].map((o)=>({value:o.value,name:o.textContent,title:o.title})))`));
   check('the dropdown offers Essentials, Standard and Teacher, each described, and not Original', options.map((o) => o.name).join(',') === 'Essentials,Standard,Teacher' && options.map((o) => o.value).join(',') === 'essens,standard,pedagog' && options.every((o) => o.title.length > 30), JSON.stringify(options));
   let now = await shown();
-  check('Standard is the default; the original explanation is shown until the Standard one is written', now.value === 'standard' && now.prepared && now.profileShown === '' && ['', 'none', 'pending'].includes(now.state), JSON.stringify(now));
+  check('Standard is the default, the walks were prepared in it, and S1 reads its own Standard explanation', now.value === 'standard' && now.prepared && now.profileShown === '' && now.state === 'own', JSON.stringify(now));
   await osClickAt(pc, '[data-ev="presentation-profile-about-toggle"]');
   const about = await read(pc, `document.querySelector('[data-ev="presentation-profile-about"]')?.textContent ?? ''`);
   check('what a profile asks for can be read in the panel', /Every profile:/.test(about) && /Standard:/.test(about) && /About five sentences/.test(about), about.slice(0, 160));
   await osClickAt(pc, '[data-ev="presentation-profile-about-toggle"]');
   const zoom0 = await zoomOf();
   await w_shot(pc, '40-standard-default');
-  // DSP-180: arriving at a step and settling asks for its explanation in the chosen profile.
-  await poll('the Standard request for S1', async () => presents().some((m) => m.deepen.profile === 'standard' && m.envelope.subject.stepId === S1), 15_000);
-  await poll('the Standard explanation', async () => (await shown()).profileShown === 'standard', 60_000);
-  now = await shown();
-  check('S1 shows its Standard explanation, from the same code', now.state === 'done' && !now.prepared && /SIMULATED Standard/.test(now.alt) && now.altStep === S1, JSON.stringify(now));
+  // DSP-181: the walk's own explanations are the Standard ones, so opening and reading it asks for nothing.
+  await delay(1500);
+  check('reading the walk in its own profile sends nothing', presents().length === 0 && questions().length === 0, String(questions().length));
+  const prepared = await read(pc, `document.querySelector('[data-ev="step-prepared-explanation"]')?.textContent ?? ''`);
+  check('the step\'s own text is a Standard explanation, with its deepening behind Show more', /SIMULATED Standard/.test(prepared) && (await read(pc, `document.querySelector('[data-ev="step-prepared-explanation"] [data-ev="answer-show-more"]')!==null`)) === true, prepared.slice(0, 160));
   const callsAtStart = questions().length;
 
   stage = 'Essentials: the current step only, the original explanation meanwhile';
@@ -957,7 +957,7 @@ async function main() {
   check('back to Essentials: shown at once, no new call', now.profileShown === 'essens' && now.state === 'done' && questions().length === callsBeforeBack, JSON.stringify({ now: now.state, calls: questions().length - callsBeforeBack }));
   await choose('Standard');
   now = await shown();
-  check('back to Standard: shown at once, no new call', now.profileShown === 'standard' && now.state === 'done' && questions().length === callsBeforeBack);
+  check('back to Standard: the walk\'s own explanation, no new call', now.prepared && now.state === 'own' && questions().length === callsBeforeBack);
   await choose('Essentials');
 
   stage = 'Explain more simply, twice, and a follow-up at the same level';

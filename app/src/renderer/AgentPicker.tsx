@@ -23,7 +23,9 @@ import type { JSX } from 'react';
 
 import type { ModelListing } from '../shared/bridge';
 import { isProviderDefaultId, listedDefault, modelRows } from '../shared/model-rows';
+import { PUBLIC_PROFILES, isPublicProfile, type PublicProfile } from '../shared/presentation-profiles';
 import { isPairError, type ReviewAgents } from '../shared/review-pair';
+import { WORDS } from './review-i18n';
 
 export interface AgentChoice {
   readonly provider: 'cursor' | 'claude' | 'copilot';
@@ -41,6 +43,7 @@ export function AgentPicker({
   onStart,
   onCancel,
   testId,
+  explanations,
 }: {
   readonly pairKey: string;
   /** The button's words: "Prepare code walks", "Delegate". */
@@ -49,6 +52,11 @@ export function AgentPicker({
   readonly onStart: (choice: AgentChoice) => void;
   readonly onCancel: () => void;
   readonly testId: string;
+  /**
+   * DSP-181, preparing walks: the presentation profile the step explanations are written in,
+   * chosen here before anything is generated. The same choice the review's panel keeps.
+   */
+  readonly explanations?: { readonly profile: PublicProfile; readonly onChoose: (profile: PublicProfile) => void };
 }): JSX.Element {
   const [agents, setAgents] = useState<ReviewAgents | null>(null);
   const [readError, setReadError] = useState('');
@@ -201,6 +209,18 @@ export function AgentPicker({
           ))}
         </select>
       </label>
+      {explanations !== undefined && (
+        <label title={WORDS.en.profiles.description[explanations.profile]}>
+          {WORDS.en.profiles.label}
+          <select data-ev={`${testId}-explanations`} value={explanations.profile} onChange={(event) => explanations.onChoose(isPublicProfile(event.target.value) ? event.target.value : explanations.profile)}>
+            {PUBLIC_PROFILES.map((id) => (
+              <option key={id} value={id} title={WORDS.en.profiles.description[id]}>
+                {WORDS.en.profiles.name[id]}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {provider !== null && (
         <label>
           Model

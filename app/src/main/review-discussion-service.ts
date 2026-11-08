@@ -847,9 +847,11 @@ export class ReviewDiscussionService {
     }
     // DSP-181: Tell me more has a section of its own, so it deepens what was shown rather than restarting.
     const mode: PresentationSection['mode'] = deepen?.action === 'present' ? 'present' : deepen?.action === 'simpler' ? 'simpler' : deepen?.action === 'more' ? 'more' : 'follow';
-    // Explain more simply with nothing generated before: the step's prepared explanation is what was shown.
+    // Nothing generated before in this profile: the step's prepared explanation is what was shown,
+    // for Explain more simply, Tell me more and a follow-up alike (DSP-181: a walk prepared in
+    // the profile is read without any alternative).
     const explanation = envelope.explanation;
-    if (mode === 'simpler' && shown.length === 0 && explanation !== null) {
+    if (mode !== 'present' && request.profile !== 'original' && shown.length === 0 && explanation !== null) {
       shown.push({ label: 'The prepared explanation of the step', text: [explanation.summary, explanation.body, explanation.why].filter((part) => part.trim() !== '').join('\n\n') });
     }
     return {

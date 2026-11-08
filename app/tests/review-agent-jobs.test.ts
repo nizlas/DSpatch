@@ -19,6 +19,7 @@ import { ReviewPairs } from '../src/host/review-pairs';
 import { RevisionSnapshots } from '../src/host/revision-snapshots';
 import { PresentationAdapter } from '../src/main/presentation-adapter';
 import { checksFileOf, parseReviewDefinition, stepsWalks } from '../src/shared/review-model';
+import { walkExplanationSection } from '../src/shared/presentation-profiles';
 import { answerJson, definitionFrom, readChecksAnswer, readReviewAnswer, readWalksAnswer, walksPrompt, withoutInvalidPlaces } from '../src/shared/review-agent';
 import { fileProgressOf, isPairError, lineStatusesOf, lineKey, type AgentJob, type OpenPair, type PairRecord } from '../src/shared/review-pair';
 import { makePairFixture, PAIR_WORKING_TREE_ONLY, type PairFixture } from './support/pair-fixture';
@@ -97,6 +98,10 @@ describe('the material', () => {
     assert.ok(prompt.includes('export const v3 = 30;'));
     assert.ok(!prompt.includes(PAIR_WORKING_TREE_ONLY));
     assert.ok(prompt.includes('Keep apart what the code is meant to do'), 'the plan\'s writing rules are the instruction');
+    // DSP-181: a profile chosen before preparing adds one section on how to explain the steps, and changes nothing else.
+    const inStandard = walksPrompt(material, { base: open.pair.base, target: open.pair.target, files: 0, skipped: [], skippedCount: 0 }, 'en', 'standard');
+    assert.ok(inStandard.includes('## How to explain the steps (Standard)'));
+    assert.equal(inStandard.replace(`\n\n${walkExplanationSection('standard')}`, ''), prompt, 'the rest of the prompt is the same');
   });
 });
 

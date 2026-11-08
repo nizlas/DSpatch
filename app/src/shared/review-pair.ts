@@ -11,6 +11,8 @@
  * draw what these functions derive. Nothing here reads the working copy.
  */
 
+import { isProfile, type PresentationProfile } from './presentation-profiles';
+
 import { diffChars } from 'diff';
 
 // --- Identity ------------------------------------------------------------------------
@@ -125,6 +127,8 @@ export interface AgentJobRequestInput {
   readonly ask?: string;
   /** `checks` (30 October 2026): the walk definition whose change is looked over. */
   readonly definitionPath?: string;
+  /** DSP-181, `walks`: the presentation profile the step explanations are written in. */
+  readonly presentation?: { readonly profile: PresentationProfile };
 }
 
 /** What a window sends for a selection: where it is, and the text it saw there. */
@@ -820,6 +824,8 @@ export interface AgentJob {
   readonly definitionPath: string | null;
   /** For a walk preparation: changed lines no walk covers, and references left out. */
   readonly uncovered: readonly LineRange[];
+  /** DSP-181, for a walk preparation: the profile the explanations are written in, and the instruction version. */
+  readonly presentation?: { readonly profile: PresentationProfile; readonly version: number };
   /** For a step question: the question, and its checked answer once there is one. */
   readonly question?: StepQuestion;
   readonly answer?: StepAnswer;
@@ -1173,6 +1179,12 @@ export function jobFrom(raw: unknown): AgentJob | null {
         ...(investigation === null ? {} : { investigation }),
         ...(typeof raw['activity'] === 'string' && state === 'running' ? { activity: raw['activity'] } : {}),
         ...(typeof raw['instruction'] === 'string' && raw['instruction'] !== '' ? { instruction: raw['instruction'] } : {}),
+        ...((): Partial<AgentJob> => {
+          const presentation = raw['presentation'];
+          return isRecordObject(presentation) && isProfile(presentation['profile'])
+            ? { presentation: { profile: presentation['profile'], version: typeof presentation['version'] === 'number' && Number.isInteger(presentation['version']) ? presentation['version'] : 0 } }
+            : {};
+        })(),
       };
     })(),
   };
