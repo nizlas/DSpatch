@@ -21,6 +21,8 @@
  * reading of the same data.
  */
 
+import { isProfile, type PresentationProfile } from './presentation-profiles';
+
 // --- The prepared definition ---------------------------------------------------
 
 /**
@@ -1218,8 +1220,8 @@ export interface ReviewUi {
    * files. Absent: Markdown wraps, code does not ({@link wrapsLines}).
    */
   readonly wrap?: { readonly markdown: boolean; readonly code: boolean };
-  /** The presentation profile chosen for this walk. */
-  readonly presentationProfile?: 'original' | 'essens' | 'pedagog';
+  /** The presentation profile chosen for this walk; a stored Original is read as the default now (DSP-181). */
+  readonly presentationProfile?: PresentationProfile;
 }
 
 /** Markdown and plain prose, where a line is a paragraph rather than a statement. */
@@ -1314,7 +1316,7 @@ function isUi(value: unknown): value is ReviewUi {
     value['openWalks'].every((entry) => typeof entry === 'string') &&
     typeof value['highlightWalk'] === 'boolean' &&
     (value['level'] === undefined || value['level'] === 'change' || value['level'] === 'unit' || value['level'] === 'file') &&
-    (value['presentationProfile'] === undefined || value['presentationProfile'] === 'original' || value['presentationProfile'] === 'essens' || value['presentationProfile'] === 'pedagog') &&
+    (value['presentationProfile'] === undefined || isProfile(value['presentationProfile'])) &&
     (value['wrap'] === undefined ||
       (isRecord(value['wrap']) && typeof value['wrap']['markdown'] === 'boolean' && typeof value['wrap']['code'] === 'boolean'))
   );

@@ -776,8 +776,8 @@ test('history brought into a discussion does not take its agent away: the last o
   }
 });
 
-// DSP-176: presentation profiles go through this discussion like any deepening. SIMULATED: a scripted adapter.
-test('a step presented in a profile, Explain more simply on it twice, and a follow-up carry the profile and what was shown', async () => {
+// DSP-176, DSP-181: presentation profiles go through this discussion like any deepening. SIMULATED: a scripted adapter.
+test('a step presented in a profile, Explain more simply on it twice, Tell me more and a follow-up carry the profile and what was shown', async () => {
   const s = await setup();
   try {
     const service = s.discussions().attach(1, s.identity, () => undefined, 'cursor');
@@ -794,12 +794,12 @@ test('a step presented in a profile, Explain more simply on it twice, and a foll
     assert.ok(!(adapter().sent[0] ?? '').includes('## How to present') && !(adapter().sent[0] ?? '').includes('## The explanation this question follows'));
     adapter().finish();
 
-    // Essens: the step presented again, in the profile, from this version of the step.
+    // Essentials: the step presented in the profile, from this version of the step.
     assert.equal(
       (
         await service.send(
           {
-            question: 'Explain this step in the Essens profile.',
+            question: 'Explain this step in the Essentials profile.',
             subject: POINT,
             selection: null,
             deepen: { action: 'present', profile: 'essens', basis: 'h1' },
@@ -810,7 +810,9 @@ test('a step presented in a profile, Explain more simply on it twice, and a foll
       ).kind,
       'sent',
     );
-    assert.match(adapter().sent[1] ?? '', /## How to present \(Essens\)\n.*\nInstruction version: \d+\n\n- Answer three things/);
+    assert.match(adapter().sent[1] ?? '', /## How to present \(Essentials\)\n.*\nInstruction version: \d+\n\n- This changes how the step is presented/);
+    assert.match(adapter().sent[1] ?? '', /\nLanguage: English\./, 'the answer language is said in the review header');
+    assert.equal((adapter().sent[1] ?? '').split('<!-- dspatch:details -->').length - 1, 1, 'the marker is named once in the prompt');
     const present = lastQuestion();
     assert.deepEqual(present?.deepen, { action: 'present', profile: 'essens', basis: 'h1' });
     assert.deepEqual(present?.presentation, { profile: 'essens', version: PRESENTATION_INSTRUCTION_VERSION });
@@ -822,9 +824,9 @@ test('a step presented in a profile, Explain more simply on it twice, and a foll
     // Explain more simply on it: attempt 1 builds on the alternative.
     await service.send({ question: 'Explain this step more simply.', subject: POINT, selection: null, deepen: { action: 'simpler', profile: 'essens', basis: 'h1' }, presentation: { profile: 'essens', shown: [alternative?.id ?? '', 'q-unknown'] } }, s.review);
     const first = adapter().sent[2] ?? '';
-    assert.match(first, /## Explaining more simply \(attempt 1\)/);
-    assert.match(first, /### Shown 1: The Essens explanation of the step\nWhat changes: the greeting/);
-    assert.match(first, /The person reads in the Essens profile/);
+    assert.match(first, /## Explaining more simply \(attempt 1, Essentials\)/);
+    assert.match(first, /### Shown 1: The Essentials explanation of the step\nWhat changes: the greeting/);
+    assert.match(first, /In Essentials: Plainer language and less jargon/);
     assert.deepEqual(lastQuestion()?.presentation, { profile: 'essens', shown: [alternative?.id] }, 'an id that is no finished answer is left out');
     const simplerQuestion = lastQuestion();
     adapter().delta('It decides the greeting.');
@@ -834,7 +836,7 @@ test('a step presented in a profile, Explain more simply on it twice, and a foll
     // Pressed again: attempt 2, both shown, and another way in asked for.
     await service.send({ question: 'Explain this step more simply.', subject: POINT, selection: null, deepen: { action: 'simpler', profile: 'essens', basis: 'h1' }, presentation: { profile: 'essens', shown: [alternative?.id ?? '', simpler?.id ?? ''] } }, s.review);
     const again = adapter().sent[3] ?? '';
-    assert.match(again, /## Explaining more simply \(attempt 2\)/);
+    assert.match(again, /## Explaining more simply \(attempt 2, Essentials\)/);
     assert.match(again, /They did not make it clear enough/);
     assert.match(again, /ask(?:ing)? which concept or connection is unclear/);
     assert.match(again, /### Shown 2: Explain more simply\nIt decides the greeting\./);
@@ -845,10 +847,21 @@ test('a step presented in a profile, Explain more simply on it twice, and a foll
     // A follow-up typed in the discussion: at the same level, following the last explanation shown.
     await service.send({ question: 'How does it choose between the two?', subject: POINT, selection: null, presentation: { profile: 'essens', shown: [alternative?.id ?? '', simpler?.id ?? '', simplerAgain?.id ?? ''] } }, s.review);
     const follow = adapter().sent[4] ?? '';
-    assert.match(follow, /## The explanation this question follows\n- The question follows the explanation below/);
+    assert.match(follow, /## The explanation this question follows \(Essentials\)\n- The question follows the explanation below/);
     assert.match(follow, /They asked for it more simply 2 time\(s\)/);
     assert.match(follow, /### Explain more simply\nGive it Ada and you get Hello, Ada!/);
     assert.equal(lastQuestion()?.deepen, undefined);
+    adapter().finish();
+
+    // DSP-181: Tell me more in the profile goes deeper from what was shown, in a section of its own.
+    await service.send(
+      { question: 'Tell me more about this step.', subject: POINT, selection: null, deepen: { action: 'more', profile: 'essens', basis: 'h1' }, presentation: { profile: 'essens', shown: [alternative?.id ?? ''] } },
+      s.review,
+    );
+    const more = adapter().sent[5] ?? '';
+    assert.match(more, /## Going deeper \(Essentials\)\n- The person has read the explanation below and asks for more/);
+    assert.match(more, /### The Essentials explanation of the step\nWhat changes: the greeting/);
+    assert.ok(!more.includes('## The explanation this question follows'));
     adapter().finish();
 
     // Nothing earlier was rewritten.
@@ -857,7 +870,7 @@ test('a step presented in a profile, Explain more simply on it twice, and a foll
     // A present request without a profile or a version of the step is not a presentation.
     await service.send({ question: 'Explain this step.', subject: POINT, selection: null, deepen: { action: 'present', profile: 'original', basis: 'h1' } }, s.review);
     assert.equal(lastQuestion()?.deepen, undefined);
-    assert.ok(!(adapter().sent[5] ?? '').includes('## How to present'));
+    assert.ok(!(adapter().sent[6] ?? '').includes('## How to present'));
   } finally {
     fs.rmSync(s.fixture.root, { recursive: true, force: true });
   }

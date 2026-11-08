@@ -188,7 +188,7 @@ export function DiscussionAnswer({
   const contextReferences = answer.contextReferences ?? [];
   const where = (start: number, end: number): string => (start === end ? `line ${String(start)}` : `lines ${String(start)}–${String(end)}`);
   return (
-    <div className="rv-answer" data-ev="discussion-answer-body" data-quote-source="answer">
+    <div className="rv-answer rv-reading" data-ev="discussion-answer-body" data-quote-source="answer">
       {answer.insufficient === true && <p className="rv-agent-insufficient">The agent could not settle this from the code it could read.</p>}
       {shown === '' ? (
         // While it is on its way, the activity line beside it says what is happening.

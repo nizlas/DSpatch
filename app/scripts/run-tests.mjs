@@ -60,6 +60,7 @@ const AREAS = {
       'recovery.test.ts',
       'continuity-view.test.ts',
       'presentation-resume.test.ts',
+      'review-reading-style.test.ts',
       'window-reads-well.test.ts',
       'workflow-gates.test.ts',
       'loop-run-view.test.ts',
@@ -123,7 +124,7 @@ const AREAS = {
   },
   review: {
     what: 'the review surface: the real diff, prepared walks, coverage and the reviewer record',
-    files: ['review-model.test.ts', 'delegated-review-view.test.ts', 'review-threads.test.ts', 'review-check-threads.test.ts', 'review-discussion.test.ts', 'presentation-profiles.test.ts', 'example-review.test.ts', 'review-host-boundary.test.ts', { file: 'review-service.test.ts', heavy: true },
+    files: ['review-model.test.ts', 'delegated-review-view.test.ts', 'review-threads.test.ts', 'review-check-threads.test.ts', 'review-discussion.test.ts', 'presentation-profiles.test.ts', 'presentation-chain.test.ts', 'example-review.test.ts', 'review-host-boundary.test.ts', { file: 'review-service.test.ts', heavy: true },
       { file: 'review-host.test.ts', heavy: true },
       { file: 'review-pairs.test.ts', heavy: true },
       { file: 'review-agent-jobs.test.ts', heavy: true },

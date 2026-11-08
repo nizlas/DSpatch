@@ -1,3 +1,4 @@
+import type { PublicProfile } from '../shared/presentation-profiles';
 import type { EvidenceLabel, Lang, LocalText, UnitKind } from '../shared/review-model';
 
 /**
@@ -65,6 +66,33 @@ export interface DiscussionWords {
   readonly notSent: string;
 }
 
+/**
+ * DSP-181: the presentation profiles as the person reads them. The ids are stable and never
+ * shown; the names follow the window's language (Essens/Standard/Pedagog, Essentials/Standard/
+ * Teacher). The prepared explanation is the legacy Original, kept for comparison.
+ */
+export interface ProfileWords {
+  readonly label: string;
+  readonly about: string;
+  readonly less: string;
+  readonly name: Record<PublicProfile, string>;
+  readonly description: Record<PublicProfile, string>;
+  readonly legacyName: string;
+  readonly writing: (name: string) => string;
+  readonly staysShown: (name: string) => string;
+  readonly originalShown: string;
+  readonly failed: (name: string, reason: string) => string;
+  readonly tryAgain: string;
+  readonly explainAs: (name: string) => string;
+  readonly fromSameCode: (name: string) => string;
+  readonly showOriginal: string;
+  readonly showProfile: (name: string) => string;
+  readonly regenerate: (name: string) => string;
+  readonly olderInstructions: (version: number) => string;
+  /** The question a profile's alternative is asked with, as it reads in the discussion. */
+  readonly presentQuestion: (name: string) => string;
+}
+
 export interface ReviewWords {
   readonly opening: string;
   readonly openDefinition: string;
@@ -106,6 +134,7 @@ export interface ReviewWords {
   readonly reviewSection: string;
   /** The right column's two tabs: the step's own text, or the discussion about the code (DSP-127). */
   readonly rightTabs: { readonly step: string; readonly discussion: string };
+  readonly profiles: ProfileWords;
   readonly discussion: DiscussionWords;
   readonly markWalked: string;
   readonly walkedUndo: string;
@@ -318,6 +347,30 @@ const sv: ReviewWords = {
   },
   reviewSection: 'Granskning',
   rightTabs: { step: 'Steg', discussion: 'Diskussion' },
+  profiles: {
+    label: 'Förklaringar',
+    about: 'Vad profilen ber om',
+    less: 'Dölj',
+    name: { essens: 'Essens', standard: 'Standard', pedagog: 'Pedagog' },
+    description: {
+      essens: 'Kärnan, precist formulerad: konkreta namn, relevanta standardvärden och det viktigaste beteendet. Mellanled och sidodetaljer ligger bakom Visa mer.',
+      standard: 'En rak teknisk förklaring för en utvecklare med vanlig vana: hur de centrala delarna hänger ihop och mekanismen som gör ändringen begriplig.',
+      pedagog: 'Lär först ut det som behövs för att förstå steget, bygger resonemanget stegvis med ett exempel när det hjälper, och kopplar sedan till den konkreta koden.',
+    },
+    legacyName: 'Original',
+    writing: (name) => `Skriver förklaringen i ${name} för det här steget…`,
+    staysShown: (name) => `Den nuvarande förklaringen i ${name} visas under tiden.`,
+    originalShown: 'Den ursprungliga förklaringen visas under tiden.',
+    failed: (name, reason) => `Förklaringen i ${name} kunde inte skrivas (${reason}).`,
+    tryAgain: 'Försök igen',
+    explainAs: (name) => `Förklara det här steget som ${name}`,
+    fromSameCode: (name) => `${name} · från samma kod`,
+    showOriginal: 'Visa den ursprungliga förklaringen (Original)',
+    showProfile: (name) => `Visa förklaringen i ${name}`,
+    regenerate: (name) => `Generera om förklaringen i ${name}`,
+    olderInstructions: (version) => `Skriven med en äldre version av instruktionerna (${String(version)}).`,
+    presentQuestion: (name) => `Förklara det här steget i profilen ${name}.`,
+  },
   discussion: {
     empty: 'Fråga om koden du tittar på. Inget skickas förrän du trycker Enter.',
     about: 'Om',
@@ -596,6 +649,30 @@ const en: ReviewWords = {
   },
   reviewSection: 'Review',
   rightTabs: { step: 'Step', discussion: 'Discussion' },
+  profiles: {
+    label: 'Explanations',
+    about: 'What it asks for',
+    less: 'Less',
+    name: { essens: 'Essentials', standard: 'Standard', pedagog: 'Teacher' },
+    description: {
+      essens: 'The core, put precisely: the concrete names, the relevant defaults and the behaviour that matters most. Intermediate steps and side details are behind Show more.',
+      standard: 'A straight technical explanation for a developer of ordinary experience: how the central parts connect and the mechanism that makes the change understandable.',
+      pedagog: 'Teaches what the step needs first, builds the reasoning step by step with an example when it helps, then connects it to the concrete code.',
+    },
+    legacyName: 'Original',
+    writing: (name) => `Writing the ${name} explanation of this step…`,
+    staysShown: (name) => `The current ${name} explanation stays shown meanwhile.`,
+    originalShown: 'The original explanation is shown meanwhile.',
+    failed: (name, reason) => `The ${name} explanation could not be written (${reason}).`,
+    tryAgain: 'Try again',
+    explainAs: (name) => `Explain this step as ${name}`,
+    fromSameCode: (name) => `${name} · from the same code`,
+    showOriginal: 'Show the original explanation (Original)',
+    showProfile: (name) => `Show the ${name} explanation`,
+    regenerate: (name) => `Regenerate the ${name} explanation`,
+    olderInstructions: (version) => `Written with an earlier version of the instructions (${String(version)}).`,
+    presentQuestion: (name) => `Explain this step in the ${name} profile.`,
+  },
   discussion: {
     empty: 'Ask about the code you are looking at. Nothing is sent until you press Enter.',
     about: 'About',

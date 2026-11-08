@@ -1,5 +1,17 @@
 import type { AttemptKind, AttemptState, AttemptStep, ModelListing, StoredAttempt } from './bridge';
-import { presentationFrom, presentationPromptSection, type PresentationProfile, type PresentationRequest, type PresentationSection } from './presentation-profiles';
+import {
+  DETAILS_MARKER,
+  DETAILS_PART_RULE,
+  SHORT_PART_RULE,
+  isProfile,
+  presentationFrom,
+  presentationPromptSection,
+  type PresentationProfile,
+  type PresentationRequest,
+  type PresentationSection,
+} from './presentation-profiles';
+
+export { DETAILS_MARKER };
 import { TASK_HEADER } from './review-task';
 import type { CodeLocation, EvidenceLabel, FileChangeStatus, Lang, ReviewNote, RevisionSide } from './review-model';
 
@@ -81,30 +93,33 @@ export const CODE_ANSWER_RULES = [
     'DSpatch checks every reference against its commit and shows it as a link. Set "insufficient": true when the code you could read does not settle the question.',
 ] as const;
 
-/**
- * Where an answer's short part ends and its details begin (Niclas's decision of 30 October
- * 2026): the window shows the short part and offers the rest under *Show more*, from what
- * was written, without asking again. Not shown; an answer without it is shown whole.
+/*
+ * Where an answer's short part ends and its details begin: {@link DETAILS_MARKER}, defined with
+ * the presentation policy (presentation-profiles.ts) and re-exported above, so the discussion's
+ * answer format, the profiles and the walk generator share one wording of the contract (DSP-181).
  */
-export const DETAILS_MARKER = '<!-- dspatch:details -->';
 
 /**
  * How every answer in the discussion is shaped, with or without code access: a quick
- * question about a type or a function is understood from the short part alone.
+ * question about a type or a function is understood from the short part alone. The first two
+ * rules are the policy's own words, so a prompt with a presentation section says them once.
  */
 export const ANSWER_SHAPE_RULES = [
-  'Answer the question first, in a short part that stands on its own: the concept and the details that matter most, enough to understand it without reading further. Any uncertainty that changes the answer belongs in this part.',
-  `When a fuller account would help (the mechanism step by step, edge cases, more context), put it after the short part, below a line holding only ${DETAILS_MARKER}. The person sees it when they ask for more. That detailed part should add depth, not repeat the short part. Leave the line out when the short part is enough, and do not pad either part.`,
+  SHORT_PART_RULE,
+  DETAILS_PART_RULE,
   'When the person explicitly asks for details or a full account, give them: the short part still answers first, and the details follow below the line.',
   'Keep established class names and terms. Use short paragraphs, bullets where they help, and bold sparingly.',
 ] as const;
 
 /**
  * An answer's short part and its details, split at {@link DETAILS_MARKER}. A marker still
- * arriving is cut off, so it never flickers into view; details that are empty are none.
+ * arriving is cut off, so it never flickers into view; details that are empty are none. A
+ * line that is only "Show more" or "Visa mer" (a heading or bold allowed) is read as the
+ * marker too (DSP-181): a model that writes the control's name instead of the marker still
+ * gets its deepening behind the control rather than in front of it.
  */
 export function splitDetails(text: string): { readonly short: string; readonly details: string | null } {
-  const found = /^[ \t]*<!--\s*dspatch:details\s*-->[ \t]*$/m.exec(text);
+  const found = /^[ \t]*(?:<!--\s*dspatch:details\s*-->|(?:#{1,6}\s*)?(?:\*\*)?(?:Show more|Visa mer):?(?:\*\*)?:?)[ \t]*$/im.exec(text);
   if (found === null) {
     return { short: text.replace(/\n[ \t]*<!--(?![\s\S]*-->)[^\n]*$/, '').trimEnd(), details: null };
   }
@@ -628,6 +643,8 @@ export function buildEnvelopePrompt(
       `Base revision: ${identity.base.sha} (${identity.base.subject})`,
       `Target revision: ${identity.target.sha} (${identity.target.subject})`,
       'The code below is read from these commits, not from any working copy.',
+      // DSP-181: the answer's language, as the walk, step and selection prompts already say it.
+      `Language: ${envelope.language === 'sv' ? 'Swedish' : 'English'}. The person reads the review in it; answer in it, and keep code names, identifiers and quoted code as they are.`,
     ].join('\n'),
   );
   parts.push(`## Subject\n${subjectLine(envelope)}`);
@@ -865,7 +882,7 @@ export function deepenFrom(raw: unknown): DeepenRequest | null {
     return null;
   }
   const text = typeof raw['text'] === 'string' ? raw['text'].slice(0, 2000) : undefined;
-  const profile = raw['profile'] === 'original' || raw['profile'] === 'essens' || raw['profile'] === 'pedagog' ? raw['profile'] : undefined;
+  const profile = isProfile(raw['profile']) ? raw['profile'] : undefined;
   const basis = typeof raw['basis'] === 'string' && /^[\w.:-]{1,128}$/.test(raw['basis']) ? raw['basis'] : undefined;
   if (action === 'present' && (profile === undefined || profile === 'original' || basis === undefined)) {
     return null;

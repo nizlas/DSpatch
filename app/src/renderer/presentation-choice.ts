@@ -1,9 +1,11 @@
 /**
- * DSP-176: the presentation profile the person reads in, and what the discussion holds for it.
+ * DSP-176, DSP-181: the presentation profile the person reads in, and what the discussion holds for it.
  *
  * The choice is the person's, per walk and per computer: kept in the windows' own storage so
  * the walk window and its panel stay in sync. The last chosen profile is also kept as the
- * default for newly opened walks.
+ * default for newly opened walks. Without an earlier public choice the default is Standard; a
+ * saved Essentials or Teacher is kept; a saved Original is the legacy presentation and no
+ * longer a choice, so the default stands (nothing stored is rewritten).
  *
  * The explanations themselves are in the review's discussion record: an alternative is the
  * answer to a `present` deepening of one step, asked in one profile from one version of the
@@ -12,29 +14,34 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
-import { isProfile, type PresentationProfile } from '../shared/presentation-profiles';
+import { effectiveProfile, isPublicProfile, type PresentationProfile, type PublicProfile } from '../shared/presentation-profiles';
 import type { DiscussionMessage } from '../shared/review-discussion';
 
 const DEFAULT_STORAGE_KEY = 'dspatch.review.presentationProfile.default';
 const WALK_STORAGE_PREFIX = 'dspatch.review.presentationProfile.walk:';
 
-function stored(key: string): PresentationProfile | null {
+function stored(key: string): PublicProfile | null {
   try {
     const value = window.localStorage.getItem(key);
-    return isProfile(value) ? value : null;
+    return isPublicProfile(value) ? value : null;
   } catch {
     return null;
   }
 }
 
-function read(scope: string, fallback: PresentationProfile | null): PresentationProfile {
-  return stored(`${WALK_STORAGE_PREFIX}${scope}`) ?? fallback ?? stored(DEFAULT_STORAGE_KEY) ?? 'original';
+/** The walk's own choice, then the review state's, then the computer's last choice, then the default. */
+export function chosenProfile(walkChoice: unknown, stateChoice: unknown, defaultChoice: unknown): PublicProfile {
+  return isPublicProfile(walkChoice) ? walkChoice : isPublicProfile(stateChoice) ? stateChoice : effectiveProfile(defaultChoice);
+}
+
+function read(scope: string, fallback: PresentationProfile | null): PublicProfile {
+  return chosenProfile(stored(`${WALK_STORAGE_PREFIX}${scope}`), fallback, stored(DEFAULT_STORAGE_KEY));
 }
 
 /** The chosen profile of one walk, shared by windows through storage. */
-export function usePresentationProfile(scope: string, fallback: PresentationProfile | null): readonly [PresentationProfile, (profile: PresentationProfile) => void] {
+export function usePresentationProfile(scope: string, fallback: PresentationProfile | null): readonly [PublicProfile, (profile: PublicProfile) => void] {
   const scopedKey = `${WALK_STORAGE_PREFIX}${scope}`;
-  const [profile, setState] = useState<PresentationProfile>(() => read(scope, fallback));
+  const [profile, setState] = useState<PublicProfile>(() => read(scope, fallback));
   useEffect(() => {
     setState(read(scope, fallback));
   }, [scope, fallback]);
@@ -47,7 +54,7 @@ export function usePresentationProfile(scope: string, fallback: PresentationProf
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, [scopedKey, scope, fallback]);
-  const choose = useCallback((next: PresentationProfile) => {
+  const choose = useCallback((next: PublicProfile) => {
     setState(next);
     try {
       window.localStorage.setItem(DEFAULT_STORAGE_KEY, next);
@@ -82,7 +89,8 @@ export function profileOf(question: DiscussionMessage): PresentationProfile {
 /**
  * The alternative explanation of a step in a profile, from this version of the step: the
  * latest asked, with its answer. A finished one is preferred to a later attempt that failed,
- * so a failed retry never hides what was there.
+ * so a failed retry never hides what was there. Original is the prepared explanation itself
+ * and has none.
  */
 export function alternativeFor(messages: readonly DiscussionMessage[], stepId: string, basis: string, profile: PresentationProfile): { readonly done: Exchange | null; readonly latest: Exchange | null } {
   if (profile === 'original') {
@@ -115,7 +123,7 @@ export function deepeningsOf(messages: readonly DiscussionMessage[], stepId: str
 /**
  * The finished answers the person has seen at this step in this profile, oldest first: the
  * alternative, then each deepening's answer. What Explain more simply builds on, and what a
- * follow-up question follows (the last of them).
+ * follow-up question or Tell me more follows (the last of them).
  */
 export function shownChain(messages: readonly DiscussionMessage[], stepId: string, basis: string, profile: PresentationProfile): readonly string[] {
   const alternative = alternativeFor(messages, stepId, basis, profile).done?.answer?.id;

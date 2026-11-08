@@ -544,24 +544,14 @@
 
 /* Prepared explanations keep their line breaks: a code name on its own line, its
    meaning on the next. */
-.rv-explanation .markdown p,
 .rv-place .markdown p {
   white-space: pre-line;
   margin: 0 0 0.6rem;
   line-height: 1.45;
 }
 
-.rv-explanation .markdown code {
-  background: var(--panel);
-  border-radius: 3px;
-  padding: 0 0.2rem;
-}
-
-.rv-explanation .markdown ol,
-.rv-explanation .markdown ul {
-  margin: 0 0 0.6rem;
-  padding-left: 1.3rem;
-}
+/* The prepared explanation's own rules used to be here; every explanation and answer now reads
+   with the one `rv-reading` typography at the end of this file (DSP-181). */
 
 .rv-places ol {
   list-style: none;
@@ -2671,12 +2661,6 @@
   max-width: 48rem;
 }
 
-.rv-explanation .markdown p,
-.rv-deepening .markdown p {
-  line-height: 1.55;
-  margin: 0 0 0.75rem;
-}
-
 .rv-summary {
   line-height: 1.55;
 }
@@ -3647,27 +3631,6 @@
   min-width: 0;
 }
 
-.rv-discussion .rv-answer .markdown__p,
-.rv-discussion .rv-answer .markdown__list,
-.rv-discussion .rv-answer .markdown__quote,
-.rv-discussion .rv-answer .markdown__table-box {
-  margin: 0 0 0.85rem;
-}
-
-.rv-discussion .rv-answer .markdown__list li {
-  margin: 0.4rem 0;
-}
-
-/* A nested list belongs to its item: closer to it, and its own items closer together. */
-.rv-discussion .rv-answer .markdown__list .markdown__list {
-  margin: 0.25rem 0 0;
-}
-
-.rv-discussion .rv-answer .markdown__list .markdown__list li {
-  margin: 0.2rem 0;
-}
-
-.rv-discussion .rv-answer .markdown__code,
 .rv-discussion-text code {
   border: none;
   background: color-mix(in srgb, var(--text) 9%, transparent);
@@ -3676,22 +3639,7 @@
   font-size: 0.88em;
 }
 
-.rv-discussion .rv-answer .markdown__pre {
-  max-width: 100%;
-  margin: 0 0 0.9rem;
-  padding: 0.6rem 0.8rem;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--text) 5%, var(--bg));
-}
-
-.rv-discussion .rv-answer .markdown__code-block {
-  font-size: 0.82rem;
-  line-height: 1.5;
-}
-
-.rv-discussion .rv-answer .markdown__table {
-  line-height: 1.4;
-}
+/* The discussion's answers read with the one `rv-reading` typography at the end of this file (DSP-181). */
 
 .rv-discussion .rv-answer-details {
   margin: 0.7rem 0 0.5rem;
@@ -4136,4 +4084,118 @@
   .rv-profile-spinner {
     animation: none;
   }
+}
+
+/* --- One reading typography (DSP-181) -------------------------------------------------------
+   Every explanation and answer the person reads in the review — the prepared explanation, a
+   profile's alternative, a deepening under a step, an answer in the discussion — carries
+   `rv-reading` and reads with these rules, docked or in a window of its own. A profile changes
+   what the text says and how it explains, never its typography; a surface adds no rule of its
+   own for paragraphs, lists, headings, code, links or tables. Only the prepared explanation
+   keeps its hard line breaks (`rv-prepared`): its generator wrote a code name on one line and
+   its meaning on the next. */
+
+.rv-reading {
+  line-height: 1.55;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rv-reading .markdown__p,
+.rv-reading .markdown__list,
+.rv-reading .markdown__quote,
+.rv-reading .markdown__table-box,
+.rv-reading .markdown__pre {
+  margin: 0 0 0.75rem;
+}
+
+.rv-reading .markdown__p {
+  line-height: 1.55;
+}
+
+.rv-reading .markdown__h {
+  margin: 0.9rem 0 0.35rem;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.rv-reading .markdown__h--1,
+.rv-reading .markdown__h--2,
+.rv-reading .markdown__h--3 {
+  font-size: 1em;
+}
+
+.rv-reading .markdown__h--4,
+.rv-reading .markdown__h--5,
+.rv-reading .markdown__h--6 {
+  font-size: 0.95em;
+  color: var(--muted);
+}
+
+.rv-reading .markdown__list {
+  padding-left: 1.3rem;
+}
+
+.rv-reading .markdown__list li {
+  margin: 0.3rem 0;
+}
+
+/* A nested list belongs to its item: closer to it, and its own items closer together. */
+.rv-reading .markdown__list .markdown__list {
+  margin: 0.25rem 0 0;
+}
+
+.rv-reading .markdown__list .markdown__list li {
+  margin: 0.15rem 0;
+}
+
+.rv-reading .markdown__list .markdown__p {
+  margin: 0;
+}
+
+.rv-reading .markdown__code {
+  border: none;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.08em 0.32em;
+  font-size: 0.88em;
+}
+
+.rv-reading .markdown__pre {
+  max-width: 100%;
+  padding: 0.6rem 0.8rem;
+  border: none;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 5%, var(--bg));
+}
+
+.rv-reading .markdown__code-block {
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.rv-reading .markdown__quote {
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+}
+
+.rv-reading .markdown__table {
+  line-height: 1.4;
+  font-size: 0.92em;
+}
+
+.rv-reading .markdown__link {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.rv-reading .markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+/* The prepared explanation keeps its line breaks: a code name on its own line, its meaning on the next. */
+.rv-prepared .markdown__p {
+  white-space: pre-line;
 }

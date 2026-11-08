@@ -40,6 +40,7 @@ import {
   type StepQuestion,
 } from './review-pair';
 
+import { GROUNDING_RULES } from './presentation-profiles';
 import { TASK_HEADER } from './review-task';
 
 export { TASK_HEADER };
@@ -228,6 +229,9 @@ export const WRITING_RULES = [
   "Keep apart what the code is meant to do, your own conclusions, and test results that were actually observed. You have observed no test run here: you can read code, not run it.",
   'No fixed length and no template of mandatory headings: be as short as understanding allows.',
   'Do not narrate your investigation ("I read…", "Then I searched…"). Give the explanation, and point at the code it rests on.',
+  // DSP-181: the grounding every explanation in the review has, the presentation profiles' included,
+  // so an alternative presentation rests on prepared text that already names what matters.
+  ...GROUNDING_RULES.slice(0, 4),
 ] as const;
 
 /**
@@ -237,7 +241,7 @@ export const WRITING_RULES = [
  */
 export const DETAILS_RULES = [
   '"answer" is the short part and stands on its own: the concept and the details that matter most, enough to understand it without reading further. Any uncertainty that changes the answer belongs there.',
-  '"details" is a fuller account for when the person asks for more: the mechanism step by step, edge cases, more context. Leave it empty when the short part is enough, and do not repeat the short part in it.',
+  '"details" is the deepening only, for when the person asks for more: complementary mechanics, special cases, longer evidence, more code references, in the same manner as the short part. Leave it empty when there is nothing to add, and do not repeat the short part in it.',
   'When the person explicitly asks for details, give them: the short part still answers first.',
 ] as const;
 
@@ -682,12 +686,12 @@ export interface ExplainTurn {
 /** What a follow-up asks, in the words of the plan's step deepenings, said of the code. */
 export function followUpWords(followUp: Pick<ExplainFollowUp, 'action' | 'question'>, answered?: string): string {
   if (followUp.action === 'simpler' && answered !== undefined) {
-    return `Explain your last answer more simply (it answered: "${answered}"): more background, a clearer cause and effect, or a concrete example. Keep the class and method names.`;
+    return `Explain your last answer more simply (it answered: "${answered}"): fewer concepts at once and plainer words, with the same names and caveats. Add no detail it did not need and do not make it longer; take another way in, such as one concrete case or the effect seen from the caller.`;
   }
   return followUp.action === 'more'
     ? 'Tell me more about this code: the mechanism, how the code connects, and the details that matter. Do not repeat what was already explained.'
     : followUp.action === 'simpler'
-      ? 'Explain this code more simply: more background, a clearer cause and effect, or a concrete example. Keep the class and method names.'
+      ? 'Explain this code more simply: fewer concepts at once and plainer words, with the same names and caveats. Add no detail that is not needed; take a concrete way in, such as one case or the effect seen from the caller.'
       : followUp.question;
 }
 

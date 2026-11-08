@@ -903,32 +903,53 @@ function presentationAnswer(prompt: string, question: string): string | null {
     focus === null ? [] : [{ label: `The code of ${step}`, path: focus[1] ?? '', side: focus[4] === 'base' ? 'base' : 'target', start: Number(focus[2] ?? '1'), end: Number(focus[3] ?? focus[2] ?? '1') }];
   const refs = `\n\n\`\`\`dspatch-references\n${JSON.stringify({ references, insufficient: false })}\n\`\`\``;
   const where = focus === null ? 'the code of this step' : `\`${focus[1] ?? ''}\` lines ${focus[2] ?? ''}–${focus[3] ?? focus[2] ?? ''}`;
-  const present = /^## How to present \((Essens|Pedagog)\)$/m.exec(prompt)?.[1];
-  if (present === 'Essens') {
-    return [
-      `**What changes:** SIMULATED Essens for “${step}”: the lines in ${where} change what the function returns.`,
-      '**Why:** SIMULATED: so the caller gets the new behaviour; a real agent says why from the code.',
-      '**What to check:** SIMULATED: that every caller expects the new value, and the case the old code handled.',
-      DETAILS_MARKER,
-      `**Mechanism (Essens, Show more):** SIMULATED: step by step, what ${where} does with its input.`,
-      '**Special cases:** SIMULATED: the empty input and the boundary value.',
-      '**More references:** SIMULATED: the callers and the test that covers it.',
-    ].join('\n\n') + refs;
+  // DSP-181: the three public profiles, each in its own shape and length, over one neutral
+  // example (a greeting function with a default); the deepening after the marker, never before it.
+  const present = /^## How to present \((Essentials|Standard|Teacher)\)$/m.exec(prompt)?.[1];
+  // A step whose title says it is trivial is explained in one sentence in every profile, with
+  // nothing behind Show more: length follows the material, not the profile.
+  if (present !== undefined && /\btrivial\b/i.test(step)) {
+    return `SIMULATED ${present} for “${step}”: \`greet()\` in ${where} now ends its text with an exclamation mark instead of a full stop; nothing else changes.` + refs;
   }
-  if (present === 'Pedagog') {
-    return [
-      `SIMULATED Pedagog for “${step}”: think of this code as a greeter at a door — it decides what to say to whoever arrives.`,
-      `For example: given the name “Ada”, the code in ${where} now answers “Hello, Ada!”.`,
-      DETAILS_MARKER,
-      '**In the same plain words (Pedagog, Show more):** SIMULATED: how the greeter decides, one case at a time, and what changed in that decision.',
-      '- SIMULATED: the case with no name.',
-      '- SIMULATED: the case with a name.',
-    ].join('\n\n') + refs;
+  if (present === 'Essentials') {
+    return (
+      [
+        `SIMULATED Essentials for “${step}”: \`greet(name)\` in ${where} now returns “Hello, <name>!” instead of the fixed “Hello!”; with no name the default “Hello!” stays.`,
+        '- SIMULATED: check the callers that compared the old fixed text.',
+        DETAILS_MARKER,
+        `SIMULATED deepening (Essentials): the branch in ${where} tests the name for emptiness before it builds the text; an empty string and a missing value both fall back to the default.`,
+        '- SIMULATED: the test that covers the fallback.',
+      ].join('\n\n') + refs
+    );
   }
-  const simpler = /^## Explaining more simply \(attempt (\d+)\)$/m.exec(prompt);
+  if (present === 'Standard') {
+    return (
+      [
+        `SIMULATED Standard for “${step}”: \`greet(name)\` in ${where} builds the greeting from its argument. The caller passes the name it read from the request, and when that is empty the function keeps the default “Hello!”. The change moves the decision from the callers into \`greet\`, so every caller follows the same rule. The default is “Hello!” and is used for an empty or missing name. Nothing else about the request handling changes.`,
+        DETAILS_MARKER,
+        `SIMULATED deepening (Standard): the mechanism step by step in ${where}, the special case of a name that is only spaces, and the test that covers the default.`,
+      ].join('\n\n') + refs
+    );
+  }
+  if (present === 'Teacher') {
+    return (
+      [
+        `SIMULATED Teacher for “${step}”. First the idea: a function can take a value, decide something about it and give back a text; here the value is a name. A default is the answer a function gives when it gets nothing useful. Think of a greeter at a door who says “Hello, Ada!” when they know the name and plain “Hello!” when they do not.`,
+        `Now the code: \`greet(name)\` in ${where} tests whether the name is empty. If it is, it returns the default “Hello!”; otherwise it builds “Hello, <name>!”. The change puts that decision inside \`greet\`, so the callers no longer decide it one by one. The consequence is one rule for every caller, and the default stays “Hello!”.`,
+        DETAILS_MARKER,
+        'SIMULATED deepening (Teacher): in the same plain words, the case of a name that is only spaces, and how the test exercises both branches.',
+      ].join('\n\n') + refs
+    );
+  }
+  const more = /^## Going deeper \((\w+)\)$/m.exec(prompt);
+  if (more !== null) {
+    const follows = /^## Going deeper[\s\S]*?^### (.*)$/m.exec(prompt)?.[1] ?? '';
+    return [`SIMULATED deeper (${more[1] ?? ''}), from “${follows}”: how the branch in ${where} is reached from the caller, and the case it does not cover.`, 'SIMULATED: the base explanation is not repeated here.'].join('\n\n') + refs;
+  }
+  const simpler = /^## Explaining more simply \(attempt (\d+)(?:, (\w+))?\)$/m.exec(prompt);
   if (simpler !== null) {
     const attempt = Number(simpler[1] ?? '1');
-    const profile = /^- The person reads in the (\w+) profile/m.exec(prompt)?.[1] ?? 'Original';
+    const profile = simpler[2] ?? 'Original';
     const shown = [...prompt.matchAll(/^### Shown \d+: (.*)$/gm)].map((match) => match[1] ?? '');
     const basis = `Built on ${String(shown.length)} explanation(s) already shown: ${shown.map((label) => `“${label}”`).join(', ')}.`;
     const angles = [
@@ -938,14 +959,19 @@ function presentationAnswer(prompt: string, question: string): string | null {
     ];
     return [angles[Math.min(attempt, 3) - 1] ?? angles[0], `${basis} Profile: ${profile}.`].join('\n\n') + refs;
   }
-  if (/^## The explanation this question follows$/m.test(prompt)) {
-    const profile = /^- The person reads in the (\w+) profile/m.exec(prompt)?.[1] ?? 'Original';
+  const follow = /^## The explanation this question follows \((\w+)\)$/m.exec(prompt);
+  if (follow !== null) {
+    const profile = follow[1] ?? 'Original';
     const follows = /^## The explanation this question follows[\s\S]*?^### (.*)$/m.exec(prompt)?.[1] ?? '';
     const simplerLevel = /asked for it more simply (\d+) time/.exec(prompt)?.[1];
     return [
       `SIMULATED follow-up at the ${profile} level, following “${follows}”${simplerLevel === undefined ? '' : ` after ${simplerLevel} simpler explanation(s)`}: ${question.slice(0, 120)}`,
       'SIMULATED: it picks between the two cases by whether a name was given — same plain words, a little more detail.',
     ].join('\n\n') + refs;
+  }
+  const reader = /^## The reader's profile \((\w+)\)$/m.exec(prompt);
+  if (reader !== null) {
+    return [`SIMULATED answer at the ${reader[1] ?? ''} level, with nothing of it shown before: ${question.slice(0, 120)}`, 'SIMULATED: the same names and the same facts.'].join('\n\n') + refs;
   }
   return null;
 }

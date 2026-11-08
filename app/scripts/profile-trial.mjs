@@ -7,13 +7,17 @@
  * DSPATCH_REVIEW_SIM_FAIL_PRESENT_STEP). Evidence is screenshots of the X display and OS-level
  * input; the discussion record on disk is read to count model calls and to see what each sent.
  *
- * It reads one walk step in Original, Essens and Pedagog at the same zoom; checks that a switch
- * asks only for the current step, shows the prepared explanation meanwhile, reuses what was
- * generated without a call (also after a restart), keeps late answers and failures where they
- * belong, gives Explain more simply the explanations already shown, and asks follow-ups at the
- * same level; that coverage and findings do not change; and that the choice works docked and in
- * the panel's own window, with zoom and an unsent draft. Simulated answers show the UI and the
- * data flow, never a real model's teaching.
+ * It reads one walk step in Standard (the default, DSP-181), Essentials and Teacher at the same
+ * zoom; checks that a profile asks only for the current step, shows the original (prepared)
+ * explanation meanwhile, reuses what was generated without a call (also after a restart), asks
+ * for a step's explanation when the reader arrives at it and settles (DSP-180), keeps late
+ * answers and failures where they belong, gives Explain more simply the explanations already
+ * shown, and asks follow-ups at the same level; that coverage and findings do not change; and
+ * that the choice works docked and in the panel's own window, with zoom and an unsent draft.
+ * Simulated answers show the UI and the data flow, never a real model's teaching.
+ *
+ * Updated for DSP-181 without a run (no Xvfb on the Windows machine it was updated on): its
+ * expectations follow the code; the first run on Linux may still need adjusting.
  *
  *     node scripts/profile-trial.mjs [<evidence folder>]
  */
@@ -897,66 +901,71 @@ async function main() {
   const S3 = 'W1.4';
   const S4 = 'W1.5';
 
-  stage = 'Original by default, with the choices described';
+  stage = 'Standard by default, with the choices described';
   await clickInPanel('right-tab-step');
   await goToStep(S1);
   const options = JSON.parse(await read(pc, `JSON.stringify([...document.querySelectorAll('[data-ev="presentation-profile"] option')].map((o)=>({value:o.value,name:o.textContent,title:o.title})))`));
-  check('the dropdown offers Original, Essens and Pedagog, each described', options.map((o) => o.name).join(',') === 'Original,Essens,Pedagog' && options.every((o) => o.title.length > 30), JSON.stringify(options));
+  check('the dropdown offers Essentials, Standard and Teacher, each described, and not Original', options.map((o) => o.name).join(',') === 'Essentials,Standard,Teacher' && options.map((o) => o.value).join(',') === 'essens,standard,pedagog' && options.every((o) => o.title.length > 30), JSON.stringify(options));
   let now = await shown();
-  check('Original is the default, and the step shows its prepared explanation', now.value === 'original' && now.prepared && now.profileShown === '' && now.state === '', JSON.stringify(now));
+  check('Standard is the default; the original explanation is shown until the Standard one is written', now.value === 'standard' && now.prepared && now.profileShown === '' && ['', 'none', 'pending'].includes(now.state), JSON.stringify(now));
   await osClickAt(pc, '[data-ev="presentation-profile-about-toggle"]');
   const about = await read(pc, `document.querySelector('[data-ev="presentation-profile-about"]')?.textContent ?? ''`);
-  check('what a profile asks for can be read in the panel', /Explain more simply follows these rules in every profile/.test(about), about.slice(0, 160));
+  check('what a profile asks for can be read in the panel', /Every profile:/.test(about) && /Standard:/.test(about) && /About five sentences/.test(about), about.slice(0, 160));
   await osClickAt(pc, '[data-ev="presentation-profile-about-toggle"]');
   const zoom0 = await zoomOf();
-  await w_shot(pc, '40-original');
+  await w_shot(pc, '40-standard-default');
+  // DSP-180: arriving at a step and settling asks for its explanation in the chosen profile.
+  await poll('the Standard request for S1', async () => presents().some((m) => m.deepen.profile === 'standard' && m.envelope.subject.stepId === S1), 15_000);
+  await poll('the Standard explanation', async () => (await shown()).profileShown === 'standard', 60_000);
+  now = await shown();
+  check('S1 shows its Standard explanation, from the same code', now.state === 'done' && !now.prepared && /SIMULATED Standard/.test(now.alt) && now.altStep === S1, JSON.stringify(now));
   const callsAtStart = questions().length;
 
-  stage = 'Essens: the current step only, the prepared explanation meanwhile';
-  await choose('Essens');
-  await poll('the Essens request', async () => presents().length === 1, 15_000);
+  stage = 'Essentials: the current step only, the original explanation meanwhile';
+  await choose('Essentials');
+  await poll('the Essentials request', async () => presents().filter((m) => m.deepen.profile === 'essens').length === 1, 15_000);
   now = await shown();
-  check('while Essens is written, the prepared explanation stays with a quiet indicator', now.state === 'pending' && now.prepared && now.profileShown === '', JSON.stringify(now));
-  await w_shot(pc, '41-essens-pending');
-  const first = presents()[0];
-  check('one request, for the current step only, in Essens, from its version', presents().length === 1 && first.deepen.profile === 'essens' && first.envelope.subject.stepId === S1 && typeof first.deepen.basis === 'string' && /## How to present \(Essens\)/.test(first.sentPrompt), JSON.stringify(first.deepen));
-  await poll('the Essens explanation', async () => (await shown()).profileShown === 'essens', 60_000);
+  check('while Essentials is written, the original explanation stays with a quiet indicator', now.state === 'pending' && now.prepared && now.profileShown === '', JSON.stringify(now));
+  await w_shot(pc, '41-essentials-pending');
+  const first = presents().find((m) => m.deepen.profile === 'essens');
+  check('one request, for the current step only, in Essentials, from its version, with the policy once', first.envelope.subject.stepId === S1 && typeof first.deepen.basis === 'string' && /## How to present \(Essentials\)/.test(first.sentPrompt) && first.sentPrompt.split('<!-- dspatch:details -->').length === 2 && /^Language: English\./m.test(first.sentPrompt), JSON.stringify(first.deepen));
+  await poll('the Essentials explanation', async () => (await shown()).profileShown === 'essens', 60_000);
   now = await shown();
-  check('the step then shows its Essens explanation', now.state === 'done' && !now.prepared && /SIMULATED Essens/.test(now.alt) && now.altStep === S1, JSON.stringify(now));
-  check('no other step was asked for', presents().length === 1);
-  await w_shot(pc, '42-essens');
+  check('the step then shows its Essentials explanation', now.state === 'done' && !now.prepared && /SIMULATED Essentials/.test(now.alt) && now.altStep === S1, JSON.stringify(now));
+  check('no other step was asked for', presents().every((m) => m.envelope.subject.stepId === S1));
+  await w_shot(pc, '42-essentials');
   await osClickAt(pc, '[data-ev="profile-explanation"] [data-ev="answer-show-more"]');
   const more = await read(pc, `document.querySelector('[data-ev="profile-explanation"] [data-ev="answer-details"]')?.textContent ?? ''`);
-  check('Show more gives the Essens depth, not the first part again', /Mechanism \(Essens, Show more\)/.test(more) && !/What changes/.test(more), more.slice(0, 160));
-  await w_shot(pc, '43-essens-show-more');
+  check('Show more gives the Essentials depth, not the first part again', /SIMULATED deepening \(Essentials\)/.test(more) && !/SIMULATED Essentials for/.test(more), more.slice(0, 160));
+  await w_shot(pc, '43-essentials-show-more');
   await osClickAt(pc, '[data-ev="profile-explanation"] [data-ev="answer-show-more"]');
   await osClickAt(pc, '[data-ev="profile-toggle-prepared"]');
-  check('the prepared explanation is a click away, kept', (await shown()).prepared === true);
+  check('the original explanation is a click away, kept', (await shown()).prepared === true);
   await osClickAt(pc, '[data-ev="profile-toggle-prepared"]');
 
-  stage = 'Pedagog, then back without a call';
-  await choose('Pedagog');
-  await poll('the Pedagog explanation', async () => (await shown()).profileShown === 'pedagog', 60_000);
-  check('Pedagog asked once for the same step', presents().length === 2 && presents()[1].deepen.profile === 'pedagog' && presents()[1].envelope.subject.stepId === S1);
+  stage = 'Teacher, then back without a call';
+  await choose('Teacher');
+  await poll('the Teacher explanation', async () => (await shown()).profileShown === 'pedagog', 60_000);
+  check('Teacher asked once for the same step', presents().filter((m) => m.deepen.profile === 'pedagog').length === 1 && presents().find((m) => m.deepen.profile === 'pedagog').envelope.subject.stepId === S1);
   now = await shown();
-  check('the step shows its Pedagog explanation, with a mental model and an example', /SIMULATED Pedagog/.test(now.alt) && /For example/.test(now.alt), now.alt.slice(0, 120));
+  check('the step shows its Teacher explanation: the idea first, then the code', /SIMULATED Teacher/.test(now.alt) && /First the idea/.test(now.alt) && /Now the code/.test(now.alt), now.alt.slice(0, 120));
   check('the zoom is as it was', (await zoomOf()) === zoom0, String(await zoomOf()));
-  await w_shot(pc, '44-pedagog');
+  await w_shot(pc, '44-teacher');
   const callsBeforeBack = questions().length;
-  await choose('Essens');
+  await choose('Essentials');
   now = await shown();
-  check('back to Essens: shown at once, no new call', now.profileShown === 'essens' && now.state === 'done' && questions().length === callsBeforeBack, JSON.stringify({ now: now.state, calls: questions().length - callsBeforeBack }));
-  await choose('Original');
+  check('back to Essentials: shown at once, no new call', now.profileShown === 'essens' && now.state === 'done' && questions().length === callsBeforeBack, JSON.stringify({ now: now.state, calls: questions().length - callsBeforeBack }));
+  await choose('Standard');
   now = await shown();
-  check('back to Original: the prepared explanation, no new call', now.prepared && now.profileShown === '' && questions().length === callsBeforeBack);
-  await choose('Essens');
+  check('back to Standard: shown at once, no new call', now.profileShown === 'standard' && now.state === 'done' && questions().length === callsBeforeBack);
+  await choose('Essentials');
 
   stage = 'Explain more simply, twice, and a follow-up at the same level';
   const simplerCount = () => questions().filter((m) => m.deepen?.action === 'simpler').length;
   await osClickAt(pc, '[data-ev="step-explain-simpler"]');
   await poll('the first simpler answer', async () => simplerCount() === 1 && discussionRecord().some((m) => m.role === 'answer' && m.questionId === questions().filter((x) => x.deepen?.action === 'simpler')[0]?.id && m.status === 'done'), 60_000);
   const simpler1 = questions().filter((m) => m.deepen?.action === 'simpler')[0];
-  check('Explain more simply builds on the Essens explanation, in Essens', simpler1.presentation?.profile === 'essens' && simpler1.presentation?.shown?.length === 1 && /attempt 1/.test(simpler1.sentPrompt) && /### Shown 1: The Essens explanation of the step/.test(simpler1.sentPrompt), JSON.stringify(simpler1.presentation));
+  check('Explain more simply builds on the Essentials explanation, in Essentials', simpler1.presentation?.profile === 'essens' && simpler1.presentation?.shown?.length === 1 && /attempt 1, Essentials/.test(simpler1.sentPrompt) && /### Shown 1: The Essentials explanation of the step/.test(simpler1.sentPrompt) && /In Essentials: Plainer language/.test(simpler1.sentPrompt), JSON.stringify(simpler1.presentation));
   await poll('the step ready again', async () => (await read(pc, `document.querySelector('[data-ev="step-explain-simpler"]')?.disabled`)) === false, 30_000);
   await osClickAt(pc, '[data-ev="step-explain-simpler"]');
   await poll('the second simpler answer', async () => simplerCount() === 2 && discussionRecord().some((m) => m.role === 'answer' && m.questionId === questions().filter((x) => x.deepen?.action === 'simpler')[1]?.id && m.status === 'done'), 60_000);
@@ -964,8 +973,8 @@ async function main() {
   check('pressed again, it gets both explanations shown and is asked for another way in', simpler2.presentation?.shown?.length === 2 && /attempt 2/.test(simpler2.sentPrompt) && /did not make it clear enough/.test(simpler2.sentPrompt) && /### Shown 2: Explain more simply/.test(simpler2.sentPrompt));
   await delay(600);
   const deepenings = await read(pc, `[...document.querySelectorAll('[data-ev="step-deepening"]')].map((d)=>d.textContent).join(' | ')`);
-  check('the step shows the simpler explanations under its Essens explanation, each another way in', /attempt 1 \(the effect first\)/.test(deepenings) && /attempt 2 \(a concrete case instead\)/.test(deepenings), deepenings.slice(0, 300));
-  await w_shot(pc, '45-essens-simpler');
+  check('the step shows the simpler explanations under its Essentials explanation, each another way in', /attempt 1 \(the effect first\)/.test(deepenings) && /attempt 2 \(a concrete case instead\)/.test(deepenings), deepenings.slice(0, 300));
+  await w_shot(pc, '45-essentials-simpler');
   await clickInPanel('right-tab-discussion');
   await clearComposer(pc);
   await osType('How does it choose between the two alternatives?');
@@ -973,9 +982,9 @@ async function main() {
   await osKey('Return');
   await poll('the follow-up answered', async () => questions().length > before && discussionRecord().some((m) => m.role === 'answer' && m.questionId === questions().at(-1).id && m.status === 'done'), 60_000);
   const follow = questions().at(-1);
-  check('the follow-up carries Essens and the explanation it follows, after two simpler ones', follow.presentation?.profile === 'essens' && /## The explanation this question follows/.test(follow.sentPrompt) && /more simply 2 time\(s\)/.test(follow.sentPrompt), JSON.stringify(follow.presentation));
+  check('the follow-up carries Essentials and the explanation it follows, after two simpler ones', follow.presentation?.profile === 'essens' && /## The explanation this question follows \(Essentials\)/.test(follow.sentPrompt) && /more simply 2 time\(s\)/.test(follow.sentPrompt), JSON.stringify(follow.presentation));
   const followAnswer = discussionRecord().find((m) => m.role === 'answer' && m.questionId === follow.id)?.text ?? '';
-  check('the answer is at the same level (SIMULATED)', /SIMULATED follow-up at the Essens level/.test(followAnswer), followAnswer.slice(0, 120));
+  check('the answer is at the same level (SIMULATED)', /SIMULATED follow-up at the Essentials level/.test(followAnswer), followAnswer.slice(0, 120));
   await delay(500);
   const followGap = JSON.parse(await read(pc, DISCUSSION_SCROLLER));
   check('the follow-up and its answer are in view at the end of the discussion', followGap.gap <= 64, JSON.stringify(followGap));
@@ -986,50 +995,50 @@ async function main() {
   const callsBeforeMove = questions().length;
   await goToStep(S2);
   now = await shown();
-  check('arriving at another step in Essens offers it, and sends nothing', now.state === 'none' && now.prepared && questions().length === callsBeforeMove, JSON.stringify(now));
-  await osClickAt(pc, '[data-ev="profile-present"]');
-  await poll('S2 asked', async () => presents().some((m) => m.envelope.subject.stepId === S2), 10_000);
+  check('arriving at another step in Essentials shows the original explanation first', now.prepared && now.profileShown === '' && ['none', 'pending', ''].includes(now.state), JSON.stringify(now));
+  // DSP-180: the request goes after the view has settled (~500 ms), once, for this step.
+  await poll('S2 asked on arrival', async () => presents().some((m) => m.envelope.subject.stepId === S2 && m.deepen.profile === 'essens'), 10_000);
+  check('one request for S2, none for the steps passed on the way', presents().filter((m) => m.envelope.subject.stepId === S2).length === 1 && questions().length === callsBeforeMove + 1, String(questions().length - callsBeforeMove));
   await goToStep(S3);
   await poll('the S2 answer arrived', async () => discussionRecord().some((m) => m.role === 'answer' && m.questionId === presents().find((x) => x.envelope.subject.stepId === S2)?.id && m.status === 'done'), 60_000);
   now = await shown();
   check('the late S2 answer is not shown at S3', now.step === S3 && now.profileShown === '' && !/S2|Changed lines 35/.test(now.alt) && now.state === 'none', JSON.stringify(now));
-  // At S3: Essens asked, and Pedagog chosen while it is written.
-  await osClickAt(pc, '[data-ev="profile-present"]');
-  await poll('S3 Essens asked', async () => presents().some((m) => m.envelope.subject.stepId === S3), 10_000);
-  await choose('Pedagog');
+  // At S3: Essentials asked on arrival, and Teacher chosen while it is written.
+  await poll('S3 Essentials asked', async () => presents().some((m) => m.envelope.subject.stepId === S3), 10_000);
+  await choose('Teacher');
   now = await shown();
-  check('a switch while another answer is written is refused and says so; nothing of Essens is shown under Pedagog', now.value === 'pedagog' && now.profileShown === '' && ['failed', 'none', 'pending'].includes(now.state), JSON.stringify(now));
-  await poll('S3 Essens done', async () => discussionRecord().some((m) => m.role === 'answer' && m.questionId === presents().find((x) => x.envelope.subject.stepId === S3 && x.deepen.profile === 'essens')?.id && m.status === 'done'), 60_000);
+  check('a switch while another answer is written is refused and says so; nothing of Essentials is shown under Teacher', now.value === 'pedagog' && now.profileShown === '' && ['failed', 'none', 'pending'].includes(now.state), JSON.stringify(now));
+  await poll('S3 Essentials done', async () => discussionRecord().some((m) => m.role === 'answer' && m.questionId === presents().find((x) => x.envelope.subject.stepId === S3 && x.deepen.profile === 'essens')?.id && m.status === 'done'), 60_000);
   now = await shown();
-  check('when the Essens answer arrives, Pedagog still does not show it', now.profileShown === '' && now.value === 'pedagog', JSON.stringify(now));
-  // Either the Pedagog request was refused while Essens was written (then it is offered again),
-  // or Essens had finished and Pedagog was asked at once: each ends under its own profile.
-  const settled = await poll('S3 in Pedagog settled', async () => {
+  check('when the Essentials answer arrives, Teacher still does not show it', now.profileShown === '' && now.value === 'pedagog', JSON.stringify(now));
+  // Either the Teacher request was refused while Essentials was written (then it is offered again),
+  // or Essentials had finished and Teacher was asked at once: each ends under its own profile.
+  const settled = await poll('S3 in Teacher settled', async () => {
     const state = (await shown()).state;
     return state === 'pending' ? false : state;
   }, 60_000);
-  note('the Pedagog request at S3', settled === 'done' ? 'asked at once, after Essens had finished' : `${settled}: refused while Essens was written, offered again`);
+  note('the Teacher request at S3', settled === 'done' ? 'asked at once, after Essentials had finished' : `${settled}: refused while Essentials was written, offered again`);
   if (settled !== 'done') {
     const again = (await read(pc, `document.querySelector('[data-ev="profile-retry"]')!==null`)) === true ? 'profile-retry' : 'profile-present';
     await osClickAt(pc, `[data-ev="${again}"]`);
-    await poll('S3 in Pedagog', async () => (await shown()).profileShown === 'pedagog', 60_000);
+    await poll('S3 in Teacher', async () => (await shown()).profileShown === 'pedagog', 60_000);
   }
   now = await shown();
-  check('S3 shows its own Pedagog explanation, never the Essens one', now.profileShown === 'pedagog' && now.altStep === S3 && /SIMULATED Pedagog/.test(now.alt), JSON.stringify(now));
+  check('S3 shows its own Teacher explanation, never the Essentials one', now.profileShown === 'pedagog' && now.altStep === S3 && /SIMULATED Teacher/.test(now.alt), JSON.stringify(now));
   await goToStep(S2);
-  await choose('Essens');
+  await choose('Essentials');
   now = await shown();
-  check('back at S2 in Essens, its answer is there at once', now.profileShown === 'essens' && now.altStep === S2);
+  check('back at S2 in Essentials, its answer is there at once', now.profileShown === 'essens' && now.altStep === S2);
 
-  stage = 'a failed presentation keeps the prepared one and can be tried again';
+  stage = 'a failed presentation keeps the original one and can be tried again';
   await goToStep(S4);
-  await osClickAt(pc, '[data-ev="profile-present"]');
+  // Asked on arrival (DSP-180); the simulated provider fails this step's first presentation.
   await poll('the failure', async () => (await shown()).state === 'failed', 60_000);
   now = await shown();
-  check('a failure leaves the prepared explanation and offers Try again', now.prepared && now.profileShown === '' && (await read(pc, `document.querySelector('[data-ev="profile-retry"]')!==null`)) === true, JSON.stringify(now));
+  check('a failure leaves the original explanation and offers Try again', now.prepared && now.profileShown === '' && (await read(pc, `document.querySelector('[data-ev="profile-retry"]')!==null`)) === true, JSON.stringify(now));
   await w_shot(pc, '47-failed-retry');
   await osClickAt(pc, '[data-ev="profile-retry"]');
-  await poll('S4 in Essens', async () => (await shown()).profileShown === 'essens', 60_000);
+  await poll('S4 in Essentials', async () => (await shown()).profileShown === 'essens', 60_000);
   check('Try again writes it', (await shown()).altStep === S4);
 
   stage = 'a thread question keeps its thread';
@@ -1088,10 +1097,10 @@ async function main() {
   await goToStep(S1);
   await delay(800);
   now = await shown();
-  check('after a restart: Essens still chosen, S1 shows its Essens explanation, no call made', now.value === 'essens' && now.profileShown === 'essens' && questions().length === callsBeforeRestart, JSON.stringify({ now, calls: questions().length - callsBeforeRestart }));
-  await choose('Pedagog');
-  check('and Pedagog too, without a call', (await shown()).profileShown === 'pedagog' && questions().length === callsBeforeRestart);
-  await choose('Original');
+  check('after a restart: Essentials still chosen, S1 shows its Essentials explanation, no call made', now.value === 'essens' && now.profileShown === 'essens' && questions().length === callsBeforeRestart, JSON.stringify({ now, calls: questions().length - callsBeforeRestart }));
+  await choose('Teacher');
+  check('and Teacher too, without a call', (await shown()).profileShown === 'pedagog' && questions().length === callsBeforeRestart);
+  await choose('Standard');
 
   stage = 'the panel in its own window';
   await clickInPanel('panel-own-window');
@@ -1107,7 +1116,7 @@ async function main() {
   await osType('A draft I have not sent');
   const gapBefore = JSON.parse(await read(pc, DISCUSSION_SCROLLER));
   // The choice is above both tabs: switched while the discussion is read.
-  for (const name of ['Essens', 'Pedagog', 'Original']) {
+  for (const name of ['Essentials', 'Teacher', 'Standard']) {
     await choose(name, 'discussion');
   }
   check('standalone: the choice works and reuses what was written, without a call', questions().length === callsBeforeRestart);
@@ -1128,8 +1137,8 @@ async function main() {
     check(`standalone at zoom ${label}: the choice is shown and fits`, fits === true);
   }
   await client.main.menu('dspatch-zoom-reset', own.frame.id);
-  await choose('Pedagog');
-  await w_shot(pc, '48-standalone-pedagog');
+  await choose('Teacher');
+  await w_shot(pc, '48-standalone-teacher');
   await quitClient();
 }
 

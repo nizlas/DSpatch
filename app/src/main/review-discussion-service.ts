@@ -38,7 +38,7 @@ import {
   type SelectionQuote,
   quoteFrom,
 } from '../shared/review-discussion';
-import { PROFILES, presentationFrom, type PresentationRequest, type PresentationSection } from '../shared/presentation-profiles';
+import { PROFILE_PROMPT_NAMES, presentationFrom, type PresentationRequest, type PresentationSection } from '../shared/presentation-profiles';
 import { toolActivity, type StepAnswer } from '../shared/review-pair';
 import { AttemptLedger } from './attempt-ledger';
 // DSP-132: the only thing taken from the chat - its adapter interface, as a type. No route
@@ -222,7 +222,7 @@ type MutableMessage = { -readonly [K in keyof DiscussionMessage]: DiscussionMess
 function shownLabel(question: DiscussionMessage | null): string {
   const deepen = question?.deepen;
   if (deepen?.action === 'present') {
-    return `The ${PROFILES[deepen.profile ?? 'original'].name} explanation of the step`;
+    return `The ${PROFILE_PROMPT_NAMES[deepen.profile ?? 'original']} explanation of the step`;
   }
   if (deepen?.action === 'simpler' || question?.simplifies !== undefined) {
     return 'Explain more simply';
@@ -845,7 +845,8 @@ export class ReviewDiscussionService {
       ids.push(id);
       shown.push({ label: shownLabel(answer.questionId === undefined ? null : this.message(answer.questionId)), text: splitDetails(splitCodeAnswer(answer.text).shown).short });
     }
-    const mode: PresentationSection['mode'] = deepen?.action === 'present' ? 'present' : deepen?.action === 'simpler' ? 'simpler' : 'follow';
+    // DSP-181: Tell me more has a section of its own, so it deepens what was shown rather than restarting.
+    const mode: PresentationSection['mode'] = deepen?.action === 'present' ? 'present' : deepen?.action === 'simpler' ? 'simpler' : deepen?.action === 'more' ? 'more' : 'follow';
     // Explain more simply with nothing generated before: the step's prepared explanation is what was shown.
     const explanation = envelope.explanation;
     if (mode === 'simpler' && shown.length === 0 && explanation !== null) {
@@ -853,7 +854,7 @@ export class ReviewDiscussionService {
     }
     return {
       request: { profile: request.profile, ...(ids.length === 0 ? {} : { shown: ids }), ...(request.version === undefined ? {} : { version: request.version }) },
-      section: { profile: request.profile, mode: mode === 'present' ? 'present' : mode, shown: mode === 'present' ? [] : shown },
+      section: { profile: request.profile, mode, shown: mode === 'present' ? [] : shown },
     };
   }
 

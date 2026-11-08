@@ -367,6 +367,11 @@ test('an answer is its short part, with details below the marker shown only on r
   assert.deepEqual(splitDetails('Short.\n<!-- dspat'), { short: 'Short.', details: null });
   // Nothing before the marker: the details are the answer.
   assert.deepEqual(splitDetails(`${DETAILS_MARKER}\nAll of it.`), { short: 'All of it.', details: null });
+  // DSP-181: a model that writes the control's name instead of the marker still gets its deepening behind the control.
+  assert.deepEqual(splitDetails('Short.\n\nShow more\n\nMore.'), { short: 'Short.', details: 'More.' });
+  assert.deepEqual(splitDetails('Kort.\n\n### Visa mer\n\nMer.'), { short: 'Kort.', details: 'Mer.' });
+  assert.deepEqual(splitDetails('Short.\n\n**Show more:**\n\nMore.'), { short: 'Short.', details: 'More.' });
+  assert.deepEqual(splitDetails('Press Show more to see it.\n\nMore.'), { short: 'Press Show more to see it.\n\nMore.', details: null }, 'the words inside a sentence are not the marker');
 });
 
 test('every question is told to answer short first, and a simpler explanation carries the earlier answer', () => {
