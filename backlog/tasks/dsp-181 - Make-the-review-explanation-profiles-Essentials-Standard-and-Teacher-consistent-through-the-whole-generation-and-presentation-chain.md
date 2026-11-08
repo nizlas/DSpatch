@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-08 17:15'
-updated_date: '2026-11-08 19:26'
+updated_date: '2026-11-08 19:32'
 labels:
   - ux
   - review
@@ -127,4 +127,6 @@ Trial adjustments, none a weakening: ids behind the names in either language; a 
 What the trial proves and does not. The simulated provider answers from the prompt's sections, so the trial verifies the interface, the prompt each path sends, the data flow, the rendering and the number of calls; it says nothing about a real model's text or pedagogy, which Niclas judges on real code. On structure: the generator's section is an instruction to the model that the profile decides how the steps are explained and nothing else; what the trial and the tests verify is that DSpatch passes the profile on and changes none of the structure, the places or the coverage itself, and that the left column keeps its concise presentation. They do not establish that a real model produces the same walks in separate generations with different profiles.
 
 Also on Linux (run 42511281489 on 1dacfeb, before the fixes): the tests, provider-tests, windows, dock and governor jobs all passed, the review group among them, so the one Windows failure in review-context.test.ts is the path separator alone. The same full workflow was started on da18c06 (run 42514889775) after the fixes.
+
+Full linux-verify on da18c06 (run 42514889775), after the fixes: tests, provider-tests, windows, dock, governor and profiles all passed; the profile trial green a second time.
 <!-- SECTION:NOTES:END -->
