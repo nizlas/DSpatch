@@ -3,10 +3,10 @@ id: DSP-182
 title: >-
   A first Windows installer: the per-user setup built on Windows, published from
   the tag and tried on Windows
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-08 20:01'
-updated_date: '2026-11-08 22:27'
+updated_date: '2026-11-08 22:42'
 labels:
   - release
   - windows
@@ -35,14 +35,14 @@ Niclas's assignment of 8 November 2026: give DSpatch a first usable Windows inst
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 package.yml builds the win32 host package and the Windows installer on a Windows runner for v* tags as well as manual runs, with the executable's version metadata set, and publish-release publishes DSpatch-Setup-<version>.exe together with the .deb, both host packages, the manifest and SHA256SUMS (stage-release without --linux-only)
+- [x] #1 package.yml builds the win32 host package and the Windows installer on a Windows runner for v* tags as well as manual runs, with the executable's version metadata set, and publish-release publishes DSpatch-Setup-<version>.exe together with the .deb, both host packages, the manifest and SHA256SUMS (stage-release without --linux-only)
 - [ ] #2 The installer installs per user without administrator rights under %LOCALAPPDATA%\Programs\DSpatch, creates a Start menu entry (the desktop shortcut decided and documented), starts DSpatch when it finishes, and registers an uninstaller under Apps and features named with the version
 - [ ] #3 The installed client carries the win32 Copilot runtime and the win32 host package, starts the standalone host from its data folder, opens a local project and completes a Copilot turn; the simulated provider is enough for the trial, and one real sign-in is tried by hand
 - [ ] #4 Installing a newer setup over an older one replaces the program and keeps %APPDATA%\DSpatch (conversations, reviews, provider support, settings, window layout and zoom) and the vendors' logins; an older running host is handled by the existing Restart host flow and nothing is sent twice
 - [ ] #5 Uninstalling removes the program and the shortcuts, leaves %APPDATA%\DSpatch and the logins in place and stops no running host; INSTALL.md says what remains and how to remove it by hand
-- [ ] #6 The unsigned installer's SmartScreen and browser warnings are described in INSTALL.md and the release notes as the exact steps a person takes; signing is a recorded decision for later, not part of this card
+- [x] #6 The unsigned installer's SmartScreen and browser warnings are described in INSTALL.md and the release notes as the exact steps a person takes; signing is a recorded decision for later, not part of this card
 - [ ] #7 Verified on Windows with an isolated profile and the simulated provider: install, first start, an upgrade from the previous build and an uninstall, and the zoom, dock and profile trials against the installed client through DSPATCH_TRIAL_CLIENT; what ran by hand and what remains is recorded here and in INSTALL.md's Windows list
-- [ ] #8 The release notes and INSTALL.md state the Windows status honestly, and no release is published from this card without Niclas's decision
+- [x] #8 The release notes and INSTALL.md state the Windows status honestly, and no release is published from this card without Niclas's decision
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -89,4 +89,10 @@ Window trials, 8 November 2026, later the same evening (runs 8 to 10 on Niclas's
 - Remedies for the uninstaller on machines with such protection, each a decision for Niclas and none built: (1) code signing (Azure Trusted Signing through win.azureSignOptions, or an OV certificate); (2) a customCheckAppRunning macro so the uninstaller finds DSpatch without spawning PowerShell (electron-builder's nsProcess plugin route), which may or may not satisfy the heuristics; (3) an exclusion in the person's own security product, their choice. MiniDAWLab's Inno Setup uninstaller never met this because it does not copy itself to the temp folder and spawn PowerShell. Niclas chose to accept and document the limitation for the first pre-release (8 November 2026).
 
 Release, 8 November 2026: on Niclas's instruction the work was pushed to origin/main and tagged v0.1.10, a pre-release with the first Windows installer; docs/releases/v0.1.10.md states what was and was not shown. The published artifacts and the outcome of the tag build are recorded below.
+
+Release v0.1.10 (8 November 2026, on Niclas's instruction): origin/main moved b0a34e5 to 62a49b9 by fast-forward, no force; tag v0.1.10 on 62a49b9. The tag build (hosts-and-deb, windows-installer, publish-release) published https://github.com/nizlas/DSpatch/releases/tag/v0.1.10, marked a pre-release by hand: DSpatch-Setup-0.1.10.exe, 405800628 bytes, sha256 bf505f040dae0a9c2914e0fde34a91c173fd586965c0e200f7c1b17bb4ea91e6; dspatch_0.1.10_amd64.deb; dspatch-host-0.1.10-62a49b98c65b-linux-x64.tar.gz and -win32-x64.tar.gz; host-manifest.json; SHA256SUMS. The downloaded installer matches SHA256SUMS (local copy in app/release/published-v0.1.10/). Silent smoke test of the published file on Niclas's machine (run11-published-silent, isolated folders): the install into the chosen folder, both host packages and the win32 Copilot runtime bundled, version resource 0.1.10, Start menu entry, no desktop shortcut, uninstall entry "DSpatch 0.1.10" per user, the installer's key; the uninstaller missing right after the install (Bitdefender, as before); removal by hand clean; the trial's data folder and Niclas's own %APPDATA%\DSpatch unchanged.
+
+Manual run 42530363131 on main (62a49b9): the wizard passed every page on the runner: setup window, folder page with no install-mode page, default folder, folder changed, Shortcuts page unchecked by default, Install (pressed with the keyboard after Invoke did nothing within 4 s), finish page with "Run DSpatch" checked by default, declined, Finish, exit code 0 (13-finish-page.png and 14-finish-declined.png in that run's windows-trials artifact). The trial then failed on its own reading of wizard.json, which Windows PowerShell had written with a byte order mark; fixed in 37cdb3d. Run 42531490168 on main carries that fix and is meant to show the first start, the upgrade with client and host running, Restart host, the uninstall and the dock, zoom and profile trials against the installed client; its result is recorded when known.
+
+Acceptance criteria at this point: 1, 6 and 8 met; 2 met except that Finish's start of DSpatch was offered and declined in every trial, not exercised, and that an installation on a machine with Bitdefender has no uninstaller file; 5's INSTALL.md part met, the uninstaller's own run pending the runner; 3, 4 and 7 pending the runner and Niclas's own sign-in by hand. Status Review: Niclas assesses the installer himself, and decides on the Bitdefender remedies above.
 <!-- SECTION:NOTES:END -->
