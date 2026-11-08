@@ -35,10 +35,18 @@ export function chosenProfile(walkChoice: unknown, stateChoice: unknown, default
 }
 
 function read(scope: string, fallback: PresentationProfile | null): PublicProfile {
+  // Before any walk exists (an empty scope) the choice is the computer's alone: the one the next
+  // preparation writes its explanations in, and the one the picker beside the agent shows.
+  if (scope === '') {
+    return effectiveProfile(stored(DEFAULT_STORAGE_KEY));
+  }
   return chosenProfile(stored(`${WALK_STORAGE_PREFIX}${scope}`), fallback, stored(DEFAULT_STORAGE_KEY));
 }
 
-/** The chosen profile of one walk, shared by windows through storage. */
+/**
+ * The chosen profile of one walk, shared by windows through storage. With an empty scope (no walk
+ * yet) it is the computer's choice, which the next preparation uses (DSP-181).
+ */
 export function usePresentationProfile(scope: string, fallback: PresentationProfile | null): readonly [PublicProfile, (profile: PublicProfile) => void] {
   const scopedKey = `${WALK_STORAGE_PREFIX}${scope}`;
   const [profile, setState] = useState<PublicProfile>(() => read(scope, fallback));
@@ -58,11 +66,13 @@ export function usePresentationProfile(scope: string, fallback: PresentationProf
     setState(next);
     try {
       window.localStorage.setItem(DEFAULT_STORAGE_KEY, next);
-      window.localStorage.setItem(scopedKey, next);
+      if (scope !== '') {
+        window.localStorage.setItem(scopedKey, next);
+      }
     } catch {
       // Not kept past this window; the choice still holds here.
     }
-  }, [scopedKey]);
+  }, [scope, scopedKey]);
   return [profile, choose] as const;
 }
 

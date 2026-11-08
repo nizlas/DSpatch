@@ -670,7 +670,8 @@ function OpenReview({
   // DSP-181: the profile the walk's own explanations were written in, when it was prepared in one; a
   // walk opens in it unless the person chose otherwise for this walk, and reads in it with no call.
   const walkProfile = bundle.definition.presentation?.profile ?? null;
-  const [profile, rememberLatestProfile] = usePresentationProfile(bundle.definitionPath, state.ui.presentationProfile ?? walkProfile);
+  // Before any walk exists the choice is the computer's, the one the next preparation uses (an empty scope).
+  const [profile, rememberLatestProfile] = usePresentationProfile(bundle.definition.walks.length === 0 ? '' : bundle.definitionPath, state.ui.presentationProfile ?? walkProfile);
   const [profileAbout, setProfileAbout] = useState(false);
   // A profile's alternative that could not be asked for (an answer still on its way, say), per step and profile.
   const [presentError, setPresentError] = useState<{ readonly key: string; readonly error: string } | null>(null);
