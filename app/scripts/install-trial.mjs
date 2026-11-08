@@ -166,22 +166,22 @@ public static class Wins {
 }
 "@; [Wins]::List()`);
 const titleOf = (entry) => entry.split('|').slice(1).join('|');
-/** One window by its title, as Windows draws it even under another window (PrintWindow): the screen capture shows what covers it. */
+/** One window by its title, as Windows draws it even under another window (PrintWindow): the screen capture shows what covers it. The class is an IntPtr: PowerShell turns a $null string argument into an empty string, which matches no window. */
 const windowShot = (title, name) => {
   const file = path.join(evidence, `${name}.png`);
   ps(`Add-Type -AssemblyName System.Drawing; Add-Type @"
 using System; using System.Runtime.InteropServices;
 [StructLayout(LayoutKind.Sequential)] public struct WRect { public int L; public int T; public int R; public int B; }
-public static class WShot { [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out WRect r); [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags); [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }
-"@; [WShot]::SetProcessDPIAware() | Out-Null; $h = [WShot]::FindWindow($null, '${title.replace(/'/g, "''")}'); if ($h -eq [IntPtr]::Zero) { throw 'no window with that title' }; $r = New-Object WRect; [WShot]::GetWindowRect($h, [ref]$r) | Out-Null; $bmp = New-Object System.Drawing.Bitmap ($r.R - $r.L), ($r.B - $r.T); $g = [System.Drawing.Graphics]::FromImage($bmp); $hdc = $g.GetHdc(); [WShot]::PrintWindow($h, $hdc, 2) | Out-Null; $g.ReleaseHdc($hdc); $bmp.Save('${file.replace(/'/g, "''")}'); $g.Dispose(); $bmp.Dispose()`, true);
+public static class WShot { [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(IntPtr cls, string title); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out WRect r); [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags); [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }
+"@; [WShot]::SetProcessDPIAware() | Out-Null; $h = [WShot]::FindWindow([IntPtr]::Zero, '${title.replace(/'/g, "''")}'); if ($h -eq [IntPtr]::Zero) { throw 'no window with that title' }; $r = New-Object WRect; [WShot]::GetWindowRect($h, [ref]$r) | Out-Null; $bmp = New-Object System.Drawing.Bitmap ($r.R - $r.L), ($r.B - $r.T); $g = [System.Drawing.Graphics]::FromImage($bmp); $hdc = $g.GetHdc(); [WShot]::PrintWindow($h, $hdc, 2) | Out-Null; $g.ReleaseHdc($hdc); $bmp.Save('${file.replace(/'/g, "''")}'); $g.Dispose(); $bmp.Dispose()`, true);
   return file;
 };
 /** Closes one window by its title as its Close button does (WM_CLOSE): a dialog answers it with its cancel. */
 const closeWindow = (title) =>
   ps(`Add-Type @"
 using System; using System.Runtime.InteropServices;
-public static class WClose { [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title); [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l); }
-"@; $h = [WClose]::FindWindow($null, '${title.replace(/'/g, "''")}'); if ($h -ne [IntPtr]::Zero) { [WClose]::PostMessage($h, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null }`, true);
+public static class WClose { [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(IntPtr cls, string title); [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l); }
+"@; $h = [WClose]::FindWindow([IntPtr]::Zero, '${title.replace(/'/g, "''")}'); if ($h -ne [IntPtr]::Zero) { [WClose]::PostMessage($h, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null }`, true);
 const warningTitle = /Open File - Security Warning|protected your PC|SmartScreen/i;
 
 // --- The client ------------------------------------------------------------------------------------

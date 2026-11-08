@@ -4,6 +4,10 @@
 # offer to start DSpatch, which the trial declines so that DSpatch is only ever started with the
 # trial's own data folder. Screenshots are of the wizard window as Windows draws it.
 #
+# UI Automation reads the pages. A press that its Invoke does not deliver (seen on the Shortcuts
+# page, an nsDialogs page) is repeated with the keyboard, the wizard brought to the front, as a
+# person would press it; the finish page's offer is never left checked when Finish is pressed.
+#
 #   powershell -NoProfile -ExecutionPolicy Bypass -File wizard.ps1 -Setup <setup.exe> -InstallDir <folder> -Evidence <folder>
 param(
   [Parameter(Mandatory = $true)][string]$Setup,
@@ -11,7 +15,7 @@ param(
   [Parameter(Mandatory = $true)][string]$Evidence
 )
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -36,6 +40,7 @@ function Shot($element, [string]$name) {
 }
 $A = [System.Windows.Automation.AutomationElement]
 $Scope = [System.Windows.Automation.TreeScope]
+$Off = [System.Windows.Automation.ToggleState]::Off
 function Cond($type, $name) {
   $c = New-Object System.Windows.Automation.PropertyCondition ($A::ControlTypeProperty, $type)
   if ($null -eq $name) { return $c }
@@ -43,6 +48,7 @@ function Cond($type, $name) {
 }
 function Child($parent, $type, $name) { return $parent.FindFirst($Scope::Descendants, (Cond $type $name)) }
 function Children($parent, $type) { return @($parent.FindAll($Scope::Descendants, (Cond $type $null))) }
+function ChildLike($parent, $type, [string]$pattern) { foreach ($e in (Children $parent $type)) { if ($e.Current.Name -like $pattern) { return $e } }; return $null }
 function WaitFor([scriptblock]$read, [int]$seconds, [string]$what) {
   $end = (Get-Date).AddSeconds($seconds)
   while ((Get-Date) -lt $end) {
@@ -52,19 +58,50 @@ function WaitFor([scriptblock]$read, [int]$seconds, [string]$what) {
   }
   throw "wizard: timeout waiting for $what"
 }
-function SetupWindow($pid) {
-  $all = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll($Scope::Children, (New-Object System.Windows.Automation.PropertyCondition ($A::ProcessIdProperty, [int]$pid))))
+# The parameter is not named $pid: that is PowerShell's own process id, and a parameter of that name reads as it.
+function SetupWindow($setupPid) {
+  $all = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll($Scope::Children, (New-Object System.Windows.Automation.PropertyCondition ($A::ProcessIdProperty, [int]$setupPid))))
   foreach ($w in $all) { if ($w.Current.Name -like 'DSpatch Setup*') { return $w } }
   return $null
 }
-function Press($window, [string[]]$names) {
-  foreach ($n in $names) {
-    $b = Child $window ([System.Windows.Automation.ControlType]::Button) $n
-    if ($null -ne $b) { $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); return $n }
-  }
-  throw "wizard: no button named $($names -join ' / ')"
-}
 function Texts($window) { return @(Children $window ([System.Windows.Automation.ControlType]::Text) | ForEach-Object { $_.Current.Name }) }
+$shell = New-Object -ComObject WScript.Shell
+function Front() { [void]$shell.AppActivate([int]$proc.Id); Start-Sleep -Milliseconds 300 }
+# Presses a button and waits for what the next page shows. Invoke first; when the page has not moved
+# within 4 s, the button is focused and pressed with Enter, the wizard in front.
+function PressAndWait($window, [string[]]$names, [scriptblock]$arrived, [int]$seconds, [string]$what) {
+  $b = $null
+  foreach ($n in $names) { $b = Child $window ([System.Windows.Automation.ControlType]::Button) $n; if ($null -ne $b) { break } }
+  if ($null -eq $b) { throw "wizard: no button named $($names -join ' / ')" }
+  $label = $b.Current.Name
+  try { $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() } catch { }
+  $end = (Get-Date).AddSeconds(4)
+  while ((Get-Date) -lt $end) {
+    try { $value = & $arrived } catch { $value = $null }
+    if ($null -ne $value) { return $value }
+    Start-Sleep -Milliseconds 250
+  }
+  Note "'$label' did not answer UI Automation's Invoke within 4 s; pressed with the keyboard instead, the wizard in front" $true
+  Front
+  try { $b.SetFocus() } catch { }
+  Start-Sleep -Milliseconds 200
+  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+  return (WaitFor $arrived $seconds $what)
+}
+function ToggleState($box) { return $box.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState }
+function UncheckBox($box, [string]$label) {
+  if ((ToggleState $box) -eq $Off) { return }
+  try { $box.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle() } catch { }
+  Start-Sleep -Milliseconds 400
+  if ((ToggleState $box) -ne $Off) {
+    Note "'$label' did not answer UI Automation's Toggle; unchecked with the keyboard instead, the wizard in front" $true
+    Front
+    try { $box.SetFocus() } catch { }
+    Start-Sleep -Milliseconds 200
+    [System.Windows.Forms.SendKeys]::SendWait(' ')
+    Start-Sleep -Milliseconds 400
+  }
+}
 
 $proc = Start-Process -FilePath $Setup -PassThru
 $win = WaitFor { SetupWindow $proc.Id } 60 'the setup window'
@@ -82,28 +119,27 @@ $value.SetValue($InstallDir)
 Start-Sleep -Milliseconds 300
 Note 'the folder can be changed' ($value.Current.Value -eq $InstallDir) $value.Current.Value
 Shot $win '11-folder-chosen'
-$pressed = Press $win @('Next >', '&Next >', 'Next')
+$box = PressAndWait $win @('Next >', '&Next >', 'Next') { Child $win ([System.Windows.Automation.ControlType]::CheckBox) 'Create a desktop shortcut' } 30 'the Shortcuts page'
 
 # Page 2: Shortcuts, the desktop checkbox unchecked.
-$box = WaitFor { Child $win ([System.Windows.Automation.ControlType]::CheckBox) 'Create a desktop shortcut' } 30 'the Shortcuts page'
-$state = $box.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState
-Note 'the Shortcuts page offers a desktop shortcut, unchecked by default' ($state -eq [System.Windows.Automation.ToggleState]::Off) "state: $state; texts: $((Texts $win) -join ' | ')"
+$state = ToggleState $box
+Note 'the Shortcuts page offers a desktop shortcut, unchecked by default' ($state -eq $Off) "state: $state; texts: $((Texts $win) -join ' | ')"
 Shot $win '12-shortcuts-page'
-$pressed = Press $win @('Install', '&Install')
+$run = PressAndWait $win @('Install', '&Install') { ChildLike $win ([System.Windows.Automation.ControlType]::CheckBox) 'Run*' } 300 'the finish page'
 
 # Installing, then the finish page.
-$run = WaitFor { Child $win ([System.Windows.Automation.ControlType]::CheckBox) 'Run DSpatch' } 240 'the finish page'
-$runState = $run.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState
-Note 'the finish page offers to start DSpatch' $true "offered, state: $runState"
+$runState = ToggleState $run
+Note 'the finish page offers to start DSpatch' $true "'$($run.Current.Name)', state: $runState"
 Shot $win '13-finish-page'
-if ($runState -eq [System.Windows.Automation.ToggleState]::On) {
-  $run.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
-  Start-Sleep -Milliseconds 300
-}
-$after = $run.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState
-Note 'the start offer can be declined (declined here: the trial starts DSpatch with its own data folder)' ($after -eq [System.Windows.Automation.ToggleState]::Off) "state: $after"
+UncheckBox $run $run.Current.Name
+$after = ToggleState $run
 Shot $win '14-finish-declined'
-$pressed = Press $win @('Finish', '&Finish')
-$proc.WaitForExit(60000) | Out-Null
+if ($after -ne $Off) {
+  # Never Finish with the offer checked: that would start DSpatch with the person's own data folder.
+  Stop-Process -Id $proc.Id -Force
+  Note 'the start offer can be declined (declined here: the trial starts DSpatch with its own data folder)' $false "state stayed $after; the wizard was ended without Finish"
+}
+Note 'the start offer can be declined (declined here: the trial starts DSpatch with its own data folder)' $true "state: $after"
+PressAndWait $win @('Finish', '&Finish') { if ($proc.HasExited) { $true } else { $null } } 60 'the installer to end' | Out-Null
 Note 'the installer ended' ($proc.HasExited -and $proc.ExitCode -eq 0) "exit code $($proc.ExitCode)"
 $results | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Evidence 'wizard.json')
