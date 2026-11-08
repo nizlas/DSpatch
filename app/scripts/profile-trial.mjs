@@ -802,9 +802,21 @@ async function chooseOption(contentsId, selector, value, typed) {
   return current();
 }
 
-/** The computed typography of the first paragraph under a selector: what the display renders it with. */
+/**
+ * The computed typography of a paragraph under a selector, as the display renders it: a paragraph
+ * followed by something when there is one, since the last paragraph of any text has no margin
+ * below it by the same shared rule; its margin is reported as "(last)" and not compared.
+ */
 const paragraphStyle = (contentsId, selector) =>
-  read(contentsId, `(()=>{const p=document.querySelector(${JSON.stringify(selector)});if(!p)return null;const s=getComputedStyle(p);return JSON.stringify({lineHeight:s.lineHeight,fontSize:s.fontSize,fontFamily:s.fontFamily,marginBottom:s.marginBottom})})()`);
+  read(contentsId, `(()=>{const all=[...document.querySelectorAll(${JSON.stringify(selector)})];const p=all.find((e)=>e.nextElementSibling!==null)??all[0];if(!p)return null;const s=getComputedStyle(p);return JSON.stringify({lineHeight:s.lineHeight,fontSize:s.fontSize,fontFamily:s.fontFamily,marginBottom:p.nextElementSibling===null?'(last)':s.marginBottom})})()`);
+/** Whether paragraphs read with one typography: the same line height, size and family, and the same margin wherever a margin applies. */
+function sameTypography(...styles) {
+  const parsed = styles.map((style) => (style === null ? null : JSON.parse(style)));
+  if (parsed.some((style) => style === null)) return false;
+  const [first] = parsed;
+  const margins = parsed.map((style) => style.marginBottom).filter((margin) => margin !== '(last)');
+  return parsed.every((style) => style.lineHeight === first.lineHeight && style.fontSize === first.fontSize && style.fontFamily === first.fontFamily) && margins.every((margin) => margin === margins[0]);
+}
 
 async function main() {
   stage = 'preflight';
@@ -987,7 +999,7 @@ async function main() {
   // One reading typography: the alternative, the walk's own text and the discussion's answer render alike.
   const altStyle = await paragraphStyle(pc, '[data-ev="profile-explanation"] .markdown__p');
   const discussionStyle = await paragraphStyle(pc, '.rv-discussion .rv-answer .markdown__p');
-  check('the alternative, the walk\'s own text and the discussion\'s answers share one typography on the display', altStyle !== null && altStyle === ownStyle && altStyle === discussionStyle, JSON.stringify({ altStyle, ownStyle, discussionStyle }));
+  check('the alternative, the walk\'s own text and the discussion\'s answers share one typography on the display', sameTypography(altStyle, ownStyle, discussionStyle), JSON.stringify({ altStyle, ownStyle, discussionStyle }));
   await osClickAt(pc, '[data-ev="profile-explanation"] [data-ev="answer-show-more"]');
   await osClickAt(pc, '[data-ev="profile-toggle-prepared"]');
   check('the original explanation is a click away, kept', (await shown()).prepared === true);
