@@ -186,6 +186,7 @@ describe('a walk is read in its own profile without a call (DSP-181)', () => {
     assert.equal(wantsAlternative('standard', 'essens', false, false), true, 'another profile with nothing yet');
     assert.equal(wantsAlternative('standard', 'essens', true, false), false, 'one is there');
     assert.equal(wantsAlternative('standard', 'essens', false, true), false, 'one is on its way');
+    assert.equal(wantsAlternative('standard', 'essens', false, false, true), false, 'the last attempt failed: it waits for Try again');
     assert.equal(wantsAlternative(null, 'standard', false, false), true, 'an older walk (Original) has no profile of its own');
   });
 });

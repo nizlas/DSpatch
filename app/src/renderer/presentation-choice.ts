@@ -172,9 +172,11 @@ export function useDefaultProfile(): readonly [PublicProfile, (profile: PublicPr
 
 /**
  * Whether the step needs an alternative asked for in the profile the person reads in (DSP-181):
- * not when the walk's own explanations are written in that profile, and not when one is there
- * or on its way. Opening a walk in its own profile therefore asks for nothing.
+ * not when the walk's own explanations are written in that profile, not when one is there or on
+ * its way, and not after an attempt failed: a failure waits for the person's Try again, so a
+ * provider that keeps failing is never asked again and again on its own. Opening a walk in its
+ * own profile therefore asks for nothing.
  */
-export function wantsAlternative(walkProfile: PresentationProfile | null, profile: PublicProfile, hasDone: boolean, pending: boolean): boolean {
-  return walkProfile !== profile && !hasDone && !pending;
+export function wantsAlternative(walkProfile: PresentationProfile | null, profile: PublicProfile, hasDone: boolean, pending: boolean, failed = false): boolean {
+  return walkProfile !== profile && !hasDone && !pending && !failed;
 }

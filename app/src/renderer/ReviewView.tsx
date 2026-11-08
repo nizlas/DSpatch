@@ -1556,7 +1556,9 @@ function OpenReview({
     const basis = stepContentHash(current.step);
     const { done, latest } = alternativeFor(discussionMessages, current.step.id, basis, profile);
     const pending = latest !== null && latest.answer?.status !== 'done' && ['sending', 'sent'].includes(latest.question.status) && (latest.answer === null || latest.answer.status === 'streaming');
-    if (!wantsAlternative(walkProfile, profile, done !== null, pending)) {
+    // An attempt that failed, was stopped or ended unknown waits for the person's Try again.
+    const failed = latest !== null && done === null && !pending;
+    if (!wantsAlternative(walkProfile, profile, done !== null, pending, failed)) {
       return;
     }
     const target = { stepId: current.step.id, profile, basis } as const;

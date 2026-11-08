@@ -1140,6 +1140,11 @@ async function main() {
   await poll('the failure', async () => (await shown()).state === 'failed', 60_000);
   now = await shown();
   check('a failure leaves the original explanation and offers Try again', now.prepared && now.profileShown === '' && (await read(pc, `document.querySelector('[data-ev="profile-retry"]')!==null`)) === true, JSON.stringify(now));
+  // A failure waits for the person: nothing is asked again on its own (a provider that kept failing would otherwise be asked without end).
+  await delay(2500);
+  now = await shown();
+  const askedForS4 = () => presents().filter((m) => m.envelope.subject.stepId === S4).length;
+  check('a failure waits for Try again: nothing is asked again on its own', now.state === 'failed' && askedForS4() === 1, JSON.stringify({ now, asked: askedForS4() }));
   await w_shot(pc, '47-failed-retry');
   await osClickAt(pc, '[data-ev="profile-retry"]');
   await poll('S4 in Essentials', async () => (await shown()).profileShown === 'essens', 60_000);
