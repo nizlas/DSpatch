@@ -454,7 +454,10 @@ async function main() {
     check('the newer setup installed silently over the older one', upgraded.status === 0 && fs.existsSync(exe), `exit ${String(upgraded.status)}`);
     const newVersion = versionOf(exe);
     const newExpected = versionOf(upgrade)?.ProductVersion ?? '';
-    check('the program is the newer version', String(newVersion?.ProductVersion ?? '') === newExpected && newExpected !== String(version?.ProductVersion ?? ''), JSON.stringify({ from: version?.ProductVersion, to: newVersion?.ProductVersion }));
+    // The setup file's resource says "0.1.10", the installed executable's "0.1.10.0": three parts are compared.
+    const threeParts = (value) => String(value ?? '').split('.').slice(0, 3).join('.');
+    check('the program is the newer version', threeParts(newVersion?.ProductVersion) === threeParts(newExpected) && threeParts(newExpected) !== threeParts(version?.ProductVersion), JSON.stringify({ from: version?.ProductVersion, to: newVersion?.ProductVersion, setup: newExpected }));
+    record('the newer build\'s uninstaller is in the folder after the upgrade', fs.existsSync(path.join(installDir, 'Uninstall DSpatch.exe')), fs.existsSync(path.join(installDir, 'Uninstall DSpatch.exe')) ? 'present' : 'missing: removed by a security product (see the security products note)');
     const entryAfter = uninstallEntries();
     check('the uninstall entry names the newer version, once', entryAfter.length === 1 && String(entryAfter[0].DisplayVersion) === newExpected.split('.').slice(0, 3).join('.') && String(entryAfter[0].UninstallString ?? '').toLowerCase().includes(installDir.toLowerCase()), JSON.stringify(entryAfter));
     if (!noWindows) {
