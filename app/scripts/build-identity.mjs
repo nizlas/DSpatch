@@ -68,13 +68,24 @@ const collected = [
   ),
 ];
 
+/**
+ * The bytes a file is hashed by: CRLF and a lone CR become LF, so the same sources hash the
+ * same whether git checked them out with CRLF (Windows, core.autocrlf) or LF (Linux). Without
+ * this the Windows client and the host package built on Linux from one commit read as different
+ * builds, and the window said "The host is another build" (DSP-182, v0.1.10). The latin1 round
+ * trip keeps every other byte as it is, so a binary file hashes consistently too.
+ *
+ * @param {Buffer} bytes
+ */
+const normalized = (bytes) => Buffer.from(bytes.toString('latin1').replace(/\r\n?/g, '\n'), 'latin1');
+
 const files = collected
   .map((full) => ({
     // Forward slashes so the manifest is comparable across platforms even though
     // only Windows is packaged today.
     path: path.relative(appDir, full).split(path.sep).join('/'),
     bytes: fs.statSync(full).size,
-    sha256: createHash('sha256').update(fs.readFileSync(full)).digest('hex'),
+    sha256: createHash('sha256').update(normalized(fs.readFileSync(full))).digest('hex'),
   }))
   .sort((left, right) => (left.path < right.path ? -1 : 1));
 
