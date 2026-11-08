@@ -14,13 +14,17 @@ on:
         description: The previous release's tag, for the upgrade trial
         type: string
         default: v0.1.4
+      only:
+        description: Run one job only (tests, provider-tests, windows, dock, governor, profiles); empty runs them all
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
   tests:
-    if: ${{ !inputs.published }}
+    if: ${{ !inputs.published && (inputs.only == '' || inputs.only == 'tests') }}
     runs-on: ubuntu-24.04
     steps:
       # The review tests open this repository's own commits: a shallow clone has none of them.
@@ -59,7 +63,7 @@ jobs:
         working-directory: app
 
   provider-tests:
-    if: ${{ !inputs.published }}
+    if: ${{ !inputs.published && (inputs.only == '' || inputs.only == 'provider-tests') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +80,7 @@ jobs:
         working-directory: app
 
   windows:
-    if: ${{ !inputs.published }}
+    if: ${{ !inputs.published && (inputs.only == '' || inputs.only == 'windows') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -107,7 +111,7 @@ jobs:
   # the walk window, undocked, resized and zoomed, as the X display shows it (a screenshot of the
   # root window) and with the mouse and keys through the X server.
   dock:
-    if: ${{ !inputs.published }}
+    if: ${{ !inputs.published && (inputs.only == '' || inputs.only == 'dock') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -136,7 +140,7 @@ jobs:
   # its reading starting and stopping with a light dry loop run in observe), then the loop and live
   # areas, where enforce is tried with injected pressure. No load is generated.
   governor:
-    if: ${{ !inputs.published }}
+    if: ${{ !inputs.published && (inputs.only == '' || inputs.only == 'governor') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -163,6 +167,37 @@ jobs:
         with:
           name: governor-linux-check
           path: app/release/governor-linux-check
+
+  # DSP-181: the presentation profiles in real windows: the profile chosen before the walks are
+  # prepared (from the panel and beside the agent), a walk read in its own profile without a call,
+  # the alternatives in the other profiles, Explain more simply and follow-ups, the names in both
+  # languages after a restart, one typography, the left column unchanged, docked and standalone,
+  # with zoom. Screenshots of the X display and input through the X server, the provider SIMULATED.
+  profiles:
+    if: ${{ !inputs.published && (inputs.only == '' || inputs.only == 'profiles') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xdotool openbox x11-xkb-utils x11-xserver-utils x11-utils imagemagick
+      - run: npm ci
+        working-directory: app
+      - run: npm run build
+        working-directory: app
+      - run: test -f node_modules/electron/dist/chrome-sandbox || node node_modules/electron/install.js
+        working-directory: app
+      - run: sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+        working-directory: app
+      - name: The profile trial in real windows
+        run: node scripts/profile-trial.mjs release/trial-profiles/ci
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: profile-trial
+          path: app/release/trial-profiles/ci
 
   published:
     if: ${{ inputs.published }}

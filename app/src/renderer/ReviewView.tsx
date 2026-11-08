@@ -2820,7 +2820,7 @@ function Header({
         </span>
         <label className="rv-lang">
           {words.language}{' '}
-          <select value={lang} onChange={(event) => onLang(event.target.value as Lang)}>
+          <select data-ev="review-language" value={lang} onChange={(event) => onLang(event.target.value as Lang)}>
             <option value="sv">Svenska</option>
             <option value="en">English</option>
           </select>

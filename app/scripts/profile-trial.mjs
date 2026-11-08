@@ -776,6 +776,36 @@ function discussionRecord() {
 const questions = () => discussionRecord().filter((message) => message.role === 'question');
 const presents = () => questions().filter((message) => message.deepen?.action === 'present');
 
+/** The stable id behind a profile's name in either language (DSP-181). */
+const PROFILE_IDS = { essentials: 'essens', essens: 'essens', standard: 'standard', teacher: 'pedagog', pedagog: 'pedagog' };
+
+/** An option of a select chosen through the operating system: typed letters first, the arrow keys from the top if the list did not follow. */
+async function chooseOption(contentsId, selector, value, typed) {
+  const current = () => read(contentsId, `document.querySelector(${JSON.stringify(selector)})?.value ?? null`);
+  const select = await pointAt(contentsId, selector, 'nearest');
+  await activate(select.windowId);
+  await osClick(select.physical);
+  await delay(300);
+  await osKey('Escape');
+  await osType(typed);
+  await delay(250);
+  const index = await read(contentsId, `[...document.querySelector(${JSON.stringify(selector)}).options].findIndex((o) => o.value === ${JSON.stringify(value)})`);
+  for (let attempt = 0; attempt < 3 && (await current()) !== value; attempt += 1) {
+    await osClick((await pointAt(contentsId, selector, null)).physical);
+    await delay(400);
+    await osKey('Home');
+    for (let i = 0; i < index; i += 1) await osKey('Down');
+    await osKey('Return');
+    await delay(400);
+  }
+  await delay(500);
+  return current();
+}
+
+/** The computed typography of the first paragraph under a selector: what the display renders it with. */
+const paragraphStyle = (contentsId, selector) =>
+  read(contentsId, `(()=>{const p=document.querySelector(${JSON.stringify(selector)});if(!p)return null;const s=getComputedStyle(p);return JSON.stringify({lineHeight:s.lineHeight,fontSize:s.fontSize,fontFamily:s.fontFamily,marginBottom:s.marginBottom})})()`);
+
 async function main() {
   stage = 'preflight';
   check('xdotool and import are here', run('sh', ['-c', 'command -v xdotool && command -v import'], true) !== '');
@@ -842,7 +872,32 @@ async function main() {
   };
   const reviewBefore = await reviewState();
   note('the review before any profile', reviewBefore);
+  stage = 'the profile chosen before the walks are prepared';
+  // The panel before any walk, shown from the diff window: its chooser offers the three profiles, Standard by default.
+  await diff.click('pair-discussion');
+  let panel = await poll('the panel before any walk', panelView, 30_000);
+  let pc = panel.view.contentsId;
+  /** Choose a profile with the keyboard on the panel's dropdown, as a person can (DSP-181: by its name in either language). */
+  const choose = async (name, onTab = 'step') => {
+    const id = PROFILE_IDS[name.toLowerCase()];
+    if (onTab === 'step') await clickInPanel('right-tab-step');
+    await chooseOption(pc, '[data-ev="presentation-profile"]', id, name.slice(0, 2));
+    check(`${name} is chosen in the dropdown`, (await read(pc, `document.querySelector('[data-ev="presentation-profile"]').value`)) === id);
+  };
+  await poll('the chooser in the panel', async () => (await read(pc, `document.querySelector('[data-ev="presentation-profile"]')!==null`)) === true, 15_000);
+  const beforeOptions = JSON.parse(await read(pc, `JSON.stringify([...document.querySelectorAll('[data-ev="presentation-profile"] option')].map((o)=>({value:o.value,name:o.textContent})))`));
+  check('before any walk, the panel offers Essentials, Standard and Teacher, Standard chosen', beforeOptions.map((o) => `${o.value}:${o.name}`).join(',') === 'essens:Essentials,standard:Standard,pedagog:Teacher' && (await read(pc, `document.querySelector('[data-ev="presentation-profile"]').value`)) === 'standard', JSON.stringify(beforeOptions));
+  await w_shot(pc, '20-panel-before-walks');
+  // Teacher chosen in the panel: the picker beside the agent shows the same.
+  await choose('Teacher', 'discussion');
   await diff.click('pair-prepare-walks');
+  await diff.until('the picker with its Explanations', `${q('pair-walks-agent-explanations')}!==null`, 15_000);
+  check('the picker shows the profile chosen in the panel', (await diff.ev(`${q('pair-walks-agent-explanations')}.value`)) === 'pedagog', String(await diff.ev(`${q('pair-walks-agent-explanations')}.value`)));
+  // Standard chosen in the picker, through the operating system: the panel follows.
+  check('Standard chosen in the picker', (await chooseOption(diffWindow.contentsId, '[data-ev="pair-walks-agent-explanations"]', 'standard', 'St')) === 'standard');
+  await poll('the panel follows the picker', async () => (await read(pc, `document.querySelector('[data-ev="presentation-profile"]').value`)) === 'standard', 10_000);
+  check('the panel\'s chooser follows the picker\'s choice', (await read(pc, `document.querySelector('[data-ev="presentation-profile"]').value`)) === 'standard');
+  await w_shot(diffWindow.contentsId, '21-picker-explanations');
   await diff.click('pair-walks-agent-start');
   let walkWindow = await poll('the walk window', async () => (await client.main.windows()).find((x) => !x.destroyed && isWalkPage(x.url)) ?? false, 90_000).catch(() => null);
   if (walkWindow === null) {
@@ -855,13 +910,16 @@ async function main() {
   await client.main.size(walkWindow.id, 1500, 940);
   await delay(800);
   walkWindow = await windowById(walkWindow.id);
-  let panel = await poll('the panel', panelView, 30_000);
+  panel = await poll('the panel', panelView, 30_000);
   if (!panel.docked || panel.frame.id !== walkWindow.id) {
     await clickInPanel('panel-dock-walk');
     panel = await dockedIn(walkWindow.id, 'the panel docked in the walk window');
   }
-  let pc = panel.view.contentsId;
+  pc = panel.view.contentsId;
   let wc = walkWindow.contentsId;
+  // The docked panel is drawn now (a paint mark the display shows) and takes a click and typed text through the operating system.
+  await checkDocked(walkWindow.id, 'docked in the walk window', '30-docked', ' typed by the trial');
+  await clearComposer(pc);
   const goToStep = async (id) => {
     await activate(walkWindow.id);
     if ((await walk.ev(`document.querySelector('[data-ev="walk-step-${id}"]')===null`)) === true) await osClickAt(wc, `[data-ev="walk-head-${id.split('.')[0]}"]`);
@@ -870,29 +928,6 @@ async function main() {
   };
   const shown = () =>
     read(pc, `JSON.stringify({step:document.querySelector('.rv-step-panel h2 .rv-step-id')?.textContent??'',value:document.querySelector('[data-ev="presentation-profile"]')?.value??'',state:document.querySelector('[data-ev="profile-status"]')?.dataset.state??'',profileShown:document.querySelector('[data-ev="profile-explanation"]')?.dataset.profile??'',altStep:document.querySelector('[data-ev="profile-explanation"]')?.dataset.step??'',alt:document.querySelector('[data-ev="profile-explanation"]')?.textContent??'',prepared:document.querySelector('[data-ev="step-prepared-explanation"]')!==null})`).then((text) => JSON.parse(text));
-  /** Choose a profile with the keyboard on the dropdown, as a person can. */
-  const choose = async (name, onTab = 'step') => {
-    if (onTab === 'step') await clickInPanel('right-tab-step');
-    const select = await pointAt(pc, '[data-ev="presentation-profile"]', 'nearest');
-    await activate(select.windowId);
-    await osClick(select.physical);
-    await delay(300);
-    await osKey('Escape');
-    await osType(name.slice(0, 2));
-    await delay(250);
-    const index = ['original', 'essens', 'pedagog'].indexOf(name.toLowerCase());
-    for (let attempt = 0; attempt < 3 && (await read(pc, `document.querySelector('[data-ev="presentation-profile"]').value`)) !== name.toLowerCase(); attempt += 1) {
-      // The list did not follow the typed letters: open it, and the arrow keys from the top, then Return.
-      await osClick((await pointAt(pc, '[data-ev="presentation-profile"]', null)).physical);
-      await delay(400);
-      await osKey('Home');
-      for (let i = 0; i < index; i += 1) await osKey('Down');
-      await osKey('Return');
-      await delay(400);
-    }
-    await delay(500);
-    check(`${name} is chosen in the dropdown`, (await read(pc, `document.querySelector('[data-ev="presentation-profile"]').value`)) === name.toLowerCase());
-  };
   const zoomOf = () => client.main.ev(`process.mainModule.require('electron').webContents.fromId(${String(pc)}).getZoomLevel()`);
 
   // S1 is the change of the greeting at To; S2 and S3 the shout change; S4 the added lines.
@@ -919,6 +954,17 @@ async function main() {
   check('reading the walk in its own profile sends nothing', presents().length === 0 && questions().length === 0, String(questions().length));
   const prepared = await read(pc, `document.querySelector('[data-ev="step-prepared-explanation"]')?.textContent ?? ''`);
   check('the step\'s own text is a Standard explanation, with its deepening behind Show more', /SIMULATED Standard/.test(prepared) && (await read(pc, `document.querySelector('[data-ev="step-prepared-explanation"] [data-ev="answer-show-more"]')!==null`)) === true, prepared.slice(0, 160));
+  check('the deepening is not shown before Show more is pressed', (await read(pc, `document.querySelector('[data-ev="step-prepared-explanation"] [data-ev="answer-details"]')===null`)) === true && !/SIMULATED deepening/.test(prepared));
+  await osClickAt(pc, '[data-ev="step-prepared-explanation"] [data-ev="answer-show-more"]');
+  const ownMore = await read(pc, `document.querySelector('[data-ev="step-prepared-explanation"] [data-ev="answer-details"]')?.textContent ?? ''`);
+  check('Show more opens the walk\'s own deepening, in Standard', /SIMULATED deepening \(Standard\)/.test(ownMore), ownMore.slice(0, 160));
+  await w_shot(pc, '40-standard-own-show-more');
+  await osClickAt(pc, '[data-ev="step-prepared-explanation"] [data-ev="answer-show-more"]');
+  const ownStyle = await paragraphStyle(pc, '[data-ev="step-prepared-explanation"] .markdown__p');
+  // The left column: titles and purposes only, in its own concise form, with nothing of the profile's text.
+  const leftColumn = () => walk.ev(`document.querySelector('.rv-walks')?.textContent ?? ''`);
+  const leftAtStart = await leftColumn();
+  check('the left column shows titles and purposes, nothing of the profile\'s explanation', leftAtStart.length > 20 && !/SIMULATED (Standard|Essentials|Teacher)|deepening/.test(leftAtStart), leftAtStart.slice(0, 160));
   const callsAtStart = questions().length;
 
   stage = 'Essentials: the current step only, the original explanation meanwhile';
@@ -938,6 +984,10 @@ async function main() {
   const more = await read(pc, `document.querySelector('[data-ev="profile-explanation"] [data-ev="answer-details"]')?.textContent ?? ''`);
   check('Show more gives the Essentials depth, not the first part again', /SIMULATED deepening \(Essentials\)/.test(more) && !/SIMULATED Essentials for/.test(more), more.slice(0, 160));
   await w_shot(pc, '43-essentials-show-more');
+  // One reading typography: the alternative, the walk's own text and the discussion's answer render alike.
+  const altStyle = await paragraphStyle(pc, '[data-ev="profile-explanation"] .markdown__p');
+  const discussionStyle = await paragraphStyle(pc, '.rv-discussion .rv-answer .markdown__p');
+  check('the alternative, the walk\'s own text and the discussion\'s answers share one typography on the display', altStyle !== null && altStyle === ownStyle && altStyle === discussionStyle, JSON.stringify({ altStyle, ownStyle, discussionStyle }));
   await osClickAt(pc, '[data-ev="profile-explanation"] [data-ev="answer-show-more"]');
   await osClickAt(pc, '[data-ev="profile-toggle-prepared"]');
   check('the original explanation is a click away, kept', (await shown()).prepared === true);
@@ -951,6 +1001,7 @@ async function main() {
   check('the step shows its Teacher explanation: the idea first, then the code', /SIMULATED Teacher/.test(now.alt) && /First the idea/.test(now.alt) && /Now the code/.test(now.alt), now.alt.slice(0, 120));
   check('the zoom is as it was', (await zoomOf()) === zoom0, String(await zoomOf()));
   await w_shot(pc, '44-teacher');
+  check('the left column is as it was before any profile was chosen', (await leftColumn()) === leftAtStart);
   const callsBeforeBack = questions().length;
   await choose('Essentials');
   now = await shown();
@@ -1066,6 +1117,9 @@ async function main() {
   check('coverage, what remains and the findings are as before any profile', (await reviewState()) === reviewBefore, await reviewState());
 
   stage = 'after a restart, without a call';
+  // The window's language set to Swedish first: the names follow it when the panel next loads.
+  check('Swedish chosen for the review window', (await chooseOption(wc, '[data-ev="review-language"]', 'sv', 'Sv')) === 'sv');
+  await delay(800);
   const callsBeforeRestart = questions().length;
   await quitClient();
   main = await launch('profiles-again');
@@ -1098,9 +1152,17 @@ async function main() {
   await delay(800);
   now = await shown();
   check('after a restart: Essentials still chosen, S1 shows its Essentials explanation, no call made', now.value === 'essens' && now.profileShown === 'essens' && questions().length === callsBeforeRestart, JSON.stringify({ now, calls: questions().length - callsBeforeRestart }));
-  await choose('Teacher');
-  check('and Teacher too, without a call', (await shown()).profileShown === 'pedagog' && questions().length === callsBeforeRestart);
+  const svOptions = JSON.parse(await read(pc, `JSON.stringify([...document.querySelectorAll('[data-ev="presentation-profile"] option')].map((o)=>o.textContent))`));
+  check('in Swedish the chooser reads Essens, Standard, Pedagog, over the same ids', svOptions.join(',') === 'Essens,Standard,Pedagog' && now.value === 'essens', JSON.stringify(svOptions));
+  const svLine = await read(pc, `document.querySelector('[data-ev="profile-status"]')?.textContent ?? ''`);
+  check('the status line reads in Swedish with the Swedish name', /Essens/.test(svLine) && /från samma kod/.test(svLine), svLine.slice(0, 160));
+  await w_shot(pc, '47-swedish-names');
+  await choose('Pedagog');
+  check('and Pedagog too, without a call', (await shown()).profileShown === 'pedagog' && questions().length === callsBeforeRestart);
   await choose('Standard');
+  now = await shown();
+  check('reopened in its own profile, the walk reads its Standard text without a call', now.state === 'own' && now.prepared && now.profileShown === '' && questions().length === callsBeforeRestart, JSON.stringify(now));
+  check('English chosen again for the review window', (await chooseOption(wc, '[data-ev="review-language"]', 'en', 'En')) === 'en');
 
   stage = 'the panel in its own window';
   await clickInPanel('panel-own-window');
