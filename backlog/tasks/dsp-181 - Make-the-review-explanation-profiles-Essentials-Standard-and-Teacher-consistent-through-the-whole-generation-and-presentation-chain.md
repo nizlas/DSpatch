@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-08 17:15'
-updated_date: '2026-11-08 18:20'
+updated_date: '2026-11-08 19:26'
 labels:
   - ux
   - review
@@ -47,7 +47,7 @@ Verification uses neutral, invented examples only: a trivial change, a normal ch
 - [x] #6 Explain more simply reduces conceptual complexity per profile, repeated presses take earlier attempts into account, and follow-up answers keep the reached level
 - [x] #7 All profiles render the same Markdown with the same typography in Step and Discussion, docked and floating; zoom, selection and Ask, scroll following and window layout keep working
 - [x] #8 Saved profile choice, the ~500 ms navigation delay, latest-step-wins, late answers, cache and explicit retry are preserved; opening alone starts no model call; new instructions and results are versioned and older alternatives can be regenerated explicitly
-- [ ] #9 Tests with neutral examples (trivial, normal with default and fallback, complex across several places, Teacher explaining an unfamiliar tool) and window trials in an isolated profile with the simulated provider are run, with what they prove and do not prove stated
+- [x] #9 Tests with neutral examples (trivial, normal with default and fallback, complex across several places, Teacher explaining an unfamiliar tool) and window trials in an isolated profile with the simulated provider are run, with what they prove and do not prove stated
 - [x] #10 A profile chosen before the walks are prepared is written into every step's explanation by the ordinary walk generation, with its deepening behind Show more; opening and navigating that walk in its profile asks for nothing; the profile changes how the steps are explained and nothing else, so the overview, walk and step titles, places and coverage are the same whatever the profile
 <!-- AC:END -->
 
@@ -98,4 +98,33 @@ Reading without a call: the walk window takes the definition's profile as the wa
 What stays profile-free: the walk list, walk titles and purposes, step titles and summaries in the left column, the change's summary and background, the places and the coverage. Verified in `presentation-walks.test.ts` with the simulated provider: the same walks, titles, questions, purposes, steps, summaries and places for Essentials, Standard, Teacher and none, only `body` and `details` differ; the walk prompt with a profile equals the plain one once the section is removed (`review-agent-jobs.test.ts`); the definition round-trips the profile and the details, an unknown profile reads as none, the content hash sees the details, the job record keeps the profile; `wantsAlternative` by profile.
 
 Verification, Windows: typecheck clean; review group 273 of 274 passed (the same pre-existing review-context.test.ts path-separator failure); presentation group 317 passed. The profile trial's expectations were updated again (the walks prepared in Standard are read without a call); the trial is still not run.
+
+Linux window trial, 8 November 2026. GitHub's ubuntu-24.04 runner, the trial's own Xvfb (1600×1000) with openbox, an isolated profile, a neutral generated project (a greeting module with three changes) and the simulated provider; no real model. Branch `dsp-181-linux` (e9bc00b, 0e2b195 and the adjustments below; not merged into main), `linux-verify` job `profiles`, run 42514229825 on da18c06: 81 checks passed, 0 failed, 3 notes. Evidence in the run's artifact `profile-trial`: screenshots of the X display (20 to 48), the paint mark and its room, the discussion record and the generated definition.
+
+Verified in real windows, with input through the X server and screenshots of the display:
+- Before any walk: the panel shown from the diff window offers Essentials, Standard and Teacher with Standard chosen; Teacher chosen in the panel is what the picker beside the agent shows; Standard chosen in the picker through the operating system is what the panel then shows. The walks were prepared with that choice.
+- The docked panel paints now (a magenta mark the display shows in its room, then the discussion drawn there), says it is visible, and takes a click into its question field and typed text through the operating system.
+- The walk opened in Standard, the profile it was prepared in: S1 reads its own Standard text, state "written with the walk", no request sent (0 questions). Its deepening is behind Show more, not before it; Show more opens it.
+- Essentials chosen: one request, for the current step only, the policy named once and the language in the prompt; the original text shown meanwhile with a quiet indicator; then the Essentials text; Show more gives its deepening, not the first part again; the original is a click away and back.
+- One typography on the display: the alternative's, the walk's own text's and the discussion answer's paragraphs render with the same line height, size and family, and the same margin wherever a margin applies.
+- The left column shows titles and purposes only, nothing of the profile's text, and is identical before and after Essentials and Teacher.
+- Teacher: asked once for the same step, the idea first and then the code; the zoom unchanged. Back to Essentials and to Standard: shown at once, no call.
+- Explain more simply twice in Essentials (attempt 1 and 2, the shown explanations given, another way in asked for), a follow-up at the Essentials level after two simpler ones, in view at the end of the discussion.
+- Arriving at S2 in Essentials shows the original text first and asks once after the settle delay; nothing for steps passed on the way. The late S2 answer is not shown at S3. A switch to Teacher while Essentials is written is refused and shows nothing of Essentials under Teacher; S3 ends under its own Teacher text; back at S2 in Essentials its answer is there at once.
+- A failed attempt (the simulated provider fails the first presentation of S4) leaves the original text and offers Try again, asks nothing again on its own, and Try again writes it.
+- A question in a finding's thread stays in the thread, in the chosen profile; coverage, what remains and the findings are as before any profile.
+- Over the whole run nothing was asked for twice, apart from S4's failure and its Try again: 12 questions in the record, each one a stage of the trial.
+- Swedish chosen in the review window before a restart: after it the chooser reads Essens, Standard, Pedagog over the same ids and the status line is Swedish; Essentials still chosen for the walk and its S1 text shown without a call; Pedagog without a call; Standard reads the walk's own text without a call; English again.
+- Standalone panel: the choice works and reuses what was written without a call; an unsent draft is kept through switches; the discussion stays where it was and comes back to its latest; the chooser fits at zoom +1, 0 and −1.
+
+Product defects the trial found, fixed on the branch and in local main:
+1. 185efdd: before any walk existed the panel kept its choice under a walk key of its own, which went before the computer's choice the picker writes, so the panel did not follow the picker. With no walk the panel now reads and writes the computer's choice only.
+2. 6e36fc0: the walk window ran DSP-180's navigation-triggered generation with no discussion of its own and never saw a finished alternative, so it asked again after every answer: eight identical requests in a row where one was due (host log of run 42512822141). With a real model that would have been one call after another for as long as a profile other than the walk's own was chosen. The automatic and the explicit request now run only in the page that shows the panel.
+3. da18c06: after a failed attempt the generation asked again at once instead of waiting for Try again; a provider that kept failing would have been asked without end. A failed, stopped or unknown attempt now waits for the person.
+
+Trial adjustments, none a weakening: ids behind the names in either language; a click through the operating system is measured after a timer (a window behind another gets no animation frames) and only where the page finds the element at the point; the typography comparison takes paragraphs followed by something, since the shared rule removes the last paragraph's margin below (the first version compared a one-paragraph text's last paragraph with another text's first); new checks for no repeated request, no automatic retry, the docked paint mark and typed input, the walk's own text and deepening, the left column, Swedish names after the restart, reopening without a call; the discussion record and the definition are kept with the evidence.
+
+What the trial proves and does not. The simulated provider answers from the prompt's sections, so the trial verifies the interface, the prompt each path sends, the data flow, the rendering and the number of calls; it says nothing about a real model's text or pedagogy, which Niclas judges on real code. On structure: the generator's section is an instruction to the model that the profile decides how the steps are explained and nothing else; what the trial and the tests verify is that DSpatch passes the profile on and changes none of the structure, the places or the coverage itself, and that the left column keeps its concise presentation. They do not establish that a real model produces the same walks in separate generations with different profiles.
+
+Also on Linux (run 42511281489 on 1dacfeb, before the fixes): the tests, provider-tests, windows, dock and governor jobs all passed, the review group among them, so the one Windows failure in review-context.test.ts is the path separator alone. The same full workflow was started on da18c06 (run 42514889775) after the fixes.
 <!-- SECTION:NOTES:END -->
