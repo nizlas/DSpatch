@@ -3,10 +3,10 @@ id: DSP-188
 title: >-
   Align the explanation instructions and the walk generation with the code-walk
   reference
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-09 21:29'
-updated_date: '2026-11-09 22:26'
+updated_date: '2026-11-09 22:51'
 labels:
   - review
   - ux
@@ -61,4 +61,8 @@ The change is to the derived instructions and the product, not to the reference.
 **Remaining weaknesses (for Niclas's evaluation).** (1) Repetition between the part shown at once and Show more is reduced in the second round (the comparison with the base revision is made once, Essentials' deepening halved) but not gone: a deepening paragraph still tends to restate its bullet before adding. (2) The first part is long for the profile in the complex case: about 270 words for Essentials, 300–410 for Standard and 450–650 for Teacher on the work queue; the simple connect case gets 150 words in Essentials. (3) Essentials and Standard converge after the marker. (4) Fixed phrases: "Two/Three things decide…", and the hedge "what the code allows, not something observed" once per text. (5) Small precision slips in the first round (a reversed order in Explain this's short answer, a right conclusion with a wrong reason) show that a sharp reader is still needed. (6) Not covered by the synthetic cases: external context, a shared snapshot, a simple setting; the judgment of real-model text on real code remains Niclas's.
 
 **AC 3 (external context).** The product opens a context reference at its recorded commit in the code view and pastes nothing of the context into the prompt or the reading flow (DSP-175, `tests/review-context.test.ts`); the instructions ask for meaning in the text and references for the source. Whether a generated explanation conveys external context well was not judged in this round, since neither synthetic case has any; recorded as not established, not as verified.
+
+**Release 0.1.13 (9 November 2026).** Commit b88de97 (the change) and 2bb9f7b (version 0.1.13, docs/releases/v0.1.13.md and .json) pushed to origin/main by fast-forward, no force; annotated tag v0.1.13. Before the tag, `linux-verify` run 42712023266 on b88de97 was green in every job: tests (typecheck; fast, host, review, chat and presentation groups under Xvfb), provider-tests, windows, dock, governor and profiles (the profile and walk window trials with the simulated provider). The package workflow's tag run 42713216155: plan (Linux only, pre-release), hosts-and-deb and publish-release succeeded; the Windows jobs were skipped. Published https://github.com/nizlas/DSpatch/releases/tag/v0.1.13 as a pre-release with four files: `dspatch_0.1.13_amd64.deb` (288 006 752 bytes), `dspatch-host-0.1.13-2bb9f7b6cdac-linux-x64.tar.gz` (127 947 791 bytes), `host-manifest.json` (hostId 0.1.13-2bb9f7b6cdac, protocol 1, contract 22f78105b1a0dcac, the same contract as 0.1.12's manifest, so an old host is reported as an update waiting for a restart rather than refused) and `SHA256SUMS`. `linux-verify` run 42714289768 with `published` and previous v0.1.12 succeeded: the published release in clean containers and an upgrade from 0.1.12. Not done here: a checksum of the downloaded binaries on this Windows machine (the container trial installs the published files), and any Windows artefact.
+
+**Status.** In Review: the implementation, its tests and the Linux release are done; AC 4 waits for Niclas's judgment of real-model text, which the release exists for. To judge the new instructions and not saved text: restart the host when the window says an update waits, start a new review (Start a new review always makes a new, empty one), prepare the walks there, and open each step's profile for the first time or press Regenerate; a saved explanation shows its text without a call, and Earlier/Later shows which entry is older. The window does not display an explanation's instruction version; it is stored with each entry (`instructionVersion` 7 for the new ones).
 <!-- SECTION:NOTES:END -->
