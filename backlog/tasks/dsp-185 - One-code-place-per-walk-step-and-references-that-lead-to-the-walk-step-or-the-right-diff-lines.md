@@ -3,7 +3,7 @@ id: DSP-185
 title: >-
   One code place per walk step, and references that lead to the walk step or to
   the right lines in the diff
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-09 13:00'
 updated_date: '2026-11-09 13:00'
@@ -73,4 +73,6 @@ Implementation, 9 November 2026 (uncommitted working tree on 9ea512b; status sta
 
 **Not covered.** The in-app `insight` scenario in `workflow-script.ts` presses a definition reference as `answer-ref` in a walk window; if that definition is a walk place, it is now a step link by decision, and the scenario was not run or updated. No real model was called; Linux only.
 **Review fixes, 9 November 2026 (implementer).** Repair round: a readable first answer is replaced by the repaired one only when it loses no valid place and no covered changed line (`walkYield`, `repairedIsKept` in `shared/review-agent.ts`; a tie goes to the repair); otherwise the first answer is kept and the provenance says the correction was not used. Still one round. Simulation mode `DSPATCH_REVIEW_SIM=crowded-worse` and tests in `review-agent-jobs.test.ts`. Reference resolution: a reference not contained in a place leads to that step only when the place holds more than half of its lines; otherwise the diff (or the file) opens with the lines marked (`reference-links.ts`, tests in `walk-places-and-links.test.ts`). A renamed file's From path counts as changed (`changedPathsOf`, used by `ReviewView.tsx` with the pair's files), so a base-side reference to the old path is not labelled unchanged code.
+
+Released in 0.1.12 (DSP-187), 9 November 2026; verification there. In Review for Niclas's assessment in the app.
 <!-- SECTION:NOTES:END -->

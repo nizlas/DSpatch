@@ -3,7 +3,7 @@ id: DSP-186
 title: >-
   Reviews as independent instances with their own identity: new, close,
   reopen and delete, several on one codebase
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-09 13:00'
 updated_date: '2026-11-09 13:00'
@@ -64,4 +64,6 @@ Implementer, 9 November 2026 (uncommitted, main checkout; DSP-184 worked in para
 
 Remaining: Linux window trial with isolated data not run by the implementer (AC #5); walk-window staleness notice; `ReviewDiscussions.forget(key)` is reached through its private map until DSP-184 adds it; `reviews/revisions/<id>` snapshots are left to the existing sweep at start.
 **Review fixes, 9 November 2026 (implementer).** Deleting a review no longer lets a late answer or step explanation recreate its discussion or explanations file: both services are sealed on dispose (see DSP-184's note; tests in `review-discussion-service.test.ts`). `forgetDiscussion` in `project-host.ts` calls the typed `ReviewDiscussions.forget`. Deleting a review recorded before review ids now records the deletion in `reviews/deleted-legacy-reviews.json` (`recordLegacyDeletion`, `deletedLegacyReviews`, `ReviewPairs.legacyDeletedAt`; the deletion is refused if it cannot be recorded); the pre-pair per-walk discussions only inferred to be its own are not deleted, and `earlierDiscussion` no longer gathers anything from them dated up to the deletion into a later legacy review of the pair, across restarts (test in `review-instances.test.ts`).
+
+Released in 0.1.12 (DSP-187), 9 November 2026; verification there. In Review for Niclas's assessment in the app.
 <!-- SECTION:NOTES:END -->
