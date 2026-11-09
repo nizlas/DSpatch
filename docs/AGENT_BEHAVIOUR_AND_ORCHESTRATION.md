@@ -1,6 +1,6 @@
 # Agent behavior and orchestration in DSpatch
 
-Guideline and proposals for further development · 23 October 2026 · Version 1.1
+Guideline and proposals for further development · 9 November 2026 · Version 1.2 (1.1 of 23 October 2026 with the inspectability clarification and the pointer to the code-understanding reference)
 
 This document defines the boundary between how an agent works, the workflow described by the graph, and Maestro's responsibility for execution. It should help Niclas and the project's agents assess changes without reintroducing hidden instructions or unnecessary routine reading of the project.
 
@@ -19,7 +19,7 @@ Roles, skills, and governing documents describe how the agent interprets the tas
 | DSpatch and Maestro | Calls, sessions, transfers, tool access, state, interruptions, and history. |
 | Provider and model | The underlying agent engine, model behavior, and the provider's own limitations. |
 
-All instructions and controls introduced by DSpatch must be explicit and inspectable. The model and provider also influence behavior, so documents cannot guarantee every individual agent decision. DSpatch must show what it sends and distinguish it from what the provider adds or what remains unknown. (For the review discussion, Niclas decided on 30 October 2026 that the view no longer shows this; each question keeps its instruction and exact text in the review's stored record. See [VISION.md section 3.4](VISION.md#less-around-the-answer-niclass-decision-after-his-trial-30-october-2026).) Inspectable means that the instructions are explicit, versioned and can be looked up through the means intended for it, such as their source module, a stored record or the graph editor's runtime contract (section 2); it does not mean that full instructions are shown in every working view. On 9 November 2026 Niclas removed the presentation profiles' instruction text and version from the review view on the same ground (VISION.md section 3.4).
+All instructions and controls introduced by DSpatch must be explicit and inspectable. The model and provider also influence behavior, so documents cannot guarantee every individual agent decision. DSpatch must show what it sends and distinguish it from what the provider adds or what remains unknown. (For the review discussion, Niclas decided on 30 October 2026 that the view no longer shows this; each question keeps its instruction and exact text in the review's stored record. See [VISION.md section 3.4](VISION.md#less-around-the-answer-niclass-decision-after-his-trial-30-october-2026).) Inspectable means that the instructions are explicit, versioned and can be looked up through the means intended for it, such as their source module, a stored record or the graph editor's runtime contract (section 2); it does not mean that full instructions are shown in every working view. On 9 November 2026 Niclas removed the presentation profiles' instruction text and version from the review view on the same ground (VISION.md section 3.4); [CODE_WALK_UNDERSTANDING_AND_PROFILES.md section 8](CODE_WALK_UNDERSTANDING_AND_PROFILES.md#8-evidence-should-be-traceable-without-disrupting-reading) says the same for the walk's explanations.
 
 ### Say where a behavior is defined
 
@@ -117,7 +117,7 @@ This clarification applies the decision in [VISION.md section 3.3](VISION.md#33-
 
 ### Three responsibilities
 
-Orchestration decides how work advances: which configured step runs next, what material it receives and how its outcome affects the task. The review capability helps a person understand and assess an identified change: code, walks, findings, review progress and decisions. The shared agent connection carries agent requests and observations through the existing AgentAdapter and provider-specific SDK adapters.
+Orchestration decides how work advances: which configured step runs next, what material it receives and how its outcome affects the task. The review capability helps a person understand and assess an identified change: code, walks, findings, review progress and decisions; what the walks and explanations are for, and how the profiles adapt them to the reader, is defined in [CODE_WALK_UNDERSTANDING_AND_PROFILES.md](CODE_WALK_UNDERSTANDING_AND_PROFILES.md). The shared agent connection carries agent requests and observations through the existing AgentAdapter and provider-specific SDK adapters.
 
 Both orchestration and review use that connection. Review does not call a provider SDK through a separate implementation, and it does not need to start Maestro to ask an agent a question. Shared integration includes authentication, tool control, cancellation and session handling, as specified in the roadmap. It does not mean the callers share one live session, one prompt, credentials across environments or unrestricted tools.
 

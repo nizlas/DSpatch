@@ -4,7 +4,7 @@ title: Understand and review changes through agent-generated code walks
 status: Review
 assignee: []
 created_date: '2026-10-28 22:32'
-updated_date: '2026-10-31 15:33'
+updated_date: '2026-11-09 21:23'
 labels:
   - review
   - code-walks
@@ -487,4 +487,6 @@ Niclas's request and decisions in [VISION.md section 3.4](../../docs/VISION.md#o
 **Niclas's trial of e928b1e (30 Oct 2026).** *Agent lost:* a new review answered "Choose an agent for this discussion". Cause: `offerDefault` refused any discussion with messages, and the pair's one discussion can start with imported history, so it had no agent and saved none. Now a discussion with no agent of its own takes the agent last used in its history, else the opener's default; the reason this is the path he hit is inferred from the code, not observed on his profile. Unit test added (review 185/185). *Hide while docked:* he reported the panel gone with no way back. Not reproduced: in `panel` (SIMULATED), docked in the diff with and without a walk, hidden, it came back by Discussion and by Ask… with the view visible at 512 px and the draft kept. Those readings are the view's state; a capture of the code window does not show the panel, so what was drawn on his screen is not established. He then said the panel comes back on asking, but a hidden chat must be openable without a new question. Both windows had a *Discussion* button that looked the same whether or not the panel was shown; it now reads *Show discussion*, emphasised with the palette's own colours, whenever the panel is hidden or not open. `panel` (SIMULATED): hidden while docked, both windows show the button, the walk's brings it back, three questions kept, no prompt sent. His own trial of it is outstanding.
 
 31 Oct 2026: the opener's agent is kept when its model is the provider's default; the picker shows the model the list marks as the default (DSP-131's fix pass). Scenario walk-start phases inherit and inherit-switch.
+
+9 November 2026: the detail definition of what a walk is for, how its steps and transitions carry the reader and how the agent investigates and explains the code is now docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md, adopted by Niclas; the plan this task was built from stays as the original record. Acceptance criteria #3 and #12 are read against the reference from now on. DSP-185 gave central new functions their own steps the same day; the remaining gaps between the generator's instructions and the reference (transitions at alternative branches, workers and callbacks; a teaching order that says when it differs from execution) are DSP-188's.
 <!-- SECTION:NOTES:END -->

@@ -156,6 +156,7 @@ Commit on your branch and open a pull request if you want to share the result. P
 | [Developer reference](app/README.md) | Scripts, architecture and implementation history; some sections describe earlier stages. |
 | [Vision](docs/VISION.md) | Product direction and design decisions; proposals are distinguished from implemented behaviour. |
 | [Interaction model](docs/INTERACTION_MODEL.md) | How people, agents and orchestration share responsibility. |
+| [Code walks and explanation profiles](docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md) | What a code walk explains, how the Essentials, Standard and Teacher profiles adapt the explanation to the reader, and how a review keeps its material. |
 | [Development plan](BACKLOG.md) | Tasks, priorities and verification records. |
 | [Agent instructions](AGENTS.md) | Contribution conventions and which design documents to read. |
 
