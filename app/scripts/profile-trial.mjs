@@ -32,6 +32,8 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+// The profile instructions' version, read from their one module so the trial follows it.
+const INSTRUCTION_VERSION = Number(/PRESENTATION_INSTRUCTION_VERSION = (\d+)/.exec(fs.readFileSync(new URL('../src/shared/presentation-profiles.ts', import.meta.url), 'utf8'))?.[1] ?? NaN);
 
 const onWindows = process.platform === 'win32';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -1051,7 +1053,7 @@ async function main() {
   check('while Essentials is written, the original explanation stays with a quiet indicator', now.state === 'pending' && now.prepared && now.profileShown === '', JSON.stringify(now));
   await w_shot(pc, '41-essentials-pending');
   const first = presents().find((m) => m.profile === 'essens');
-  check('one request, for the current step only, in Essentials, from its version, with the policy once and the walk\'s outline', first.stepId === S1 && typeof first.basis === 'string' && /## How to present \(Essentials\)/.test(first.prompt) && first.prompt.split('<!-- dspatch:details -->').length === 2 && /^Language: English\./m.test(first.prompt) && /## Where this step is in the walk\n/.test(first.prompt) && /<- this step/.test(first.prompt) && /Instruction version: 5/.test(first.prompt), JSON.stringify({ stepId: first.stepId, basis: first.basis }));
+  check('one request, for the current step only, in Essentials, from its version, with the policy once and the walk\'s outline', first.stepId === S1 && typeof first.basis === 'string' && /## How to present \(Essentials\)/.test(first.prompt) && first.prompt.split('<!-- dspatch:details -->').length === 2 && /^Language: English\./m.test(first.prompt) && /## Where this step is in the walk\n/.test(first.prompt) && /<- this step/.test(first.prompt) && new RegExp(`Instruction version: ${INSTRUCTION_VERSION}\\b`).test(first.prompt), JSON.stringify({ stepId: first.stepId, basis: first.basis }));
   check('the profile explanation is no discussion entry', questions().length === 0, String(questions().length));
   await poll('the Essentials explanation', async () => (await shown()).profileShown === 'essens', 60_000);
   now = await shown();

@@ -147,7 +147,8 @@ describe('one policy in the prompt (DSP-181)', () => {
     assert.match(standard, /- Show more in Standard: the connections and consequences developed further/);
     assert.match(teacher, /- Show more in Teacher: the evidence in the code, the special cases, and the remaining concepts/);
     assert.match(essentials, /two plain, natural sentences: not packed sentences held together with colons, and not lists of identifiers/);
-    assert.match(teacher, /setup and teardown included \(constructors, destructors and stop paths\)/);
+    assert.match(teacher, /setup and teardown included/);
+    assert.match(teacher, /this is not an inventory to fill in/);
     assert.match(teacher, /undefined behaviour that can corrupt the structure, not merely a duplicate/);
     assert.match(standard, /say what the work actually consists of/);
     assert.match(essentials, /The code decides\. Where the prepared explanation says more than the code supports/);
@@ -238,7 +239,7 @@ describe('one policy in the prompt (DSP-181)', () => {
     const section = presentationPromptSection({ profile: 'standard', mode: 'present', shown: [], walk: outline }) ?? '';
     assert.match(section, /## Where this step is in the walk\nWalk: Greeting a visitor\n1\. Read the name \(code: src\/a\.ts 1–3 \(To\)\)\n2\. Build the greeting \(code: src\/b\.ts 4–9 \(To\)\)  <- this step/);
     assert.match(section, /"in the next step"/);
-    assert.match(section, /do not explain that code here/);
+    assert.match(section, /A short orientation of what happens later is allowed/);
     assert.equal(outlineFrom({ steps: [], current: 0 }), null);
     assert.equal(outlineFrom({ steps: [{ title: 'x' }], current: 3 }), null);
     assert.equal(outlineFrom({ steps: Array.from({ length: 100 }, () => ({ title: 'x'.repeat(500) })), current: 0 })?.steps.length, 40);
