@@ -7,15 +7,15 @@
  * saved Essentials or Teacher is kept; a saved Original is the legacy presentation and no
  * longer a choice, so the default stands (nothing stored is rewritten).
  *
- * The explanations themselves are in the review's discussion record: an alternative is the
- * answer to a `present` deepening of one step, asked in one profile from one version of the
- * step (its content hash). What is shown is chosen from that record, so an answer that arrives
- * late, after the person moved on, is kept and shown only where it belongs.
+ * DSP-184: the explanations themselves are the step explanations' own store, apart from the
+ * discussion ({@link useStepExplanations}); what a step shows is chosen from it per review, walk,
+ * step, step version and profile, so an answer that arrives late, after the person moved on, is
+ * kept and shown only where it belongs.
  */
 import { useCallback, useEffect, useState } from 'react';
 
 import { effectiveProfile, isPublicProfile, type PresentationProfile, type PublicProfile } from '../shared/presentation-profiles';
-import type { DiscussionMessage } from '../shared/review-discussion';
+import type { StepExplanation } from '../shared/step-explanations';
 
 const DEFAULT_STORAGE_KEY = 'dspatch.review.presentationProfile.default';
 const WALK_STORAGE_PREFIX = 'dspatch.review.presentationProfile.walk:';
@@ -76,74 +76,6 @@ export function usePresentationProfile(scope: string, fallback: PresentationProf
   return [profile, choose] as const;
 }
 
-export interface Exchange {
-  readonly question: DiscussionMessage;
-  readonly answer: DiscussionMessage | null;
-}
-
-function answerOf(messages: readonly DiscussionMessage[], question: DiscussionMessage): DiscussionMessage | null {
-  return messages.find((message) => message.role === 'answer' && message.questionId === question.id) ?? null;
-}
-
-/** A question asked from this step's own actions (not from a point worth checking). */
-function atStep(message: DiscussionMessage, stepId: string): boolean {
-  const subject = message.envelope?.subject;
-  return message.role === 'question' && message.deepen !== undefined && subject?.kind === 'point' && subject.stepId === stepId && subject.checkId === undefined;
-}
-
-/** The profile a deepening was asked in; one asked before profiles is Original's. */
-export function profileOf(question: DiscussionMessage): PresentationProfile {
-  return question.deepen?.profile ?? question.presentation?.profile ?? 'original';
-}
-
-/**
- * The alternative explanation of a step in a profile, from this version of the step: the
- * latest asked, with its answer. A finished one is preferred to a later attempt that failed,
- * so a failed retry never hides what was there. Original is the prepared explanation itself
- * and has none.
- */
-export function alternativeFor(messages: readonly DiscussionMessage[], stepId: string, basis: string, profile: PresentationProfile): { readonly done: Exchange | null; readonly latest: Exchange | null } {
-  if (profile === 'original') {
-    return { done: null, latest: null };
-  }
-  const asked = messages
-    .filter((message) => atStep(message, stepId) && message.deepen?.action === 'present' && message.deepen.profile === profile && message.deepen.basis === basis)
-    .map((question) => ({ question, answer: answerOf(messages, question) }));
-  const done = [...asked].reverse().find((entry) => entry.answer?.status === 'done' && entry.answer.text.trim() !== '') ?? null;
-  return { done, latest: asked.at(-1) ?? null };
-}
-
-/**
- * The step's deepenings that belong to the explanation shown: asked in this profile, from this
- * version of the step (or, in Original, from before versions were recorded). The alternative
- * itself is shown as the explanation, not among them.
- */
-export function deepeningsOf(messages: readonly DiscussionMessage[], stepId: string, basis: string, profile: PresentationProfile): readonly Exchange[] {
-  return messages
-    .filter(
-      (message) =>
-        atStep(message, stepId) &&
-        message.deepen?.action !== 'present' &&
-        profileOf(message) === profile &&
-        (message.deepen?.basis === undefined ? profile === 'original' : message.deepen.basis === basis),
-    )
-    .map((question) => ({ question, answer: answerOf(messages, question) }));
-}
-
-/**
- * The finished answers the person has seen at this step in this profile, oldest first: the
- * alternative, then each deepening's answer. What Explain more simply builds on, and what a
- * follow-up question or Tell me more follows (the last of them).
- */
-export function shownChain(messages: readonly DiscussionMessage[], stepId: string, basis: string, profile: PresentationProfile): readonly string[] {
-  const alternative = alternativeFor(messages, stepId, basis, profile).done?.answer?.id;
-  const deepened = deepeningsOf(messages, stepId, basis, profile)
-    .filter((entry) => entry.answer?.status === 'done')
-    .map((entry) => entry.answer?.id ?? '')
-    .filter((id) => id !== '');
-  return [...(alternative === undefined ? [] : [alternative]), ...deepened].slice(-6);
-}
-
 /**
  * The computer's last chosen profile, which a newly prepared walk's explanations are written in
  * (DSP-181), kept in sync between the review's windows through storage.
@@ -170,13 +102,60 @@ export function useDefaultProfile(): readonly [PublicProfile, (profile: PublicPr
   return [profile, choose] as const;
 }
 
+/** The review's step explanations as a window holds them, and the one being written. */
+export interface StepExplanationsState {
+  readonly entries: readonly StepExplanation[];
+  readonly busy: { readonly entryId: string; readonly activity?: string } | null;
+}
+
+/** Merge an entry into a list, replacing an earlier copy of it. */
+export function withEntry(entries: readonly StepExplanation[], entry: StepExplanation): readonly StepExplanation[] {
+  const at = entries.findIndex((candidate) => candidate.id === entry.id);
+  if (at < 0) {
+    return [...entries, entry];
+  }
+  const next = [...entries];
+  next[at] = entry;
+  return next;
+}
+
 /**
- * Whether the step needs an alternative asked for in the profile the person reads in (DSP-181):
- * not when the walk's own explanations are written in that profile, not when one is there or on
- * its way, and not after an attempt failed: a failure waits for the person's Try again, so a
- * provider that keeps failing is never asked again and again on its own. Opening a walk in its
- * own profile therefore asks for nothing.
+ * DSP-184: the review's step explanations, read on open and kept current from the events every
+ * window of the review hears. Reading asks the provider for nothing.
  */
-export function wantsAlternative(walkProfile: PresentationProfile | null, profile: PublicProfile, hasDone: boolean, pending: boolean, failed = false): boolean {
-  return walkProfile !== profile && !hasDone && !pending && !failed;
+export function useStepExplanations(scope: string): StepExplanationsState {
+  const [state, setState] = useState<StepExplanationsState>({ entries: [], busy: null });
+  useEffect(() => {
+    const bridge = window.dspatchReviewDiscussion;
+    if (bridge === undefined) {
+      return;
+    }
+    let live = true;
+    void bridge
+      .load(null)
+      .then((outcome) => {
+        if (live && outcome.kind === 'loaded' && outcome.explanations !== undefined) {
+          const view = outcome.explanations;
+          setState((before) => ({ entries: view.entries.reduce(withEntry, before.entries), busy: view.busy }));
+        }
+      })
+      .catch(() => undefined);
+    const off = bridge.onEvent((event) => {
+      if (event.kind === 'explanation') {
+        setState((before) => ({ ...before, entries: withEntry(before.entries, event.entry) }));
+      } else if (event.kind === 'explanation-delta') {
+        setState((before) => ({
+          ...before,
+          entries: before.entries.map((entry) => (entry.id === event.entryId ? { ...entry, text: entry.text + event.text } : entry)),
+        }));
+      } else if (event.kind === 'explanation-busy') {
+        setState((before) => ({ ...before, busy: event.busy }));
+      }
+    });
+    return () => {
+      live = false;
+      off();
+    };
+  }, [scope]);
+  return state;
 }

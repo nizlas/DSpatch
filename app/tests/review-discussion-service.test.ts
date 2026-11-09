@@ -39,7 +39,8 @@ import {
   discussionWorkingFolder,
 } from '../src/main/review-discussion-service.ts';
 import { ReviewService } from '../src/main/review-service.ts';
-import { PRESENTATION_INSTRUCTION_VERSION } from '../src/shared/presentation-profiles.ts';
+import { explanationsRecordPath } from '../src/main/step-explanation-channel.ts';
+import { WALK_TEXT, historyOf, shownItem, type StepExplanation, type StepExplanationOutcome } from '../src/shared/step-explanations.ts';
 import { REVIEW_DISCUSSION_CODE_INSTRUCTION, REVIEW_DISCUSSION_INSTRUCTION, type DiscussionIdentity, type DiscussionMessage, type ReviewDiscussionEvent } from '../src/shared/review-discussion.ts';
 import { WORKING_TREE_ONLY, makeReviewFixture, type ReviewFixture } from './support/review-fixture.ts';
 
@@ -776,101 +777,151 @@ test('history brought into a discussion does not take its agent away: the last o
   }
 });
 
-// DSP-176, DSP-181: presentation profiles go through this discussion like any deepening. SIMULATED: a scripted adapter.
-test('a step presented in a profile, Explain more simply on it twice, Tell me more and a follow-up carry the profile and what was shown', async () => {
+// DSP-184: a step's explanations are in a channel and a store of their own, apart from the
+// discussion. SIMULATED: a scripted adapter; neutral examples.
+test('step explanations: no discussion entry and no discussion turn; their own session, store, history and guards', async () => {
   const s = await setup();
   try {
-    const service = s.discussions().attach(1, s.identity, () => undefined, 'cursor');
-    const adapter = (): NonNullable<(typeof s.adapters)[number]> => {
-      const found = s.adapters[0];
-      assert.ok(found !== undefined);
-      return found;
-    };
-    const answerOf = (questionId: string): DiscussionMessage | undefined => storedMessages(s).find((message) => message.role === 'answer' && message.questionId === questionId);
-    const lastQuestion = (): DiscussionMessage | undefined => storedMessages(s).filter((message) => message.role === 'question').at(-1);
+    const events: ReviewDiscussionEvent[] = [];
+    const service = s.discussions().attach(1, s.identity, (event) => events.push(event), 'cursor');
+    const slot = { walkId: 'W1', stepId: 'W1.1', basis: 'h1', profile: 'essens' } as const;
+    const outline = { walkTitle: 'Greeting a visitor', steps: [{ title: 'Read the name', places: ['src/a.ts 1–3 (To)'] }, { title: 'Build the greeting', places: ['src/b.ts 4–9 (To)'] }], current: 0 };
+    const explain = (input: Record<string, unknown>) => service.send({ channel: 'explanation', ...slot, parent: null, trigger: 'person', language: 'en', outline, ...input }, s.review) as unknown as Promise<StepExplanationOutcome>;
+    const stored = (): StepExplanation[] => (JSON.parse(fs.readFileSync(explanationsRecordPath(s.fixture.records, s.identity.key), 'utf8')) as { entries: StepExplanation[] }).entries;
 
-    // Original asks as before: no presentation section in a Tell me more.
-    assert.equal((await service.send({ question: 'Tell me more about this step.', subject: POINT, selection: null, deepen: { action: 'more', basis: 'h1' } }, s.review)).kind, 'sent');
-    assert.ok(!(adapter().sent[0] ?? '').includes('## How to present') && !(adapter().sent[0] ?? '').includes('## The explanation this question follows'));
-    adapter().finish();
+    // Asked on its own (arrival at the step): sent in the explanations' session.
+    const first = await explain({ action: 'present', trigger: 'auto' });
+    assert.equal(first.kind, 'sent');
+    const explainer = s.adapters[0];
+    assert.ok(explainer !== undefined);
+    const prompt = explainer.sent[0] ?? '';
+    assert.match(prompt, /## How to present \(Essentials\)/);
+    assert.match(prompt, /Instruction version: 4/);
+    assert.match(prompt, /## Where this step is in the walk\nWalk: Greeting a visitor\n1\. Read the name \(code: src\/a\.ts 1–3 \(To\)\)  <- this step\n2\. Build the greeting/);
+    assert.match(prompt, /do not write file names, paths or line numbers/);
+    assert.ok(!fs.existsSync(discussionRecordPath(s.fixture.records, s.identity.key)), 'the discussion file is not even written');
 
-    // Essentials: the step presented in the profile, from this version of the step.
-    assert.equal(
-      (
-        await service.send(
-          {
-            question: 'Explain this step in the Essentials profile.',
-            subject: POINT,
-            selection: null,
-            deepen: { action: 'present', profile: 'essens', basis: 'h1' },
-            presentation: { profile: 'essens', version: PRESENTATION_INSTRUCTION_VERSION },
-          },
-          s.review,
-        )
-      ).kind,
-      'sent',
-    );
-    assert.match(adapter().sent[1] ?? '', /## How to present \(Essentials\)\n.*\nInstruction version: \d+\n\n- This changes how the step is presented/);
-    assert.match(adapter().sent[1] ?? '', /\nLanguage: English\./, 'the answer language is said in the review header');
-    assert.equal((adapter().sent[1] ?? '').split('<!-- dspatch:details -->').length - 1, 1, 'the marker is named once in the prompt');
-    const present = lastQuestion();
-    assert.deepEqual(present?.deepen, { action: 'present', profile: 'essens', basis: 'h1' });
-    assert.deepEqual(present?.presentation, { profile: 'essens', version: PRESENTATION_INSTRUCTION_VERSION });
-    adapter().delta('What changes: the greeting. Why: the caller wants it.');
-    adapter().finish();
-    const alternative = answerOf(present?.id ?? '');
-    assert.equal(alternative?.status, 'done');
+    // The discussion is not blocked by it, and runs in a session of its own.
+    assert.equal((await service.send({ question: 'What does it return?', subject: POINT, selection: null }, s.review)).kind, 'sent');
+    const discussion = s.adapters[1];
+    assert.ok(discussion !== undefined && discussion !== explainer, 'two sessions, two adapters');
+    // A second explanation while one is being written is refused, never queued or repeated.
+    const busy = await explain({ action: 'present', profile: 'pedagog' });
+    assert.equal(busy.kind, 'refused');
+    // A duplicate for the same slot is refused.
+    assert.equal((await explain({ action: 'present' })).kind, 'refused');
 
-    // Explain more simply on it: attempt 1 builds on the alternative.
-    await service.send({ question: 'Explain this step more simply.', subject: POINT, selection: null, deepen: { action: 'simpler', profile: 'essens', basis: 'h1' }, presentation: { profile: 'essens', shown: [alternative?.id ?? '', 'q-unknown'] } }, s.review);
-    const first = adapter().sent[2] ?? '';
-    assert.match(first, /## Explaining more simply \(attempt 1, Essentials\)/);
-    assert.match(first, /### Shown 1: The Essentials explanation of the step\nWhat changes: the greeting/);
-    assert.match(first, /In Essentials: Plainer language and less jargon/);
-    assert.deepEqual(lastQuestion()?.presentation, { profile: 'essens', shown: [alternative?.id] }, 'an id that is no finished answer is left out');
-    const simplerQuestion = lastQuestion();
-    adapter().delta('It decides the greeting.');
-    adapter().finish();
-    const simpler = answerOf(simplerQuestion?.id ?? '');
+    explainer.delta('SIMULATED Essentials: it returns the greeting.');
+    explainer.finish();
+    discussion.finish();
+    let entries = stored();
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]?.status, 'done');
+    assert.equal(entries[0]?.trigger, 'auto');
+    assert.equal(entries[0]?.instructionVersion, 4);
+    assert.equal(entries[0]?.prompt, prompt, 'the exact prompt is kept with the explanation');
+    assert.ok(events.some((event) => event.kind === 'explanation' && event.entry.prompt === undefined), 'windows get no prompt');
+    // The discussion holds only the person's question.
+    assert.deepEqual(storedMessages(s).filter((message) => message.role === 'question').map((message) => message.text), ['What does it return?']);
 
-    // Pressed again: attempt 2, both shown, and another way in asked for.
-    await service.send({ question: 'Explain this step more simply.', subject: POINT, selection: null, deepen: { action: 'simpler', profile: 'essens', basis: 'h1' }, presentation: { profile: 'essens', shown: [alternative?.id ?? '', simpler?.id ?? ''] } }, s.review);
-    const again = adapter().sent[3] ?? '';
-    assert.match(again, /## Explaining more simply \(attempt 2, Essentials\)/);
-    assert.match(again, /They did not make it clear enough/);
-    assert.match(again, /ask(?:ing)? which concept or connection is unclear/);
-    assert.match(again, /### Shown 2: Explain more simply\nIt decides the greeting\./);
-    adapter().delta('Give it Ada and you get Hello, Ada!');
-    adapter().finish();
-    const simplerAgain = answerOf(lastQuestion()?.id ?? '');
+    // Tell me more, Explain more simply and Regenerate build on what was shown, in this profile.
+    const base = entries[0]?.id ?? '';
+    assert.equal((await explain({ action: 'more', parent: base })).kind, 'sent');
+    assert.match(explainer.sent[1] ?? '', /## Going deeper \(Essentials\)[\s\S]*### The Essentials explanation of the step\nSIMULATED Essentials: it returns the greeting\./);
+    explainer.delta('SIMULATED deeper.');
+    explainer.finish();
+    const more = stored().at(-1)?.id ?? '';
+    assert.equal((await explain({ action: 'simpler', parent: more })).kind, 'sent');
+    assert.match(explainer.sent[2] ?? '', /## Explaining more simply \(attempt 2, Essentials\)[\s\S]*### Shown 1: The Essentials explanation[\s\S]*### Shown 2: Tell me more/);
+    explainer.delta('SIMULATED simpler.');
+    explainer.finish();
+    assert.equal((await explain({ action: 'regenerate', parent: base })).kind, 'sent');
+    assert.match(explainer.sent[3] ?? '', /## Regenerating[\s\S]*Do not copy its sentences/);
+    explainer.delta('SIMULATED regenerated.');
+    explainer.finish();
+    entries = stored();
+    const history = historyOf(entries, slot);
+    assert.deepEqual(history.items.length, 5, 'the walk text, then four explanations, oldest first');
+    assert.equal(shownItem(history, undefined), entries.at(-1)?.id, 'the latest is shown');
+    assert.equal(shownItem(history, WALK_TEXT), WALK_TEXT, 'the walk text can be gone back to');
+    // Switching profile back needs no call: what is there is read from the store.
+    const sends = explainer.sent.length;
+    assert.equal(historyOf(entries, { ...slot, profile: 'pedagog' }).hasDone, false);
+    assert.equal(historyOf(entries, slot).hasDone, true);
+    assert.equal(explainer.sent.length, sends);
+    // A parent from another profile or step is refused.
+    assert.equal((await explain({ action: 'more', parent: base, profile: 'pedagog' })).kind, 'refused');
 
-    // A follow-up typed in the discussion: at the same level, following the last explanation shown.
-    await service.send({ question: 'How does it choose between the two?', subject: POINT, selection: null, presentation: { profile: 'essens', shown: [alternative?.id ?? '', simpler?.id ?? '', simplerAgain?.id ?? ''] } }, s.review);
-    const follow = adapter().sent[4] ?? '';
-    assert.match(follow, /## The explanation this question follows \(Essentials\)\n- The question follows the explanation below/);
-    assert.match(follow, /They asked for it more simply 2 time\(s\)/);
-    assert.match(follow, /### Explain more simply\nGive it Ada and you get Hello, Ada!/);
-    assert.equal(lastQuestion()?.deepen, undefined);
-    adapter().finish();
+    // A failure: stored as failed; an automatic request waits for the person's Try again.
+    assert.equal((await explain({ action: 'present', profile: 'pedagog', basis: 'h2', trigger: 'auto' })).kind, 'sent');
+    explainer.finish('error');
+    const failed = stored().at(-1);
+    assert.equal(failed?.status, 'failed');
+    const again = await explain({ action: 'present', profile: 'pedagog', basis: 'h2', trigger: 'auto' });
+    assert.equal(again.kind, 'refused');
+    assert.match(again.kind === 'refused' ? again.error : '', /Try again/);
+    assert.equal((await explain({ action: 'present', profile: 'pedagog', basis: 'h2', trigger: 'person' })).kind, 'sent', 'Try again is the person\'s');
 
-    // DSP-181: Tell me more in the profile goes deeper from what was shown, in a section of its own.
-    await service.send(
-      { question: 'Tell me more about this step.', subject: POINT, selection: null, deepen: { action: 'more', profile: 'essens', basis: 'h1' }, presentation: { profile: 'essens', shown: [alternative?.id ?? ''] } },
-      s.review,
-    );
-    const more = adapter().sent[5] ?? '';
-    assert.match(more, /## Going deeper \(Essentials\)\n- The person has read the explanation below and asks for more/);
-    assert.match(more, /### The Essentials explanation of the step\nWhat changes: the greeting/);
-    assert.ok(!more.includes('## The explanation this question follows'));
-    adapter().finish();
+    // A late answer lands on its own entry: the step version and profile it was asked for, wherever the window is.
+    explainer.delta('SIMULATED late answer for the other version, in Teacher.');
+    explainer.finish();
+    const late = stored().at(-1);
+    assert.equal(late?.basis, 'h2');
+    assert.equal(late?.profile, 'pedagog');
+    assert.equal(late?.text, 'SIMULATED late answer for the other version, in Teacher.');
+    assert.equal(historyOf(stored(), slot).items.length, 5, 'nothing landed on W1.1');
 
-    // Nothing earlier was rewritten.
-    assert.equal(answerOf(present?.id ?? '')?.text, 'What changes: the greeting. Why: the caller wants it.');
+    // Nothing of it is in the discussion, or in a new discussion session's recap.
+    assert.equal(storedMessages(s).filter((message) => message.role === 'question').length, 1);
+    assert.equal(discussion.sent.length, 1);
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});
 
-    // A present request without a profile or a version of the step is not a presentation.
-    await service.send({ question: 'Explain this step.', subject: POINT, selection: null, deepen: { action: 'present', profile: 'original', basis: 'h1' } }, s.review);
-    assert.equal(lastQuestion()?.deepen, undefined);
-    assert.ok(!(adapter().sent[6] ?? '').includes('## How to present'));
+test('step explanations: DSpatch closing on one leaves it unknown, never repeated on its own', async () => {
+  const s = await setup();
+  try {
+    const discussions = s.discussions();
+    const service = discussions.attach(1, s.identity, () => undefined, 'cursor');
+    const slot = { walkId: 'W1', stepId: 'W1.1', basis: 'h1', profile: 'standard' } as const;
+    assert.equal((await service.send({ channel: 'explanation', ...slot, action: 'present', parent: null, trigger: 'auto', language: 'en' }, s.review)).kind, 'sent');
+    await discussions.dispose();
+    const reopened = s.discussions().attach(2, s.identity, () => undefined, 'cursor');
+    const view = await reopened.load(null, s.review);
+    const entry = view.kind === 'loaded' ? view.explanations?.entries[0] : undefined;
+    assert.equal(entry?.status, 'unknown');
+    const outcome = (await reopened.send({ channel: 'explanation', ...slot, action: 'present', parent: null, trigger: 'auto', language: 'en' }, s.review)) as unknown as StepExplanationOutcome;
+    assert.equal(outcome.kind, 'refused');
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a discussion question carries the explanation shown in Step as hidden context, with no profile; old profile entries stay stored and out of the recap', async () => {
+  const s = await setup();
+  try {
+    // An older record: an automatic profile explanation asked through the discussion, then a person's question.
+    const older: DiscussionMessage[] = [
+      { id: 'q-old-present', role: 'question', text: 'Explain this step in the Teacher profile.', at: '1', subject: 's', status: 'sent', deepen: { action: 'present', profile: 'pedagog', basis: 'h1' } },
+      { id: 'a-old-present', role: 'answer', text: 'SIMULATED Teacher text.', at: '2', subject: 's', status: 'done', questionId: 'q-old-present' },
+      { id: 'q-old-more', role: 'question', text: 'Tell me more about this step.', at: '3', subject: 's', status: 'sent', deepen: { action: 'more', basis: 'h1' } },
+      { id: 'a-old-more', role: 'answer', text: 'SIMULATED more.', at: '4', subject: 's', status: 'done', questionId: 'q-old-more' },
+    ];
+    const service = s.discussions(undefined, () => older).attach(1, s.identity, () => undefined, 'cursor');
+    await service.send({ question: 'Why is the default kept?', subject: POINT, selection: null, presentation: { profile: 'pedagog' }, reading: { text: 'SIMULATED Essentials: it returns the greeting.' } }, s.review);
+    const prompt = s.adapters[0]?.sent[0] ?? '';
+    assert.match(prompt, /## The explanation of this step the person is reading\n[\s\S]*SIMULATED Essentials: it returns the greeting\./);
+    assert.ok(!/## How to present|reader's profile|Teacher|Pedagog/.test(prompt.replace(/Earlier in this discussion[\s\S]*?\n## /, '')), 'no profile section');
+    assert.match(prompt, /## Earlier in this discussion[\s\S]*Tell me more about this step\./, 'a person-initiated deepening stays in the recap');
+    assert.ok(!prompt.includes('SIMULATED Teacher text.'), 'the automatic profile entry is left out of the recap');
+    const stored = storedMessages(s);
+    assert.ok(stored.some((message) => message.id === 'q-old-present') && stored.some((message) => message.id === 'a-old-present'), 'nothing stored is deleted');
+    assert.equal(stored.at(-1)?.readingContext ?? stored.at(-2)?.readingContext, true);
+    // A profile explanation is not a discussion question any more.
+    s.adapters[0]?.finish();
+    const refused = await service.send({ question: 'Explain this step in the Essentials profile.', subject: POINT, selection: null, deepen: { action: 'present', profile: 'essens', basis: 'h1' } }, s.review);
+    assert.equal(refused.kind, 'refused');
   } finally {
     fs.rmSync(s.fixture.root, { recursive: true, force: true });
   }
@@ -894,6 +945,21 @@ test('Explain more simply on an answer, twice, builds on the chain it simplifies
     assert.match(prompt, /## Explaining more simply \(attempt 2\)/);
     assert.match(prompt, /### Shown 1: The answer to “Why 20\?”\nBecause the target says so\./);
     assert.match(prompt, /### Shown 2: The answer to explain more simply\nThe target decides\./);
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('forgetting a deleted review closes its discussion and its step explanations (DSP-186, DSP-184)', async () => {
+  const s = await setup();
+  try {
+    const discussions = s.discussions();
+    const service = discussions.attach(1, s.identity, () => undefined, 'cursor');
+    const slot = { walkId: 'W1', stepId: 'W1.1', basis: 'h1', profile: 'standard' } as const;
+    assert.equal((await service.send({ channel: 'explanation', ...slot, action: 'present', parent: null, trigger: 'person', language: 'en' }, s.review)).kind, 'sent');
+    await discussions.forget(s.identity.key);
+    assert.ok(s.adapters.every((adapter) => adapter.disposed), 'every adapter of the review is closed');
+    assert.notEqual(discussions.serviceFor(s.identity), service, 'a later window gets a new service');
   } finally {
     fs.rmSync(s.fixture.root, { recursive: true, force: true });
   }

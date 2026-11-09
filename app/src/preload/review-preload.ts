@@ -81,6 +81,12 @@ const discussionBridge: ReviewDiscussionBridge = {
     ipcRenderer.invoke('dspatch:review-discussion-list-models', provider) as ReturnType<ReviewDiscussionBridge['listModels']>,
   chooseModel: (provider, modelId) =>
     ipcRenderer.invoke('dspatch:review-discussion-choose-model', provider, modelId) as ReturnType<ReviewDiscussionBridge['chooseModel']>,
+  // DSP-184: step explanations travel on the discussion's request path, marked for their own
+  // channel; the service never makes them discussion entries.
+  explain: (input) =>
+    ipcRenderer.invoke('dspatch:review-discussion-send', { ...input, channel: 'explanation' }) as ReturnType<NonNullable<ReviewDiscussionBridge['explain']>>,
+  stopExplanation: () =>
+    ipcRenderer.invoke('dspatch:review-discussion-send', { channel: 'explanation', stop: true }) as ReturnType<NonNullable<ReviewDiscussionBridge['stopExplanation']>>,
   onEvent: (listener) => {
     const handler = (_event: unknown, payload: ReviewDiscussionEvent): void => {
       listener(payload);
@@ -101,7 +107,7 @@ const pairBridge: ReviewPairBridge = {
   log: (repository, skip) => ipcRenderer.invoke('dspatch:review-pair-log', repository, skip) as ReturnType<ReviewPairBridge['log']>,
   direction: (repository, first, second) =>
     ipcRenderer.invoke('dspatch:review-pair-direction', repository, first, second) as ReturnType<ReviewPairBridge['direction']>,
-  open: (pair) => ipcRenderer.invoke('dspatch:review-pair-open', pair) as ReturnType<ReviewPairBridge['open']>,
+  open: (request) => ipcRenderer.invoke('dspatch:review-pair-open', request) as ReturnType<ReviewPairBridge['open']>,
   forWalk: () => ipcRenderer.invoke('dspatch:review-pair-for-walk') as ReturnType<ReviewPairBridge['forWalk']>,
   readFile: (key, side, filePath) =>
     ipcRenderer.invoke('dspatch:review-pair-read-file', key, side, filePath) as ReturnType<ReviewPairBridge['readFile']>,
@@ -116,7 +122,8 @@ const pairBridge: ReviewPairBridge = {
     ipcRenderer.invoke('dspatch:review-pair-open-walk', key, definitionPath) as ReturnType<ReviewPairBridge['openWalk']>,
   openWalks: (key) => ipcRenderer.invoke('dspatch:review-pair-open-walks', key) as ReturnType<ReviewPairBridge['openWalks']>,
   ongoing: () => ipcRenderer.invoke('dspatch:review-pair-ongoing') as ReturnType<ReviewPairBridge['ongoing']>,
-  end: (pair) => ipcRenderer.invoke('dspatch:review-pair-end', pair) as ReturnType<ReviewPairBridge['end']>,
+  end: (review) => ipcRenderer.invoke('dspatch:review-pair-end', review) as ReturnType<ReviewPairBridge['end']>,
+  delete: (review) => ipcRenderer.invoke('dspatch:review-pair-delete', review) as ReturnType<ReviewPairBridge['delete']>,
   showInDiff: (location) =>
     ipcRenderer.invoke('dspatch:review-pair-show-in-diff', location) as ReturnType<ReviewPairBridge['showInDiff']>,
   agents: (key) => ipcRenderer.invoke('dspatch:review-pair-agents', key) as ReturnType<ReviewPairBridge['agents']>,

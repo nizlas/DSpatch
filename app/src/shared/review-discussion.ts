@@ -13,6 +13,7 @@ import {
 
 export { DETAILS_MARKER };
 import { TASK_HEADER } from './review-task';
+import type { StepExplanationEvent, StepExplanationInput, StepExplanationOutcome, StepExplanationsView } from './step-explanations';
 import type { CodeLocation, EvidenceLabel, FileChangeStatus, Lang, ReviewNote, RevisionSide } from './review-model';
 
 /**
@@ -627,6 +628,8 @@ export function buildEnvelopePrompt(
   code: CodeAccessSection | null = null,
   simplify: SimplifySection | null = null,
   presentation: PresentationSection | null = null,
+  /** DSP-184: the step explanation the person is reading, as a context section. */
+  reading: string | null = null,
 ): string {
   const parts: string[] = [];
   const identity = envelope.identity;
@@ -781,6 +784,9 @@ export function buildEnvelopePrompt(
       parts.push(section);
     }
   }
+  if (reading !== null) {
+    parts.push(reading);
+  }
   parts.push(`## Question\n${clip(question.trim(), ENVELOPE_LIMITS.questionChars)}`);
   parts.push(['## How to answer', ...[...ANSWER_SHAPE_RULES, ...(code === null ? [] : CODE_ANSWER_RULES)].map((rule) => `- ${rule}`)].join('\n'));
   if (code !== null) {
@@ -859,6 +865,8 @@ export interface DiscussionMessage {
    * on (Explain more simply) or followed (a follow-up). Absent before profiles: Original.
    */
   readonly presentation?: PresentationRequest;
+  /** DSP-184: the question carried the step explanation the person was reading, as hidden context. */
+  readonly readingContext?: true;
 }
 
 /** Which deepening a question is, and the selected text for Explain this. */
@@ -896,6 +904,16 @@ export function deepenFrom(raw: unknown): DeepenRequest | null {
 }
 
 /**
+ * DSP-184: whether a stored question is, with certainty, an automatic profile explanation of a
+ * step asked through the discussion before the step explanations had their own channel: only a
+ * question with a `present` deepening. Its answer goes with it. Nothing else is guessed at, and
+ * nothing stored is rewritten or deleted.
+ */
+export function isAutomaticProfileEntry(message: DiscussionMessage): boolean {
+  return message.role === 'question' && message.deepen?.action === 'present';
+}
+
+/**
  * The agents a review discussion can use (DSP-132). The same values as the main
  * chat's `StoredSessionProvider`, spelt here so the review module needs nothing of the
  * chat's.
@@ -924,7 +942,9 @@ export const DEFAULT_RECAP_LIMITS: RecapLimits = { totalChars: ENVELOPE_LIMITS.r
 export function recapFor(messages: readonly DiscussionMessage[], limits: RecapLimits = DEFAULT_RECAP_LIMITS): string {
   const exchanges: { question: DiscussionMessage; answer: DiscussionMessage }[] = [];
   for (const question of messages) {
-    if (question.role !== 'question') {
+    // DSP-184: an automatic profile explanation from before the step explanations had their own
+    // channel is the step's, not the conversation's: it is kept in the record and left out here.
+    if (question.role !== 'question' || isAutomaticProfileEntry(question)) {
       continue;
     }
     const answer = messages.find((message) => message.role === 'answer' && message.questionId === question.id && message.status === 'done');
@@ -1177,6 +1197,9 @@ function adoptMessages(value: unknown): DiscussionMessage[] {
     if (presentation !== null) {
       message.presentation = presentation;
     }
+    if (entry['readingContext'] === true) {
+      message.readingContext = true;
+    }
     if (entry['codeAccess'] === true) {
       message.codeAccess = true;
     }
@@ -1375,7 +1398,9 @@ export type ReviewDiscussionEvent =
    * Show the review's panel (30 October 2026): the discussion, with the cursor in its question
    * unless `quiet`; or, with `tab` `'step'`, the step, quietly.
    */
-  | { readonly kind: 'show'; readonly quiet?: true; readonly tab?: 'step' };
+  | { readonly kind: 'show'; readonly quiet?: true; readonly tab?: 'step' }
+  /** DSP-184: the step explanations' own events, on the same channel to the same windows. */
+  | StepExplanationEvent;
 
 /** What the window sends with a question. The envelope is built in main from the subject. */
 export interface DiscussionSendInput {
@@ -1393,10 +1418,15 @@ export interface DiscussionSendInput {
    */
   readonly simplify?: { readonly answerId: string };
   /**
-   * DSP-176: the profile the person reads in, and the answers already shown in this chain
-   * (oldest first): what Explain more simply builds on, or what a follow-up follows.
+   * DSP-176, legacy: older windows sent the profile. DSP-184: it is ignored; a profile changes
+   * the step's explanation, not the conversation.
    */
   readonly presentation?: PresentationRequest;
+  /**
+   * DSP-184: the step explanation the person is reading in Step, for a question about the
+   * current step: sent as hidden context, never shown as a discussion entry.
+   */
+  readonly reading?: { readonly text: string } | null;
 }
 
 export type DiscussionSendOutcome =
@@ -1423,6 +1453,8 @@ export type DiscussionLoadOutcome =
       readonly subjectLine: string | null;
       /** Something the person should know about the stored discussion, if anything. */
       readonly note: string | null;
+      /** DSP-184: the review's step explanations, kept apart from the discussion. */
+      readonly explanations?: StepExplanationsView;
     }
   | { readonly kind: 'refused'; readonly error: string };
 
@@ -1444,6 +1476,13 @@ export interface ReviewDiscussionBridge {
   /** DSP-149: choose this agent's model; the chat and the discussion share the choice. */
   chooseModel(provider: DiscussionProvider, modelId: string): Promise<string>;
   onEvent(listener: (event: ReviewDiscussionEvent) => void): () => void;
+  /**
+   * DSP-184: ask for a step explanation, in the step explanations' own channel. It travels on
+   * the discussion's request path and never becomes a discussion entry.
+   */
+  explain?(input: StepExplanationInput): Promise<StepExplanationOutcome>;
+  /** DSP-184: stop the step explanation being written. */
+  stopExplanation?(): Promise<DiscussionCancelOutcome>;
 }
 
 // --- Words the envelope uses ------------------------------------------------------

@@ -8,7 +8,10 @@
  * - a trivial change: short in every profile, nothing behind Show more;
  * - a normal change with a default and a fallback: every profile names them in the base text;
  * - a complex change over several code places: every place reaches the prompt;
- * - a step where Teacher must explain an unfamiliar tool: the prompt asks for the prerequisite.
+ * - a step where Teacher must explain an unfamiliar tool: the prompt asks for the needed concepts.
+ *
+ * DSP-184: the simulated answers can only show that the instructions reach the prompt and the
+ * data flow; whether a model follows them is not shown here.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -136,9 +139,9 @@ describe('the chain, with the simulated provider (DSP-181)', () => {
 
   it('a step about an unfamiliar tool: the Teacher prompt asks for the prerequisite knowledge, and the answer builds it before the code', () => {
     const got = present('Declare the build option that switches the greeting on', 'pedagog');
-    assert.match(got.prompt, /Teach the prerequisite knowledge the reader needs for this step first/);
-    assert.match(got.prompt, /declaring a build setting, reading it while configuring and using the result at run time/);
-    assert.match(got.prompt, /No general lessons that this step does not need/);
+    assert.match(got.prompt, /Build the concepts the reader needs for this step first/);
+    assert.match(got.prompt, /only those this step needs/);
+    assert.ok(!/build setting/.test(got.prompt), 'no hard-coded example (DSP-184)');
     assert.ok(got.short.indexOf('First the idea') < got.short.indexOf('Now the code'));
   });
 

@@ -17,7 +17,7 @@ import { answerJson, definitionFrom, readWalksAnswer, type ProposedWalks } from 
 import { parseReviewDefinition, stepContentHash } from '../src/shared/review-model';
 import { jobFrom } from '../src/shared/review-pair';
 import { TASK_HEADER } from '../src/shared/review-task';
-import { wantsAlternative } from '../src/renderer/presentation-choice';
+import { historyOf, wantsExplanation } from '../src/shared/step-explanations';
 
 const PAIR = { repository: 'sample-repo', base: 'a'.repeat(40), target: 'b'.repeat(40) };
 
@@ -181,12 +181,10 @@ describe('the same walks whatever the profile (DSP-181, SIMULATED)', () => {
 });
 
 describe('a walk is read in its own profile without a call (DSP-181)', () => {
-  it('asks for an alternative only in another profile, and only when none is there or on its way', () => {
-    assert.equal(wantsAlternative('standard', 'standard', false, false), false, 'the walk\'s own profile');
-    assert.equal(wantsAlternative('standard', 'essens', false, false), true, 'another profile with nothing yet');
-    assert.equal(wantsAlternative('standard', 'essens', true, false), false, 'one is there');
-    assert.equal(wantsAlternative('standard', 'essens', false, true), false, 'one is on its way');
-    assert.equal(wantsAlternative('standard', 'essens', false, false, true), false, 'the last attempt failed: it waits for Try again');
-    assert.equal(wantsAlternative(null, 'standard', false, false), true, 'an older walk (Original) has no profile of its own');
+  it('asks for an explanation only in another profile, and only when none is there or on its way (DSP-184: from the step explanations\' store)', () => {
+    const nothing = historyOf([], { walkId: 'W1', stepId: 'W1.1', basis: 'h', profile: 'essens' });
+    assert.equal(wantsExplanation('essens', 'essens', nothing), false, 'the walk\'s own profile');
+    assert.equal(wantsExplanation('standard', 'essens', nothing), true, 'another profile with nothing yet');
+    assert.equal(wantsExplanation(null, 'standard', nothing), true, 'an older walk (Original) has no profile of its own');
   });
 });

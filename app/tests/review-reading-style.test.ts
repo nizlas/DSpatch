@@ -52,7 +52,9 @@ describe('one reading typography (DSP-181)', () => {
 
   it('every explanation and answer carries rv-reading, and only the prepared text is rv-prepared', () => {
     assert.match(view, /className="rv-profile-explanation rv-explanation rv-reading"/, 'the profile alternative');
-    assert.match(view, /className="rv-explanation rv-reading rv-prepared" data-ev="step-prepared-explanation"/, 'the prepared body');
+    // DSP-184: the walk's own text (summary, body, why) is one block, in the same place as a profile's explanation.
+    assert.match(view, /className="rv-walk-explanation" data-ev="step-prepared-explanation"/, 'the walk\'s own text');
+    assert.match(view, /className="rv-explanation rv-reading rv-prepared" data-quote-source="explanation"/, 'the prepared body');
     assert.equal((view.match(/rv-explanation rv-reading rv-prepared/g) ?? []).length, 2, 'the prepared body and its why');
     assert.ok(!/rv-profile-explanation[^"]*rv-prepared/.test(view), 'an alternative never keeps hard line breaks');
     assert.match(answer, /className="rv-answer rv-reading"/, 'every discussion answer, under a step or in the thread');

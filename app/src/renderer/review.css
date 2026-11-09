@@ -4011,47 +4011,62 @@
   margin: 0.4rem 0;
 }
 
-/* DSP-176: presentation profiles. The choice sits under the panel's tabs, quiet; the line above a
-   step's explanation says which explanation is shown and what is happening to the profile's. */
-.rv-profile-bar {
-  margin-top: -0.6rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.25rem 0.6rem;
-  padding: 0.35rem 0.7rem;
-  border-bottom: 1px solid var(--line);
+/* DSP-176, DSP-184: presentation profiles. With walks the chooser is the step explanation's,
+   in its own bar in Step, with the explanation's history beside it; before any walk it sits in
+   the tab row, as the profile the walks will be prepared in. */
+.rv-profile-choice {
+  white-space: nowrap;
   font-size: 0.85rem;
 }
 
-.rv-profile-choice {
+.rv-right-tabs .rv-profile-choice {
   margin-left: 0.6rem;
-  white-space: nowrap;
-  font-size: 0.85rem;
 }
 
 .rv-profile-choice select {
   font: inherit;
 }
 
-.rv-profile-description {
-  flex-basis: 100%;
+.rv-explanation-bar {
+  margin: 0.5rem 0 0.4rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.rv-explanation-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.8rem;
+}
+
+.rv-explanation-bar .rv-section-title {
+  display: inline;
   margin: 0;
 }
 
-.rv-profile-about {
-  flex-basis: 100%;
-  margin: 0.2rem 0 0;
-  max-height: 16rem;
-  overflow: auto;
-  white-space: pre-wrap;
-  font: inherit;
-  font-size: 0.8rem;
-  color: var(--muted);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0.4rem 0.6rem;
+.rv-explanation-history {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.rv-explanation-bar .rv-profile-line {
+  margin: 0.25rem 0 0;
+}
+
+/* DSP-184: the step's place navigation stays in view while a long explanation scrolls, just
+   under the panel's sticky tab row. */
+.rv-place-nav-sticky {
+  position: sticky;
+  top: 1.9rem;
+  z-index: 1;
+  background: var(--bg);
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .rv-profile-line {

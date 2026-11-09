@@ -4,9 +4,9 @@
  * Standard and Teacher differ in selection and manner, with length as a guideline; Explain
  * more simply reduces concepts per profile and asks for another way in when pressed again;
  * Tell me more and a follow-up keep the level and do not restart; Original is the prepared
- * explanation, kept and never asked for again. What the walk shows is chosen from the
- * discussion so that a late or failed answer never shows under the wrong step, version or
- * profile. Neutral examples only.
+ * explanation, kept and never asked for again. DSP-184: what a step shows is chosen from the
+ * step explanations' own store, so a late or failed answer never shows under the wrong step,
+ * version or profile; the discussion carries no profile. Neutral examples only.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -15,6 +15,7 @@ import {
   DEFAULT_PROFILE,
   DETAILS_MARKER,
   DETAILS_PART_RULE,
+  EXPLANATORY_VALUE_RULES,
   GROUNDING_RULES,
   LENGTH_GUIDELINE_RULES,
   MORE_RULES,
@@ -30,12 +31,16 @@ import {
   isProfile,
   isPublicProfile,
   presentationFrom,
+  WALK_WRITING_RULES,
+  outlineFrom,
   presentationPromptSection,
-  profileInstructionText,
+  readingContextSection,
+  walkExplanationSection,
 } from '../src/shared/presentation-profiles';
-import { ANSWER_SHAPE_RULES, deepenFrom, type DiscussionMessage } from '../src/shared/review-discussion';
+import { ANSWER_SHAPE_RULES, deepenFrom, isAutomaticProfileEntry, recapFor, type DiscussionMessage } from '../src/shared/review-discussion';
 import { WORDS } from '../src/renderer/review-i18n';
-import { alternativeFor, chosenProfile, deepeningsOf, shownChain } from '../src/renderer/presentation-choice';
+import { chosenProfile } from '../src/renderer/presentation-choice';
+import { WALK_TEXT, adoptStepExplanations, chainTo, historyOf, shownItem, wantsExplanation, type StepExplanation } from '../src/shared/step-explanations';
 
 const count = (text: string, needle: string): number => text.split(needle).length - 1;
 
@@ -46,18 +51,33 @@ describe('the profiles (DSP-181)', () => {
     assert.equal(DEFAULT_PROFILE, 'standard');
     assert.ok(isProfile('original') && isProfile('standard') && !isProfile('essentials'));
     assert.ok(!isPublicProfile('original') && isPublicProfile('pedagog'));
-    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 3);
+    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 4);
   });
 
   it('are named and described in the window\'s language over stable ids; prompts use the English names', () => {
     assert.deepEqual(PUBLIC_PROFILES.map((id) => WORDS.sv.profiles.name[id]), ['Essens', 'Standard', 'Pedagog']);
     assert.deepEqual(PUBLIC_PROFILES.map((id) => WORDS.en.profiles.name[id]), ['Essentials', 'Standard', 'Teacher']);
     assert.deepEqual(PUBLIC_PROFILES.map((id) => PROFILE_PROMPT_NAMES[id]), ['Essentials', 'Standard', 'Teacher']);
+    // Ids, prompt names and display names are three things, never mixed: the ids are not shown,
+    // the Swedish names are not prompt names, and the prompt names are English.
     for (const id of PUBLIC_PROFILES) {
-      assert.ok(WORDS.sv.profiles.description[id].length > 40 && WORDS.en.profiles.description[id].length > 40);
+      assert.ok(id === 'standard' || (!Object.values(WORDS.sv.profiles.name).includes(id) && !Object.values(WORDS.en.profiles.name).includes(id)), `the id ${id} is not shown`);
+      assert.equal(WORDS.en.profiles.name[id], PROFILE_PROMPT_NAMES[id], 'the English display name is the prompt name');
+      assert.ok(WORDS.sv.profiles.description[id].length > 20 && WORDS.en.profiles.description[id].length > 20, 'a short plain tooltip per option');
+      assert.ok(WORDS.sv.profiles.description[id].length < 120 && WORDS.en.profiles.description[id].length < 120, 'a tooltip, not the instructions');
     }
-    assert.equal(WORDS.sv.profiles.presentQuestion('Essens'), 'Förklara det här steget i profilen Essens.');
-    assert.equal(WORDS.en.profiles.presentQuestion('Teacher'), 'Explain this step in the Teacher profile.');
+    assert.ok(!Object.values(PROFILE_PROMPT_NAMES).includes('Pedagog') && !Object.values(PROFILE_PROMPT_NAMES).includes('Essens'));
+    // The chooser is the step explanation's.
+    assert.equal(WORDS.en.profiles.label, 'Explanation');
+    assert.equal(WORDS.sv.profiles.label, 'Förklaring');
+  });
+
+  it('the review view says nothing of the instructions (DSP-184): no "What it asks for", no instruction text, no version', () => {
+    for (const lang of ['sv', 'en'] as const) {
+      const words = JSON.stringify(WORDS[lang].profiles, (_key, value: unknown) => (typeof value === 'function' ? String((value as (...args: unknown[]) => unknown)('X', 'Y')) : value));
+      assert.ok(!/What it asks for|Vad profilen ber om|Instruction version|instruktionerna|instructions/i.test(words), `${lang}: ${words.slice(0, 200)}`);
+      assert.ok(!('about' in WORDS[lang].profiles));
+    }
   });
 
   it('a saved Essentials or Teacher is kept; a saved Original, nothing or nonsense means Standard', () => {
@@ -101,16 +121,32 @@ describe('one policy in the prompt (DSP-181)', () => {
     const essentials = presentationPromptSection({ profile: 'essens', mode: 'present', shown: [] }) ?? '';
     const standard = presentationPromptSection({ profile: 'standard', mode: 'present', shown: [] }) ?? '';
     const teacher = presentationPromptSection({ profile: 'pedagog', mode: 'present', shown: [] }) ?? '';
-    assert.match(essentials, /Select the core/);
-    assert.match(essentials, /About two sentences/);
-    assert.match(standard, /developer of ordinary experience/);
-    assert.match(standard, /About five sentences/);
-    assert.match(teacher, /prerequisite knowledge/);
-    assert.match(teacher, /declaring a build setting, reading it while configuring and using the result at run time/);
-    assert.match(teacher, /About ten sentences/);
+    // Essentials: the purpose and the most important events, above the statements; about two sentences.
+    assert.match(essentials, /purpose of the code and its most important events, at a level above the individual statements/);
+    assert.match(essentials, /concrete identifiers only where they help/);
+    assert.match(essentials, /Leave out mechanical details \(indexes, loop bounds, every single call\)/);
+    assert.match(essentials, /About two sentences for a normal step/);
+    // Standard: also how and why the parts connect, for a developer new to this code; understanding, not words.
+    assert.match(standard, /knows programming but not this code/);
+    assert.match(standard, /develop the connections: why the conditions exist, how the parts work together, and which consequences matter/);
+    assert.match(standard, /Not a line-by-line account/);
+    assert.match(standard, /Do not teach general programming concepts/);
+    assert.match(standard, /About four to six sentences/);
+    // Teacher: concepts first, the reasoning, examples where they help; not shortened.
+    assert.match(teacher, /Build the concepts the reader needs/);
+    assert.match(teacher, /Explain the reasoning step by step/);
+    assert.match(teacher, /example, or an analogy/);
+    assert.match(teacher, /Do not shorten it to resemble the other profiles/);
+    // Generic: no hard-coded example of a particular kind of project.
+    assert.ok(!/build setting|build system/.test(teacher));
     for (const section of [essentials, standard, teacher]) {
+      // Every profile: understanding beyond the code and its comments, no invented intentions, and the self-check.
+      for (const rule of EXPLANATORY_VALUE_RULES) {
+        assert.equal(count(section, rule), 1);
+      }
+      assert.match(section, /not already plain from the code or its comments/);
       assert.match(section, /not what is said about the code/);
-      assert.match(section, /State the relevant default values explicitly/);
+      assert.match(section, /default value explicitly when it is decisive/);
       assert.match(section, /not a count to hit, not a cap/);
       assert.match(section, /do not start a new broad review/);
     }
@@ -148,43 +184,61 @@ describe('one policy in the prompt (DSP-181)', () => {
 
   it('Tell me more goes deeper from what was shown and does not restart', () => {
     const more = presentationPromptSection({ profile: 'standard', mode: 'more', shown: [{ label: 'The Standard explanation of the step', text: 'The base.' }] }) ?? '';
-    assert.match(more, /^## Going deeper \(Standard\)/);
+    assert.match(more, /^## Going deeper \(Standard\)\nInstruction version: \d+\n/);
     assert.ok(more.includes(MORE_RULES[0]) && more.includes(MORE_RULES[1]));
     assert.match(more, /Do not restart with the same base explanation/);
     assert.match(more, /### The Standard explanation of the step\nThe base\./);
     // Nothing shown yet in the profile: the prepared explanation is deepened, with the profile's manner.
     const first = presentationPromptSection({ profile: 'essens', mode: 'more', shown: [] }) ?? '';
-    assert.match(first, /^## The reader's profile \(Essentials\)\n- The reader's profile: Essentials\. Its manner:/);
+    assert.match(first, /^## The reader's profile \(Essentials\)\nInstruction version: \d+\n- The reader's profile: Essentials\. Its manner:/);
     assert.ok(!first.includes('below'), 'nothing is said to be below when nothing is');
     assert.equal(presentationPromptSection({ profile: 'original', mode: 'more', shown: [] }), null);
   });
 
-  it('a follow-up keeps the level of what it follows, says how many times it was simplified, and never points at an explanation that is not there', () => {
-    const follow = presentationPromptSection({ profile: 'pedagog', mode: 'follow', shown: [{ label: 'Explain more simply', text: 'Like a door.' }] }) ?? '';
-    assert.match(follow, /^## The explanation this question follows \(Teacher\)/);
-    assert.match(follow, /same level of explanation/);
-    assert.match(follow, /more simply 1 time\(s\)/);
-    assert.match(follow, /### Explain more simply\nLike a door\./);
-    const nothingShown = presentationPromptSection({ profile: 'standard', mode: 'follow', shown: [] }) ?? '';
-    assert.match(nothingShown, /^## The reader's profile \(Standard\)/);
-    assert.ok(!nothingShown.includes('follows the explanation below'));
-    assert.equal(presentationPromptSection({ profile: 'original', mode: 'follow', shown: [] }), null, 'Original with nothing shown asks as before the profiles');
-    const legacyFollow = presentationPromptSection({ profile: 'original', mode: 'follow', shown: [{ label: 'Explain more simply', text: 'A.' }] }) ?? '';
-    assert.match(legacyFollow, /^## The explanation this question follows \(Original\)/);
+  it('the same rules reach walk generation, a profile\'s explanation, regeneration and the deepenings, with the walk-relative rules', () => {
+    for (const id of PUBLIC_PROFILES) {
+      const walk = walkExplanationSection(id);
+      const present = presentationPromptSection({ profile: id, mode: 'present', shown: [], walk: null }) ?? '';
+      const regenerate = presentationPromptSection({ profile: id, mode: 'regenerate', shown: [{ label: 'Before', text: 'A.' }], walk: null }) ?? '';
+      for (const section of [walk, present, regenerate]) {
+        for (const rule of [...GROUNDING_RULES, ...EXPLANATORY_VALUE_RULES, ...PROFILES[id].manner, ...WALK_WRITING_RULES]) {
+          assert.equal(count(section, rule), 1, `${id}: ${rule.slice(0, 40)}`);
+        }
+        assert.match(section, new RegExp(`Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`));
+      }
+      assert.match(regenerate, /## Regenerating[\s\S]*### Before\nA\./);
+      for (const mode of ['more', 'simpler', 'explain'] as const) {
+        const section = presentationPromptSection({ profile: id, mode, shown: [{ label: 'Shown', text: 'A.' }], walk: null }) ?? '';
+        assert.ok(section.includes(PROFILES[id].manner[0] ?? '-'), `${mode} keeps the profile's manner`);
+        assert.ok(section.includes(EXPLANATORY_VALUE_RULES[2]), `${mode} keeps the self-check`);
+        for (const rule of WALK_WRITING_RULES) {
+          assert.equal(count(section, rule), 1, `${mode}: the walk-relative rules`);
+        }
+      }
+    }
   });
 
-  it('every profile\'s instruction can be read as the window shows it', () => {
-    assert.match(profileInstructionText('original'), /kept for comparison and is not asked for again/);
+  it('an explanation prompt carries the walk\'s order and coverage; an outline from a window is bounded', () => {
+    const outline = outlineFrom({ walkTitle: 'Greeting a visitor', steps: [{ title: 'Read the name', places: ['src/a.ts 1–3 (To)'] }, { title: 'Build the greeting', places: ['src/b.ts 4–9 (To)', 7] }], current: 1 });
+    assert.ok(outline !== null);
+    const section = presentationPromptSection({ profile: 'standard', mode: 'present', shown: [], walk: outline }) ?? '';
+    assert.match(section, /## Where this step is in the walk\nWalk: Greeting a visitor\n1\. Read the name \(code: src\/a\.ts 1–3 \(To\)\)\n2\. Build the greeting \(code: src\/b\.ts 4–9 \(To\)\)  <- this step/);
+    assert.match(section, /"in the next step"/);
+    assert.match(section, /Do not explain in advance what a later step covers/);
+    assert.equal(outlineFrom({ steps: [], current: 0 }), null);
+    assert.equal(outlineFrom({ steps: [{ title: 'x' }], current: 3 }), null);
+    assert.equal(outlineFrom({ steps: Array.from({ length: 100 }, () => ({ title: 'x'.repeat(500) })), current: 0 })?.steps.length, 40);
+  });
+
+  it('a discussion question\'s context is the explanation shown, without a profile or its manner', () => {
+    const section = readingContextSection({ text: 'It returns the greeting.' }) ?? '';
+    assert.match(section, /^## The explanation of this step the person is reading/);
+    assert.match(section, /It returns the greeting\./);
     for (const id of PUBLIC_PROFILES) {
-      const text = profileInstructionText(id);
-      assert.match(text, new RegExp(`^${PROFILE_PROMPT_NAMES[id]}\nInstruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`));
-      assert.match(text, /Every profile:/);
-      assert.match(text, /After the marker \(Show more\):/);
-      assert.match(text, /Tell me more:/);
-      assert.match(text, /Explain more simply:/);
-      assert.match(text, /A follow-up question:/);
-      assert.ok(text.includes(PROFILES[id].guideline));
+      assert.ok(!section.includes(PROFILES[id].manner[0] ?? '-'));
     }
+    assert.ok(!/Essentials|Teacher|profile/.test(section));
+    assert.equal(readingContextSection(null), null);
   });
 
   it('a request names a known profile and only answer-like ids, a few of them', () => {
@@ -205,73 +259,102 @@ describe('one policy in the prompt (DSP-181)', () => {
   });
 });
 
-// What the walk shows, from the discussion's messages.
+// DSP-184: what a step shows, from the step explanations' own store.
 let clock = 0;
-function question(id: string, stepId: string, deepen: DiscussionMessage['deepen'], status: DiscussionMessage['status'] = 'sent', presentation?: DiscussionMessage['presentation']): DiscussionMessage {
+function entry(id: string, overrides: Partial<StepExplanation> = {}): StepExplanation {
   clock += 1;
   return {
     id,
-    role: 'question',
-    text: id,
+    walkId: 'W1',
+    stepId: 'W1.1',
+    basis: 'h1',
+    profile: 'essens',
+    action: 'present',
+    parent: null,
+    text: `text of ${id}`,
+    status: 'done',
     at: String(clock),
-    subject: '',
-    status,
-    deepen,
-    ...(presentation === undefined ? {} : { presentation }),
-    envelope: { subject: { kind: 'point', walkId: 'W1', stepId, placeIndex: 0 } } as unknown as DiscussionMessage['envelope'],
+    instructionVersion: PRESENTATION_INSTRUCTION_VERSION,
+    language: 'en',
+    trigger: 'person',
+    ...overrides,
   };
 }
-function answer(id: string, questionId: string, status: DiscussionMessage['status'] = 'done', text = `text of ${id}`): DiscussionMessage {
-  return { id, role: 'answer', text, at: '', subject: '', status, questionId };
-}
 
-describe('what the walk shows', () => {
-  const messages: DiscussionMessage[] = [
-    // Before profiles: a Tell me more in Original, with no version.
-    question('q-old', 'W1.1', { action: 'more' }),
-    answer('a-old', 'q-old'),
-    // An Essentials alternative written under the earlier instructions (version 2).
-    question('q-e1', 'W1.1', { action: 'present', profile: 'essens', basis: 'h1' }, 'sent', { profile: 'essens', version: 2 }),
-    answer('a-e1', 'q-e1'),
-    // A retry that failed after a good one: the good one still shows.
-    question('q-e2', 'W1.1', { action: 'present', profile: 'essens', basis: 'h1' }),
-    answer('a-e2', 'q-e2', 'failed', ''),
+describe('what a step shows (DSP-184)', () => {
+  const slot = { walkId: 'W1', stepId: 'W1.1', basis: 'h1', profile: 'essens' } as const;
+  const entries: StepExplanation[] = [
+    entry('x-e1'),
     // A late answer for another step and for another profile.
-    question('q-p', 'W1.2', { action: 'present', profile: 'pedagog', basis: 'h2' }),
-    answer('a-p', 'q-p'),
-    // A Standard alternative of this step, under the current instructions.
-    question('q-st', 'W1.1', { action: 'present', profile: 'standard', basis: 'h1' }, 'sent', { profile: 'standard', version: PRESENTATION_INSTRUCTION_VERSION }),
-    answer('a-st', 'q-st'),
-    // An Essentials alternative of an older version of the step.
-    question('q-e0', 'W1.1', { action: 'present', profile: 'essens', basis: 'h0' }),
-    answer('a-e0', 'q-e0'),
-    question('q-s1', 'W1.1', { action: 'simpler', profile: 'essens', basis: 'h1' }),
-    answer('a-s1', 'q-s1'),
-    question('q-m', 'W1.1', { action: 'more', basis: 'h1' }),
-    answer('a-m', 'q-m'),
+    entry('x-p', { stepId: 'W1.2', profile: 'pedagog' }),
+    entry('x-st', { profile: 'standard' }),
+    // An older version of the step.
+    entry('x-e0', { basis: 'h0' }),
+    entry('x-m', { action: 'more', parent: 'x-e1' }),
+    entry('x-s', { action: 'simpler', parent: 'x-m' }),
+    // A regeneration that failed: what was there stays shown, and the failure waits for Try again.
+    entry('x-r', { action: 'regenerate', parent: 'x-s', status: 'failed', text: '', error: 'provider error' }),
   ];
 
-  it('an alternative is the one of this step, version and profile; a failed retry does not hide it; Standard and Essentials stay apart', () => {
-    const shown = alternativeFor(messages, 'W1.1', 'h1', 'essens');
-    assert.equal(shown.done?.answer?.id, 'a-e1');
-    assert.equal(shown.latest?.question.id, 'q-e2');
-    assert.equal(shown.done?.question.presentation?.version, 2, 'the version it was written under is kept, so the window can say it is older');
-    assert.equal(alternativeFor(messages, 'W1.1', 'h1', 'standard').done?.answer?.id, 'a-st');
-    assert.equal(alternativeFor(messages, 'W1.1', 'h1', 'pedagog').done, null, 'the Teacher answer is for another step');
-    assert.equal(alternativeFor(messages, 'W1.2', 'h2', 'pedagog').done?.answer?.id, 'a-p');
-    assert.equal(alternativeFor(messages, 'W1.1', 'h9', 'essens').done, null, 'a changed step reuses nothing');
-    assert.equal(alternativeFor(messages, 'W1.1', 'h1', 'original').done, null, 'Original is the prepared explanation itself');
+  it('a history per review, walk, step, version and profile: the walk text first, finished explanations in order, the latest shown', () => {
+    const history = historyOf(entries, slot);
+    assert.deepEqual(history.items, [WALK_TEXT, 'x-e1', 'x-m', 'x-s']);
+    assert.equal(shownItem(history, undefined), 'x-s');
+    assert.equal(shownItem(history, 'x-e1'), 'x-e1', 'gone back to an earlier one');
+    assert.equal(shownItem(history, WALK_TEXT), WALK_TEXT, 'the walk text can always be returned to');
+    assert.equal(shownItem(history, 'x-st'), 'x-s', 'an item of another profile is not this history\'s');
+    assert.equal(history.failed?.id, 'x-r');
+    assert.equal(history.pending, null);
+    assert.deepEqual(historyOf(entries, { ...slot, profile: 'standard' }).items, [WALK_TEXT, 'x-st']);
+    assert.deepEqual(historyOf(entries, { ...slot, basis: 'h9' }).items, [WALK_TEXT], 'a changed step reuses nothing');
+    assert.deepEqual(historyOf(entries, { ...slot, profile: 'pedagog' }).items, [WALK_TEXT], 'the Teacher answer is for another step');
   });
 
-  it('deepenings belong to their profile and version; older ones stay with Original', () => {
-    assert.deepEqual(deepeningsOf(messages, 'W1.1', 'h1', 'essens').map((entry) => entry.question.id), ['q-s1']);
-    assert.deepEqual(deepeningsOf(messages, 'W1.1', 'h1', 'original').map((entry) => entry.question.id), ['q-old', 'q-m']);
-    assert.deepEqual(deepeningsOf(messages, 'W1.1', 'h1', 'standard'), []);
+  it('what an action builds on follows the parent links, finished ones only, oldest first', () => {
+    assert.deepEqual(chainTo(entries, 'x-s').map((item) => item.id), ['x-e1', 'x-m', 'x-s']);
+    assert.deepEqual(chainTo(entries, null), []);
   });
 
-  it('the chain shown is the alternative, then the deepenings, oldest first', () => {
-    assert.deepEqual(shownChain(messages, 'W1.1', 'h1', 'essens'), ['a-e1', 'a-s1']);
-    assert.deepEqual(shownChain(messages, 'W1.1', 'h1', 'standard'), ['a-st']);
-    assert.deepEqual(shownChain(messages, 'W1.1', 'h1', 'original'), ['a-old', 'a-m']);
+  it('asked for on arrival only when nothing is there, nothing is on its way and nothing failed; never in the walk\'s own profile', () => {
+    const empty = historyOf([], slot);
+    assert.equal(wantsExplanation('standard', 'essens', empty), true);
+    assert.equal(wantsExplanation('essens', 'essens', empty), false, 'the walk\'s own profile');
+    assert.equal(wantsExplanation(null, 'essens', empty), true, 'an older walk (Original) has no profile of its own');
+    assert.equal(wantsExplanation('standard', 'essens', historyOf([entry('a')], slot)), false, 'one is there');
+    assert.equal(wantsExplanation('standard', 'essens', historyOf([entry('b', { status: 'streaming', text: '' })], slot)), false, 'one is on its way');
+    assert.equal(wantsExplanation('standard', 'essens', historyOf([entry('c', { status: 'failed', text: '' })], slot)), false, 'the last attempt failed: it waits for Try again');
+    assert.equal(wantsExplanation('standard', 'essens', historyOf([entry('d', { status: 'unknown', text: '' })], slot)), false, 'an unknown end waits too');
+  });
+
+  it('a stored record is read as it is; a newer one is left alone', () => {
+    const identity = { key: 'k', repository: 'r', base: 'b', target: 't', definitionPath: 'd' };
+    const adopted = adoptStepExplanations({ version: 1, entries: [entries[0], { id: 'broken' }], savedAt: 'x' }, identity);
+    assert.equal(adopted.kind === 'adopted' ? adopted.record.entries.length : -1, 1);
+    assert.equal(adoptStepExplanations({ version: 2, entries: [] }, identity).kind, 'newer');
+    assert.equal(adoptStepExplanations('nonsense', identity).kind, 'unusable');
+  });
+});
+
+describe('older automatic profile entries in the discussion (DSP-184)', () => {
+  const question = (id: string, deepen: DiscussionMessage['deepen'], text = id): DiscussionMessage => ({ id, role: 'question', text, at: id, subject: 's', status: 'sent', ...(deepen === undefined ? {} : { deepen }) });
+  const answer = (id: string, questionId: string, text: string): DiscussionMessage => ({ id, role: 'answer', text, at: id, subject: 's', status: 'done', questionId });
+  const messages: DiscussionMessage[] = [
+    question('q1', { action: 'present', profile: 'pedagog', basis: 'h1' }),
+    answer('a1', 'q1', 'An automatic Teacher text.'),
+    question('q2', { action: 'more', basis: 'h1' }, 'Tell me more about this step.'),
+    answer('a2', 'q2', 'More, asked by the person.'),
+    question('q3', undefined, 'Why is the default kept?'),
+    answer('a3', 'q3', 'Because the caller relies on it.'),
+  ];
+
+  it('only a question with a present deepening is identified, with certainty; person-initiated deepenings stay', () => {
+    assert.deepEqual(messages.filter(isAutomaticProfileEntry).map((message) => message.id), ['q1']);
+  });
+
+  it('the recap leaves them out, and keeps the rest', () => {
+    const recap = recapFor(messages);
+    assert.ok(!recap.includes('An automatic Teacher text.'));
+    assert.match(recap, /More, asked by the person\./);
+    assert.match(recap, /Because the caller relies on it\./);
   });
 });

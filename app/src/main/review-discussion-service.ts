@@ -15,7 +15,6 @@ import {
   emptyDiscussionRecord,
   recapFor,
   splitCodeAnswer,
-  splitDetails,
   subjectLine,
   type DiscussionAgentView,
   type DiscussionCancelOutcome,
@@ -33,14 +32,15 @@ import {
   type ContextEnvelope,
   type EnvelopeOutcome,
   type SimplifySection,
-  type DeepenRequest,
   type ReviewDiscussionEvent,
   type SelectionQuote,
   quoteFrom,
 } from '../shared/review-discussion';
-import { PROFILE_PROMPT_NAMES, presentationFrom, type PresentationRequest, type PresentationSection } from '../shared/presentation-profiles';
+import { PROFILE_PROMPT_NAMES, readingContextSection } from '../shared/presentation-profiles';
+import type { StepExplanationEvent } from '../shared/step-explanations';
 import { toolActivity, type StepAnswer } from '../shared/review-pair';
 import { AttemptLedger } from './attempt-ledger';
+import { StepExplanationChannel } from './step-explanation-channel';
 // DSP-132: the only thing taken from the chat - its adapter interface, as a type. No route
 // to the chat service or the loop runner exists from here (an import scan pins it).
 import type { ChatAdapter } from './chat-service';
@@ -236,6 +236,15 @@ function shownLabel(question: DiscussionMessage | null): string {
   return `The answer to “${(question?.text ?? '').replace(/\s+/g, ' ').slice(0, 100)}”`;
 }
 
+/** DSP-184: the explanation a question carries as context, bounded, or `null`. */
+function readingFrom(raw: unknown): { readonly text: string } | null {
+  if (typeof raw !== 'object' || raw === null) {
+    return null;
+  }
+  const text = (raw as { text?: unknown }).text;
+  return typeof text === 'string' && text.trim() !== '' ? { text: text.slice(0, 8_000) } : null;
+}
+
 interface Turn {
   readonly questionId: string;
   answerId: string | null;
@@ -256,7 +265,8 @@ interface Turn {
 /** How often the window is told what the agent is doing, at most. */
 const ACTIVITY_MS = 700;
 
-interface Session {
+/** A provider session of this review: the discussion's, or the step explanations' (DSP-184). */
+export interface Session {
   readonly adapter: ChatAdapter;
   readonly provider: DiscussionProvider;
   readonly sessionId: string;
@@ -331,10 +341,26 @@ export class ReviewDiscussionService {
   /** Events dropped because they named another session. */
   foreignEventsDropped = 0;
 
+  /** DSP-184: the review's step explanations, in a channel and a store of their own. */
+  readonly explanations: StepExplanationChannel;
+
   constructor(options: ReviewDiscussionServiceOptions) {
     this.options = options;
     this.identity = options.identity;
     this.readStored();
+    this.explanations = new StepExplanationChannel({
+      identity: this.identity,
+      recordsDir: options.recordsDir,
+      log: (message) => options.log(message),
+      emit: (event) => this.emit(event),
+      provider: () => this.provider,
+      availabilityOf: (provider) => this.availabilityOf(provider),
+      model: (provider) => this.model(provider),
+      openSession: (provider, holder, onEvent) => this.openSession(provider, holder, onEvent),
+      closeSession: (session) => this.closeSession(session),
+      targetCount: () => this.targets.size,
+      cancelConfirmMs: options.timings?.cancelConfirmMs ?? CANCEL_CONFIRM_MS,
+    });
   }
 
   // --- Reading and writing the record ------------------------------------------
@@ -436,6 +462,7 @@ export class ReviewDiscussionService {
   detach(targetId: number): void {
     this.targets.delete(targetId);
     void this.closeIdleAdapter();
+    void this.explanations.closeIdle();
   }
 
   /** How many windows are showing this review. */
@@ -443,7 +470,7 @@ export class ReviewDiscussionService {
     return this.targets.size;
   }
 
-  private emit(event: ReviewDiscussionEvent): void {
+  private emit(event: ReviewDiscussionEvent | StepExplanationEvent): void {
     for (const send of this.targets.values()) {
       try {
         send(event);
@@ -516,11 +543,11 @@ export class ReviewDiscussionService {
 
   // --- The agent (DSP-132) ------------------------------------------------------------
 
-  private availabilityOf(provider: DiscussionProvider): { choosable: boolean; reason: string | null } {
+  availabilityOf(provider: DiscussionProvider): { choosable: boolean; reason: string | null } {
     return this.options.availability?.(provider) ?? { choosable: true, reason: null };
   }
 
-  private policyLine(provider: DiscussionProvider): string {
+  policyLine(provider: DiscussionProvider): string {
     const access = this.options.codeAccess;
     if (access !== undefined && access.offered(provider)) {
       return access.policyLine(provider);
@@ -529,7 +556,7 @@ export class ReviewDiscussionService {
   }
 
   /** Close a session: its adapter first, then the revisions it read, so nothing reads them after. */
-  private async closeSession(session: Session): Promise<void> {
+  async closeSession(session: Session): Promise<void> {
     session.unsubscribe();
     try {
       await session.adapter.dispose();
@@ -642,6 +669,8 @@ export class ReviewDiscussionService {
       status: this.status(),
       subjectLine: line,
       note,
+      // DSP-184: the step explanations, read with the discussion and kept apart from it.
+      explanations: this.explanations.view(),
     };
   }
 
@@ -725,12 +754,33 @@ export class ReviewDiscussionService {
     if (this.starting !== null) {
       return this.starting;
     }
-    const starting = (async (): Promise<Session> => {
+    const starting = this.openSession(provider, 'discussion', (event) => this.onAgentEvent(event));
+    this.starting = starting;
+    return starting.then(
+      (session) => {
+        this.session = session;
+        this.starting = null;
+        return session;
+      },
+      (error: unknown) => {
+        this.starting = null;
+        throw error;
+      },
+    );
+  }
+
+  /**
+   * Start a provider session for this review, with the review's checks (DSP-184: shared by
+   * the discussion and the step explanations, each holding a session of its own). `holder`
+   * names the session's use, so the revisions it reads are held under a name of their own.
+   */
+  openSession(provider: DiscussionProvider, holder: string, onEvent: (event: AgentEvent) => void): Promise<Session> {
+    return (async (): Promise<Session> => {
       const access = this.options.codeAccess;
       const reads = access !== undefined && access.offered(provider);
       // With code access the session runs in the revisions' folder, held until it closes.
       this.sessionCounter += 1;
-      const revisions = reads ? await access.hold(this.identity, `discussion-${this.identity.key}-${String(this.sessionCounter)}`) : null;
+      const revisions = reads ? await access.hold(this.identity, `${holder}-${this.identity.key}-${String(this.sessionCounter)}`) : null;
       const workspacePath = revisions?.folder ?? discussionWorkingFolder(this.options.recordsDir, this.identity.key);
       fs.mkdirSync(workspacePath, { recursive: true });
       const adapter = reads ? access.createAdapter(provider) : this.options.createAdapter(provider);
@@ -756,11 +806,9 @@ export class ReviewDiscussionService {
           modelRequested: this.model(provider),
           workspacePath,
         });
-        const unsubscribe = adapter.subscribe(handle.dspatchSessionId, (event) => {
-          this.onAgentEvent(event);
-        });
+        const unsubscribe = adapter.subscribe(handle.dspatchSessionId, onEvent);
         this.options.log(
-          `review discussion ${this.identity.key}: session ${handle.dspatchSessionId} started in ${reads ? 'the revision folder (read-only analysis access)' : workspacePath} (adapter ${adapter.id})`,
+          `review ${holder} ${this.identity.key}: session ${handle.dspatchSessionId} started in ${reads ? 'the revision folder (read-only analysis access)' : workspacePath} (adapter ${adapter.id})`,
         );
         return { adapter, provider, sessionId: handle.dspatchSessionId, unsubscribe, sends: 0, revisions };
       } catch (error) {
@@ -769,21 +817,9 @@ export class ReviewDiscussionService {
         throw error;
       }
     })();
-    this.starting = starting;
-    return starting.then(
-      (session) => {
-        this.session = session;
-        this.starting = null;
-        return session;
-      },
-      (error: unknown) => {
-        this.starting = null;
-        throw error;
-      },
-    );
   }
 
-  private model(provider: DiscussionProvider): string {
+  model(provider: DiscussionProvider): string {
     return this.options.modelFor?.(provider) ?? this.options.model ?? REVIEW_DISCUSSION_DEFAULT_MODEL;
   }
 
@@ -818,45 +854,11 @@ export class ReviewDiscussionService {
       earlier.unshift({ label: shownLabel(beforeAsked), text: splitCodeAnswer(before.text).shown });
       link = beforeAsked?.simplifies;
     }
-    const profile = asked.presentation?.profile;
+    // DSP-184: no profile: the discussion's style is not the Step profile's.
     return {
       answerId,
       envelope: asked.envelope,
-      section: { question: asked.text, answer: splitCodeAnswer(answer.text).shown, ...(earlier.length === 0 ? {} : { earlier }), ...(profile === undefined ? {} : { profile }) },
-    };
-  }
-
-  /**
-   * DSP-176: what a question asks of the presentation, with the answers it names resolved to
-   * the text the person saw. Only finished answers of this discussion are taken; others are left out.
-   */
-  private presentationOf(raw: unknown, deepen: DeepenRequest | null, envelope: ContextEnvelope): { readonly request: PresentationRequest; readonly section: PresentationSection } | null {
-    const request = presentationFrom(raw);
-    if (request === null) {
-      return null;
-    }
-    const shown: { label: string; text: string }[] = [];
-    const ids: string[] = [];
-    for (const id of request.shown ?? []) {
-      const answer = this.message(id);
-      if (answer === null || answer.role !== 'answer' || answer.status !== 'done') {
-        continue;
-      }
-      ids.push(id);
-      shown.push({ label: shownLabel(answer.questionId === undefined ? null : this.message(answer.questionId)), text: splitDetails(splitCodeAnswer(answer.text).shown).short });
-    }
-    // DSP-181: Tell me more has a section of its own, so it deepens what was shown rather than restarting.
-    const mode: PresentationSection['mode'] = deepen?.action === 'present' ? 'present' : deepen?.action === 'simpler' ? 'simpler' : deepen?.action === 'more' ? 'more' : 'follow';
-    // Nothing generated before in this profile: the step's prepared explanation is what was shown,
-    // for Explain more simply, Tell me more and a follow-up alike (DSP-181: a walk prepared in
-    // the profile is read without any alternative).
-    const explanation = envelope.explanation;
-    if (mode !== 'present' && request.profile !== 'original' && shown.length === 0 && explanation !== null) {
-      shown.push({ label: 'The prepared explanation of the step', text: [explanation.summary, explanation.body, explanation.why].filter((part) => part.trim() !== '').join('\n\n') });
-    }
-    return {
-      request: { profile: request.profile, ...(ids.length === 0 ? {} : { shown: ids }), ...(request.version === undefined ? {} : { version: request.version }) },
-      section: { profile: request.profile, mode, shown: mode === 'present' ? [] : shown },
+      section: { question: asked.text, answer: splitCodeAnswer(answer.text).shown, ...(earlier.length === 0 ? {} : { earlier }) },
     };
   }
 
@@ -865,6 +867,14 @@ export class ReviewDiscussionService {
    * navigation; only this, from an explicit action.
    */
   async send(input: unknown, envelopes: EnvelopeSource): Promise<DiscussionSendOutcome> {
+    // DSP-184: a step explanation travels on the discussion's request path (the window's IPC and
+    // the host's routing are the discussion's) and goes to its own channel from here: it never
+    // becomes a discussion entry and never takes the discussion's turn. The window's bridge
+    // types the outcome (`explain`, `stopExplanation`); this signature stays the discussion's.
+    if (typeof input === 'object' && input !== null && (input as { channel?: unknown }).channel === 'explanation') {
+      const stop = (input as { stop?: unknown }).stop === true;
+      return (stop ? await this.explanations.cancel() : await this.explanations.send(input, envelopes)) as unknown as DiscussionSendOutcome;
+    }
     const closing: DiscussionSendOutcome = { kind: 'refused', error: 'DSpatch is closing; the question was not sent.' };
     if (this.closedForQuit) {
       return closing;
@@ -891,6 +901,10 @@ export class ReviewDiscussionService {
         kind: 'refused',
         error: `${availability.reason ?? `${providerName(provider)} cannot be used here.`} Nothing was sent; choose another agent to ask here.`,
       };
+    }
+    if (deepenFrom(raw.deepen)?.action === 'present') {
+      // DSP-184: a profile's explanation is the step's, asked in its own channel, never here.
+      return { kind: 'refused', error: 'A step explanation in a profile is not a discussion question; it is asked from Step. Nothing was sent.' };
     }
     const decision = this.ledger.mayRepeat('agent-turn');
     if (!decision.allowed) {
@@ -940,15 +954,17 @@ export class ReviewDiscussionService {
       // A new session has been told nothing: earlier questions and answers go in front, bounded and shown.
       // DSP-132: after a switch the person may have left it out.
       const recap = session.sends === 0 && this.switchNotice?.leftOut !== true ? recapFor(this.messages) : '';
-      const deepenAsked = simplified === null ? deepenFrom(raw.deepen) : null;
-      const presented = simplified === null ? this.presentationOf(raw.presentation, deepenAsked, envelope) : null;
+      // DSP-184: a question about the step carries the explanation the person reads in Step, as
+      // hidden context; no profile section: a profile changes the step's explanation, not the conversation.
+      const reading = simplified === null ? readingFrom(raw.reading) : null;
       prompt = buildEnvelopePrompt(
         envelope,
         question,
         recap === '' ? null : recap,
         session.revisions === null ? null : { folder: session.revisions.section },
         simplified === null ? null : simplified.section,
-        presented === null ? null : presented.section,
+        null,
+        reading === null ? null : readingContextSection(reading),
       );
       const questionId = this.nextId('q');
       const attempt = this.ledger.open('agent-turn', `Review question: ${question.split('\n')[0]?.slice(0, 70) ?? ''}`);
@@ -973,12 +989,7 @@ export class ReviewDiscussionService {
           return deepen === null || simplified !== null ? {} : { deepen };
         })(),
         ...(simplified === null ? {} : { simplifies: simplified.answerId }),
-        // DSP-176: the profile, and what it built on; a simplification keeps its chain's profile.
-        ...(presented !== null
-          ? { presentation: presented.request }
-          : simplified !== null && simplified.section.profile !== undefined
-            ? { presentation: { profile: simplified.section.profile } }
-            : {}),
+        ...(reading === null ? {} : { readingContext: true }),
       };
       this.messages.push(message);
       this.switchNotice = null;
@@ -1372,6 +1383,9 @@ export class ReviewDiscussionService {
    */
   async dispose(): Promise<void> {
     this.closedForQuit = true;
+    await this.explanations.dispose().catch((error: unknown) => {
+      this.options.log(`step explanations ${this.identity.key}: did not close cleanly (${describeError(error)})`);
+    });
     const turn = this.turn;
     if (turn !== null) {
       this.ledger.markOutcomeUnknown(
@@ -1458,6 +1472,19 @@ export class ReviewDiscussions {
     for (const service of this.services.values()) {
       service.detach(targetId);
     }
+  }
+
+  /**
+   * DSP-186: a review was deleted. Its discussion and its step explanations close (a turn on its
+   * way is left unknown, never ended) and are forgotten here; the files are the caller's to remove.
+   */
+  async forget(key: string): Promise<void> {
+    const service = this.services.get(key);
+    if (service === undefined) {
+      return;
+    }
+    this.services.delete(key);
+    await service.dispose();
   }
 
   /** Quit: every discussion closes its adapter; a running turn is left unknown. */

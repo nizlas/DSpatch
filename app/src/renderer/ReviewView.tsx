@@ -48,19 +48,23 @@ import {
   type WalkStep,
 } from '../shared/review-model';
 import { stepContentHash } from '../shared/review-model';
+import { PRESENTATION_INSTRUCTION_VERSION, PUBLIC_PROFILES, isPublicProfile, type PresentationProfile, type PublicProfile, type WalkOutline } from '../shared/presentation-profiles';
 import {
-  PRESENTATION_INSTRUCTION_VERSION,
-  PUBLIC_PROFILES,
-  isPublicProfile,
-  profileInstructionText,
-  type PresentationProfile,
-  type PresentationRequest,
-  type PublicProfile,
-} from '../shared/presentation-profiles';
-import { alternativeFor, deepeningsOf, shownChain, usePresentationProfile, wantsAlternative, type Exchange } from './presentation-choice';
+  WALK_TEXT,
+  historyOf,
+  shownItem,
+  slotKey,
+  wantsExplanation,
+  type ExplanationAction,
+  type ExplanationHistory,
+  type ExplanationSlot,
+  type StepExplanation,
+  type StepExplanationOutcome,
+} from '../shared/step-explanations';
+import { usePresentationProfile, useStepExplanations } from './presentation-choice';
 import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuote } from '../shared/review-discussion';
 import { quoteRanges, readQuote } from './walk-selection';
-import { isPairError, type AgentJob, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
+import { generationStale, isPairError, type AgentJob, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
 import { KIND_WORDS, STATUS_WORDS, reviewThreadsOf, threadOfPoint, type ReviewThread } from '../shared/review-threads';
 import { PairKeyContext } from './DiscussionAnswer';
@@ -660,11 +664,9 @@ function OpenReview({
   const [diffNote, setDiffNote] = useState('');
 
   /*
-   * DSP-152: deepening a step. Tell me more, Explain more simply and Explain this are
-   * questions in this review's own discussion, sent with the step as their subject so the
-   * envelope carries the revisions, the step and its code; the step shows their answers
-   * beside it, and the discussion goes on from there. Asking for a simpler explanation is
-   * one question: it changes nothing else about the review.
+   * The review's discussion, as its component reports it: threads and a point worth checking
+   * show their exchanges from it. DSP-184: a step's own explanations are not in it; they are
+   * in the step explanations' store (`useStepExplanations`).
    */
   const [discussionMessages, setDiscussionMessages] = useState<readonly DiscussionMessage[]>([]);
   // DSP-181: the profile the walk's own explanations were written in, when it was prepared in one; a
@@ -672,11 +674,6 @@ function OpenReview({
   const walkProfile = bundle.definition.presentation?.profile ?? null;
   // Before any walk exists the choice is the computer's, the one the next preparation uses (an empty scope).
   const [profile, rememberLatestProfile] = usePresentationProfile(bundle.definition.walks.length === 0 ? '' : bundle.definitionPath, state.ui.presentationProfile ?? walkProfile);
-  const [profileAbout, setProfileAbout] = useState(false);
-  // A profile's alternative that could not be asked for (an answer still on its way, say), per step and profile.
-  const [presentError, setPresentError] = useState<{ readonly key: string; readonly error: string } | null>(null);
-  // Show the prepared explanation instead of the alternative, per step and profile; nothing is lost.
-  const [showPrepared, setShowPrepared] = useState<ReadonlySet<string>>(new Set());
   // DSP-175: the review's threads, from the pair record every window of the review shares.
   const threads = useMemo(() => (pair === null ? [] : reviewThreadsOf(pair.record)), [pair]);
   const threadExchanges = useMemo(() => exchangesByThread(discussionMessages), [discussionMessages]);
@@ -735,8 +732,8 @@ function OpenReview({
           return 'The review discussion is not available in this window.';
         }
         try {
-          // DSP-176: asked in the thread, at the level of the profile the person reads in; it stays in the thread.
-          const outcome = await discussion.send({ question, subject: { kind: 'thread', threadId: thread.id }, selection: null, quote: quoted, language: lang, presentation: { profile, version: PRESENTATION_INSTRUCTION_VERSION } });
+          // DSP-184: asked in the thread; it stays in the thread. No profile: the conversation is the person's.
+          const outcome = await discussion.send({ question, subject: { kind: 'thread', threadId: thread.id }, selection: null, quote: quoted, language: lang });
           return outcome.kind === 'sent' ? null : outcome.error;
         } catch (error) {
           return error instanceof Error ? error.message : String(error);
@@ -747,7 +744,7 @@ function OpenReview({
     }),
     // goAway is stable over a window's life.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedThread, showThreadInDiff, threads, pairBridge, pair, threadExchanges, lang, profile],
+    [selectedThread, showThreadInDiff, threads, pairBridge, pair, threadExchanges, lang],
   );
   const [discussionActivity, setDiscussionActivity] = useState<{ readonly questionId: string; readonly text: string } | null>(null);
   const [deepenError, setDeepenError] = useState<string | null>(null);
@@ -1429,107 +1426,151 @@ function OpenReview({
     [],
   );
 
-  /** A deepening of the step, or (`fromPoint`) of the open point worth checking at it. */
+  /** A deepening of the open point worth checking: a question in the discussion, as before (DSP-152). */
   const deepen = useCallback(
     async (request: DeepenRequest, fromPoint = false, explained: SelectionQuote | null = null): Promise<void> => {
       const discussion = window.dspatchReviewDiscussion;
-      if (discussion === undefined || current === null) {
+      if (discussion === undefined) {
         return;
       }
       setDeepenError(null);
       // The review's own save first, as the discussion does before any question.
       await flush();
-      const subject = discussionRequest.subject;
-      // The step's own actions are about the step, even while a point is open above it.
-      const asked =
-        !fromPoint && subject.kind === 'point' ? { kind: 'point' as const, walkId: subject.walkId, stepId: subject.stepId, placeIndex: subject.placeIndex } : subject;
-      // DSP-176: a step's own action is asked in the profile the person reads in, from this
-      // version of the step, with what was already shown of it: what Explain more simply builds
-      // on and what Tell me more goes deeper into. A point worth checking asks as before.
-      const asProfile = request.profile ?? profile;
-      const basis = stepContentHash(current.step);
-      const chain = fromPoint || request.action === 'present' ? [] : shownChain(discussionMessages, current.step.id, basis, asProfile);
-      // DSP-181: every action of the step carries the profile, what was shown in it and the
-      // instruction version, so one policy reaches Tell me more, Explain more simply and Explain
-      // this alike. A point worth checking asks as before.
-      const presentation: PresentationRequest | null = fromPoint ? null : { profile: asProfile, ...(chain.length === 0 ? {} : { shown: chain }), version: PRESENTATION_INSTRUCTION_VERSION };
-      const sent: DeepenRequest = fromPoint ? request : { ...request, profile: asProfile, basis };
-      // Explain this is about the selection, which goes along exactly; the rest is background.
       const outcome = await discussion.send({
-        question: deepenQuestion(sent, lang, fromPoint),
-        subject: asked,
+        question: deepenQuestion(request, lang, fromPoint),
+        subject: discussionRequest.subject,
         selection: discussionRequest.selection,
         language: lang,
-        deepen: sent,
-        ...(presentation === null ? {} : { presentation }),
+        deepen: request,
         ...(request.action === 'explain' && explained !== null ? { quote: explained } : {}),
       });
-      if (request.action === 'present') {
-        setPresentError(outcome.kind === 'sent' ? null : { key: `${current.step.id}:${asProfile}`, error: outcome.error });
-        return;
-      }
       if (outcome.kind !== 'sent') {
         setDeepenError(outcome.error);
       }
       // Away from the walk an answer has no step to stand under: it is in the discussion.
-      if (outcome.kind === 'sent' && asked.kind !== 'point') {
+      if (outcome.kind === 'sent' && discussionRequest.subject.kind !== 'point') {
         setRightTab('discussion');
       }
     },
-    [current, discussionRequest, flush, lang, profile, discussionMessages],
+    [discussionRequest, flush, lang],
   );
 
-  const autoPresentationArmed = useRef(false);
-  const autoPresentationInFlight = useRef(false);
-  const autoPresentationWanted = useRef<{ readonly stepId: string; readonly profile: PresentationProfile; readonly basis: string } | null>(null);
-  const autoPresentationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /*
+   * DSP-184: the step's explanations, in their own channel and store, apart from the discussion.
+   * A profile's explanation, Regenerate, Tell me more, Explain more simply and Explain this from
+   * Step write there and are shown in Step, each profile with its own history; nothing of them
+   * is a discussion entry. What is shown is the latest unless the person went back (`navAt`,
+   * this window's own, never stored).
+   */
+  const explanationState = useStepExplanations(bundle.definitionPath);
+  const [navAt, setNavAt] = useState<Readonly<Record<string, string>>>({});
+  const [explanationError, setExplanationError] = useState<{ readonly key: string; readonly error: string } | null>(null);
+  const slotOf = useCallback((walkId: string, step: WalkStep, asProfile: PublicProfile): ExplanationSlot => ({ walkId, stepId: step.id, basis: stepContentHash(step), profile: asProfile }), []);
+  const outlineOf = useCallback(
+    (walk: Walk, stepId: string): WalkOutline => ({
+      walkTitle: pick(walk.title, lang),
+      steps: walk.steps.map((entry) => ({
+        title: pick(entry.title, lang),
+        places: entry.places.map((at) => `${at.focus.path} ${rangeText(at.focus)} (${at.focus.side === 'base' ? 'From' : 'To'})`),
+      })),
+      current: Math.max(0, walk.steps.findIndex((entry) => entry.id === stepId)),
+    }),
+    [lang],
+  );
 
-  const requestPresentationFor = useCallback(
-    async (stepId: string, asProfile: PresentationProfile, basis: string): Promise<void> => {
-      if (!isPublicProfile(asProfile) || !showsPanel) {
-        return;
+  /** Ask for a step explanation in its own channel. */
+  const askExplanation = useCallback(
+    async (
+      walk: Walk,
+      step: WalkStep,
+      asProfile: PublicProfile,
+      action: ExplanationAction,
+      options: { readonly parent: string | null; readonly selection?: string; readonly quote?: SelectionQuote | null; readonly trigger: 'auto' | 'person' },
+    ): Promise<StepExplanationOutcome | null> => {
+      const bridge = window.dspatchReviewDiscussion;
+      if (bridge?.explain === undefined) {
+        return null;
       }
-      const discussion = window.dspatchReviewDiscussion;
-      const found = findStep(bundle, stepId);
-      if (discussion === undefined || found === null) {
-        return;
+      const slot = slotOf(walk.id, step, asProfile);
+      const key = slotKey(slot);
+      if (options.trigger === 'person') {
+        // What the person asks for is what they want to read when it arrives.
+        setNavAt((before) => {
+          const { [key]: _gone, ...rest } = before;
+          return rest;
+        });
       }
       await flush();
-      const sent: DeepenRequest = { action: 'present', profile: asProfile, basis };
-      const outcome = await discussion.send({
-        question: deepenQuestion(sent, lang, false),
-        subject: { kind: 'point', walkId: found.walk.id, stepId: found.step.id, placeIndex: 0 },
-        selection: null,
-        language: lang,
-        deepen: sent,
-        presentation: { profile: asProfile, version: PRESENTATION_INSTRUCTION_VERSION },
-      });
-      if (outcome.kind !== 'sent') {
-        setPresentError({ key: `${stepId}:${asProfile}`, error: outcome.error });
-      } else {
-        setPresentError(null);
+      const outcome = await bridge
+        .explain({
+          ...slot,
+          action,
+          parent: options.parent,
+          ...(options.selection === undefined ? {} : { selection: options.selection }),
+          ...(options.quote === undefined || options.quote === null ? {} : { quote: options.quote }),
+          trigger: options.trigger,
+          language: lang,
+          outline: outlineOf(walk, step.id),
+        })
+        .catch((error: unknown): StepExplanationOutcome => ({ kind: 'refused', error: error instanceof Error ? error.message : String(error) }));
+      if (outcome.kind === 'sent') {
+        setExplanationError(null);
+      } else if (options.trigger === 'person' || outcome.kind !== 'refused' || outcome.busy !== true) {
+        setExplanationError({ key, error: outcome.error });
       }
+      return outcome;
     },
-    [bundle, flush, lang, showsPanel],
+    [flush, lang, outlineOf, slotOf],
   );
 
-  const runWantedPresentation = useCallback(() => {
-    if (autoPresentationInFlight.current) {
+  /** The current step's explanation in the profile chosen: its history and what is shown. */
+  const stepExplanation = useMemo(() => {
+    if (current === null) {
+      return null;
+    }
+    const slot = slotOf(current.walk.id, current.step, profile);
+    const history = historyOf(explanationState.entries, slot);
+    const key = slotKey(slot);
+    return { slot, key, history, shown: shownItem(history, navAt[key]) };
+  }, [current, profile, explanationState.entries, navAt, slotOf]);
+
+  // Asking on arrival (DSP-180, DSP-181, kept): only the page that shows the panel asks, only for
+  // the current step and profile, 500 ms after the person settles, the latest step winning; never on
+  // open or load, never when there is one, and never after an attempt ended without one.
+  const autoArmed = useRef(false);
+  const autoInFlight = useRef(false);
+  const autoWanted = useRef<{ readonly walk: Walk; readonly step: WalkStep; readonly profile: PublicProfile } | null>(null);
+  const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nowShown = useRef<{ readonly stepId: string | null; readonly profile: PublicProfile }>({ stepId: null, profile });
+  nowShown.current = { stepId: away === null ? (current?.step.id ?? null) : null, profile };
+  const busyRef = useRef(explanationState.busy);
+  busyRef.current = explanationState.busy;
+
+  const runWanted = useCallback(() => {
+    const next = autoWanted.current;
+    if (next === null || autoInFlight.current || busyRef.current !== null) {
       return;
     }
-    const next = autoPresentationWanted.current;
-    if (next === null) {
+    autoWanted.current = null;
+    // The latest step wins: a wish for a step the person has left is dropped.
+    if (nowShown.current.stepId !== next.step.id || nowShown.current.profile !== next.profile) {
       return;
     }
-    autoPresentationWanted.current = null;
-    autoPresentationInFlight.current = true;
-    void requestPresentationFor(next.stepId, next.profile, next.basis).finally(() => {
-      autoPresentationInFlight.current = false;
-      if (autoPresentationWanted.current !== null) {
-        runWantedPresentation();
+    autoInFlight.current = true;
+    void askExplanation(next.walk, next.step, next.profile, 'present', { parent: null, trigger: 'auto' }).then((outcome) => {
+      autoInFlight.current = false;
+      if (outcome !== null && outcome.kind === 'refused' && outcome.busy === true && autoWanted.current === null) {
+        autoWanted.current = next;
       }
     });
-  }, [requestPresentationFor]);
+  }, [askExplanation]);
+
+  useEffect(() => {
+    // The channel became free: a wish that waited for it goes now.
+    if (explanationState.busy === null) {
+      runWanted();
+    }
+  }, [explanationState.busy, runWanted]);
 
   const lastAutoStep = useRef<string | null>(current?.step.id ?? null);
   useEffect(() => {
@@ -1539,47 +1580,41 @@ function OpenReview({
       return;
     }
     if (stepId !== null && stepId !== lastAutoStep.current) {
-      autoPresentationArmed.current = true;
+      autoArmed.current = true;
     }
     lastAutoStep.current = stepId;
   }, [current?.step.id]);
 
   useEffect(() => {
-    if (autoPresentationTimer.current !== null) {
-      clearTimeout(autoPresentationTimer.current);
-      autoPresentationTimer.current = null;
+    if (autoTimer.current !== null) {
+      clearTimeout(autoTimer.current);
+      autoTimer.current = null;
     }
-    // Only the page that shows the panel asks: it is the one that hears the discussion's answers.
-    if (!showsPanel || !autoPresentationArmed.current || current === null || away !== null) {
+    if (!showsPanel || !autoArmed.current || current === null || away !== null || stepExplanation === null) {
       return;
     }
-    const basis = stepContentHash(current.step);
-    const { done, latest } = alternativeFor(discussionMessages, current.step.id, basis, profile);
-    const pending = latest !== null && latest.answer?.status !== 'done' && ['sending', 'sent'].includes(latest.question.status) && (latest.answer === null || latest.answer.status === 'streaming');
-    // An attempt that failed, was stopped or ended unknown waits for the person's Try again.
-    const failed = latest !== null && done === null && !pending;
-    if (!wantsAlternative(walkProfile, profile, done !== null, pending, failed)) {
+    if (!wantsExplanation(walkProfile, profile, stepExplanation.history)) {
       return;
     }
-    const target = { stepId: current.step.id, profile, basis } as const;
-    autoPresentationTimer.current = setTimeout(() => {
-      autoPresentationWanted.current = target;
-      runWantedPresentation();
+    const target = { walk: current.walk, step: current.step, profile } as const;
+    autoTimer.current = setTimeout(() => {
+      autoWanted.current = target;
+      runWanted();
     }, 500);
     return () => {
-      if (autoPresentationTimer.current !== null) {
-        clearTimeout(autoPresentationTimer.current);
-        autoPresentationTimer.current = null;
+      if (autoTimer.current !== null) {
+        clearTimeout(autoTimer.current);
+        autoTimer.current = null;
       }
     };
-  }, [showsPanel, current, away, discussionMessages, profile, walkProfile, runWantedPresentation]);
+  }, [showsPanel, current, away, stepExplanation, profile, walkProfile, runWanted]);
 
   const chooseProfile = useCallback(
     (next: PublicProfile) => {
       rememberLatestProfile(next);
-      autoPresentationArmed.current = true;
+      autoArmed.current = true;
       update((value) => ({ ...value, ui: { ...value.ui, presentationProfile: next } }));
-      setPresentError(null);
+      setExplanationError(null);
     },
     [rememberLatestProfile, update],
   );
@@ -1592,27 +1627,42 @@ function OpenReview({
   }, [profile, state.ui.presentationProfile, update]);
 
   /**
-   * DSP-176: what a question typed in the discussion follows: at a walk step, the profile and the
-   * explanations already shown there in it. In Original with nothing generated or simplified it
-   * asks as before.
+   * DSP-184: what a question in the discussion about the current step carries of the explanation
+   * shown in Step: the generated text, as hidden context. The walk's own text is in the envelope
+   * already. No profile goes with it: the conversation is the person's.
    */
-  const followUpPresentation = useCallback((): PresentationRequest | null => {
-    if (current === null || away !== null || discussionRequest.subject.kind !== 'point') {
-      return { profile, version: PRESENTATION_INSTRUCTION_VERSION };
+  const readingFor = useCallback((): { readonly text: string } | null => {
+    if (stepExplanation === null || away !== null || openCheck !== null || discussionRequest.subject.kind !== 'point') {
+      return null;
     }
-    const chain = shownChain(discussionMessages, current.step.id, stepContentHash(current.step), profile);
-    return { profile, ...(chain.length === 0 ? {} : { shown: chain }), version: PRESENTATION_INSTRUCTION_VERSION };
-  }, [current, away, discussionRequest.subject.kind, discussionMessages, profile]);
+    const entry = stepExplanation.history.entries.get(stepExplanation.shown);
+    return entry === undefined ? null : { text: entry.text };
+  }, [stepExplanation, away, openCheck, discussionRequest.subject.kind]);
+
+  /** Explain this at the current step: an explanation in Step, building on the one shown. */
+  const explainInStep = useCallback(
+    (text: string, selected: SelectionQuote | null): boolean => {
+      if (current === null || away !== null || openCheck !== null || stepExplanation === null || text.trim() === '') {
+        return false;
+      }
+      const parent = stepExplanation.shown === WALK_TEXT ? null : stepExplanation.shown;
+      void askExplanation(current.walk, current.step, profile, 'explain', { parent, selection: text.trim().slice(0, 2000), quote: selected, trigger: 'person' });
+      setRightTab('step');
+      return true;
+    },
+    [current, away, openCheck, stepExplanation, askExplanation, profile],
+  );
 
   /** Explain exactly this selection: the one just read, or the one kept. */
   const explainQuote = useCallback(
     (selected: SelectionQuote | null = quote) => {
       setQuoteOffer(null);
-      if (selected !== null) {
+      // DSP-184: at a step it is the step's explanation, in Step; elsewhere a question in the discussion.
+      if (selected !== null && !explainInStep(selected.text, selected)) {
         void deepen({ action: 'explain', text: selected.text.slice(0, 2000) }, false, selected);
       }
     },
-    [deepen, quote],
+    [deepen, quote, explainInStep],
   );
 
   // Read what is selected now; offer the action beside it, or in place of the context menu.
@@ -1808,11 +1858,11 @@ function OpenReview({
                 {words.rightTabs[key]}
               </button>
             ))}
-            {/* DSP-176, DSP-181: how the agent's explanations are presented; in the row that stays in view, also
-                before any walk exists, so the profile the walks are prepared in can be chosen first. */}
-            {(
+            {/* DSP-181: before any walk exists, the profile the walks will be prepared in. With walks the
+                chooser is the step explanation's, in Step (DSP-184). */}
+            {noWalks && (
               <label className="rv-profile-choice" title={words.profiles.description[profile]}>
-                <span className="rv-sub">{words.profiles.label}</span>{' '}
+                <span className="rv-sub">{words.profiles.prepareLabel}</span>{' '}
                 <select data-ev="presentation-profile" value={profile} onChange={(event) => chooseProfile(isPublicProfile(event.currentTarget.value) ? event.currentTarget.value : profile)}>
                   {PUBLIC_PROFILES.map((id) => (
                     <option key={id} value={id} title={words.profiles.description[id]}>
@@ -1846,26 +1896,10 @@ function OpenReview({
               )}
             </span>
           </div>
-          {(
-            // DSP-176: how the agent's explanations are presented. A presentation choice only.
-            <div className="rv-profile-bar" data-ev="presentation-profile-bar">
-              <button type="button" className="rv-link rv-profile-about-toggle" data-ev="presentation-profile-about-toggle" aria-expanded={profileAbout} onClick={() => setProfileAbout(!profileAbout)}>
-                {profileAbout ? words.profiles.less : words.profiles.about}
-              </button>
-              <p className="rv-sub rv-profile-description" data-ev="presentation-profile-description">
-                {words.profiles.description[profile]}
-              </p>
-              {profileAbout && (
-                <pre className="rv-profile-about" data-ev="presentation-profile-about">
-                  {profileInstructionText(profile)}
-                </pre>
-              )}
-            </div>
-          )}
           <ReviewDiscussion
             bundle={bundle}
             request={discussionRequest}
-            presentation={followUpPresentation}
+            reading={readingFor}
             lang={lang}
             words={words.discussion}
             shown={rightTab === 'discussion'}
@@ -1895,6 +1929,14 @@ function OpenReview({
           />
           {rightTab === 'step' && (
             <>
+              {/* DSP-186: as in the diff window, said and never acted on: walks are prepared again only when the person asks. */}
+              {pair !== null && pair.record.generation !== null && (generationStale(pair.record, PRESENTATION_INSTRUCTION_VERSION) || (pair.record.generation.profile !== null && pair.record.generation.profile !== profile)) && (
+                <p className="rv-pair-hint" data-ev="walk-stale">
+                  The code walks of this review were prepared with earlier settings
+                  {pair.record.generation.profile !== null && pair.record.generation.profile !== profile && isPublicProfile(pair.record.generation.profile) ? ` (the ${words.profiles.name[pair.record.generation.profile]} profile)` : ''}. Prepare them again to use the current
+                  ones; nothing is prepared again by itself.
+                </p>
+              )}
               {pair !== null && pairBridge !== undefined && focus !== null && (
                 <div className="rv-show-in-diff">
                   <button
@@ -2005,32 +2047,43 @@ function OpenReview({
                           />
                         )
                   }
-                  deepenings={deepeningsOf(discussionMessages, current.step.id, stepContentHash(current.step), profile)}
-                  presentation={((): StepPresentation => {
-                    const key = `${current.step.id}:${profile}`;
-                    const alternative = alternativeFor(discussionMessages, current.step.id, stepContentHash(current.step), profile);
+                  explanation={((): StepExplanationView => {
+                    const view = stepExplanation;
+                    const history = view?.history ?? historyOf([], slotOf(current.walk.id, current.step, profile));
+                    const shown = view?.shown ?? WALK_TEXT;
+                    const ask = (action: ExplanationAction, parent: string | null, selection?: string): void =>
+                      void askExplanation(current.walk, current.step, profile, action, { parent, ...(selection === undefined ? {} : { selection }), trigger: 'person' });
+                    const parentOfShown = shown === WALK_TEXT ? null : shown;
                     return {
                       profile,
                       walkProfile,
-                      ...alternative,
-                      error: presentError?.key === key ? presentError.error : null,
-                      prepared: showPrepared.has(key),
-                      onPresent: () => void deepen({ action: 'present', profile }),
-                      onPrepared: (on) =>
-                        setShowPrepared((before) => {
-                          const next = new Set(before);
-                          if (on) {
-                            next.add(key);
-                          } else {
-                            next.delete(key);
-                          }
-                          return next;
-                        }),
+                      history,
+                      shown,
+                      busy: explanationState.busy,
+                      error: view !== null && explanationError?.key === view.key ? explanationError.error : null,
+                      onChoose: chooseProfile,
+                      onNavigate: (item) => {
+                        if (view !== null) {
+                          setNavAt((before) => ({ ...before, [view.key]: item }));
+                        }
+                      },
+                      onPresent: () => ask(history.hasDone || walkProfile === profile ? 'regenerate' : 'present', history.hasDone ? (history.items.at(-1) ?? null) : null),
+                      onMore: () => ask('more', parentOfShown),
+                      onSimpler: () => ask('simpler', parentOfShown),
+                      onExplainThis: (text) => ask('explain', parentOfShown, text),
+                      onRetry: () => {
+                        const failed = history.failed;
+                        if (failed !== null) {
+                          ask(failed.action, failed.parent, failed.selection);
+                        }
+                      },
+                      onStop: () => void window.dspatchReviewDiscussion?.stopExplanation?.(),
+                      onContinue: () => {
+                        setRightTab('discussion');
+                        setTimeout(() => panelHost.querySelector<HTMLTextAreaElement>('[data-ev="discussion-composer"]')?.focus(), 0);
+                      },
                     };
                   })()}
-                  deepenError={deepenError}
-                  onDeepen={(request) => void deepen(request, false, request.action === 'explain' ? quote : null)}
-                  onContinue={() => setRightTab('discussion')}
                   walk={current.walk}
                   step={current.step}
                   index={current.index}
@@ -3196,13 +3249,7 @@ function Browse({
 
 // --- Right column ---------------------------------------------------------------------
 
-/** The profile's name in the window's language; the legacy Original keeps its name (DSP-181). */
-function profileName(profile: PresentationProfile | undefined, lang: Lang): string {
-  const words = WORDS[lang].profiles;
-  return profile !== undefined && isPublicProfile(profile) ? words.name[profile] : words.legacyName;
-}
-
-/** The question a deepening action asks, in the review's language. */
+/** The question a deepening of a point worth checking asks, or one away from the walk, in the review's language. */
 function deepenQuestion(request: DeepenRequest, lang: Lang, check = false): string {
   if (check) {
     if (lang === 'sv') {
@@ -3218,139 +3265,196 @@ function deepenQuestion(request: DeepenRequest, lang: Lang, check = false): stri
         ? 'Explain this point more simply: fewer concepts at once and plainer words, with the same names and caveats; add no detail that is not needed.'
         : `Explain this, in the context of this point: "${request.text ?? ''}"`;
   }
-  // DSP-176: how to present is said in the prompt's own section (presentation-profiles.ts); the
-  // question only says what is asked, so the person sees a plain question in the discussion.
-  const name = profileName(request.profile, lang);
   if (lang === 'sv') {
-    return request.action === 'present'
-      ? WORDS.sv.profiles.presentQuestion(name)
-      : request.action === 'more'
-        ? 'Berätta mer om det här steget: mekanismen, hur koden hänger ihop och de detaljer som spelar roll.'
-        : request.action === 'simpler'
-          ? 'Förklara det här steget enklare.'
-          : `Förklara detta i sammanhanget av det här steget: "${request.text ?? ''}"`;
-  }
-  return request.action === 'present'
-    ? WORDS.en.profiles.presentQuestion(name)
-    : request.action === 'more'
-      ? 'Tell me more about this step: the mechanism, how the code connects, and the details that matter.'
+    return request.action === 'more'
+      ? 'Berätta mer om det här: mekanismen, hur koden hänger ihop och de detaljer som spelar roll.'
       : request.action === 'simpler'
-        ? 'Explain this step more simply.'
-        : `Explain this, in the context of this step: "${request.text ?? ''}"`;
+        ? 'Förklara det här enklare.'
+        : `Förklara detta: "${request.text ?? ''}"`;
+  }
+  return request.action === 'more'
+    ? 'Tell me more about this: the mechanism, how the code connects, and the details that matter.'
+    : request.action === 'simpler'
+      ? 'Explain this more simply.'
+      : `Explain this: "${request.text ?? ''}"`;
 }
 
-/** A step's deepenings: its deepening questions in this discussion, each with its answer. */
-type Deepening = Exchange;
+/** An exchange of the discussion: a question and its answer. */
+interface Deepening {
+  readonly question: DiscussionMessage;
+  readonly answer: DiscussionMessage | null;
+}
 
 /**
- * DSP-176: what the step shows in the profile chosen: the alternative explanation when there is
- * one (with the prepared one a click away), and otherwise the prepared one with what is
- * happening to the alternative — on its way, failed and retryable, or offered.
+ * DSP-184: the step's explanation in the profile chosen, from the step explanations' own store:
+ * its history, what is shown, and what can be asked. Nothing here is a discussion entry.
  */
-interface StepPresentation {
-  readonly profile: PresentationProfile;
-  /** DSP-181: the profile the walk's own explanations were written in; `null` for an older walk (Original). */
+interface StepExplanationView {
+  readonly profile: PublicProfile;
+  /** The profile the walk's own explanations were written in; `null` for an older walk (Original). */
   readonly walkProfile: PresentationProfile | null;
-  readonly done: Exchange | null;
-  readonly latest: Exchange | null;
+  readonly history: ExplanationHistory;
+  /** `WALK_TEXT` or an entry id. */
+  readonly shown: string;
+  readonly busy: { readonly entryId: string; readonly activity?: string } | null;
   readonly error: string | null;
-  /** The person chose to see the prepared explanation instead of the alternative. */
-  readonly prepared: boolean;
+  readonly onChoose: (profile: PublicProfile) => void;
+  readonly onNavigate: (item: string) => void;
   readonly onPresent: () => void;
-  readonly onPrepared: (on: boolean) => void;
+  readonly onMore: () => void;
+  readonly onSimpler: () => void;
+  readonly onExplainThis: (text: string) => void;
+  readonly onRetry: () => void;
+  readonly onStop: () => void;
+  readonly onContinue: () => void;
+}
+
+/** A stored explanation, as the one answer component renders it (references in one place, for DSP-185). */
+function asAnswer(entry: StepExplanation): DiscussionMessage {
+  return {
+    id: entry.id,
+    role: 'answer',
+    text: entry.text,
+    at: entry.finishedAt ?? entry.at,
+    subject: '',
+    status: entry.status === 'sending' ? 'streaming' : entry.status,
+    ...(entry.references === undefined ? {} : { references: entry.references }),
+    ...(entry.contextReferences === undefined ? {} : { contextReferences: entry.contextReferences }),
+    ...(entry.insufficient === true ? { insufficient: true } : {}),
+  };
+}
+
+/** What an entry in the history is, in the window's words. */
+function itemLabel(view: StepExplanationView, item: string, words: ReviewWords): string {
+  const name = words.profiles.name[view.profile];
+  if (item === WALK_TEXT) {
+    const own = view.walkProfile !== null && isPublicProfile(view.walkProfile) ? words.profiles.name[view.walkProfile] : words.profiles.legacyName;
+    return words.profiles.walkText(own);
+  }
+  const entry = view.history.entries.get(item);
+  return entry === undefined ? name : words.profiles.action[entry.action](name);
 }
 
 /**
- * The state of a step's alternative in a profile, for its line above the explanation. `own`
- * (DSP-181): the walk's explanations were written in this profile, so the step's own text is
- * the explanation and nothing is asked for.
+ * The step explanation's own bar (DSP-184): the profile chooser, labelled as the explanation's,
+ * with a plain tooltip per option; where the shown explanation is in its history, with Back and
+ * Forward; and what is happening to an explanation on its way or one that failed. The same in
+ * every profile.
  */
-function presentationState(presentation: StepPresentation): 'none' | 'own' | 'pending' | 'failed' | 'done' {
-  const latest = presentation.latest;
-  const pending = latest !== null && (latest.answer === null ? ['sending', 'sent'].includes(latest.question.status) : latest.answer.status === 'streaming');
-  if (pending) {
-    return 'pending';
-  }
-  if (presentation.done !== null) {
-    return 'done';
-  }
-  const nothing = presentation.walkProfile === presentation.profile ? 'own' : 'none';
-  if (presentation.error !== null || (latest !== null && latest.answer?.status !== 'done')) {
-    return latest === null && presentation.error === null ? nothing : 'failed';
-  }
-  return nothing;
-}
-
-/**
- * The line that says which explanation is shown and what is happening to the profile's, in
- * the window's language (DSP-181). An alternative written under an earlier version of the
- * instructions is said so, and can be regenerated; nothing stored is rewritten.
- */
-function ProfileLine({ presentation, stepId, words }: { readonly presentation: StepPresentation; readonly stepId: string; readonly words: ReviewWords }): JSX.Element | null {
-  if (!isPublicProfile(presentation.profile)) {
-    return null;
-  }
-  const name = words.profiles.name[presentation.profile];
-  const state = presentationState(presentation);
-  const failure = presentation.error ?? presentation.latest?.answer?.error ?? presentation.latest?.question.error ?? (presentation.latest?.answer?.status === 'cancelled' ? 'it was stopped' : 'no answer arrived');
-  const version = presentation.done?.question.presentation?.version;
-  const older = presentation.done !== null && version !== PRESENTATION_INSTRUCTION_VERSION;
-  const own = presentation.walkProfile === presentation.profile;
-  const meanwhile = presentation.done !== null && !presentation.prepared ? words.profiles.staysShown(name) : own ? words.profiles.walkOwnShown : words.profiles.originalShown;
+function ExplanationBar({ view, stepId, words }: { readonly view: StepExplanationView; readonly stepId: string; readonly words: ReviewWords }): JSX.Element {
+  const items = view.history.items;
+  const at = Math.max(0, items.indexOf(view.shown));
+  const name = words.profiles.name[view.profile];
+  const pending = view.history.pending;
+  const failed = view.history.failed;
+  const state = pending !== null ? 'pending' : failed !== null ? 'failed' : view.error !== null ? 'refused' : view.history.hasDone ? 'done' : view.walkProfile === view.profile ? 'own' : 'none';
+  const shownEntry = view.history.entries.get(view.shown);
   return (
-    <div
-      className={`rv-profile-line rv-profile-${state}`}
-      data-ev="profile-status"
-      data-state={state}
-      data-profile={presentation.profile}
-      data-step={stepId}
-      {...(version === undefined ? {} : { 'data-version': String(version) })}
-    >
-      {state === 'pending' && (
-        <span role="status">
-          <span className="rv-profile-spinner" aria-hidden="true" /> {words.profiles.writing(name)} {meanwhile}
-        </span>
-      )}
-      {state === 'failed' && (
-        <span role="status">
-          {words.profiles.failed(name, failure)} {meanwhile}{' '}
-          <button type="button" className="rv-link" data-ev="profile-retry" onClick={presentation.onPresent}>
-            {words.profiles.tryAgain}
-          </button>
-        </span>
-      )}
-      {state === 'none' && (
-        <button type="button" className="rv-quiet" data-ev="profile-present" onClick={presentation.onPresent}>
-          {words.profiles.explainAs(name)}
-        </button>
-      )}
-      {state === 'own' && (
-        <span>
-          <span className="rv-sub">{words.profiles.preparedWith(name)}</span>{' '}
-          <button type="button" className="rv-link" data-ev="profile-regenerate" onClick={presentation.onPresent}>
-            {words.profiles.regenerate(name)}
-          </button>
-        </span>
-      )}
-      {state === 'done' && (
-        <span>
-          <span className="rv-sub">{presentation.prepared ? (own ? words.profiles.walkOwn(name) : words.profiles.legacyName) : words.profiles.fromSameCode(name)}</span>{' '}
-          {older && (
-            <span className="rv-sub" data-ev="profile-older">
-              {words.profiles.olderInstructions(version ?? 0)}{' '}
+    <div className="rv-explanation-bar" data-ev="explanation-bar" data-state={state} data-profile={view.profile} data-step={stepId} data-shown={view.shown}>
+      <div className="rv-explanation-bar-row">
+        <label className="rv-profile-choice" title={words.profiles.description[view.profile]}>
+          <span className="rv-section-title">{words.profiles.label}</span>{' '}
+          <select data-ev="presentation-profile" value={view.profile} onChange={(event) => view.onChoose(isPublicProfile(event.currentTarget.value) ? event.currentTarget.value : view.profile)}>
+            {PUBLIC_PROFILES.map((id) => (
+              <option key={id} value={id} title={words.profiles.description[id]}>
+                {words.profiles.name[id]}
+              </option>
+            ))}
+          </select>
+        </label>
+        {items.length > 1 && (
+          <span className="rv-explanation-history" role="group" aria-label={words.profiles.history}>
+            <button type="button" className="rv-quiet" data-ev="explanation-back" disabled={at === 0} title={words.profiles.back} onClick={() => view.onNavigate(items[at - 1] ?? WALK_TEXT)}>
+              ← {words.profiles.back}
+            </button>
+            <span className="rv-sub" data-ev="explanation-position">
+              {words.profiles.position(at + 1, items.length)}
             </span>
-          )}
-          <button type="button" className="rv-link" data-ev="profile-toggle-prepared" onClick={() => presentation.onPrepared(!presentation.prepared)}>
-            {presentation.prepared ? words.profiles.showProfile(name) : own ? words.profiles.showWalkOwn : words.profiles.showOriginal}
-          </button>{' '}
-          <button type="button" className="rv-link" data-ev="profile-regenerate" onClick={presentation.onPresent}>
-            {words.profiles.regenerate(name)}
-          </button>
-        </span>
-      )}
+            <button
+              type="button"
+              className="rv-quiet"
+              data-ev="explanation-forward"
+              disabled={at >= items.length - 1}
+              title={words.profiles.forward}
+              onClick={() => view.onNavigate(items[at + 1] ?? view.shown)}
+            >
+              {words.profiles.forward} →
+            </button>
+          </span>
+        )}
+      </div>
+      <div className="rv-profile-line rv-sub" data-ev="profile-status" data-state={state} data-profile={view.profile} data-step={stepId} {...(shownEntry === undefined ? {} : { 'data-version': String(shownEntry.instructionVersion) })}>
+        <span data-ev="explanation-shown">{itemLabel(view, view.shown, words)}</span>
+        {state === 'pending' && pending !== null && (
+          <span role="status">
+            {' · '}
+            <span className="rv-profile-spinner" aria-hidden="true" /> {view.busy?.entryId === pending.id && view.busy.activity !== undefined ? view.busy.activity : words.profiles.writing(name)}{' '}
+            <button type="button" className="rv-link" data-ev="explanation-stop" onClick={view.onStop}>
+              {words.discussion.stop}
+            </button>
+          </span>
+        )}
+        {state === 'failed' && failed !== null && (
+          <span role="status" className="rv-profile-failed">
+            {' · '}
+            {words.profiles.failed(words.profiles.action[failed.action](name), failed.error ?? failed.status)}{' '}
+            <button type="button" className="rv-link" data-ev="profile-retry" onClick={view.onRetry}>
+              {words.profiles.tryAgain}
+            </button>
+          </span>
+        )}
+        {state === 'refused' && <span className="rv-error"> · {view.error}</span>}
+        {state === 'none' && (
+          <>
+            {' · '}
+            <button type="button" className="rv-link" data-ev="profile-present" onClick={view.onPresent}>
+              {words.profiles.explainAs(name)}
+            </button>
+          </>
+        )}
+        {(state === 'own' || state === 'done') && (
+          <>
+            {' · '}
+            <button type="button" className="rv-link" data-ev="profile-regenerate" onClick={view.onPresent}>
+              {words.profiles.regenerate(name)}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
+
+/** The deepening actions of the step's explanation, in the profile chosen; their results are in the history. */
+function ExplanationActions({ view, selectedText, words }: { readonly view: StepExplanationView; readonly selectedText: string; readonly words: ReviewWords }): JSX.Element {
+  const waiting = view.history.pending !== null;
+  return (
+    <div className="rv-deepen">
+      <div className="rv-deepen-actions">
+        <button type="button" data-ev="step-tell-more" disabled={waiting} onClick={view.onMore}>
+          {words.profiles.more}
+        </button>
+        <button type="button" data-ev="step-explain-simpler" disabled={waiting} onClick={view.onSimpler}>
+          {words.profiles.simpler}
+        </button>
+        <button
+          type="button"
+          data-ev="step-explain-this"
+          disabled={waiting || selectedText.trim() === ''}
+          title={selectedText.trim() === '' ? words.profiles.selectFirst : `${words.profiles.explainThis}: "${selectedText.slice(0, 80)}"`}
+          onClick={() => view.onExplainThis(selectedText.trim())}
+        >
+          {words.profiles.explainThis}
+        </button>
+        <button type="button" className="rv-quiet" data-ev="step-continue-discussion" title={words.profiles.askAboutHint} onClick={view.onContinue}>
+          {words.profiles.askAbout}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const DEEPEN_WORD: Record<DeepenRequest['action'], string> = { more: 'Tell me more', simpler: 'Explain more simply', explain: 'Explain this', present: 'The step explained' };
 
 /** Everything asked from a point worth checking, deepenings and the person's own questions, with answers. */
 function pointExchanges(messages: readonly DiscussionMessage[], checkId: string): readonly Deepening[] {
@@ -3360,76 +3464,6 @@ function pointExchanges(messages: readonly DiscussionMessage[], checkId: string)
       return message.role === 'question' && subject?.kind === 'point' && subject.checkId === checkId;
     })
     .map((question) => ({ question, answer: messages.find((message) => message.role === 'answer' && message.questionId === question.id) ?? null }));
-}
-
-const DEEPEN_WORD: Record<DeepenRequest['action'], string> = { more: 'Tell me more', simpler: 'Explain more simply', explain: 'Explain this', present: 'The step explained' };
-
-/** The deepening actions of a step, and its deepenings so far, folded under the explanation. */
-function StepDeepening({
-  deepenings,
-  error,
-  onDeepen,
-  onContinue,
-  onShow,
-  selectedText,
-}: {
-  readonly deepenings: readonly Deepening[];
-  readonly error: string | null;
-  readonly onDeepen: (request: DeepenRequest) => void;
-  readonly onContinue: () => void;
-  /** Opens a reference of an answer at its revision. */
-  readonly onShow: (location: CodeLocation) => void;
-  readonly selectedText: string;
-}): JSX.Element {
-  const waiting = deepenings.some((entry) => entry.question.status === 'sending' || entry.answer?.status === 'streaming');
-  return (
-    <div className="rv-deepen">
-      <div className="rv-deepen-actions">
-        <button type="button" data-ev="step-tell-more" disabled={waiting} onClick={() => onDeepen({ action: 'more' })}>
-          Tell me more
-        </button>
-        <button type="button" data-ev="step-explain-simpler" disabled={waiting} onClick={() => onDeepen({ action: 'simpler' })}>
-          Explain more simply
-        </button>
-        <button
-          type="button"
-          data-ev="step-explain-this"
-          disabled={waiting || selectedText.trim() === ''}
-          title={selectedText.trim() === '' ? 'Select a sentence or a term in the explanation first.' : `Explain "${selectedText.slice(0, 80)}"`}
-          onClick={() => onDeepen({ action: 'explain', text: selectedText.trim() })}
-        >
-          Explain this
-        </button>
-      </div>
-      {error !== null && <p className="rv-error">{error}</p>}
-      {deepenings.map((entry, index) => {
-        const status = entry.answer?.status ?? entry.question.status;
-        const last = index === deepenings.length - 1;
-        return (
-          <details key={entry.question.id} className="rv-deepening" open={last} data-ev="step-deepening" data-state={status}>
-            <summary>
-              {DEEPEN_WORD[entry.question.deepen?.action ?? 'more']}
-              {entry.question.deepen?.text !== undefined && <span className="rv-sub"> · “{entry.question.deepen.text.slice(0, 60)}”</span>}
-              {(status === 'sending' || status === 'streaming') && <span className="rv-sub"> · answering…</span>}
-              {(status === 'failed' || status === 'unknown' || status === 'cancelled') && <span className="rv-sub"> · {status}</span>}
-            </summary>
-            {entry.answer !== null && entry.answer.text !== '' ? (
-              <div data-quote-origin={`the answer to “${(entry.question.deepen?.text ?? entry.question.text).replace(/\s+/g, ' ').slice(0, 80)}”`} data-quote-message={entry.question.id}>
-                <DiscussionAnswer answer={entry.answer} onShow={onShow} />
-              </div>
-            ) : (
-              <PendingLine questionId={entry.question.id} pending={status === 'sending' || status === 'streaming' || status === 'sent'} />
-            )}
-            {last && (
-              <button type="button" className="rv-quiet" data-ev="step-continue-discussion" onClick={onContinue}>
-                Continue in the discussion
-              </button>
-            )}
-          </details>
-        );
-      })}
-    </div>
-  );
 }
 
 /**
@@ -3522,22 +3556,14 @@ function StepPanel({
   lang,
   onPlace,
   onOpenEvidence,
-  deepenings,
-  deepenError,
-  onDeepen,
-  onContinue,
   codeQuestion,
   quoteText,
-  presentation,
+  explanation,
 }: {
-  /** DSP-176: the explanation in the profile chosen, and what is happening to it. */
-  readonly presentation: StepPresentation;
+  /** DSP-184: the step's explanation in the profile chosen, from its own store, and what can be asked. */
+  readonly explanation: StepExplanationView;
   /** DSP-152: asking the agent to look into the code for this step, when the walk is over a revision pair. */
   readonly codeQuestion?: () => JSX.Element;
-  readonly deepenings: readonly Deepening[];
-  readonly deepenError: string | null;
-  readonly onDeepen: (request: DeepenRequest) => void;
-  readonly onContinue: () => void;
   readonly walk: Walk;
   readonly step: WalkStep;
   readonly index: number;
@@ -3558,8 +3584,8 @@ function StepPanel({
   const panel = useRef<HTMLElement | null>(null);
   const active = stopIndex;
   const activePlace = step.places[placeIndex] ?? null;
-  // DSP-176: the profile's alternative in place of the prepared text, unless the person asked for that.
-  const alternative = presentation.done !== null && !presentation.prepared ? presentation.done : null;
+  // DSP-184: what the history shows: the walk's own text, or a stored explanation of this profile.
+  const generated = explanation.shown === WALK_TEXT ? null : (explanation.history.entries.get(explanation.shown) ?? null);
   const purpose = pick(walk.purpose, lang);
   // The walk's introduction, short: its first sentence, the rest on request.
   const firstSentence = /^[\s\S]*?[.!?](\s|$)/.exec(purpose)?.[0]?.trim() ?? purpose;
@@ -3567,8 +3593,16 @@ function StepPanel({
     referenceProblems.filter((problem) => problem.stepId === step.id).map((problem) => problem.refId.replace(/\.(unit|from)$/, '')),
   );
   const summaryLabels = [...new Set(step.evidence.map((entry) => entry.label))];
+  const origin = `the explanation of step ${step.id} “${pick(step.title, lang)}”`;
+  /*
+   * DSP-184: one component order for every profile: the step's title; the explanation's bar
+   * (profile, history, status); the step's places with their navigation, kept in view while a
+   * long explanation scrolls; the explanation; its deepening actions. Before, the walk's own text
+   * put its summary above the places and its body below them, so a walk written in Standard read
+   * in another order than an Essentials or Teacher explanation, which came whole above the places.
+   */
   return (
-    <section className="rv-step-panel" ref={panel} data-quote-step={step.id}>
+    <section className="rv-step-panel" ref={panel} data-quote-step={step.id} data-ev="step-panel">
       <div className="rv-walk-title">
         {walk.id} · <Inline text={pick(walk.title, lang)} />
       </div>
@@ -3589,28 +3623,10 @@ function StepPanel({
         {words.stepOf(index + 1, walk.steps.length)}
         {state.walkedSteps[step.id] !== undefined && <span className="rv-mark-walked"> ✓</span>}
       </div>
-      <ProfileLine presentation={presentation} stepId={step.id} words={words} />
-      {alternative !== null && (
-        <div
-          className="rv-profile-explanation rv-explanation rv-reading"
-          data-ev="profile-explanation"
-          data-profile={presentation.profile}
-          data-step={step.id}
-          data-quote-origin={`the ${profileName(presentation.profile, lang)} explanation of step ${step.id} “${pick(step.title, lang)}”`}
-          data-quote-message={alternative.question.id}
-          data-quote-step={step.id}
-        >
-          <DiscussionAnswer answer={alternative.answer as DiscussionMessage} onShow={onOpenEvidence} />
-        </div>
-      )}
-      {alternative === null && pick(step.summary, lang) !== '' && (
-        <p className="rv-summary" data-quote-source="explanation" data-quote-origin={`the explanation of step ${step.id} “${pick(step.title, lang)}”`}>
-          <Inline text={pick(step.summary, lang)} />
-        </p>
-      )}
+      <ExplanationBar view={explanation} stepId={step.id} words={words} />
 
       {stops.length > 1 && (
-        <div className="rv-places">
+        <div className="rv-places" data-ev="step-places">
           <div className="rv-section-title">{words.places}</div>
           <ol>
             {stops.map((entry, position) => (
@@ -3643,15 +3659,18 @@ function StepPanel({
               ← <Inline text={pick(activePlace.from?.label ?? { sv: '', en: '' }, lang)} />
             </div>
           )}
-          <div className="rv-place-nav">
-            <button type="button" disabled={active === 0} onClick={() => onPlace(active - 1)}>
-              ↑ {words.previousPlace}
-            </button>
-            <span className="rv-sub">{words.placeOf(active + 1, stops.length)}</span>
-            <button type="button" disabled={active === stops.length - 1} onClick={() => onPlace(active + 1)}>
-              ↓ {words.nextPlace}
-            </button>
-          </div>
+        </div>
+      )}
+      {stops.length > 1 && (
+        // Kept in view while a long explanation scrolls (DSP-184).
+        <div className="rv-place-nav rv-place-nav-sticky" data-ev="step-place-nav">
+          <button type="button" disabled={active === 0} onClick={() => onPlace(active - 1)}>
+            ↑ {words.previousPlace}
+          </button>
+          <span className="rv-sub">{words.placeOf(active + 1, stops.length)}</span>
+          <button type="button" disabled={active === stops.length - 1} onClick={() => onPlace(active + 1)}>
+            ↓ {words.nextPlace}
+          </button>
         </div>
       )}
 
@@ -3662,28 +3681,49 @@ function StepPanel({
         </div>
       )}
 
-      {alternative === null && (
-        <div className="rv-explanation rv-reading rv-prepared" data-ev="step-prepared-explanation" data-quote-source="explanation" data-quote-origin={`the explanation of step ${step.id} “${pick(step.title, lang)}”`}>
-          {/* DSP-181: a walk prepared in a profile may carry a deepening, read behind Show more as an answer's is. */}
-          {step.details !== undefined && pick(step.details, lang) !== '' ? (
-            <ShortThenMore short={pick(step.body, lang)} details={pick(step.details, lang)} />
-          ) : (
-            <Markdown text={pick(step.body, lang)} />
+      {generated !== null ? (
+        <div
+          className="rv-profile-explanation rv-explanation rv-reading"
+          data-ev="profile-explanation"
+          data-profile={explanation.profile}
+          data-action={generated.action}
+          data-entry={generated.id}
+          data-step={step.id}
+          data-quote-origin={`the ${words.profiles.name[explanation.profile]} explanation of step ${step.id} “${pick(step.title, lang)}”`}
+          data-quote-step={step.id}
+        >
+          {generated.selection !== undefined && <p className="rv-sub">“{generated.selection.slice(0, 120)}”</p>}
+          <DiscussionAnswer answer={asAnswer(generated)} onShow={onOpenEvidence} />
+        </div>
+      ) : (
+        <div className="rv-walk-explanation" data-ev="step-prepared-explanation">
+          {pick(step.summary, lang) !== '' && (
+            <p className="rv-summary" data-quote-source="explanation" data-quote-origin={origin}>
+              <Inline text={pick(step.summary, lang)} />
+            </p>
+          )}
+          <div className="rv-explanation rv-reading rv-prepared" data-quote-source="explanation" data-quote-origin={origin}>
+            {/* DSP-181: a walk prepared in a profile may carry a deepening, read behind Show more as an answer's is. */}
+            {step.details !== undefined && pick(step.details, lang) !== '' ? (
+              <ShortThenMore short={pick(step.body, lang)} details={pick(step.details, lang)} />
+            ) : (
+              <Markdown text={pick(step.body, lang)} />
+            )}
+          </div>
+          {pick(step.why, lang) !== '' && (
+            <>
+              <div className="rv-section-title">{words.whyItMatters}</div>
+              <div className="rv-explanation rv-reading rv-prepared" data-quote-source="explanation" data-quote-origin={origin}>
+                <Markdown text={pick(step.why, lang)} />
+              </div>
+            </>
           )}
         </div>
       )}
       {/* DSP-175: code from other repositories of the workspace, read as context; never covered. */}
       <WalkContextPlaces step={step} lang={lang} />
-      {alternative === null && pick(step.why, lang) !== '' && (
-        <>
-          <div className="rv-section-title">{words.whyItMatters}</div>
-          <div className="rv-explanation rv-reading rv-prepared" data-quote-source="explanation" data-quote-origin={`the explanation of step ${step.id} “${pick(step.title, lang)}”`}>
-            <Markdown text={pick(step.why, lang)} />
-          </div>
-        </>
-      )}
 
-      <StepDeepening deepenings={deepenings} error={deepenError} onDeepen={onDeepen} onContinue={onContinue} onShow={onOpenEvidence} selectedText={quoteText} />
+      <ExplanationActions view={explanation} selectedText={quoteText} words={words} />
       {codeQuestion?.()}
 
       {step.evidence.length > 0 && (

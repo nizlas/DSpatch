@@ -8,6 +8,7 @@ import { FOLLOW_THRESHOLD_PX, decideScroll, discussionScrollReason, followAfterS
 import type { DiscussionWords } from './review-i18n';
 import {
   PROVIDER_ADDED_CONTEXT_LINE,
+  isAutomaticProfileEntry,
   subjectLine,
   withoutErrorClass,
   type ContextEnvelope,
@@ -22,7 +23,6 @@ import {
   type SelectionQuote,
 } from '../shared/review-discussion';
 import { stepsWalks, type CodeLocation, type Lang, type ReviewBundle } from '../shared/review-model';
-import type { PresentationRequest } from '../shared/presentation-profiles';
 
 /*
  * The discussion about the code under review (DSP-127), in the review window's right
@@ -220,13 +220,14 @@ export function ReviewDiscussion({
   onActivity,
   onSharedQuote,
   onShow,
-  presentation,
+  reading,
 }: {
   /**
-   * DSP-176: the profile the person reads in and the explanation a question here follows, as
-   * the walk shows it now; absent where there is no walk step (the diff), which asks as before.
+   * DSP-184: the step explanation the person is reading in Step, for a question about the current
+   * step: it goes with the question as hidden context, never as an entry here. No profile: a
+   * profile changes the step's explanation, not this conversation. Absent in the diff window.
    */
-  readonly presentation?: () => PresentationRequest | null;
+  readonly reading?: () => { readonly text: string } | null;
   /** The walk the window shows; `null` in the diff window, which has none (30 October 2026). */
   readonly bundle: ReviewBundle | null;
   readonly request: DiscussionRequest;
@@ -311,12 +312,13 @@ export function ReviewDiscussion({
         // Written in another window of the review: shown here, and not saved back from here.
         fromElsewhere.current = event.text;
         setText(event.text);
-      } else {
+      } else if (event.kind === 'status') {
         setStatus(event.status);
         if (event.note !== undefined) {
           setNote(event.note);
         }
       }
+      // DSP-184: the step explanations' events are Step's, not this conversation's.
     });
     void bridge.load(null).then(
       (outcome) => {
@@ -382,8 +384,8 @@ export function ReviewDiscussion({
         // The position and notes the envelope reads come from the saved record.
         await flush();
         // The selection goes along with the question, exactly as it is shown above the field.
-        const following = presentation?.() ?? null;
-        const outcome = await bridge.send({ question, subject: request.subject, selection: request.selection, language: lang, quote: request.quote ?? null, ...(following === null ? {} : { presentation: following }) });
+        const context = reading?.() ?? null;
+        const outcome = await bridge.send({ question, subject: request.subject, selection: request.selection, language: lang, quote: request.quote ?? null, ...(context === null ? {} : { reading: context }) });
         if (outcome.kind === 'sent') {
           setText('');
           void bridge.saveDraft('');
@@ -400,7 +402,7 @@ export function ReviewDiscussion({
         sending.current = false;
       }
     },
-    [bridge, text, flush, request, lang, status, presentation],
+    [bridge, text, flush, request, lang, status, reading],
   );
 
   /** DSP-132: choose the agent. Builds nothing; the next question starts its session. */
@@ -526,7 +528,9 @@ export function ReviewDiscussion({
   );
 
   // A question asked in a review thread stays in that thread (DSP-175); here it is one line.
-  const questions = messages.filter((message) => message.role === 'question');
+  // DSP-184: an automatic profile explanation asked here before the step explanations had their
+  // own channel is the step's: hidden, with its answer, and kept in the stored record as it is.
+  const questions = messages.filter((message) => message.role === 'question' && !isAutomaticProfileEntry(message));
   const answersOf = (id: string): readonly DiscussionMessage[] => messages.filter((message) => message.role === 'answer' && message.questionId === id);
   const turn = status?.turn ?? null;
   const activityText = turn === null ? null : turn.stopping ? words.stopping : (turn.activity ?? words.answering);

@@ -963,6 +963,19 @@ function contextDefinition(reader: Reader, name: string, prompt: string): { read
  * They show the data flow, never a real model's teaching.
  */
 function presentationAnswer(prompt: string, question: string): string | null {
+  const answer = presentationAnswerText(prompt, question);
+  // DSP-184: a regeneration is told apart from the explanation it replaces, so a trial can see
+  // each entry of a profile's history; the walk's outline, when sent, is named.
+  if (answer === null || !/^## Regenerating$/m.test(prompt)) {
+    return answer;
+  }
+  regenerations += 1;
+  return answer.replace(/^SIMULATED (Essentials|Standard|Teacher)/, `SIMULATED regenerated #${String(regenerations)} $1`);
+}
+
+let regenerations = 0;
+
+function presentationAnswerText(prompt: string, question: string): string | null {
   const step = /^Step: (.*)$/m.exec(prompt)?.[1]?.trim() ?? 'this step';
   const focus = /^### focus · (.+?) lines (\d+)(?:–(\d+))? · (base|target) @/m.exec(prompt);
   const references =
@@ -1025,6 +1038,12 @@ function presentationAnswer(prompt: string, question: string): string | null {
     ];
     return [angles[Math.min(attempt, 3) - 1] ?? angles[0], `${basis} Profile: ${profile}.`].join('\n\n') + refs;
   }
+  // DSP-184: Explain this on a selection of the step's explanation, in the profile, in Step.
+  const selected = /^## Explaining a selection \((\w+)\)$/m.exec(prompt);
+  if (selected !== null) {
+    const follows = /^## Explaining a selection[\s\S]*?^### (.*)$/m.exec(prompt)?.[1] ?? 'the prepared explanation';
+    return [`SIMULATED explain-this (${selected[1] ?? ''}), within “${follows}”: ${question.slice(0, 120)}`, 'SIMULATED: only the selection is explained, not the whole step again.'].join('\n\n') + refs;
+  }
   const follow = /^## The explanation this question follows \((\w+)\)$/m.exec(prompt);
   if (follow !== null) {
     const profile = follow[1] ?? 'Original';
@@ -1086,7 +1105,11 @@ function reviewQuestion(prompt: string, reader: Reader, asked: string[]): string
   }
   const before = asked.length;
   asked.push(question);
-  const sessionWords = before === 0 ? 'This is the first question in this session.' : `This session has had ${String(before)} question(s) before this one; the last was “${(asked[before - 1] ?? '').slice(0, 60)}”.`;
+  const reading = /^## The explanation of this step the person is reading\n[\s\S]*?\n\n([^\n]*)/m.exec(prompt)?.[1];
+  const sessionWords =
+    (before === 0 ? 'This is the first question in this session.' : `This session has had ${String(before)} question(s) before this one; the last was “${(asked[before - 1] ?? '').slice(0, 60)}”.`) +
+    // DSP-184: the step explanation shown in Step came along as hidden context.
+    (reading === undefined ? '' : ` SIMULATED: the explanation shown in Step came along as context, beginning “${reading.slice(0, 60)}”.`);
   // What the person selected, when the question is about a selection (30 October 2026).
   const selectedCode = /Selected code, (\S+) lines? (\d+)[^\n]*?· (base|target) \((?:From|To)\) @ \w+:\n(`{3,})\n([\s\S]*?)\n\4/.exec(prompt);
   const selectedText = /Selected text from [^\n]*\n(`{3,})\n([\s\S]*?)\n\1/.exec(prompt);

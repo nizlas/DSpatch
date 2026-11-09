@@ -72,30 +72,34 @@ export interface DiscussionWords {
  * Teacher). The prepared explanation is the legacy Original, kept for comparison.
  */
 export interface ProfileWords {
+  /** DSP-184: the chooser is the step explanation's. */
   readonly label: string;
-  readonly about: string;
-  readonly less: string;
+  /** The profile walks are prepared in, chosen before there is a step to explain. */
+  readonly prepareLabel: string;
   readonly name: Record<PublicProfile, string>;
+  /** A short tooltip per option, in plain words: how the profiles differ. Never the instructions. */
   readonly description: Record<PublicProfile, string>;
   readonly legacyName: string;
   readonly writing: (name: string) => string;
-  readonly staysShown: (name: string) => string;
-  readonly originalShown: string;
-  readonly failed: (name: string, reason: string) => string;
+  readonly failed: (what: string, reason: string) => string;
   readonly tryAgain: string;
   readonly explainAs: (name: string) => string;
-  readonly fromSameCode: (name: string) => string;
-  readonly showOriginal: string;
-  readonly showProfile: (name: string) => string;
   readonly regenerate: (name: string) => string;
-  readonly olderInstructions: (version: number) => string;
-  /** The question a profile's alternative is asked with, as it reads in the discussion. */
-  readonly presentQuestion: (name: string) => string;
-  /** DSP-181: the walk's own explanations were written in this profile. */
-  readonly preparedWith: (name: string) => string;
-  readonly walkOwnShown: string;
-  readonly showWalkOwn: string;
-  readonly walkOwn: (name: string) => string;
+  /** DSP-184: the walk's own text, written in this profile (or Original for an older walk). */
+  readonly walkText: (name: string) => string;
+  /** DSP-184: what an explanation in the history is, by what asked for it. */
+  readonly action: Record<'present' | 'regenerate' | 'more' | 'simpler' | 'explain', (name: string) => string>;
+  readonly history: string;
+  readonly back: string;
+  readonly forward: string;
+  readonly position: (at: number, of: number) => string;
+  readonly more: string;
+  readonly simpler: string;
+  readonly explainThis: string;
+  readonly selectFirst: string;
+  /** Continue in the discussion: the explanation goes along as context, not as an entry. */
+  readonly askAbout: string;
+  readonly askAboutHint: string;
 }
 
 export interface ReviewWords {
@@ -353,32 +357,38 @@ const sv: ReviewWords = {
   reviewSection: 'Granskning',
   rightTabs: { step: 'Steg', discussion: 'Diskussion' },
   profiles: {
-    label: 'Förklaringar',
-    about: 'Vad profilen ber om',
-    less: 'Dölj',
+    label: 'Förklaring',
+    prepareLabel: 'Förklaringar',
     name: { essens: 'Essens', standard: 'Standard', pedagog: 'Pedagog' },
     description: {
-      essens: 'Kärnan, precist formulerad: konkreta namn, relevanta standardvärden och det viktigaste beteendet. Mellanled och sidodetaljer ligger bakom Visa mer.',
-      standard: 'En rak teknisk förklaring för en utvecklare med vanlig vana: hur de centrala delarna hänger ihop och mekanismen som gör ändringen begriplig.',
-      pedagog: 'Lär först ut det som behövs för att förstå steget, bygger resonemanget stegvis med ett exempel när det hjälper, och kopplar sedan till den konkreta koden.',
+      essens: 'Vad koden gör och den viktigaste följden, kort.',
+      standard: 'Också hur och varför delarna hänger ihop, för en utvecklare som är ny i koden.',
+      pedagog: 'Bygger först upp begreppen som behövs och förklarar resonemanget, med exempel.',
     },
     legacyName: 'Original',
-    writing: (name) => `Skriver förklaringen i ${name} för det här steget…`,
-    staysShown: (name) => `Den nuvarande förklaringen i ${name} visas under tiden.`,
-    originalShown: 'Den ursprungliga förklaringen visas under tiden.',
-    failed: (name, reason) => `Förklaringen i ${name} kunde inte skrivas (${reason}).`,
+    writing: (name) => `Skriver förklaringen i ${name}…`,
+    failed: (what, reason) => `${what} kunde inte skrivas (${reason}).`,
     tryAgain: 'Försök igen',
-    explainAs: (name) => `Förklara det här steget som ${name}`,
-    fromSameCode: (name) => `${name} · från samma kod`,
-    showOriginal: 'Visa den ursprungliga förklaringen (Original)',
-    showProfile: (name) => `Visa förklaringen i ${name}`,
-    regenerate: (name) => `Generera om förklaringen i ${name}`,
-    olderInstructions: (version) => `Skriven med en äldre version av instruktionerna (${String(version)}).`,
-    presentQuestion: (name) => `Förklara det här steget i profilen ${name}.`,
-    preparedWith: (name) => `${name} · skriven med walken`,
-    walkOwnShown: 'Walkens egen förklaring visas under tiden.',
-    showWalkOwn: 'Visa walkens egen förklaring',
-    walkOwn: (name) => `Walkens egen förklaring (${name})`,
+    explainAs: (name) => `Förklara steget som ${name}`,
+    regenerate: (name) => `Generera om i ${name}`,
+    walkText: (name) => `Walkens egen förklaring (${name})`,
+    action: {
+      present: (name) => `Förklaringen i ${name}`,
+      regenerate: (name) => `Omgenererad förklaring i ${name}`,
+      more: (name) => `Berätta mer (${name})`,
+      simpler: (name) => `Enklare förklarat (${name})`,
+      explain: (name) => `Förklara detta (${name})`,
+    },
+    history: 'Förklaringens historik',
+    back: 'Tidigare',
+    forward: 'Senare',
+    position: (at, of) => `${String(at)} av ${String(of)}`,
+    more: 'Berätta mer',
+    simpler: 'Förklara enklare',
+    explainThis: 'Förklara detta',
+    selectFirst: 'Markera först en mening eller ett begrepp i förklaringen.',
+    askAbout: 'Fråga i diskussionen…',
+    askAboutHint: 'Skriv en egen fråga i Diskussion; förklaringen som visas här följer med som sammanhang.',
   },
   discussion: {
     empty: 'Fråga om koden du tittar på. Inget skickas förrän du trycker Enter.',
@@ -659,32 +669,38 @@ const en: ReviewWords = {
   reviewSection: 'Review',
   rightTabs: { step: 'Step', discussion: 'Discussion' },
   profiles: {
-    label: 'Explanations',
-    about: 'What it asks for',
-    less: 'Less',
+    label: 'Explanation',
+    prepareLabel: 'Explanations',
     name: { essens: 'Essentials', standard: 'Standard', pedagog: 'Teacher' },
     description: {
-      essens: 'The core, put precisely: the concrete names, the relevant defaults and the behaviour that matters most. Intermediate steps and side details are behind Show more.',
-      standard: 'A straight technical explanation for a developer of ordinary experience: how the central parts connect and the mechanism that makes the change understandable.',
-      pedagog: 'Teaches what the step needs first, builds the reasoning step by step with an example when it helps, then connects it to the concrete code.',
+      essens: 'What the code does and the most important consequence, briefly.',
+      standard: 'Also how and why the parts connect, for a developer new to this code.',
+      pedagog: 'Builds up the concepts you need first and explains the reasoning, with examples.',
     },
     legacyName: 'Original',
-    writing: (name) => `Writing the ${name} explanation of this step…`,
-    staysShown: (name) => `The current ${name} explanation stays shown meanwhile.`,
-    originalShown: 'The original explanation is shown meanwhile.',
-    failed: (name, reason) => `The ${name} explanation could not be written (${reason}).`,
+    writing: (name) => `Writing the ${name} explanation…`,
+    failed: (what, reason) => `${what} could not be written (${reason}).`,
     tryAgain: 'Try again',
-    explainAs: (name) => `Explain this step as ${name}`,
-    fromSameCode: (name) => `${name} · from the same code`,
-    showOriginal: 'Show the original explanation (Original)',
-    showProfile: (name) => `Show the ${name} explanation`,
-    regenerate: (name) => `Regenerate the ${name} explanation`,
-    olderInstructions: (version) => `Written with an earlier version of the instructions (${String(version)}).`,
-    presentQuestion: (name) => `Explain this step in the ${name} profile.`,
-    preparedWith: (name) => `${name} · written with the walk`,
-    walkOwnShown: 'The walk\'s own explanation is shown meanwhile.',
-    showWalkOwn: 'Show the walk\'s own explanation',
-    walkOwn: (name) => `The walk\'s own explanation (${name})`,
+    explainAs: (name) => `Explain the step as ${name}`,
+    regenerate: (name) => `Regenerate in ${name}`,
+    walkText: (name) => `The walk's own explanation (${name})`,
+    action: {
+      present: (name) => `The ${name} explanation`,
+      regenerate: (name) => `Regenerated ${name} explanation`,
+      more: (name) => `Tell me more (${name})`,
+      simpler: (name) => `Explained more simply (${name})`,
+      explain: (name) => `Explain this (${name})`,
+    },
+    history: 'The explanation\'s history',
+    back: 'Earlier',
+    forward: 'Later',
+    position: (at, of) => `${String(at)} of ${String(of)}`,
+    more: 'Tell me more',
+    simpler: 'Explain more simply',
+    explainThis: 'Explain this',
+    selectFirst: 'Select a sentence or a term in the explanation first.',
+    askAbout: 'Ask in the discussion…',
+    askAboutHint: 'Write your own question in Discussion; the explanation shown here goes along as context.',
   },
   discussion: {
     empty: 'Ask about the code you are looking at. Nothing is sent until you press Enter.',

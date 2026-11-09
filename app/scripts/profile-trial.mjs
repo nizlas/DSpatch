@@ -12,12 +12,15 @@
  * explanation meanwhile, reuses what was generated without a call (also after a restart), asks
  * for a step's explanation when the reader arrives at it and settles (DSP-180), keeps late
  * answers and failures where they belong, gives Explain more simply the explanations already
- * shown, and asks follow-ups at the same level; that coverage and findings do not change; and
- * that the choice works docked and in the panel's own window, with zoom and an unsent draft.
- * Simulated answers show the UI and the data flow, never a real model's teaching.
+ * shown; that coverage and findings do not change; and that the choice works docked and in the
+ * panel's own window, with zoom and an unsent draft.
  *
- * Updated for DSP-181 without a run (no Xvfb on the Windows machine it was updated on): its
- * expectations follow the code; the first run on Linux may still need adjusting.
+ * DSP-184: step explanations are in their own store (`<key>.explanations.json`), apart from the
+ * discussion: the trial reads that store to count calls and to see what each sent, checks that
+ * no profile explanation, regeneration or deepening from Step becomes a discussion entry, that a
+ * profile's history can be gone back and forth in, that a question in the discussion carries the
+ * explanation shown as hidden context and no profile, and that the review view shows no
+ * instruction text. Simulated answers show the UI and the data flow, never a real model's teaching.
  *
  *     node scripts/profile-trial.mjs [<evidence folder>]
  */
@@ -787,12 +790,29 @@ function discussionRecord() {
   return discussionFiles().flatMap((file) => JSON.parse(fs.readFileSync(file, 'utf8')).messages ?? []);
 }
 const questions = () => discussionRecord().filter((message) => message.role === 'question');
-const presents = () => questions().filter((message) => message.deepen?.action === 'present');
+/** DSP-184: the step explanations' own store, read from disk. */
+function explanationEntries() {
+  const found = [];
+  const walk = (folder) => {
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+      const full = path.join(folder, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.explanations.json')) found.push(full);
+    }
+  };
+  if (profile !== '' && fs.existsSync(profile)) walk(profile);
+  return found.flatMap((file) => JSON.parse(fs.readFileSync(file, 'utf8')).entries ?? []);
+}
+/** A profile's explanation of a step, asked on arrival or by the person (Try again). */
+const presents = () => explanationEntries().filter((entry) => entry.action === 'present');
+/** Every model call the review made: the person's questions and the step explanations. */
+const calls = () => questions().length + explanationEntries().length;
+const doneFor = (stepId, profileId) => explanationEntries().some((entry) => entry.stepId === stepId && entry.profile === profileId && entry.status === 'done');
 /** Presentations asked more than once for one step, profile and version of the step: a loop, or a retry. */
 function repeatedPresents() {
   const counts = new Map();
   for (const message of presents()) {
-    const key = `${message.envelope?.subject?.stepId ?? '?'}:${message.deepen?.profile ?? '?'}:${message.deepen?.basis ?? '?'}`;
+    const key = `${message.stepId ?? '?'}:${message.profile ?? '?'}:${message.basis ?? '?'}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return [...counts].filter(([, count]) => count > 1).map(([key, count]) => `${key} ×${String(count)}`);
@@ -800,7 +820,11 @@ function repeatedPresents() {
 /** The discussion records and the generated definitions, kept with the evidence: what was sent, and what was prepared. */
 function saveRecords() {
   try {
-    for (const file of discussionFiles()) fs.copyFileSync(file, path.join(evidence, `record-${path.basename(file)}`));
+    for (const file of discussionFiles()) {
+      fs.copyFileSync(file, path.join(evidence, `record-${path.basename(file)}`));
+      const explanations = file.replace(/\.discussion\.json$/, '.explanations.json');
+      if (fs.existsSync(explanations)) fs.copyFileSync(explanations, path.join(evidence, `record-${path.basename(explanations)}`));
+    }
     const generated = path.join(profile, 'reviews', 'generated');
     if (fs.existsSync(generated)) {
       for (const folder of fs.readdirSync(generated)) {
@@ -993,15 +1017,18 @@ async function main() {
   check('the dropdown offers Essentials, Standard and Teacher, each described, and not Original', options.map((o) => o.name).join(',') === 'Essentials,Standard,Teacher' && options.map((o) => o.value).join(',') === 'essens,standard,pedagog' && options.every((o) => o.title.length > 30), JSON.stringify(options));
   let now = await shown();
   check('Standard is the default, the walks were prepared in it, and S1 reads its own Standard explanation', now.value === 'standard' && now.prepared && now.profileShown === '' && now.state === 'own', JSON.stringify(now));
-  await osClickAt(pc, '[data-ev="presentation-profile-about-toggle"]');
-  const about = await read(pc, `document.querySelector('[data-ev="presentation-profile-about"]')?.textContent ?? ''`);
-  check('what a profile asks for can be read in the panel', /Every profile:/.test(about) && /Standard:/.test(about) && /About five sentences/.test(about), about.slice(0, 160));
-  await osClickAt(pc, '[data-ev="presentation-profile-about-toggle"]');
+  // DSP-184: the review view says nothing of the instructions: no "What it asks for", no instruction text, no version.
+  const panelText = await read(pc, `document.body.innerText`);
+  check('no "What it asks for", instruction text or instruction version in the review view', (await read(pc, `document.querySelector('[data-ev="presentation-profile-about-toggle"],[data-ev="presentation-profile-about"],[data-ev="presentation-profile-description"]')===null`)) === true && !/What it asks for|Instruction version|Every profile:/.test(panelText), panelText.slice(0, 200));
+  // DSP-184: one component order: the step title, the explanation's bar with its chooser, the places, the explanation, its actions.
+  const order = JSON.parse(await read(pc, `JSON.stringify(['.rv-step-panel h2','[data-ev="explanation-bar"]','[data-ev="step-places"]','[data-ev="step-prepared-explanation"],[data-ev="profile-explanation"]','[data-ev="step-tell-more"]'].map((sel)=>{const e=document.querySelector(sel);return e===null?null:e.getBoundingClientRect().top+scrollY;}))`));
+  check('the step panel reads title, explanation bar, places, explanation, actions', order.every((top, i) => top === null || i === 0 || order.slice(0, i).every((before) => before === null || before <= top)), JSON.stringify(order));
+  check('the chooser is labelled as the step explanation\'s', /Explanation/.test(await read(pc, `document.querySelector('[data-ev="explanation-bar"] .rv-profile-choice')?.textContent ?? ''`)));
   const zoom0 = await zoomOf();
   await w_shot(pc, '40-standard-default');
   // DSP-181: the walk's own explanations are the Standard ones, so opening and reading it asks for nothing.
   await delay(1500);
-  check('reading the walk in its own profile sends nothing', presents().length === 0 && questions().length === 0, String(questions().length));
+  check('reading the walk in its own profile sends nothing', calls() === 0, String(calls()));
   const prepared = await read(pc, `document.querySelector('[data-ev="step-prepared-explanation"]')?.textContent ?? ''`);
   check('the step\'s own text is a Standard explanation, with its deepening behind Show more', /SIMULATED Standard/.test(prepared) && (await read(pc, `document.querySelector('[data-ev="step-prepared-explanation"] [data-ev="answer-show-more"]')!==null`)) === true, prepared.slice(0, 160));
   check('the deepening is not shown before Show more is pressed', (await read(pc, `document.querySelector('[data-ev="step-prepared-explanation"] [data-ev="answer-details"]')===null`)) === true && !/SIMULATED deepening/.test(prepared));
@@ -1015,20 +1042,21 @@ async function main() {
   const leftColumn = () => walk.ev(`document.querySelector('.rv-walks')?.textContent ?? ''`);
   const leftAtStart = await leftColumn();
   check('the left column shows titles and purposes, nothing of the profile\'s explanation', leftAtStart.length > 20 && !/SIMULATED (Standard|Essentials|Teacher)|deepening/.test(leftAtStart), leftAtStart.slice(0, 160));
-  const callsAtStart = questions().length;
+  const callsAtStart = calls();
 
   stage = 'Essentials: the current step only, the original explanation meanwhile';
   await choose('Essentials');
-  await poll('the Essentials request', async () => presents().filter((m) => m.deepen.profile === 'essens').length === 1, 15_000);
+  await poll('the Essentials request', async () => presents().filter((m) => m.profile === 'essens').length === 1, 15_000);
   now = await shown();
   check('while Essentials is written, the original explanation stays with a quiet indicator', now.state === 'pending' && now.prepared && now.profileShown === '', JSON.stringify(now));
   await w_shot(pc, '41-essentials-pending');
-  const first = presents().find((m) => m.deepen.profile === 'essens');
-  check('one request, for the current step only, in Essentials, from its version, with the policy once', first.envelope.subject.stepId === S1 && typeof first.deepen.basis === 'string' && /## How to present \(Essentials\)/.test(first.sentPrompt) && first.sentPrompt.split('<!-- dspatch:details -->').length === 2 && /^Language: English\./m.test(first.sentPrompt), JSON.stringify(first.deepen));
+  const first = presents().find((m) => m.profile === 'essens');
+  check('one request, for the current step only, in Essentials, from its version, with the policy once and the walk\'s outline', first.stepId === S1 && typeof first.basis === 'string' && /## How to present \(Essentials\)/.test(first.prompt) && first.prompt.split('<!-- dspatch:details -->').length === 2 && /^Language: English\./m.test(first.prompt) && /## Where this step is in the walk\n/.test(first.prompt) && /<- this step/.test(first.prompt) && /Instruction version: 4/.test(first.prompt), JSON.stringify({ stepId: first.stepId, basis: first.basis }));
+  check('the profile explanation is no discussion entry', questions().length === 0, String(questions().length));
   await poll('the Essentials explanation', async () => (await shown()).profileShown === 'essens', 60_000);
   now = await shown();
   check('the step then shows its Essentials explanation', now.state === 'done' && !now.prepared && /SIMULATED Essentials/.test(now.alt) && now.altStep === S1, JSON.stringify(now));
-  check('no other step was asked for', presents().every((m) => m.envelope.subject.stepId === S1));
+  check('no other step was asked for', presents().every((m) => m.stepId === S1));
   // The answer done, nothing may ask again: a second request for the same step, profile and version would be a loop.
   await delay(3000);
   check('no request is repeated for the same step, profile and version of the step', repeatedPresents().length === 0, JSON.stringify(repeatedPresents()));
@@ -1039,80 +1067,93 @@ async function main() {
   await w_shot(pc, '43-essentials-show-more');
   // One reading typography: the alternative, the walk's own text and the discussion's answer render alike.
   const altStyle = await paragraphStyle(pc, '[data-ev="profile-explanation"] .markdown__p');
-  const discussionStyle = await paragraphStyle(pc, '.rv-discussion .rv-answer .markdown__p');
-  check('the alternative, the walk\'s own text and the discussion\'s answers share one typography on the display', sameTypography(altStyle, ownStyle, discussionStyle), JSON.stringify({ altStyle, ownStyle, discussionStyle }));
+  // DSP-184: the discussion has no answer yet (the explanation is not one); compared with it below.
+  check('the alternative and the walk\'s own text share one typography on the display', sameTypography(altStyle, ownStyle), JSON.stringify({ altStyle, ownStyle }));
   await osClickAt(pc, '[data-ev="profile-explanation"] [data-ev="answer-show-more"]');
-  await osClickAt(pc, '[data-ev="profile-toggle-prepared"]');
-  check('the original explanation is a click away, kept', (await shown()).prepared === true);
-  await osClickAt(pc, '[data-ev="profile-toggle-prepared"]');
+  // DSP-184: the profile's history: the walk's own text is the first entry, Back and Forward move in it.
+  await osClickAt(pc, '[data-ev="explanation-back"]');
+  check('Back shows the walk\'s own explanation, kept, without a call', (await shown()).prepared === true && (await read(pc, `document.querySelector('[data-ev="explanation-position"]')?.textContent ?? ''`)) === '1 of 2');
+  await w_shot(pc, '43b-essentials-back');
+  await osClickAt(pc, '[data-ev="explanation-forward"]');
+  check('Forward shows the Essentials explanation again', (await shown()).profileShown === 'essens');
 
   stage = 'Teacher, then back without a call';
   await choose('Teacher');
   await poll('the Teacher explanation', async () => (await shown()).profileShown === 'pedagog', 60_000);
-  check('Teacher asked once for the same step', presents().filter((m) => m.deepen.profile === 'pedagog').length === 1 && presents().find((m) => m.deepen.profile === 'pedagog').envelope.subject.stepId === S1);
+  check('Teacher asked once for the same step', presents().filter((m) => m.profile === 'pedagog').length === 1 && presents().find((m) => m.profile === 'pedagog').stepId === S1);
   now = await shown();
   check('the step shows its Teacher explanation: the idea first, then the code', /SIMULATED Teacher/.test(now.alt) && /First the idea/.test(now.alt) && /Now the code/.test(now.alt), now.alt.slice(0, 120));
   check('the zoom is as it was', (await zoomOf()) === zoom0, String(await zoomOf()));
   await w_shot(pc, '44-teacher');
   check('the left column is as it was before any profile was chosen', (await leftColumn()) === leftAtStart);
-  const callsBeforeBack = questions().length;
+  const callsBeforeBack = calls();
   await choose('Essentials');
   now = await shown();
-  check('back to Essentials: shown at once, no new call', now.profileShown === 'essens' && now.state === 'done' && questions().length === callsBeforeBack, JSON.stringify({ now: now.state, calls: questions().length - callsBeforeBack }));
+  check('back to Essentials: shown at once, no new call', now.profileShown === 'essens' && now.state === 'done' && calls() === callsBeforeBack, JSON.stringify({ now: now.state, calls: calls() - callsBeforeBack }));
   await choose('Standard');
   now = await shown();
-  check('back to Standard: the walk\'s own explanation, no new call', now.prepared && now.state === 'own' && questions().length === callsBeforeBack);
+  check('back to Standard: the walk\'s own explanation, no new call', now.prepared && now.state === 'own' && calls() === callsBeforeBack);
   await choose('Essentials');
 
-  stage = 'Explain more simply, twice, and a follow-up at the same level';
-  const simplerCount = () => questions().filter((m) => m.deepen?.action === 'simpler').length;
+  stage = 'Explain more simply, twice, in Step; then a question in the discussion with the explanation as context';
+  const simplers = () => explanationEntries().filter((m) => m.action === 'simpler');
+  const questionsBeforeSimpler = questions().length;
   await osClickAt(pc, '[data-ev="step-explain-simpler"]');
-  await poll('the first simpler answer', async () => simplerCount() === 1 && discussionRecord().some((m) => m.role === 'answer' && m.questionId === questions().filter((x) => x.deepen?.action === 'simpler')[0]?.id && m.status === 'done'), 60_000);
-  const simpler1 = questions().filter((m) => m.deepen?.action === 'simpler')[0];
-  check('Explain more simply builds on the Essentials explanation, in Essentials', simpler1.presentation?.profile === 'essens' && simpler1.presentation?.shown?.length === 1 && /attempt 1, Essentials/.test(simpler1.sentPrompt) && /### Shown 1: The Essentials explanation of the step/.test(simpler1.sentPrompt) && /In Essentials: Plainer language/.test(simpler1.sentPrompt), JSON.stringify(simpler1.presentation));
+  await poll('the first simpler explanation', async () => simplers().length === 1 && simplers()[0].status === 'done', 60_000);
+  const simpler1 = simplers()[0];
+  check('Explain more simply builds on the Essentials explanation, in Essentials', simpler1.profile === 'essens' && /attempt 1, Essentials/.test(simpler1.prompt) && /### Shown 1: The Essentials explanation of the step/.test(simpler1.prompt) && /In Essentials: Plainer language/.test(simpler1.prompt), simpler1.prompt.slice(-400));
   await poll('the step ready again', async () => (await read(pc, `document.querySelector('[data-ev="step-explain-simpler"]')?.disabled`)) === false, 30_000);
   await osClickAt(pc, '[data-ev="step-explain-simpler"]');
-  await poll('the second simpler answer', async () => simplerCount() === 2 && discussionRecord().some((m) => m.role === 'answer' && m.questionId === questions().filter((x) => x.deepen?.action === 'simpler')[1]?.id && m.status === 'done'), 60_000);
-  const simpler2 = questions().filter((m) => m.deepen?.action === 'simpler')[1];
-  check('pressed again, it gets both explanations shown and is asked for another way in', simpler2.presentation?.shown?.length === 2 && /attempt 2/.test(simpler2.sentPrompt) && /did not make it clear enough/.test(simpler2.sentPrompt) && /### Shown 2: Explain more simply/.test(simpler2.sentPrompt));
+  await poll('the second simpler explanation', async () => simplers().length === 2 && simplers()[1].status === 'done', 60_000);
+  const simpler2 = simplers()[1];
+  check('pressed again, it gets both explanations shown and is asked for another way in', /attempt 2/.test(simpler2.prompt) && /did not make it clear enough/.test(simpler2.prompt) && /### Shown 2: Explain more simply/.test(simpler2.prompt));
+  check('neither is a discussion entry or a discussion turn', questions().length === questionsBeforeSimpler);
   await delay(600);
-  const deepenings = await read(pc, `[...document.querySelectorAll('[data-ev="step-deepening"]')].map((d)=>d.textContent).join(' | ')`);
-  check('the step shows the simpler explanations under its Essentials explanation, each another way in', /attempt 1 \(the effect first\)/.test(deepenings) && /attempt 2 \(a concrete case instead\)/.test(deepenings), deepenings.slice(0, 300));
+  now = await shown();
+  check('Step shows the latest simpler explanation in place, in Essentials', /attempt 2 \(a concrete case instead\)/.test(now.alt) && now.profileShown === 'essens', now.alt.slice(0, 200));
+  await osClickAt(pc, '[data-ev="explanation-back"]');
+  check('Back shows the first simpler one', /attempt 1 \(the effect first\)/.test((await shown()).alt));
+  await osClickAt(pc, '[data-ev="explanation-forward"]');
   await w_shot(pc, '45-essentials-simpler');
   await clickInPanel('right-tab-discussion');
+  const shownInDiscussion = await read(pc, `[...document.querySelectorAll('.rv-discussion-turn')].length`);
+  check('Discussion shows no profile explanation and no Step deepening', shownInDiscussion === 0, String(shownInDiscussion));
   await clearComposer(pc);
   await osType('How does it choose between the two alternatives?');
   const before = questions().length;
   await osKey('Return');
-  await poll('the follow-up answered', async () => questions().length > before && discussionRecord().some((m) => m.role === 'answer' && m.questionId === questions().at(-1).id && m.status === 'done'), 60_000);
+  await poll('the question answered', async () => questions().length > before && discussionRecord().some((m) => m.role === 'answer' && m.questionId === questions().at(-1).id && m.status === 'done'), 60_000);
   const follow = questions().at(-1);
-  check('the follow-up carries Essentials and the explanation it follows, after two simpler ones', follow.presentation?.profile === 'essens' && /## The explanation this question follows \(Essentials\)/.test(follow.sentPrompt) && /more simply 2 time\(s\)/.test(follow.sentPrompt), JSON.stringify(follow.presentation));
+  check('the question carries the explanation shown in Step as hidden context, and no profile', follow.presentation === undefined && follow.readingContext === true && /## The explanation of this step the person is reading\n[\s\S]*attempt 2/.test(follow.sentPrompt) && !/## How to present|The reader's profile|## The explanation this question follows/.test(follow.sentPrompt), follow.sentPrompt.slice(-600));
   const followAnswer = discussionRecord().find((m) => m.role === 'answer' && m.questionId === follow.id)?.text ?? '';
-  check('the answer is at the same level (SIMULATED)', /SIMULATED follow-up at the Essentials level/.test(followAnswer), followAnswer.slice(0, 120));
+  check('the answer was given the context (SIMULATED)', /came along as context/.test(followAnswer), followAnswer.slice(0, 160));
+  check('Discussion shows the person\'s question and nothing else', (await read(pc, `[...document.querySelectorAll('.rv-discussion-turn')].length`)) === 1);
   await delay(500);
   const followGap = JSON.parse(await read(pc, DISCUSSION_SCROLLER));
-  check('the follow-up and its answer are in view at the end of the discussion', followGap.gap <= 64, JSON.stringify(followGap));
+  check('the question and its answer are in view at the end of the discussion', followGap.gap <= 64, JSON.stringify(followGap));
+  const discussionStyle = await paragraphStyle(pc, '.rv-discussion .rv-answer .markdown__p');
+  check('the explanation, the walk\'s own text and the discussion\'s answers share one typography on the display', sameTypography(altStyle, ownStyle, discussionStyle), JSON.stringify({ altStyle, ownStyle, discussionStyle }));
   await w_shot(pc, '46-follow-up');
 
   stage = 'a step without an alternative, a late answer and a quick switch';
   await clickInPanel('right-tab-step');
-  const callsBeforeMove = questions().length;
+  const callsBeforeMove = calls();
   await goToStep(S2);
   now = await shown();
   check('arriving at another step in Essentials shows the original explanation first', now.prepared && now.profileShown === '' && ['none', 'pending', ''].includes(now.state), JSON.stringify(now));
   // DSP-180: the request goes after the view has settled (~500 ms), once, for this step.
-  await poll('S2 asked on arrival', async () => presents().some((m) => m.envelope.subject.stepId === S2 && m.deepen.profile === 'essens'), 10_000);
-  check('one request for S2, none for the steps passed on the way', presents().filter((m) => m.envelope.subject.stepId === S2).length === 1 && questions().length === callsBeforeMove + 1, String(questions().length - callsBeforeMove));
+  await poll('S2 asked on arrival', async () => presents().some((m) => m.stepId === S2 && m.profile === 'essens'), 10_000);
+  check('one request for S2, none for the steps passed on the way', presents().filter((m) => m.stepId === S2).length === 1 && calls() === callsBeforeMove + 1, String(calls() - callsBeforeMove));
   await goToStep(S3);
-  await poll('the S2 answer arrived', async () => discussionRecord().some((m) => m.role === 'answer' && m.questionId === presents().find((x) => x.envelope.subject.stepId === S2)?.id && m.status === 'done'), 60_000);
+  await poll('the S2 answer arrived', async () => doneFor(S2, 'essens'), 60_000);
   now = await shown();
   check('the late S2 answer is not shown at S3', now.step === S3 && now.profileShown === '' && !/S2|Changed lines 35/.test(now.alt) && now.state === 'none', JSON.stringify(now));
   // At S3: Essentials asked on arrival, and Teacher chosen while it is written.
-  await poll('S3 Essentials asked', async () => presents().some((m) => m.envelope.subject.stepId === S3), 10_000);
+  await poll('S3 Essentials asked', async () => presents().some((m) => m.stepId === S3), 10_000);
   await choose('Teacher');
   now = await shown();
   check('a switch while another answer is written is refused and says so; nothing of Essentials is shown under Teacher', now.value === 'pedagog' && now.profileShown === '' && ['failed', 'none', 'pending'].includes(now.state), JSON.stringify(now));
-  await poll('S3 Essentials done', async () => discussionRecord().some((m) => m.role === 'answer' && m.questionId === presents().find((x) => x.envelope.subject.stepId === S3 && x.deepen.profile === 'essens')?.id && m.status === 'done'), 60_000);
+  await poll('S3 Essentials done', async () => doneFor(S3, 'essens'), 60_000);
   now = await shown();
   check('when the Essentials answer arrives, Teacher still does not show it', now.profileShown === '' && now.value === 'pedagog', JSON.stringify(now));
   // Either the Teacher request was refused while Essentials was written (then it is offered again),
@@ -1143,7 +1184,7 @@ async function main() {
   // A failure waits for the person: nothing is asked again on its own (a provider that kept failing would otherwise be asked without end).
   await delay(2500);
   now = await shown();
-  const askedForS4 = () => presents().filter((m) => m.envelope.subject.stepId === S4).length;
+  const askedForS4 = () => presents().filter((m) => m.stepId === S4).length;
   check('a failure waits for Try again: nothing is asked again on its own', now.state === 'failed' && askedForS4() === 1, JSON.stringify({ now, asked: askedForS4() }));
   await w_shot(pc, '47-failed-retry');
   await osClickAt(pc, '[data-ev="profile-retry"]');
@@ -1165,7 +1206,7 @@ async function main() {
     await osKey('ctrl+Return');
     await poll('the thread question', async () => questions().length > beforeThread, 15_000);
     const asked = questions().at(-1);
-    check('a question in a finding\'s thread stays in that thread, asked in the profile chosen', asked.envelope.subject.kind === 'thread' && asked.envelope.subject.threadId === threadId && asked.presentation?.profile === 'essens', JSON.stringify({ subject: asked.envelope.subject, presentation: asked.presentation }));
+    check('a question in a finding\'s thread stays in that thread, with no profile (DSP-184)', asked.envelope.subject.kind === 'thread' && asked.envelope.subject.threadId === threadId && asked.presentation === undefined && !/## How to present|The reader's profile/.test(asked.sentPrompt), JSON.stringify({ subject: asked.envelope.subject, presentation: asked.presentation }));
     await poll('its answer', async () => discussionRecord().some((m) => m.role === 'answer' && m.questionId === asked.id && m.status === 'done'), 60_000);
   } else {
     note('no thread at S1', '');
@@ -1180,7 +1221,7 @@ async function main() {
   // The window's language set to Swedish first: the names follow it when the panel next loads.
   check('Swedish chosen for the review window', (await chooseOption(wc, '[data-ev="review-language"]', 'sv', 'Sv')) === 'sv');
   await delay(800);
-  const callsBeforeRestart = questions().length;
+  const callsBeforeRestart = calls();
   await quitClient();
   main = await launch('profiles-again');
   await main.until('the recent project', `${q('open-project-0')}!==null`, 60_000);
@@ -1211,17 +1252,17 @@ async function main() {
   await goToStep(S1);
   await delay(800);
   now = await shown();
-  check('after a restart: Essentials still chosen, S1 shows its Essentials explanation, no call made', now.value === 'essens' && now.profileShown === 'essens' && questions().length === callsBeforeRestart, JSON.stringify({ now, calls: questions().length - callsBeforeRestart }));
+  check('after a restart: Essentials still chosen, S1 shows its Essentials explanation, no call made', now.value === 'essens' && now.profileShown === 'essens' && calls() === callsBeforeRestart, JSON.stringify({ now, calls: calls() - callsBeforeRestart }));
   const svOptions = JSON.parse(await read(pc, `JSON.stringify([...document.querySelectorAll('[data-ev="presentation-profile"] option')].map((o)=>o.textContent))`));
   check('in Swedish the chooser reads Essens, Standard, Pedagog, over the same ids', svOptions.join(',') === 'Essens,Standard,Pedagog' && now.value === 'essens', JSON.stringify(svOptions));
   const svLine = await read(pc, `document.querySelector('[data-ev="profile-status"]')?.textContent ?? ''`);
-  check('the status line reads in Swedish with the Swedish name', /Essens/.test(svLine) && /från samma kod/.test(svLine), svLine.slice(0, 160));
+  check('the status line reads in Swedish with the Swedish name', /Essens/.test(svLine) && /Förklaringen i Essens|Enklare förklarat \(Essens\)/.test(svLine), svLine.slice(0, 160));
   await w_shot(pc, '47-swedish-names');
   await choose('Pedagog');
-  check('and Pedagog too, without a call', (await shown()).profileShown === 'pedagog' && questions().length === callsBeforeRestart);
+  check('and Pedagog too, without a call', (await shown()).profileShown === 'pedagog' && calls() === callsBeforeRestart);
   await choose('Standard');
   now = await shown();
-  check('reopened in its own profile, the walk reads its Standard text without a call', now.state === 'own' && now.prepared && now.profileShown === '' && questions().length === callsBeforeRestart, JSON.stringify(now));
+  check('reopened in its own profile, the walk reads its Standard text without a call', now.state === 'own' && now.prepared && now.profileShown === '' && calls() === callsBeforeRestart, JSON.stringify(now));
   check('English chosen again for the review window', (await chooseOption(wc, '[data-ev="review-language"]', 'en', 'En')) === 'en');
 
   stage = 'the panel in its own window';
@@ -1237,11 +1278,13 @@ async function main() {
   await clearComposer(pc);
   await osType('A draft I have not sent');
   const gapBefore = JSON.parse(await read(pc, DISCUSSION_SCROLLER));
-  // The choice is above both tabs: switched while the discussion is read.
+  // DSP-184: the choice is the step explanation's, in Step: switched there, then back to the discussion.
   for (const name of ['Essentials', 'Teacher', 'Standard']) {
-    await choose(name, 'discussion');
+    await choose(name, 'step');
   }
-  check('standalone: the choice works and reuses what was written, without a call', questions().length === callsBeforeRestart);
+  await clickInPanel('right-tab-discussion');
+  await delay(300);
+  check('standalone: the choice works and reuses what was written, without a call', calls() === callsBeforeRestart);
   check('standalone: the unsent draft is kept through the switches', (await composerValue(pc))?.includes('A draft I have not sent') === true);
   const gapAfter = JSON.parse(await read(pc, DISCUSSION_SCROLLER));
   check('standalone: the discussion is where it was (the switches moved nothing)', Math.abs(gapAfter.gap - gapBefore.gap) <= 2, JSON.stringify({ gapBefore, gapAfter }));

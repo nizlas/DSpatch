@@ -1,29 +1,37 @@
 /**
- * DSP-176, DSP-181: the presentation policy for the review agent's explanations.
+ * DSP-176, DSP-181, DSP-184: the presentation policy for the review agent's explanations.
  *
- * Everything DSpatch tells the agent about *how to present* an explanation is here, in one
- * place, so that it is easy to read, compare and iterate on, and so that the window can show
- * the person exactly what a profile asks for (AGENT_BEHAVIOUR_AND_ORCHESTRATION.md, section 2:
- * an instruction DSpatch adds is visible, not built into the code).
+ * Everything DSpatch tells the agent about *how to present* a step's explanation is here, in
+ * one place, so that it is easy to read, compare and iterate on. The instructions are not shown
+ * in the review's reading flow (Niclas's decision of 9 November 2026, DSP-184): the person
+ * chooses a profile and reads the explanation. That is a placement in the window: the
+ * instructions stay explicit and inspectable (AGENT_BEHAVIOUR_AND_ORCHESTRATION.md, section 1)
+ * through this file, their one definition, and through every stored step explanation, which
+ * keeps the exact prompt it was sent with and the instruction version (`<key>.explanations.json`).
  *
  * A profile changes presentation only. It never changes how carefully the code is read, which
- * facts are stated, the findings, their recommendations or what is approved: every request
- * still goes through the review's own discussion, with the same envelope, code, tools and
- * read-only policy.
+ * facts are stated, the findings, their recommendations or what is approved.
  *
- * One policy, three public profiles (Niclas's decision of 8 November 2026):
+ * One policy, three public profiles (Niclas's decisions of 8 and 9 November 2026):
  * - the **grounding** every base text has, whatever the profile ({@link GROUNDING_RULES});
  * - the **details contract**: what goes before and after the one marker line the window splits
  *   on ({@link DETAILS_MARKER}, {@link SHORT_PART_RULE}, {@link DETAILS_PART_RULE}), reused by the
  *   discussion's answer format and by the walk generator, so a prompt holds one wording of it;
- *   - the **profiles**: Essentials selects the core, Standard explains how the central parts
- *   connect, Teacher builds the prerequisite knowledge first; length is a guideline, never a
- *   quota ({@link LENGTH_GUIDELINE_RULES}).
- * - **Original** is the walk's prepared explanation: a legacy presentation, kept and viewable,
- *   never asked for again and hidden from the ordinary chooser.
+ * - the **profiles**: Essentials says what the code does and the most important consequence;
+ *   Standard adds how and why the relevant parts connect, for a developer who knows programming
+ *   but not this code; Teacher builds the needed concepts and explains the reasoning, with
+ *   examples where they help. Length is a guideline, never a quota ({@link LENGTH_GUIDELINE_RULES});
+ * - the **walk-relative writing rules** ({@link WALK_WRITING_RULES}): an explanation is read
+ *   beside the walk's code, in the walk's order;
+ * - **Original** is an older walk's prepared explanation: kept and viewable, never asked for.
  *
- * The ids are stable and never shown: the names and descriptions the person reads come from
- * the window's own words in its language (`review-i18n.ts`); prompts use the English names.
+ * The same rules reach walk generation ({@link walkExplanationSection}), a profile's
+ * explanation, regeneration, Tell me more, Explain more simply and Explain this
+ * ({@link presentationPromptSection}). The discussion carries no profile: a profile changes
+ * the step's explanation, not the conversation (DSP-184).
+ *
+ * The ids are stable and never shown: the names the person reads come from the window's own
+ * words in its language (`review-i18n.ts`); prompts use the English names.
  */
 
 export type PresentationProfile = 'original' | 'essens' | 'standard' | 'pedagog';
@@ -34,10 +42,10 @@ export const PUBLIC_PROFILES: readonly PublicProfile[] = ['essens', 'standard', 
 /** Every id a stored record may carry, the legacy one included. */
 export const PRESENTATION_PROFILES: readonly PresentationProfile[] = ['original', ...PUBLIC_PROFILES];
 export const DEFAULT_PROFILE: PublicProfile = 'standard';
-/** The prepared explanation, as the walk generator wrote it: shown while an alternative is on its way and on request. */
+/** The prepared explanation of an older walk, as the walk generator wrote it. */
 export const LEGACY_PROFILE: PresentationProfile = 'original';
-/** Raised when profile instructions change in meaning; stored on new alternatives. */
-export const PRESENTATION_INSTRUCTION_VERSION = 3;
+/** Raised when profile instructions change in meaning; stored with every step explanation and walk. */
+export const PRESENTATION_INSTRUCTION_VERSION = 4;
 
 /** The English names, as prompts say them; the window shows the names of its own language. */
 export const PROFILE_PROMPT_NAMES: Readonly<Record<PresentationProfile, string>> = {
@@ -99,11 +107,23 @@ export const SAME_FACTS_RULES = [
  * these; it never replaces them with vaguer words.
  */
 export const GROUNDING_RULES = [
-  'Name the concrete functions, settings, types or other parts that are central to the step, with their real names; explain a term rather than replacing it with a vague word such as "the other mechanism" or "one of the options".',
+  'When you name a function, setting, type or other part, use its real name; explain a term rather than replacing it with a vague word such as "the other mechanism" or "one of the options".',
   'Say what changes and its most important consequence.',
-  'State the relevant default values explicitly.',
+  'State a default value explicitly when it is decisive for what the step does.',
   'Keep the conditions, fallback behaviour and uncertainties that are decisive for a correct understanding.',
   'Present this step; do not start a new broad review. Do not retell the whole discussion or every finding of the review: an important objection may be summarised in one line that points to its thread. A new observation of yours is an observation, not a verified fact, and it changes no decision of the review.',
+] as const;
+
+/**
+ * DSP-184 (Niclas's correction of 9 November 2026): every profile adds understanding beyond
+ * what the code and its comments already say, rather than retelling them in prose, and keeps
+ * what the code shows apart from an interpretation of why it is written so. Ends with the
+ * self-check every text is held to.
+ */
+export const EXPLANATORY_VALUE_RULES = [
+  'Add understanding beyond what can be read directly in the code and its comments. Do not retell each statement, condition or comment in prose.',
+  'Do not invent intentions to make the text sound explanatory. Keep apart what the code shows and an interpretation of why it is written so, and mark an interpretation as one.',
+  'Before you answer, ask: what does this help the reader understand that is not already plain from the code or its comments? If the answer is only "the same details, said in sentences", rewrite it.',
 ] as const;
 
 /**
@@ -111,13 +131,23 @@ export const GROUNDING_RULES = [
  * pads or truncates to hit a number (DSP-181).
  */
 export const LENGTH_GUIDELINE_RULES = [
-  'The length given for this profile is the order of magnitude for a normal step, not a count to hit, not a cap, not an order between profiles and not a reason to fill out a simple explanation. A simple change is explained briefly in every profile; a complex or wide change may take more room when the material calls for it. Every sentence must add understanding. Do not press many clauses into very long sentences.',
+  'The length given for this profile is the order of magnitude for a normal step, not a count to hit, not a cap and not a reason to fill out a simple explanation. A simple change is explained briefly in every profile; a complex or wide change may take more room when the material calls for it. Every sentence must add understanding. Do not press the content of many sentences into a few long ones: a shorter profile says less, at a higher level, not the same in denser sentences.',
 ] as const;
 
 /** The form of the details, in every profile. */
 export const DEEPENING_RULES = [
   'After the marker line: the deepening only, in the same manner as the first part, readable even when long: short paragraphs, lists where they help, small code excerpts where they carry the point.',
   'Name the code you rest on with references, as for any answer, so the person can open it.',
+] as const;
+
+/**
+ * DSP-184: an explanation is read beside the walk's code, in the walk's order. Said in walk
+ * generation and in every step explanation, with the walk's outline when the window sends it.
+ */
+export const WALK_WRITING_RULES = [
+  'The walk shows the code of each step beside its explanation. In the prose, do not write file names, paths or line numbers for code the walk shows; name the functions, types, variables and settings instead. The references block, when one is asked for, still names files and lines.',
+  'Write relative to the walk: say "here" for the code of this step, and "in the next step", "in a later step" or "as we saw earlier" only where the walk\'s order makes it true.',
+  'Explain this step. Do not explain in advance what a later step covers; at most say that a later step shows it.',
 ] as const;
 
 export interface ProfileDefinition {
@@ -144,42 +174,36 @@ export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> 
     id: 'essens',
     promptName: 'Essentials',
     manner: [
-      'Select the core and put it precisely: what changes, the behaviour that matters most, and what the reader needs to understand or check here.',
-      'Keep the concrete names, the relevant defaults and the most important behaviour.',
-      'Leave out mechanical intermediate steps and side details that are not needed to understand the change; they belong after the marker if anywhere.',
-      'A short lead sentence and a few short bullet points are welcome; no headings for their own sake.',
+      'Give the purpose of the code and its most important events, at a level above the individual statements.',
+      'Include the conditions that are decisive, summarised so they are understood rather than listed.',
+      'Name concrete identifiers only where they help the reader connect the explanation to the code.',
+      'Leave out mechanical details (indexes, loop bounds, every single call) unless they are decisive; any further detail that is needed goes after the marker.',
     ],
-    guideline: 'About two sentences, or the same said as a few short bullet points, for a normal step.',
-    simpler: [
-      'Plainer language and less jargon, still concrete: the same names, the same point, said more directly.',
-    ],
+    guideline: 'About two sentences for a normal step.',
+    simpler: ['Plainer language and less jargon: the same point, said more directly.'],
   },
   standard: {
     id: 'standard',
     promptName: 'Standard',
     manner: [
-      'Give a straight technical explanation for a developer of ordinary experience who did not write this change.',
-      'Explain how the central parts connect and the mechanism that makes the change understandable: what calls what, what data moves, what decides the outcome.',
-      'Do not assume detailed knowledge of this project: say what a project-specific name is the first time it matters.',
+      'Write for a developer who knows programming but not this code. Say what the code is for and its most important consequence, and develop the connections: why the conditions exist, how the parts work together, and which consequences matter.',
+      'Not a line-by-line account. Go into detail only where the code is hard to read, the behaviour is surprising or a consequence is easy to miss, and then make exactly that clear.',
+      'Place a project-specific name briefly the first time it matters. Do not teach general programming concepts.',
     ],
-    guideline: 'About five sentences for a normal step.',
-    simpler: [
-      'Break the difficult connection into its parts and explain the concepts that are needed to follow it, one at a time.',
-    ],
+    guideline: 'About four to six sentences for a normal step.',
+    simpler: ['Break the difficult connection into its parts and explain the concepts that are needed to follow it, one at a time.'],
   },
   pedagog: {
     id: 'pedagog',
     promptName: 'Teacher',
     manner: [
-      'Teach the prerequisite knowledge the reader needs for this step first, briefly: the tool, pattern or concept that would otherwise make the text hard to follow. For a build system, for example, that may be the difference between declaring a build setting, reading it while configuring and using the result at run time.',
-      'Build the reasoning step by step, and use one concrete example or an analogy when it actually helps and holds for the code.',
+      'Build the concepts the reader needs for this step first: the tool, pattern or idea that would otherwise make the step hard to follow, briefly and only those this step needs.',
+      'Explain the reasoning step by step: why the code is shaped this way and what would go wrong otherwise.',
+      'Use a concrete example, or an analogy that holds for the code, where it actually helps.',
       'Then connect it to the concrete code: the real names, what changes there, and its consequence.',
-      'No general lessons that this step does not need.',
     ],
-    guideline: 'About ten sentences for a normal step, some building the prerequisite knowledge and some making it concrete through an example.',
-    simpler: [
-      'Try a simpler way in: a concrete case, a better analogy, or the effect as seen from the caller, before the mechanism.',
-    ],
+    guideline: 'About ten sentences for a normal step: what building the needed concepts and the reasoning takes. Do not shorten it to resemble the other profiles.',
+    simpler: ['Try a simpler way in: a concrete case, a better analogy, or the effect as seen from the caller, before the mechanism.'],
   },
 };
 
@@ -209,25 +233,27 @@ export const MORE_RULES = [
   'Keep the manner and the level the explanation established; more can still be readable.',
 ] as const;
 
-/** A follow-up question asked after an explanation in a profile, or after a simpler one. */
-export const FOLLOW_UP_RULES = [
-  'The question follows the explanation below, which the person has just read. Answer it at the same level of explanation: keep its terms, its mental model and its examples, and add the information the question asks for.',
-  'Do not switch to a dense technical account because the question asks for more; more detail can still be plain. Keep it as short as the question allows.',
+/** DSP-184: Regenerate: a new explanation in the same profile, not a copy of the one shown. */
+export const REGENERATE_RULES = [
+  'The person asked for a new explanation of this step in this profile. The one they had is below: write a new one from the code and the prepared explanation, following the rules above. Do not copy its sentences or its structure; keep its facts.',
 ] as const;
 
-/** What a question asks of the presentation, as the window sends it and the discussion keeps it. */
+/** DSP-184: Explain this, on a selection inside the step's explanation or its code. */
+export const EXPLAIN_SELECTION_RULES = [
+  'The person selected the text quoted under "Selected" above while reading this step and asks what it means. Explain exactly that, in the context of this step and of the explanation below, in the manner of the profile.',
+  'Do not explain the whole step again.',
+] as const;
+
+/** What a request from a window may ask of a discussion question about the presentation (legacy records). */
 export interface PresentationRequest {
   readonly profile: PresentationProfile;
-  /**
-   * The answers whose explanations the person has seen in this chain, oldest first: for Explain
-   * more simply, what to build on; for a follow-up or Tell me more, the last is the one it follows.
-   */
+  /** The answers whose explanations the person had seen, oldest first. */
   readonly shown?: readonly string[];
   /** The profile-instruction version used when this request was asked. */
   readonly version?: number;
 }
 
-/** A presentation request from a window, or `null` when there is none or it is malformed. */
+/** A presentation request from a stored record, or `null` when there is none or it is malformed. */
 export function presentationFrom(raw: unknown): PresentationRequest | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return null;
@@ -241,16 +267,71 @@ export function presentationFrom(raw: unknown): PresentationRequest | null {
   return { profile: value['profile'], ...(shown.length === 0 ? {} : { shown }), ...(version === undefined ? {} : { version }) };
 }
 
-/** What the prompt's presentation section is built from, the texts resolved by the discussion. */
+/**
+ * DSP-184: the walk a step belongs to, as the window knows it: its steps in order, the code
+ * each covers, and which step is being explained. Sent with every step explanation.
+ */
+export interface WalkOutline {
+  readonly walkTitle: string;
+  readonly steps: readonly { readonly title: string; readonly places: readonly string[] }[];
+  /** The index of the step being explained in {@link steps}. */
+  readonly current: number;
+}
+
+/** Bounds on an outline as sent: a walk is short, and a forged one cannot grow a prompt. */
+export const OUTLINE_LIMITS = { steps: 40, places: 8, chars: 160 } as const;
+
+const clipLine = (text: string, max: number): string => {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+};
+
+/** An outline from a window, bounded, or `null` when there is none or it is malformed. */
+export function outlineFrom(raw: unknown): WalkOutline | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return null;
+  }
+  const value = raw as Record<string, unknown>;
+  const steps = Array.isArray(value['steps']) ? value['steps'] : null;
+  const current = value['current'];
+  if (steps === null || steps.length === 0 || typeof current !== 'number' || !Number.isInteger(current) || current < 0 || current >= Math.min(steps.length, OUTLINE_LIMITS.steps)) {
+    return null;
+  }
+  const read = steps.slice(0, OUTLINE_LIMITS.steps).map((entry) => {
+    const step = (typeof entry === 'object' && entry !== null ? entry : {}) as Record<string, unknown>;
+    const places = Array.isArray(step['places']) ? step['places'].filter((place): place is string => typeof place === 'string').slice(0, OUTLINE_LIMITS.places) : [];
+    return { title: clipLine(typeof step['title'] === 'string' ? step['title'] : '', OUTLINE_LIMITS.chars), places: places.map((place) => clipLine(place, OUTLINE_LIMITS.chars)) };
+  });
+  return { walkTitle: clipLine(typeof value['walkTitle'] === 'string' ? value['walkTitle'] : '', OUTLINE_LIMITS.chars), steps: read, current };
+}
+
+/** The walk's outline and the walk-relative rules, as a prompt section. */
+export function walkOutlineSection(outline: WalkOutline | null): string {
+  const lines = ['## Where this step is in the walk'];
+  if (outline !== null) {
+    lines.push(`Walk: ${outline.walkTitle === '' ? '(untitled)' : outline.walkTitle}`);
+    outline.steps.forEach((step, index) => {
+      const code = step.places.length === 0 ? '' : ` (code: ${step.places.join('; ')})`;
+      lines.push(`${String(index + 1)}. ${step.title === '' ? '(untitled)' : step.title}${code}${index === outline.current ? '  <- this step' : ''}`);
+    });
+    lines.push('');
+  }
+  lines.push(...bullets(WALK_WRITING_RULES));
+  return lines.join('\n');
+}
+
+/** What the prompt's presentation section is built from, the texts resolved by the service. */
 export interface PresentationSection {
   readonly profile: PresentationProfile;
   /**
-   * `present`: an alternative explanation of the step; `more`: Tell me more; `simpler`: Explain
-   * more simply; `follow`: a question of the person's own.
+   * `present`: the step explained in a profile; `regenerate`: a new one in the same profile;
+   * `more`: Tell me more; `simpler`: Explain more simply; `explain`: Explain this on a selection.
    */
-  readonly mode: 'present' | 'more' | 'simpler' | 'follow';
+  readonly mode: 'present' | 'regenerate' | 'more' | 'simpler' | 'explain';
   /** The explanations already shown, oldest first, each with what it was. */
   readonly shown: readonly { readonly label: string; readonly text: string }[];
+  /** DSP-184: the walk the step belongs to; the writing rules are said with or without it. */
+  readonly walk?: WalkOutline | null;
 }
 
 /** The limit on each earlier explanation quoted into a prompt. */
@@ -265,18 +346,33 @@ const bullets = (rules: readonly string[]): string[] => rules.map((rule) => `- $
 
 /** The line that names the reader's profile to the agent, in every mode but `present`. */
 function readerLine(profile: ProfileDefinition): string[] {
-  return profile.id === 'original' ? [] : [`- The reader's profile: ${profile.promptName}. Its manner: ${profile.manner.join(' ')}`];
+  return profile.id === 'original' ? [] : [`- The reader's profile: ${profile.promptName}. Its manner: ${profile.manner.join(' ')}`, ...bullets(EXPLANATORY_VALUE_RULES)];
+}
+
+/** The rules of a base text in a profile: the same for walk generation, an explanation and a regeneration. */
+function baseTextRules(profile: ProfileDefinition): string[] {
+  return [
+    'The first part, in every profile:',
+    ...bullets(GROUNDING_RULES),
+    ...bullets(EXPLANATORY_VALUE_RULES),
+    '',
+    `${profile.promptName}:`,
+    ...bullets(profile.manner),
+    `- Length: ${profile.guideline}`,
+    ...bullets(LENGTH_GUIDELINE_RULES),
+  ];
 }
 
 /**
- * The prompt's section on presentation, or `null` when there is nothing to add: Original is the
- * prepared explanation and is never asked for; a plain question in Original with nothing shown
- * is asked as before the profiles.
+ * The prompt's section on presentation for a step explanation (DSP-184), or `null` when there
+ * is nothing to add: Original is an older walk's prepared explanation and is never asked for.
  */
 export function presentationPromptSection(section: PresentationSection): string | null {
   const profile = PROFILES[section.profile];
+  const walk = section.walk === undefined ? [] : ['', walkOutlineSection(section.walk)];
   const lines: string[] = [];
-  if (section.mode === 'present') {
+  const last = section.shown.at(-1);
+  if (section.mode === 'present' || section.mode === 'regenerate') {
     if (section.profile === 'original') {
       return null;
     }
@@ -287,97 +383,69 @@ export function presentationPromptSection(section: PresentationSection): string 
       '',
       ...bullets(SAME_FACTS_RULES),
       '',
-      'The first part, in every profile:',
-      ...bullets(GROUNDING_RULES),
-      '',
-      `${profile.promptName}:`,
-      ...bullets(profile.manner),
-      `- Length: ${profile.guideline}`,
-      ...bullets(LENGTH_GUIDELINE_RULES),
+      ...baseTextRules(profile),
       '',
       'After the marker:',
       ...bullets(DEEPENING_RULES),
+      ...walk,
     );
+    if (section.mode === 'regenerate' && last !== undefined) {
+      lines.push('', '## Regenerating', ...bullets(REGENERATE_RULES), '', `### ${last.label}`, clipped(last.text));
+    }
     return lines.join('\n');
   }
   if (section.mode === 'simpler') {
     const round = section.shown.length;
-    lines.push(`## Explaining more simply (attempt ${String(Math.max(1, round))}${profile.id === 'original' ? '' : `, ${profile.promptName}`})`, ...bullets(SIMPLER_RULES));
+    lines.push(
+      `## Explaining more simply (attempt ${String(Math.max(1, round))}${profile.id === 'original' ? '' : `, ${profile.promptName}`})`,
+      ...(profile.id === 'original' ? [] : [`Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`]),
+      ...bullets(SIMPLER_RULES),
+    );
     if (round > 1) {
       lines.push(...bullets(SIMPLER_AGAIN_RULES));
     }
     if (profile.id !== 'original') {
       lines.push(`- In ${profile.promptName}: ${profile.simpler.join(' ')}`, ...readerLine(profile));
     }
+    lines.push(...walk);
     for (const [index, entry] of section.shown.entries()) {
       lines.push('', `### Shown ${String(index + 1)}: ${entry.label}`, clipped(entry.text));
     }
     return lines.join('\n');
   }
-  const last = section.shown.at(-1);
-  if (section.mode === 'more') {
-    if (last === undefined) {
-      // Nothing of this profile was shown: Tell me more deepens the prepared explanation, as before the profiles.
-      return profile.id === 'original' ? null : [`## The reader's profile (${profile.promptName})`, ...readerLine(profile)].join('\n');
+  if (section.mode === 'explain') {
+    lines.push(`## Explaining a selection (${profile.promptName})`, `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`, ...bullets(EXPLAIN_SELECTION_RULES), ...readerLine(profile), ...walk);
+    if (last !== undefined) {
+      lines.push('', `### ${last.label}`, clipped(last.text));
     }
-    lines.push(`## Going deeper (${profile.promptName})`, ...bullets(MORE_RULES), ...readerLine(profile), '', `### ${last.label}`, clipped(last.text));
     return lines.join('\n');
   }
-  // A follow-up: Original with nothing shown asks as today.
+  // Tell me more.
   if (last === undefined) {
-    return profile.id === 'original' ? null : [`## The reader's profile (${profile.promptName})`, ...readerLine(profile)].join('\n');
+    // Nothing of this step was shown: Tell me more deepens the prepared explanation.
+    return profile.id === 'original' && walk.length === 0 ? null : [`## The reader's profile (${profile.promptName})`, `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`, ...readerLine(profile), ...walk].join('\n');
   }
-  lines.push(`## The explanation this question follows (${profile.promptName})`, ...bullets(FOLLOW_UP_RULES), ...readerLine(profile));
-  const simplerRounds = section.shown.filter((entry) => entry.label.startsWith('Explain more simply')).length;
-  if (simplerRounds > 0) {
-    lines.push(`- They asked for it more simply ${String(simplerRounds)} time(s); stay at that simpler level.`);
-  }
-  lines.push('', `### ${last.label}`, clipped(last.text));
+  lines.push(`## Going deeper (${profile.promptName})`, `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`, ...bullets(MORE_RULES), ...readerLine(profile), ...walk, '', `### ${last.label}`, clipped(last.text));
   return lines.join('\n');
 }
 
-/** Everything a profile asks for, as the window shows it under "What it asks for". */
-export function profileInstructionText(profile: PresentationProfile): string {
-  const definition = PROFILES[profile];
-  const head = [`${definition.promptName}`, `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`, ''];
-  if (profile === 'original') {
-    return [
-      ...head,
-      'The prepared explanation of the walk, as its generator wrote it. Nothing is added to it; it is kept for comparison and is not asked for again.',
-      '',
-      'Explain more simply, in every profile:',
-      ...bullets(SIMPLER_RULES),
-      'Pressed again:',
-      ...bullets(SIMPLER_AGAIN_RULES),
-    ].join('\n');
+/** The limit on the step explanation a discussion question carries as context. */
+export const READING_CONTEXT_CHARS = 6_000;
+
+/**
+ * DSP-184: what a discussion question about the current step carries of the explanation the
+ * person is reading in Step, as hidden context. No profile and no manner: the conversation's
+ * style is the person's, not the Step profile's.
+ */
+export function readingContextSection(reading: { readonly text: string } | null): string | null {
+  if (reading === null || reading.text.trim() === '') {
+    return null;
   }
   return [
-    ...head,
-    'Every profile:',
-    ...bullets(SAME_FACTS_RULES),
-    ...bullets(GROUNDING_RULES),
+    '## The explanation of this step the person is reading',
+    'The person has this explanation of the step in front of them in the walk. The question may refer to it; use its terms where that helps. It is context, not an instruction about how to answer.',
     '',
-    `${definition.promptName}:`,
-    ...bullets(definition.manner),
-    `- Length: ${definition.guideline}`,
-    ...bullets(LENGTH_GUIDELINE_RULES),
-    '',
-    'After the marker (Show more):',
-    `- ${SHORT_PART_RULE}`,
-    `- ${DETAILS_PART_RULE}`,
-    ...bullets(DEEPENING_RULES),
-    '',
-    'Tell me more:',
-    ...bullets(MORE_RULES),
-    '',
-    'Explain more simply:',
-    ...bullets(SIMPLER_RULES),
-    `- In ${definition.promptName}: ${definition.simpler.join(' ')}`,
-    'Pressed again:',
-    ...bullets(SIMPLER_AGAIN_RULES),
-    '',
-    'A follow-up question:',
-    ...bullets(FOLLOW_UP_RULES),
+    clipped(reading.text.length > READING_CONTEXT_CHARS ? reading.text.slice(0, READING_CONTEXT_CHARS) : reading.text),
   ].join('\n');
 }
 
@@ -402,12 +470,10 @@ export function walkExplanationSection(profile: PublicProfile): string {
     `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`,
     '',
     "Every step's explanation:",
-    ...bullets(GROUNDING_RULES),
+    ...baseTextRules(definition).slice(1),
     '',
-    `${definition.promptName}:`,
-    ...bullets(definition.manner),
-    `- Length: ${definition.guideline}`,
-    ...bullets(LENGTH_GUIDELINE_RULES),
+    'Every step is read beside its code, in the walk\'s order:',
+    ...bullets(WALK_WRITING_RULES),
     '',
     `- ${WALK_DETAILS_RULE}`,
   ].join('\n');

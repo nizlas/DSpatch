@@ -211,7 +211,7 @@ export function AgentPicker({
       </label>
       {explanations !== undefined && (
         <label title={WORDS.en.profiles.description[explanations.profile]}>
-          {WORDS.en.profiles.label}
+          {WORDS.en.profiles.prepareLabel}
           <select data-ev={`${testId}-explanations`} value={explanations.profile} onChange={(event) => explanations.onChoose(isPublicProfile(event.target.value) ? event.target.value : explanations.profile)}>
             {PUBLIC_PROFILES.map((id) => (
               <option key={id} value={id} title={WORDS.en.profiles.description[id]}>
