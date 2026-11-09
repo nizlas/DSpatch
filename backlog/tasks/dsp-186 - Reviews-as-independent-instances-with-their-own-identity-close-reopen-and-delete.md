@@ -40,7 +40,7 @@ Decided behaviour (Niclas, 9 November 2026; replaces VISION 3.4's "Ongoing revie
 - [x] #2 Late job results for a deleted or other review are dropped and never recreate files
 - [x] #3 Existing pair records open as reviews without data loss, with a backup taken before the first change; tested on synthetic data
 - [x] #4 Material, base and generation settings recorded; stale settings shown; nothing reused silently
-- [ ] #5 Tests and a Linux window trial with isolated data pass, limits stated
+- [x] #5 Tests and a Linux window trial with isolated data pass, limits stated
 <!-- AC:END -->
 
 ## Implementation Notes
