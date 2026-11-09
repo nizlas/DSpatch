@@ -51,7 +51,7 @@ describe('the profiles (DSP-181)', () => {
     assert.equal(DEFAULT_PROFILE, 'standard');
     assert.ok(isProfile('original') && isProfile('standard') && !isProfile('essentials'));
     assert.ok(!isPublicProfile('original') && isPublicProfile('pedagog'));
-    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 5);
+    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 6);
   });
 
   it('are named and described in the window\'s language over stable ids; prompts use the English names', () => {
@@ -128,7 +128,7 @@ describe('one policy in the prompt (DSP-181)', () => {
     assert.match(essentials, /About two sentences for a normal step/);
     // Standard: also how and why the parts connect, for a developer new to this code; understanding, not words.
     assert.match(standard, /knows programming but not this code/);
-    assert.match(standard, /develop the connections: why the conditions exist, how the parts work together, and which consequences matter/);
+    assert.match(standard, /the consequences that matter, and develop the connections: why the conditions exist and how the parts work together/);
     assert.match(standard, /Not a line-by-line account/);
     assert.match(standard, /Do not teach general programming concepts/);
     assert.match(standard, /About four to six sentences/);
@@ -137,6 +137,20 @@ describe('one policy in the prompt (DSP-181)', () => {
     assert.match(teacher, /Explain the reasoning step by step/);
     assert.match(teacher, /example, or an analogy/);
     assert.match(teacher, /Do not shorten it to resemble the other profiles/);
+    // Mechanisms are covered at each profile's level, in one place: Essentials keeps its short form.
+    for (const section of [essentials, standard, teacher]) {
+      assert.match(section, /Essentials: its short part names the central mechanism and its consequence within its two sentences, and the explanation of the mechanisms goes after the marker/);
+      assert.ok(!/never nothing about one that matters/.test(section));
+    }
+    // Show more in each profile's own manner and depth; Essentials in plain sentences; Teacher's concurrency concepts.
+    assert.match(essentials, /- Show more in Essentials: the key mechanism, briefly/);
+    assert.match(standard, /- Show more in Standard: the connections and consequences developed further/);
+    assert.match(teacher, /- Show more in Teacher: the evidence in the code, the special cases, and the remaining concepts/);
+    assert.match(essentials, /two plain, natural sentences: not packed sentences held together with colons, and not lists of identifiers/);
+    assert.match(teacher, /setup and teardown included \(constructors, destructors and stop paths\)/);
+    assert.match(teacher, /undefined behaviour that can corrupt the structure, not merely a duplicate/);
+    assert.match(standard, /say what the work actually consists of/);
+    assert.match(essentials, /The code decides\. Where the prepared explanation says more than the code supports/);
     // Generic: no hard-coded example of a particular kind of project.
     assert.ok(!/build setting|build system/.test(teacher));
     for (const section of [essentials, standard, teacher]) {
@@ -224,7 +238,7 @@ describe('one policy in the prompt (DSP-181)', () => {
     const section = presentationPromptSection({ profile: 'standard', mode: 'present', shown: [], walk: outline }) ?? '';
     assert.match(section, /## Where this step is in the walk\nWalk: Greeting a visitor\n1\. Read the name \(code: src\/a\.ts 1–3 \(To\)\)\n2\. Build the greeting \(code: src\/b\.ts 4–9 \(To\)\)  <- this step/);
     assert.match(section, /"in the next step"/);
-    assert.match(section, /Do not explain in advance what a later step covers/);
+    assert.match(section, /do not explain that code here/);
     assert.equal(outlineFrom({ steps: [], current: 0 }), null);
     assert.equal(outlineFrom({ steps: [{ title: 'x' }], current: 3 }), null);
     assert.equal(outlineFrom({ steps: Array.from({ length: 100 }, () => ({ title: 'x'.repeat(500) })), current: 0 })?.steps.length, 40);

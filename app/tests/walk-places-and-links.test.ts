@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { STEP_REFERENCE_RULE, outlineFrom, walkOutlineOf, walkOutlineSection } from '../src/shared/presentation-profiles';
-import { resolveLineReference, resolveStepReference, type ReferenceScope } from '../src/shared/reference-links';
+import { changedPathsOf, resolveLineReference, resolveStepReference, type ReferenceScope } from '../src/shared/reference-links';
 import { PATH_RULES, PLACE_RULES, crowdedStepProblems, repeatedStepProblems, definitionFrom, distinctPlaceCount, readStepAnswer, readWalksAnswer, repairPrompt, walksPrompt } from '../src/shared/review-agent';
 import { stepReferencesFrom } from '../src/shared/review-discussion';
 import { parseReviewDefinition, stepContentHash, type ReviewDefinition } from '../src/shared/review-model';
@@ -172,9 +172,12 @@ describe('where a reference leads (DSP-185)', () => {
     });
     const narrow = resolveLineReference({ path: 'config.ts', side: 'target', start: 33, end: 33 }, scope());
     assert.equal(narrow.kind === 'step' ? narrow.stepId : null, 'W1.3');
-    // Not contained anywhere: the place it overlaps most.
-    const overlapping = resolveLineReference({ path: 'config.ts', side: 'target', start: 38, end: 45 }, scope());
+    // Not contained anywhere: the place it overlaps most, when that place holds most of its lines.
+    const overlapping = resolveLineReference({ path: 'config.ts', side: 'target', start: 38, end: 41 }, scope());
     assert.equal(overlapping.kind === 'step' ? overlapping.stepId : null, 'W1.2');
+    // Most of its lines outside every place: the diff at its lines, not a step it only grazes.
+    assert.deepEqual(resolveLineReference({ path: 'config.ts', side: 'target', start: 40, end: 48 }, scope()), { kind: 'diff', location: { path: 'config.ts', side: 'target', start: 40, end: 48 } });
+    assert.equal(resolveLineReference({ path: 'config.ts', side: 'target', start: 38, end: 43 }, scope()).kind, 'diff', 'half is not a majority');
     // The side matters: base lines lead to the step showing the base lines.
     const removed = resolveLineReference({ path: 'build.ts', side: 'base', start: 10, end: 10 }, scope('W1.4'));
     assert.ok(removed.kind === 'step' && removed.stepId === 'W1.4' && removed.here);
@@ -185,6 +188,13 @@ describe('where a reference leads (DSP-185)', () => {
     assert.deepEqual(resolveLineReference({ path: 'other.ts', side: 'base', start: 5, end: 5 }, scope()), { kind: 'diff', location: { path: 'other.ts', side: 'base', start: 5, end: 5 } });
     assert.deepEqual(resolveLineReference({ path: 'util.ts', side: 'target', start: 3, end: 4 }, scope()), { kind: 'unchanged', location: { path: 'util.ts', side: 'target', start: 3, end: 4 } });
     assert.equal(resolveLineReference({ path: '', side: 'target', start: 0, end: 0 }, scope()).kind, 'unresolved');
+  });
+
+  it('a base-side reference to a renamed file\'s old path is code in the diff, not unchanged code', () => {
+    const paths = changedPathsOf([{ path: 'new-name.ts' }], [{ oldPath: 'old-name.ts', newPath: 'new-name.ts' }, { oldPath: null, newPath: 'added.ts' }]);
+    assert.deepEqual([...paths].sort(), ['added.ts', 'new-name.ts', 'old-name.ts']);
+    const renamed = resolveLineReference({ path: 'old-name.ts', side: 'base', start: 2, end: 3 }, { walks: [], changedPaths: paths, currentStepId: null });
+    assert.equal(renamed.kind, 'diff');
   });
 
   it('an explicit step reference leads to that step; an id the walk does not have is shown as not found', () => {

@@ -48,6 +48,7 @@ import {
   type WalkStep,
 } from '../shared/review-model';
 import { stepContentHash } from '../shared/review-model';
+import { changedPathsOf } from '../shared/reference-links';
 import { PRESENTATION_INSTRUCTION_VERSION, PUBLIC_PROFILES, isPublicProfile, walkOutlineOf, type PresentationProfile, type PublicProfile, type WalkOutline } from '../shared/presentation-profiles';
 import {
   WALK_TEXT,
@@ -984,11 +985,11 @@ function OpenReview({
   );
   const referenceLinks: ReferenceLinks = useMemo(
     () => ({
-      scope: { walks: bundle.definition.walks, changedPaths: new Set(bundle.files.map((file) => file.path)), currentStepId: current?.step.id ?? null },
+      scope: { walks: bundle.definition.walks, changedPaths: changedPathsOf(bundle.files, pair?.files ?? []), currentStepId: current?.step.id ?? null },
       lang,
       goToStep: followStepLink,
     }),
-    [bundle, current?.step.id, lang, followStepLink],
+    [bundle, pair?.files, current?.step.id, lang, followStepLink],
   );
   const stepLinkBackHere = stepLinkBack !== null && current?.step.id === stepLinkBack.to && state.position.away === null ? stepLinkBack : null;
 

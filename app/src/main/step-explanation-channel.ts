@@ -154,6 +154,12 @@ export class StepExplanationChannel {
 
   private closed = false;
 
+  /**
+   * Set once `dispose` has recorded what it closed on. From then on nothing is written: a review
+   * deleted after its channel was disposed must not have its file recreated by a late end (DSP-186).
+   */
+  private sealed = false;
+
   private counter = 0;
 
   constructor(host: ExplanationChannelHost) {
@@ -204,7 +210,7 @@ export class StepExplanationChannel {
   }
 
   private save(): void {
-    if (this.readOnly !== null) {
+    if (this.readOnly !== null || this.sealed) {
       return;
     }
     const record: StepExplanationRecord = { version: STEP_EXPLANATIONS_FORMAT_VERSION, identity: this.host.identity, entries: this.entries, savedAt: nowIso() };
@@ -570,6 +576,10 @@ export class StepExplanationChannel {
       } else {
         try {
           const checked = await revisions.check({ ...block, answer: split.shown });
+          if (this.closed) {
+            // Closed (quit or deleted) while the references were checked: the entry was left unknown.
+            return;
+          }
           if ('error' in checked) {
             entry.references = [];
             entry.adjustments = [checked.error];
@@ -619,6 +629,7 @@ export class StepExplanationChannel {
     if (turn !== null) {
       this.settle(turn, 'unknown', 'DSpatch was closed while this explanation was on its way. Whether it finished is unknown.');
     }
+    this.sealed = true;
     const session = this.session;
     this.session = null;
     if (session !== null) {

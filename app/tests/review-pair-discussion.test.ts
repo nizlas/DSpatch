@@ -36,6 +36,7 @@ function pairsWith(jobs: readonly AgentJob[] = []): ReviewPairs {
     opened: (key: string) => (key === 'k' ? open : null),
     linesAt: (_key: string, side: string, filePath: string) => Promise.resolve(LINES[`${side}:${filePath}`] ?? null),
     storedRecord: () => ({ jobs }) as unknown as PairRecord,
+    legacyDeletedAt: () => null,
   } as unknown as ReviewPairs;
 }
 

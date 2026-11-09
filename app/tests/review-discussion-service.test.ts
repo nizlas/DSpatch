@@ -796,7 +796,7 @@ test('step explanations: no discussion entry and no discussion turn; their own s
     assert.ok(explainer !== undefined);
     const prompt = explainer.sent[0] ?? '';
     assert.match(prompt, /## How to present \(Essentials\)/);
-    assert.match(prompt, /Instruction version: 5/);
+    assert.match(prompt, /Instruction version: 6/);
     assert.match(prompt, /## Where this step is in the walk\nWalk: Greeting a visitor\n1\. Read the name \(code: src\/a\.ts 1–3 \(To\)\)  <- this step\n2\. Build the greeting/);
     assert.match(prompt, /do not write file names, paths or line numbers/);
     assert.ok(!fs.existsSync(discussionRecordPath(s.fixture.records, s.identity.key)), 'the discussion file is not even written');
@@ -818,7 +818,7 @@ test('step explanations: no discussion entry and no discussion turn; their own s
     assert.equal(entries.length, 1);
     assert.equal(entries[0]?.status, 'done');
     assert.equal(entries[0]?.trigger, 'auto');
-    assert.equal(entries[0]?.instructionVersion, 5);
+    assert.equal(entries[0]?.instructionVersion, 6);
     assert.equal(entries[0]?.prompt, prompt, 'the exact prompt is kept with the explanation');
     assert.ok(events.some((event) => event.kind === 'explanation' && event.entry.prompt === undefined), 'windows get no prompt');
     // The discussion holds only the person's question.
@@ -960,6 +960,84 @@ test('forgetting a deleted review closes its discussion and its step explanation
     await discussions.forget(s.identity.key);
     assert.ok(s.adapters.every((adapter) => adapter.disposed), 'every adapter of the review is closed');
     assert.notEqual(discussions.serviceFor(s.identity), service, 'a later window gets a new service');
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});
+
+// DSP-186 review: once a deleted review's discussion is let go, nothing it still had on its way writes its files again.
+test('an answer whose send returns after its review was deleted does not recreate the discussion file', async () => {
+  const s = await setup();
+  try {
+    const discussions = s.discussions();
+    const service = discussions.attach(1, s.identity, () => undefined, 'cursor');
+    s.sendMode = 'hold';
+    const held = service.send({ question: 'Held', subject: POINT, selection: null }, s.review);
+    await until(() => s.adapters[0]?.sent.length === 1, 'the held send');
+    const file = discussionRecordPath(s.fixture.records, s.identity.key);
+    assert.ok(fs.existsSync(file), 'the question was written before the send');
+    await discussions.forget(s.identity.key);
+    fs.rmSync(file, { force: true });
+    s.adapters[0]?.releaseSend();
+    await held;
+    s.adapters[0]?.delta('late');
+    s.adapters[0]?.finish();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(fs.existsSync(file), false, 'nothing was written after the review was deleted');
+  } finally {
+    fs.rmSync(s.fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a step explanation whose references are still being checked when its review is deleted does not recreate the explanations file', async () => {
+  const s = await setup();
+  try {
+    let resolveCheck: (value: { error: string }) => void = () => undefined;
+    let checking = false;
+    const analysis: ScriptedAdapter[] = [];
+    const policy = { mode: 'analysis-test' };
+    const discussions = new ReviewDiscussions({
+      recordsDir: s.fixture.records,
+      log: () => undefined,
+      createAdapter: () => new ScriptedAdapter(),
+      codeAccess: {
+        offered: () => true,
+        createAdapter: () => {
+          const adapter = new ScriptedAdapter('late-explanation');
+          (adapter as unknown as { permissionPolicy: () => unknown }).permissionPolicy = () => policy;
+          analysis.push(adapter);
+          return adapter;
+        },
+        policy,
+        policyLine: () => 'analysis',
+        hold: () =>
+          Promise.resolve({
+            folder: s.fixture.records,
+            section: '',
+            check: () => {
+              checking = true;
+              return new Promise<{ error: string }>((resolve) => {
+                resolveCheck = resolve;
+              });
+            },
+            release: () => undefined,
+          }),
+      },
+    });
+    const service = discussions.attach(1, s.identity, () => undefined, 'claude');
+    const slot = { walkId: 'W1', stepId: 'W1.1', basis: 'h1', profile: 'standard' } as const;
+    assert.equal((await service.send({ channel: 'explanation', ...slot, action: 'present', parent: null, trigger: 'person', language: 'en' }, s.review)).kind, 'sent');
+    const adapter = analysis[0];
+    assert.ok(adapter !== undefined);
+    adapter.delta('The step explained.');
+    adapter.finish();
+    await until(() => checking, 'the reference check to start');
+    await discussions.forget(s.identity.key);
+    const file = explanationsRecordPath(s.fixture.records, s.identity.key);
+    fs.rmSync(file, { force: true });
+    resolveCheck({ error: 'late' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(fs.existsSync(file), false, 'nothing was written after the review was deleted');
   } finally {
     fs.rmSync(s.fixture.root, { recursive: true, force: true });
   }

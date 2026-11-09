@@ -264,6 +264,9 @@ export function earlierDiscussion(
   pairs: ReviewPairs,
 ): readonly DiscussionMessage[] {
   const messages: DiscussionMessage[] = [];
+  // DSP-186 review: a legacy review of this pair was deleted. What was discussed before then is
+  // not gathered again into a later review of the pair; the files themselves are left as they are.
+  const deletedAt = pairs.legacyDeletedAt(identity.key);
   let names: string[] = [];
   try {
     // Discussions of reviews with ids are each their own review's, never gathered into another.
@@ -302,6 +305,9 @@ export function earlierDiscussion(
       continue;
     }
     for (const message of adopted.record.messages) {
+      if (deletedAt !== null && message.at <= deletedAt) {
+        continue;
+      }
       // A turn that had not ended there has no outcome known here.
       const status: DiscussionStatus = message.status === 'sending' || message.status === 'streaming' || message.status === 'sent' ? (message.role === 'question' ? 'sent' : 'unknown') : message.status;
       messages.push({ ...message, status });

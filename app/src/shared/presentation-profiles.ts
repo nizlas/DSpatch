@@ -45,7 +45,7 @@ export const DEFAULT_PROFILE: PublicProfile = 'standard';
 /** The prepared explanation of an older walk, as the walk generator wrote it. */
 export const LEGACY_PROFILE: PresentationProfile = 'original';
 /** Raised when profile instructions change in meaning; stored with every step explanation and walk. */
-export const PRESENTATION_INSTRUCTION_VERSION = 5;
+export const PRESENTATION_INSTRUCTION_VERSION = 6;
 
 /** The English names, as prompts say them; the window shows the names of its own language. */
 export const PROFILE_PROMPT_NAMES: Readonly<Record<PresentationProfile, string>> = {
@@ -84,7 +84,7 @@ export const DETAILS_MARKER = '<!-- dspatch:details -->';
 
 /** The one wording of what the short part is, for every answer in the review. */
 export const SHORT_PART_RULE =
-  'Answer first, in a short part that stands on its own: enough to understand the point without reading further. Any uncertainty that changes the answer belongs in this part.';
+  'Answer first, in a short part that stands on its own: enough to understand the point without reading further. An uncertainty or risk that changes the answer is said in this part, briefly; its evidence and explanation can go after the marker.';
 
 /** The one wording of what goes after the marker, for every answer in the review. */
 export const DETAILS_PART_RULE =
@@ -98,7 +98,8 @@ export const DETAILS_PART_RULE =
  * profile chooses what to say of them and how, never which they are.
  */
 export const SAME_FACTS_RULES = [
-  'This changes how the step is presented, not what is said about the code. Keep every fact, risk, uncertainty, finding and recommendation the prepared explanation and the code support; add none the code does not support, and do not change what is reviewed or approved.',
+  'This changes how the step is presented, not what is said about the code. Keep every fact, risk, uncertainty, finding and recommendation the code supports; add none the code does not support, and do not change what is reviewed or approved.',
+  'The code decides. Where the prepared explanation says more than the code supports (for example that a call wakes a worker when the code only sends a notification that may be lost), follow the code and say so briefly; that correction is part of presenting the step, not a new review.',
   'Read the code again when you need to; do not present what you have not read.',
 ] as const;
 
@@ -133,7 +134,8 @@ export const EXPLANATORY_VALUE_RULES = [
  * every generation path: walk generation, present, regenerate, more, simpler and explain.
  */
 export const MECHANISM_RULES = [
-  'Code is not explained because it is in the step or because its function is named. Explain every central mechanism the step shows at this profile\'s level: what state it touches and what protects it, who owns what and for how long, what is handed on and how the receiver learns of it, and what has actually happened when the code returns as opposed to what has only been requested or reused. A shorter profile says less about each, never nothing about one that matters.',
+  'Code is not explained because it is in the step or because its function is named. Cover every central mechanism the step shows: what state it touches and what protects it, who owns what and for how long, what is handed on and how the receiver learns of it, and what has actually happened when the code returns as opposed to what has only been requested or reused. Where the code makes "the work" trivial, or different from what its names suggest, say what the work actually consists of.',
+  'Cover them at this profile\'s level. Essentials: its short part names the central mechanism and its consequence within its two sentences, and the explanation of the mechanisms goes after the marker. Standard: explain how the mechanisms connect and what follows from that. Teacher: build the concepts each mechanism rests on, then apply them to this code. A mechanism that matters is never left out of the explanation as a whole; a shorter profile says less about it in its short part, not less truly.',
   'Before you write, read what the explanation depends on at the review\'s revision where you can read the code: the types involved, the callers, the other code that reads or writes the same state, and the code that waits for or carries out what this code requests. Do not infer the architecture from names.',
   'When relevant code really is not available to you, still explain the general concepts the reader needs, and say plainly what cannot be established about this implementation. Missing code is neither a reason to invent a connection nor a reason to leave a concept out.',
 ] as const;
@@ -150,6 +152,7 @@ export const LENGTH_GUIDELINE_RULES = [
 export const DEEPENING_RULES = [
   'After the marker line: the deepening only, in the same manner as the first part, readable even when long: short paragraphs, lists where they help, small code excerpts where they carry the point.',
   'Name the code you rest on with references, as for any answer, so the person can open it.',
+  'Write it in this profile\'s own manner and depth, as its Show more line says: it is not the same list of details whatever the profile.',
 ] as const;
 
 /**
@@ -159,7 +162,7 @@ export const DEEPENING_RULES = [
 export const WALK_WRITING_RULES = [
   'The walk shows the code of each step beside its explanation. In the prose, do not write file names, paths or line numbers for code the walk shows; name the functions, types, variables and settings instead. The references block, when one is asked for, still names files and lines.',
   'Write relative to the walk: say "here" for the code of this step, and "in the next step", "in a later step" or "as we saw earlier" only where the walk\'s order makes it true.',
-  'Explain this step. Do not explain in advance what a later step covers; at most say that a later step shows it.',
+  'Explain this step. When its correctness depends on code a later step shows, read that code and state the dependency or risk here in a sentence, saying that a later step shows how it works; do not explain that code here.',
 ] as const;
 
 /**
@@ -180,6 +183,8 @@ export interface ProfileDefinition {
   readonly guideline: string;
   /** How this profile explains more simply. */
   readonly simpler: readonly string[];
+  /** What this profile's Show more (the part after the marker) adds, in its own manner and depth. */
+  readonly details: string;
 }
 
 export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> = {
@@ -189,6 +194,7 @@ export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> 
     manner: [],
     guideline: '',
     simpler: [],
+    details: '',
   },
   essens: {
     id: 'essens',
@@ -198,34 +204,40 @@ export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> 
       'Include the conditions that are decisive, summarised so they are understood rather than listed.',
       'Name concrete identifiers only where they help the reader connect the explanation to the code.',
       'Leave out mechanical details (indexes, loop bounds, every single call) unless they are decisive; any further detail that is needed goes after the marker.',
+      'Of the uncertainties and risks, keep in the short part only the one that decides how the code must be judged, in a clause; the others go after the marker. State that risk precisely, what goes wrong and when, without overstating it; its details go after the marker.',
+      'The short part is two plain, natural sentences: not packed sentences held together with colons, and not lists of identifiers. Name at most one or two identifiers, and only where they help the reader find the code.',
     ],
     guideline: 'About two sentences for a normal step.',
     simpler: ['Plainer language and less jargon: the same point, said more directly.'],
+    details: 'the key mechanism, briefly: how it works and why it matters here, not a full account.',
   },
   standard: {
     id: 'standard',
     promptName: 'Standard',
     manner: [
-      'Write for a developer who knows programming but not this code. Say what the code is for and its most important consequence, and develop the connections: why the conditions exist, how the parts work together, and which consequences matter.',
+      'Write for a developer who knows programming but not this code. Say what the code is for and the consequences that matter, and develop the connections: why the conditions exist and how the parts work together.',
       'Not a line-by-line account. Go into detail only where the code is hard to read, the behaviour is surprising or a consequence is easy to miss, and then make exactly that clear.',
       'Place a project-specific name briefly the first time it matters. Do not teach general programming concepts.',
     ],
     guideline: 'About four to six sentences for a normal step.',
     simpler: ['Break the difficult connection into its parts and explain the concepts that are needed to follow it, one at a time.'],
+    details: 'the connections and consequences developed further: how the mechanisms interact, the special cases that change the outcome, and what follows for the code that depends on this.',
   },
   pedagog: {
     id: 'pedagog',
     promptName: 'Teacher',
     manner: [
       'Build the concepts the reader needs for this step first: the tool, pattern or idea that would otherwise make the step hard to follow, briefly and only those this step needs.',
-      'Find those concepts by what a reviewer must understand to judge this code, asking of it: which shared state it touches, which other paths or threads touch the same state, and what protects it and for how long; which operations must happen together and why; who owns each object, how long it lives, and what that ownership does and does not guarantee (shared ownership keeps an object alive; it does not make its contents safe to use concurrently); where a request or data is handed to another part, how that part learns of it and what it does then; and what is true when the code returns — an object reused, a request made, or the work actually done.',
+      'Find those concepts by what a reviewer must understand to judge this code, asking of it: which shared state it touches, every other path or thread that takes the same lock or touches the same state, setup and teardown included (constructors, destructors and stop paths), and what protects it and for how long, teaching a scoped lock\'s extent, what it covers until it is released, where that matters for judging the code; which operations must happen together and why; who owns each object, how long it lives, and what that ownership does and does not guarantee (shared ownership keeps an object alive; it does not make its contents safe to use concurrently); where a request or data is handed to another part, how that part learns of it and what it does then; and what is true when the code returns — an object reused, a request made, or the work actually done.',
+      'Describe a concurrency fault precisely: unsynchronised concurrent access to a container or other shared structure, where one side writes, is a data race, undefined behaviour that can corrupt the structure, not merely a duplicate or a stale value.',
       'Explain those concepts as they apply here, in connected reasoning about purpose and interplay: not a line-by-line paraphrase, and not a general lesson on the language.',
       'Explain the reasoning step by step: why the code is shaped this way and what would go wrong otherwise.',
       'Use a concrete example, or an analogy that holds for the code, where it actually helps.',
       'Then connect it to the concrete code: the real names, what changes there, and its consequence.',
     ],
-    guideline: 'About ten sentences for a normal step: what building the needed concepts and the reasoning takes. A step with several interacting mechanisms takes the room understanding them needs. Do not shorten it to resemble the other profiles.',
+    guideline: 'No fixed length: often around ten sentences for a simple step, and as much as building the needed concepts and the reasoning takes when several mechanisms interact. The short part may be as long as understanding the step needs; longer evidence, special cases and further references go after the marker. Do not shorten it to resemble the other profiles.',
     simpler: ['Try a simpler way in: a concrete case, a better analogy, or the effect as seen from the caller, before the mechanism.'],
+    details: 'the evidence in the code, the special cases, and the remaining concepts the short part did not need to build.',
   },
 };
 
@@ -444,6 +456,7 @@ function baseTextRules(profile: ProfileDefinition): string[] {
     ...bullets(profile.manner),
     `- Length: ${profile.guideline}`,
     ...bullets(LENGTH_GUIDELINE_RULES),
+    ...(profile.details === '' ? [] : [`- Show more in ${profile.promptName}: ${profile.details}`]),
   ];
 }
 

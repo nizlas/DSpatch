@@ -1331,6 +1331,26 @@ export function uncoveredBy(walks: ProposedWalks, files: readonly PairFile[]): r
   return rangesOf(missing);
 }
 
+/**
+ * DSP-185 review: what a set of walks keeps once its invalid places are left out: the valid
+ * places in the reviewed revisions, and the changed lines they leave uncovered.
+ */
+export function walkYield(walks: ProposedWalks, invalid: ReadonlyMap<string, string>, files: readonly PairFile[]): { readonly places: number; readonly uncoveredLines: number } {
+  const kept = withoutInvalidPlaces(walks, invalid);
+  const places = kept.walks.reduce((total, walk) => total + walk.steps.reduce((sum, step) => sum + step.places.length, 0), 0);
+  const uncoveredLines = uncoveredBy(kept, files).reduce((total, range) => total + range.end - range.start + 1, 0);
+  return { places, uncoveredLines };
+}
+
+/**
+ * DSP-185 review: the one repair round replaces a readable first answer only when it loses
+ * nothing: no valid place and no covered changed line. Otherwise the first answer is kept, and
+ * what it was asked to correct stays said. A tie goes to the repaired answer.
+ */
+export function repairedIsKept(first: { readonly places: number; readonly uncoveredLines: number }, repaired: { readonly places: number; readonly uncoveredLines: number }): boolean {
+  return repaired.places >= first.places && repaired.uncoveredLines <= first.uncoveredLines;
+}
+
 const lang2 = (value: string): { sv: string; en: string } => ({ sv: value, en: value });
 
 /** One point worth checking as the definition format (`dspatch-review/2`) has it. */

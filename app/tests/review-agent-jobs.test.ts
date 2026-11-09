@@ -20,7 +20,7 @@ import { RevisionSnapshots } from '../src/host/revision-snapshots';
 import { PresentationAdapter } from '../src/main/presentation-adapter';
 import { checksFileOf, parseReviewDefinition, stepsWalks } from '../src/shared/review-model';
 import { walkExplanationSection } from '../src/shared/presentation-profiles';
-import { answerJson, definitionFrom, readChecksAnswer, readReviewAnswer, readWalksAnswer, walksPrompt, withoutInvalidPlaces } from '../src/shared/review-agent';
+import { answerJson, definitionFrom, readChecksAnswer, readReviewAnswer, readWalksAnswer, repairedIsKept, walksPrompt, withoutInvalidPlaces } from '../src/shared/review-agent';
 import { fileProgressOf, isPairError, lineStatusesOf, lineKey, type AgentJob, type OpenPair, type PairRecord } from '../src/shared/review-pair';
 import { makePairFixture, PAIR_WORKING_TREE_ONLY, type PairFixture } from './support/pair-fixture';
 
@@ -223,6 +223,34 @@ describe('preparing code walks', () => {
     assert.deepEqual(job.uncovered, fixed.uncovered);
     const provenance = (JSON.parse(fs.readFileSync(job.definitionPath, 'utf8')) as { provenance: { en: string } }).provenance.en;
     assert.match(provenance, /kept as written, so no place or covered line was lost/);
+  });
+
+  it('keeps the first answer when the repaired one would lose places or covered lines, says so, and asks no more', async () => {
+    process.env['DSPATCH_REVIEW_SIM'] = 'crowded';
+    sent = [];
+    const crowded = await settled(open.key, (jobs().start(open.key, { kind: 'walks', provider: 'cursor', model: 'sim-model' }) as AgentJob).id);
+    process.env['DSPATCH_REVIEW_SIM'] = 'crowded-worse';
+    sent = [];
+    const started = jobs().start(open.key, { kind: 'walks', provider: 'cursor', model: 'sim-model' });
+    assert.ok(!isPairError(started));
+    const job = await settled(open.key, started.id);
+    delete process.env['DSPATCH_REVIEW_SIM'];
+    assert.equal(job.state, 'done', job.note);
+    assert.equal(sent.length, 2, 'one repair round, never a second');
+    assert.ok(job.definitionPath !== null && crowded.definitionPath !== null);
+    // The first (crowded) answer was kept: the same places and coverage as one kept crowded.
+    assert.deepEqual(coveredLines(job.definitionPath), coveredLines(crowded.definitionPath));
+    assert.deepEqual(job.uncovered, crowded.uncovered);
+    const provenance = (JSON.parse(fs.readFileSync(job.definitionPath, 'utf8')) as { provenance: { en: string } }).provenance.en;
+    assert.match(provenance, /its correction kept fewer valid places or covered fewer changed lines, so its first answer is kept as written/);
+    assert.match(provenance, /kept as written, so no place or covered line was lost/);
+  });
+
+  it('a repaired answer replaces the first only when it loses no valid place and no covered line', () => {
+    assert.equal(repairedIsKept({ places: 4, uncoveredLines: 0 }, { places: 4, uncoveredLines: 0 }), true, 'a tie goes to the repair');
+    assert.equal(repairedIsKept({ places: 4, uncoveredLines: 2 }, { places: 5, uncoveredLines: 0 }), true);
+    assert.equal(repairedIsKept({ places: 4, uncoveredLines: 0 }, { places: 3, uncoveredLines: 0 }), false, 'a lost place');
+    assert.equal(repairedIsKept({ places: 4, uncoveredLines: 0 }, { places: 6, uncoveredLines: 1 }), false, 'a lost line');
   });
 
   it('refuses a second preparation while one runs', () => {

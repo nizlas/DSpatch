@@ -415,6 +415,29 @@ describe('reviews recorded before ids', () => {
     assert.equal(joined.key, key);
   });
 
+  it('a deleted earlier review does not gather its pair\'s earlier walk discussions again, also after a restart, and they are left as they were', async () => {
+    const reviews = reviewsDir('legacy-deleted');
+    const { key } = legacyRecord(reviews);
+    // A discussion kept over a walk of this pair before review ids: only inferred to be the review's.
+    const walkIdentity: DiscussionIdentity = { key: 'walkkey', ...appPair(), definitionPath: fixture.walkDefinition };
+    const walkFile = path.join(reviews, 'walkkey.discussion.json');
+    const before = JSON.stringify({ ...emptyDiscussionRecord(walkIdentity), messages: [{ id: 'q-0001-x', role: 'question', text: 'Earlier?', at: '2026-10-30T10:00:00.000Z', subject: 'W1.1', status: 'sent' }] });
+    fs.writeFileSync(walkFile, before);
+    const pairIdentity: DiscussionIdentity = { key, ...appPair(), definitionPath: '' };
+    const pairs = await pairsIn(reviews);
+    assert.equal(earlierDiscussion(reviews, pairIdentity, () => true, pairs).length, 1, 'before deleting, the earlier review gathers it');
+    assert.ok(!isPairError(pairs.remove(key)));
+    assert.ok(!reviewArtefacts(reviews, key).files.includes(walkFile), 'a file only inferred to be its own is not deleted');
+    // Restarted; a walk from a file of the same pair opens a new review under the pair key.
+    const restarted = await pairsIn(reviews);
+    assert.ok(restarted.legacyDeletedAt(key) !== null, 'the deletion is remembered');
+    const joined = await restarted.openForWalk(appPair(), fixture.walkDefinition);
+    assert.ok(!isPairError(joined), JSON.stringify(joined));
+    assert.equal(joined.key, key);
+    assert.deepEqual(earlierDiscussion(reviews, pairIdentity, () => true, restarted), [], 'nothing from before the deletion is gathered again');
+    assert.equal(fs.readFileSync(walkFile, 'utf8'), before, 'the earlier discussion is left as it was');
+  });
+
   it('moves a record that cannot be read aside instead of writing over it', async () => {
     const reviews = reviewsDir('corrupt');
     const pairs = await pairsIn(reviews);

@@ -628,9 +628,10 @@ function prepareWalks(prompt: string, reader: Reader): string {
   lastWalks = answer;
   // DSP-185: DSPATCH_REVIEW_SIM=crowded puts two places that each need their own explanation in
   // one step with no reason, and answers the repair round the same way; crowded-once corrects it
-  // in the repair round.
+  // in the repair round; crowded-worse splits it in the repair round but drops a step, losing
+  // places and covered lines, so the first answer is to be kept.
   const crowdedMode = process.env['DSPATCH_REVIEW_SIM'];
-  if (crowdedMode === 'crowded' || crowdedMode === 'crowded-once') {
+  if (crowdedMode === 'crowded' || crowdedMode === 'crowded-once' || crowdedMode === 'crowded-worse') {
     const crowded = JSON.parse(JSON.stringify(answer)) as { walks: { steps: { title: string; body: string; places: { path?: string }[] }[] }[] };
     const at = crowded.walks.flatMap((walk, walkIndex) => walk.steps.map((step, stepIndex) => ({ walkIndex, stepIndex, path: step.places[0]?.path ?? '' })));
     const first = at[0];
@@ -646,6 +647,12 @@ function prepareWalks(prompt: string, reader: Reader): string {
     }
     if (crowdedMode === 'crowded') {
       lastWalks = crowded;
+    }
+    if (crowdedMode === 'crowded-worse') {
+      const worse = JSON.parse(JSON.stringify(answer)) as { walks: { steps: unknown[] }[] };
+      worse.walks.at(-1)?.steps.pop();
+      worse.walks = worse.walks.filter((walk) => walk.steps.length > 0);
+      lastWalks = worse;
     }
     return fence(crowded);
   }

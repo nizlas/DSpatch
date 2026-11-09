@@ -46,6 +46,7 @@ import {
   crowdedStepProblems,
   definitionFrom,
   repeatedStepProblems,
+  repairedIsKept,
   discussionFolderSection,
   followUpWords,
   linesAround,
@@ -61,6 +62,7 @@ import {
   stepQuestionPrompt,
   uncoveredBy,
   walkPlaceProblems,
+  walkYield,
   walksPrompt,
   withCheckedChecks,
   withCheckedContext,
@@ -1168,6 +1170,7 @@ export class ReviewAgentJobs {
     const read = this.reader(live);
     this.setActivity(live, 'Checking every place against the commits');
     let parsed = readWalksAnswer(answerJson(first.text));
+    let repairNote: string | null = null;
     let invalid = parsed.walks === null ? new Map<string, string>() : await walkPlaceProblems(parsed.walks, read, live.context);
     // DSP-185: a step with several places and no reason why they belong together goes into the same round.
     const crowded = parsed.walks === null ? new Map<string, string>() : new Map([...crowdedStepProblems(parsed.walks), ...[...repeatedStepProblems(parsed.walks)].map(([at, problem]) => [`r${at}`, problem] as const)]);
@@ -1180,8 +1183,16 @@ export class ReviewAgentJobs {
       }
       const again = readWalksAnswer(answerJson(second.text));
       if (again.walks !== null) {
-        parsed = again;
-        invalid = await walkPlaceProblems(again.walks, read, live.context);
+        const againInvalid = await walkPlaceProblems(again.walks, read, live.context);
+        // DSP-185 review: a readable first answer is replaced only by a correction that loses no valid place and no covered line.
+        const files = this.options.pairs.opened(live.key)?.files ?? [];
+        if (parsed.walks === null || repairedIsKept(walkYield(parsed.walks, invalid, files), walkYield(again.walks, againInvalid, files))) {
+          parsed = again;
+          invalid = againInvalid;
+        } else {
+          repairNote = 'The agent was asked once to correct its walks; its correction kept fewer valid places or covered fewer changed lines, so its first answer is kept as written.';
+          this.options.log(`review agent ${live.jobId}: the repaired walks lost places or coverage; the first answer is kept`);
+        }
       }
     }
     if (parsed.walks === null) {
@@ -1216,6 +1227,7 @@ export class ReviewAgentJobs {
       (invalid.size + checked.left > 0 ? ` ${String(invalid.size + checked.left)} place(s) that did not exist at their commit were left out.` : '') +
       (stillCrowded > 0 ? ` ${crowdedNote(stillCrowded)}` : '') +
       (stillRepeated > 0 ? ` ${repeatedNote(stillRepeated)}` : '') +
+      (repairNote === null ? '' : ` ${repairNote}`) +
       (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) of the commits could not be given to the agent to read.` : '');
     if (!this.accepts(live)) {
       // DSP-186: the review was deleted, or the job is no longer its; the answer is dropped unwritten.

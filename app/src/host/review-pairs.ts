@@ -203,6 +203,57 @@ export function reviewOfDefinition(reviewsDir: string, definitionPath: unknown):
   return null;
 }
 
+/** Where the reviews recorded before review ids that were deleted are listed (DSP-186). */
+export function deletedLegacyPath(reviewsDir: string): string {
+  return path.join(reviewsDir, 'deleted-legacy-reviews.json');
+}
+
+/**
+ * The reviews recorded before review ids that were deleted, with when (DSP-186 review). A
+ * legacy review's per-walk discussions from before review ids are only inferred to be its own,
+ * so they are not deleted with it; this record keeps them from being gathered into a later
+ * review of the same pair, across restarts. Unreadable: treated as empty, never overwritten
+ * by {@link recordLegacyDeletion} (which then refuses).
+ */
+export function deletedLegacyReviews(reviewsDir: string): ReadonlyMap<string, string> {
+  const result = new Map<string, string>();
+  try {
+    const raw = JSON.parse(fs.readFileSync(deletedLegacyPath(reviewsDir), 'utf8')) as { deleted?: unknown };
+    for (const entry of Array.isArray(raw.deleted) ? raw.deleted : []) {
+      const value = entry as { id?: unknown; deletedAt?: unknown };
+      if (typeof value.id === 'string' && isLegacyReviewId(value.id) && typeof value.deletedAt === 'string') {
+        result.set(value.id, value.deletedAt);
+      }
+    }
+  } catch {
+    // None recorded.
+  }
+  return result;
+}
+
+/** Record that a review recorded before review ids was deleted, at `at`. `null` when saved, else why not. */
+export function recordLegacyDeletion(reviewsDir: string, id: string, at: string): string | null {
+  const file = deletedLegacyPath(reviewsDir);
+  if (fs.existsSync(file)) {
+    try {
+      JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      return `${file} could not be read, so it was not written over.`;
+    }
+  }
+  const entries = new Map(deletedLegacyReviews(reviewsDir));
+  entries.set(id, at);
+  try {
+    fs.mkdirSync(reviewsDir, { recursive: true });
+    const temporary = `${file}.tmp`;
+    fs.writeFileSync(temporary, `${JSON.stringify({ version: 1, deleted: [...entries].map(([entry, deletedAt]) => ({ id: entry, deletedAt })) }, null, 2)}\n`, 'utf8');
+    fs.renameSync(temporary, file);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
 /**
  * Every file and folder that is one review's own (DSP-186), for deleting it: its walks and
  * their points, the definition carrying its discussion, the discussion, its step
@@ -735,6 +786,13 @@ export class ReviewPairs {
     if (backup !== null) {
       return backup;
     }
+    if (isLegacyReviewId(raw)) {
+      // Its earlier per-walk discussions are only inferred to be its own: kept, but never gathered again.
+      const unsaved = recordLegacyDeletion(this.reviewsDir(), raw, new Date().toISOString());
+      if (unsaved !== null) {
+        return { error: `The review was not deleted: that it was could not be recorded (${unsaved}).` };
+      }
+    }
     this.deleted.add(raw);
     this.open.delete(raw);
     try {
@@ -743,6 +801,11 @@ export class ReviewPairs {
       return { error: `The review record could not be deleted: ${error instanceof Error ? error.message : String(error)}` };
     }
     return { deleted: true };
+  }
+
+  /** When a review recorded before review ids was deleted, or `null`: kept across restarts. */
+  legacyDeletedAt(key: string): string | null {
+    return isLegacyReviewId(key) ? (deletedLegacyReviews(this.reviewsDir()).get(key) ?? null) : null;
   }
 
   /** Whether a review may still be written: not deleted, and open in this host. */

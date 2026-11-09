@@ -35,10 +35,29 @@ export type ReferenceTarget =
 export interface ReferenceScope {
   /** The walks of the open review, in order; points' own tours are not part of it. */
   readonly walks: readonly Walk[];
-  /** The paths the review's diff changes (at To; a removed file by its From path). */
+  /** The paths the review's diff changes: at To, and at From for a removed or renamed file ({@link changedPathsOf}). */
   readonly changedPaths: ReadonlySet<string>;
   /** The step being read, if any: a reference to it says "here". */
   readonly currentStepId: string | null;
+}
+
+/**
+ * Every path the diff changes, on either side: a file's path, and a renamed file's From path
+ * too, so a base-side reference to a renamed file's old path is code in the diff, not unchanged.
+ */
+export function changedPathsOf(
+  files: readonly { readonly path: string }[],
+  pairFiles: readonly { readonly oldPath: string | null; readonly newPath: string | null }[] = [],
+): ReadonlySet<string> {
+  const paths = new Set(files.map((file) => file.path));
+  for (const file of pairFiles) {
+    for (const entry of [file.oldPath, file.newPath]) {
+      if (entry !== null && entry !== '') {
+        paths.add(entry);
+      }
+    }
+  }
+  return paths;
 }
 
 function overlap(a: { readonly start: number; readonly end: number }, b: { readonly start: number; readonly end: number }): number {
@@ -47,8 +66,10 @@ function overlap(a: { readonly start: number; readonly end: number }, b: { reado
 
 /**
  * A checked line reference: the walk step whose place's focus contains it (the narrowest such
- * place, the step being read first among equals, then walk order); else the place it overlaps
- * most; else the file in the diff or the unchanged file. Same path and side only.
+ * place, the step being read first among equals, then walk order); else the place sharing the
+ * most of its lines, provided the place holds more than half of them; else the file in the diff
+ * or the unchanged file, the lines marked. Same path and side only. A reference that only grazes
+ * a place (most of its lines outside) does not lead to that step (DSP-185 review).
  */
 export function resolveLineReference(range: { readonly path: string; readonly side: RevisionSide; readonly start: number; readonly end: number }, scope: ReferenceScope): ReferenceTarget {
   if (range.path === '' || !Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 1 || range.end < range.start) {
@@ -80,6 +101,9 @@ export function resolveLineReference(range: { readonly path: string; readonly si
           return;
         }
         const contains = focus.start <= range.start && focus.end >= range.end;
+        if (!contains && shared * 2 <= range.end - range.start + 1) {
+          return;
+        }
         candidates.push({ walk, stepIndex, placeIndex, contains, measure: contains ? focus.end - focus.start + 1 : shared, here: step.id === scope.currentStepId, order });
       });
     });

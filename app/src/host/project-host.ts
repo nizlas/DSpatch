@@ -3966,21 +3966,11 @@ function pairDiscussionIdentity(identity: DiscussionIdentity): DiscussionIdentit
  * go before its files are removed, so nothing of it is saved again.
  */
 async function forgetDiscussion(key: string): Promise<void> {
-  // ReviewDiscussions has no way to let one discussion go yet (DSP-184 owns that file); until
-  // it does, its services are reached as they are kept.
-  const discussions = requireReviewDiscussions() as unknown as {
-    readonly forget?: (key: string) => Promise<void>;
-    readonly services?: Map<string, { dispose(): Promise<void> }>;
-  };
-  if (typeof discussions.forget === 'function') {
-    await discussions.forget(key);
-    return;
-  }
-  const service = discussions.services?.get(key);
-  if (service !== undefined) {
-    discussions.services?.delete(key);
-    await service.dispose().catch(() => undefined);
-  }
+  await requireReviewDiscussions()
+    .forget(key)
+    .catch((error: unknown) => {
+      log(`[review] the discussion of ${key} did not close cleanly (${error instanceof Error ? error.message : String(error)})`);
+    });
 }
 
 /** Where a window's question gets its context: a walk's review, or the diff's revision pair. */

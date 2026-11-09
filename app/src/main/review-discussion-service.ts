@@ -333,6 +333,12 @@ export class ReviewDiscussionService {
 
   private closedForQuit = false;
 
+  /**
+   * Set once `dispose` has recorded what it closed on. From then on nothing is written, so an
+   * answer ending after its review was deleted cannot recreate the discussion file (DSP-186).
+   */
+  private sealed = false;
+
   private messageCounter = 0;
 
   /** Sessions started, so each holds the revisions under a name of its own. */
@@ -433,6 +439,9 @@ export class ReviewDiscussionService {
   private save(): { saved: boolean; error?: string } {
     if (this.readOnly !== null) {
       return { saved: false, error: this.readOnly };
+    }
+    if (this.sealed) {
+      return { saved: false, error: 'This discussion was closed; nothing more is written for it.' };
     }
     try {
       const file = this.recordPath();
@@ -1402,6 +1411,7 @@ export class ReviewDiscussionService {
       this.turn = null;
       this.save();
     }
+    this.sealed = true;
     const session = this.session;
     this.session = null;
     if (session !== null) {
