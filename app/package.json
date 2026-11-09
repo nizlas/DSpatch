@@ -1,7 +1,7 @@
 {
   "name": "dspatch",
   "productName": "DSpatch",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "description": "DSpatch – a workspace for agent-assisted development.",
   "homepage": "https://github.com/nizlas/DSpatch",

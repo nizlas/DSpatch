@@ -2,6 +2,9 @@
 # version tags publish the matching packages and checksums as a GitHub release.
 # DSP-182: the Windows installer is built on a Windows runner, on manual runs and on tags alike,
 # and published with the .deb, both host packages, the manifest and SHA256SUMS.
+# A tag's optional docs/releases/<tag>.json narrows that: {"platforms": ["linux"]} builds and
+# publishes Linux only (no Windows host package, no installer), and {"prerelease": true} marks the
+# release a pre-release without a hyphen in the tag.
 name: package
 on:
   workflow_dispatch:
@@ -13,7 +16,29 @@ permissions:
   contents: read
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      windows: ${{ steps.plan.outputs.windows }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const file = `docs/releases/${process.env.REF_NAME}.json`;
+            const plan = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+            const windows = !Array.isArray(plan.platforms) || plan.platforms.includes("windows");
+            const prerelease = plan.prerelease === true || process.env.REF_NAME.includes("-");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `windows=${windows}\nprerelease=${prerelease}\n`);
+            console.log(file, JSON.stringify({ windows, prerelease }));
+          '
+
   hosts-and-deb:
+    needs: plan
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +52,7 @@ jobs:
       - run: npm run package:host -- --platform linux
         working-directory: app
       - run: node scripts/build-host-package.mjs --platform win32
+        if: needs.plan.outputs.windows == 'true'
         working-directory: app
       - run: npm run package:client -- --linux deb --x64
         working-directory: app
@@ -45,7 +71,8 @@ jobs:
             app/release/host/
             app/release/trial-standalone/
   windows-installer:
-    needs: hosts-and-deb
+    needs: [plan, hosts-and-deb]
+    if: needs.plan.outputs.windows == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -147,8 +174,12 @@ jobs:
             app/release/trial-profiles/ci
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [hosts-and-deb, windows-installer]
+    # Runs when the installer was built, or skipped because the tag's plan is Linux only.
+    if: >-
+      always() && startsWith(github.ref, 'refs/tags/v') &&
+      needs.hosts-and-deb.result == 'success' &&
+      (needs.windows-installer.result == 'success' || (needs.plan.outputs.windows == 'false' && needs.windows-installer.result == 'skipped'))
+    needs: [plan, hosts-and-deb, windows-installer]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -162,6 +193,7 @@ jobs:
           name: linux
           path: app/release
       - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.windows == 'true'
         with:
           name: windows
           path: app/release
@@ -169,15 +201,16 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node -e 'const {version} = require("./app/package.json"); if (process.env.RELEASE_TAG !== `v${version}`) throw new Error("Tag and package version differ");'
-      - run: node scripts/stage-release.mjs
+      - run: node scripts/stage-release.mjs ${{ needs.plan.outputs.windows == 'false' && '--linux-only' || '' }}
         working-directory: app
       - name: Publish installers, hosts and checksums
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
         run: |
           extra=()
-          if [[ "$RELEASE_TAG" == *-* ]]; then extra+=(--prerelease); fi
+          if [[ "$PRERELEASE" == true ]]; then extra+=(--prerelease); fi
           gh release create "$RELEASE_TAG" app/release/stage-"$RELEASE_TAG"/* \
             --verify-tag --title "DSpatch $RELEASE_TAG" \
             --notes-file "docs/releases/$RELEASE_TAG.md" "${extra[@]}"
