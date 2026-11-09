@@ -196,7 +196,7 @@ export type ProjectHostMethods = ReviewMethods & {
   }>;
   readonly 'reviewPair.direction': (repository: unknown, first: unknown, second: unknown) => PairAnswer<PairDirection>;
   readonly 'reviewPair.open': (request: unknown) => PairAnswer<OpenPair>;
-  readonly 'reviewPair.openForWalk': (pair: RevisionPairIdentity, definitionPath?: string) => PairAnswer<OpenPair>;
+  readonly 'reviewPair.openForWalk': (pair: RevisionPairIdentity, definitionPath?: string, review?: string | null) => PairAnswer<OpenPair>;
   readonly 'reviewPair.readFile': (key: unknown, side: unknown, path: unknown) => PairAnswer<{ readonly text: string | null; readonly binary: boolean }>;
   readonly 'reviewPair.readContextFile': (key: unknown, repository: unknown, path: unknown, commit: unknown) => PairAnswer<ContextFileView>;
   readonly 'reviewPair.state': (key: unknown) => PairAnswer<PairRecord>;
@@ -207,6 +207,7 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'reviewPair.walkOpened': (key: unknown, definitionPath: unknown) => { readonly saved: true };
   readonly 'reviewPair.ongoing': () => readonly OngoingReview[];
   readonly 'reviewPair.end': (pair: unknown) => PairAnswer<{ readonly ended: true }>;
+  readonly 'reviewPair.delete': (review: unknown) => PairAnswer<{ readonly deleted: true }>;
   readonly 'reviewPair.agents': (key: unknown, opener: unknown) => PairAnswer<ReviewAgents>;
   readonly 'reviewPair.startJob': (key: unknown, request: unknown) => PairAnswer<AgentJob>;
   readonly 'reviewPair.cancelJob': (key: unknown, jobId: unknown) => PairAnswer<{ readonly note: string }>;
@@ -371,6 +372,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'reviewPair.walkOpened': true,
   'reviewPair.ongoing': true,
   'reviewPair.end': true,
+  'reviewPair.delete': true,
   'reviewPair.agents': true,
   'reviewPair.startJob': true,
   'reviewPair.cancelJob': true,

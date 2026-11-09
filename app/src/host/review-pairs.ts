@@ -10,22 +10,27 @@
  * the diff is computed between the two commits. Nothing is ever read from the working
  * copy, and nothing stands in for a revision that cannot be read.
  *
- * **One record per pair.** Decisions about a pair are kept under a key of the repository
- * and both full hashes, so the diff window and every walk window over the same pair read
- * and write one record, and a review of changed code starts empty instead of inheriting
- * approvals given to other code.
+ * **One record per review** (DSP-186, Niclas's decision of 9 November 2026). Every review
+ * has an id of its own, and its record, walks, discussion and positions are kept under it.
+ * The diff window and every walk window of one review read and write that review's record.
+ * Starting a review of a pair reviewed before starts a new, empty review; closing keeps a
+ * review for reopening; deleting removes only that review's own files. A review recorded
+ * before ids keeps its pair key as its id, so its files keep their names.
  */
 
 import { execFile } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import {
   adoptPairRecord,
   emptyRecord,
+  generationStale,
   isFullHash,
+  isLegacyReviewId,
   isPairError,
+  isReviewId,
   LOG_FORMAT_ARGS,
   pairFilesFrom,
   parseLog,
@@ -51,6 +56,8 @@ import {
 } from '../shared/review-pair';
 import { ORIENTATION_DIFF_CHARS, type AnalysisMaterial, type WalkStepOutline } from '../shared/review-agent';
 import { CHECKS_FILE_FORMAT, checksFileOf } from '../shared/review-model';
+import { PRESENTATION_INSTRUCTION_VERSION } from '../shared/presentation-profiles';
+import { reviewRecordKey } from '../main/review-service';
 import { checkThreadId, reviewThreadsOf, reviewerOf, threadActionProblem } from '../shared/review-threads';
 
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -155,8 +162,92 @@ export function pairKeyOf(pair: RevisionPairIdentity): string {
 export interface ReviewPairsOptions {
   /** `userData/reviews/pairs`. */
   readonly recordsDir: string;
-  /** A pair's record changed: every window over that pair should read it again. */
+  /**
+   * `userData/reviews`: where a review's walks (`generated/<id>/`) and its discussion's
+   * definition (`discussion/<id>.review.json`) are, and where the one backup taken before
+   * review ids goes. The parent of `recordsDir` when not named.
+   */
+  readonly reviewsDir?: string;
+  /** A review's record changed: every window of that review should read it again. */
   readonly changed: (key: string, record: PairRecord) => void;
+  /** The instruction version current now, for whether walks were prepared with earlier settings. */
+  readonly instructionVersion?: number;
+}
+
+/** A new review's id: never the form of a pair key, so it cannot meet a review recorded before ids. */
+export function newReviewId(): string {
+  return `r-${randomBytes(12).toString('hex')}`;
+}
+
+/**
+ * The review a walk definition belongs to, by where DSpatch wrote it: a review's prepared
+ * walks are in `generated/<id>/`, the definition carrying its discussion before any walk is
+ * `discussion/<id>.review.json`. `null` for a definition that is not one of those, such as
+ * one the person opened from a file.
+ */
+export function reviewOfDefinition(reviewsDir: string, definitionPath: unknown): string | null {
+  if (typeof definitionPath !== 'string' || definitionPath === '') {
+    return null;
+  }
+  const resolved = path.resolve(definitionPath);
+  const parent = path.dirname(resolved);
+  const same = (a: string, b: string): boolean => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+  if (same(path.dirname(parent), path.resolve(reviewsDir, 'generated'))) {
+    const id = path.basename(parent);
+    return isReviewId(id) ? id : null;
+  }
+  if (same(parent, path.resolve(reviewsDir, 'discussion'))) {
+    const id = path.basename(resolved).replace(/\.review\.json$/i, '');
+    return isReviewId(id) ? id : null;
+  }
+  return null;
+}
+
+/**
+ * Every file and folder that is one review's own (DSP-186), for deleting it: its walks and
+ * their points, the definition carrying its discussion, the discussion, its step
+ * explanations, the discussion's working folder, the context it was given, and the record
+ * of where each of its walk windows was. Not its pair record, which {@link ReviewPairs}
+ * removes, and nothing outside `reviewsDir`.
+ */
+export function reviewArtefacts(reviewsDir: string, id: string): { readonly files: readonly string[]; readonly folders: readonly string[]; readonly definitions: readonly string[] } {
+  if (!isReviewId(id)) {
+    return { files: [], folders: [], definitions: [] };
+  }
+  const generated = path.join(reviewsDir, 'generated', id);
+  const definitions: string[] = [];
+  try {
+    for (const name of fs.readdirSync(generated)) {
+      if (name.endsWith('.review.json')) {
+        definitions.push(path.join(generated, name));
+      }
+    }
+  } catch {
+    // No walks were prepared.
+  }
+  const placeholder = path.join(reviewsDir, 'discussion', `${id}.review.json`);
+  if (fs.existsSync(placeholder)) {
+    definitions.push(placeholder);
+  }
+  const files = [
+    placeholder,
+    path.join(reviewsDir, `${id}.discussion.json`),
+    path.join(reviewsDir, `${id}.explanations.json`),
+    path.join(reviewsDir, 'context', `${id}.json`),
+  ];
+  // Where each walk window of this review was: kept under the walk's repository, commits and definition.
+  for (const definition of definitions) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(definition, 'utf8')) as Record<string, unknown>;
+      if (typeof raw['repository'] === 'string' && typeof raw['base'] === 'string' && typeof raw['target'] === 'string') {
+        const repository = path.resolve(path.dirname(definition), raw['repository']);
+        files.push(path.join(reviewsDir, `${reviewRecordKey(repository, raw['base'], raw['target'], definition)}.json`));
+      }
+    } catch {
+      // A definition that cannot be read has no walk record to find.
+    }
+  }
+  return { files: files.filter((file) => fs.existsSync(file)), folders: [generated, path.join(reviewsDir, 'discussion-cwd', id)].filter((folder) => fs.existsSync(folder)), definitions };
 }
 
 /** What a mark request may carry, checked before it is written. */
@@ -195,11 +286,31 @@ export class ReviewPairs {
   /** Repositories this host has offered or opened: the only ones a window may name. */
   private readonly known = new Map<string, string>();
 
-  /** Open pairs by key, so a later window over the same pair gets the same files. */
+  /** Open reviews by id, so a later window of the same review gets the same files. */
   private readonly open = new Map<string, OpenPair>();
+
+  /** The diff of each pair, read once, whichever of its reviews asked. */
+  private readonly diffs = new Map<string, Omit<OpenPair, 'key' | 'record'>>();
+
+  /**
+   * Reviews deleted in this run (DSP-186): nothing is written for them again, so an agent's
+   * late answer cannot bring one back.
+   */
+  private readonly deleted = new Set<string>();
+
+  /** Whether the backup before the first record in the new form has been seen to. */
+  private backupChecked = false;
 
   constructor(options: ReviewPairsOptions) {
     this.options = options;
+  }
+
+  private reviewsDir(): string {
+    return this.options.reviewsDir ?? path.dirname(this.options.recordsDir);
+  }
+
+  private instructionVersion(): number {
+    return this.options.instructionVersion ?? PRESENTATION_INSTRUCTION_VERSION;
   }
 
   /**
@@ -335,12 +446,19 @@ export class ReviewPairs {
     return commit;
   }
 
-  /** Open the diff between exactly two commits, with its record. */
+  /**
+   * Open a review (DSP-186). `{ review: id }` opens that review again, a closed one becoming
+   * open; a repository and two commits start a new review of them, empty, with the current
+   * settings, whatever reviews of the same pair there are.
+   */
   async openPair(raw: unknown): Promise<PairAnswer<OpenPair>> {
     if (typeof raw !== 'object' || raw === null) {
       return { error: 'No revision pair was named.' };
     }
     const value = raw as Record<string, unknown>;
+    if (value['review'] !== undefined) {
+      return this.openReview(value['review'], true);
+    }
     const repository = this.repositoryOf(value['repository']);
     if (repository === null) {
       return { error: 'That folder is not one of the repositories offered for review.' };
@@ -351,13 +469,44 @@ export class ReviewPairs {
     if (value['base'] === value['target']) {
       return { error: 'From and To are the same commit, so there is no change to review.' };
     }
-    const pair: RevisionPairIdentity = { repository, base: value['base'], target: value['target'] };
-    const opened = await this.load(pair);
-    if (isPairError(opened)) {
+    return this.startReview({ repository, base: value['base'], target: value['target'] });
+  }
+
+  /** A new review of a pair: its own id, an empty record written at once, the current settings. */
+  private async startReview(pair: RevisionPairIdentity): Promise<PairAnswer<OpenPair>> {
+    const diff = await this.diffOf(pair);
+    if (isPairError(diff)) {
+      return diff;
+    }
+    const id = newReviewId();
+    const now = new Date().toISOString();
+    const written = this.write(id, emptyRecord(pair, id, now, this.instructionVersion()), false, true);
+    if (isPairError(written)) {
+      return written;
+    }
+    this.rememberLastPair(pair);
+    const opened: OpenPair = { ...diff, key: id, record: written };
+    this.open.set(id, opened);
+    return opened;
+  }
+
+  /** An existing review by its id; `reopen` makes a closed one open, as the person asked. */
+  private async openReview(raw: unknown, reopen: boolean): Promise<PairAnswer<OpenPair>> {
+    if (!isReviewId(raw) || this.deleted.has(raw)) {
+      return { error: 'That review is not known. It may have been deleted.' };
+    }
+    const pair = this.storedPairOf(`${raw}.json`);
+    if (pair === null) {
+      return { error: 'That review is not known. It may have been deleted.' };
+    }
+    // The repository is read from the host's own record, which is why it may be admitted.
+    this.admit(pair.repository);
+    const opened = await this.load(raw, pair);
+    if (isPairError(opened) || !reopen) {
       return opened;
     }
     this.rememberLastPair(pair);
-    // Opening an ended review makes it ongoing again; nothing else about it changes.
+    // Opening a closed review makes it open again; nothing else about it changes.
     if (opened.record.endedAt !== null) {
       const resumed = this.write(opened.key, { ...opened.record, endedAt: null }, false);
       return isPairError(resumed) ? opened : { ...opened, record: resumed };
@@ -365,14 +514,29 @@ export class ReviewPairs {
     return opened;
   }
 
-  /** The pair's files and record, read once per pair; remembers nothing. */
-  private async load(pair: RevisionPairIdentity): Promise<PairAnswer<OpenPair>> {
-    const repository = pair.repository;
-    const key = pairKeyOf(pair);
-    const already = this.open.get(key);
+  /** A review's files and record, its pair's diff read once per pair. */
+  private async load(id: string, pair: RevisionPairIdentity): Promise<PairAnswer<OpenPair>> {
+    const already = this.open.get(id);
     if (already !== undefined) {
-      return { ...already, record: this.readRecord(key, pair) };
+      return { ...already, record: this.readRecord(id, pair) };
     }
+    const diff = await this.diffOf(pair);
+    if (isPairError(diff)) {
+      return diff;
+    }
+    const opened: OpenPair = { ...diff, key: id, record: this.readRecord(id, pair) };
+    this.open.set(id, opened);
+    return opened;
+  }
+
+  /** The pair's commits and changed files, from Git, once per pair. */
+  private async diffOf(pair: RevisionPairIdentity): Promise<PairAnswer<Omit<OpenPair, 'key' | 'record'>>> {
+    const pairKey = pairKeyOf(pair);
+    const known = this.diffs.get(pairKey);
+    if (known !== undefined) {
+      return known;
+    }
+    const repository = pair.repository;
     try {
       const [base, target] = await Promise.all([this.commitOf(repository, pair.base), this.commitOf(repository, pair.target)]);
       const common = ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '-M', pair.base, pair.target];
@@ -380,17 +544,9 @@ export class ReviewPairs {
         git(repository, [...common.slice(0, 5), '--name-status', '-z', ...common.slice(5)]),
         git(repository, [...common.slice(0, 5), '-U0', ...common.slice(5)]),
       ]);
-      const opened: OpenPair = {
-        key,
-        pair,
-        repositoryName: path.basename(repository),
-        base,
-        target,
-        files: pairFilesFrom(nameStatus, patch),
-        record: this.readRecord(key, pair),
-      };
-      this.open.set(key, opened);
-      return opened;
+      const diff = { pair, repositoryName: path.basename(repository), base, target, files: pairFilesFrom(nameStatus, patch) };
+      this.diffs.set(pairKey, diff);
+      return diff;
     } catch (error) {
       return { error: `The change could not be read: ${error instanceof Error ? error.message : String(error)}` };
     }
@@ -495,34 +651,35 @@ export class ReviewPairs {
   }
 
   /**
-   * The reviews that have not been ended, newest first: every pair record on disk whose
+   * Every review, open and closed, newest first (DSP-186): each review on disk whose
    * repository still exists. The repositories are read from the host's own records, which
-   * is why they may be admitted here. Reading starts nothing and remembers nothing.
+   * is why they may be admitted here. Reading starts nothing and writes nothing.
    */
   async ongoing(): Promise<readonly OngoingReview[]> {
     let names: string[];
     try {
-      names = fs.readdirSync(this.options.recordsDir).filter((name) => /^[0-9a-f]{24}\.json$/.test(name));
+      names = fs.readdirSync(this.options.recordsDir).filter((name) => name.endsWith('.json') && isReviewId(name.slice(0, -'.json'.length)));
     } catch {
       return [];
     }
     const out: OngoingReview[] = [];
     for (const name of names) {
+      const id = name.slice(0, -'.json'.length);
       const pair = this.storedPairOf(name);
-      if (pair === null || !fs.existsSync(pair.repository)) {
-        continue;
-      }
-      const record = this.readRecord(pairKeyOf(pair), pair);
-      if (record.endedAt !== null) {
+      if (pair === null || this.deleted.has(id) || !fs.existsSync(pair.repository)) {
         continue;
       }
       this.admit(pair.repository);
-      const opened = await this.load(pair);
+      const opened = await this.load(id, pair);
       if (isPairError(opened)) {
         continue;
       }
+      const record = opened.record;
       out.push({
         key: opened.key,
+        closed: record.endedAt !== null,
+        createdAt: record.createdAt,
+        stale: generationStale(record, this.instructionVersion()),
         pair,
         repositoryName: opened.repositoryName,
         base: { hash: opened.base.hash, subject: opened.base.subject },
@@ -534,21 +691,63 @@ export class ReviewPairs {
     return out.sort((a, b) => b.savedAt.localeCompare(a.savedAt));
   }
 
-  /** End a review: it leaves the ongoing list. Its marks, jobs and walks stay as they are. */
+  /**
+   * Close a review: it is kept, listed as closed, for reopening. Its marks, jobs and walks
+   * stay as they are; nothing is approved. Named by its id; a pair names the review recorded
+   * for it before review ids.
+   */
   end(raw: unknown): PairAnswer<{ readonly ended: true }> {
     const value = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
-    if (typeof value['repository'] !== 'string' || !isFullHash(value['base']) || !isFullHash(value['target'])) {
+    const id =
+      typeof raw === 'string'
+        ? raw
+        : typeof value['review'] === 'string'
+          ? value['review']
+          : typeof value['repository'] === 'string' && isFullHash(value['base']) && isFullHash(value['target'])
+            ? pairKeyOf({ repository: value['repository'], base: value['base'], target: value['target'] })
+            : null;
+    if (id === null || !isReviewId(id)) {
       return { error: 'No review was named.' };
     }
-    const pair: RevisionPairIdentity = { repository: value['repository'], base: value['base'], target: value['target'] };
-    const key = pairKeyOf(pair);
-    const stored = this.storedPairOf(`${key}.json`);
+    const stored = this.deleted.has(id) ? null : this.storedPairOf(`${id}.json`);
     if (stored === null) {
       return { error: 'That review is not known.' };
     }
-    const record = this.readRecord(key, stored);
-    const written = this.write(key, { ...record, endedAt: new Date().toISOString() }, true);
+    const record = this.readRecord(id, stored);
+    const written = this.write(id, { ...record, endedAt: new Date().toISOString() }, true);
     return isPairError(written) ? written : { ended: true };
+  }
+
+  /**
+   * Delete a review's record (DSP-186). From now on nothing is written for it in this run,
+   * so a late agent answer cannot bring it back. Its other files are removed by the caller
+   * from {@link reviewArtefacts}; no other review and nothing in a repository is touched.
+   */
+  remove(raw: unknown): PairAnswer<{ readonly deleted: true }> {
+    if (!isReviewId(raw)) {
+      return { error: 'No review was named.' };
+    }
+    const file = this.recordPath(raw);
+    if (!fs.existsSync(file) && !this.open.has(raw)) {
+      return { error: 'That review is not known.' };
+    }
+    const backup = this.ensureBackup();
+    if (backup !== null) {
+      return backup;
+    }
+    this.deleted.add(raw);
+    this.open.delete(raw);
+    try {
+      fs.rmSync(file, { force: true });
+    } catch (error) {
+      return { error: `The review record could not be deleted: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    return { deleted: true };
+  }
+
+  /** Whether a review may still be written: not deleted, and open in this host. */
+  holds(key: string): boolean {
+    return !this.deleted.has(key) && this.open.has(key) && (isLegacyReviewId(key) || fs.existsSync(this.recordPath(key)));
   }
 
   /**
@@ -565,6 +764,11 @@ export class ReviewPairs {
       return;
     }
     const resolved = path.resolve(definitionPath);
+    const owner = reviewOfDefinition(this.reviewsDir(), resolved);
+    if (owner !== null && owner !== opened.key) {
+      // Another review's walks: never this review's points.
+      return;
+    }
     let raw: Record<string, unknown>;
     try {
       raw = JSON.parse(fs.readFileSync(resolved, 'utf8')) as Record<string, unknown>;
@@ -644,10 +848,14 @@ export class ReviewPairs {
     return (again ?? walks[0])?.definitionPath ?? null;
   }
 
-  /** The pair a stored record names, when the file is that pair's record. */
+  /**
+   * The pair a stored review record names, when the file is that review's record: a record
+   * written with review ids names its id; one written before is under its pair's key.
+   */
   private storedPairOf(name: string): RevisionPairIdentity | null {
     try {
       const raw = JSON.parse(fs.readFileSync(path.join(this.options.recordsDir, name), 'utf8')) as Record<string, unknown>;
+      const id = name.endsWith('.json') ? name.slice(0, -'.json'.length) : '';
       const stored = raw['pair'];
       if (typeof stored !== 'object' || stored === null) {
         return null;
@@ -657,7 +865,10 @@ export class ReviewPairs {
         return null;
       }
       const pair: RevisionPairIdentity = { repository: value['repository'], base: value['base'], target: value['target'] };
-      return `${pairKeyOf(pair)}.json` === name ? pair : null;
+      if (raw['version'] === 2 && typeof raw['id'] === 'string') {
+        return raw['id'] === id && isReviewId(id) ? pair : null;
+      }
+      return raw['version'] === 1 && `${pairKeyOf(pair)}.json` === name ? pair : null;
     } catch {
       return null;
     }
@@ -705,12 +916,80 @@ export class ReviewPairs {
     return path.join(this.options.recordsDir, `${key}.json`);
   }
 
+  /**
+   * A review's record. A missing one is empty. One that cannot be read as JSON is moved
+   * aside (`<id>.json.corrupt-<time>`), never overwritten by the next save (DSP-186).
+   */
   private readRecord(key: string, pair: RevisionPairIdentity): PairRecord {
+    const file = this.recordPath(key);
+    let text: string;
     try {
-      return adoptPairRecord(JSON.parse(fs.readFileSync(this.recordPath(key), 'utf8')) as unknown, pair);
+      text = fs.readFileSync(file, 'utf8');
     } catch {
-      return emptyRecord(pair);
+      return emptyRecord(pair, key);
     }
+    try {
+      return adoptPairRecord(JSON.parse(text) as unknown, pair, key);
+    } catch {
+      try {
+        fs.renameSync(file, `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+      } catch {
+        // Left where it is; the next save is refused below rather than writing over it.
+      }
+      return emptyRecord(pair, key);
+    }
+  }
+
+  /**
+   * Once, before the first record is written in the form with review ids: a copy of every
+   * pair record as it was, beside them in `backup-<time>-pre-review-ids` (DSP-186). Only when
+   * there is a record of the earlier form to keep, and never again once a backup exists.
+   * `null` when writing may go on; the reason when the backup failed, so nothing is written.
+   */
+  private ensureBackup(): { readonly error: string } | null {
+    if (this.backupChecked) {
+      return null;
+    }
+    const parent = this.reviewsDir();
+    try {
+      if (fs.readdirSync(parent).some((name) => /^backup-.*-pre-review-ids$/.test(name))) {
+        this.backupChecked = true;
+        return null;
+      }
+    } catch {
+      // No reviews folder yet: nothing to keep.
+    }
+    let earlier = false;
+    try {
+      for (const name of fs.readdirSync(this.options.recordsDir)) {
+        if (!name.endsWith('.json') || !isLegacyReviewId(name.slice(0, -'.json'.length))) {
+          continue;
+        }
+        try {
+          if ((JSON.parse(fs.readFileSync(path.join(this.options.recordsDir, name), 'utf8')) as Record<string, unknown>)['version'] === 1) {
+            earlier = true;
+            break;
+          }
+        } catch {
+          // An unreadable record is copied with the rest when there is a backup to take.
+        }
+      }
+    } catch {
+      this.backupChecked = true;
+      return null;
+    }
+    if (!earlier) {
+      this.backupChecked = true;
+      return null;
+    }
+    const target = path.join(parent, `backup-${new Date().toISOString().replace(/[:.]/g, '-')}-pre-review-ids`);
+    try {
+      fs.cpSync(this.options.recordsDir, target, { recursive: true, filter: (source) => !source.endsWith('.tmp') });
+    } catch (error) {
+      return { error: `The review records could not be backed up before their first change, so nothing was saved: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    this.backupChecked = true;
+    return null;
   }
 
   private writeFile(file: string, value: unknown): void {
@@ -720,8 +999,20 @@ export class ReviewPairs {
     fs.renameSync(temporary, file);
   }
 
-  private write(key: string, record: PairRecord, announce: boolean): PairAnswer<PairRecord> {
-    const saved: PairRecord = { ...record, savedAt: new Date().toISOString() };
+  /**
+   * Save a review's record. Nothing is written for a deleted review, nor for a review with
+   * ids whose record is gone (`creating` only when it is first written), so a late answer
+   * cannot make one appear again.
+   */
+  private write(key: string, record: PairRecord, announce: boolean, creating = false): PairAnswer<PairRecord> {
+    if (this.deleted.has(key) || (!creating && !isLegacyReviewId(key) && !fs.existsSync(this.recordPath(key)))) {
+      return { error: 'That review was deleted, so nothing was saved.' };
+    }
+    const backup = this.ensureBackup();
+    if (backup !== null) {
+      return backup;
+    }
+    const saved: PairRecord = { ...record, version: 2, id: key, savedAt: new Date().toISOString() };
     try {
       this.writeFile(this.recordPath(key), saved);
     } catch (error) {
@@ -739,9 +1030,26 @@ export class ReviewPairs {
    * The repository comes from the walk definition the host itself opened, never from a
    * window, which is why it may be admitted here.
    */
-  async openForWalk(pair: RevisionPairIdentity, definitionPath?: unknown): Promise<PairAnswer<OpenPair>> {
+  async openForWalk(pair: RevisionPairIdentity, definitionPath?: unknown, review?: unknown): Promise<PairAnswer<OpenPair>> {
     this.admit(pair.repository);
-    const opened = await this.openPair(pair);
+    // DSP-186: the review the window belongs to; else the one the walk was written for; else,
+    // for a walk from a file, the review of this pair recorded under its pair key.
+    const id = isReviewId(review) ? review : (reviewOfDefinition(this.reviewsDir(), definitionPath) ?? pairKeyOf(pair));
+    let opened: PairAnswer<OpenPair>;
+    if (fs.existsSync(this.recordPath(id))) {
+      const stored = this.storedPairOf(`${id}.json`);
+      if (stored === null || folderIdentity(stored.repository) !== folderIdentity(pair.repository) || stored.base !== pair.base || stored.target !== pair.target) {
+        return { error: 'That walk is about other commits than its review.' };
+      }
+      opened = await this.openReview(id, true);
+    } else if (isLegacyReviewId(id) && id === pairKeyOf(pair)) {
+      // Nothing recorded for this pair yet: an empty review under its key, written on its first change.
+      this.deleted.delete(id);
+      const repository = this.repositoryOf(pair.repository) ?? pair.repository;
+      opened = await this.load(id, { ...pair, repository });
+    } else {
+      return { error: 'The review this walk belongs to is not known. It may have been deleted.' };
+    }
     // DSP-175: the walk's points worth checking become the review's threads, read here from the file.
     if (isPairError(opened) || typeof definitionPath !== 'string') {
       return opened;
@@ -769,6 +1077,11 @@ export class ReviewPairs {
         continue;
       }
       seen.add(folderIdentity(resolved));
+      const owner = reviewOfDefinition(this.reviewsDir(), resolved);
+      if (owner !== null && owner !== opened.key) {
+        // DSP-186: another review's walks are never offered here, however exactly they match the pair.
+        continue;
+      }
       try {
         const raw = JSON.parse(fs.readFileSync(resolved, 'utf8')) as Record<string, unknown>;
         const repository = typeof raw['repository'] === 'string' ? path.resolve(path.dirname(resolved), raw['repository']) : null;
@@ -813,6 +1126,10 @@ export class ReviewPairs {
     }
     if (typeof definitionPath !== 'string' || typeof walkId !== 'string' || typeof stepId !== 'string') {
       return { error: 'That step is not known.' };
+    }
+    const owner = reviewOfDefinition(this.reviewsDir(), definitionPath);
+    if (owner !== null && owner !== opened.key) {
+      return { error: 'That walk belongs to another review.' };
     }
     let raw: Record<string, unknown>;
     try {
@@ -1006,18 +1323,25 @@ export class ReviewPairs {
     return this.write(opened.key, change(this.readRecord(opened.key, opened.pair)), true);
   }
 
-  /** The pair key of a walk definition's repository and revisions, for matching walks to a pair. */
-  keyFor(pair: RevisionPairIdentity): string {
-    return pairKeyOf(pair);
-  }
-
-  /** The open pair under a key, if any. */
+  /** The open review under an id, if any. */
   opened(key: string): OpenPair | null {
     return this.open.get(key) ?? null;
   }
 
-  /** A pair's stored record, read without opening the pair; an empty one when there is none. */
-  storedRecord(pair: RevisionPairIdentity): PairRecord {
-    return this.readRecord(pairKeyOf(pair), pair);
+  /**
+   * A review's stored record, read without opening it; an empty one when there is none, or
+   * when the record is of another pair than `pair`.
+   */
+  storedRecord(key: string, pair: RevisionPairIdentity): PairRecord {
+    if (!isReviewId(key) || this.deleted.has(key)) {
+      return emptyRecord(pair, '');
+    }
+    return this.readRecord(key, pair);
+  }
+
+  /** Whether walks of this review were prepared with earlier settings than the current ones. */
+  stale(key: string): boolean {
+    const opened = this.open.get(key);
+    return opened !== undefined && generationStale(this.readRecord(key, opened.pair), this.instructionVersion());
   }
 }

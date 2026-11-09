@@ -31,7 +31,7 @@ import {
 import { KIND_WORDS, RECOMMENDATION_WORDS, STATUS_WORDS, reviewThreadsOf, type ReviewThread } from '../shared/review-threads';
 import { checkedQuote, envelopeRange, type RevisionReader } from '../shared/review-envelope-read';
 import type { CodeLocation, FileChangeStatus, Lang, RevisionSide } from '../shared/review-model';
-import { segmentWords, shownPath, type AgentJob, type OpenPair, type PairFile, type RevisionPairIdentity } from '../shared/review-pair';
+import { isLegacyReviewId, segmentWords, shownPath, type AgentJob, type OpenPair, type PairFile, type RevisionPairIdentity } from '../shared/review-pair';
 import type { ReviewPairs } from './review-pairs';
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -125,7 +125,7 @@ export function pairEnvelopeSource(pairs: ReviewPairs, key: string): EnvelopeSou
       } else if (subjectRaw['kind'] === 'thread' && typeof subjectRaw['threadId'] === 'string') {
         // DSP-175: a question in a review thread goes with the thread as it stands and the
         // code at its checked places; the answer is kept in that thread.
-        const found = reviewThreadsOf(pairs.storedRecord(open.pair)).find((entry) => entry.id === subjectRaw['threadId']);
+        const found = reviewThreadsOf(pairs.storedRecord(key, open.pair)).find((entry) => entry.id === subjectRaw['threadId']);
         if (found === undefined) {
           return { kind: 'refused', error: 'That thread is not in this review, so nothing was sent.' };
         }
@@ -250,10 +250,12 @@ function explanationMessages(job: AgentJob, pair: RevisionPairIdentity, roots: R
 }
 
 /**
- * The history the pair's discussion starts from, the first time it is opened: every
- * discussion kept earlier over a walk of the same pair, and every explanation asked for in
- * the diff, in the order they happened. Each question keeps its own envelope, quote and
- * revisions. Nothing is sent and nothing is approved; the earlier records stay as they are.
+ * The history a review's discussion starts from, the first time it is opened: every
+ * explanation asked for in the diff of this review, and, for a review recorded before
+ * review ids only, every discussion kept earlier over a walk of the same pair, in the order
+ * they happened. A review started since begins with nothing of any other review (DSP-186).
+ * Each question keeps its own envelope, quote and revisions. Nothing is sent and nothing is
+ * approved; the earlier records stay as they are.
  */
 export function earlierDiscussion(
   recordsDir: string,
@@ -264,7 +266,10 @@ export function earlierDiscussion(
   const messages: DiscussionMessage[] = [];
   let names: string[] = [];
   try {
-    names = fs.readdirSync(recordsDir).filter((name) => name.endsWith('.discussion.json') && name !== `${identity.key}.discussion.json`);
+    // Discussions of reviews with ids are each their own review's, never gathered into another.
+    names = isLegacyReviewId(identity.key)
+      ? fs.readdirSync(recordsDir).filter((name) => name.endsWith('.discussion.json') && name !== `${identity.key}.discussion.json` && !name.startsWith('r-'))
+      : [];
   } catch {
     names = [];
   }
@@ -303,7 +308,7 @@ export function earlierDiscussion(
     }
   }
   const pair: RevisionPairIdentity = { repository: identity.repository, base: identity.base, target: identity.target };
-  const jobs = pairs.storedRecord(pair).jobs.filter((job) => job.kind === 'explain' && (job.selection !== undefined || job.followUp !== undefined));
+  const jobs = pairs.storedRecord(identity.key, pair).jobs.filter((job) => job.kind === 'explain' && (job.selection !== undefined || job.followUp !== undefined));
   const roots = new Map(jobs.filter((job) => job.followUp === undefined).map((job) => [job.id, job]));
   for (const job of jobs) {
     messages.push(...explanationMessages(job, pair, roots));

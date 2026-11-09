@@ -554,6 +554,51 @@ export class ReviewWindows {
     return null;
   }
 
+  /**
+   * DSP-186: a review is being deleted. Every window of it closes, each saving its view
+   * first, and its panel goes; `keep` (the window that asked) stays, no longer tied to it.
+   * Waits for them, at most `boundMs` each, so nothing of the review is written after this.
+   */
+  async closeReview(key: string, keep: ReviewWindowEntry, boundMs: number): Promise<void> {
+    const windows = new Set(this.list().filter((entry) => entry.pairKey === key && entry !== keep && entry.view !== 'panel').map((entry) => entry.window));
+    if (keep.pairKey === key) {
+      this.releasePanelFrom(keep);
+      keep.pairKey = null;
+      keep.pairIdentity = null;
+      keep.pairLabel = null;
+      if (!keep.window.isDestroyed()) {
+        keep.window.setTitle(titleFor(keep));
+      }
+    }
+    const panel = this.panels.get(key);
+    if (panel !== undefined) {
+      panel.closing = true;
+      windows.add(panel.frame);
+    }
+    this.lastFollows.delete(key);
+    await Promise.all(
+      [...windows]
+        .filter((window) => !window.isDestroyed())
+        .map(
+          (window) =>
+            new Promise<void>((resolve) => {
+              const bound = setTimeout(() => {
+                this.options.log('a window of a deleted review did not close in time; ending it');
+                if (!window.isDestroyed()) {
+                  window.destroy();
+                }
+                resolve();
+              }, boundMs);
+              window.once('closed', () => {
+                clearTimeout(bound);
+                resolve();
+              });
+              window.close();
+            }),
+        ),
+    );
+  }
+
   /** A walk window learned which pair it is over. */
   joinPair(entry: ReviewWindowEntry, key: string): void {
     entry.pairKey = key;
@@ -596,7 +641,7 @@ export class ReviewWindows {
         identity: null,
         chooserKey: null,
         view: 'diff',
-        pairStart: { kind: 'pair', pair, at: location },
+        pairStart: { kind: 'pair', pair, at: location, review: key },
       });
       return { ok: true, note: 'The diff opened at that place.' };
     } catch (error) {
@@ -624,7 +669,8 @@ export class ReviewWindows {
     const walkWindows = this.list().filter((entry) => entry.view === 'walk');
     // The panel follows the walk opened, whichever it is (30 October 2026).
     this.panelFollowsDefinition(key, definitionPath);
-    const showing = walkWindows.find(same);
+    // DSP-186: a window of another review showing the same walk file is that review's, not this one's.
+    const showing = walkWindows.find((entry) => same(entry) && (entry.pairKey === null || entry.pairKey === key));
     if (showing !== undefined) {
       showing.pairKey = key;
       this.focus(showing);

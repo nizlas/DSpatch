@@ -63,12 +63,16 @@ after(() => {
   fs.rmSync(records, { recursive: true, force: true });
 });
 
+/** The one review of app these tests build on: started once, then opened again by its id (DSP-186). */
+let appReview: string | null = null;
+
 async function openApp(): Promise<OpenPair> {
   await pairs.repositories([fixture.workspace]);
-  const opened = await pairs.openPair({ repository: fixture.app, base: fixture.appBase, target: fixture.appTarget });
+  const opened = await pairs.openPair(appReview === null ? { repository: fixture.app, base: fixture.appBase, target: fixture.appTarget } : { review: appReview });
   if (isPairError(opened)) {
     throw new Error(opened.error);
   }
+  appReview = opened.key;
   return opened;
 }
 
@@ -217,7 +221,7 @@ describe('decisions about changed lines', () => {
     const open = await openApp();
     const again = new ReviewPairs({ recordsDir: records, changed: () => undefined });
     await again.repositories([fixture.workspace]);
-    const reopened = await again.openPair({ repository: fixture.app, base: fixture.appBase, target: fixture.appTarget });
+    const reopened = await again.openPair({ review: open.key });
     assert.ok(!isPairError(reopened));
     assert.equal(reopened.record.marks.length, (pairs.state(open.key) as PairRecord).marks.length);
     const swapped = await again.openPair({ repository: fixture.app, base: fixture.appTarget, target: fixture.appBase });
@@ -232,7 +236,7 @@ describe('decisions about changed lines', () => {
     const again = new ReviewPairs({ recordsDir: records, changed: () => undefined });
     await again.repositories([fixture.workspace]);
     assert.deepEqual(again.lastPair(fixture.app), { base: fixture.appBase, target: fixture.appTarget });
-    const reopened = await again.openPair({ repository: fixture.app, base: fixture.appBase, target: fixture.appTarget });
+    const reopened = await again.openPair({ review: open.key });
     assert.ok(!isPairError(reopened));
     assert.equal(reopened.record.position.layout, 'unified');
   });
@@ -319,18 +323,20 @@ describe('ongoing reviews (trial feedback of 29 October 2026)', () => {
     assert.deepEqual(after, before, 'listing changed no record and no last pair');
   });
 
-  it('ends a review without approving or deleting anything, and opening it again resumes it', async () => {
+  // DSP-186 replaced "opening the same two commits resumes it": a closed review is listed as
+  // closed and reopened by its id; choosing the commits again starts a new review.
+  it('closes a review without approving or deleting anything, and reopening it by its id resumes it', async () => {
     const open = await openApp();
     const marksBefore = (pairs.state(open.key) as PairRecord).marks.length;
-    assert.ok(!isPairError(pairs.end(open.pair)));
-    assert.ok(!(await pairs.ongoing()).some((entry) => entry.key === open.key));
+    assert.ok(!isPairError(pairs.end(open.key)));
+    assert.equal((await pairs.ongoing()).find((entry) => entry.key === open.key)?.closed, true);
     const ended = pairs.state(open.key) as PairRecord;
     assert.equal(ended.marks.length, marksBefore);
     assert.notEqual(ended.endedAt, null);
-    assert.ok(isPairError(pairs.end({ repository: fixture.app, base: fixture.libBase, target: fixture.libTarget })), 'an unknown review is refused');
+    assert.ok(isPairError(pairs.end(`r-${'0'.repeat(24)}`)), 'an unknown review is refused');
     const reopened = await openApp();
     assert.equal(reopened.record.endedAt, null);
-    assert.ok((await pairs.ongoing()).some((entry) => entry.key === open.key));
+    assert.equal((await pairs.ongoing()).find((entry) => entry.key === open.key)?.closed, false);
   });
 
   it('opens the walk last opened from the review, else the first offered', async () => {
@@ -759,7 +765,7 @@ describe('points worth checking become review threads (DSP-175)', () => {
     // Asked again: a new point replaces it in the walk, but the decided one stays a thread.
     fs.writeFileSync(definition.replace(/\.review\.json$/, '.checks.json'), JSON.stringify({ format: 'dspatch-checks/1', checks: [{ ...older, id: 'C1' }] }));
     pairs.adoptChecks(opened.key, definition);
-    const after = reviewThreadsOf(pairs.storedRecord(pairOf()));
+    const after = reviewThreadsOf(pairs.storedRecord(opened.key, pairOf()));
     const kept = after.find((entry) => entry.id === thread.id);
     assert.equal(kept?.status, 'action-agreed');
     assert.deepEqual(kept?.points, []);

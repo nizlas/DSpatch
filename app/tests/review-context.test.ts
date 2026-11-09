@@ -324,7 +324,7 @@ describe('a question only lib answers, through the real services', () => {
         createAdapter: simulated,
         policy: undefined,
         policyLine: () => 'analysis',
-        hold: (held, holder) => jobs.holdForDiscussion({ repository: held.repository, base: held.base, target: held.target }, holder),
+        hold: (held, holder) => jobs.holdForDiscussion(held.key, { repository: held.repository, base: held.base, target: held.target }, holder),
       },
     });
     try {

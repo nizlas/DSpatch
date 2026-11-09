@@ -22,6 +22,7 @@ import {
   fileProgressOf,
   fileReviewFactsOf,
   changeMarksOf,
+  generationStale,
   isPairError,
   lineKey,
   lineStatusesOf,
@@ -64,6 +65,7 @@ import {
 import { TokensView } from './review-code';
 import { AgentPicker, type AgentChoice } from './AgentPicker';
 import { useDefaultProfile } from './presentation-choice';
+import { PRESENTATION_INSTRUCTION_VERSION } from '../shared/presentation-profiles';
 import type { SelectionQuote } from '../shared/review-discussion';
 import type { PanelState } from '../shared/review-pair';
 import { rangeInCell } from './walk-selection';
@@ -131,8 +133,8 @@ export function PairReview(): JSX.Element {
   }, [bridge]);
 
   /**
-   * The way into review: the reviews not ended, when there are any, with *Start a new
-   * review* beside them; else straight to choosing a repository. Reading the list starts
+   * The way into review: every review, open and closed, when there are any, with *Start a
+   * new review* beside them; else straight to choosing a repository. Reading the list starts
    * nothing and sends nothing to an agent.
    */
   const showReviews = useCallback(
@@ -155,7 +157,8 @@ export function PairReview(): JSX.Element {
       if (bridge === undefined) {
         return;
       }
-      const outcome = await bridge.open(review.pair);
+      // DSP-186: exactly this review, a closed one becoming open again.
+      const outcome = await bridge.open({ review: review.key });
       if (outcome.kind === 'opened') {
         const repository = { path: outcome.open.pair.repository, name: outcome.open.repositoryName };
         setPhase({ kind: 'review', open: outcome.open, at: null, several: true, repository });
@@ -177,7 +180,7 @@ export function PairReview(): JSX.Element {
         await showReviews();
         return;
       }
-      const outcome = await bridge.open(start.pair);
+      const outcome = await bridge.open(start.review === undefined ? start.pair : { review: start.review });
       if (outcome.kind === 'opened') {
         const repository = { path: outcome.open.pair.repository, name: outcome.open.repositoryName };
         setPhase({ kind: 'review', open: outcome.open, at: start.at, several: false, repository });
@@ -226,7 +229,7 @@ export function PairReview(): JSX.Element {
     return <div className="rv rv-pair"><p className="rv-pair-message">This window has no review connection.</p></div>;
   }
   const backToReview = async (review: Extract<Phase, { kind: 'review' }>): Promise<void> => {
-    const outcome = await bridge.open(review.open.pair);
+    const outcome = await bridge.open({ review: review.open.key });
     if (outcome.kind === 'opened') {
       setPhase({ ...review, open: outcome.open, at: null });
     } else {
@@ -244,12 +247,25 @@ export function PairReview(): JSX.Element {
           onResume={(review) => void resume(review)}
           onNew={() => void chooseRepository()}
           onEnd={(review) => {
-            if (left !== null && samePair(left.open.pair, review.pair)) {
+            if (left !== null && left.open.key === review.key) {
               setLeft(null);
             }
-            void bridge.end(review.pair).then((answer) => {
+            void bridge.end(review.key).then((answer) => {
               void showReviews(isPairError(answer) ? answer.error : '');
             });
+          }}
+          onDelete={(review) => {
+            if (left !== null && left.open.key === review.key) {
+              setLeft(null);
+            }
+            void bridge.delete(review.key).then(
+              (answer) => {
+                void showReviews(isPairError(answer) ? answer.error : 'The review was deleted.');
+              },
+              (error: unknown) => {
+                void showReviews(`The review could not be deleted: ${error instanceof Error ? error.message : String(error)}`);
+              },
+            );
           }}
         />
       )}
@@ -302,10 +318,11 @@ export function PairReview(): JSX.Element {
 // --- Choosing ---------------------------------------------------------------------------
 
 /**
- * The reviews not ended (Niclas's trial feedback, 29 October 2026): each opens where it
- * was left, with its marks, explanations and walks, without any agent work. Several can be
- * ongoing at once; closing a window does not end one, *End review* does, and that approves
- * nothing.
+ * Every review (Niclas's trial feedback of 29 October and decision of 9 November 2026):
+ * each is an instance of its own, opened where it was left, with its marks, explanations
+ * and walks, without any agent work. Several can be open at once, also of one pair. *Close*
+ * keeps a review for reopening and approves nothing; *Delete* removes that review's own
+ * data, after asking, and nothing else.
  */
 function OngoingList({
   reviews,
@@ -313,18 +330,89 @@ function OngoingList({
   onResume,
   onNew,
   onEnd,
+  onDelete,
 }: {
   readonly reviews: readonly OngoingReview[];
   readonly note: string | null;
   readonly onResume: (review: OngoingReview) => void;
   readonly onNew: () => void;
   readonly onEnd: (review: OngoingReview) => void;
+  readonly onDelete: (review: OngoingReview) => void;
 }): JSX.Element {
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const open = reviews.filter((review) => !review.closed);
+  const closed = reviews.filter((review) => review.closed);
+  const row = (review: OngoingReview, index: number, group: 'open' | 'closed'): JSX.Element => {
+    const percent = review.total === 0 ? null : Math.floor((review.handled * 100) / review.total);
+    const prefix = group === 'open' ? 'pair-ongoing' : 'pair-closed';
+    return (
+      <li key={review.key} className="rv-pair-ongoing-row" data-review={review.key}>
+        <button type="button" className="rv-pair-ongoing-open" data-ev={`${prefix}-open-${String(index)}`} title={group === 'closed' ? 'Reopen this review where it was left' : undefined} onClick={() => onResume(review)}>
+          <span className="rv-pair-ongoing-repo">{review.repositoryName}</span>
+          <span className="rv-pair-ongoing-revs">
+            <code>{short(review.base.hash)}</code> {review.base.subject}
+            <span className="rv-pair-arrow" aria-hidden="true"> → </span>
+            <code>{short(review.target.hash)}</code> {review.target.subject}
+          </span>
+          <span className="rv-pair-ongoing-progress">
+            Started {formatDate(review.createdAt)} · {percent === null ? '' : `${String(percent)}% handled · `}
+            {review.filesDone} of {review.files} {review.files === 1 ? 'file' : 'files'} done
+            {review.stale ? ' · walks prepared with earlier settings' : ''}
+          </span>
+        </button>
+        {confirming === review.key ? (
+          <span className="rv-pair-confirm" data-ev={`${prefix}-confirm-${String(index)}`}>
+            Delete this review with its walks, discussion and marks? The code is not touched.{' '}
+            <button
+              type="button"
+              data-ev={`${prefix}-delete-yes-${String(index)}`}
+              onClick={() => {
+                setConfirming(null);
+                onDelete(review);
+              }}
+            >
+              Delete
+            </button>{' '}
+            <button type="button" className="rv-pair-link" data-ev={`${prefix}-delete-no-${String(index)}`} onClick={() => setConfirming(null)}>
+              Keep it
+            </button>
+          </span>
+        ) : (
+          <>
+            {group === 'open' ? (
+              <button
+                type="button"
+                className="rv-pair-link"
+                data-ev={`pair-ongoing-end-${String(index)}`}
+                title="Keep it, closed, for reopening. Nothing is approved or deleted."
+                onClick={() => onEnd(review)}
+              >
+                Close review
+              </button>
+            ) : (
+              <button type="button" className="rv-pair-link" data-ev={`pair-closed-reopen-${String(index)}`} title="Reopen this review where it was left" onClick={() => onResume(review)}>
+                Reopen
+              </button>
+            )}
+            <button
+              type="button"
+              className="rv-pair-link"
+              data-ev={`${prefix}-delete-${String(index)}`}
+              title="Delete this review and only its own walks, discussion and marks"
+              onClick={() => setConfirming(review.key)}
+            >
+              Delete…
+            </button>
+          </>
+        )}
+      </li>
+    );
+  };
   return (
     <div className="rv-pair-choose">
       <header className="rv-pair-head">
         <h1>Reviews</h1>
-        <button type="button" className="rv-pair-primary" data-ev="pair-new-review" onClick={onNew}>
+        <button type="button" className="rv-pair-primary" data-ev="pair-new-review" title="A new review starts empty, also of commits reviewed before" onClick={onNew}>
           Start a new review
         </button>
       </header>
@@ -333,40 +421,19 @@ function OngoingList({
           {note}
         </p>
       )}
-      {reviews.length === 0 ? (
-        <p className="rv-pair-message">No ongoing reviews.</p>
+      {open.length === 0 ? (
+        <p className="rv-pair-message">No open reviews.</p>
       ) : (
         <>
-          <h2 className="rv-pair-section">Ongoing</h2>
-          <ul className="rv-pair-ongoing">
-            {reviews.map((review, index) => {
-              const percent = review.total === 0 ? null : Math.floor((review.handled * 100) / review.total);
-              return (
-                <li key={review.key} className="rv-pair-ongoing-row">
-                  <button type="button" className="rv-pair-ongoing-open" data-ev={`pair-ongoing-open-${String(index)}`} onClick={() => onResume(review)}>
-                    <span className="rv-pair-ongoing-repo">{review.repositoryName}</span>
-                    <span className="rv-pair-ongoing-revs">
-                      <code>{short(review.base.hash)}</code> {review.base.subject}
-                      <span className="rv-pair-arrow" aria-hidden="true"> → </span>
-                      <code>{short(review.target.hash)}</code> {review.target.subject}
-                    </span>
-                    <span className="rv-pair-ongoing-progress">
-                      {percent === null ? '' : `${String(percent)}% handled · `}
-                      {review.filesDone} of {review.files} {review.files === 1 ? 'file' : 'files'} done
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="rv-pair-link"
-                    data-ev={`pair-ongoing-end-${String(index)}`}
-                    title="Take it off this list. Nothing is approved or deleted; choosing the same two commits opens it again."
-                    onClick={() => onEnd(review)}
-                  >
-                    End review
-                  </button>
-                </li>
-              );
-            })}
+          <h2 className="rv-pair-section">Open</h2>
+          <ul className="rv-pair-ongoing">{open.map((review, index) => row(review, index, 'open'))}</ul>
+        </>
+      )}
+      {closed.length > 0 && (
+        <>
+          <h2 className="rv-pair-section">Closed</h2>
+          <ul className="rv-pair-ongoing" data-ev="pair-closed-list">
+            {closed.map((review, index) => row(review, index, 'closed'))}
           </ul>
         </>
       )}
@@ -409,10 +476,6 @@ type ChosenDirection =
   | { readonly kind: 'choose'; readonly first: string; readonly second: string; readonly reason: string };
 
 const ROLE_WORD = { from: 'From', to: 'To', chosen: 'Chosen' } as const;
-
-function samePair(one: { readonly repository: string; readonly base: string; readonly target: string }, other: { readonly repository: string; readonly base: string; readonly target: string }): boolean {
-  return one.repository === other.repository && one.base === other.base && one.target === other.target;
-}
 
 /**
  * Where the review's panel is, as this window is told, and the room this view keeps for it
@@ -1359,6 +1422,14 @@ function DiffReview({
           </button>
         </div>
       </header>
+      {/* DSP-186: said, never acted on: walks are prepared again only when the person asks. */}
+      {record.generation !== null && (generationStale(record, PRESENTATION_INSTRUCTION_VERSION) || (record.generation.profile !== null && record.generation.profile !== explanationsIn)) && (
+        <p className="rv-pair-hint" data-ev="pair-stale">
+          The code walks of this review were prepared with earlier settings
+          {record.generation.profile !== null && record.generation.profile !== explanationsIn ? ` (the ${record.generation.profile} profile)` : ''}. Prepare them again to use the current
+          ones; nothing is prepared again by itself.
+        </p>
+      )}
       {preparing && (
         <div className="rv-pair-walks">
           <AgentPicker

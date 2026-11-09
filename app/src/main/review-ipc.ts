@@ -122,13 +122,14 @@ export function reviewSenderRefusal(windows: ReviewWindows, sender: WebContents)
 
 /**
  * The discussion identity of the review a window shows, or `null` while it is choosing.
- * A walk names its definition, a diff window none: the host gives both the one discussion
- * of their revision pair (30 October 2026).
+ * A walk names its definition, a diff window none: the host gives every window of one review
+ * that review's one discussion (30 October and 9 November 2026). The key is the review's id
+ * when the window is tied to a review, else empty, and the host finds the review itself.
  */
 function discussionIdentityOf(entry: ReviewWindowEntry): DiscussionIdentity | null {
   const identity = entry.identity;
   if (identity !== null) {
-    return { key: identity.key, repository: identity.repository, base: identity.base, target: identity.target, definitionPath: identity.definitionPath };
+    return { key: entry.pairKey ?? '', repository: identity.repository, base: identity.base, target: identity.target, definitionPath: identity.definitionPath };
   }
   const pair = entry.view === 'diff' ? entry.pairIdentity : null;
   return pair === null ? null : { key: entry.pairKey ?? '', repository: pair.repository, base: pair.base, target: pair.target, definitionPath: '' };
@@ -224,7 +225,7 @@ export function registerReviewIpc(
     }
     const other = windows.claimPair(entry, opened.key, pairLabel(opened), opened.pair);
     if (other !== null) {
-      return { kind: 'focused', note: 'This change is already open in another review window, which has been brought to the front.' };
+      return { kind: 'focused', note: 'This review is already open in another review window, which has been brought to the front.' };
     }
     return { kind: 'opened', open: opened };
   });
@@ -243,6 +244,8 @@ export function registerReviewIpc(
         target: identity.target,
       },
       identity.definitionPath,
+      // DSP-186: the review this window was opened for, when it was opened from one.
+      entry.pairKey,
     )) as PairAnswer<OpenPair>;
     if (!isPairError(opened)) {
       windows.joinPair(entry, opened.key);
@@ -387,14 +390,24 @@ export function registerReviewIpc(
       }
     }
   });
-  // The way into review: reviews not ended, and ending one. Neither starts agent work.
+  // The way into review: every review, closing one and deleting one. None starts agent work.
   ipcMain.handle(REVIEW_PAIR_CHANNELS.ongoing, async (event) => {
     entryOf(event);
     return pairs.call('reviewPair.ongoing');
   });
-  ipcMain.handle(REVIEW_PAIR_CHANNELS.end, async (event, pair: unknown) => {
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.end, async (event, review: unknown) => {
     entryOf(event);
-    return pairs.call('reviewPair.end', pair);
+    return pairs.call('reviewPair.end', review);
+  });
+  // DSP-186: the review's windows close first, saving what they hold, so nothing of the
+  // review is written after the host has removed it. The window asking stays, without it.
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.delete, async (event, review: unknown) => {
+    const entry = entryOf(event);
+    if (typeof review !== 'string' || review === '') {
+      return { error: 'No review was named.' };
+    }
+    await windows.closeReview(review, entry, 5000);
+    return pairs.call('reviewPair.delete', review);
   });
   // DSP-152: agent work over the pair. The host checks the request; a window names only its own pair.
   // The opener's agent and model go with the question: the host answers with the choice

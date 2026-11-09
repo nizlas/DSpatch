@@ -511,7 +511,8 @@ export class ReviewContexts {
 
   private read(key: string, pair: RevisionPairIdentity): ContextRecord {
     const empty: ContextRecord = { version: 1, pair, workspace: null, given: [] };
-    if (!/^[0-9a-f]{24}$/.test(key)) {
+    // A review's id (DSP-186): its pair key when recorded before review ids, else `r-` and 24 hex.
+    if (!/^(?:r-)?[0-9a-f]{24}$/.test(key)) {
       return empty;
     }
     try {

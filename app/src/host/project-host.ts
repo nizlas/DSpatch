@@ -169,7 +169,7 @@ import {
 import type { SampleProjectListing } from '../main/sample-projects';
 import { readDirectoryPage, readFileForViewing } from '../main/workspace-tree';
 import { ReviewHost } from './review-host';
-import { ReviewPairs, pairKeyOf } from './review-pairs';
+import { ReviewPairs, pairKeyOf, reviewArtefacts, reviewOfDefinition } from './review-pairs';
 import { earlierDiscussion, pairEnvelopeSource } from './review-pair-discussion';
 import { definitionFrom } from '../shared/review-agent';
 import { ReviewAgentJobs } from './review-agent-jobs';
@@ -177,7 +177,7 @@ import { RevisionSnapshots } from './revision-snapshots';
 import { ReviewContexts } from './context-repositories';
 import { ResourceGovernor, ResourceSampler, availableCpus, governorConfig } from '../main/resource-governor';
 import { GovernedRunControl } from '../main/resource-governor-control';
-import { REVIEW_PAIR_CHANGED } from '../shared/review-pair';
+import { REVIEW_PAIR_CHANGED, isPairError, isReviewId } from '../shared/review-pair';
 
 /*
  * The project host (DSP-111): the services that do a project's work, in a process of
@@ -3872,9 +3872,9 @@ function isDiscussionDefinition(definition: string): boolean {
   return path.dirname(resolved).toLowerCase() === path.resolve(discussionDefinitionsDir()).toLowerCase() || path.basename(resolved).toLowerCase() === 'discussion.review.json';
 }
 
-/** Walk definitions prepared for one pair (DSP-152), newest first. */
+/** Walk definitions prepared for one review (DSP-152, DSP-186), newest first. */
 function generatedWalkDefinitions(key: unknown): readonly string[] {
-  if (typeof key !== 'string' || !/^[0-9a-f]{24}$/.test(key)) {
+  if (!isReviewId(key)) {
     return [];
   }
   const folder = path.join(userDataDir(), 'reviews', 'generated', key);
@@ -3947,13 +3947,40 @@ function envelopeSourceFor(sessionId: string): EnvelopeSource {
  * target. A window that comes back while an answer is still arriving is rebound here.
  */
 /**
- * One discussion per repository and revision pair (Niclas's decision of 30 October 2026): a
- * walk window and the diff window over the same pair reach the same discussion, whatever
- * walk the walk window shows. The pair's key is the one its review record has.
+ * One discussion per review (Niclas's decisions of 30 October and 9 November 2026): a walk
+ * window, the diff window and the panel of the same review reach the same discussion,
+ * whatever walk the walk window shows, and two reviews of one pair have two. The window's
+ * review id comes from main; a window not yet tied to a review is matched by where its walk
+ * was written, else by the pair's key, the id of a review recorded before review ids.
  */
 function pairDiscussionIdentity(identity: DiscussionIdentity): DiscussionIdentity {
   const pair = { repository: identity.repository, base: identity.base, target: identity.target };
-  return { key: pairKeyOf(pair), ...pair, definitionPath: '' };
+  const key = isReviewId(identity.key)
+    ? identity.key
+    : (reviewOfDefinition(path.join(userDataDir(), 'reviews'), identity.definitionPath) ?? pairKeyOf(pair));
+  return { key, ...pair, definitionPath: '' };
+}
+
+/**
+ * A review's discussion goes with the review (DSP-186): its adapter is closed and it is let
+ * go before its files are removed, so nothing of it is saved again.
+ */
+async function forgetDiscussion(key: string): Promise<void> {
+  // ReviewDiscussions has no way to let one discussion go yet (DSP-184 owns that file); until
+  // it does, its services are reached as they are kept.
+  const discussions = requireReviewDiscussions() as unknown as {
+    readonly forget?: (key: string) => Promise<void>;
+    readonly services?: Map<string, { dispose(): Promise<void> }>;
+  };
+  if (typeof discussions.forget === 'function') {
+    await discussions.forget(key);
+    return;
+  }
+  const service = discussions.services?.get(key);
+  if (service !== undefined) {
+    discussions.services?.delete(key);
+    await service.dispose().catch(() => undefined);
+  }
 }
 
 /** Where a window's question gets its context: a walk's review, or the diff's revision pair. */
@@ -4021,7 +4048,9 @@ function registerReviewMethods(): void {
     return answer;
   });
   handle('reviewPair.open', async (_event, request: unknown) => reconciled(await requireReviewPairs().openPair(request)));
-  handle('reviewPair.openForWalk', async (_event, pair, definitionPath?: unknown) => reconciled(await requireReviewPairs().openForWalk(pair, definitionPath)));
+  handle('reviewPair.openForWalk', async (_event, pair, definitionPath?: unknown, review?: unknown) =>
+    reconciled(await requireReviewPairs().openForWalk(pair, definitionPath, review)),
+  );
   handle('reviewPair.readFile', (_event, key: unknown, side: unknown, filePath: unknown) =>
     requireReviewPairs().readFile(key, side, filePath),
   );
@@ -4073,9 +4102,45 @@ function registerReviewMethods(): void {
     requireReviewPairs().walkOpened(key, definitionPath);
     return { saved: true };
   });
-  // The way into review lists the reviews not ended; ending one approves nothing.
+  // The way into review lists every review, open and closed; closing one approves nothing.
   handle('reviewPair.ongoing', () => requireReviewPairs().ongoing());
-  handle('reviewPair.end', (_event, pair: unknown) => requireReviewPairs().end(pair));
+  handle('reviewPair.end', (_event, review: unknown) => requireReviewPairs().end(review));
+  /*
+   * DSP-186: delete one review and only its own data. Its record goes first, so nothing is
+   * written for it again; then its running agent work is stopped and its discussion let go;
+   * then its walks, discussion, explanations, positions and recent entries are removed.
+   * Main has closed its windows before asking. Nothing in any repository is touched.
+   */
+  handle('reviewPair.delete', async (_event, review: unknown) => {
+    if (!isReviewId(review)) {
+      return { error: 'No review was named.' };
+    }
+    const removed = requireReviewPairs().remove(review);
+    if (isPairError(removed)) {
+      return removed;
+    }
+    await requireReviewAgentJobs().forgetReview(review);
+    await forgetDiscussion(review);
+    const artefacts = reviewArtefacts(path.join(userDataDir(), 'reviews'), review);
+    const left: string[] = [];
+    for (const file of artefacts.files) {
+      try {
+        fs.rmSync(file, { force: true });
+      } catch {
+        left.push(file);
+      }
+    }
+    for (const folder of artefacts.folders) {
+      try {
+        fs.rmSync(folder, { recursive: true, force: true });
+      } catch {
+        left.push(folder);
+      }
+    }
+    requireReviewHost().forgetDefinitions(artefacts.definitions);
+    log(`[review] review ${review} deleted (${String(artefacts.files.length)} file(s), ${String(artefacts.folders.length)} folder(s)${left.length > 0 ? `, ${String(left.length)} could not be removed` : ''})`);
+    return left.length === 0 ? { deleted: true } : { error: `The review was deleted, but ${String(left.length)} of its files could not be removed: ${left.join(', ')}` };
+  });
   // DSP-152: preparing walks and delegated review, started only by an explicit request.
   handle('reviewPair.agents', (_event, key: unknown, opener: unknown) => requireReviewAgentJobs().agents(key, opener));
   handle('reviewPair.startJob', (_event, key: unknown, request: unknown) => {
@@ -4569,6 +4634,7 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
   });
   reviewPairs = new ReviewPairs({
     recordsDir: path.join(userDataDir(), 'reviews', 'pairs'),
+    reviewsDir: path.join(userDataDir(), 'reviews'),
     changed: (key, record) => {
       emitEvent({ kind: 'review-pair', key }, REVIEW_PAIR_CHANGED, { key, record });
     },
@@ -4668,7 +4734,7 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
       policyLine: (provider) =>
         `${provider === 'copilot' ? describeCopilotPolicy(COPILOT_ANALYSIS_POLICY) : describePermissionPolicy(ANALYSIS_PERMISSIONS)}, in a folder holding the two revisions only${provider === 'copilot' ? `. ${COPILOT_EXCLUSION_NOTE}` : ''}`,
       hold: (identity, holder) =>
-        requireReviewAgentJobs().holdForDiscussion({ repository: identity.repository, base: identity.base, target: identity.target }, holder),
+        requireReviewAgentJobs().holdForDiscussion(identity.key, { repository: identity.repository, base: identity.base, target: identity.target }, holder),
     },
     log: (message) => {
       log(`[review] ${message}`);

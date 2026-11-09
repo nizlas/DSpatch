@@ -56,8 +56,29 @@ export function isFullHash(value: unknown): value is string {
   return typeof value === 'string' && FULL_HASH.test(value);
 }
 
-/** An open pair: its identity, its files and their record. */
+/**
+ * A review's own identity (DSP-186, Niclas's decision of 9 November 2026). Every review is
+ * an instance of its own: a new review of a pair that was reviewed before starts empty, and
+ * closing, reopening and deleting act on exactly one review.
+ *
+ * A review recorded before review ids keeps the key of its repository and two commits (24
+ * hexadecimal characters) as its id, so its files keep their names. A review started since
+ * has `r-` and 24 random hexadecimal characters, a form a pair key can never take.
+ */
+const REVIEW_ID = /^(?:[0-9a-f]{24}|r-[0-9a-f]{24})$/;
+
+export function isReviewId(value: unknown): value is string {
+  return typeof value === 'string' && REVIEW_ID.test(value);
+}
+
+/** A review recorded before review ids, whose id is its pair's key. */
+export function isLegacyReviewId(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{24}$/.test(value);
+}
+
+/** An open review: its id (`key`), its pair, the pair's files and the review's record. */
 export interface OpenPair {
+  /** The review's id (DSP-186): every window and job of this review names it. */
   readonly key: string;
   readonly pair: RevisionPairIdentity;
   readonly repositoryName: string;
@@ -876,8 +897,32 @@ export interface PairPosition {
 
 export const START_POSITION: PairPosition = { view: 'files', fileKey: null, layout: 'split', line: null };
 
+/**
+ * The settings walks are generated with (DSP-186): the agent and model, the presentation
+ * profile and the version of DSpatch's instructions for it. A review records those current
+ * when it was started and those its walks were last prepared with, so it can say when its
+ * walks were prepared with earlier settings. Nothing is regenerated because of it.
+ */
+export interface ReviewGeneration {
+  readonly provider: 'cursor' | 'claude' | 'copilot' | null;
+  readonly model: string;
+  readonly profile: PresentationProfile | null;
+  /** `null` for walks prepared before instruction versions were recorded. */
+  readonly instructionVersion: number | null;
+  readonly at: string;
+}
+
 export interface PairRecord {
-  readonly version: 1;
+  /** 2 since review ids (DSP-186); a stored version 1 record is read as a review whose id is its pair key. */
+  readonly version: 2;
+  /** The review's own id; the record file is `<id>.json`. */
+  readonly id: string;
+  /** When the review was started; for a review recorded before ids, when it was first saved, if known. */
+  readonly createdAt: string;
+  /** The instruction version current when the review was started; `null` when not known. */
+  readonly startedWith: { readonly instructionVersion: number | null };
+  /** What the review's walks were last prepared with, or `null` when none were. */
+  readonly generation: ReviewGeneration | null;
   readonly pair: RevisionPairIdentity;
   readonly requirement: ReviewRequirement;
   readonly marks: readonly PairMark[];
@@ -912,9 +957,13 @@ export interface PairRecord {
   readonly savedAt: string;
 }
 
-export function emptyRecord(pair: RevisionPairIdentity): PairRecord {
+export function emptyRecord(pair: RevisionPairIdentity, id = '', createdAt = new Date(0).toISOString(), instructionVersion: number | null = null): PairRecord {
   return {
-    version: 1,
+    version: 2,
+    id,
+    createdAt,
+    startedWith: { instructionVersion },
+    generation: null,
     pair,
     requirement: DEFAULT_REQUIREMENT,
     marks: [],
@@ -1242,9 +1291,9 @@ function positionFrom(raw: unknown): PairPosition {
  * Unknown or malformed entries are dropped one by one rather than failing the whole
  * record; a record for another pair is refused, since its decisions are about other code.
  */
-export function adoptPairRecord(raw: unknown, pair: RevisionPairIdentity): PairRecord {
-  const empty = emptyRecord(pair);
-  if (!isRecordObject(raw) || raw['version'] !== 1 || !isRecordObject(raw['pair'])) {
+export function adoptPairRecord(raw: unknown, pair: RevisionPairIdentity, id = ''): PairRecord {
+  const empty = emptyRecord(pair, id);
+  if (!isRecordObject(raw) || (raw['version'] !== 1 && raw['version'] !== 2) || !isRecordObject(raw['pair'])) {
     return empty;
   }
   const stored = raw['pair'];
@@ -1294,8 +1343,15 @@ export function adoptPairRecord(raw: unknown, pair: RevisionPairIdentity): PairR
       jobs.push(job);
     }
   }
+  const savedAt = typeof raw['savedAt'] === 'string' ? raw['savedAt'] : empty.savedAt;
+  const startedWith = isRecordObject(raw['startedWith']) ? raw['startedWith'] : {};
   return {
-    version: 1,
+    version: 2,
+    id: typeof raw['id'] === 'string' && raw['id'] !== '' ? raw['id'] : id,
+    // A review recorded before ids says nothing of when it began; the earliest it knew of stands in.
+    createdAt: typeof raw['createdAt'] === 'string' && raw['createdAt'] !== '' ? raw['createdAt'] : (jobs[0]?.startedAt ?? savedAt),
+    startedWith: { instructionVersion: typeof startedWith['instructionVersion'] === 'number' && Number.isInteger(startedWith['instructionVersion']) ? startedWith['instructionVersion'] : null },
+    generation: generationFrom(raw['generation']) ?? generationOfJobs(jobs),
     pair,
     // A stored requirement is kept as stored; a record without one takes today's default.
     requirement: raw['requirement'] === 'manual-or-agent' ? 'manual-or-agent' : raw['requirement'] === 'manual' ? 'manual' : DEFAULT_REQUIREMENT,
@@ -1308,8 +1364,47 @@ export function adoptPairRecord(raw: unknown, pair: RevisionPairIdentity): PairR
     endedAt: typeof raw['endedAt'] === 'string' && raw['endedAt'] !== '' ? raw['endedAt'] : null,
     threads: threadRecordsFrom(raw['threads']),
     checkSources: checkSourcesFrom(raw['checkSources']),
-    savedAt: typeof raw['savedAt'] === 'string' ? raw['savedAt'] : empty.savedAt,
+    savedAt,
   };
+}
+
+function generationFrom(raw: unknown): ReviewGeneration | null {
+  if (!isRecordObject(raw)) {
+    return null;
+  }
+  const provider = raw['provider'];
+  const version = raw['instructionVersion'];
+  return {
+    provider: provider === 'cursor' || provider === 'claude' || provider === 'copilot' ? provider : null,
+    model: typeof raw['model'] === 'string' ? raw['model'] : '',
+    profile: isProfile(raw['profile']) ? raw['profile'] : null,
+    instructionVersion: typeof version === 'number' && Number.isInteger(version) ? version : null,
+    at: typeof raw['at'] === 'string' ? raw['at'] : '',
+  };
+}
+
+/** What the latest walk preparation of a record was started with, for a record that says nothing of it. */
+export function generationOfJobs(jobs: readonly AgentJob[]): ReviewGeneration | null {
+  const latest = [...jobs].reverse().find((job) => job.kind === 'walks');
+  return latest === undefined ? null : generationOfJob(latest);
+}
+
+export function generationOfJob(job: AgentJob): ReviewGeneration {
+  return {
+    provider: job.provider,
+    model: job.model,
+    profile: job.presentation?.profile ?? null,
+    instructionVersion: job.presentation?.version ?? null,
+    at: job.startedAt,
+  };
+}
+
+/**
+ * Whether a review's walks were prepared with earlier settings than DSpatch's current
+ * instructions (DSP-186): said in the window, never acted on by itself.
+ */
+export function generationStale(record: Pick<PairRecord, 'generation'>, currentInstructionVersion: number): boolean {
+  return record.generation !== null && record.generation.instructionVersion !== currentInstructionVersion;
 }
 
 const CHECK_POINT_KINDS: readonly StoredCheck['kind'][] = ['question', 'uncertainty', 'finding'];
@@ -1635,9 +1730,15 @@ export function fileReviewFactsOf(file: PairFile, record: PairRecord): FileRevie
   return { agents: [...agents], findings };
 }
 
-/** A review that has not been ended, as the way into review lists it. */
+/** A review as the way into review lists it (DSP-186: every instance, open or closed). */
 export interface OngoingReview {
+  /** The review's id. */
   readonly key: string;
+  /** Closed reviews are kept for reopening; they are listed apart. */
+  readonly closed: boolean;
+  readonly createdAt: string;
+  /** Its walks were prepared with earlier settings than DSpatch's current ones. */
+  readonly stale: boolean;
   readonly pair: RevisionPairIdentity;
   readonly repositoryName: string;
   readonly base: Pick<LogCommit, 'hash' | 'subject'>;
@@ -1940,7 +2041,7 @@ export type PairWindowStart =
   /** A diff window that has not chosen a pair yet: repository list or log. */
   | { readonly kind: 'choose' }
   /** A diff window reopened onto a pair, and where to go in it, if anywhere. */
-  | { readonly kind: 'pair'; readonly pair: RevisionPairIdentity; readonly at: DiffLocation | null };
+  | { readonly kind: 'pair'; readonly pair: RevisionPairIdentity; readonly at: DiffLocation | null; readonly review?: string };
 
 export type PairOpenOutcome =
   | { readonly kind: 'opened'; readonly open: OpenPair }
@@ -1971,6 +2072,7 @@ export const REVIEW_PAIR_CHANNELS = {
   openWalks: 'dspatch:review-pair-open-walks',
   ongoing: 'dspatch:review-pair-ongoing',
   end: 'dspatch:review-pair-end',
+  delete: 'dspatch:review-pair-delete',
   showInDiff: 'dspatch:review-pair-show-in-diff',
   agents: 'dspatch:review-pair-agents',
   startJob: 'dspatch:review-pair-start-job',
@@ -2000,7 +2102,11 @@ export interface ReviewPairBridge {
   ): Promise<PairAnswer<{ readonly commits: readonly LogCommit[]; readonly more: boolean; readonly last: { readonly base: string; readonly target: string } | null }>>;
   /** Which of two chosen commits is From and which is To, from Git's ancestry. Reads only. */
   direction(repository: string, first: string, second: string): Promise<PairAnswer<PairDirection>>;
-  open(pair: RevisionPairIdentity): Promise<PairOpenOutcome>;
+  /**
+   * DSP-186: `{ review }` opens that review again (a closed one becomes open); a pair starts
+   * a new review of it, empty, whatever reviews of the same pair there are.
+   */
+  open(request: RevisionPairIdentity | { readonly review: string }): Promise<PairOpenOutcome>;
   /** In a walk window: the pair the walk is over, opened so decisions share its record. */
   forWalk(): Promise<PairAnswer<OpenPair>>;
   readFile(key: string, side: LineSide, path: string): Promise<PairAnswer<{ readonly text: string | null; readonly binary: boolean }>>;
@@ -2021,10 +2127,16 @@ export interface ReviewPairBridge {
   openWalk(key: string, definitionPath: string): Promise<{ readonly ok: boolean; readonly note: string }>;
   /** *Code walks*: the walk last opened from this review (else the newest), in its walk window. */
   openWalks(key: string): Promise<{ readonly ok: boolean; readonly note: string }>;
-  /** The reviews not ended, newest first, for the way into review. Reads; starts nothing. */
+  /** Every review, open and closed, newest first, for the way into review. Reads; starts nothing. */
   ongoing(): Promise<readonly OngoingReview[]>;
-  /** End a review: it leaves the ongoing list. Approves nothing and deletes nothing. */
-  end(pair: RevisionPairIdentity): Promise<PairAnswer<{ readonly ended: true }>>;
+  /** Close a review: it is kept for reopening. Approves nothing and deletes nothing. */
+  end(review: string): Promise<PairAnswer<{ readonly ended: true }>>;
+  /**
+   * DSP-186: delete a review and only its own data: its record, walks, discussion,
+   * explanations and walk positions. Its windows close and its agent work is stopped first.
+   * Never source code, never another review.
+   */
+  delete(review: string): Promise<PairAnswer<{ readonly deleted: true }>>;
   showInDiff(location: DiffLocation): Promise<{ readonly ok: boolean; readonly note: string }>;
   /** DSP-152: the agents that can prepare walks or review a delegated part here. */
   agents(key: string): Promise<PairAnswer<ReviewAgents>>;

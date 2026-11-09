@@ -8,7 +8,7 @@ import { REVIEW_PERMISSIONS } from '../src/adapter/claude-agent-sdk-adapter.ts';
 import { COPILOT_ANALYSIS_POLICY, COPILOT_REVIEW_POLICY, CopilotSdkAdapter } from '../src/adapter/copilot-sdk-adapter.ts';
 import { ReviewAgentJobs } from '../src/host/review-agent-jobs.ts';
 import { pairEnvelopeSource } from '../src/host/review-pair-discussion.ts';
-import { ReviewPairs, pairKeyOf } from '../src/host/review-pairs.ts';
+import { ReviewPairs } from '../src/host/review-pairs.ts';
 import { RevisionSnapshots } from '../src/host/revision-snapshots.ts';
 import { ReviewDiscussions, type ReviewDiscussionService } from '../src/main/review-discussion-service.ts';
 import { ReviewService } from '../src/main/review-service.ts';
@@ -57,7 +57,7 @@ function discussions(): ReviewDiscussions {
       createAdapter: () => adapter(COPILOT_ANALYSIS_POLICY),
       policy: REVIEW_PERMISSIONS,
       policyLine: () => 'analysis',
-      hold: (held, holder) => jobs.holdForDiscussion({ repository: held.repository, base: held.base, target: held.target }, holder),
+      hold: (held, holder) => jobs.holdForDiscussion(held.key, { repository: held.repository, base: held.base, target: held.target }, holder),
     },
   });
 }
@@ -113,7 +113,7 @@ describe('Copilot review questions through the real services and runtime', { tim
     }
     opened = answer;
     key = opened.key;
-    identity = { key: pairKeyOf(opened.pair), repository: insight.insight, base: insight.base, target: insight.target, definitionPath: '' };
+    identity = { key: opened.key, repository: insight.insight, base: insight.base, target: insight.target, definitionPath: '' };
     snapshots = new RevisionSnapshots({ root: path.join(dir, 'revisions'), log: () => undefined });
     jobs = new ReviewAgentJobs({
       recordsDir: dir,

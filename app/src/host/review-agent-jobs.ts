@@ -74,6 +74,7 @@ import {
 import {
   openerChoiceFrom,
   changedLinesOf,
+  generationOfJob,
   isPairError,
   lineKey,
   type AgentInvestigation,
@@ -172,8 +173,11 @@ export interface ReviewAgentJobsOptions {
 }
 
 interface Live {
+  /** The review's id (DSP-186): every result is written back to this review and no other. */
   readonly key: string;
   readonly jobId: string;
+  /** The review was deleted while this ran: nothing of it is written anywhere (DSP-186). */
+  dropped: boolean;
   adapter: ChatAdapter | null;
   sessionId: string | null;
   unsubscribe: Unsubscribe | null;
@@ -569,13 +573,20 @@ export class ReviewAgentJobs {
     // Written before anything is sent: a job that never reached the disk could not be
     // reconciled after a restart. The agent and model it was started with become the
     // review's choice: the next job starts from them, whatever window opens it.
-    const written = this.options.pairs.update(key, (current) => ({ ...current, agent: { provider, model }, jobs: [...current.jobs, job] }));
+    // DSP-186: a walk preparation is what the review's walks are prepared with from now on.
+    const written = this.options.pairs.update(key, (current) => ({
+      ...current,
+      agent: { provider, model },
+      jobs: [...current.jobs, job],
+      ...(kind === 'walks' ? { generation: generationOfJob(job) } : {}),
+    }));
     if (isPairError(written)) {
       return written;
     }
     const live: Live = {
       key,
       jobId: job.id,
+      dropped: false,
       adapter: null,
       sessionId: null,
       unsubscribe: null,
@@ -632,6 +643,35 @@ export class ReviewAgentJobs {
     return { note: 'Asked to stop.' };
   }
 
+  /**
+   * A review is being deleted (DSP-186): its running work is asked to stop and its sessions
+   * closed, and nothing any of it answers later is written: no record, no walks, no points.
+   */
+  async forgetReview(key: string): Promise<void> {
+    for (const live of [...this.live.values()].filter((entry) => entry.key === key)) {
+      live.dropped = true;
+      live.cancelRequested = true;
+      this.quiet(live);
+      if (live.adapter !== null && live.sessionId !== null && live.runId !== null) {
+        await live.adapter.cancel(live.sessionId).catch(() => undefined);
+      }
+      await this.closeSession(live);
+    }
+  }
+
+  /**
+   * Whether a job's results may still be written: its review exists and holds this job as
+   * running. Checked before every write of a result, the walk and points files included, so a
+   * late answer never makes a deleted review appear again and never lands in another.
+   */
+  private accepts(live: Live): boolean {
+    if (live.dropped || !this.options.pairs.holds(live.key)) {
+      return false;
+    }
+    const current = this.options.pairs.state(live.key);
+    return !isPairError(current) && current.jobs.some((job) => job.id === live.jobId && (job.state === 'running' || job.state === 'cancelling'));
+  }
+
   /** Quit: anything still running is recorded as unknown; adapters are closed. */
   async dispose(): Promise<void> {
     for (const live of [...this.live.values()]) {
@@ -644,6 +684,9 @@ export class ReviewAgentJobs {
   // --- Inside ------------------------------------------------------------------------------
 
   private setJob(live: Live, change: Partial<AgentJob>): PairRecord | null {
+    if (live.dropped || !this.options.pairs.holds(live.key) || !this.holdsJob(live)) {
+      return null;
+    }
     const written = this.options.pairs.update(live.key, (record) => ({
       ...record,
       jobs: record.jobs.map((job) => {
@@ -656,6 +699,12 @@ export class ReviewAgentJobs {
       }),
     }));
     return isPairError(written) ? null : written;
+  }
+
+  /** Whether the review's record has this job at all. */
+  private holdsJob(live: Live): boolean {
+    const current = this.options.pairs.state(live.key);
+    return !isPairError(current) && current.jobs.some((job) => job.id === live.jobId);
   }
 
   /**
@@ -763,8 +812,9 @@ export class ReviewAgentJobs {
    * October 2026): the same folder a job reads, held under `holder` until released, the same
    * prompt section, and the same check of references against Git at the two commits.
    */
-  async holdForDiscussion(pair: RevisionPairIdentity, holder: string): Promise<HeldRevisions> {
-    const opened = await this.options.pairs.openForWalk(pair);
+  async holdForDiscussion(review: string, pair: RevisionPairIdentity, holder: string): Promise<HeldRevisions> {
+    // DSP-186: the discussion's own review, by its id; never another review of the same pair.
+    const opened = this.options.pairs.opened(review) ?? (await this.options.pairs.openForWalk(pair, undefined, review));
     if (isPairError(opened)) {
       throw new Error(opened.error);
     }
@@ -963,7 +1013,9 @@ export class ReviewAgentJobs {
         // DSP-175: the workspace's other repositories, described to the agent and recorded.
         material = withContext(material, snapshot.manifest);
         live.context = contextReaderOf(snapshot.manifest.context);
-        this.options.contexts?.given(live.key, opened.pair, live.jobId, snapshot.manifest.context);
+        if (this.accepts(live)) {
+          this.options.contexts?.given(live.key, opened.pair, live.jobId, snapshot.manifest.context);
+        }
       } catch (error) {
         this.finish(live, 'failed', 'The two revisions could not be prepared for the agent to read, so nothing was sent. Nothing was approved.', { detail: describe(error) });
         return;
@@ -1146,6 +1198,11 @@ export class ReviewAgentJobs {
       (job.presentation === undefined ? '' : ` The step explanations are written in the ${PROFILE_PROMPT_NAMES[job.presentation.profile]} profile (instruction version ${String(job.presentation.version)}).`) +
       (invalid.size + checked.left > 0 ? ` ${String(invalid.size + checked.left)} place(s) that did not exist at their commit were left out.` : '') +
       (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) of the commits could not be given to the agent to read.` : '');
+    if (!this.accepts(live)) {
+      // DSP-186: the review was deleted, or the job is no longer its; the answer is dropped unwritten.
+      this.options.log(`review agent ${live.jobId}: its review is gone or the job no longer runs there; the walks were not written`);
+      return;
+    }
     fs.mkdirSync(path.dirname(definitionPath), { recursive: true });
     fs.writeFileSync(definitionPath, `${JSON.stringify(definitionFrom(walks, opened?.pair ?? { repository: '', base: '', target: '' }, heading, provenance, job.presentation ?? null), null, 2)}\n`, 'utf8');
     // DSP-175: points written with the walks are review threads too (an answer of the older form).
@@ -1183,6 +1240,10 @@ export class ReviewAgentJobs {
     const checked = await withCheckedStandaloneChecks(parsed.checks, this.reader(live));
     if (live.cancelRequested) {
       this.endedEarly(live, { status: 'finished', error: null });
+      return;
+    }
+    if (!this.accepts(live)) {
+      this.options.log(`review agent ${live.jobId}: its review is gone or the job no longer runs there; the points were not written`);
       return;
     }
     const file = checksFileOf(definitionPath);
@@ -1249,9 +1310,7 @@ export class ReviewAgentJobs {
         '.';
     // The approvals and the job's result are written together: a result without its
     // approvals, or approvals without the result that grounds them, never exist.
-    const current = this.options.pairs.state(live.key);
-    const stillRunning = !isPairError(current) && current.jobs.some((entry) => entry.id === live.jobId && (entry.state === 'running' || entry.state === 'cancelling'));
-    if (!stillRunning || live.cancelRequested) {
+    if (!this.accepts(live) || live.cancelRequested) {
       this.endedEarly(live, { status: 'finished', error: null });
       return;
     }

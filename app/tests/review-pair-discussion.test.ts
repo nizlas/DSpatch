@@ -87,7 +87,8 @@ test("the pair's discussion starts from earlier walk discussions and the diff's 
       asked: 'Why look it up?',
       answer: { answer: 'Short.', details: 'Long.', references: [{ label: 'It', range: { kind: 'lines', side: 'target', path: 'src/table.ts', start: 4, end: 9 } }], insufficient: false, adjustments: [] },
     } as unknown as AgentJob;
-    const pairIdentity: DiscussionIdentity = { key: 'pairkey', repository: 'C:\\repo', base: BASE, target: TARGET, definitionPath: '' };
+    // A review recorded before review ids: its id is its pair key (24 hex), and it gathers its pair's earlier walk discussions.
+    const pairIdentity: DiscussionIdentity = { key: 'f'.repeat(24), repository: 'C:\\repo', base: BASE, target: TARGET, definitionPath: '' };
     const history = earlierDiscussion(dir, pairIdentity, (other) => other.repository === 'C:\\repo' && other.target === TARGET, pairsWith([job]));
     assert.deepEqual(history.map((message) => [message.role, message.text.split('\n')[0]]), [
       ['question', 'Why look it up?'],
@@ -101,6 +102,12 @@ test("the pair's discussion starts from earlier walk discussions and the diff's 
     assert.deepEqual(splitDetails(history[1]?.text ?? ''), { short: 'Short.', details: 'Long.' });
     assert.equal(history[1]?.references?.[0]?.range.path, 'src/table.ts');
     assert.equal(fs.readFileSync(walkFile, 'utf8'), before, 'the earlier record is not changed');
+    // DSP-186: a review started since begins with its own explanations only, nothing of another review's discussion.
+    const own = earlierDiscussion(dir, { ...pairIdentity, key: `r-${'1'.repeat(24)}` }, () => true, pairsWith([job]));
+    assert.deepEqual(own.map((message) => [message.role, message.text.split('\n')[0]]), [
+      ['question', 'Why look it up?'],
+      ['answer', 'Short.'],
+    ]);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

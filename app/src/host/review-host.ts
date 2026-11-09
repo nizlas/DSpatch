@@ -383,6 +383,31 @@ export class ReviewHost implements ReviewHostApi {
     return {};
   }
 
+  /**
+   * DSP-186: a deleted review's walks are no longer the last review of their repository. Only
+   * entries naming one of `definitions` go; the others stay as they are.
+   */
+  forgetDefinitions(definitions: readonly string[]): void {
+    if (definitions.length === 0) {
+      return;
+    }
+    const gone = new Set(definitions.map((definition) => folderKey(path.resolve(definition))));
+    const repositories = { ...this.readRecent() };
+    const kept = Object.fromEntries(
+      Object.entries(repositories).filter(([, entry]) => typeof entry.definitionPath !== 'string' || !gone.has(folderKey(path.resolve(entry.definitionPath)))),
+    );
+    if (Object.keys(kept).length === Object.keys(repositories).length) {
+      return;
+    }
+    try {
+      const temporary = `${this.recentPath()}.tmp`;
+      fs.writeFileSync(temporary, `${JSON.stringify({ version: 1, repositories: kept }, null, 2)}\n`, 'utf8');
+      fs.renameSync(temporary, this.recentPath());
+    } catch (error) {
+      this.options.log(`the recent reviews could not be updated after a deletion: ${String(error)}`);
+    }
+  }
+
   /** Remember the definition just opened as the last one for its repository. */
   private async rememberRecent(identity: ReviewIdentity): Promise<void> {
     const root = await topLevel(identity.repository);
